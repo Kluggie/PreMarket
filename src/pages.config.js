@@ -6,6 +6,9 @@ import Profile from './pages/Profile';
 import Organization from './pages/Organization';
 import CreateProposal from './pages/CreateProposal';
 import Proposals from './pages/Proposals';
+import ProposalDetail from './pages/ProposalDetail';
+import Admin from './pages/Admin';
+import Settings from './pages/Settings';
 import __Layout from './Layout.jsx';
 
 
@@ -18,6 +21,9 @@ export const PAGES = {
     "Organization": Organization,
     "CreateProposal": CreateProposal,
     "Proposals": Proposals,
+    "ProposalDetail": ProposalDetail,
+    "Admin": Admin,
+    "Settings": Settings,
 }
 
 export const pagesConfig = {
