@@ -147,6 +147,10 @@ export default function Admin() {
               <Shield className="w-4 h-4 mr-2" />
               Audit Log
             </TabsTrigger>
+            <TabsTrigger value="dedupe" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
+              <FileText className="w-4 h-4 mr-2" />
+              Template Dedupe
+            </TabsTrigger>
           </TabsList>
 
           {/* Overview */}
@@ -457,6 +461,34 @@ export default function Admin() {
                     ))}
                   </div>
                 )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Template Dedupe */}
+          <TabsContent value="dedupe">
+            <Card className="border-0 shadow-sm">
+              <CardHeader>
+                <CardTitle>Template Deduplication</CardTitle>
+                <CardDescription>
+                  Manage duplicate templates and fix rendering issues.
+                  <Link to={createPageUrl('TemplateDedupe')} className="ml-4 text-blue-600 hover:text-blue-700 inline-flex items-center gap-1">
+                    Open Full Page
+                    <ChevronRight className="w-4 h-4" />
+                  </Link>
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <p className="text-slate-600 mb-4">
+                  The Template Dedupe tool helps you identify and resolve duplicate templates based on question counts.
+                  Click "Open Full Page" above to access the full deduplication interface.
+                </p>
+                <Link to={createPageUrl('TemplateDedupe')}>
+                  <Button className="bg-blue-600 hover:bg-blue-700">
+                    <FileText className="w-4 h-4 mr-2" />
+                    Go to Template Dedupe
+                  </Button>
+                </Link>
               </CardContent>
             </Card>
           </TabsContent>
