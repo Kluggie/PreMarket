@@ -53,7 +53,11 @@ export default function Templates() {
 
   const { data: templates = [], isLoading } = useQuery({
     queryKey: ['templates'],
-    queryFn: () => base44.entities.Template.list('-created_date')
+    queryFn: async () => {
+      const all = await base44.entities.Template.list('-created_date');
+      // Filter out archived templates
+      return all.filter(t => t.status !== 'archived');
+    }
   });
 
   // Increment view count when template is clicked
