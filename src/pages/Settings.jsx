@@ -19,10 +19,27 @@ export default function Settings() {
     email_reveals: true,
     email_marketing: false
   });
+  const [showPasswordChange, setShowPasswordChange] = useState(false);
+  const [showActiveSessions, setShowActiveSessions] = useState(false);
 
   useEffect(() => {
     base44.auth.me().then(setUser);
   }, []);
+
+  const handleSignOutEverywhere = async () => {
+    if (confirm('Are you sure you want to sign out of all devices?')) {
+      await base44.auth.logout();
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    if (confirm('Are you sure you want to delete your account? This action cannot be undone.')) {
+      if (confirm('This will permanently delete all your data. Type DELETE to confirm.')) {
+        // In production, this would trigger account deletion
+        alert('Account deletion is currently unavailable. Please contact support.');
+      }
+    }
+  };
 
   return (
     <div className="min-h-screen bg-slate-50 py-8">
@@ -125,7 +142,9 @@ export default function Settings() {
                   <p className="font-medium">Change Password</p>
                   <p className="text-sm text-slate-500">Update your account password.</p>
                 </div>
-                <Button variant="outline">Update</Button>
+                <Button variant="outline" disabled className="opacity-50">
+                  Coming Soon
+                </Button>
               </div>
               <Separator />
               <div className="flex items-center justify-between">
@@ -133,7 +152,9 @@ export default function Settings() {
                   <p className="font-medium">Two-Factor Authentication</p>
                   <p className="text-sm text-slate-500">Add an extra layer of security.</p>
                 </div>
-                <Button variant="outline">Enable</Button>
+                <Button variant="outline" disabled className="opacity-50">
+                  Coming Soon
+                </Button>
               </div>
               <Separator />
               <div className="flex items-center justify-between">
@@ -141,7 +162,9 @@ export default function Settings() {
                   <p className="font-medium">Active Sessions</p>
                   <p className="text-sm text-slate-500">Manage your logged-in devices.</p>
                 </div>
-                <Button variant="outline">View</Button>
+                <Button variant="outline" disabled className="opacity-50">
+                  Coming Soon
+                </Button>
               </div>
             </CardContent>
           </Card>
@@ -160,7 +183,11 @@ export default function Settings() {
                   <p className="font-medium">Sign Out Everywhere</p>
                   <p className="text-sm text-slate-500">Log out of all devices.</p>
                 </div>
-                <Button variant="outline" className="text-red-600 border-red-200 hover:bg-red-50">
+                <Button 
+                  variant="outline" 
+                  className="text-red-600 border-red-200 hover:bg-red-50"
+                  onClick={handleSignOutEverywhere}
+                >
                   <LogOut className="w-4 h-4 mr-2" />
                   Sign Out All
                 </Button>
@@ -171,7 +198,11 @@ export default function Settings() {
                   <p className="font-medium">Delete Account</p>
                   <p className="text-sm text-slate-500">Permanently delete your account and data.</p>
                 </div>
-                <Button variant="outline" className="text-red-600 border-red-200 hover:bg-red-50">
+                <Button 
+                  variant="outline" 
+                  className="text-red-600 border-red-200 hover:bg-red-50"
+                  onClick={handleDeleteAccount}
+                >
                   <Trash2 className="w-4 h-4 mr-2" />
                   Delete
                 </Button>
