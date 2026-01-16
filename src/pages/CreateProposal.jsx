@@ -145,7 +145,16 @@ export default function CreateProposal() {
     if (templateId && !selectedTemplate) {
       // Merge DB templates with default templates
       const allTemplates = [...(templates || []), ...defaultTemplates];
-      const template = allTemplates.find(t => t.id === templateId);
+      let template = allTemplates.find(t => t.id === templateId);
+      
+      // If template is archived or duplicate, find canonical by template_key
+      if (template && (template.status === 'archived' || !template.template_key)) {
+        const key = template.template_key || template.slug;
+        template = allTemplates.find(t => 
+          (t.template_key === key || t.slug === key) && 
+          t.status === 'published'
+        ) || template;
+      }
       
       if (template) {
         setSelectedTemplate(template);
@@ -163,11 +172,19 @@ export default function CreateProposal() {
 
   const createProposalMutation = useMutation({
     mutationFn: async (guestEmailParam) => {
+      // Get current template version
+      const versions = await base44.entities.TemplateVersion.filter({
+        template_id: selectedTemplate.id,
+        is_current: true
+      });
+      const currentVersion = versions[0];
+      
       // Create proposal
       const proposal = await base44.entities.Proposal.create({
         title: proposalTitle || `${selectedTemplate.name} Proposal`,
         template_id: selectedTemplate.id,
         template_name: selectedTemplate.name,
+        template_version_id: currentVersion?.id || null,
         status: recipientEmail ? 'sent' : 'draft',
         party_a_user_id: user?.id || 'guest',
         party_a_email: isGuestMode ? guestEmailParam : user?.email,

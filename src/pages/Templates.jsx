@@ -145,7 +145,37 @@ export default function Templates() {
     }
   ];
 
-  const displayTemplates = templates.length > 0 ? templates : defaultTemplates;
+  // Deduplicate by template_key, keeping only published/latest per key
+  const deduplicateTemplates = (temps) => {
+    const keyMap = new Map();
+    
+    temps.forEach(t => {
+      const key = t.template_key || t.slug;
+      if (!key) return;
+      
+      // Skip archived
+      if (t.status === 'archived') return;
+      
+      const existing = keyMap.get(key);
+      if (!existing) {
+        keyMap.set(key, t);
+      } else {
+        // Prefer published over coming_soon, then newer
+        if (t.status === 'published' && existing.status !== 'published') {
+          keyMap.set(key, t);
+        } else if (t.status === existing.status) {
+          // Same status, prefer newer
+          if (new Date(t.updated_date) > new Date(existing.updated_date)) {
+            keyMap.set(key, t);
+          }
+        }
+      }
+    });
+    
+    return Array.from(keyMap.values());
+  };
+  
+  const displayTemplates = deduplicateTemplates(templates.length > 0 ? templates : defaultTemplates);
 
   return (
     <div className="min-h-screen bg-slate-50 py-8">

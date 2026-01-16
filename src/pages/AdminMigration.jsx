@@ -1,21 +1,53 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
+import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { AlertCircle, CheckCircle2, Database, ArrowRight } from 'lucide-react';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { AlertCircle, CheckCircle2, Database, ArrowRight, RefreshCw } from 'lucide-react';
 
 export default function AdminMigration() {
   const [migrating, setMigrating] = useState(false);
   const [result, setResult] = useState(null);
+  
+  const { data: templates = [], refetch: refetchTemplates } = useQuery({
+    queryKey: ['all-templates'],
+    queryFn: () => base44.entities.Template.list()
+  });
+  
+  const { data: allQuestions = [], refetch: refetchQuestions } = useQuery({
+    queryKey: ['all-template-questions'],
+    queryFn: () => base44.entities.TemplateQuestion.list()
+  });
+  
+  // Build migration status
+  const migrationStatus = templates.map(t => {
+    const normalizedCount = allQuestions.filter(q => q.template_id === t.id).length;
+    const embeddedCount = t.questions?.length || 0;
+    
+    return {
+      template_id: t.id,
+      name: t.name,
+      template_key: t.template_key || t.slug,
+      status: t.status,
+      normalized_count: normalizedCount,
+      embedded_count: embeddedCount,
+      needs_migration: normalizedCount === 0 && embeddedCount > 0
+    };
+  });
 
-  const runMigration = async () => {
+  const runMigration = async (templateId = null) => {
     setMigrating(true);
     setResult(null);
 
     try {
-      const response = await base44.functions.invoke('migrateTemplateQuestions', {});
+      const response = await base44.functions.invoke('migrateTemplateQuestions', {
+        template_id: templateId
+      });
       setResult(response.data);
+      refetchTemplates();
+      refetchQuestions();
     } catch (error) {
       setResult({
         success: false,
@@ -81,6 +113,67 @@ export default function AdminMigration() {
                 )}
               </Button>
             </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-0 shadow-sm mb-6">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <CheckCircle2 className="w-5 h-5 text-slate-600" />
+              Migration Status
+            </CardTitle>
+            <CardDescription>
+              Current state of template normalization
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Template</TableHead>
+                  <TableHead>Key</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Normalized</TableHead>
+                  <TableHead className="text-right">Embedded</TableHead>
+                  <TableHead className="text-right">Action</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {migrationStatus.map((status) => (
+                  <TableRow key={status.template_id}>
+                    <TableCell className="font-medium">{status.name}</TableCell>
+                    <TableCell>
+                      <code className="text-xs bg-slate-100 px-2 py-1 rounded">{status.template_key}</code>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={status.status === 'published' ? 'default' : 'outline'}>
+                        {status.status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right">{status.normalized_count}</TableCell>
+                    <TableCell className="text-right">{status.embedded_count}</TableCell>
+                    <TableCell className="text-right">
+                      {status.needs_migration ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => runMigration(status.template_id)}
+                          disabled={migrating}
+                        >
+                          <RefreshCw className="w-3 h-3 mr-1" />
+                          Migrate
+                        </Button>
+                      ) : (
+                        <Badge variant="outline" className="text-green-600">
+                          <CheckCircle2 className="w-3 h-3 mr-1" />
+                          Ready
+                        </Badge>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           </CardContent>
         </Card>
 

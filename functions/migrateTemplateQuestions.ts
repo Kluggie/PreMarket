@@ -10,8 +10,18 @@ Deno.serve(async (req) => {
             return Response.json({ error: 'Admin access required' }, { status: 403 });
         }
 
-        // Get all templates
-        const templates = await base44.asServiceRole.entities.Template.list();
+        // Parse request body for template_id filter
+        let requestData = {};
+        try {
+            requestData = await req.json();
+        } catch {
+            // No body is fine, migrate all
+        }
+
+        // Get all templates or specific one
+        const templates = requestData.template_id 
+            ? [await base44.asServiceRole.entities.Template.get(requestData.template_id)]
+            : await base44.asServiceRole.entities.Template.list();
         
         const migrationLog = {
             templates_processed: 0,
