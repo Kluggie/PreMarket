@@ -119,9 +119,12 @@ export default function Pricing() {
     }
   ];
 
-  const handleCTA = (plan) => {
+  const handleCTA = async (plan) => {
     if (plan.name === 'Enterprise') {
       setShowContactSales(true);
+    } else if (plan.name === 'Starter') {
+      // Starter plan - go to Template Library
+      window.location.href = createPageUrl('Templates');
     } else {
       base44.auth.redirectToLogin(createPageUrl('Dashboard'));
     }

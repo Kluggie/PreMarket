@@ -16,6 +16,7 @@ import {
   Save, CheckCircle2, AlertCircle, Eye, EyeOff, Building2
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { createPageUrl } from '../utils';
 
 export default function Profile() {
   const [user, setUser] = useState(null);

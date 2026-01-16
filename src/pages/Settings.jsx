@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,35 +9,76 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
 import {
-  Bell, Lock, Mail, Shield, Trash2, AlertTriangle, LogOut
+  Bell, Lock, Mail, Shield, Trash2, AlertTriangle, LogOut, CheckCircle2
 } from 'lucide-react';
+import { createPageUrl } from '../utils';
 
 export default function Settings() {
   const [user, setUser] = useState(null);
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    base44.auth.me().then(setUser);
+  }, []);
+
+  const { data: profile } = useQuery({
+    queryKey: ['userProfile', user?.email],
+    queryFn: async () => {
+      const profiles = await base44.entities.UserProfile.filter({ user_email: user?.email });
+      return profiles[0] || null;
+    },
+    enabled: !!user?.email
+  });
+
   const [notifications, setNotifications] = useState({
     email_proposals: true,
     email_evaluations: true,
     email_reveals: true,
     email_marketing: false
   });
-  const [showPasswordChange, setShowPasswordChange] = useState(false);
-  const [showActiveSessions, setShowActiveSessions] = useState(false);
 
   useEffect(() => {
-    base44.auth.me().then(setUser);
-  }, []);
+    if (profile?.notification_settings) {
+      setNotifications(profile.notification_settings);
+    }
+  }, [profile]);
+
+  const saveNotificationsMutation = useMutation({
+    mutationFn: async (settings) => {
+      if (profile) {
+        await base44.entities.UserProfile.update(profile.id, {
+          notification_settings: settings
+        });
+      } else {
+        await base44.entities.UserProfile.create({
+          user_id: user.id,
+          user_email: user.email,
+          notification_settings: settings
+        });
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries(['userProfile']);
+    }
+  });
+
+  const handleNotificationChange = (key, value) => {
+    const newSettings = { ...notifications, [key]: value };
+    setNotifications(newSettings);
+    saveNotificationsMutation.mutate(newSettings);
+  };
 
   const handleSignOutEverywhere = async () => {
     if (confirm('Are you sure you want to sign out of all devices?')) {
       await base44.auth.logout();
+      window.location.href = createPageUrl('Landing');
     }
   };
 
   const handleDeleteAccount = async () => {
     if (confirm('Are you sure you want to delete your account? This action cannot be undone.')) {
-      if (confirm('This will permanently delete all your data. Type DELETE to confirm.')) {
-        // In production, this would trigger account deletion
-        alert('Account deletion is currently unavailable. Please contact support.');
+      if (confirm('Final confirmation: Type DELETE to proceed.')) {
+        alert('Account deletion is currently unavailable. Please contact support@premarket.com');
       }
     }
   };
@@ -89,7 +131,7 @@ export default function Settings() {
                 </div>
                 <Switch 
                   checked={notifications.email_proposals}
-                  onCheckedChange={(v) => setNotifications({ ...notifications, email_proposals: v })}
+                  onCheckedChange={(v) => handleNotificationChange('email_proposals', v)}
                 />
               </div>
               <Separator />
@@ -100,7 +142,7 @@ export default function Settings() {
                 </div>
                 <Switch 
                   checked={notifications.email_evaluations}
-                  onCheckedChange={(v) => setNotifications({ ...notifications, email_evaluations: v })}
+                  onCheckedChange={(v) => handleNotificationChange('email_evaluations', v)}
                 />
               </div>
               <Separator />
@@ -111,7 +153,7 @@ export default function Settings() {
                 </div>
                 <Switch 
                   checked={notifications.email_reveals}
-                  onCheckedChange={(v) => setNotifications({ ...notifications, email_reveals: v })}
+                  onCheckedChange={(v) => handleNotificationChange('email_reveals', v)}
                 />
               </div>
               <Separator />
@@ -122,9 +164,19 @@ export default function Settings() {
                 </div>
                 <Switch 
                   checked={notifications.email_marketing}
-                  onCheckedChange={(v) => setNotifications({ ...notifications, email_marketing: v })}
+                  onCheckedChange={(v) => handleNotificationChange('email_marketing', v)}
                 />
               </div>
+              {saveNotificationsMutation.isSuccess && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="flex items-center gap-2 text-green-600 text-sm pt-2"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  Settings saved
+                </motion.div>
+              )}
             </CardContent>
           </Card>
 

@@ -116,69 +116,22 @@ export default function About() {
         </div>
       </section>
 
-      {/* What We're Not */}
+      {/* Disclaimer */}
       <section className="py-16">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
           <Card className="border-0 shadow-sm border-l-4 border-l-amber-500">
             <CardContent className="p-8">
-              <h2 className="text-2xl font-bold text-slate-900 mb-6">Important Clarifications</h2>
-              <div className="space-y-4">
-                <div className="p-4 bg-red-50 rounded-lg">
-                  <h3 className="font-semibold text-red-900 mb-2">❌ We Are NOT Brokers</h3>
-                  <p className="text-sm text-red-700">
-                    PreMarket does not facilitate, intermediate, or execute transactions. All dealings are directly between parties.
-                  </p>
-                </div>
-                <div className="p-4 bg-red-50 rounded-lg">
-                  <h3 className="font-semibold text-red-900 mb-2">❌ We Do NOT Provide Financial Advice</h3>
-                  <p className="text-sm text-red-700">
-                    AI evaluations are informational only. Consult qualified professionals for investment, legal, or financial advice.
-                  </p>
-                </div>
-                <div className="p-4 bg-red-50 rounded-lg">
-                  <h3 className="font-semibold text-red-900 mb-2">❌ We Do NOT Handle Transactions</h3>
-                  <p className="text-sm text-red-700">
-                    PreMarket is a pre-qualification platform only. We do not process payments, hold funds, or manage contracts.
-                  </p>
-                </div>
-                <div className="p-4 bg-green-50 rounded-lg">
-                  <h3 className="font-semibold text-green-900 mb-2">✓ We ARE an Information Platform</h3>
-                  <p className="text-sm text-green-700">
-                    We provide tools for structured information exchange, compatibility assessment, and privacy-controlled communication—nothing more.
-                  </p>
-                </div>
-              </div>
+              <h2 className="text-2xl font-bold text-slate-900 mb-4">Important Disclaimer</h2>
+              <p className="text-slate-600 mb-4">
+                PreMarket is an information platform for pre-qualification only. We do not act as brokers, 
+                provide financial or legal advice, or handle transactions. All dealings are directly between parties.
+              </p>
+              <p className="text-slate-600">
+                AI evaluations are informational only. Users must conduct their own due diligence and 
+                consult qualified professionals for investment, legal, or financial decisions.
+              </p>
             </CardContent>
           </Card>
-        </div>
-      </section>
-
-      {/* Use Cases */}
-      <section className="py-16 bg-slate-100">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-12">
-            <h2 className="text-3xl font-bold text-slate-900 mb-4">Use Cases</h2>
-            <p className="text-lg text-slate-600">
-              PreMarket serves various pre-qualification scenarios
-            </p>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {[
-              { title: 'M&A', desc: 'Evaluate acquisition targets and acquirers before detailed due diligence' },
-              { title: 'Executive Recruiting', desc: 'Pre-qualify candidates and employers for senior positions' },
-              { title: 'Investor Matching', desc: 'Connect startups with compatible investors at the right stage' },
-              { title: 'Strategic Partnerships', desc: 'Assess partnership compatibility before formal negotiations' },
-              { title: 'Consulting Engagements', desc: 'Pre-qualify consultants and clients for project fit' },
-              { title: 'Custom Scenarios', desc: 'Create templates for any bilateral pre-qualification need' }
-            ].map((useCase, idx) => (
-              <Card key={idx} className="border-0 shadow-sm">
-                <CardContent className="p-6">
-                  <h3 className="font-semibold text-slate-900 mb-2">{useCase.title}</h3>
-                  <p className="text-sm text-slate-600">{useCase.desc}</p>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
         </div>
       </section>
 
