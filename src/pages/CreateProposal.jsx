@@ -38,7 +38,7 @@ const defaultTemplates = [
     slug: 'm-and-a',
     description: 'Evaluate potential acquisition targets or acquirers.',
     category: 'm_and_a',
-    status: 'active',
+    status: 'published',
     party_a_label: 'Acquirer',
     party_b_label: 'Target Company',
     questions: [
@@ -63,7 +63,7 @@ const defaultTemplates = [
     slug: 'recruiting',
     description: 'Pre-qualify candidates for executive positions.',
     category: 'recruiting',
-    status: 'active',
+    status: 'published',
     party_a_label: 'Employer',
     party_b_label: 'Candidate',
     questions: [
@@ -87,7 +87,7 @@ const defaultTemplates = [
     slug: 'investment',
     description: 'Connect startups with potential investors.',
     category: 'investment',
-    status: 'active',
+    status: 'published',
     party_a_label: 'Startup',
     party_b_label: 'Investor',
     questions: [
@@ -119,6 +119,11 @@ export default function CreateProposal() {
   const [isGuestMode, setIsGuestMode] = useState(false);
   const [guestEmail, setGuestEmail] = useState('');
 
+  const { data: templates = [] } = useQuery({
+    queryKey: ['templates'],
+    queryFn: () => base44.entities.Template.filter({ status: 'published' })
+  });
+
   useEffect(() => {
     base44.auth.me().then(setUser).catch(() => setUser(null));
   }, []);
@@ -137,7 +142,7 @@ export default function CreateProposal() {
     
     if (templateId && !selectedTemplate) {
       // Merge DB templates with default templates
-      const allTemplates = [...templates, ...defaultTemplates];
+      const allTemplates = [...(templates || []), ...defaultTemplates];
       const template = allTemplates.find(t => t.id === templateId);
       
       if (template) {
@@ -147,12 +152,7 @@ export default function CreateProposal() {
     }
   }, [templates, selectedTemplate]);
 
-  const { data: templates = [] } = useQuery({
-    queryKey: ['templates'],
-    queryFn: () => base44.entities.Template.filter({ status: 'published' })
-  });
-
-  const displayTemplates = templates.length > 0 ? templates : defaultTemplates.filter(t => t.status === 'published');
+  const displayTemplates = templates.length > 0 ? templates : defaultTemplates.filter(t => t.status === 'active');
 
   const createProposalMutation = useMutation({
     mutationFn: async (guestEmailParam) => {

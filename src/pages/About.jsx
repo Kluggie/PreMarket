@@ -43,7 +43,7 @@ export default function About() {
           <p className="text-xl text-blue-100 mb-8">
             A privacy-preserving pre-qualification platform for structured trust-building before commitment.
           </p>
-          <Link to={createPageUrl('CreateProposal')}>
+          <Link to={createPageUrl('Templates')}>
             <Button size="lg" className="bg-white text-slate-900 hover:bg-blue-50">
               Get Started
               <ArrowRight className="ml-2 w-5 h-5" />
