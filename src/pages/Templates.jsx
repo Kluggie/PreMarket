@@ -50,8 +50,6 @@ export default function Templates() {
   const [showCustomRequest, setShowCustomRequest] = useState(false);
   const [customFormData, setCustomFormData] = useState({ name: '', email: '', message: '' });
   const [submitted, setSubmitted] = useState(false);
-  const [categoryFilter, setCategoryFilter] = useState('all');
-  const [statusFilter, setStatusFilter] = useState('all');
 
   const { data: templates = [], isLoading } = useQuery({
     queryKey: ['templates'],
@@ -147,21 +145,13 @@ export default function Templates() {
     }
   ];
 
-  let displayTemplates = templates.length > 0 ? templates : defaultTemplates;
-  
-  // Apply filters
-  if (categoryFilter !== 'all') {
-    displayTemplates = displayTemplates.filter(t => t.category === categoryFilter);
-  }
-  if (statusFilter !== 'all') {
-    displayTemplates = displayTemplates.filter(t => t.status === statusFilter);
-  }
+  const displayTemplates = templates.length > 0 ? templates : defaultTemplates;
 
   return (
     <div className="min-h-screen bg-slate-50 py-8">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Header */}
-        <div className="text-center mb-8">
+        <div className="text-center mb-12">
           <h1 className="text-3xl font-bold text-slate-900 mb-4">Template Library</h1>
           <p className="text-lg text-slate-600 max-w-2xl mx-auto">
             Choose from industry-specific templates to structure your pre-qualification proposals.
@@ -169,64 +159,7 @@ export default function Templates() {
           </p>
         </div>
 
-        {/* Filters */}
-        <Card className="border-0 shadow-sm mb-8">
-          <CardContent className="p-4">
-            <div className="flex flex-col sm:flex-row gap-4">
-              <div className="flex-1">
-                <Label className="text-xs text-slate-500 mb-2 block">Category</Label>
-                <div className="flex gap-2 flex-wrap">
-                  <Button 
-                    variant={categoryFilter === 'all' ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => setCategoryFilter('all')}
-                  >
-                    All Categories
-                  </Button>
-                  {Object.entries(categoryLabels).map(([key, label]) => (
-                    <Button 
-                      key={key}
-                      variant={categoryFilter === key ? 'default' : 'outline'}
-                      size="sm"
-                      onClick={() => setCategoryFilter(key)}
-                    >
-                      {label}
-                    </Button>
-                  ))}
-                </div>
-              </div>
-              <div className="w-px bg-slate-200 hidden sm:block" />
-              <div>
-                <Label className="text-xs text-slate-500 mb-2 block">Status</Label>
-                <div className="flex gap-2">
-                  <Button 
-                    variant={statusFilter === 'all' ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => setStatusFilter('all')}
-                  >
-                    All
-                  </Button>
-                  <Button 
-                    variant={statusFilter === 'published' ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => setStatusFilter('published')}
-                  >
-                    <CheckCircle2 className="w-3 h-3 mr-1" />
-                    Active
-                  </Button>
-                  <Button 
-                    variant={statusFilter === 'coming_soon' ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => setStatusFilter('coming_soon')}
-                  >
-                    <Clock className="w-3 h-3 mr-1" />
-                    Coming Soon
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+
 
         {/* Templates Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
