@@ -12,7 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
   Users, Building2, FileText, Shield, Search, MoreVertical,
-  ChevronRight, AlertTriangle, CheckCircle2, Clock, TrendingUp
+  ChevronRight, AlertTriangle, CheckCircle2, Clock, TrendingUp, Mail
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -52,6 +52,11 @@ export default function Admin() {
   const { data: auditLogs = [] } = useQuery({
     queryKey: ['admin', 'audit'],
     queryFn: () => base44.entities.AuditLog.list('-created_date', 50)
+  });
+
+  const { data: contactRequests = [] } = useQuery({
+    queryKey: ['admin', 'contacts'],
+    queryFn: () => base44.entities.ContactRequest.list('-created_date', 100)
   });
 
   // Check if user is admin
@@ -133,6 +138,10 @@ export default function Admin() {
             <TabsTrigger value="templates" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
               <FileText className="w-4 h-4 mr-2" />
               Templates
+            </TabsTrigger>
+            <TabsTrigger value="contacts" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
+              <Mail className="w-4 h-4 mr-2" />
+              Contacts ({contactRequests.length})
             </TabsTrigger>
             <TabsTrigger value="audit" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
               <Shield className="w-4 h-4 mr-2" />
@@ -351,6 +360,64 @@ export default function Admin() {
                           <TableCell>v{t.version || 1}</TableCell>
                           <TableCell>
                             <Button variant="ghost" size="sm">Edit</Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Contact Requests */}
+          <TabsContent value="contacts">
+            <Card className="border-0 shadow-sm">
+              <CardHeader>
+                <CardTitle>Contact Requests</CardTitle>
+                <CardDescription>All user inquiries and sales requests.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {contactRequests.length === 0 ? (
+                  <p className="text-center text-slate-500 py-8">No contact requests yet.</p>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Name</TableHead>
+                        <TableHead>Email</TableHead>
+                        <TableHead>Reason</TableHead>
+                        <TableHead>Type</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Date</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {contactRequests.map(req => (
+                        <TableRow key={req.id}>
+                          <TableCell className="font-medium">{req.name || '-'}</TableCell>
+                          <TableCell>{req.email}</TableCell>
+                          <TableCell className="capitalize">{req.reason?.replace('_', ' ')}</TableCell>
+                          <TableCell>
+                            <Badge className={
+                              req.type === 'sales' 
+                                ? 'bg-purple-100 text-purple-700' 
+                                : 'bg-blue-100 text-blue-700'
+                            }>
+                              {req.type}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Badge className={
+                              req.status === 'resolved' ? 'bg-green-100 text-green-700' :
+                              req.status === 'in_progress' ? 'bg-blue-100 text-blue-700' :
+                              'bg-slate-100 text-slate-700'
+                            }>
+                              {req.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-slate-500">
+                            {new Date(req.created_date).toLocaleDateString()}
                           </TableCell>
                         </TableRow>
                       ))}

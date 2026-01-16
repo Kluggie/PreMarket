@@ -91,7 +91,7 @@ export default function Layout({ children, currentPageName }) {
 
             {/* Desktop Nav */}
             <nav className="hidden md:flex items-center gap-1">
-              {isLandingPage && !user && (
+              {!user && (
                 <>
                   <Link to={createPageUrl('Landing')} className="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors">
                     Home
@@ -190,7 +190,7 @@ export default function Layout({ children, currentPageName }) {
                   <Button 
                     variant="ghost" 
                     onClick={() => base44.auth.redirectToLogin(createPageUrl('Dashboard'))}
-                    className="text-slate-600 hover:text-slate-900"
+                    className="text-slate-600 hover:text-slate-900 hidden sm:inline-flex"
                   >
                     Sign In
                   </Button>
@@ -198,7 +198,7 @@ export default function Layout({ children, currentPageName }) {
                     onClick={() => base44.auth.redirectToLogin(createPageUrl('Dashboard'))}
                     className="bg-blue-600 hover:bg-blue-700 text-white"
                   >
-                    Get Started
+                    {isLandingPage ? 'Get Started' : 'Sign In'}
                   </Button>
                 </>
               )}
