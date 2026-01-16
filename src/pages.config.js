@@ -14,6 +14,7 @@ import Terms from './pages/Terms';
 import Documentation from './pages/Documentation';
 import Contact from './pages/Contact';
 import About from './pages/About';
+import Verification from './pages/Verification';
 import __Layout from './Layout.jsx';
 
 
@@ -34,6 +35,7 @@ export const PAGES = {
     "Documentation": Documentation,
     "Contact": Contact,
     "About": About,
+    "Verification": Verification,
 }
 
 export const pagesConfig = {
