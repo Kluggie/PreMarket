@@ -7,7 +7,6 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import GuestProposalBanner from '../components/proposal/GuestProposalBanner';
 import GuestEmailCapture from '../components/proposal/GuestEmailCapture';
-import { useTemplateQuestions } from '../components/template/TemplateQuestionLoader';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
@@ -145,16 +144,7 @@ export default function CreateProposal() {
     if (templateId && !selectedTemplate) {
       // Merge DB templates with default templates
       const allTemplates = [...(templates || []), ...defaultTemplates];
-      let template = allTemplates.find(t => t.id === templateId);
-      
-      // If template is archived or duplicate, find canonical by template_key
-      if (template && (template.status === 'archived' || !template.template_key)) {
-        const key = template.template_key || template.slug;
-        template = allTemplates.find(t => 
-          (t.template_key === key || t.slug === key) && 
-          t.status === 'published'
-        ) || template;
-      }
+      const template = allTemplates.find(t => t.id === templateId);
       
       if (template) {
         setSelectedTemplate(template);
@@ -172,19 +162,11 @@ export default function CreateProposal() {
 
   const createProposalMutation = useMutation({
     mutationFn: async (guestEmailParam) => {
-      // Get current template version
-      const versions = await base44.entities.TemplateVersion.filter({
-        template_id: selectedTemplate.id,
-        is_current: true
-      });
-      const currentVersion = versions[0];
-      
       // Create proposal
       const proposal = await base44.entities.Proposal.create({
         title: proposalTitle || `${selectedTemplate.name} Proposal`,
         template_id: selectedTemplate.id,
         template_name: selectedTemplate.name,
-        template_version_id: currentVersion?.id || null,
         status: recipientEmail ? 'sent' : 'draft',
         party_a_user_id: user?.id || 'guest',
         party_a_email: isGuestMode ? guestEmailParam : user?.email,
@@ -216,7 +198,7 @@ export default function CreateProposal() {
 
       // Create responses
       const responsePromises = Object.entries(responses).map(([questionId, value]) => {
-        const question = templateQuestions.find(q => q.id === questionId);
+        const question = selectedTemplate.questions.find(q => q.id === questionId);
         const visibility = visibilitySettings[questionId] || 'full';
         
         let responseData = {
@@ -253,33 +235,8 @@ export default function CreateProposal() {
     setVisibilitySettings(prev => ({ ...prev, [questionId]: visibility }));
   };
 
-  // Load questions from TemplateQuestion entity (or fallback to embedded)
-  const { questions: templateQuestions } = useTemplateQuestions(selectedTemplate);
-  
-  // Debug info for admin
-  const [showDebug, setShowDebug] = useState(false);
-  useEffect(() => {
-    if (user?.role === 'admin') {
-      setShowDebug(true);
-    }
-  }, [user]);
-
-  // Filter questions by role - defensive filtering
-  const partyAQuestions = templateQuestions?.filter(q => {
-    return q.party === 'a' || q.party === 'both' || q.applies_to_role === 'proposer' || q.applies_to_role === 'both';
-  }) || [];
-  
-  const partyBQuestions = templateQuestions?.filter(q => {
-    return q.party === 'b' || q.party === 'both' || q.applies_to_role === 'recipient' || q.applies_to_role === 'both';
-  }) || [];
-
-  // Admin debug info
-  const debugInfo = showDebug && selectedTemplate ? {
-    active_version_id: selectedTemplate.active_version_id,
-    total_questions: templateQuestions?.length || 0,
-    proposer_questions: partyAQuestions.length,
-    recipient_questions: partyBQuestions.length
-  } : null;
+  const partyAQuestions = selectedTemplate?.questions?.filter(q => q.party === 'a' || q.party === 'both') || [];
+  const partyBQuestions = selectedTemplate?.questions?.filter(q => q.party === 'b' || q.party === 'both') || [];
 
   const renderQuestionInput = (question) => {
     const value = responses[question.id] || '';
@@ -550,18 +507,6 @@ export default function CreateProposal() {
               exit={{ opacity: 0, x: -20 }}
               className="space-y-6"
             >
-              {/* Debug Info (Admin Only) */}
-              {debugInfo && (
-                <Card className="border-0 shadow-sm bg-slate-900 text-white">
-                  <CardContent className="p-4">
-                    <div className="text-xs font-mono space-y-1">
-                      <div>Version: {debugInfo.active_version_id || 'none'}</div>
-                      <div>Total: {debugInfo.total_questions} | Proposer: {debugInfo.proposer_questions} | Recipient: {debugInfo.recipient_questions}</div>
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-
               {/* Your Info (Party A) */}
               <Card className="border-0 shadow-sm">
                 <CardHeader>
@@ -573,23 +518,8 @@ export default function CreateProposal() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   {partyAQuestions.map(renderQuestionInput)}
-                  {partyAQuestions.length === 0 && templateQuestions?.length === 0 && (
-                    <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
-                      <div className="flex items-start gap-3">
-                        <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
-                        <div className="flex-1">
-                          <p className="font-medium text-amber-900">Missing Questions</p>
-                          <p className="text-sm text-amber-700 mt-1">
-                            This template is missing questions. Admin must restore questions from the Admin panel.
-                          </p>
-                          {showDebug && selectedTemplate && (
-                            <div className="mt-2 text-xs font-mono text-amber-600 bg-amber-100 p-2 rounded">
-                              Debug: embedded={selectedTemplate.questions?.length || 0} | normalized={templateQuestions?.length || 0} | version={selectedTemplate.active_version_id || 'none'}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
+                  {partyAQuestions.length === 0 && (
+                    <p className="text-slate-500 text-center py-4">No questions for this section in this template.</p>
                   )}
                 </CardContent>
               </Card>
@@ -607,23 +537,8 @@ export default function CreateProposal() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   {partyBQuestions.map(renderQuestionInput)}
-                  {partyBQuestions.length === 0 && templateQuestions?.length === 0 && (
-                    <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
-                      <div className="flex items-start gap-3">
-                        <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
-                        <div className="flex-1">
-                          <p className="font-medium text-amber-900">Missing Questions</p>
-                          <p className="text-sm text-amber-700 mt-1">
-                            This template is missing questions. Admin must restore questions from the Admin panel.
-                          </p>
-                          {showDebug && selectedTemplate && (
-                            <div className="mt-2 text-xs font-mono text-amber-600 bg-amber-100 p-2 rounded">
-                              Debug: embedded={selectedTemplate.questions?.length || 0} | normalized={templateQuestions?.length || 0} | version={selectedTemplate.active_version_id || 'none'}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
+                  {partyBQuestions.length === 0 && (
+                    <p className="text-slate-500 text-center py-4">No questions for this section in this template.</p>
                   )}
                 </CardContent>
               </Card>
@@ -685,7 +600,7 @@ export default function CreateProposal() {
                     </div>
                     <div className="flex justify-between">
                       <span className="text-slate-500">Fields Completed</span>
-                      <span className="font-medium">{Object.keys(responses).length} / {templateQuestions?.length || 0}</span>
+                      <span className="font-medium">{Object.keys(responses).length} / {selectedTemplate?.questions?.length || 0}</span>
                     </div>
                   </div>
 
