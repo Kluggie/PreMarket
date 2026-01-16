@@ -52,7 +52,7 @@ export default function Layout({ children, currentPageName }) {
     { name: 'Dashboard', href: createPageUrl('Dashboard'), icon: LayoutDashboard },
     { name: 'Proposals', href: createPageUrl('Proposals'), icon: FileText },
     { name: 'Templates', href: createPageUrl('Templates'), icon: FileText },
-    { name: 'Pricing', href: createPageUrl('Pricing'), icon: FileText },
+    { name: 'Pricing', href: createPageUrl('Pricing'), icon: FileText }
   ] : [];
 
   if (isAuthPage) {

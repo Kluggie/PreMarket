@@ -135,25 +135,24 @@ export default function CreateProposal() {
     const params = new URLSearchParams(window.location.search);
     const templateId = params.get('template');
     
-    if (templateId) {
-      // Fetch from DB or use default
-      const dbTemplate = templates.find(t => t.id === templateId);
-      const defaultTemplate = defaultTemplates.find(t => t.id === templateId);
-      const template = dbTemplate || defaultTemplate;
+    if (templateId && !selectedTemplate) {
+      // Merge DB templates with default templates
+      const allTemplates = [...templates, ...defaultTemplates];
+      const template = allTemplates.find(t => t.id === templateId);
       
       if (template) {
         setSelectedTemplate(template);
         setStep(2); // Skip to step 2
       }
     }
-  }, [templates]);
+  }, [templates, selectedTemplate]);
 
   const { data: templates = [] } = useQuery({
     queryKey: ['templates'],
-    queryFn: () => base44.entities.Template.filter({ status: 'active' })
+    queryFn: () => base44.entities.Template.filter({ status: 'published' })
   });
 
-  const displayTemplates = templates.length > 0 ? templates : defaultTemplates.filter(t => t.status === 'active');
+  const displayTemplates = templates.length > 0 ? templates : defaultTemplates.filter(t => t.status === 'published');
 
   const createProposalMutation = useMutation({
     mutationFn: async (guestEmailParam) => {
@@ -358,10 +357,12 @@ export default function CreateProposal() {
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Header */}
         <div className="mb-8">
-          <Link to={createPageUrl('Dashboard')} className="inline-flex items-center text-slate-600 hover:text-slate-900 mb-4">
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Back to Dashboard
-          </Link>
+          {user && (
+            <Link to={createPageUrl('Dashboard')} className="inline-flex items-center text-slate-600 hover:text-slate-900 mb-4">
+              <ArrowLeft className="w-4 h-4 mr-2" />
+              Back to Dashboard
+            </Link>
+          )}
           <h1 className="text-2xl font-bold text-slate-900">Create Proposal</h1>
           <p className="text-slate-500 mt-1">Fill out the template to create a pre-qualification proposal.</p>
         </div>
@@ -377,7 +378,7 @@ export default function CreateProposal() {
 
         <AnimatePresence mode="wait">
           {/* Step 1: Select Template */}
-          {step === 1 && (
+          {step === 1 && !selectedTemplate && (
             <motion.div
               key="step1"
               initial={{ opacity: 0, x: 20 }}
