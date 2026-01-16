@@ -111,6 +111,7 @@ export default function CreateProposal() {
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
   const [step, setStep] = useState(1);
+  const [hasTemplatePreselected, setHasTemplatePreselected] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState(null);
   const [recipientEmail, setRecipientEmail] = useState('');
   const [proposalTitle, setProposalTitle] = useState('');
@@ -147,10 +148,15 @@ export default function CreateProposal() {
       
       if (template) {
         setSelectedTemplate(template);
-        setStep(2); // Skip to step 2
+        setHasTemplatePreselected(true);
+        setStep(1); // Start at step 1 (Recipient & Title)
       }
     }
   }, [templates, selectedTemplate]);
+
+  // Adjust step calculation based on whether template is preselected
+  const actualStep = hasTemplatePreselected ? step : step;
+  const totalSteps = hasTemplatePreselected ? 3 : 4;
 
   const displayTemplates = templates.length > 0 ? templates : defaultTemplates.filter(t => t.status === 'active');
 
@@ -350,7 +356,7 @@ export default function CreateProposal() {
     );
   };
 
-  const progress = (step / 4) * 100;
+  const progress = (actualStep / totalSteps) * 100;
 
   return (
     <div className="min-h-screen bg-slate-50 py-8">
@@ -370,7 +376,7 @@ export default function CreateProposal() {
         {/* Progress */}
         <div className="mb-8">
           <div className="flex items-center justify-between text-sm text-slate-500 mb-2">
-            <span>Step {step} of 4</span>
+            <span>Step {actualStep} of {totalSteps}</span>
             <span>{Math.round(progress)}% complete</span>
           </div>
           <Progress value={progress} className="h-2" />
@@ -429,8 +435,8 @@ export default function CreateProposal() {
             </motion.div>
           )}
 
-          {/* Step 2: Recipient & Title */}
-          {step === 2 && (
+          {/* Step 1: Recipient & Title */}
+          {step === 1 && (
             <motion.div
               key="step2"
               initial={{ opacity: 0, x: 20 }}
@@ -478,13 +484,9 @@ export default function CreateProposal() {
                     </div>
                   </div>
 
-                  <div className="flex justify-between mt-6">
-                    <Button variant="outline" onClick={() => setStep(1)}>
-                      <ArrowLeft className="w-4 h-4 mr-2" />
-                      Back
-                    </Button>
+                  <div className="flex justify-end mt-6">
                     <Button 
-                      onClick={() => setStep(3)}
+                      onClick={() => setStep(2)}
                       className="bg-blue-600 hover:bg-blue-700"
                     >
                       Continue
@@ -496,8 +498,8 @@ export default function CreateProposal() {
             </motion.div>
           )}
 
-          {/* Step 3: Fill Template */}
-          {step === 3 && (
+          {/* Step 2: Fill Template */}
+          {step === 2 && (
             <motion.div
               key="step3"
               initial={{ opacity: 0, x: 20 }}
@@ -542,7 +544,7 @@ export default function CreateProposal() {
               </Card>
 
               <div className="flex justify-between">
-                <Button variant="outline" onClick={() => setStep(2)}>
+                <Button variant="outline" onClick={() => setStep(1)}>
                   <ArrowLeft className="w-4 h-4 mr-2" />
                   Back
                 </Button>
@@ -557,8 +559,8 @@ export default function CreateProposal() {
             </motion.div>
           )}
 
-          {/* Step 4: Review & Submit */}
-          {step === 4 && (
+          {/* Step 3: Review & Submit */}
+          {step === 3 && (
             <motion.div
               key="step4"
               initial={{ opacity: 0, x: 20 }}
@@ -617,7 +619,7 @@ export default function CreateProposal() {
                   </div>
 
                   <div className="flex justify-between">
-                    <Button variant="outline" onClick={() => setStep(3)}>
+                    <Button variant="outline" onClick={() => setStep(2)}>
                       <ArrowLeft className="w-4 h-4 mr-2" />
                       Back
                     </Button>

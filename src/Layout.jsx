@@ -4,7 +4,7 @@ import { createPageUrl } from './utils';
 import { base44 } from '@/api/base44Client';
 import { 
   Menu, X, ChevronDown, User, LogOut, Settings, Building2, 
-  FileText, Inbox, LayoutDashboard, Shield, Bell
+  FileText, Inbox, LayoutDashboard, Shield
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -14,6 +14,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import NotificationDropdown from './components/NotificationDropdown';
 
 export default function Layout({ children, currentPageName }) {
   const [user, setUser] = useState(null);
@@ -43,12 +44,10 @@ export default function Layout({ children, currentPageName }) {
   const isAuthPage = ['Login', 'Signup'].includes(currentPageName);
 
   const handleLogout = async () => {
-    await base44.auth.logout();
-    window.location.href = createPageUrl('Landing');
+    await base44.auth.logout('/');
   };
 
   const navLinks = user ? [
-    { name: 'Home', href: createPageUrl('Landing'), icon: LayoutDashboard },
     { name: 'Dashboard', href: createPageUrl('Dashboard'), icon: LayoutDashboard },
     { name: 'Proposals', href: createPageUrl('Proposals'), icon: FileText },
     { name: 'Templates', href: createPageUrl('Templates'), icon: FileText },
@@ -125,13 +124,7 @@ export default function Layout({ children, currentPageName }) {
             <div className="flex items-center gap-3">
               {user ? (
                 <>
-                  <Link to={createPageUrl('Landing')} className="hidden md:inline-flex">
-                    <Button variant="ghost">Home</Button>
-                  </Link>
-                  <Button variant="ghost" size="icon" className="relative">
-                    <Bell className="w-5 h-5 text-slate-600" />
-                    <span className="absolute top-1 right-1 w-2 h-2 bg-blue-600 rounded-full"></span>
-                  </Button>
+                  <NotificationDropdown user={user} />
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button variant="ghost" className="flex items-center gap-2 pl-2 pr-3">
