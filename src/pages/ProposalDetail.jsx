@@ -294,16 +294,6 @@ export default function ProposalDetail() {
                   {runEvaluationMutation.isPending ? 'Evaluating...' : 'Run AI Evaluation'}
                 </Button>
               )}
-              {latestEvaluation && (
-                <Button 
-                  variant="outline"
-                  onClick={() => runEvaluationMutation.mutate()}
-                  disabled={runEvaluationMutation.isPending}
-                >
-                  <RefreshCw className={`w-4 h-4 mr-2 ${runEvaluationMutation.isPending ? 'animate-spin' : ''}`} />
-                  Re-evaluate
-                </Button>
-              )}
             </div>
           </div>
         </div>
@@ -339,52 +329,7 @@ export default function ProposalDetail() {
           </Card>
         )}
 
-        {/* Mutual Reveal Banner */}
-        {proposal.status !== 'revealed' && (
-          <Card className="border-0 shadow-sm mb-6 border-l-4 border-l-amber-500">
-            <CardContent className="p-4">
-              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-                <div className="flex items-start gap-3">
-                  {proposal.mutual_reveal ? (
-                    <Unlock className="w-6 h-6 text-green-600 flex-shrink-0" />
-                  ) : (
-                    <Lock className="w-6 h-6 text-amber-600 flex-shrink-0" />
-                  )}
-                  <div>
-                    <p className="font-medium text-slate-900">
-                      {proposal.mutual_reveal ? 'Identity Revealed' : 'Identity Protected'}
-                    </p>
-                    <p className="text-sm text-slate-500">
-                      {otherPartyRequestedReveal 
-                        ? 'The other party has requested mutual reveal. Accept to unlock full identities.'
-                        : 'Both parties must request reveal to unlock full contact information.'}
-                    </p>
-                  </div>
-                </div>
-                {canRequestReveal && (
-                  <Button 
-                    onClick={() => requestRevealMutation.mutate()}
-                    disabled={requestRevealMutation.isPending}
-                    variant={otherPartyRequestedReveal ? 'default' : 'outline'}
-                    className={otherPartyRequestedReveal ? 'bg-green-600 hover:bg-green-700' : ''}
-                  >
-                    {otherPartyRequestedReveal ? (
-                      <>
-                        <Unlock className="w-4 h-4 mr-2" />
-                        Accept Reveal
-                      </>
-                    ) : (
-                      <>
-                        <Lock className="w-4 h-4 mr-2" />
-                        Request Reveal
-                      </>
-                    )}
-                  </Button>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        )}
+
 
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -396,14 +341,6 @@ export default function ProposalDetail() {
             <TabsTrigger value="evaluation" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
               <BarChart3 className="w-4 h-4 mr-2" />
               AI Report
-            </TabsTrigger>
-            <TabsTrigger value="verification" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
-              <Shield className="w-4 h-4 mr-2" />
-              Verification
-            </TabsTrigger>
-            <TabsTrigger value="attachments" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
-              <Paperclip className="w-4 h-4 mr-2" />
-              Files ({attachments.length})
             </TabsTrigger>
             <TabsTrigger value="activity" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
               <Clock className="w-4 h-4 mr-2" />
@@ -519,20 +456,13 @@ export default function ProposalDetail() {
                   <CardContent>
                     <div className="space-y-3">
                       <div className="flex items-center justify-between">
-                        <span className="text-sm text-slate-500">Party A Level</span>
-                        <Badge>Gate {proposal.reveal_level_a || 1}</Badge>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm text-slate-500">Party B Level</span>
-                        <Badge>Gate {proposal.reveal_level_b || 0}</Badge>
-                      </div>
-                      <Separator />
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm text-slate-500">Mutual Reveal</span>
+                        <span className="text-sm text-slate-500">Status</span>
                         {proposal.mutual_reveal ? (
-                          <Badge className="bg-green-100 text-green-700">Complete</Badge>
+                          <Badge className="bg-green-100 text-green-700">Passed</Badge>
+                        ) : proposal.reveal_requested_by_a || proposal.reveal_requested_by_b ? (
+                          <Badge className="bg-amber-100 text-amber-700">Pending</Badge>
                         ) : (
-                          <Badge variant="outline">Pending</Badge>
+                          <Badge variant="outline" className="text-slate-600">Not Requested</Badge>
                         )}
                       </div>
                     </div>
@@ -654,79 +584,7 @@ export default function ProposalDetail() {
             )}
           </TabsContent>
 
-          {/* Verification Tab */}
-          <TabsContent value="verification">
-            <Card className="border-0 shadow-sm">
-              <CardHeader>
-                <CardTitle>Verification Log</CardTitle>
-                <CardDescription>Track verification status of provided information.</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {verifications.length === 0 ? (
-                  <div className="text-center py-12">
-                    <Shield className="w-12 h-12 text-slate-300 mx-auto mb-4" />
-                    <p className="text-slate-500">No verification items yet.</p>
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    {verifications.map(item => (
-                      <div key={item.id} className="p-4 bg-slate-50 rounded-xl">
-                        <div className="flex items-start justify-between">
-                          <div>
-                            <p className="font-medium">{item.question_id}</p>
-                            <p className="text-sm text-slate-500">{item.original_value}</p>
-                          </div>
-                          <Badge className={
-                            item.status === 'confirmed' ? 'bg-green-100 text-green-700' :
-                            item.status === 'disputed' ? 'bg-red-100 text-red-700' :
-                            'bg-slate-100 text-slate-700'
-                          }>
-                            {item.status}
-                          </Badge>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
 
-          {/* Attachments Tab */}
-          <TabsContent value="attachments">
-            <Card className="border-0 shadow-sm">
-              <CardHeader>
-                <CardTitle>Attached Documents</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {attachments.length === 0 ? (
-                  <div className="text-center py-12">
-                    <Paperclip className="w-12 h-12 text-slate-300 mx-auto mb-4" />
-                    <p className="text-slate-500 mb-4">No documents attached yet.</p>
-                    <Button variant="outline">
-                      <Upload className="w-4 h-4 mr-2" />
-                      Upload Document
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {attachments.map(file => (
-                      <div key={file.id} className="p-4 bg-slate-50 rounded-xl flex items-center gap-4">
-                        <div className="w-10 h-10 rounded-lg bg-blue-100 flex items-center justify-center">
-                          <FileText className="w-5 h-5 text-blue-600" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-medium truncate">{file.name}</p>
-                          <p className="text-sm text-slate-500">{file.file_type}</p>
-                        </div>
-                        <Button variant="ghost" size="sm">View</Button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
 
           {/* Activity Tab */}
           <TabsContent value="activity">
@@ -769,6 +627,32 @@ export default function ProposalDetail() {
                       </div>
                     </div>
                   ))}
+                  {proposal.mutual_reveal && (
+                    <div className="flex items-start gap-4">
+                      <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center">
+                        <CheckCircle2 className="w-4 h-4 text-green-600" />
+                      </div>
+                      <div>
+                        <p className="font-medium">Reveal Status: Passed</p>
+                        <p className="text-sm text-slate-500">
+                          Both parties agreed to reveal identities
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                  {!proposal.mutual_reveal && (proposal.reveal_requested_by_a || proposal.reveal_requested_by_b) && (
+                    <div className="flex items-start gap-4">
+                      <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center">
+                        <Clock className="w-4 h-4 text-amber-600" />
+                      </div>
+                      <div>
+                        <p className="font-medium">Reveal Status: Pending</p>
+                        <p className="text-sm text-slate-500">
+                          Waiting for mutual reveal agreement
+                        </p>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </CardContent>
             </Card>
