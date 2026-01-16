@@ -47,7 +47,8 @@ export default function Profile() {
       twitter: '',
       github: '',
       crunchbase: ''
-    }
+    },
+    social_links_ai_consent: false
   });
 
   useEffect(() => {
@@ -66,7 +67,8 @@ export default function Profile() {
           twitter: '',
           github: '',
           crunchbase: ''
-        }
+        },
+        social_links_ai_consent: profile.social_links_ai_consent || false
       });
     }
   }, [profile]);
@@ -120,17 +122,18 @@ export default function Profile() {
             <p className="text-slate-500">Manage your professional identity and privacy settings.</p>
           </div>
           <div className="flex items-center gap-2">
-            <Badge className={
-              profile?.verification_status === 'verified' 
-                ? 'bg-green-100 text-green-700' 
-                : 'bg-slate-100 text-slate-600'
-            }>
-              {profile?.verification_status === 'verified' ? (
-                <><CheckCircle2 className="w-3 h-3 mr-1" />Verified</>
-              ) : (
-                <><AlertCircle className="w-3 h-3 mr-1" />Unverified</>
-              )}
-            </Badge>
+            {profile?.verification_status === 'verified' ? (
+              <Badge className="bg-green-100 text-green-700">
+                <CheckCircle2 className="w-3 h-3 mr-1" />Verified
+              </Badge>
+            ) : (
+              <Link to={createPageUrl('Verification')}>
+                <Button variant="outline" size="sm" className="flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-amber-500" />
+                  Unverified - Click to Verify
+                </Button>
+              </Link>
+            )}
           </div>
         </div>
 
@@ -283,6 +286,33 @@ export default function Profile() {
                   </div>
                 </div>
 
+                <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">
+                  <h4 className="font-medium text-slate-900 mb-3">Privacy Settings</h4>
+                  <p className="text-sm text-slate-600 mb-4">
+                    Control how your identity appears to others:
+                  </p>
+                  <ul className="space-y-2 text-sm text-slate-600">
+                    <li className="flex items-start gap-2">
+                      <Eye className="w-4 h-4 text-green-600 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <strong>Public:</strong> Visible in the public directory with full identity
+                      </div>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <User className="w-4 h-4 text-blue-600 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <strong>Pseudonymous:</strong> Visible in directory but identity masked until reveal
+                      </div>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <EyeOff className="w-4 h-4 text-slate-600 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <strong>Private:</strong> Hidden from directory until explicit reveal
+                      </div>
+                    </li>
+                  </ul>
+                </div>
+
                 <div className="p-4 bg-amber-50 rounded-xl border border-amber-100">
                   <h4 className="font-medium text-amber-900 mb-2">Progressive Reveal Gates</h4>
                   <p className="text-sm text-amber-700 mb-4">
@@ -369,11 +399,24 @@ export default function Profile() {
                   </div>
                 </div>
 
-                <div className="p-4 bg-blue-50 rounded-xl border border-blue-100">
+                <div className="p-4 bg-blue-50 rounded-xl border border-blue-100 space-y-4">
                   <p className="text-sm text-blue-700">
                     <strong>AI Evaluation:</strong> Social links are analyzed by AI to provide additional context 
                     and trust signals in proposal evaluations. More complete profiles lead to higher confidence scores.
                   </p>
+                  
+                  <div className="flex items-center justify-between p-4 bg-white rounded-lg border border-blue-200">
+                    <div className="flex-1">
+                      <p className="font-medium text-blue-900 text-sm">AI Analysis Consent</p>
+                      <p className="text-xs text-blue-600 mt-1">
+                        I consent to my social links being used by AI evaluations
+                      </p>
+                    </div>
+                    <Switch 
+                      checked={formData.social_links_ai_consent}
+                      onCheckedChange={(v) => setFormData({ ...formData, social_links_ai_consent: v })}
+                    />
+                  </div>
                 </div>
               </CardContent>
             </Card>
