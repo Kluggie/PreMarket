@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '../utils';
 import { base44 } from '@/api/base44Client';
@@ -11,6 +11,16 @@ import {
   Building2, Users, TrendingUp, Briefcase, Handshake, FileText,
   ArrowRight, Lock, CheckCircle2, Clock
 } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
 
 const iconMap = {
   m_and_a: Building2,
@@ -31,6 +41,10 @@ const categoryLabels = {
 };
 
 export default function Templates() {
+  const [showCustomRequest, setShowCustomRequest] = useState(false);
+  const [customFormData, setCustomFormData] = useState({ name: '', email: '', message: '' });
+  const [submitted, setSubmitted] = useState(false);
+
   const { data: templates = [], isLoading } = useQuery({
     queryKey: ['templates'],
     queryFn: () => base44.entities.Template.list('-created_date')
@@ -38,11 +52,36 @@ export default function Templates() {
 
   // Increment view count when template is clicked
   const incrementViewCount = async (templateId) => {
-    const template = templates.find(t => t.id === templateId);
-    if (template) {
-      await base44.entities.Template.update(templateId, {
-        view_count: (template.view_count || 0) + 1
+    try {
+      const template = templates.find(t => t.id === templateId);
+      if (template) {
+        await base44.entities.Template.update(templateId, {
+          view_count: (template.view_count || 0) + 1
+        });
+      }
+    } catch (e) {
+      // Silently fail - non-critical
+    }
+  };
+
+  const handleCustomTemplateRequest = async (e) => {
+    e.preventDefault();
+    try {
+      await base44.entities.ContactRequest.create({
+        ...customFormData,
+        reason: 'request',
+        message: `Custom Template Request: ${customFormData.message}`,
+        type: 'general',
+        status: 'new'
       });
+      setSubmitted(true);
+      setTimeout(() => {
+        setShowCustomRequest(false);
+        setSubmitted(false);
+        setCustomFormData({ name: '', email: '', message: '' });
+      }, 2000);
+    } catch (error) {
+      console.error('Failed to submit request:', error);
     }
   };
 
@@ -203,12 +242,72 @@ export default function Templates() {
               <p className="text-slate-600 mb-6 max-w-md mx-auto">
                 Contact us to create industry-specific templates tailored to your pre-qualification needs.
               </p>
-              <Button variant="outline">
+              <Button variant="outline" onClick={() => setShowCustomRequest(true)}>
                 Request Custom Template
               </Button>
             </CardContent>
           </Card>
         </div>
+
+        {/* Custom Template Request Dialog */}
+        <Dialog open={showCustomRequest} onOpenChange={setShowCustomRequest}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Request Custom Template</DialogTitle>
+              <DialogDescription>
+                Tell us about your pre-qualification needs and we'll create a template for you.
+              </DialogDescription>
+            </DialogHeader>
+            
+            {submitted ? (
+              <div className="py-8 text-center">
+                <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-4">
+                  <CheckCircle2 className="w-8 h-8 text-green-600" />
+                </div>
+                <h3 className="text-lg font-semibold text-slate-900 mb-2">Request Sent!</h3>
+                <p className="text-slate-600">We'll contact you within 24 hours.</p>
+              </div>
+            ) : (
+              <form onSubmit={handleCustomTemplateRequest} className="space-y-4 py-4">
+                <div className="space-y-2">
+                  <Label htmlFor="custom-name">Name *</Label>
+                  <Input
+                    id="custom-name"
+                    required
+                    value={customFormData.name}
+                    onChange={(e) => setCustomFormData({ ...customFormData, name: e.target.value })}
+                    placeholder="Your name"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="custom-email">Email *</Label>
+                  <Input
+                    id="custom-email"
+                    type="email"
+                    required
+                    value={customFormData.email}
+                    onChange={(e) => setCustomFormData({ ...customFormData, email: e.target.value })}
+                    placeholder="you@example.com"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="custom-message">Template Requirements *</Label>
+                  <Textarea
+                    id="custom-message"
+                    required
+                    value={customFormData.message}
+                    onChange={(e) => setCustomFormData({ ...customFormData, message: e.target.value })}
+                    placeholder="Describe your use case and what fields/criteria you need..."
+                    className="min-h-[100px]"
+                  />
+                </div>
+                <Button type="submit" className="w-full bg-blue-600 hover:bg-blue-700">
+                  Submit Request
+                </Button>
+              </form>
+            )}
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );
