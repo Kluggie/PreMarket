@@ -5,6 +5,8 @@ import { base44 } from '@/api/base44Client';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
+import GuestProposalBanner from '../components/proposal/GuestProposalBanner';
+import GuestEmailCapture from '../components/proposal/GuestEmailCapture';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
@@ -114,9 +116,18 @@ export default function CreateProposal() {
   const [proposalTitle, setProposalTitle] = useState('');
   const [responses, setResponses] = useState({});
   const [visibilitySettings, setVisibilitySettings] = useState({});
+  const [isGuestMode, setIsGuestMode] = useState(false);
+  const [guestEmail, setGuestEmail] = useState('');
 
   useEffect(() => {
-    base44.auth.me().then(setUser);
+    base44.auth.me().then(setUser).catch(() => setUser(null));
+  }, []);
+
+  // Check for guest mode in URL
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const isGuest = params.get('guest') === 'true';
+    setIsGuestMode(isGuest);
   }, []);
 
   // Check for template in URL params
@@ -142,19 +153,40 @@ export default function CreateProposal() {
   const displayTemplates = templates.length > 0 ? templates : defaultTemplates.filter(t => t.status === 'active');
 
   const createProposalMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (guestEmailParam) => {
       // Create proposal
       const proposal = await base44.entities.Proposal.create({
         title: proposalTitle || `${selectedTemplate.name} Proposal`,
         template_id: selectedTemplate.id,
         template_name: selectedTemplate.name,
         status: recipientEmail ? 'sent' : 'draft',
-        party_a_user_id: user.id,
-        party_a_email: user.email,
+        party_a_user_id: user?.id || 'guest',
+        party_a_email: isGuestMode ? guestEmailParam : user?.email,
         party_b_email: recipientEmail || null,
         reveal_level_a: 1,
         sent_at: recipientEmail ? new Date().toISOString() : null
       });
+
+      // If guest mode, create guest proposal record
+      if (isGuestMode && guestEmailParam) {
+        const magicToken = Math.random().toString(36).substring(2) + Date.now().toString(36);
+        const expiresAt = new Date();
+        expiresAt.setDate(expiresAt.getDate() + 30); // 30 days expiry
+
+        await base44.entities.GuestProposal.create({
+          guest_email: guestEmailParam,
+          magic_token: magicToken,
+          proposal_id: proposal.id,
+          expires_at: expiresAt.toISOString()
+        });
+
+        // Send magic link email
+        await base44.integrations.Core.SendEmail({
+          to: guestEmailParam,
+          subject: 'Your PreMarket Proposal Link',
+          body: `Hi there!\n\nYour proposal has been created on PreMarket.\n\nAccess your proposal: ${window.location.origin}${createPageUrl(`ProposalDetail?id=${proposal.id}&token=${magicToken}`)}\n\nThis link will expire in 30 days.\n\nBest regards,\nThe PreMarket Team`
+        });
+      }
 
       // Create responses
       const responsePromises = Object.entries(responses).map(([questionId, value]) => {
@@ -529,12 +561,23 @@ export default function CreateProposal() {
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -20 }}
             >
-              <Card className="border-0 shadow-sm">
-                <CardHeader>
-                  <CardTitle>Review & Submit</CardTitle>
-                  <CardDescription>Review your proposal before sending.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-6">
+              {isGuestMode && <GuestProposalBanner />}
+              
+              {isGuestMode && !guestEmail ? (
+                <GuestEmailCapture 
+                  onEmailSubmit={(email) => {
+                    setGuestEmail(email);
+                    createProposalMutation.mutate(email);
+                  }}
+                  isSubmitting={createProposalMutation.isPending}
+                />
+              ) : (
+                <Card className="border-0 shadow-sm">
+                  <CardHeader>
+                    <CardTitle>Review & Submit</CardTitle>
+                    <CardDescription>Review your proposal before sending.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-6">
                   {/* Summary */}
                   <div className="p-4 bg-slate-50 rounded-xl space-y-3">
                     <div className="flex justify-between">
@@ -575,8 +618,8 @@ export default function CreateProposal() {
                       Back
                     </Button>
                     <Button 
-                      onClick={() => createProposalMutation.mutate()}
-                      disabled={createProposalMutation.isPending}
+                      onClick={() => createProposalMutation.mutate(guestEmail)}
+                      disabled={createProposalMutation.isPending || (isGuestMode && !guestEmail)}
                       className="bg-blue-600 hover:bg-blue-700"
                     >
                       {createProposalMutation.isPending ? (
@@ -596,6 +639,7 @@ export default function CreateProposal() {
                   </div>
                 </CardContent>
               </Card>
+              )}
             </motion.div>
           )}
         </AnimatePresence>
