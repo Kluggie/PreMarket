@@ -12,10 +12,10 @@ import Profile from './pages/Profile';
 import ProposalDetail from './pages/ProposalDetail';
 import Proposals from './pages/Proposals';
 import Settings from './pages/Settings';
+import TemplateDedupe from './pages/TemplateDedupe';
 import Templates from './pages/Templates';
 import Terms from './pages/Terms';
 import Verification from './pages/Verification';
-import TemplateDedupe from './pages/TemplateDedupe';
 import __Layout from './Layout.jsx';
 
 
@@ -34,10 +34,10 @@ export const PAGES = {
     "ProposalDetail": ProposalDetail,
     "Proposals": Proposals,
     "Settings": Settings,
+    "TemplateDedupe": TemplateDedupe,
     "Templates": Templates,
     "Terms": Terms,
     "Verification": Verification,
-    "TemplateDedupe": TemplateDedupe,
 }
 
 export const pagesConfig = {

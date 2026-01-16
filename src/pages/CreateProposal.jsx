@@ -123,9 +123,11 @@ export default function CreateProposal() {
   const { data: templates = [] } = useQuery({
     queryKey: ['templates'],
     queryFn: async () => {
-      const all = await base44.entities.Template.filter({ status: 'active' });
+      const all = await base44.entities.Template.list();
+      // Show published and active templates, exclude hidden/archived/coming_soon
+      const visible = all.filter(t => t.status === 'published' || t.status === 'active');
       // Deduplicate by template_key, keeping the one with most questions
-      const byKey = all.reduce((acc, t) => {
+      const byKey = visible.reduce((acc, t) => {
         const key = t.template_key || t.slug;
         if (!acc[key] || (t.questions?.length || 0) > (acc[key].questions?.length || 0)) {
           acc[key] = t;
