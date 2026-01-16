@@ -1,14 +1,58 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '../utils';
 import { base44 } from '@/api/base44Client';
+import { useMutation } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Check, X, Zap, Building2, Shield } from 'lucide-react';
 
 export default function Pricing() {
+  const [showContactSales, setShowContactSales] = useState(false);
+  const [salesFormData, setSalesFormData] = useState({
+    name: '',
+    email: '',
+    organization: '',
+    message: ''
+  });
+  const [submitted, setSubmitted] = useState(false);
+
+  const submitSalesMutation = useMutation({
+    mutationFn: async (data) => {
+      return base44.entities.ContactRequest.create({
+        ...data,
+        type: 'sales',
+        reason: 'sales',
+        status: 'new'
+      });
+    },
+    onSuccess: () => {
+      setSubmitted(true);
+      setSalesFormData({ name: '', email: '', organization: '', message: '' });
+      setTimeout(() => {
+        setShowContactSales(false);
+        setSubmitted(false);
+      }, 2000);
+    }
+  });
+
+  const handleSalesSubmit = (e) => {
+    e.preventDefault();
+    submitSalesMutation.mutate(salesFormData);
+  };
+
   const plans = [
     {
       name: 'Starter',
@@ -72,6 +116,14 @@ export default function Pricing() {
     }
   ];
 
+  const handleCTA = (plan) => {
+    if (plan.name === 'Enterprise') {
+      setShowContactSales(true);
+    } else {
+      base44.auth.redirectToLogin(createPageUrl('Dashboard'));
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 py-16">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -131,7 +183,7 @@ export default function Pricing() {
                   </ul>
 
                   <Button 
-                    onClick={() => base44.auth.redirectToLogin(createPageUrl('Dashboard'))}
+                    onClick={() => handleCTA(plan)}
                     className={`w-full ${plan.popular ? 'bg-blue-600 hover:bg-blue-700' : ''}`}
                     variant={plan.popular ? 'default' : 'outline'}
                   >
@@ -176,6 +228,79 @@ export default function Pricing() {
             ))}
           </div>
         </div>
+
+        {/* Contact Sales Modal */}
+        <Dialog open={showContactSales} onOpenChange={setShowContactSales}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Contact Sales</DialogTitle>
+              <DialogDescription>
+                Let us know more about your needs and we'll get in touch within 24 hours.
+              </DialogDescription>
+            </DialogHeader>
+            
+            {submitted ? (
+              <div className="py-8 text-center">
+                <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-4">
+                  <Check className="w-8 h-8 text-green-600" />
+                </div>
+                <h3 className="text-lg font-semibold text-slate-900 mb-2">Message Sent!</h3>
+                <p className="text-slate-600">Our sales team will contact you soon.</p>
+              </div>
+            ) : (
+              <form onSubmit={handleSalesSubmit} className="space-y-4 py-4">
+                <div className="space-y-2">
+                  <Label htmlFor="sales-name">Name *</Label>
+                  <Input
+                    id="sales-name"
+                    required
+                    value={salesFormData.name}
+                    onChange={(e) => setSalesFormData({ ...salesFormData, name: e.target.value })}
+                    placeholder="Your name"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="sales-email">Email *</Label>
+                  <Input
+                    id="sales-email"
+                    type="email"
+                    required
+                    value={salesFormData.email}
+                    onChange={(e) => setSalesFormData({ ...salesFormData, email: e.target.value })}
+                    placeholder="you@example.com"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="sales-org">Organization *</Label>
+                  <Input
+                    id="sales-org"
+                    required
+                    value={salesFormData.organization}
+                    onChange={(e) => setSalesFormData({ ...salesFormData, organization: e.target.value })}
+                    placeholder="Your company"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="sales-message">Message</Label>
+                  <Textarea
+                    id="sales-message"
+                    value={salesFormData.message}
+                    onChange={(e) => setSalesFormData({ ...salesFormData, message: e.target.value })}
+                    placeholder="Tell us about your needs..."
+                    className="min-h-[100px]"
+                  />
+                </div>
+                <Button 
+                  type="submit" 
+                  disabled={submitSalesMutation.isPending}
+                  className="w-full bg-blue-600 hover:bg-blue-700"
+                >
+                  {submitSalesMutation.isPending ? 'Sending...' : 'Send Message'}
+                </Button>
+              </form>
+            )}
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );

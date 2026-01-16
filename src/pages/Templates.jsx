@@ -165,7 +165,7 @@ export default function Templates() {
                         Coming Soon
                       </Button>
                     ) : (
-                      <Link to={createPageUrl(`CreateProposal?template=${template.id}`)}>
+                      <Link to={createPageUrl(`CreateProposal?template=${template.id}&step=2`)}>
                         <Button className="w-full bg-slate-900 hover:bg-slate-800">
                           Use Template
                           <ArrowRight className="w-4 h-4 ml-2" />
