@@ -151,6 +151,29 @@ export default function AdminRestoreQuestions() {
                   </>
                 )}
               </Button>
+              <Button
+                onClick={async () => {
+                  setRestoring(true);
+                  try {
+                    const response = await base44.functions.invoke('backfillAppliesRole', {});
+                    setResult(response.data);
+                    refetchQuestions();
+                  } catch (error) {
+                    setResult({ success: false, error: error.message });
+                  } finally {
+                    setRestoring(false);
+                  }
+                }}
+                disabled={restoring}
+                className="bg-purple-600 hover:bg-purple-700"
+              >
+                {restoring ? 'Fixing...' : (
+                  <>
+                    <Database className="w-4 h-4 mr-2" />
+                    Backfill Roles
+                  </>
+                )}
+              </Button>
               {needsRestoreCount > 0 && (
                 <Button
                   onClick={() => runRestore()}
@@ -273,7 +296,22 @@ export default function AdminRestoreQuestions() {
             <CardContent>
               {result.success ? (
                 <div className="space-y-4">
-                  {result.fix_log ? (
+                  {result.backfill_log ? (
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="p-4 bg-slate-50 rounded-lg">
+                        <div className="text-2xl font-bold text-slate-900">
+                          {result.backfill_log.total}
+                        </div>
+                        <div className="text-sm text-slate-600">Total Questions</div>
+                      </div>
+                      <div className="p-4 bg-slate-50 rounded-lg">
+                        <div className="text-2xl font-bold text-slate-900">
+                          {result.backfill_log.fixed}
+                        </div>
+                        <div className="text-sm text-slate-600">Roles Fixed</div>
+                      </div>
+                    </div>
+                  ) : result.fix_log ? (
                     <div className="grid grid-cols-3 gap-4">
                       <div className="p-4 bg-slate-50 rounded-lg">
                         <div className="text-2xl font-bold text-slate-900">

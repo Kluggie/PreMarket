@@ -264,8 +264,22 @@ export default function CreateProposal() {
     }
   }, [user]);
 
-  const partyAQuestions = templateQuestions?.filter(q => q.party === 'a' || q.party === 'both') || [];
-  const partyBQuestions = templateQuestions?.filter(q => q.party === 'b' || q.party === 'both') || [];
+  // Filter questions by role - defensive filtering
+  const partyAQuestions = templateQuestions?.filter(q => {
+    return q.party === 'a' || q.party === 'both' || q.applies_to_role === 'proposer' || q.applies_to_role === 'both';
+  }) || [];
+  
+  const partyBQuestions = templateQuestions?.filter(q => {
+    return q.party === 'b' || q.party === 'both' || q.applies_to_role === 'recipient' || q.applies_to_role === 'both';
+  }) || [];
+
+  // Admin debug info
+  const debugInfo = showDebug && selectedTemplate ? {
+    active_version_id: selectedTemplate.active_version_id,
+    total_questions: templateQuestions?.length || 0,
+    proposer_questions: partyAQuestions.length,
+    recipient_questions: partyBQuestions.length
+  } : null;
 
   const renderQuestionInput = (question) => {
     const value = responses[question.id] || '';
@@ -536,6 +550,18 @@ export default function CreateProposal() {
               exit={{ opacity: 0, x: -20 }}
               className="space-y-6"
             >
+              {/* Debug Info (Admin Only) */}
+              {debugInfo && (
+                <Card className="border-0 shadow-sm bg-slate-900 text-white">
+                  <CardContent className="p-4">
+                    <div className="text-xs font-mono space-y-1">
+                      <div>Version: {debugInfo.active_version_id || 'none'}</div>
+                      <div>Total: {debugInfo.total_questions} | Proposer: {debugInfo.proposer_questions} | Recipient: {debugInfo.recipient_questions}</div>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
               {/* Your Info (Party A) */}
               <Card className="border-0 shadow-sm">
                 <CardHeader>
