@@ -547,7 +547,7 @@ export default function CreateProposal() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   {partyAQuestions.map(renderQuestionInput)}
-                  {partyAQuestions.length === 0 && (
+                  {partyAQuestions.length === 0 && templateQuestions?.length === 0 && (
                     <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
                       <div className="flex items-start gap-3">
                         <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
@@ -581,7 +581,7 @@ export default function CreateProposal() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   {partyBQuestions.map(renderQuestionInput)}
-                  {partyBQuestions.length === 0 && (
+                  {partyBQuestions.length === 0 && templateQuestions?.length === 0 && (
                     <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
                       <div className="flex items-start gap-3">
                         <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />

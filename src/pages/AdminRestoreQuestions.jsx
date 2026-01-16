@@ -76,6 +76,26 @@ export default function AdminRestoreQuestions() {
     }
   };
 
+  const fixActiveVersions = async () => {
+    setRestoring(true);
+    setResult(null);
+
+    try {
+      const response = await base44.functions.invoke('fixActiveVersions', {});
+      setResult(response.data);
+      refetchTemplates();
+      refetchVersions();
+      refetchQuestions();
+    } catch (error) {
+      setResult({
+        success: false,
+        error: error.message
+      });
+    } finally {
+      setRestoring(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 py-8">
       <div className="max-w-6xl mx-auto px-4">
@@ -118,8 +138,20 @@ export default function AdminRestoreQuestions() {
               </div>
             </div>
 
-            {needsRestoreCount > 0 && (
-              <div className="flex gap-3">
+            <div className="flex gap-3">
+              <Button
+                onClick={fixActiveVersions}
+                disabled={restoring}
+                className="bg-green-600 hover:bg-green-700"
+              >
+                {restoring ? 'Fixing...' : (
+                  <>
+                    <CheckCircle2 className="w-4 h-4 mr-2" />
+                    Fix Active Versions
+                  </>
+                )}
+              </Button>
+              {needsRestoreCount > 0 && (
                 <Button
                   onClick={() => runRestore()}
                   disabled={restoring}
@@ -134,19 +166,19 @@ export default function AdminRestoreQuestions() {
                     </>
                   )}
                 </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    refetchTemplates();
-                    refetchVersions();
-                    refetchQuestions();
-                  }}
-                >
-                  <RefreshCw className="w-4 h-4 mr-2" />
-                  Refresh Status
-                </Button>
-              </div>
-            )}
+              )}
+              <Button
+                variant="outline"
+                onClick={() => {
+                  refetchTemplates();
+                  refetchVersions();
+                  refetchQuestions();
+                }}
+              >
+                <RefreshCw className="w-4 h-4 mr-2" />
+                Refresh Status
+              </Button>
+            </div>
           </CardContent>
         </Card>
 
@@ -228,12 +260,12 @@ export default function AdminRestoreQuestions() {
                 {result.success ? (
                   <>
                     <CheckCircle2 className="w-5 h-5 text-green-600" />
-                    Restoration Complete
+                    {result.migration_log ? 'Restoration Complete' : 'Fix Complete'}
                   </>
                 ) : (
                   <>
                     <AlertCircle className="w-5 h-5 text-red-600" />
-                    Restoration Failed
+                    Operation Failed
                   </>
                 )}
               </CardTitle>
@@ -241,48 +273,77 @@ export default function AdminRestoreQuestions() {
             <CardContent>
               {result.success ? (
                 <div className="space-y-4">
-                  <div className="grid grid-cols-3 gap-4">
-                    <div className="p-4 bg-slate-50 rounded-lg">
-                      <div className="text-2xl font-bold text-slate-900">
-                        {result.migration_log.templates_processed}
+                  {result.fix_log ? (
+                    <div className="grid grid-cols-3 gap-4">
+                      <div className="p-4 bg-slate-50 rounded-lg">
+                        <div className="text-2xl font-bold text-slate-900">
+                          {result.fix_log.templates_processed}
+                        </div>
+                        <div className="text-sm text-slate-600">Templates Processed</div>
                       </div>
-                      <div className="text-sm text-slate-600">Templates Processed</div>
-                    </div>
-                    <div className="p-4 bg-slate-50 rounded-lg">
-                      <div className="text-2xl font-bold text-slate-900">
-                        {result.migration_log.versions_created}
+                      <div className="p-4 bg-slate-50 rounded-lg">
+                        <div className="text-2xl font-bold text-slate-900">
+                          {result.fix_log.pointers_fixed}
+                        </div>
+                        <div className="text-sm text-slate-600">Pointers Fixed</div>
                       </div>
-                      <div className="text-sm text-slate-600">Versions Created</div>
-                    </div>
-                    <div className="p-4 bg-slate-50 rounded-lg">
-                      <div className="text-2xl font-bold text-slate-900">
-                        {result.migration_log.questions_created}
+                      <div className="p-4 bg-slate-50 rounded-lg">
+                        <div className="text-2xl font-bold text-slate-900">
+                          {result.fix_log.versions_created}
+                        </div>
+                        <div className="text-sm text-slate-600">Versions Created</div>
                       </div>
-                      <div className="text-sm text-slate-600">Questions Restored</div>
                     </div>
-                  </div>
+                  ) : (
+                    <div className="grid grid-cols-3 gap-4">
+                      <div className="p-4 bg-slate-50 rounded-lg">
+                        <div className="text-2xl font-bold text-slate-900">
+                          {result.migration_log.templates_processed}
+                        </div>
+                        <div className="text-sm text-slate-600">Templates Processed</div>
+                      </div>
+                      <div className="p-4 bg-slate-50 rounded-lg">
+                        <div className="text-2xl font-bold text-slate-900">
+                          {result.migration_log.versions_created}
+                        </div>
+                        <div className="text-sm text-slate-600">Versions Created</div>
+                      </div>
+                      <div className="p-4 bg-slate-50 rounded-lg">
+                        <div className="text-2xl font-bold text-slate-900">
+                          {result.migration_log.questions_created}
+                        </div>
+                        <div className="text-sm text-slate-600">Questions Restored</div>
+                      </div>
+                    </div>
+                  )}
 
-                  {result.migration_log.details && result.migration_log.details.length > 0 && (
+                  {(result.migration_log?.details || result.fix_log?.details) && (
                     <div className="space-y-2">
                       <h3 className="font-semibold text-slate-900">Details:</h3>
-                      {result.migration_log.details.map((detail, idx) => (
+                      {(result.migration_log?.details || result.fix_log?.details).map((detail, idx) => (
                         <div key={idx} className="p-3 bg-slate-50 rounded-lg flex items-center justify-between">
                           <span className="text-sm text-slate-700">{detail.template_name}</span>
-                          <Badge variant={detail.status === 'success' ? 'default' : 'outline'}>
-                            {detail.status === 'success' 
-                              ? `${detail.questions_migrated} questions` 
-                              : detail.reason
-                            }
-                          </Badge>
+                          {detail.status ? (
+                            <Badge variant={detail.status === 'success' ? 'default' : 'outline'}>
+                              {detail.status === 'success' 
+                                ? `${detail.questions_migrated} questions` 
+                                : detail.reason
+                              }
+                            </Badge>
+                          ) : (
+                            <div className="text-xs text-slate-600">
+                              {detail.normalized_count} questions • {detail.was_fixed ? 'Fixed' : 'OK'}
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
                   )}
 
-                  {result.migration_log.errors && result.migration_log.errors.length > 0 && (
+                  {(result.migration_log?.errors || result.fix_log?.errors) && (result.migration_log?.errors || result.fix_log?.errors).length > 0 && (
                     <div className="p-4 bg-red-50 border border-red-100 rounded-lg">
                       <h3 className="font-semibold text-red-900 mb-2">Errors:</h3>
-                      {result.migration_log.errors.map((error, idx) => (
+                      {(result.migration_log?.errors || result.fix_log?.errors).map((error, idx) => (
                         <div key={idx} className="text-sm text-red-700">
                           {error.template_name}: {error.error}
                         </div>
