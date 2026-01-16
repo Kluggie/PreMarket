@@ -12,7 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
   Users, Building2, FileText, Shield, Search, MoreVertical,
-  ChevronRight, AlertTriangle, CheckCircle2, Clock, TrendingUp, Mail
+  ChevronRight, AlertTriangle, CheckCircle2, Clock, TrendingUp, Mail, Eye, EyeOff
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -20,10 +20,12 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 
 export default function Admin() {
   const [user, setUser] = useState(null);
   const [activeTab, setActiveTab] = useState('overview');
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     base44.auth.me().then(setUser);
@@ -59,6 +61,13 @@ export default function Admin() {
     queryFn: () => base44.entities.ContactRequest.list('-created_date', 100)
   });
 
+  const updateTemplateMutation = useMutation({
+    mutationFn: ({ id, status }) => base44.entities.Template.update(id, { status }),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['admin', 'templates']);
+    }
+  });
+
   // Check if user is admin
   if (user && user.role !== 'admin') {
     return (
@@ -77,12 +86,12 @@ export default function Admin() {
     );
   }
 
-  const publishedTemplates = templates.filter(t => t.status === 'published');
+  const activeTemplates = templates.filter(t => t.status === 'active');
   
   const stats = [
     { label: 'Total Users', value: allUsers.length, icon: Users, color: 'from-blue-500 to-blue-600' },
     { label: 'Organizations', value: organizations.length, icon: Building2, color: 'from-indigo-500 to-indigo-600' },
-    { label: 'Published Templates', value: publishedTemplates.length, icon: FileText, color: 'from-purple-500 to-purple-600' },
+    { label: 'Active Templates', value: activeTemplates.length, icon: FileText, color: 'from-purple-500 to-purple-600' },
     { label: 'Total Proposals', value: proposals.length, icon: TrendingUp, color: 'from-green-500 to-green-600' }
   ];
 
@@ -343,8 +352,8 @@ export default function Admin() {
                         <TableHead>Template</TableHead>
                         <TableHead>Category</TableHead>
                         <TableHead>Status</TableHead>
-                        <TableHead>Version</TableHead>
-                        <TableHead></TableHead>
+                        <TableHead>Questions</TableHead>
+                        <TableHead>Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -353,17 +362,41 @@ export default function Admin() {
                           <TableCell className="font-medium">{t.name}</TableCell>
                           <TableCell className="capitalize">{t.category?.replace('_', ' ')}</TableCell>
                           <TableCell>
-                            <Badge className={
-                              t.status === 'active' ? 'bg-green-100 text-green-700' :
-                              t.status === 'coming_soon' ? 'bg-amber-100 text-amber-700' :
-                              'bg-slate-100 text-slate-700'
-                            }>
-                              {t.status}
-                            </Badge>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="outline" size="sm" className={
+                                  t.status === 'active' ? 'border-green-600 text-green-700' :
+                                  t.status === 'hidden' ? 'border-slate-400 text-slate-700' :
+                                  'border-slate-300 text-slate-500'
+                                }>
+                                  {t.status === 'active' && <Eye className="w-3 h-3 mr-1" />}
+                                  {t.status === 'hidden' && <EyeOff className="w-3 h-3 mr-1" />}
+                                  {t.status}
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent>
+                                <DropdownMenuItem onClick={() => updateTemplateMutation.mutate({ id: t.id, status: 'active' })}>
+                                  <Eye className="w-4 h-4 mr-2" />
+                                  Active (Visible)
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => updateTemplateMutation.mutate({ id: t.id, status: 'hidden' })}>
+                                  <EyeOff className="w-4 h-4 mr-2" />
+                                  Hidden
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => updateTemplateMutation.mutate({ id: t.id, status: 'archived' })}>
+                                  <AlertTriangle className="w-4 h-4 mr-2" />
+                                  Archived
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </TableCell>
-                          <TableCell>v{t.version || 1}</TableCell>
                           <TableCell>
-                            <Button variant="ghost" size="sm">Edit</Button>
+                            {t.questions?.length || 0} questions
+                          </TableCell>
+                          <TableCell>
+                            <Link to={createPageUrl(`TemplateDedupe`)}>
+                              <Button variant="ghost" size="sm">Manage</Button>
+                            </Link>
                           </TableCell>
                         </TableRow>
                       ))}

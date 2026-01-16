@@ -55,8 +55,8 @@ export default function Templates() {
     queryKey: ['templates'],
     queryFn: async () => {
       const all = await base44.entities.Template.list('-created_date');
-      // Filter out archived templates
-      return all.filter(t => t.status !== 'archived');
+      // Only show active templates on public site
+      return all.filter(t => t.status === 'active');
     }
   });
 

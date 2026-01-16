@@ -123,7 +123,7 @@ export default function CreateProposal() {
   const { data: templates = [] } = useQuery({
     queryKey: ['templates'],
     queryFn: async () => {
-      const all = await base44.entities.Template.filter({ status: 'published' });
+      const all = await base44.entities.Template.filter({ status: 'active' });
       // Deduplicate by template_key, keeping the one with most questions
       const byKey = all.reduce((acc, t) => {
         const key = t.template_key || t.slug;
