@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import ProposalsChart from '../components/dashboard/ProposalsChart';
 import {
   Plus, FileText, Inbox, Send, Clock, CheckCircle2, AlertTriangle,
   ArrowRight, Eye, Users, BarChart3, TrendingUp, ChevronRight
@@ -172,6 +173,11 @@ export default function Dashboard() {
               </Card>
             </motion.div>
           ))}
+        </div>
+
+        {/* Analytics Chart */}
+        <div className="mb-8">
+          <ProposalsChart sentProposals={sentProposals} receivedProposals={receivedProposals} />
         </div>
 
         {/* Proposals Tabs */}

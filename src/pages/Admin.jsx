@@ -72,10 +72,12 @@ export default function Admin() {
     );
   }
 
+  const publishedTemplates = templates.filter(t => t.status === 'published');
+  
   const stats = [
     { label: 'Total Users', value: allUsers.length, icon: Users, color: 'from-blue-500 to-blue-600' },
     { label: 'Organizations', value: organizations.length, icon: Building2, color: 'from-indigo-500 to-indigo-600' },
-    { label: 'Templates', value: templates.length, icon: FileText, color: 'from-purple-500 to-purple-600' },
+    { label: 'Published Templates', value: publishedTemplates.length, icon: FileText, color: 'from-purple-500 to-purple-600' },
     { label: 'Total Proposals', value: proposals.length, icon: TrendingUp, color: 'from-green-500 to-green-600' }
   ];
 

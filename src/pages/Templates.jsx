@@ -36,6 +36,16 @@ export default function Templates() {
     queryFn: () => base44.entities.Template.list('-created_date')
   });
 
+  // Increment view count when template is clicked
+  const incrementViewCount = async (templateId) => {
+    const template = templates.find(t => t.id === templateId);
+    if (template) {
+      await base44.entities.Template.update(templateId, {
+        view_count: (template.view_count || 0) + 1
+      });
+    }
+  };
+
   // Default templates to show even if none exist
   const defaultTemplates = [
     {
@@ -44,7 +54,7 @@ export default function Templates() {
       slug: 'm-and-a',
       description: 'Evaluate potential acquisition targets or acquirers. Assess financial health, strategic fit, and deal structure compatibility.',
       category: 'm_and_a',
-      status: 'active',
+      status: 'published',
       party_a_label: 'Acquirer',
       party_b_label: 'Target Company'
     },
@@ -54,7 +64,7 @@ export default function Templates() {
       slug: 'recruiting',
       description: 'Pre-qualify candidates for executive positions. Evaluate experience, compensation expectations, and cultural fit.',
       category: 'recruiting',
-      status: 'active',
+      status: 'published',
       party_a_label: 'Employer',
       party_b_label: 'Candidate'
     },
@@ -64,7 +74,7 @@ export default function Templates() {
       slug: 'investment',
       description: 'Connect startups with potential investors. Evaluate stage fit, check size alignment, and sector expertise.',
       category: 'investment',
-      status: 'active',
+      status: 'published',
       party_a_label: 'Startup',
       party_b_label: 'Investor'
     },
