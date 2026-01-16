@@ -123,11 +123,13 @@ export default function CreateProposal() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const templateId = params.get('template');
+    const stepParam = params.get('step');
+    
     if (templateId) {
       const template = defaultTemplates.find(t => t.id === templateId);
       if (template) {
         setSelectedTemplate(template);
-        setStep(2);
+        setStep(stepParam ? parseInt(stepParam) : 2);
       }
     }
   }, []);
