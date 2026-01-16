@@ -1,29 +1,29 @@
-import Landing from './pages/Landing';
+import Admin from './pages/Admin';
+import CreateProposal from './pages/CreateProposal';
 import Dashboard from './pages/Dashboard';
-import Templates from './pages/Templates';
+import Landing from './pages/Landing';
+import Organization from './pages/Organization';
 import Pricing from './pages/Pricing';
 import Profile from './pages/Profile';
-import Organization from './pages/Organization';
-import CreateProposal from './pages/CreateProposal';
-import Proposals from './pages/Proposals';
 import ProposalDetail from './pages/ProposalDetail';
-import Admin from './pages/Admin';
+import Proposals from './pages/Proposals';
 import Settings from './pages/Settings';
+import Templates from './pages/Templates';
 import __Layout from './Layout.jsx';
 
 
 export const PAGES = {
-    "Landing": Landing,
+    "Admin": Admin,
+    "CreateProposal": CreateProposal,
     "Dashboard": Dashboard,
-    "Templates": Templates,
+    "Landing": Landing,
+    "Organization": Organization,
     "Pricing": Pricing,
     "Profile": Profile,
-    "Organization": Organization,
-    "CreateProposal": CreateProposal,
-    "Proposals": Proposals,
     "ProposalDetail": ProposalDetail,
-    "Admin": Admin,
+    "Proposals": Proposals,
     "Settings": Settings,
+    "Templates": Templates,
 }
 
 export const pagesConfig = {

@@ -1,15 +1,39 @@
-import React from 'react';
-import { Link } from 'react-router-dom';
+import React, { useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '../utils';
 import { base44 } from '@/api/base44Client';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { 
   Shield, ArrowRight, CheckCircle2, Lock, Eye, FileText, 
   Users, Zap, BarChart3, RefreshCw, ChevronRight
 } from 'lucide-react';
 
 export default function Landing() {
+  const navigate = useNavigate();
+  const [showCTAModal, setShowCTAModal] = useState(false);
+
+  const handleStartFree = () => {
+    setShowCTAModal(true);
+  };
+
+  const handleGuestProposal = () => {
+    setShowCTAModal(false);
+    navigate(createPageUrl('CreateProposal?guest=true'));
+  };
+
+  const handleSignIn = () => {
+    setShowCTAModal(false);
+    base44.auth.redirectToLogin(createPageUrl('CreateProposal'));
+  };
+
   const features = [
     {
       icon: Shield,
@@ -85,10 +109,10 @@ export default function Landing() {
               transition={{ duration: 0.6, delay: 0.1 }}
               className="text-5xl sm:text-6xl lg:text-7xl font-bold text-slate-900 tracking-tight mb-6"
             >
-              Structured Trust
+              Verify Fit
               <br />
               <span className="bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
-                Before Commitment
+                Before You Reveal
               </span>
             </motion.h1>
 
@@ -110,7 +134,7 @@ export default function Landing() {
             >
               <Button 
                 size="lg"
-                onClick={() => base44.auth.redirectToLogin(createPageUrl('Dashboard'))}
+                onClick={handleStartFree}
                 className="bg-slate-900 hover:bg-slate-800 text-white px-8 py-6 text-lg h-auto"
               >
                 Start Free
@@ -122,6 +146,39 @@ export default function Landing() {
                 </Button>
               </Link>
             </motion.div>
+
+            {/* CTA Choice Modal */}
+            <Dialog open={showCTAModal} onOpenChange={setShowCTAModal}>
+              <DialogContent className="sm:max-w-md">
+                <DialogHeader>
+                  <DialogTitle>Get Started with PreMarket</DialogTitle>
+                  <DialogDescription>
+                    Choose how you'd like to begin your pre-qualification journey.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-3 py-4">
+                  <Button 
+                    onClick={handleGuestProposal}
+                    variant="outline"
+                    className="w-full h-auto py-4 justify-start"
+                  >
+                    <div className="text-left">
+                      <p className="font-semibold">Create Proposal (Guest)</p>
+                      <p className="text-xs text-slate-500">No account required • Email link to continue later</p>
+                    </div>
+                  </Button>
+                  <Button 
+                    onClick={handleSignIn}
+                    className="w-full h-auto py-4 bg-blue-600 hover:bg-blue-700 justify-start"
+                  >
+                    <div className="text-left">
+                      <p className="font-semibold">Sign In / Create Account</p>
+                      <p className="text-xs text-blue-100">Full dashboard • Analytics • Manage proposals</p>
+                    </div>
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
 
             {/* Trust indicators */}
             <motion.div
@@ -238,7 +295,7 @@ export default function Landing() {
           </p>
           <Button 
             size="lg"
-            onClick={() => base44.auth.redirectToLogin(createPageUrl('Dashboard'))}
+            onClick={handleStartFree}
             className="bg-white text-slate-900 hover:bg-slate-100 px-8 py-6 text-lg h-auto"
           >
             Get Started Free

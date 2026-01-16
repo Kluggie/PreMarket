@@ -43,13 +43,15 @@ export default function Layout({ children, currentPageName }) {
   const isAuthPage = ['Login', 'Signup'].includes(currentPageName);
 
   const handleLogout = async () => {
-    await base44.auth.logout();
+    await base44.auth.logout(createPageUrl('Landing'));
   };
 
   const navLinks = user ? [
+    { name: 'Home', href: createPageUrl('Landing'), icon: LayoutDashboard },
     { name: 'Dashboard', href: createPageUrl('Dashboard'), icon: LayoutDashboard },
     { name: 'Proposals', href: createPageUrl('Proposals'), icon: FileText },
     { name: 'Templates', href: createPageUrl('Templates'), icon: FileText },
+    { name: 'Pricing', href: createPageUrl('Pricing'), icon: FileText },
   ] : [];
 
   if (isAuthPage) {
@@ -82,7 +84,7 @@ export default function Layout({ children, currentPageName }) {
             {/* Logo */}
             <Link to={createPageUrl('Landing')} className="flex items-center gap-2">
               <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center">
-                <Shield className="w-5 h-5 text-white" />
+                <span className="text-sm font-bold text-white">PM</span>
               </div>
               <span className="text-xl font-bold text-slate-900">PreMarket</span>
             </Link>
@@ -122,6 +124,9 @@ export default function Layout({ children, currentPageName }) {
             <div className="flex items-center gap-3">
               {user ? (
                 <>
+                  <Link to={createPageUrl('Landing')} className="hidden md:inline-flex">
+                    <Button variant="ghost">Home</Button>
+                  </Link>
                   <Button variant="ghost" size="icon" className="relative">
                     <Bell className="w-5 h-5 text-slate-600" />
                     <span className="absolute top-1 right-1 w-2 h-2 bg-blue-600 rounded-full"></span>
@@ -244,7 +249,7 @@ export default function Layout({ children, currentPageName }) {
               <div className="col-span-1 md:col-span-2">
                 <div className="flex items-center gap-2 mb-4">
                   <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-500 flex items-center justify-center">
-                    <Shield className="w-5 h-5 text-white" />
+                    <span className="text-sm font-bold text-white">PM</span>
                   </div>
                   <span className="text-xl font-bold">PreMarket</span>
                 </div>
@@ -266,10 +271,18 @@ export default function Layout({ children, currentPageName }) {
                 </ul>
               </div>
               <div>
+                <h4 className="font-semibold mb-4">Company</h4>
+                <ul className="space-y-2 text-sm text-slate-400">
+                  <li><Link to={createPageUrl('About')} className="hover:text-white transition-colors">About Us</Link></li>
+                  <li><Link to={createPageUrl('Contact')} className="hover:text-white transition-colors">Contact</Link></li>
+                  <li><Link to={createPageUrl('Documentation')} className="hover:text-white transition-colors">Documentation</Link></li>
+                </ul>
+              </div>
+              <div>
                 <h4 className="font-semibold mb-4">Legal</h4>
                 <ul className="space-y-2 text-sm text-slate-400">
-                  <li><Link to={createPageUrl('Landing')} className="hover:text-white transition-colors">Privacy Policy</Link></li>
-                  <li><Link to={createPageUrl('Landing')} className="hover:text-white transition-colors">Terms of Service</Link></li>
+                  <li><Link to={createPageUrl('Privacy')} className="hover:text-white transition-colors">Privacy Policy</Link></li>
+                  <li><Link to={createPageUrl('Terms')} className="hover:text-white transition-colors">Terms of Service</Link></li>
                 </ul>
               </div>
             </div>
