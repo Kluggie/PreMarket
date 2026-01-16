@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import {
   Building2, Users, TrendingUp, Briefcase, Handshake, FileText,
-  ArrowRight, Lock, CheckCircle2, Clock
+  ArrowRight, Lock, CheckCircle2, Clock, Database, Shield, Zap, Filter
 } from 'lucide-react';
 import {
   Dialog,
@@ -28,6 +28,9 @@ const iconMap = {
   investment: TrendingUp,
   partnership: Handshake,
   consulting: Briefcase,
+  api_data: 'Database',
+  saas_procurement: 'Shield',
+  beta_access: 'Zap',
   custom: FileText
 };
 
@@ -37,6 +40,9 @@ const categoryLabels = {
   investment: 'Investment',
   partnership: 'Partnership',
   consulting: 'Consulting',
+  api_data: 'API & Data',
+  saas_procurement: 'SaaS Procurement',
+  beta_access: 'Beta Access',
   custom: 'Custom'
 };
 
@@ -44,6 +50,8 @@ export default function Templates() {
   const [showCustomRequest, setShowCustomRequest] = useState(false);
   const [customFormData, setCustomFormData] = useState({ name: '', email: '', message: '' });
   const [submitted, setSubmitted] = useState(false);
+  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
 
   const { data: templates = [], isLoading } = useQuery({
     queryKey: ['templates'],
@@ -139,13 +147,21 @@ export default function Templates() {
     }
   ];
 
-  const displayTemplates = templates.length > 0 ? templates : defaultTemplates;
+  let displayTemplates = templates.length > 0 ? templates : defaultTemplates;
+  
+  // Apply filters
+  if (categoryFilter !== 'all') {
+    displayTemplates = displayTemplates.filter(t => t.category === categoryFilter);
+  }
+  if (statusFilter !== 'all') {
+    displayTemplates = displayTemplates.filter(t => t.status === statusFilter);
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 py-8">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Header */}
-        <div className="text-center mb-12">
+        <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-slate-900 mb-4">Template Library</h1>
           <p className="text-lg text-slate-600 max-w-2xl mx-auto">
             Choose from industry-specific templates to structure your pre-qualification proposals.
@@ -153,10 +169,78 @@ export default function Templates() {
           </p>
         </div>
 
+        {/* Filters */}
+        <Card className="border-0 shadow-sm mb-8">
+          <CardContent className="p-4">
+            <div className="flex flex-col sm:flex-row gap-4">
+              <div className="flex-1">
+                <Label className="text-xs text-slate-500 mb-2 block">Category</Label>
+                <div className="flex gap-2 flex-wrap">
+                  <Button 
+                    variant={categoryFilter === 'all' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setCategoryFilter('all')}
+                  >
+                    All Categories
+                  </Button>
+                  {Object.entries(categoryLabels).map(([key, label]) => (
+                    <Button 
+                      key={key}
+                      variant={categoryFilter === key ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setCategoryFilter(key)}
+                    >
+                      {label}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+              <div className="w-px bg-slate-200 hidden sm:block" />
+              <div>
+                <Label className="text-xs text-slate-500 mb-2 block">Status</Label>
+                <div className="flex gap-2">
+                  <Button 
+                    variant={statusFilter === 'all' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setStatusFilter('all')}
+                  >
+                    All
+                  </Button>
+                  <Button 
+                    variant={statusFilter === 'published' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setStatusFilter('published')}
+                  >
+                    <CheckCircle2 className="w-3 h-3 mr-1" />
+                    Active
+                  </Button>
+                  <Button 
+                    variant={statusFilter === 'coming_soon' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setStatusFilter('coming_soon')}
+                  >
+                    <Clock className="w-3 h-3 mr-1" />
+                    Coming Soon
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
         {/* Templates Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {displayTemplates.map((template, index) => {
-            const Icon = iconMap[template.category] || FileText;
+          {displayTemplates.length === 0 ? (
+            <div className="col-span-full text-center py-16">
+              <FileText className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+              <h3 className="text-lg font-semibold text-slate-900 mb-2">No templates found</h3>
+              <p className="text-slate-500">Try adjusting your filters or request a custom template.</p>
+            </div>
+          ) : displayTemplates.map((template, index) => {
+            const iconName = iconMap[template.category];
+            const Icon = typeof iconName === 'string' ? 
+              ({ Database, Shield, Zap }[iconName] || FileText) : 
+              iconName || FileText;
             const isComingSoon = template.status === 'coming_soon';
 
             return (

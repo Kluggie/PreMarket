@@ -549,7 +549,7 @@ export default function CreateProposal() {
                   Back
                 </Button>
                 <Button 
-                  onClick={() => setStep(4)}
+                  onClick={() => setStep(3)}
                   className="bg-blue-600 hover:bg-blue-700"
                 >
                   Review
