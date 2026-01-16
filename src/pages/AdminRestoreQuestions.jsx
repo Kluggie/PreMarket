@@ -28,7 +28,11 @@ export default function AdminRestoreQuestions() {
 
   // Build restoration status
   const restorationStatus = templates.map(t => {
-    const version = allVersions.find(v => v.template_id === t.id && v.is_current);
+    // Use active_version_id first, then fallback to is_current
+    const version = t.active_version_id 
+      ? allVersions.find(v => v.id === t.active_version_id)
+      : allVersions.find(v => v.template_id === t.id && v.is_current);
+    
     const normalizedCount = version 
       ? allQuestions.filter(q => q.template_version_id === version.id).length 
       : 0;
@@ -39,8 +43,9 @@ export default function AdminRestoreQuestions() {
       name: t.name,
       template_key: t.template_key || t.slug,
       status: t.status,
-      version_id: version?.id,
+      version_id: version?.id || 'none',
       version_number: version?.version_number || 1,
+      active_version_id: t.active_version_id || 'none',
       normalized_count: normalizedCount,
       embedded_count: embeddedCount,
       needs_restore: normalizedCount === 0 && embeddedCount > 0
@@ -156,7 +161,7 @@ export default function AdminRestoreQuestions() {
                   <TableHead>Template</TableHead>
                   <TableHead>Key</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Version</TableHead>
+                  <TableHead className="text-right">Active Ver</TableHead>
                   <TableHead className="text-right">Embedded</TableHead>
                   <TableHead className="text-right">Normalized</TableHead>
                   <TableHead className="text-right">Action</TableHead>
@@ -176,7 +181,11 @@ export default function AdminRestoreQuestions() {
                         {status.status}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-right">v{status.version_number}</TableCell>
+                    <TableCell className="text-right">
+                      <code className="text-xs bg-slate-100 px-1 py-0.5 rounded">
+                        {status.active_version_id !== 'none' ? status.active_version_id.slice(0, 8) : 'none'}
+                      </code>
+                    </TableCell>
                     <TableCell className="text-right">{status.embedded_count}</TableCell>
                     <TableCell className="text-right">
                       <span className={status.normalized_count === 0 && status.embedded_count > 0 ? 'text-red-600 font-bold' : ''}>

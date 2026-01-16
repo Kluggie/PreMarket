@@ -7,14 +7,30 @@ import { base44 } from '@/api/base44Client';
  */
 export function useTemplateQuestions(template) {
   const { data: questionRecords, isLoading } = useQuery({
-    queryKey: ['template-questions', template?.id],
+    queryKey: ['template-questions', template?.id, template?.active_version_id],
     queryFn: async () => {
       if (!template?.id) return [];
       
-      // Try to load from TemplateQuestion entity
-      const questions = await base44.entities.TemplateQuestion.filter({
-        template_id: template.id
-      });
+      // Load from active version if available
+      let versionId = template.active_version_id;
+      
+      // If no active_version_id, find current version
+      if (!versionId) {
+        const versions = await base44.entities.TemplateVersion.filter({
+          template_id: template.id,
+          is_current: true
+        });
+        versionId = versions[0]?.id;
+      }
+      
+      // Try to load from TemplateQuestion entity for this version
+      const questions = versionId 
+        ? await base44.entities.TemplateQuestion.filter({
+            template_version_id: versionId
+          })
+        : await base44.entities.TemplateQuestion.filter({
+            template_id: template.id
+          });
       
       return questions.sort((a, b) => (a.order || 0) - (b.order || 0));
     },

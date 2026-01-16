@@ -255,6 +255,14 @@ export default function CreateProposal() {
 
   // Load questions from TemplateQuestion entity (or fallback to embedded)
   const { questions: templateQuestions } = useTemplateQuestions(selectedTemplate);
+  
+  // Debug info for admin
+  const [showDebug, setShowDebug] = useState(false);
+  useEffect(() => {
+    if (user?.role === 'admin') {
+      setShowDebug(true);
+    }
+  }, [user]);
 
   const partyAQuestions = templateQuestions?.filter(q => q.party === 'a' || q.party === 'both') || [];
   const partyBQuestions = templateQuestions?.filter(q => q.party === 'b' || q.party === 'both') || [];
@@ -543,11 +551,16 @@ export default function CreateProposal() {
                     <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
                       <div className="flex items-start gap-3">
                         <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
-                        <div>
+                        <div className="flex-1">
                           <p className="font-medium text-amber-900">Missing Questions</p>
                           <p className="text-sm text-amber-700 mt-1">
                             This template is missing questions. Admin must restore questions from the Admin panel.
                           </p>
+                          {showDebug && selectedTemplate && (
+                            <div className="mt-2 text-xs font-mono text-amber-600 bg-amber-100 p-2 rounded">
+                              Debug: embedded={selectedTemplate.questions?.length || 0} | normalized={templateQuestions?.length || 0} | version={selectedTemplate.active_version_id || 'none'}
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -572,11 +585,16 @@ export default function CreateProposal() {
                     <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
                       <div className="flex items-start gap-3">
                         <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
-                        <div>
+                        <div className="flex-1">
                           <p className="font-medium text-amber-900">Missing Questions</p>
                           <p className="text-sm text-amber-700 mt-1">
                             This template is missing questions. Admin must restore questions from the Admin panel.
                           </p>
+                          {showDebug && selectedTemplate && (
+                            <div className="mt-2 text-xs font-mono text-amber-600 bg-amber-100 p-2 rounded">
+                              Debug: embedded={selectedTemplate.questions?.length || 0} | normalized={templateQuestions?.length || 0} | version={selectedTemplate.active_version_id || 'none'}
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>

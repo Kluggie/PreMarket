@@ -39,14 +39,48 @@ Deno.serve(async (req) => {
                         template_id: template.id,
                         template_name: template.name,
                         status: 'skipped',
-                        reason: 'no_questions'
+                        reason: 'no_embedded_questions'
                     });
                     continue;
                 }
 
-                // Check if questions already migrated
+                // Find or create the active version
+                let version;
+                
+                // First check if template has active_version_id set
+                if (template.active_version_id) {
+                    version = await base44.asServiceRole.entities.TemplateVersion.get(template.active_version_id);
+                }
+                
+                // If not, find existing version
+                if (!version) {
+                    const versions = await base44.asServiceRole.entities.TemplateVersion.filter({
+                        template_id: template.id,
+                        is_current: true
+                    });
+                    version = versions[0];
+                }
+                
+                // If still no version, create one
+                if (!version) {
+                    version = await base44.asServiceRole.entities.TemplateVersion.create({
+                        template_id: template.id,
+                        version_number: template.version || 1,
+                        is_current: true,
+                        changelog: 'Initial migration from embedded questions',
+                        published_date: new Date().toISOString()
+                    });
+                    migrationLog.versions_created++;
+                    
+                    // Update template with active_version_id
+                    await base44.asServiceRole.entities.Template.update(template.id, {
+                        active_version_id: version.id
+                    });
+                }
+
+                // Check if questions already migrated for this version
                 const existingQuestions = await base44.asServiceRole.entities.TemplateQuestion.filter({
-                    template_id: template.id
+                    template_version_id: version.id
                 });
 
                 if (existingQuestions.length > 0) {
@@ -55,20 +89,11 @@ Deno.serve(async (req) => {
                         template_name: template.name,
                         status: 'skipped',
                         reason: 'already_migrated',
-                        existing_count: existingQuestions.length
+                        existing_count: existingQuestions.length,
+                        version_id: version.id
                     });
                     continue;
                 }
-
-                // Create version record
-                const version = await base44.asServiceRole.entities.TemplateVersion.create({
-                    template_id: template.id,
-                    version_number: template.version || 1,
-                    is_current: true,
-                    changelog: 'Initial migration from embedded questions',
-                    published_date: new Date().toISOString()
-                });
-                migrationLog.versions_created++;
 
                 // Migrate each question (idempotent - check for existing by question_id)
                 let order = 0;
@@ -130,12 +155,20 @@ Deno.serve(async (req) => {
                     migrationLog.questions_created++;
                 }
 
+                // Update template with active_version_id if not set
+                if (!template.active_version_id) {
+                    await base44.asServiceRole.entities.Template.update(template.id, {
+                        active_version_id: version.id
+                    });
+                }
+
                 migrationLog.templates_processed++;
                 migrationLog.details.push({
                     template_id: template.id,
                     template_name: template.name,
                     status: 'success',
-                    questions_migrated: template.questions.length
+                    questions_migrated: template.questions.length,
+                    version_id: version.id
                 });
 
             } catch (error) {
