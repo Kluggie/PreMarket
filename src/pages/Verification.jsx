@@ -128,21 +128,7 @@ export default function Verification() {
           </div>
         </div>
 
-        {/* Progress Overview */}
-        <Card className="border-0 shadow-sm mb-8">
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <p className="text-sm text-slate-500">Verification Progress</p>
-                <p className="text-2xl font-bold text-slate-900">{completedSteps} of {steps.length} completed</p>
-              </div>
-              <div className="text-right">
-                <p className="text-3xl font-bold text-blue-600">{Math.round(overallProgress)}%</p>
-              </div>
-            </div>
-            <Progress value={overallProgress} className="h-2" />
-          </CardContent>
-        </Card>
+
 
         {/* Verification Steps */}
         <div className="space-y-4">
