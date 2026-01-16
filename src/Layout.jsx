@@ -43,11 +43,14 @@ export default function Layout({ children, currentPageName }) {
   const isLandingPage = currentPageName === 'Landing';
   const isAuthPage = ['Login', 'Signup'].includes(currentPageName);
 
-  const handleLogout = async () => {
-    await base44.auth.logout('/');
+  const handleLogout = () => {
+    window.location.href = '/';
+    localStorage.clear();
+    sessionStorage.clear();
   };
 
   const navLinks = user ? [
+    { name: 'Home', href: createPageUrl('Landing'), icon: LayoutDashboard },
     { name: 'Dashboard', href: createPageUrl('Dashboard'), icon: LayoutDashboard },
     { name: 'Proposals', href: createPageUrl('Proposals'), icon: FileText },
     { name: 'Templates', href: createPageUrl('Templates'), icon: FileText },

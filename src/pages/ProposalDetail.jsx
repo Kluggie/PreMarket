@@ -284,6 +284,46 @@ export default function ProposalDetail() {
             </div>
 
             <div className="flex items-center gap-3">
+              <Button 
+                variant="outline"
+                onClick={async () => {
+                  const { jsPDF } = await import('jspdf');
+                  const doc = new jsPDF();
+                  
+                  doc.setFontSize(20);
+                  doc.text(proposal.title || 'Untitled Proposal', 20, 20);
+                  doc.setFontSize(10);
+                  doc.text(`Template: ${proposal.template_name}`, 20, 30);
+                  doc.text(`Created: ${new Date(proposal.created_date).toLocaleDateString()}`, 20, 36);
+                  
+                  doc.setFontSize(12);
+                  doc.text('Parties:', 20, 50);
+                  doc.setFontSize(10);
+                  doc.text(`Party A: ${proposal.mutual_reveal || isPartyA ? proposal.party_a_email : 'Protected'}`, 20, 58);
+                  doc.text(`Party B: ${proposal.mutual_reveal || isPartyB ? proposal.party_b_email || 'Not specified' : 'Protected'}`, 20, 64);
+                  
+                  if (latestEvaluation) {
+                    doc.setFontSize(12);
+                    doc.text('AI Evaluation:', 20, 78);
+                    doc.setFontSize(10);
+                    doc.text(`Overall Score: ${latestEvaluation.overall_score}%`, 20, 86);
+                    doc.text(`Confidence: ${latestEvaluation.confidence}%`, 20, 92);
+                    
+                    let y = 102;
+                    doc.text('Criteria Scores:', 20, y);
+                    (latestEvaluation.criteria_scores || []).forEach(c => {
+                      y += 6;
+                      if (y > 270) { doc.addPage(); y = 20; }
+                      doc.text(`${c.name}: ${c.score}%`, 25, y);
+                    });
+                  }
+                  
+                  doc.save(`${proposal.title || 'proposal'}.pdf`);
+                }}
+              >
+                <FileText className="w-4 h-4 mr-2" />
+                Download PDF
+              </Button>
               {!latestEvaluation && (
                 <Button 
                   onClick={() => runEvaluationMutation.mutate()}
@@ -342,9 +382,9 @@ export default function ProposalDetail() {
               <BarChart3 className="w-4 h-4 mr-2" />
               AI Report
             </TabsTrigger>
-            <TabsTrigger value="activity" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
-              <Clock className="w-4 h-4 mr-2" />
-              Activity
+            <TabsTrigger value="fullproposal" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
+              <FileText className="w-4 h-4 mr-2" />
+              Full Proposal
             </TabsTrigger>
           </TabsList>
 
@@ -448,23 +488,68 @@ export default function ProposalDetail() {
                   </CardContent>
                 </Card>
 
-                {/* Reveal Status */}
+                {/* Activity Timeline */}
                 <Card className="border-0 shadow-sm">
                   <CardHeader>
-                    <CardTitle>Reveal Status</CardTitle>
+                    <CardTitle>Activity Timeline</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm text-slate-500">Status</span>
-                        {proposal.mutual_reveal ? (
-                          <Badge className="bg-green-100 text-green-700">Passed</Badge>
-                        ) : proposal.reveal_requested_by_a || proposal.reveal_requested_by_b ? (
-                          <Badge className="bg-amber-100 text-amber-700">Pending</Badge>
-                        ) : (
-                          <Badge variant="outline" className="text-slate-600">Not Requested</Badge>
-                        )}
+                    <div className="space-y-4">
+                      <div className="flex items-start gap-4">
+                        <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center">
+                          <FileText className="w-4 h-4 text-blue-600" />
+                        </div>
+                        <div>
+                          <p className="font-medium">Proposal Created</p>
+                          <p className="text-sm text-slate-500">{new Date(proposal.created_date).toLocaleString()}</p>
+                        </div>
                       </div>
+                      {proposal.sent_at && (
+                        <div className="flex items-start gap-4">
+                          <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center">
+                            <Send className="w-4 h-4 text-green-600" />
+                          </div>
+                          <div>
+                            <p className="font-medium">Proposal Sent</p>
+                            <p className="text-sm text-slate-500">{new Date(proposal.sent_at).toLocaleString()}</p>
+                          </div>
+                        </div>
+                      )}
+                      {evaluations.map(evalRun => (
+                        <div key={evalRun.id} className="flex items-start gap-4">
+                          <div className="w-8 h-8 rounded-full bg-purple-100 flex items-center justify-center">
+                            <Sparkles className="w-4 h-4 text-purple-600" />
+                          </div>
+                          <div>
+                            <p className="font-medium">AI Evaluation Run</p>
+                            <p className="text-sm text-slate-500">
+                              Score: {evalRun.overall_score}% • {new Date(evalRun.created_date).toLocaleString()}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                      {proposal.mutual_reveal && (
+                        <div className="flex items-start gap-4">
+                          <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center">
+                            <CheckCircle2 className="w-4 h-4 text-green-600" />
+                          </div>
+                          <div>
+                            <p className="font-medium">Reveal Status: Passed</p>
+                            <p className="text-sm text-slate-500">Both parties agreed to reveal identities</p>
+                          </div>
+                        </div>
+                      )}
+                      {!proposal.mutual_reveal && (proposal.reveal_requested_by_a || proposal.reveal_requested_by_b) && (
+                        <div className="flex items-start gap-4">
+                          <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center">
+                            <Clock className="w-4 h-4 text-amber-600" />
+                          </div>
+                          <div>
+                            <p className="font-medium">Reveal Status: Pending</p>
+                            <p className="text-sm text-slate-500">Waiting for mutual reveal agreement</p>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </CardContent>
                 </Card>
@@ -586,76 +671,105 @@ export default function ProposalDetail() {
 
 
 
-          {/* Activity Tab */}
-          <TabsContent value="activity">
-            <Card className="border-0 shadow-sm">
-              <CardHeader>
-                <CardTitle>Activity Timeline</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  <div className="flex items-start gap-4">
-                    <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center">
-                      <FileText className="w-4 h-4 text-blue-600" />
+          {/* Full Proposal Tab */}
+          <TabsContent value="fullproposal">
+            <div className="space-y-6">
+              {/* Proposal Header */}
+              <Card className="border-0 shadow-sm">
+                <CardHeader>
+                  <CardTitle>{proposal.title || 'Untitled Proposal'}</CardTitle>
+                  <CardDescription>
+                    {proposal.template_name} • Created {new Date(proposal.created_date).toLocaleDateString()}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="p-4 bg-blue-50 rounded-xl">
+                      <p className="text-sm text-blue-600 font-medium mb-2">Party A (Proposer)</p>
+                      <p className="font-medium text-slate-900">
+                        {proposal.mutual_reveal || isPartyA ? proposal.party_a_email : 'Identity Protected'}
+                      </p>
                     </div>
-                    <div>
-                      <p className="font-medium">Proposal Created</p>
-                      <p className="text-sm text-slate-500">{new Date(proposal.created_date).toLocaleString()}</p>
+                    <div className="p-4 bg-indigo-50 rounded-xl">
+                      <p className="text-sm text-indigo-600 font-medium mb-2">Party B (Recipient)</p>
+                      <p className="font-medium text-slate-900">
+                        {proposal.mutual_reveal || isPartyB ? proposal.party_b_email || 'Not specified' : 'Identity Protected'}
+                      </p>
                     </div>
                   </div>
-                  {proposal.sent_at && (
-                    <div className="flex items-start gap-4">
-                      <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center">
-                        <Send className="w-4 h-4 text-green-600" />
-                      </div>
-                      <div>
-                        <p className="font-medium">Proposal Sent</p>
-                        <p className="text-sm text-slate-500">{new Date(proposal.sent_at).toLocaleString()}</p>
-                      </div>
+                </CardContent>
+              </Card>
+
+              {/* Full Template Responses */}
+              <Card className="border-0 shadow-sm">
+                <CardHeader>
+                  <CardTitle>Complete Proposal Answers</CardTitle>
+                  <CardDescription>All information provided in this proposal.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {responses.length === 0 ? (
+                    <p className="text-slate-500 text-center py-8">No responses recorded yet.</p>
+                  ) : (
+                    <div className="space-y-4">
+                      {responses.map(response => (
+                        <div key={response.id} className="p-4 border border-slate-200 rounded-xl">
+                          <div className="flex items-start justify-between mb-3">
+                            <div>
+                              <p className="font-semibold text-slate-900 capitalize mb-1">
+                                {response.question_id.replace(/_/g, ' ')}
+                              </p>
+                              <Badge variant="outline" className="text-xs">
+                                Party {response.party.toUpperCase()}
+                              </Badge>
+                            </div>
+                            <Badge className={
+                              response.visibility === 'full' ? 'bg-green-100 text-green-700' :
+                              response.visibility === 'partial' ? 'bg-amber-100 text-amber-700' :
+                              'bg-slate-100 text-slate-700'
+                            }>
+                              {response.visibility}
+                            </Badge>
+                          </div>
+                          <div className="bg-slate-50 p-3 rounded-lg">
+                            <p className="text-slate-700">
+                              {response.value_type === 'range' 
+                                ? `Range: ${response.range_min} - ${response.range_max}`
+                                : response.value || 'Not provided'
+                              }
+                            </p>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   )}
-                  {evaluations.map(evalRun => (
-                    <div key={evalRun.id} className="flex items-start gap-4">
-                      <div className="w-8 h-8 rounded-full bg-purple-100 flex items-center justify-center">
-                        <Sparkles className="w-4 h-4 text-purple-600" />
+                </CardContent>
+              </Card>
+
+              {/* AI Evaluation Summary */}
+              {latestEvaluation && (
+                <Card className="border-0 shadow-sm">
+                  <CardHeader>
+                    <CardTitle>AI Evaluation Summary</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex items-center gap-6 mb-6">
+                      <div className="text-center">
+                        <p className="text-4xl font-bold text-blue-600">{latestEvaluation.overall_score}%</p>
+                        <p className="text-sm text-slate-500 mt-1">Match Score</p>
                       </div>
                       <div>
-                        <p className="font-medium">AI Evaluation Run</p>
-                        <p className="text-sm text-slate-500">
-                          Score: {evalRun.overall_score}% • {new Date(evalRun.created_date).toLocaleString()}
-                        </p>
+                        <p className="text-sm text-slate-500 mb-1">Confidence</p>
+                        <div className="flex items-center gap-2">
+                          <Progress value={latestEvaluation.confidence || 0} className="w-32 h-2" />
+                          <span className="text-sm font-medium">{latestEvaluation.confidence}%</span>
+                        </div>
                       </div>
                     </div>
-                  ))}
-                  {proposal.mutual_reveal && (
-                    <div className="flex items-start gap-4">
-                      <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center">
-                        <CheckCircle2 className="w-4 h-4 text-green-600" />
-                      </div>
-                      <div>
-                        <p className="font-medium">Reveal Status: Passed</p>
-                        <p className="text-sm text-slate-500">
-                          Both parties agreed to reveal identities
-                        </p>
-                      </div>
-                    </div>
-                  )}
-                  {!proposal.mutual_reveal && (proposal.reveal_requested_by_a || proposal.reveal_requested_by_b) && (
-                    <div className="flex items-start gap-4">
-                      <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center">
-                        <Clock className="w-4 h-4 text-amber-600" />
-                      </div>
-                      <div>
-                        <p className="font-medium">Reveal Status: Pending</p>
-                        <p className="text-sm text-slate-500">
-                          Waiting for mutual reveal agreement
-                        </p>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
+                    <p className="text-slate-600">{latestEvaluation.summary}</p>
+                  </CardContent>
+                </Card>
+              )}
+            </div>
           </TabsContent>
         </Tabs>
       </div>
