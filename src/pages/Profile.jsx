@@ -77,6 +77,23 @@ export default function Profile() {
 
   const saveMutation = useMutation({
     mutationFn: async (data) => {
+      // Track consent changes in audit log
+      if (profile && profile.social_links_ai_consent !== data.social_links_ai_consent) {
+        await base44.entities.AuditLog.create({
+          entity_type: 'UserProfile',
+          entity_id: profile.id,
+          user_id: user.id,
+          user_email: user.email,
+          action: 'consent_change',
+          details: {
+            field: 'social_links_ai_consent',
+            old_value: profile.social_links_ai_consent,
+            new_value: data.social_links_ai_consent,
+            timestamp: new Date().toISOString()
+          }
+        });
+      }
+
       if (profile) {
         return base44.entities.UserProfile.update(profile.id, data);
       } else {
@@ -407,17 +424,23 @@ export default function Profile() {
                     and trust signals in proposal evaluations. More complete profiles lead to higher confidence scores.
                   </p>
                   
-                  <div className="flex items-center justify-between p-4 bg-white rounded-lg border border-blue-200">
-                    <div className="flex-1">
-                      <p className="font-medium text-blue-900 text-sm">AI Analysis Consent</p>
-                      <p className="text-xs text-blue-600 mt-1">
-                        I consent to my social links being used by AI evaluations
-                      </p>
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between p-4 bg-white rounded-lg border border-blue-200">
+                      <div className="flex-1">
+                        <p className="font-medium text-blue-900 text-sm">AI Analysis Consent</p>
+                        <p className="text-xs text-blue-600 mt-1">
+                          I consent to my social links being used by AI evaluations
+                        </p>
+                      </div>
+                      <Switch 
+                        checked={formData.social_links_ai_consent}
+                        onCheckedChange={(v) => setFormData({ ...formData, social_links_ai_consent: v })}
+                      />
                     </div>
-                    <Switch 
-                      checked={formData.social_links_ai_consent}
-                      onCheckedChange={(v) => setFormData({ ...formData, social_links_ai_consent: v })}
-                    />
+                    <p className="text-xs text-slate-500">
+                      You can change this anytime. Consent affects future evaluations. Your social links remain 
+                      stored but will not be used by AI if consent is disabled.
+                    </p>
                   </div>
                 </div>
               </CardContent>
