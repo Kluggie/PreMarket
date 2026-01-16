@@ -16,6 +16,7 @@ import Templates from './pages/Templates';
 import Terms from './pages/Terms';
 import Verification from './pages/Verification';
 import AdminMigration from './pages/AdminMigration';
+import AdminRestoreQuestions from './pages/AdminRestoreQuestions';
 import __Layout from './Layout.jsx';
 
 
@@ -38,6 +39,7 @@ export const PAGES = {
     "Terms": Terms,
     "Verification": Verification,
     "AdminMigration": AdminMigration,
+    "AdminRestoreQuestions": AdminRestoreQuestions,
 }
 
 export const pagesConfig = {

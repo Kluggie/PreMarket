@@ -540,7 +540,17 @@ export default function CreateProposal() {
                 <CardContent className="space-y-4">
                   {partyAQuestions.map(renderQuestionInput)}
                   {partyAQuestions.length === 0 && (
-                    <p className="text-slate-500 text-center py-4">No questions for this section in this template.</p>
+                    <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                      <div className="flex items-start gap-3">
+                        <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                        <div>
+                          <p className="font-medium text-amber-900">Missing Questions</p>
+                          <p className="text-sm text-amber-700 mt-1">
+                            This template is missing questions. Admin must restore questions from the Admin panel.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
                   )}
                 </CardContent>
               </Card>
@@ -559,7 +569,17 @@ export default function CreateProposal() {
                 <CardContent className="space-y-4">
                   {partyBQuestions.map(renderQuestionInput)}
                   {partyBQuestions.length === 0 && (
-                    <p className="text-slate-500 text-center py-4">No questions for this section in this template.</p>
+                    <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                      <div className="flex items-start gap-3">
+                        <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                        <div>
+                          <p className="font-medium text-amber-900">Missing Questions</p>
+                          <p className="text-sm text-amber-700 mt-1">
+                            This template is missing questions. Admin must restore questions from the Admin panel.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
                   )}
                 </CardContent>
               </Card>

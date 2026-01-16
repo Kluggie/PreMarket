@@ -70,16 +70,33 @@ Deno.serve(async (req) => {
                 });
                 migrationLog.versions_created++;
 
-                // Migrate each question
+                // Migrate each question (idempotent - check for existing by question_id)
                 let order = 0;
                 for (const q of template.questions) {
-                    // Map party to applies_to_role
-                    let applies_to_role = 'both';
-                    if (q.party === 'a') applies_to_role = 'proposer';
-                    else if (q.party === 'b') applies_to_role = 'recipient';
+                    // Check if this question already exists for this version
+                    const existingForVersion = await base44.asServiceRole.entities.TemplateQuestion.filter({
+                        template_version_id: version.id,
+                        question_id: q.id
+                    });
 
-                    // Determine verification mode
-                    let verification_mode = 'simple_ack';
+                    if (existingForVersion.length > 0) {
+                        continue; // Skip, already migrated
+                    }
+
+                    // Map party to applies_to_role and question_purpose
+                    let applies_to_role = 'both';
+                    let question_purpose = 'shared_fact';
+                    
+                    if (q.party === 'a') {
+                        applies_to_role = 'proposer';
+                        question_purpose = 'offer';
+                    } else if (q.party === 'b') {
+                        applies_to_role = 'recipient';
+                        question_purpose = 'requirement';
+                    }
+
+                    // Determine verification mode - default to simple_ack for proposer questions
+                    let verification_mode = applies_to_role === 'proposer' ? 'simple_ack' : 'none';
                     if (q.evidence_requirement === 'required') {
                         verification_mode = 'evidence_required';
                     } else if (q.evidence_requirement === 'recommended') {
@@ -101,12 +118,12 @@ Deno.serve(async (req) => {
                         required: q.required || false,
                         supports_range: q.supports_range || false,
                         applies_to_role: applies_to_role,
-                        question_purpose: 'shared_fact', // Default
-                        comparable_key: null,
+                        question_purpose: question_purpose,
+                        comparable_key: q.comparable_key || null,
                         visibility_default: q.default_visibility || 'full',
                         verification_mode: verification_mode,
-                        verifiable: q.verifiable || false,
-                        recipient_can_verify: q.recipient_can_verify || false,
+                        verifiable: applies_to_role === 'proposer',
+                        recipient_can_verify: applies_to_role === 'proposer',
                         evidence_requirement: q.evidence_requirement || 'optional',
                         weight: q.weight || null
                     });
