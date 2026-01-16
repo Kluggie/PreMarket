@@ -176,7 +176,7 @@ export default function Templates() {
                       </Button>
                     ) : (
                       <Link 
-                        to={createPageUrl(`CreateProposal?template=${template.id}&step=2`)}
+                        to={createPageUrl(`CreateProposal?template=${template.id}`)}
                         onClick={() => incrementViewCount(template.id)}
                       >
                         <Button className="w-full bg-slate-900 hover:bg-slate-800">
