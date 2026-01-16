@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import GuestProposalBanner from '../components/proposal/GuestProposalBanner';
 import GuestEmailCapture from '../components/proposal/GuestEmailCapture';
+import { useTemplateQuestions } from '../components/template/TemplateQuestionLoader';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
@@ -198,7 +199,7 @@ export default function CreateProposal() {
 
       // Create responses
       const responsePromises = Object.entries(responses).map(([questionId, value]) => {
-        const question = selectedTemplate.questions.find(q => q.id === questionId);
+        const question = templateQuestions.find(q => q.id === questionId);
         const visibility = visibilitySettings[questionId] || 'full';
         
         let responseData = {
@@ -235,8 +236,11 @@ export default function CreateProposal() {
     setVisibilitySettings(prev => ({ ...prev, [questionId]: visibility }));
   };
 
-  const partyAQuestions = selectedTemplate?.questions?.filter(q => q.party === 'a' || q.party === 'both') || [];
-  const partyBQuestions = selectedTemplate?.questions?.filter(q => q.party === 'b' || q.party === 'both') || [];
+  // Load questions from TemplateQuestion entity (or fallback to embedded)
+  const { questions: templateQuestions } = useTemplateQuestions(selectedTemplate);
+
+  const partyAQuestions = templateQuestions?.filter(q => q.party === 'a' || q.party === 'both') || [];
+  const partyBQuestions = templateQuestions?.filter(q => q.party === 'b' || q.party === 'both') || [];
 
   const renderQuestionInput = (question) => {
     const value = responses[question.id] || '';
@@ -600,7 +604,7 @@ export default function CreateProposal() {
                     </div>
                     <div className="flex justify-between">
                       <span className="text-slate-500">Fields Completed</span>
-                      <span className="font-medium">{Object.keys(responses).length} / {selectedTemplate?.questions?.length || 0}</span>
+                      <span className="font-medium">{Object.keys(responses).length} / {templateQuestions?.length || 0}</span>
                     </div>
                   </div>
 
