@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '../utils';
 import { base44 } from '@/api/base44Client';
@@ -20,6 +20,9 @@ import { Badge } from '@/components/ui/badge';
 import { Check, X, Zap, Building2, Shield } from 'lucide-react';
 
 export default function Pricing() {
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, []);
   const [showContactSales, setShowContactSales] = useState(false);
   const [salesFormData, setSalesFormData] = useState({
     name: '',
