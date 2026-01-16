@@ -20,8 +20,16 @@ export default function Landing() {
   const navigate = useNavigate();
   const [showCTAModal, setShowCTAModal] = useState(false);
 
-  const handleStartFree = () => {
-    setShowCTAModal(true);
+  const handleStartFree = async () => {
+    // Check if user is authenticated
+    const isAuth = await base44.auth.isAuthenticated();
+    if (isAuth) {
+      // Redirect authenticated users directly to Templates
+      navigate(createPageUrl('Templates'));
+    } else {
+      // Show modal for guests
+      setShowCTAModal(true);
+    }
   };
 
   const handleGuestProposal = () => {

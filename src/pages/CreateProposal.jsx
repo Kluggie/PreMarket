@@ -130,20 +130,23 @@ export default function CreateProposal() {
     setIsGuestMode(isGuest);
   }, []);
 
-  // Check for template in URL params
+  // Check for template in URL params and auto-skip to step 2
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const templateId = params.get('template');
-    const stepParam = params.get('step');
     
     if (templateId) {
-      const template = defaultTemplates.find(t => t.id === templateId);
+      // Fetch from DB or use default
+      const dbTemplate = templates.find(t => t.id === templateId);
+      const defaultTemplate = defaultTemplates.find(t => t.id === templateId);
+      const template = dbTemplate || defaultTemplate;
+      
       if (template) {
         setSelectedTemplate(template);
-        setStep(stepParam ? parseInt(stepParam) : 2);
+        setStep(2); // Skip to step 2
       }
     }
-  }, []);
+  }, [templates]);
 
   const { data: templates = [] } = useQuery({
     queryKey: ['templates'],

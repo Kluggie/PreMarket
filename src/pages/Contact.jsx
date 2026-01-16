@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Mail, MapPin, Phone, CheckCircle2 } from 'lucide-react';
+import { CheckCircle2 } from 'lucide-react';
 
 export default function Contact() {
   const [formData, setFormData] = useState({
@@ -165,56 +165,23 @@ export default function Contact() {
                   >
                     {submitMutation.isPending ? 'Sending...' : 'Send Message'}
                   </Button>
+
+                  <Card className="border-0 shadow-sm bg-blue-50 mt-4">
+                    <CardContent className="p-4">
+                      <h3 className="font-semibold text-blue-900 mb-2 text-sm">Response Time</h3>
+                      <p className="text-xs text-blue-700">
+                        We typically respond to all inquiries within 24 hours during business days. For urgent matters, please mention "URGENT" in your message subject.
+                      </p>
+                    </CardContent>
+                  </Card>
                 </form>
               </CardContent>
             </Card>
           </div>
 
-          {/* Contact Info */}
+          {/* Empty sidebar for layout */}
           <div className="space-y-6">
-            <Card className="border-0 shadow-sm">
-              <CardContent className="p-6">
-                <div className="space-y-6">
-                  <div className="flex items-start gap-4">
-                    <div className="w-10 h-10 rounded-lg bg-blue-100 flex items-center justify-center flex-shrink-0">
-                      <Mail className="w-5 h-5 text-blue-600" />
-                    </div>
-                    <div>
-                      <h3 className="font-semibold text-slate-900 mb-1">Email</h3>
-                      <p className="text-sm text-slate-600">support@premarket.com</p>
-                      <p className="text-sm text-slate-600">sales@premarket.com</p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-start gap-4">
-                    <div className="w-10 h-10 rounded-lg bg-indigo-100 flex items-center justify-center flex-shrink-0">
-                      <MapPin className="w-5 h-5 text-indigo-600" />
-                    </div>
-                    <div>
-                      <h3 className="font-semibold text-slate-900 mb-1">Location</h3>
-                      <p className="text-sm text-slate-600">
-                        123 Innovation Street<br />
-                        San Francisco, CA 94105<br />
-                        United States
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-start gap-4">
-                    <div className="w-10 h-10 rounded-lg bg-purple-100 flex items-center justify-center flex-shrink-0">
-                      <Phone className="w-5 h-5 text-purple-600" />
-                    </div>
-                    <div>
-                      <h3 className="font-semibold text-slate-900 mb-1">Phone</h3>
-                      <p className="text-sm text-slate-600">+1 (555) 123-4567</p>
-                      <p className="text-xs text-slate-500 mt-1">Mon-Fri, 9am-6pm PST</p>
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="border-0 shadow-sm bg-blue-50">
+            <Card className="border-0 shadow-sm bg-slate-50 opacity-0 pointer-events-none">
               <CardContent className="p-6">
                 <h3 className="font-semibold text-blue-900 mb-2">Response Time</h3>
                 <p className="text-sm text-blue-700">

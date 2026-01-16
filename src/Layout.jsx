@@ -43,7 +43,8 @@ export default function Layout({ children, currentPageName }) {
   const isAuthPage = ['Login', 'Signup'].includes(currentPageName);
 
   const handleLogout = async () => {
-    await base44.auth.logout(createPageUrl('Landing'));
+    await base44.auth.logout();
+    window.location.href = createPageUrl('Landing');
   };
 
   const navLinks = user ? [
