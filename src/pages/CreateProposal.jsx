@@ -122,7 +122,18 @@ export default function CreateProposal() {
 
   const { data: templates = [] } = useQuery({
     queryKey: ['templates'],
-    queryFn: () => base44.entities.Template.filter({ status: 'published' })
+    queryFn: async () => {
+      const all = await base44.entities.Template.filter({ status: 'published' });
+      // Deduplicate by template_key, keeping the one with most questions
+      const byKey = all.reduce((acc, t) => {
+        const key = t.template_key || t.slug;
+        if (!acc[key] || (t.questions?.length || 0) > (acc[key].questions?.length || 0)) {
+          acc[key] = t;
+        }
+        return acc;
+      }, {});
+      return Object.values(byKey);
+    }
   });
 
   useEffect(() => {
