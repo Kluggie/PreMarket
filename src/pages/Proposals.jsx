@@ -1,0 +1,258 @@
+import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
+import { createPageUrl } from '../utils';
+import { base44 } from '@/api/base44Client';
+import { useQuery } from '@tanstack/react-query';
+import { motion } from 'framer-motion';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Card, CardContent } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Plus, Search, Filter, Send, Inbox, FileText, BarChart3,
+  ChevronRight, Clock, CheckCircle2, AlertTriangle, Eye, Users
+} from 'lucide-react';
+
+const StatusBadge = ({ status }) => {
+  const config = {
+    draft: { color: 'bg-slate-100 text-slate-700', icon: FileText },
+    sent: { color: 'bg-blue-100 text-blue-700', icon: Send },
+    received: { color: 'bg-amber-100 text-amber-700', icon: Inbox },
+    under_verification: { color: 'bg-purple-100 text-purple-700', icon: Eye },
+    re_evaluated: { color: 'bg-indigo-100 text-indigo-700', icon: BarChart3 },
+    mutual_interest: { color: 'bg-green-100 text-green-700', icon: Users },
+    revealed: { color: 'bg-emerald-100 text-emerald-700', icon: CheckCircle2 },
+    closed: { color: 'bg-slate-100 text-slate-600', icon: Clock },
+    withdrawn: { color: 'bg-red-100 text-red-700', icon: AlertTriangle }
+  };
+  const { color, icon: Icon } = config[status] || config.draft;
+  const label = status?.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+  
+  return (
+    <Badge className={`${color} font-medium`}>
+      <Icon className="w-3 h-3 mr-1" />
+      {label}
+    </Badge>
+  );
+};
+
+export default function Proposals() {
+  const [user, setUser] = useState(null);
+  const [activeTab, setActiveTab] = useState('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+
+  useEffect(() => {
+    base44.auth.me().then(setUser);
+  }, []);
+
+  const { data: sentProposals = [], isLoading: loadingSent } = useQuery({
+    queryKey: ['proposals', 'sent', user?.email],
+    queryFn: () => base44.entities.Proposal.filter({ party_a_email: user?.email }, '-created_date'),
+    enabled: !!user?.email
+  });
+
+  const { data: receivedProposals = [], isLoading: loadingReceived } = useQuery({
+    queryKey: ['proposals', 'received', user?.email],
+    queryFn: () => base44.entities.Proposal.filter({ party_b_email: user?.email }, '-created_date'),
+    enabled: !!user?.email
+  });
+
+  const allProposals = [...sentProposals, ...receivedProposals].sort(
+    (a, b) => new Date(b.created_date) - new Date(a.created_date)
+  );
+
+  const getFilteredProposals = () => {
+    let proposals = activeTab === 'sent' ? sentProposals : 
+                   activeTab === 'received' ? receivedProposals : 
+                   allProposals;
+
+    if (statusFilter !== 'all') {
+      proposals = proposals.filter(p => p.status === statusFilter);
+    }
+
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      proposals = proposals.filter(p => 
+        p.title?.toLowerCase().includes(query) ||
+        p.template_name?.toLowerCase().includes(query) ||
+        p.party_a_email?.toLowerCase().includes(query) ||
+        p.party_b_email?.toLowerCase().includes(query)
+      );
+    }
+
+    return proposals;
+  };
+
+  const filteredProposals = getFilteredProposals();
+  const isLoading = loadingSent || loadingReceived;
+
+  const ProposalRow = ({ proposal }) => {
+    const isSent = proposal.party_a_email === user?.email;
+    
+    return (
+      <Link to={createPageUrl(`ProposalDetail?id=${proposal.id}`)}>
+        <motion.div
+          whileHover={{ backgroundColor: 'rgb(248, 250, 252)' }}
+          className="p-4 border-b border-slate-100 flex items-center gap-4 cursor-pointer"
+        >
+          <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center">
+            {isSent ? (
+              <Send className="w-5 h-5 text-blue-600" />
+            ) : (
+              <Inbox className="w-5 h-5 text-amber-600" />
+            )}
+          </div>
+          
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-1">
+              <h3 className="font-medium text-slate-900 truncate">
+                {proposal.title || 'Untitled Proposal'}
+              </h3>
+              <StatusBadge status={proposal.status} />
+            </div>
+            <div className="flex items-center gap-4 text-sm text-slate-500">
+              <span>{proposal.template_name}</span>
+              <span>•</span>
+              <span>
+                {isSent ? `To: ${proposal.party_b_email || 'Draft'}` : `From: ${proposal.party_a_email}`}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-6">
+            {proposal.latest_score && (
+              <div className="text-right">
+                <p className="text-2xl font-bold text-blue-600">{proposal.latest_score}%</p>
+                <p className="text-xs text-slate-500">Match Score</p>
+              </div>
+            )}
+            <div className="text-right">
+              <p className="text-sm text-slate-500">
+                {new Date(proposal.created_date).toLocaleDateString()}
+              </p>
+            </div>
+            <ChevronRight className="w-5 h-5 text-slate-400" />
+          </div>
+        </motion.div>
+      </Link>
+    );
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 py-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        {/* Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">Proposals</h1>
+            <p className="text-slate-500 mt-1">Manage all your pre-qualification proposals.</p>
+          </div>
+          <Link to={createPageUrl('CreateProposal')}>
+            <Button className="bg-blue-600 hover:bg-blue-700">
+              <Plus className="w-4 h-4 mr-2" />
+              New Proposal
+            </Button>
+          </Link>
+        </div>
+
+        {/* Filters */}
+        <Card className="border-0 shadow-sm mb-6">
+          <CardContent className="p-4">
+            <div className="flex flex-col sm:flex-row gap-4">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <Input 
+                  placeholder="Search proposals..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-10"
+                />
+              </div>
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger className="w-[180px]">
+                  <Filter className="w-4 h-4 mr-2" />
+                  <SelectValue placeholder="Filter by status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Statuses</SelectItem>
+                  <SelectItem value="draft">Draft</SelectItem>
+                  <SelectItem value="sent">Sent</SelectItem>
+                  <SelectItem value="received">Received</SelectItem>
+                  <SelectItem value="under_verification">Under Verification</SelectItem>
+                  <SelectItem value="mutual_interest">Mutual Interest</SelectItem>
+                  <SelectItem value="revealed">Revealed</SelectItem>
+                  <SelectItem value="closed">Closed</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Tabs & List */}
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <TabsList className="bg-white border border-slate-200 p-1 mb-4">
+            <TabsTrigger value="all" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
+              All ({allProposals.length})
+            </TabsTrigger>
+            <TabsTrigger value="sent" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
+              <Send className="w-4 h-4 mr-2" />
+              Sent ({sentProposals.length})
+            </TabsTrigger>
+            <TabsTrigger value="received" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
+              <Inbox className="w-4 h-4 mr-2" />
+              Received ({receivedProposals.length})
+            </TabsTrigger>
+          </TabsList>
+
+          <Card className="border-0 shadow-sm overflow-hidden">
+            {isLoading ? (
+              <CardContent className="p-0">
+                {[1, 2, 3, 4, 5].map(i => (
+                  <div key={i} className="p-4 border-b border-slate-100 animate-pulse">
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 rounded-lg bg-slate-200" />
+                      <div className="flex-1">
+                        <div className="h-5 bg-slate-200 rounded w-48 mb-2" />
+                        <div className="h-4 bg-slate-100 rounded w-32" />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </CardContent>
+            ) : filteredProposals.length === 0 ? (
+              <CardContent className="py-16 text-center">
+                <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center mx-auto mb-4">
+                  <FileText className="w-8 h-8 text-slate-400" />
+                </div>
+                <h3 className="text-lg font-semibold text-slate-900 mb-2">No proposals found</h3>
+                <p className="text-slate-500 mb-6">
+                  {searchQuery || statusFilter !== 'all' 
+                    ? 'Try adjusting your filters.'
+                    : 'Create your first proposal to get started.'
+                  }
+                </p>
+                {!searchQuery && statusFilter === 'all' && (
+                  <Link to={createPageUrl('CreateProposal')}>
+                    <Button>
+                      <Plus className="w-4 h-4 mr-2" />
+                      Create Proposal
+                    </Button>
+                  </Link>
+                )}
+              </CardContent>
+            ) : (
+              <CardContent className="p-0">
+                {filteredProposals.map(proposal => (
+                  <ProposalRow key={proposal.id} proposal={proposal} />
+                ))}
+              </CardContent>
+            )}
+          </Card>
+        </Tabs>
+      </div>
+    </div>
+  );
+}
