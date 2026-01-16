@@ -12,6 +12,8 @@ import Templates from './pages/Templates';
 import Privacy from './pages/Privacy';
 import Terms from './pages/Terms';
 import Documentation from './pages/Documentation';
+import Contact from './pages/Contact';
+import About from './pages/About';
 import __Layout from './Layout.jsx';
 
 
@@ -30,6 +32,8 @@ export const PAGES = {
     "Privacy": Privacy,
     "Terms": Terms,
     "Documentation": Documentation,
+    "Contact": Contact,
+    "About": About,
 }
 
 export const pagesConfig = {
