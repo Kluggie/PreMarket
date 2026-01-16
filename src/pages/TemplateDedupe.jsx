@@ -29,15 +29,18 @@ export default function TemplateDedupe() {
   const backfillMutation = useMutation({
     mutationFn: async () => {
       const updates = templates
-        .filter(t => !t.template_key)
-        .map(t => base44.entities.Template.update(t.id, {
-          template_key: t.slug || t.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
-        }));
+        .filter(t => !t.template_key || t.template_key === null)
+        .map(t => {
+          const templateKey = t.slug || t.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+          return base44.entities.Template.update(t.id, { template_key: templateKey });
+        });
       
       await Promise.all(updates);
+      return updates.length;
     },
-    onSuccess: () => {
+    onSuccess: (count) => {
       queryClient.invalidateQueries(['all-templates']);
+      alert(`Backfilled ${count} templates`);
     }
   });
 
@@ -46,18 +49,19 @@ export default function TemplateDedupe() {
     mutationFn: async () => {
       // Group by template_key
       const grouped = templates.reduce((acc, t) => {
-        const key = t.template_key || t.slug;
+        const key = t.template_key || t.slug || 'unknown';
         if (!acc[key]) acc[key] = [];
         acc[key].push(t);
         return acc;
       }, {});
 
       const archivePromises = [];
+      let archivedCount = 0;
 
       Object.entries(grouped).forEach(([key, group]) => {
         if (group.length <= 1) return;
 
-        // Sort to find canonical (best) template
+        // Sort to find canonical (best) template - one with questions
         const sorted = group.sort((a, b) => {
           const aQuestions = a.questions?.length || 0;
           const bQuestions = b.questions?.length || 0;
@@ -69,24 +73,34 @@ export default function TemplateDedupe() {
           if (!aRendersOk && bRendersOk) return 1;
 
           // If both render or both don't, prefer more questions
-          return bQuestions - aQuestions;
+          if (bQuestions !== aQuestions) return bQuestions - aQuestions;
+          
+          // If same question count, prefer published over other statuses
+          if (a.status === 'published' && b.status !== 'published') return -1;
+          if (b.status === 'published' && a.status !== 'published') return 1;
+          
+          return 0;
         });
 
         // Keep first (canonical), archive rest
-        const canonical = sorted[0];
         const duplicates = sorted.slice(1);
 
         duplicates.forEach(dup => {
-          archivePromises.push(
-            base44.entities.Template.update(dup.id, { status: 'archived' })
-          );
+          if (dup.status !== 'archived') {
+            archivePromises.push(
+              base44.entities.Template.update(dup.id, { status: 'archived' })
+            );
+            archivedCount++;
+          }
         });
       });
 
       await Promise.all(archivePromises);
+      return archivedCount;
     },
-    onSuccess: () => {
+    onSuccess: (count) => {
       queryClient.invalidateQueries(['all-templates']);
+      alert(`Archived ${count} duplicate templates`);
     }
   });
 
@@ -150,11 +164,11 @@ export default function TemplateDedupe() {
             <div className="flex gap-3">
               <Button
                 onClick={() => backfillMutation.mutate()}
-                disabled={backfillMutation.isPending || templates.every(t => t.template_key)}
+                disabled={backfillMutation.isPending}
                 variant="outline"
               >
                 <RefreshCw className="w-4 h-4 mr-2" />
-                Backfill template_key
+                Backfill template_key ({templates.filter(t => !t.template_key).length} missing)
               </Button>
               <Button
                 onClick={() => dedupeMutation.mutate()}
