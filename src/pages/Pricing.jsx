@@ -241,7 +241,7 @@ export default function Pricing() {
               },
               {
                 q: 'What is pseudonymous mode?',
-                a: 'Pseudonymous mode lets you send proposals without revealing your identity until the recipient expresses interest. It's ideal for sensitive exploratory discussions.'
+                a: 'Pseudonymous mode lets you send proposals without revealing your identity until the recipient expresses interest. It is ideal for sensitive exploratory discussions.'
               }
             ].map((faq, i) => (
               <Card key={i} className="border-0 shadow-sm">
