@@ -120,7 +120,7 @@ export default function CreateProposal() {
   const [isGuestMode, setIsGuestMode] = useState(false);
   const [guestEmail, setGuestEmail] = useState('');
 
-  const { data: templates = [] } = useQuery({
+  const { data: templates = [], isLoading } = useQuery({
     queryKey: ['templates'],
     queryFn: async () => {
       const all = await base44.entities.Template.list();
