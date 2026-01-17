@@ -42,6 +42,7 @@ export default function TemplateBuilder() {
   const [showQuestionEditor, setShowQuestionEditor] = useState(false);
   const [validationErrors, setValidationErrors] = useState({});
   const [showPublishDialog, setShowPublishDialog] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const { data: existingTemplate } = useQuery({
     queryKey: ['template', templateId],
@@ -174,14 +175,24 @@ export default function TemplateBuilder() {
       visibility_default: 'full',
       evidence_requirement: 'none',
       verifiability_level: 'self_declared',
-      sensitivity_level: 'public'
+      sensitivity_level: 'public',
+      module_key: '',
+      preset_required: {},
+      preset_visible: {}
     });
     setShowQuestionEditor(true);
+    setShowAdvanced(false);
   };
 
   const handleEditQuestion = (question) => {
-    setEditingQuestion({ ...question });
+    setEditingQuestion({ 
+      ...question,
+      module_key: question.module_key || '',
+      preset_required: question.preset_required || {},
+      preset_visible: question.preset_visible || {}
+    });
     setShowQuestionEditor(true);
+    setShowAdvanced(false);
   };
 
   const handleSaveQuestion = () => {
@@ -336,6 +347,24 @@ export default function TemplateBuilder() {
               <p className="text-slate-500 mt-1">Build a pre-qualification template with validation.</p>
             </div>
             <div className="flex items-center gap-3">
+              {template.slug === 'universal_enterprise_onboarding' && templateId && (
+                <Button 
+                  variant="outline" 
+                  onClick={async () => {
+                    try {
+                      await base44.functions.invoke('fixUniversalTemplateModules', {});
+                      queryClient.invalidateQueries(['template']);
+                      alert('Module keys auto-tagged successfully!');
+                    } catch (error) {
+                      alert('Error: ' + error.message);
+                    }
+                  }}
+                  className="border-purple-200 text-purple-700 hover:bg-purple-50"
+                >
+                  <Wand2 className="w-4 h-4 mr-2" />
+                  Auto-tag Modules
+                </Button>
+              )}
               <Button variant="outline" onClick={handleSaveDraft} disabled={saveTemplateMutation.isPending}>
                 <Save className="w-4 h-4 mr-2" />
                 Save Draft
@@ -667,6 +696,77 @@ export default function TemplateBuilder() {
                     />
                   </div>
                 )}
+
+                {/* Advanced Section */}
+                <div className="border-t pt-4 mt-6">
+                  <button
+                    type="button"
+                    onClick={() => setShowAdvanced(!showAdvanced)}
+                    className="flex items-center justify-between w-full text-left"
+                  >
+                    <Label className="text-sm font-semibold text-slate-700">Advanced (Presets & Modules)</Label>
+                    {showAdvanced ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                  </button>
+
+                  {showAdvanced && (
+                    <div className="space-y-4 mt-4">
+                      <div className="space-y-2">
+                        <Label>Module Key</Label>
+                        <Select
+                          value={editingQuestion?.module_key || 'none'}
+                          onValueChange={(v) => setEditingQuestion({ 
+                            ...editingQuestion, 
+                            module_key: v === 'none' ? '' : v 
+                          })}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">None (included in all presets)</SelectItem>
+                            <SelectItem value="org_profile">org_profile</SelectItem>
+                            <SelectItem value="security_compliance">security_compliance</SelectItem>
+                            <SelectItem value="privacy_data_handling">privacy_data_handling</SelectItem>
+                            <SelectItem value="operations_sla">operations_sla</SelectItem>
+                            <SelectItem value="implementation_it">implementation_it</SelectItem>
+                            <SelectItem value="legal_commercial">legal_commercial</SelectItem>
+                            <SelectItem value="references">references</SelectItem>
+                            <SelectItem value="api_data">api_data</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-slate-500">
+                          Module determines which presets show this question.
+                        </p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>Preset Required Overrides</Label>
+                        <div className="space-y-2 pl-4">
+                          {['vendor_prequal', 'saas_procurement', 'private_rfp_prequal', 'api_data_provider'].map(preset => (
+                            <div key={preset} className="flex items-center space-x-2">
+                              <Checkbox
+                                checked={editingQuestion?.preset_required?.[preset] === true}
+                                onCheckedChange={(checked) => {
+                                  const updated = { ...(editingQuestion?.preset_required || {}) };
+                                  if (checked) {
+                                    updated[preset] = true;
+                                  } else {
+                                    delete updated[preset];
+                                  }
+                                  setEditingQuestion({ ...editingQuestion, preset_required: updated });
+                                }}
+                              />
+                              <Label className="text-sm font-normal">{preset}</Label>
+                            </div>
+                          ))}
+                        </div>
+                        <p className="text-xs text-slate-500">
+                          Override default required flag for specific presets.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
 
                 <div className="flex justify-end gap-3 pt-4">
                   <Button variant="outline" onClick={() => { setShowQuestionEditor(false); setValidationErrors({}); }}>
