@@ -1,5 +1,6 @@
 import About from './pages/About';
 import Admin from './pages/Admin';
+import Billing from './pages/Billing';
 import Contact from './pages/Contact';
 import CreateProposal from './pages/CreateProposal';
 import Dashboard from './pages/Dashboard';
@@ -18,13 +19,13 @@ import TemplateDedupe from './pages/TemplateDedupe';
 import Templates from './pages/Templates';
 import Terms from './pages/Terms';
 import Verification from './pages/Verification';
-import Billing from './pages/Billing';
 import __Layout from './Layout.jsx';
 
 
 export const PAGES = {
     "About": About,
     "Admin": Admin,
+    "Billing": Billing,
     "Contact": Contact,
     "CreateProposal": CreateProposal,
     "Dashboard": Dashboard,
@@ -43,7 +44,6 @@ export const PAGES = {
     "Templates": Templates,
     "Terms": Terms,
     "Verification": Verification,
-    "Billing": Billing,
 }
 
 export const pagesConfig = {

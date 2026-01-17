@@ -292,6 +292,14 @@ export default function CreateProposal() {
 
   const createProposalMutation = useMutation({
     mutationFn: async (guestEmailParam) => {
+      // Check proposal limit before creating
+      if (!isGuestMode && user) {
+        const limitCheck = await base44.functions.invoke('checkProposalLimit');
+        if (!limitCheck.data.allowed) {
+          throw new Error(`You've reached your monthly proposal limit (${limitCheck.data.limit} proposals). Upgrade to Professional for unlimited proposals.`);
+        }
+      }
+
       const proposalData = {
         title: proposalTitle || `${selectedTemplate.name} Proposal`,
         template_id: selectedTemplate.id,
