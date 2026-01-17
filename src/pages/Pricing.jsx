@@ -123,10 +123,20 @@ export default function Pricing() {
     if (plan.name === 'Enterprise') {
       setShowContactSales(true);
     } else if (plan.name === 'Starter') {
-      // Starter plan - go to Template Library
-      window.location.href = createPageUrl('Templates');
-    } else {
       base44.auth.redirectToLogin(createPageUrl('Dashboard'));
+    } else if (plan.name === 'Professional') {
+      // Check if user is logged in
+      try {
+        const user = await base44.auth.me();
+        if (user) {
+          // Redirect to billing page
+          window.location.href = createPageUrl('Billing');
+        } else {
+          base44.auth.redirectToLogin(createPageUrl('Billing'));
+        }
+      } catch {
+        base44.auth.redirectToLogin(createPageUrl('Billing'));
+      }
     }
   };
 

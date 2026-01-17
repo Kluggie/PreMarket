@@ -9,8 +9,9 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
 import {
-  Bell, Lock, Mail, Shield, Trash2, AlertTriangle, LogOut, CheckCircle2
+  Bell, Lock, Mail, Shield, Trash2, AlertTriangle, LogOut, CheckCircle2, CreditCard
 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { createPageUrl } from '../utils';
 
 export default function Settings() {
@@ -110,6 +111,27 @@ export default function Settings() {
               <div className="space-y-2">
                 <Label>Full Name</Label>
                 <Input value={user?.full_name || ''} disabled className="bg-slate-50" />
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Billing */}
+          <Card className="border-0 shadow-sm">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <CreditCard className="w-5 h-5 text-slate-400" />
+                Billing & Subscription
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="font-medium">Manage your subscription</p>
+                  <p className="text-sm text-slate-500">View your plan and billing details.</p>
+                </div>
+                <Link to={createPageUrl('Billing')}>
+                  <Button variant="outline">View Billing</Button>
+                </Link>
               </div>
             </CardContent>
           </Card>

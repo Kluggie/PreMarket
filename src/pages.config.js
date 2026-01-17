@@ -18,6 +18,7 @@ import TemplateDedupe from './pages/TemplateDedupe';
 import Templates from './pages/Templates';
 import Terms from './pages/Terms';
 import Verification from './pages/Verification';
+import Billing from './pages/Billing';
 import __Layout from './Layout.jsx';
 
 
@@ -42,6 +43,7 @@ export const PAGES = {
     "Templates": Templates,
     "Terms": Terms,
     "Verification": Verification,
+    "Billing": Billing,
 }
 
 export const pagesConfig = {
