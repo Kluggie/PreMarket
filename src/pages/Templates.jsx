@@ -95,61 +95,7 @@ export default function Templates() {
     }
   };
 
-  // Default templates to show even if none exist
-  const defaultTemplates = [
-    {
-      id: 'ma-default',
-      name: 'M&A Pre-Qualification',
-      slug: 'm-and-a',
-      description: 'Evaluate potential acquisition targets or acquirers. Assess financial health, strategic fit, and deal structure compatibility.',
-      category: 'm_and_a',
-      status: 'published',
-      party_a_label: 'Acquirer',
-      party_b_label: 'Target Company'
-    },
-    {
-      id: 'recruiting-default',
-      name: 'Executive Recruiting',
-      slug: 'recruiting',
-      description: 'Pre-qualify candidates for executive positions. Evaluate experience, compensation expectations, and cultural fit.',
-      category: 'recruiting',
-      status: 'published',
-      party_a_label: 'Employer',
-      party_b_label: 'Candidate'
-    },
-    {
-      id: 'investment-default',
-      name: 'Investor Matching',
-      slug: 'investment',
-      description: 'Connect startups with potential investors. Evaluate stage fit, check size alignment, and sector expertise.',
-      category: 'investment',
-      status: 'published',
-      party_a_label: 'Startup',
-      party_b_label: 'Investor'
-    },
-    {
-      id: 'partnership-default',
-      name: 'Strategic Partnership',
-      slug: 'partnership',
-      description: 'Evaluate potential business partnerships. Assess complementary capabilities and strategic alignment.',
-      category: 'partnership',
-      status: 'coming_soon',
-      party_a_label: 'Partner A',
-      party_b_label: 'Partner B'
-    },
-    {
-      id: 'consulting-default',
-      name: 'Consulting Engagement',
-      slug: 'consulting',
-      description: 'Pre-qualify consulting firms or clients. Evaluate expertise, budget alignment, and project scope.',
-      category: 'consulting',
-      status: 'coming_soon',
-      party_a_label: 'Client',
-      party_b_label: 'Consultant'
-    }
-  ];
-
-  const displayTemplates = templates.length > 0 ? templates : defaultTemplates;
+  const displayTemplates = templates;
 
   return (
     <div className="min-h-screen bg-slate-50 py-8">

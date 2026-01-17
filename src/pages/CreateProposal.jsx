@@ -30,82 +30,7 @@ const iconMap = {
   custom: FileText
 };
 
-// Default templates with questions
-const defaultTemplates = [
-  {
-    id: 'ma-default',
-    name: 'M&A Pre-Qualification',
-    slug: 'm-and-a',
-    description: 'Evaluate potential acquisition targets or acquirers.',
-    category: 'm_and_a',
-    status: 'published',
-    party_a_label: 'Acquirer',
-    party_b_label: 'Target Company',
-    questions: [
-      { id: 'company_name', section: 'Company Info', party: 'b', label: 'Company Name', field_type: 'text', required: true, supports_visibility: true },
-      { id: 'industry', section: 'Company Info', party: 'b', label: 'Industry', field_type: 'text', required: true },
-      { id: 'revenue', section: 'Financials', party: 'b', label: 'Annual Revenue', field_type: 'currency', required: true, supports_range: true },
-      { id: 'employees', section: 'Company Info', party: 'b', label: 'Number of Employees', field_type: 'number', supports_range: true },
-      { id: 'deal_size', section: 'Deal Terms', party: 'a', label: 'Target Deal Size', field_type: 'currency', required: true, supports_range: true },
-      { id: 'timeline', section: 'Deal Terms', party: 'a', label: 'Desired Timeline', field_type: 'select', options: ['< 3 months', '3-6 months', '6-12 months', '12+ months'] },
-      { id: 'strategic_rationale', section: 'Strategy', party: 'a', label: 'Strategic Rationale', field_type: 'text', required: true }
-    ],
-    evaluation_criteria: [
-      { name: 'Financial Fit', weight: 30 },
-      { name: 'Strategic Alignment', weight: 25 },
-      { name: 'Market Position', weight: 20 },
-      { name: 'Deal Terms Compatibility', weight: 25 }
-    ]
-  },
-  {
-    id: 'recruiting-default',
-    name: 'Executive Recruiting',
-    slug: 'recruiting',
-    description: 'Pre-qualify candidates for executive positions.',
-    category: 'recruiting',
-    status: 'published',
-    party_a_label: 'Employer',
-    party_b_label: 'Candidate',
-    questions: [
-      { id: 'role_title', section: 'Position', party: 'a', label: 'Role Title', field_type: 'text', required: true },
-      { id: 'experience_years', section: 'Requirements', party: 'b', label: 'Years of Experience', field_type: 'number', required: true, supports_range: true },
-      { id: 'current_title', section: 'Background', party: 'b', label: 'Current Title', field_type: 'text', required: true },
-      { id: 'compensation', section: 'Compensation', party: 'both', label: 'Compensation Expectation', field_type: 'currency', supports_range: true },
-      { id: 'location_pref', section: 'Logistics', party: 'b', label: 'Location Preference', field_type: 'text' },
-      { id: 'remote_preference', section: 'Logistics', party: 'both', label: 'Remote Work Preference', field_type: 'select', options: ['Fully Remote', 'Hybrid', 'On-site', 'Flexible'] }
-    ],
-    evaluation_criteria: [
-      { name: 'Experience Match', weight: 30 },
-      { name: 'Compensation Alignment', weight: 25 },
-      { name: 'Location/Logistics Fit', weight: 20 },
-      { name: 'Cultural Fit Indicators', weight: 25 }
-    ]
-  },
-  {
-    id: 'investment-default',
-    name: 'Investor Matching',
-    slug: 'investment',
-    description: 'Connect startups with potential investors.',
-    category: 'investment',
-    status: 'published',
-    party_a_label: 'Startup',
-    party_b_label: 'Investor',
-    questions: [
-      { id: 'startup_name', section: 'Company', party: 'a', label: 'Startup Name', field_type: 'text', required: true },
-      { id: 'stage', section: 'Company', party: 'a', label: 'Current Stage', field_type: 'select', options: ['Pre-seed', 'Seed', 'Series A', 'Series B', 'Series C+'], required: true },
-      { id: 'raise_amount', section: 'Funding', party: 'a', label: 'Raise Amount', field_type: 'currency', required: true, supports_range: true },
-      { id: 'check_size', section: 'Investment', party: 'b', label: 'Typical Check Size', field_type: 'currency', supports_range: true },
-      { id: 'sector_focus', section: 'Focus', party: 'b', label: 'Sector Focus', field_type: 'text' },
-      { id: 'traction', section: 'Metrics', party: 'a', label: 'Key Traction Metrics', field_type: 'text' }
-    ],
-    evaluation_criteria: [
-      { name: 'Stage Fit', weight: 25 },
-      { name: 'Check Size Match', weight: 25 },
-      { name: 'Sector Alignment', weight: 25 },
-      { name: 'Traction/Growth', weight: 25 }
-    ]
-  }
-];
+
 
 export default function CreateProposal() {
   const navigate = useNavigate();
@@ -155,9 +80,7 @@ export default function CreateProposal() {
     const templateId = params.get('template');
     
     if (templateId && !selectedTemplate) {
-      // Merge DB templates with default templates
-      const allTemplates = [...(templates || []), ...defaultTemplates];
-      const template = allTemplates.find(t => t.id === templateId);
+      const template = templates.find(t => t.id === templateId);
       
       if (template) {
         setSelectedTemplate(template);
@@ -171,7 +94,7 @@ export default function CreateProposal() {
   const actualStep = hasTemplatePreselected ? step : step;
   const totalSteps = hasTemplatePreselected ? 3 : 4;
 
-  const displayTemplates = templates.length > 0 ? templates : defaultTemplates.filter(t => t.status === 'active');
+  const allTemplates = templates;
 
   const createProposalMutation = useMutation({
     mutationFn: async (guestEmailParam) => {
@@ -411,7 +334,7 @@ export default function CreateProposal() {
                 </CardHeader>
                 <CardContent>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {displayTemplates.map(template => {
+                    {allTemplates.map(template => {
                       const Icon = iconMap[template.category] || FileText;
                       return (
                         <button
