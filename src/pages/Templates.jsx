@@ -118,14 +118,14 @@ export default function Templates() {
               <Card className="border-0 shadow-sm text-center py-16">
                 <CardContent>
                   <FileText className="w-16 h-16 text-slate-300 mx-auto mb-4" />
-                  <h3 className="text-xl font-semibold text-slate-900 mb-2">No templates available yet</h3>
+                  <h3 className="text-xl font-semibold text-slate-900 mb-2">Get Started with Templates</h3>
                   <p className="text-slate-600 mb-6">
-                    The template library is being prepared. Check back soon for pre-built templates to structure your proposals.
+                    Create your first template to structure pre-qualification proposals.
                   </p>
                   <Link to={createPageUrl('Admin')}>
-                    <Button variant="outline">
+                    <Button className="bg-blue-600 hover:bg-blue-700">
                       <Settings className="w-4 h-4 mr-2" />
-                      Admin Panel
+                      Create Your First Template
                     </Button>
                   </Link>
                 </CardContent>
