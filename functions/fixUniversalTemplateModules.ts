@@ -29,6 +29,45 @@ Deno.serve(async (req) => {
       'licensing_constraints_counterparty': ['Clear license', 'Some restrictions', 'Unclear/Negotiable']
     };
 
+    // Sensitive fields that need confidentiality controls
+    const sensitiveFields = [
+      'pricing_model_self',
+      'contracting_readiness_self',
+      'insurance_available_self',
+      'references_available_self',
+      'case_studies_available_self',
+      'trust_center_url_self',
+      'soc2_iso_evidence_self',
+      'pentest_summary_self',
+      'dpa_template_self',
+      'incident_notification_self',
+      'uptime_target_self'
+    ];
+
+    // Required fields (all presets)
+    const requiredFields = [
+      'org_type_self',
+      'org_size_self',
+      'industry_self',
+      'operating_regions_self',
+      'website_self',
+      'deployment_model_self',
+      'support_model_self',
+      'mfa_enforced_self',
+      'encrypt_transit_self',
+      'encrypt_rest_self',
+      'data_residency_self',
+      'dpa_available_self'
+    ];
+
+    // API data questions that should only be required for api_data_provider preset
+    const apiDataRequiredFields = [
+      'data_categories_self',
+      'update_frequency_self',
+      'delivery_method_self',
+      'licensing_clarity_self'
+    ];
+
     // Module key mappings based on question IDs
     const moduleMap = {
       // org_profile
@@ -106,7 +145,7 @@ Deno.serve(async (req) => {
       'licensing_constraints_counterparty': 'api_data'
     };
 
-    // Update questions with module_key and fix options
+    // Update questions with module_key, fix options, set confidentiality controls and required flags
     const updatedQuestions = questions.map(q => {
       const moduleKey = moduleMap[q.id];
       if (!moduleKey) {
@@ -121,6 +160,25 @@ Deno.serve(async (req) => {
       // Fix options if needed
       if (optionsFixes[q.id]) {
         updated.allowed_values = optionsFixes[q.id];
+      }
+
+      // Set confidentiality controls for sensitive fields
+      if (sensitiveFields.includes(q.id)) {
+        updated.supports_visibility = true;
+        updated.visibility_default = 'partial';
+      }
+
+      // Set required flag for core required fields
+      if (requiredFields.includes(q.id)) {
+        updated.required = true;
+      }
+
+      // Set preset-specific required for api_data fields
+      if (apiDataRequiredFields.includes(q.id)) {
+        updated.preset_required = {
+          ...updated.preset_required,
+          api_data_provider: true
+        };
       }
       
       return updated;

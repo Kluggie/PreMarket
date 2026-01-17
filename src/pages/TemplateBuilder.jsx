@@ -775,6 +775,25 @@ export default function TemplateBuilder() {
                           Override default required flag for specific presets.
                         </p>
                       </div>
+
+                      <div className="space-y-2">
+                        <div className="flex items-center space-x-2">
+                          <Checkbox
+                            checked={editingQuestion?.supports_visibility === true}
+                            onCheckedChange={(checked) => {
+                              setEditingQuestion({ 
+                                ...editingQuestion, 
+                                supports_visibility: checked,
+                                visibility_default: checked ? 'partial' : 'full'
+                              });
+                            }}
+                          />
+                          <Label className="text-sm font-normal">Sensitive field (show confidentiality control)</Label>
+                        </div>
+                        <p className="text-xs text-slate-500">
+                          Allow proposer to control visibility (full/partial/hidden).
+                        </p>
+                      </div>
                     </div>
                   )}
                 </div>
