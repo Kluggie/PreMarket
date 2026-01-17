@@ -114,10 +114,22 @@ export default function Templates() {
         {/* Templates Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {displayTemplates.length === 0 ? (
-            <div className="col-span-full text-center py-16">
-              <FileText className="w-12 h-12 text-slate-300 mx-auto mb-4" />
-              <h3 className="text-lg font-semibold text-slate-900 mb-2">No templates found</h3>
-              <p className="text-slate-500">Try adjusting your filters or request a custom template.</p>
+            <div className="col-span-full">
+              <Card className="border-0 shadow-sm text-center py-16">
+                <CardContent>
+                  <FileText className="w-16 h-16 text-slate-300 mx-auto mb-4" />
+                  <h3 className="text-xl font-semibold text-slate-900 mb-2">No templates available yet</h3>
+                  <p className="text-slate-600 mb-6">
+                    The template library is being prepared. Check back soon for pre-built templates to structure your proposals.
+                  </p>
+                  <Link to={createPageUrl('Admin')}>
+                    <Button variant="outline">
+                      <Settings className="w-4 h-4 mr-2" />
+                      Admin Panel
+                    </Button>
+                  </Link>
+                </CardContent>
+              </Card>
             </div>
           ) : displayTemplates.map((template, index) => {
             const iconName = iconMap[template.category];
