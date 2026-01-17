@@ -129,17 +129,31 @@ export default function CreateProposal() {
 
   // Check if question should be included based on modules
   const shouldIncludeQuestion = (question) => {
-    // If template doesn't use modules, include all questions
-    if (!isUniversalTemplate || enabledModules.length === 0) {
+    // Non-universal templates: include all questions
+    if (!isUniversalTemplate) {
       return true;
     }
     
-    // If question has module_key and we have enabled modules, check if included
-    if (question.module_key && enabledModules.length > 0) {
-      return enabledModules.includes(question.module_key);
+    // Universal template but no preset selected yet: exclude all
+    if (enabledModules.length === 0) {
+      return false;
     }
     
-    // Questions without module_key are always included
+    // Question has module_key: check if it's in enabled modules
+    if (question.module_key) {
+      const included = enabledModules.includes(question.module_key);
+      if (process.env.NODE_ENV === 'development') {
+        if (!included) {
+          console.log(`[Filter] Excluding question ${question.id} (module: ${question.module_key})`);
+        }
+      }
+      return included;
+    }
+    
+    // Question missing module_key: treat as core (include), but warn in dev
+    if (process.env.NODE_ENV === 'development') {
+      console.warn(`[Filter] Question ${question.id} missing module_key, treating as core`);
+    }
     return true;
   };
 
@@ -162,6 +176,19 @@ export default function CreateProposal() {
     const normalized = getNormalizedParty(q);
     return (normalized === 'b' || normalized === 'both') && shouldIncludeQuestion(q);
   }) || [];
+
+  // Dev diagnostics
+  if (process.env.NODE_ENV === 'development' && isUniversalTemplate && selectedTemplate) {
+    const moduleStats = {};
+    selectedTemplate.questions?.forEach(q => {
+      const key = q.module_key || 'no_module_key';
+      moduleStats[key] = (moduleStats[key] || 0) + 1;
+    });
+    console.log('[Universal Template] Preset:', presetKey);
+    console.log('[Universal Template] Enabled modules:', enabledModules);
+    console.log('[Universal Template] Question count by module:', moduleStats);
+    console.log('[Universal Template] Rendered - Party A:', partyAQuestions.length, 'Party B:', partyBQuestions.length);
+  }
 
   // Check if value is empty based on field type
   const isValueEmpty = (question, value) => {
