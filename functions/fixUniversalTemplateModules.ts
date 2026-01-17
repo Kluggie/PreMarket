@@ -21,6 +21,14 @@ Deno.serve(async (req) => {
     const template = templates[0];
     const questions = template.questions || [];
 
+    // Options fixes
+    const optionsFixes = {
+      'update_frequency_self': ['Real-time', 'Hourly', 'Daily', 'Weekly', 'Monthly'],
+      'min_update_frequency_counterparty': ['Real-time', 'Hourly', 'Daily', 'Weekly', 'Monthly'],
+      'licensing_clarity_self': ['Clear license', 'Some restrictions', 'Unclear/Negotiable'],
+      'licensing_constraints_counterparty': ['Clear license', 'Some restrictions', 'Unclear/Negotiable']
+    };
+
     // Module key mappings based on question IDs
     const moduleMap = {
       // org_profile
@@ -98,16 +106,24 @@ Deno.serve(async (req) => {
       'licensing_constraints_counterparty': 'api_data'
     };
 
-    // Update questions with module_key
+    // Update questions with module_key and fix options
     const updatedQuestions = questions.map(q => {
       const moduleKey = moduleMap[q.id];
       if (!moduleKey) {
         console.warn(`No module mapping for question: ${q.id}`);
       }
-      return {
+      
+      const updated = {
         ...q,
         module_key: moduleKey || 'org_profile' // default fallback
       };
+      
+      // Fix options if needed
+      if (optionsFixes[q.id]) {
+        updated.allowed_values = optionsFixes[q.id];
+      }
+      
+      return updated;
     });
 
     // Update the template
@@ -115,14 +131,22 @@ Deno.serve(async (req) => {
       questions: updatedQuestions
     });
 
+    const breakdown = updatedQuestions.reduce((acc, q) => {
+      acc[q.module_key] = (acc[q.module_key] || 0) + 1;
+      return acc;
+    }, {});
+
+    // Count how many api_data questions there are
+    const apiDataQuestions = updatedQuestions.filter(q => q.module_key === 'api_data');
+
     return Response.json({
       success: true,
-      message: 'Module keys added to all questions',
+      message: 'Module keys added and options fixed',
       questionsUpdated: updatedQuestions.length,
-      breakdown: updatedQuestions.reduce((acc, q) => {
-        acc[q.module_key] = (acc[q.module_key] || 0) + 1;
-        return acc;
-      }, {})
+      breakdown,
+      apiDataCount: apiDataQuestions.length,
+      apiDataQuestions: apiDataQuestions.map(q => ({ id: q.id, label: q.label })),
+      optionsFixed: Object.keys(optionsFixes)
     });
 
   } catch (error) {
