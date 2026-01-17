@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import {
   Building2, Users, TrendingUp, Briefcase, Handshake, FileText,
-  ArrowRight, Lock, CheckCircle2, Clock, Database, Shield, Zap, Filter
+  ArrowRight, Lock, CheckCircle2, Clock, Database, Shield, Zap, Filter, Settings
 } from 'lucide-react';
 import {
   Dialog,
