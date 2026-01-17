@@ -137,13 +137,17 @@ export default function CreateProposal() {
         const question = selectedTemplate.questions.find(q => q.id === questionId);
         const visibility = visibilitySettings[questionId] || 'full';
         
+        // Determine subject party (who this response is about)
+        const normalizedParty = getNormalizedParty(question);
+        const subjectParty = normalizedParty === 'b' ? 'b' : 'a'; // 'b' if about counterparty, 'a' otherwise
+        
         let responseData = {
           proposal_id: proposal.id,
           question_id: questionId,
-          party: question?.party === 'b' ? 'a' : 'a', // Party A is filling info about Party B initially
+          entered_by_party: 'a', // Proposer is always 'a'
+          is_about_counterparty: question?.is_about_counterparty || false,
           value: typeof value === 'object' ? JSON.stringify(value) : String(value),
-          visibility: visibility,
-          reveal_at_gate: visibility === 'hidden' ? 3 : visibility === 'partial' ? 2 : 1
+          visibility: visibility
         };
 
         if (typeof value === 'object' && value.type === 'range') {
@@ -171,8 +175,49 @@ export default function CreateProposal() {
     setVisibilitySettings(prev => ({ ...prev, [questionId]: visibility }));
   };
 
-  const partyAQuestions = selectedTemplate?.questions?.filter(q => q.party === 'a' || q.party === 'both') || [];
-  const partyBQuestions = selectedTemplate?.questions?.filter(q => q.party === 'b' || q.party === 'both') || [];
+  // Normalize question party for backward compatibility
+  const getNormalizedParty = (question) => {
+    // Legacy: if question has party field ('a', 'b', 'both')
+    if (question.party) {
+      return question.party;
+    }
+    // New schema: use is_about_counterparty to determine subject
+    if (question.is_about_counterparty === true) {
+      return 'b'; // About counterparty
+    }
+    // New schema: if applies_to_role is set
+    if (question.applies_to_role === 'proposer') {
+      return 'a';
+    }
+    if (question.applies_to_role === 'recipient') {
+      return 'b';
+    }
+    if (question.applies_to_role === 'both') {
+      return 'both';
+    }
+    // Default to 'a' (proposer fills about self)
+    return 'a';
+  };
+
+  const partyAQuestions = selectedTemplate?.questions?.filter(q => {
+    const normalized = getNormalizedParty(q);
+    return normalized === 'a' || normalized === 'both';
+  }) || [];
+  
+  const partyBQuestions = selectedTemplate?.questions?.filter(q => {
+    const normalized = getNormalizedParty(q);
+    return normalized === 'b' || normalized === 'both';
+  }) || [];
+
+  // Debug counters (development only)
+  if (process.env.NODE_ENV === 'development' && selectedTemplate?.questions) {
+    console.log('[CreateProposal Debug]', {
+      totalQuestions: selectedTemplate.questions.length,
+      partyAQuestions: partyAQuestions.length,
+      partyBQuestions: partyBQuestions.length,
+      sampleQuestion: selectedTemplate.questions[0]
+    });
+  }
 
   const renderQuestionInput = (question) => {
     const value = responses[question.id] || '';
@@ -372,7 +417,7 @@ export default function CreateProposal() {
           )}
 
           {/* Step 1: Recipient & Title */}
-          {step === 1 && (
+          {step === 1 && selectedTemplate && (
             <motion.div
               key="step2"
               initial={{ opacity: 0, x: 20 }}
