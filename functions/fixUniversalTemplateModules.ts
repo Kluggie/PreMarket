@@ -1,0 +1,132 @@
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.6';
+
+Deno.serve(async (req) => {
+  try {
+    const base44 = createClientFromRequest(req);
+    const user = await base44.auth.me();
+
+    if (user?.role !== 'admin') {
+      return Response.json({ error: 'Forbidden: Admin access required' }, { status: 403 });
+    }
+
+    // Fetch the Universal Enterprise Onboarding template
+    const templates = await base44.asServiceRole.entities.Template.filter({
+      slug: 'universal_enterprise_onboarding'
+    });
+
+    if (templates.length === 0) {
+      return Response.json({ error: 'Template not found' }, { status: 404 });
+    }
+
+    const template = templates[0];
+    const questions = template.questions || [];
+
+    // Module key mappings based on question IDs
+    const moduleMap = {
+      // org_profile
+      'org_type_self': 'org_profile',
+      'org_size_self': 'org_profile',
+      'industry_self': 'org_profile',
+      'operating_regions_self': 'org_profile',
+      'website_self': 'org_profile',
+      'org_type_counterparty': 'org_profile',
+      'org_size_counterparty': 'org_profile',
+      'region_constraints_counterparty': 'org_profile',
+      
+      // security_compliance
+      'mfa_enforced_self': 'security_compliance',
+      'sso_supported_self': 'security_compliance',
+      'encrypt_transit_self': 'security_compliance',
+      'encrypt_rest_self': 'security_compliance',
+      'soc2_status_self': 'security_compliance',
+      'iso27001_self': 'security_compliance',
+      'pentest_freq_self': 'security_compliance',
+      'trust_center_url_self': 'security_compliance',
+      'soc2_iso_evidence_self': 'security_compliance',
+      'pentest_summary_self': 'security_compliance',
+      'min_soc2_counterparty': 'security_compliance',
+      'require_sso_counterparty': 'security_compliance',
+      'require_encrypt_rest_counterparty': 'security_compliance',
+      'require_pentest_counterparty': 'security_compliance',
+      
+      // privacy_data_handling
+      'data_types_self': 'privacy_data_handling',
+      'data_residency_self': 'privacy_data_handling',
+      'retention_policy_self': 'privacy_data_handling',
+      'dpa_available_self': 'privacy_data_handling',
+      'dpa_template_self': 'privacy_data_handling',
+      'data_residency_req_counterparty': 'privacy_data_handling',
+      'dpa_required_counterparty': 'privacy_data_handling',
+      
+      // operations_sla
+      'uptime_target_self': 'operations_sla',
+      'support_model_self': 'operations_sla',
+      'incident_notification_self': 'operations_sla',
+      'min_uptime_counterparty': 'operations_sla',
+      'required_support_counterparty': 'operations_sla',
+      'required_incident_notify_counterparty': 'operations_sla',
+      
+      // implementation_it
+      'deployment_model_self': 'implementation_it',
+      'integration_methods_self': 'implementation_it',
+      'onboarding_time_self': 'implementation_it',
+      'preferred_deployment_counterparty': 'implementation_it',
+      'must_have_integrations_counterparty': 'implementation_it',
+      'target_onboarding_counterparty': 'implementation_it',
+      
+      // legal_commercial
+      'pricing_model_self': 'legal_commercial',
+      'contracting_readiness_self': 'legal_commercial',
+      'insurance_available_self': 'legal_commercial',
+      'preferred_pricing_counterparty': 'legal_commercial',
+      'contract_requirement_counterparty': 'legal_commercial',
+      'requires_insurance_counterparty': 'legal_commercial',
+      
+      // references
+      'references_available_self': 'references',
+      'case_studies_available_self': 'references',
+      'will_require_refs_counterparty': 'references',
+      
+      // api_data
+      'data_categories_self': 'api_data',
+      'update_frequency_self': 'api_data',
+      'delivery_method_self': 'api_data',
+      'licensing_clarity_self': 'api_data',
+      'required_data_categories_counterparty': 'api_data',
+      'min_update_frequency_counterparty': 'api_data',
+      'required_delivery_methods_counterparty': 'api_data',
+      'licensing_constraints_counterparty': 'api_data'
+    };
+
+    // Update questions with module_key
+    const updatedQuestions = questions.map(q => {
+      const moduleKey = moduleMap[q.id];
+      if (!moduleKey) {
+        console.warn(`No module mapping for question: ${q.id}`);
+      }
+      return {
+        ...q,
+        module_key: moduleKey || 'org_profile' // default fallback
+      };
+    });
+
+    // Update the template
+    await base44.asServiceRole.entities.Template.update(template.id, {
+      questions: updatedQuestions
+    });
+
+    return Response.json({
+      success: true,
+      message: 'Module keys added to all questions',
+      questionsUpdated: updatedQuestions.length,
+      breakdown: updatedQuestions.reduce((acc, q) => {
+        acc[q.module_key] = (acc[q.module_key] || 0) + 1;
+        return acc;
+      }, {})
+    });
+
+  } catch (error) {
+    console.error('Error:', error);
+    return Response.json({ error: error.message }, { status: 500 });
+  }
+});
