@@ -12,13 +12,15 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Progress } from '@/components/ui/progress';
 import {
   ArrowLeft, ArrowRight, FileText, User, Eye, EyeOff, Lock,
   Building2, Users, TrendingUp, Handshake, Briefcase, CheckCircle2,
-  Send, Sparkles, AlertTriangle
+  Send, Sparkles, AlertTriangle, XCircle
 } from 'lucide-react';
 
 const iconMap = {
@@ -30,8 +32,6 @@ const iconMap = {
   custom: FileText
 };
 
-
-
 export default function CreateProposal() {
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
@@ -42,6 +42,7 @@ export default function CreateProposal() {
   const [proposalTitle, setProposalTitle] = useState('');
   const [responses, setResponses] = useState({});
   const [visibilitySettings, setVisibilitySettings] = useState({});
+  const [validationErrors, setValidationErrors] = useState({});
   const [isGuestMode, setIsGuestMode] = useState(false);
   const [guestEmail, setGuestEmail] = useState('');
 
@@ -49,9 +50,7 @@ export default function CreateProposal() {
     queryKey: ['templates'],
     queryFn: async () => {
       const all = await base44.entities.Template.list();
-      // Show published and active templates, exclude hidden/archived/coming_soon
       const visible = all.filter(t => t.status === 'published' || t.status === 'active');
-      // Deduplicate by template_key, keeping the one with most questions
       const byKey = visible.reduce((acc, t) => {
         const key = t.template_key || t.slug;
         if (!acc[key] || (t.questions?.length || 0) > (acc[key].questions?.length || 0)) {
@@ -67,14 +66,12 @@ export default function CreateProposal() {
     base44.auth.me().then(setUser).catch(() => setUser(null));
   }, []);
 
-  // Check for guest mode in URL
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const isGuest = params.get('guest') === 'true';
     setIsGuestMode(isGuest);
   }, []);
 
-  // Check for template in URL params and auto-skip to step 2
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const templateId = params.get('template');
@@ -85,20 +82,138 @@ export default function CreateProposal() {
       if (template) {
         setSelectedTemplate(template);
         setHasTemplatePreselected(true);
-        setStep(1); // Start at step 1 (Recipient & Title)
+        setStep(1);
       }
     }
   }, [templates, selectedTemplate]);
 
-  // Adjust step calculation based on whether template is preselected
-  const actualStep = hasTemplatePreselected ? step : step;
-  const totalSteps = hasTemplatePreselected ? 3 : 4;
+  const totalSteps = hasTemplatePreselected ? 4 : 5;
 
   const allTemplates = templates;
 
+  // Normalize question party for backward compatibility
+  const getNormalizedParty = (question) => {
+    if (question.party) {
+      return question.party;
+    }
+    if (question.is_about_counterparty === true) {
+      return 'b';
+    }
+    if (question.applies_to_role === 'proposer') {
+      return 'a';
+    }
+    if (question.applies_to_role === 'recipient') {
+      return 'b';
+    }
+    if (question.applies_to_role === 'both') {
+      return 'both';
+    }
+    return 'a';
+  };
+
+  const partyAQuestions = selectedTemplate?.questions?.filter(q => {
+    const normalized = getNormalizedParty(q);
+    return normalized === 'a' || normalized === 'both';
+  }) || [];
+  
+  const partyBQuestions = selectedTemplate?.questions?.filter(q => {
+    const normalized = getNormalizedParty(q);
+    return normalized === 'b' || normalized === 'both';
+  }) || [];
+
+  // Check if value is empty based on field type
+  const isValueEmpty = (question, value) => {
+    if (value === null || value === undefined || value === '') return true;
+    
+    if (question.field_type === 'multi_select') {
+      return !Array.isArray(value) || value.length === 0;
+    }
+    
+    if (question.field_type === 'boolean' || question.field_type === 'select') {
+      return value === '' || value === null || value === undefined;
+    }
+    
+    if (question.field_type === 'file' || question.field_type === 'url') {
+      return value === '' || value === null;
+    }
+    
+    return false;
+  };
+
+  // Check if question is conditionally required
+  const isConditionallyRequired = (question) => {
+    if (question.evidence_requirement !== 'conditional') return false;
+    
+    // SOC2/ISO evidence required if Type I/II or Certified
+    if (question.id === 'soc2_iso_evidence') {
+      const soc2 = responses['soc2_status'];
+      const iso = responses['iso27001'];
+      return soc2 === 'Type I' || soc2 === 'Type II' || iso === 'Certified';
+    }
+    
+    // Pen test summary required if Annual/Biannual
+    if (question.id === 'pentest_summary') {
+      const freq = responses['pentest_freq'];
+      return freq === 'Annual' || freq === 'Biannual';
+    }
+    
+    return false;
+  };
+
+  // Validate questions for current step
+  const validateCurrentStep = () => {
+    const errors = {};
+    let questionsToValidate = [];
+    
+    if (step === 2) {
+      questionsToValidate = partyAQuestions;
+    } else if (step === 3) {
+      questionsToValidate = partyBQuestions;
+    }
+    
+    questionsToValidate.forEach(question => {
+      const isRequired = question.required || isConditionallyRequired(question);
+      const value = responses[question.id];
+      
+      if (isRequired && isValueEmpty(question, value)) {
+        errors[question.id] = 'This field is required';
+      }
+    });
+    
+    setValidationErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  // Validate all for final submit
+  const validateAll = () => {
+    const errors = {};
+    const allQuestions = [...partyAQuestions, ...partyBQuestions];
+    
+    allQuestions.forEach(question => {
+      const isRequired = question.required || isConditionallyRequired(question);
+      const value = responses[question.id];
+      
+      if (isRequired && isValueEmpty(question, value)) {
+        errors[question.id] = 'This field is required';
+      }
+    });
+    
+    setValidationErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  const handleNext = () => {
+    if (step === 2 || step === 3) {
+      if (!validateCurrentStep()) {
+        return;
+      }
+    }
+    setValidationErrors({});
+    setStep(step + 1);
+  };
+
   const createProposalMutation = useMutation({
     mutationFn: async (guestEmailParam) => {
-      // Create proposal
       const proposal = await base44.entities.Proposal.create({
         title: proposalTitle || `${selectedTemplate.name} Proposal`,
         template_id: selectedTemplate.id,
@@ -107,15 +222,14 @@ export default function CreateProposal() {
         party_a_user_id: user?.id || 'guest',
         party_a_email: isGuestMode ? guestEmailParam : user?.email,
         party_b_email: recipientEmail || null,
-        reveal_level_a: 1,
+        disclosure_mode: responses['disclosure_mode'] || 'open',
         sent_at: recipientEmail ? new Date().toISOString() : null
       });
 
-      // If guest mode, create guest proposal record
       if (isGuestMode && guestEmailParam) {
         const magicToken = Math.random().toString(36).substring(2) + Date.now().toString(36);
         const expiresAt = new Date();
-        expiresAt.setDate(expiresAt.getDate() + 30); // 30 days expiry
+        expiresAt.setDate(expiresAt.getDate() + 30);
 
         await base44.entities.GuestProposal.create({
           guest_email: guestEmailParam,
@@ -124,7 +238,6 @@ export default function CreateProposal() {
           expires_at: expiresAt.toISOString()
         });
 
-        // Send magic link email
         await base44.integrations.Core.SendEmail({
           to: guestEmailParam,
           subject: 'Your PreMarket Proposal Link',
@@ -132,21 +245,16 @@ export default function CreateProposal() {
         });
       }
 
-      // Create responses
       const responsePromises = Object.entries(responses).map(([questionId, value]) => {
         const question = selectedTemplate.questions.find(q => q.id === questionId);
         const visibility = visibilitySettings[questionId] || 'full';
         
-        // Determine subject party (who this response is about)
-        const normalizedParty = getNormalizedParty(question);
-        const subjectParty = normalizedParty === 'b' ? 'b' : 'a'; // 'b' if about counterparty, 'a' otherwise
-        
         let responseData = {
           proposal_id: proposal.id,
           question_id: questionId,
-          entered_by_party: 'a', // Proposer is always 'a'
+          entered_by_party: 'a',
           is_about_counterparty: question?.is_about_counterparty || false,
-          value: typeof value === 'object' ? JSON.stringify(value) : String(value),
+          value: typeof value === 'object' && !Array.isArray(value) ? JSON.stringify(value) : Array.isArray(value) ? JSON.stringify(value) : String(value),
           visibility: visibility
         };
 
@@ -169,70 +277,35 @@ export default function CreateProposal() {
 
   const handleResponseChange = (questionId, value) => {
     setResponses(prev => ({ ...prev, [questionId]: value }));
+    if (validationErrors[questionId]) {
+      setValidationErrors(prev => {
+        const newErrors = { ...prev };
+        delete newErrors[questionId];
+        return newErrors;
+      });
+    }
   };
 
   const handleVisibilityChange = (questionId, visibility) => {
     setVisibilitySettings(prev => ({ ...prev, [questionId]: visibility }));
   };
 
-  // Normalize question party for backward compatibility
-  const getNormalizedParty = (question) => {
-    // Legacy: if question has party field ('a', 'b', 'both')
-    if (question.party) {
-      return question.party;
-    }
-    // New schema: use is_about_counterparty to determine subject
-    if (question.is_about_counterparty === true) {
-      return 'b'; // About counterparty
-    }
-    // New schema: if applies_to_role is set
-    if (question.applies_to_role === 'proposer') {
-      return 'a';
-    }
-    if (question.applies_to_role === 'recipient') {
-      return 'b';
-    }
-    if (question.applies_to_role === 'both') {
-      return 'both';
-    }
-    // Default to 'a' (proposer fills about self)
-    return 'a';
-  };
-
-  const partyAQuestions = selectedTemplate?.questions?.filter(q => {
-    const normalized = getNormalizedParty(q);
-    return normalized === 'a' || normalized === 'both';
-  }) || [];
-  
-  const partyBQuestions = selectedTemplate?.questions?.filter(q => {
-    const normalized = getNormalizedParty(q);
-    return normalized === 'b' || normalized === 'both';
-  }) || [];
-
-  // Debug counters (development only)
-  if (process.env.NODE_ENV === 'development' && selectedTemplate?.questions) {
-    console.log('[CreateProposal Debug]', {
-      totalQuestions: selectedTemplate.questions.length,
-      partyAQuestions: partyAQuestions.length,
-      partyBQuestions: partyBQuestions.length,
-      sampleQuestion: selectedTemplate.questions[0]
-    });
-  }
-
   const renderQuestionInput = (question) => {
     const value = responses[question.id] || '';
     const visibility = visibilitySettings[question.id] || 'full';
+    const hasError = validationErrors[question.id];
+    const isConditionalReq = isConditionallyRequired(question);
 
     return (
-      <div key={question.id} className="space-y-3 p-4 bg-slate-50 rounded-xl">
-        <div className="flex items-start justify-between">
-          <div>
-            <Label className="text-sm font-medium">
+      <div key={question.id} className="space-y-2 p-4 bg-white border rounded-xl">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex-1">
+            <Label className="text-sm font-medium text-slate-900">
               {question.label}
-              {question.required && <span className="text-red-500 ml-1">*</span>}
+              {(question.required || isConditionalReq) && <span className="text-red-500 ml-1">*</span>}
             </Label>
             {question.description && (
-              <p className="text-xs text-slate-500 mt-1">{question.description}</p>
+              <p className="text-sm text-slate-600 mt-1">{question.description}</p>
             )}
           </div>
           {question.supports_visibility && (
@@ -258,91 +331,122 @@ export default function CreateProposal() {
           )}
         </div>
 
-        {question.field_type === 'select' ? (
-          <Select 
-            value={value}
-            onValueChange={(v) => handleResponseChange(question.id, v)}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="Select..." />
-            </SelectTrigger>
-            <SelectContent>
-              {question.options?.map(opt => (
-                <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+        <div className="space-y-2">
+          {question.field_type === 'select' ? (
+            question.allowed_values && question.allowed_values.length > 0 ? (
+              <Select 
+                value={value}
+                onValueChange={(v) => handleResponseChange(question.id, v)}
+              >
+                <SelectTrigger className={hasError ? 'border-red-500' : ''}>
+                  <SelectValue placeholder="Select..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {question.allowed_values.map(opt => (
+                    <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <>
+                <Input 
+                  type="text"
+                  value={value}
+                  onChange={(e) => handleResponseChange(question.id, e.target.value)}
+                  placeholder="Enter value..."
+                  className={hasError ? 'border-red-500' : ''}
+                />
+                {process.env.NODE_ENV === 'development' && (
+                  <Badge variant="outline" className="text-xs text-amber-600">
+                    Missing options in template
+                  </Badge>
+                )}
+              </>
+            )
+          ) : question.field_type === 'multi_select' ? (
+            <div className="space-y-2">
+              {question.allowed_values?.map(opt => (
+                <div key={opt} className="flex items-center space-x-2">
+                  <Checkbox 
+                    id={`${question.id}-${opt}`}
+                    checked={(value || []).includes(opt)}
+                    onCheckedChange={(checked) => {
+                      const current = value || [];
+                      const newValue = checked 
+                        ? [...current, opt]
+                        : current.filter(v => v !== opt);
+                      handleResponseChange(question.id, newValue);
+                    }}
+                  />
+                  <label htmlFor={`${question.id}-${opt}`} className="text-sm">{opt}</label>
+                </div>
               ))}
-            </SelectContent>
-          </Select>
-        ) : question.field_type === 'currency' && question.supports_range ? (
-          <div className="space-y-2">
-            <div className="flex items-center gap-2">
-              <Input 
-                type="number"
-                placeholder="Min"
-                value={typeof value === 'object' ? value.min : ''}
-                onChange={(e) => handleResponseChange(question.id, {
-                  type: 'range',
-                  min: Number(e.target.value),
-                  max: typeof value === 'object' ? value.max : 0
-                })}
-                className="flex-1"
-              />
-              <span className="text-slate-400">to</span>
-              <Input 
-                type="number"
-                placeholder="Max"
-                value={typeof value === 'object' ? value.max : ''}
-                onChange={(e) => handleResponseChange(question.id, {
-                  type: 'range',
-                  min: typeof value === 'object' ? value.min : 0,
-                  max: Number(e.target.value)
-                })}
-                className="flex-1"
-              />
             </div>
-            <p className="text-xs text-slate-500">Enter a range or single value</p>
-          </div>
-        ) : question.field_type === 'number' && question.supports_range ? (
-          <div className="flex items-center gap-2">
-            <Input 
-              type="number"
-              placeholder="Min"
-              value={typeof value === 'object' ? value.min : value}
-              onChange={(e) => handleResponseChange(question.id, {
-                type: 'range',
-                min: Number(e.target.value),
-                max: typeof value === 'object' ? value.max : 0
-              })}
+          ) : question.field_type === 'boolean' ? (
+            <RadioGroup value={value} onValueChange={(v) => handleResponseChange(question.id, v)}>
+              <div className="flex items-center space-x-2">
+                <RadioGroupItem value="Yes" id={`${question.id}-yes`} />
+                <Label htmlFor={`${question.id}-yes`}>Yes</Label>
+              </div>
+              <div className="flex items-center space-x-2">
+                <RadioGroupItem value="No" id={`${question.id}-no`} />
+                <Label htmlFor={`${question.id}-no`}>No</Label>
+              </div>
+            </RadioGroup>
+          ) : question.field_type === 'textarea' ? (
+            <Textarea 
+              value={value}
+              onChange={(e) => handleResponseChange(question.id, e.target.value)}
+              placeholder={`Enter ${question.label.toLowerCase()}...`}
+              className={`min-h-[100px] ${hasError ? 'border-red-500' : ''}`}
             />
-            <span className="text-slate-400">to</span>
+          ) : question.field_type === 'url' ? (
             <Input 
-              type="number"
-              placeholder="Max"
-              value={typeof value === 'object' ? value.max : ''}
-              onChange={(e) => handleResponseChange(question.id, {
-                type: 'range',
-                min: typeof value === 'object' ? value.min : 0,
-                max: Number(e.target.value)
-              })}
+              type="url"
+              value={value}
+              onChange={(e) => handleResponseChange(question.id, e.target.value)}
+              placeholder="https://..."
+              className={hasError ? 'border-red-500' : ''}
             />
-          </div>
-        ) : (
-          <Input 
-            type={question.field_type === 'number' || question.field_type === 'currency' ? 'number' : 'text'}
-            value={value}
-            onChange={(e) => handleResponseChange(question.id, e.target.value)}
-            placeholder={`Enter ${question.label.toLowerCase()}...`}
-          />
-        )}
+          ) : question.field_type === 'file' ? (
+            <Input 
+              type="file"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  handleResponseChange(question.id, file.name);
+                }
+              }}
+              className={hasError ? 'border-red-500' : ''}
+            />
+          ) : (
+            <Input 
+              type={question.field_type === 'number' ? 'number' : 'text'}
+              value={value}
+              onChange={(e) => handleResponseChange(question.id, e.target.value)}
+              placeholder={`Enter ${question.label.toLowerCase()}...`}
+              className={hasError ? 'border-red-500' : ''}
+            />
+          )}
+          
+          {hasError && (
+            <p className="text-sm text-red-600 flex items-center gap-1">
+              <XCircle className="w-4 h-4" />
+              {hasError}
+            </p>
+          )}
+        </div>
       </div>
     );
   };
 
-  const progress = (actualStep / totalSteps) * 100;
+  const progress = (step / totalSteps) * 100;
+
+  const hasValidationErrors = Object.keys(validationErrors).length > 0;
 
   return (
     <div className="min-h-screen bg-slate-50 py-8">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-        {/* Header */}
         <div className="mb-8">
           {user && (
             <Link to={createPageUrl('Dashboard')} className="inline-flex items-center text-slate-600 hover:text-slate-900 mb-4">
@@ -354,10 +458,9 @@ export default function CreateProposal() {
           <p className="text-slate-500 mt-1">Fill out the template to create a pre-qualification proposal.</p>
         </div>
 
-        {/* Progress */}
         <div className="mb-8">
           <div className="flex items-center justify-between text-sm text-slate-500 mb-2">
-            <span>Step {actualStep} of {totalSteps}</span>
+            <span>Step {step} of {totalSteps}</span>
             <span>{Math.round(progress)}% complete</span>
           </div>
           <Progress value={progress} className="h-2" />
@@ -416,10 +519,10 @@ export default function CreateProposal() {
             </motion.div>
           )}
 
-          {/* Step 1: Recipient & Title */}
+          {/* Step 1: Proposal Details */}
           {step === 1 && selectedTemplate && (
             <motion.div
-              key="step2"
+              key="step1-details"
               initial={{ opacity: 0, x: 20 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -20 }}
@@ -452,19 +555,6 @@ export default function CreateProposal() {
                     </p>
                   </div>
 
-                  <div className="p-4 bg-amber-50 border border-amber-100 rounded-xl">
-                    <div className="flex items-start gap-3">
-                      <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
-                      <div>
-                        <p className="font-medium text-amber-900">About Party B Information</p>
-                        <p className="text-sm text-amber-700 mt-1">
-                          As the proposer, you'll provide initial information about the recipient ({selectedTemplate?.party_b_label}).
-                          They can verify, correct, or update this information when they receive the proposal.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
                   <div className="flex justify-end mt-6">
                     <Button 
                       onClick={() => setStep(2)}
@@ -479,16 +569,14 @@ export default function CreateProposal() {
             </motion.div>
           )}
 
-          {/* Step 2: Fill Template */}
+          {/* Step 2: Your Information */}
           {step === 2 && (
             <motion.div
-              key="step3"
+              key="step2"
               initial={{ opacity: 0, x: 20 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -20 }}
-              className="space-y-6"
             >
-              {/* Your Info (Party A) */}
               <Card className="border-0 shadow-sm">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
@@ -498,14 +586,46 @@ export default function CreateProposal() {
                   <CardDescription>Information about you or your organization.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
+                  {hasValidationErrors && (
+                    <Alert variant="destructive">
+                      <AlertTriangle className="w-4 h-4" />
+                      <AlertDescription>
+                        Please complete all required fields before continuing.
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                  
                   {partyAQuestions.map(renderQuestionInput)}
                   {partyAQuestions.length === 0 && (
-                    <p className="text-slate-500 text-center py-4">No questions for this section in this template.</p>
+                    <p className="text-slate-500 text-center py-4">No questions for this section.</p>
                   )}
                 </CardContent>
               </Card>
 
-              {/* Counterparty Info (Party B) */}
+              <div className="flex justify-between mt-6">
+                <Button variant="outline" onClick={() => setStep(1)}>
+                  <ArrowLeft className="w-4 h-4 mr-2" />
+                  Back
+                </Button>
+                <Button 
+                  onClick={handleNext}
+                  className="bg-blue-600 hover:bg-blue-700"
+                >
+                  Continue
+                  <ArrowRight className="w-4 h-4 ml-2" />
+                </Button>
+              </div>
+            </motion.div>
+          )}
+
+          {/* Step 3: Counterparty Information */}
+          {step === 3 && (
+            <motion.div
+              key="step3"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+            >
               <Card className="border-0 shadow-sm">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
@@ -517,20 +637,29 @@ export default function CreateProposal() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
+                  {hasValidationErrors && (
+                    <Alert variant="destructive">
+                      <AlertTriangle className="w-4 h-4" />
+                      <AlertDescription>
+                        Please complete all required fields before continuing.
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                  
                   {partyBQuestions.map(renderQuestionInput)}
                   {partyBQuestions.length === 0 && (
-                    <p className="text-slate-500 text-center py-4">No questions for this section in this template.</p>
+                    <p className="text-slate-500 text-center py-4">No questions for this section.</p>
                   )}
                 </CardContent>
               </Card>
 
-              <div className="flex justify-between">
-                <Button variant="outline" onClick={() => setStep(1)}>
+              <div className="flex justify-between mt-6">
+                <Button variant="outline" onClick={() => { setValidationErrors({}); setStep(2); }}>
                   <ArrowLeft className="w-4 h-4 mr-2" />
                   Back
                 </Button>
                 <Button 
-                  onClick={() => setStep(3)}
+                  onClick={handleNext}
                   className="bg-blue-600 hover:bg-blue-700"
                 >
                   Review
@@ -540,8 +669,8 @@ export default function CreateProposal() {
             </motion.div>
           )}
 
-          {/* Step 3: Review & Submit */}
-          {step === 3 && (
+          {/* Step 4: Review & Submit */}
+          {step === 4 && (
             <motion.div
               key="step4"
               initial={{ opacity: 0, x: 20 }}
@@ -565,67 +694,71 @@ export default function CreateProposal() {
                     <CardDescription>Review your proposal before sending.</CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-6">
-                  {/* Summary */}
-                  <div className="p-4 bg-slate-50 rounded-xl space-y-3">
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">Template</span>
-                      <span className="font-medium">{selectedTemplate?.name}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">Title</span>
-                      <span className="font-medium">{proposalTitle || `${selectedTemplate?.name} Proposal`}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">Recipient</span>
-                      <span className="font-medium">{recipientEmail || 'Draft (no recipient)'}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">Fields Completed</span>
-                      <span className="font-medium">{Object.keys(responses).length} / {selectedTemplate?.questions?.length || 0}</span>
-                    </div>
-                  </div>
-
-                  {/* AI Evaluation Notice */}
-                  <div className="p-4 bg-blue-50 border border-blue-100 rounded-xl">
-                    <div className="flex items-start gap-3">
-                      <Sparkles className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
-                      <div>
-                        <p className="font-medium text-blue-900">AI Evaluation</p>
-                        <p className="text-sm text-blue-700 mt-1">
-                          After submission, AI will generate a compatibility score, identify red flags, 
-                          and provide recommendations based on the information provided.
-                        </p>
+                    <div className="p-4 bg-slate-50 rounded-xl space-y-3">
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Template</span>
+                        <span className="font-medium">{selectedTemplate?.name}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Title</span>
+                        <span className="font-medium">{proposalTitle || `${selectedTemplate?.name} Proposal`}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Recipient</span>
+                        <span className="font-medium">{recipientEmail || 'Draft (no recipient)'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Fields Completed</span>
+                        <span className="font-medium">{Object.keys(responses).length} / {selectedTemplate?.questions?.length || 0}</span>
                       </div>
                     </div>
-                  </div>
 
-                  <div className="flex justify-between">
-                    <Button variant="outline" onClick={() => setStep(2)}>
-                      <ArrowLeft className="w-4 h-4 mr-2" />
-                      Back
-                    </Button>
-                    <Button 
-                      onClick={() => createProposalMutation.mutate(guestEmail)}
-                      disabled={createProposalMutation.isPending || (isGuestMode && !guestEmail)}
-                      className="bg-blue-600 hover:bg-blue-700"
-                    >
-                      {createProposalMutation.isPending ? (
-                        'Creating...'
-                      ) : recipientEmail ? (
-                        <>
-                          <Send className="w-4 h-4 mr-2" />
-                          Send Proposal
-                        </>
-                      ) : (
-                        <>
-                          <CheckCircle2 className="w-4 h-4 mr-2" />
-                          Save Draft
-                        </>
-                      )}
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
+                    <div className="p-4 bg-blue-50 border border-blue-100 rounded-xl">
+                      <div className="flex items-start gap-3">
+                        <Sparkles className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+                        <div>
+                          <p className="font-medium text-blue-900">AI Evaluation</p>
+                          <p className="text-sm text-blue-700 mt-1">
+                            After submission, AI will generate a compatibility score, identify red flags, 
+                            and provide recommendations based on the information provided.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex justify-between">
+                      <Button variant="outline" onClick={() => setStep(3)}>
+                        <ArrowLeft className="w-4 h-4 mr-2" />
+                        Back
+                      </Button>
+                      <Button 
+                        onClick={() => {
+                          if (recipientEmail && !validateAll()) {
+                            setStep(2);
+                            return;
+                          }
+                          createProposalMutation.mutate(guestEmail);
+                        }}
+                        disabled={createProposalMutation.isPending || (isGuestMode && !guestEmail)}
+                        className="bg-blue-600 hover:bg-blue-700"
+                      >
+                        {createProposalMutation.isPending ? (
+                          'Creating...'
+                        ) : recipientEmail ? (
+                          <>
+                            <Send className="w-4 h-4 mr-2" />
+                            Send Proposal
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 className="w-4 h-4 mr-2" />
+                            Save Draft
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
               )}
             </motion.div>
           )}
