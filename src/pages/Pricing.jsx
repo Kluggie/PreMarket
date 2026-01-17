@@ -66,13 +66,13 @@ export default function Pricing() {
       color: 'from-slate-500 to-slate-600',
       features: [
         { text: '3 proposals per month', included: true },
-        { text: 'Basic templates', included: true },
+        { text: 'All templates', included: true },
         { text: 'AI evaluation reports', included: true },
+        { text: 'Re-evaluations per proposal: 1', included: true },
         { text: 'Pseudonymous mode', included: true },
         { text: 'Email support', included: true },
         { text: 'Organization profiles', included: false },
-        { text: 'Custom templates', included: false },
-        { text: 'API access', included: false }
+        { text: 'Custom templates', included: false }
       ],
       cta: 'Get Started',
       popular: false
@@ -87,14 +87,14 @@ export default function Pricing() {
       features: [
         { text: 'Unlimited proposals', included: true },
         { text: 'All templates', included: true },
-        { text: 'Advanced AI evaluation', included: true },
+        { text: 'AI evaluation reports', included: true },
+        { text: 'Re-evaluations per proposal: 3', included: true },
         { text: 'Pseudonymous mode', included: true },
         { text: 'Priority support', included: true },
         { text: 'Organization profiles', included: true },
-        { text: 'Custom templates', included: false },
-        { text: 'API access', included: false }
+        { text: 'Custom templates', included: false }
       ],
-      cta: 'Start Free Trial',
+      cta: 'Start Subscription',
       popular: true
     },
     {
@@ -105,14 +105,14 @@ export default function Pricing() {
       icon: Shield,
       color: 'from-indigo-500 to-purple-600',
       features: [
-        { text: 'Unlimited proposals', included: true },
-        { text: 'All templates', included: true },
-        { text: 'Advanced AI evaluation', included: true },
+        { text: 'Custom volume', included: true },
+        { text: 'Custom templates', included: true },
+        { text: 'AI evaluation reports', included: true },
+        { text: 'Re-evaluations per proposal: 5', included: true },
         { text: 'Pseudonymous mode', included: true },
         { text: 'Dedicated support', included: true },
         { text: 'Organization profiles', included: true },
-        { text: 'Custom templates', included: true },
-        { text: 'API access', included: true }
+        { text: 'Custom security review + onboarding', included: true }
       ],
       cta: 'Contact Sales',
       popular: false
@@ -141,6 +141,9 @@ export default function Pricing() {
           </h1>
           <p className="text-lg text-slate-600 max-w-2xl mx-auto">
             Start free and scale as you grow. No hidden fees, no surprises.
+          </p>
+          <p className="text-sm text-slate-500 mt-2">
+            Upgrades apply immediately. Downgrades and cancellations take effect at the end of your billing period.
           </p>
         </div>
 
@@ -209,20 +212,36 @@ export default function Pricing() {
           <div className="space-y-4">
             {[
               {
-                q: 'What happens after my free trial?',
-                a: 'After your 14-day trial, you can choose to upgrade to a paid plan or continue with the free Starter plan with limited features.'
+                q: 'Can I change plans later?',
+                a: 'Yes, you can upgrade anytime and upgrades apply immediately. Downgrades and cancellations take effect at the end of your current billing period, so you keep access until then.'
               },
               {
-                q: 'Can I change plans later?',
-                a: 'Yes, you can upgrade or downgrade your plan at any time. Changes take effect immediately.'
+                q: 'How do re-evaluations work, and why are they limited?',
+                a: 'Recipients can verify or update information and re-run the AI evaluation. Re-evaluations are limited per proposal to keep reports trustworthy and prevent gaming the system or reverse-engineering confidential data.'
+              },
+              {
+                q: 'Does the AI report reveal confidential values?',
+                a: 'No. The AI evaluation report respects all field privacy settings you configure. Hidden or partial-visibility fields are never shown in exact detail—only match statuses, scores, and recommendations are provided.'
+              },
+              {
+                q: 'Can I cancel anytime?',
+                a: 'Yes. Cancellations take effect at the end of your current billing period. You retain full access until then, and no further charges occur after that.'
               },
               {
                 q: 'Is my data secure?',
-                a: 'Yes, all data is encrypted at rest and in transit. We never share your information with third parties.'
+                a: 'We follow industry-standard security practices. All data is transmitted over encrypted connections, and access controls are enforced throughout the platform.'
               },
               {
-                q: 'Do you offer refunds?',
-                a: 'We offer a 30-day money-back guarantee on all paid plans. No questions asked.'
+                q: 'What counts as a proposal?',
+                a: 'Each new pre-qualification proposal you create (sent or drafted) counts toward your monthly limit. Receiving proposals does not count toward your limit.'
+              },
+              {
+                q: 'Do I need a credit card for the Starter plan?',
+                a: 'No. The Starter plan is completely free and does not require payment information.'
+              },
+              {
+                q: 'What is pseudonymous mode?',
+                a: 'Pseudonymous mode lets you send proposals without revealing your identity until the recipient expresses interest. It's ideal for sensitive exploratory discussions.'
               }
             ].map((faq, i) => (
               <Card key={i} className="border-0 shadow-sm">
