@@ -45,6 +45,8 @@ export default function CreateProposal() {
   const [validationErrors, setValidationErrors] = useState({});
   const [isGuestMode, setIsGuestMode] = useState(false);
   const [guestEmail, setGuestEmail] = useState('');
+  const [presetKey, setPresetKey] = useState('');
+  const [enabledModules, setEnabledModules] = useState([]);
 
   const { data: templates = [], isLoading } = useQuery({
     queryKey: ['templates'],
@@ -91,6 +93,20 @@ export default function CreateProposal() {
 
   const allTemplates = templates;
 
+  // Check if template is Universal Enterprise Onboarding
+  const isUniversalTemplate = selectedTemplate?.slug === 'universal_enterprise_onboarding' || 
+                               selectedTemplate?.template_key === 'universal_enterprise_onboarding' ||
+                               selectedTemplate?.name === 'Universal Enterprise Onboarding';
+
+  // Preset to modules mapping
+  const getModulesForPreset = (preset) => {
+    const baseModules = ['org_profile', 'security_compliance', 'privacy_data_handling', 'operations_sla', 'implementation_it', 'legal_commercial', 'references'];
+    if (preset === 'api_data_provider') {
+      return [...baseModules, 'api_data'];
+    }
+    return baseModules;
+  };
+
   // Normalize question party for backward compatibility
   const getNormalizedParty = (question) => {
     if (question.party) {
@@ -111,14 +127,40 @@ export default function CreateProposal() {
     return 'a';
   };
 
+  // Check if question should be included based on modules
+  const shouldIncludeQuestion = (question) => {
+    // If template doesn't use modules, include all questions
+    if (!isUniversalTemplate || enabledModules.length === 0) {
+      return true;
+    }
+    
+    // If question has module_key and we have enabled modules, check if included
+    if (question.module_key && enabledModules.length > 0) {
+      return enabledModules.includes(question.module_key);
+    }
+    
+    // Questions without module_key are always included
+    return true;
+  };
+
+  // Get effective required flag based on preset
+  const getEffectiveRequired = (question) => {
+    if (isUniversalTemplate && presetKey && question.preset_required) {
+      return question.preset_required[presetKey] !== undefined 
+        ? question.preset_required[presetKey]
+        : question.required;
+    }
+    return question.required;
+  };
+
   const partyAQuestions = selectedTemplate?.questions?.filter(q => {
     const normalized = getNormalizedParty(q);
-    return normalized === 'a' || normalized === 'both';
+    return (normalized === 'a' || normalized === 'both') && shouldIncludeQuestion(q);
   }) || [];
   
   const partyBQuestions = selectedTemplate?.questions?.filter(q => {
     const normalized = getNormalizedParty(q);
-    return normalized === 'b' || normalized === 'both';
+    return (normalized === 'b' || normalized === 'both') && shouldIncludeQuestion(q);
   }) || [];
 
   // Check if value is empty based on field type
@@ -172,7 +214,8 @@ export default function CreateProposal() {
     }
     
     questionsToValidate.forEach(question => {
-      const isRequired = question.required || isConditionallyRequired(question);
+      const effectiveRequired = getEffectiveRequired(question);
+      const isRequired = effectiveRequired || isConditionallyRequired(question);
       const value = responses[question.id];
       
       if (isRequired && isValueEmpty(question, value)) {
@@ -190,7 +233,8 @@ export default function CreateProposal() {
     const allQuestions = [...partyAQuestions, ...partyBQuestions];
     
     allQuestions.forEach(question => {
-      const isRequired = question.required || isConditionallyRequired(question);
+      const effectiveRequired = getEffectiveRequired(question);
+      const isRequired = effectiveRequired || isConditionallyRequired(question);
       const value = responses[question.id];
       
       if (isRequired && isValueEmpty(question, value)) {
@@ -214,7 +258,7 @@ export default function CreateProposal() {
 
   const createProposalMutation = useMutation({
     mutationFn: async (guestEmailParam) => {
-      const proposal = await base44.entities.Proposal.create({
+      const proposalData = {
         title: proposalTitle || `${selectedTemplate.name} Proposal`,
         template_id: selectedTemplate.id,
         template_name: selectedTemplate.name,
@@ -224,7 +268,15 @@ export default function CreateProposal() {
         party_b_email: recipientEmail || null,
         disclosure_mode: responses['disclosure_mode'] || 'open',
         sent_at: recipientEmail ? new Date().toISOString() : null
-      });
+      };
+
+      // Add preset fields if Universal Enterprise Onboarding
+      if (isUniversalTemplate && presetKey) {
+        proposalData.preset_key = presetKey;
+        proposalData.enabled_modules = enabledModules;
+      }
+
+      const proposal = await base44.entities.Proposal.create(proposalData);
 
       if (isGuestMode && guestEmailParam) {
         const magicToken = Math.random().toString(36).substring(2) + Date.now().toString(36);
@@ -295,6 +347,7 @@ export default function CreateProposal() {
     const visibility = visibilitySettings[question.id] || 'full';
     const hasError = validationErrors[question.id];
     const isConditionalReq = isConditionallyRequired(question);
+    const effectiveRequired = getEffectiveRequired(question);
 
     return (
       <div key={question.id} className="space-y-2 p-4 bg-white border rounded-xl">
@@ -302,7 +355,7 @@ export default function CreateProposal() {
           <div className="flex-1">
             <Label className="text-sm font-medium text-slate-900">
               {question.label}
-              {(question.required || isConditionalReq) && <span className="text-red-500 ml-1">*</span>}
+              {(effectiveRequired || isConditionalReq) && <span className="text-red-500 ml-1">*</span>}
             </Label>
             {question.description && (
               <p className="text-sm text-slate-600 mt-1">{question.description}</p>
@@ -555,9 +608,53 @@ export default function CreateProposal() {
                     </p>
                   </div>
 
+                  {/* Universal Enterprise Onboarding Preset Selector */}
+                  {isUniversalTemplate && (
+                    <div className="space-y-3 p-4 border-2 border-blue-200 bg-blue-50 rounded-xl">
+                      <Label className="text-sm font-semibold text-blue-900">
+                        Onboarding Type *
+                      </Label>
+                      <RadioGroup value={presetKey} onValueChange={(value) => {
+                        setPresetKey(value);
+                        setEnabledModules(getModulesForPreset(value));
+                      }}>
+                        <div className="space-y-2">
+                          <div className="flex items-center space-x-2">
+                            <RadioGroupItem value="vendor_prequal" id="preset-vendor" />
+                            <Label htmlFor="preset-vendor" className="font-normal cursor-pointer">
+                              Vendor Pre-Qualification
+                            </Label>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <RadioGroupItem value="saas_procurement" id="preset-saas" />
+                            <Label htmlFor="preset-saas" className="font-normal cursor-pointer">
+                              SaaS Procurement
+                            </Label>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <RadioGroupItem value="private_rfp_prequal" id="preset-rfp" />
+                            <Label htmlFor="preset-rfp" className="font-normal cursor-pointer">
+                              Private RFP Pre-Qualification
+                            </Label>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <RadioGroupItem value="api_data_provider" id="preset-api" />
+                            <Label htmlFor="preset-api" className="font-normal cursor-pointer">
+                              API / Data Provider Matching
+                            </Label>
+                          </div>
+                        </div>
+                      </RadioGroup>
+                      <p className="text-xs text-blue-700 mt-2">
+                        This determines which questions you'll see in the next steps.
+                      </p>
+                    </div>
+                  )}
+
                   <div className="flex justify-end mt-6">
                     <Button 
                       onClick={() => setStep(2)}
+                      disabled={isUniversalTemplate && !presetKey}
                       className="bg-blue-600 hover:bg-blue-700"
                     >
                       Continue

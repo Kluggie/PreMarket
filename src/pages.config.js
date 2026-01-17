@@ -12,11 +12,11 @@ import Profile from './pages/Profile';
 import ProposalDetail from './pages/ProposalDetail';
 import Proposals from './pages/Proposals';
 import Settings from './pages/Settings';
+import TemplateBuilder from './pages/TemplateBuilder';
 import TemplateDedupe from './pages/TemplateDedupe';
 import Templates from './pages/Templates';
 import Terms from './pages/Terms';
 import Verification from './pages/Verification';
-import TemplateBuilder from './pages/TemplateBuilder';
 import __Layout from './Layout.jsx';
 
 
@@ -35,11 +35,11 @@ export const PAGES = {
     "ProposalDetail": ProposalDetail,
     "Proposals": Proposals,
     "Settings": Settings,
+    "TemplateBuilder": TemplateBuilder,
     "TemplateDedupe": TemplateDedupe,
     "Templates": Templates,
     "Terms": Terms,
     "Verification": Verification,
-    "TemplateBuilder": TemplateBuilder,
 }
 
 export const pagesConfig = {
