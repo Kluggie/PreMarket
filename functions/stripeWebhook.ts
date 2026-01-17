@@ -47,9 +47,14 @@ Deno.serve(async (req) => {
 
       case 'customer.subscription.updated': {
         const subscription = event.data.object;
-        const userId = subscription.metadata.user_id;
-
-        if (userId) {
+        
+        // Look up user by customer ID
+        const users = await base44.asServiceRole.entities.User.filter({ 
+          stripe_customer_id: subscription.customer 
+        });
+        
+        if (users.length > 0) {
+          const user = users[0];
           const updates = {
             subscription_status: subscription.status,
             current_period_end: new Date(subscription.current_period_end * 1000).toISOString(),
@@ -61,17 +66,22 @@ Deno.serve(async (req) => {
             updates.plan_tier = 'starter';
           }
 
-          await base44.asServiceRole.entities.User.update(userId, updates);
+          await base44.asServiceRole.entities.User.update(user.id, updates);
         }
         break;
       }
 
       case 'customer.subscription.deleted': {
         const subscription = event.data.object;
-        const userId = subscription.metadata.user_id;
-
-        if (userId) {
-          await base44.asServiceRole.entities.User.update(userId, {
+        
+        // Look up user by customer ID
+        const users = await base44.asServiceRole.entities.User.filter({ 
+          stripe_customer_id: subscription.customer 
+        });
+        
+        if (users.length > 0) {
+          const user = users[0];
+          await base44.asServiceRole.entities.User.update(user.id, {
             plan_tier: 'starter',
             subscription_status: 'canceled',
             cancel_at_period_end: false
@@ -82,12 +92,17 @@ Deno.serve(async (req) => {
 
       case 'invoice.payment_succeeded': {
         const invoice = event.data.object;
-        if (invoice.subscription) {
+        if (invoice.subscription && invoice.customer) {
           const subscription = await stripe.subscriptions.retrieve(invoice.subscription);
-          const userId = subscription.metadata.user_id;
-
-          if (userId) {
-            await base44.asServiceRole.entities.User.update(userId, {
+          
+          // Look up user by customer ID
+          const users = await base44.asServiceRole.entities.User.filter({ 
+            stripe_customer_id: invoice.customer 
+          });
+          
+          if (users.length > 0) {
+            const user = users[0];
+            await base44.asServiceRole.entities.User.update(user.id, {
               subscription_status: 'active',
               last_payment_at: new Date().toISOString(),
               current_period_end: new Date(subscription.current_period_end * 1000).toISOString()
@@ -99,12 +114,15 @@ Deno.serve(async (req) => {
 
       case 'invoice.payment_failed': {
         const invoice = event.data.object;
-        if (invoice.subscription) {
-          const subscription = await stripe.subscriptions.retrieve(invoice.subscription);
-          const userId = subscription.metadata.user_id;
-
-          if (userId) {
-            await base44.asServiceRole.entities.User.update(userId, {
+        if (invoice.subscription && invoice.customer) {
+          // Look up user by customer ID
+          const users = await base44.asServiceRole.entities.User.filter({ 
+            stripe_customer_id: invoice.customer 
+          });
+          
+          if (users.length > 0) {
+            const user = users[0];
+            await base44.asServiceRole.entities.User.update(user.id, {
               subscription_status: 'past_due'
             });
           }
