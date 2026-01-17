@@ -16,6 +16,7 @@ import TemplateDedupe from './pages/TemplateDedupe';
 import Templates from './pages/Templates';
 import Terms from './pages/Terms';
 import Verification from './pages/Verification';
+import TemplateBuilder from './pages/TemplateBuilder';
 import __Layout from './Layout.jsx';
 
 
@@ -38,6 +39,7 @@ export const PAGES = {
     "Templates": Templates,
     "Terms": Terms,
     "Verification": Verification,
+    "TemplateBuilder": TemplateBuilder,
 }
 
 export const pagesConfig = {

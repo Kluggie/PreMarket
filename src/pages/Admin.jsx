@@ -336,10 +336,12 @@ export default function Admin() {
               <CardHeader>
                 <div className="flex items-center justify-between">
                   <CardTitle>Template Management</CardTitle>
-                  <Button>
-                    <FileText className="w-4 h-4 mr-2" />
-                    Create Template
-                  </Button>
+                  <Link to={createPageUrl('TemplateBuilder')}>
+                    <Button>
+                      <FileText className="w-4 h-4 mr-2" />
+                      Create Template
+                    </Button>
+                  </Link>
                 </div>
               </CardHeader>
               <CardContent>
@@ -394,9 +396,14 @@ export default function Admin() {
                             {t.questions?.length || 0} questions
                           </TableCell>
                           <TableCell>
-                            <Link to={createPageUrl(`TemplateDedupe`)}>
-                              <Button variant="ghost" size="sm">Manage</Button>
-                            </Link>
+                            <div className="flex gap-2">
+                              <Link to={createPageUrl(`TemplateBuilder?id=${t.id}`)}>
+                                <Button variant="ghost" size="sm">Edit</Button>
+                              </Link>
+                              <Link to={createPageUrl(`TemplateDedupe`)}>
+                                <Button variant="ghost" size="sm">Manage</Button>
+                              </Link>
+                            </div>
                           </TableCell>
                         </TableRow>
                       ))}
