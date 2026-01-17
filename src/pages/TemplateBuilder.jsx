@@ -351,12 +351,23 @@ export default function TemplateBuilder() {
                 <Button 
                   variant="outline" 
                   onClick={async () => {
+                    if (!confirm('This will update module_key on ALL questions and fix missing options. Continue?')) {
+                      return;
+                    }
                     try {
-                      await base44.functions.invoke('fixUniversalTemplateModules', {});
+                      const result = await base44.functions.invoke('fixUniversalTemplateModules', {});
+                      console.log('Auto-tag result:', result);
+                      
+                      // Invalidate all template queries
                       queryClient.invalidateQueries(['template']);
-                      alert('Module keys auto-tagged successfully!');
+                      queryClient.invalidateQueries(['templates']);
+                      queryClient.invalidateQueries(['admin', 'templates']);
+                      
+                      // Reload the page to fetch fresh data
+                      window.location.reload();
                     } catch (error) {
                       alert('Error: ' + error.message);
+                      console.error('Auto-tag error:', error);
                     }
                   }}
                   className="border-purple-200 text-purple-700 hover:bg-purple-50"

@@ -53,9 +53,18 @@ export default function CreateProposal() {
     queryFn: async () => {
       const all = await base44.entities.Template.list();
       const visible = all.filter(t => t.status === 'published' || t.status === 'active');
+      
+      // For Universal template, always get the most recently updated one
       const byKey = visible.reduce((acc, t) => {
         const key = t.template_key || t.slug;
-        if (!acc[key] || (t.questions?.length || 0) > (acc[key].questions?.length || 0)) {
+        if (!acc[key]) {
+          acc[key] = t;
+        } else if (key === 'universal_enterprise_onboarding') {
+          // For universal, pick the one with most recent update
+          if (new Date(t.updated_date || t.created_date) > new Date(acc[key].updated_date || acc[key].created_date)) {
+            acc[key] = t;
+          }
+        } else if ((t.questions?.length || 0) > (acc[key].questions?.length || 0)) {
           acc[key] = t;
         }
         return acc;
@@ -135,26 +144,20 @@ export default function CreateProposal() {
     }
     
     // Universal template but no preset selected yet: exclude all
-    if (enabledModules.length === 0) {
+    if (!presetKey || enabledModules.length === 0) {
       return false;
     }
     
-    // Question has module_key: check if it's in enabled modules
+    // Question has module_key: MUST be in enabled modules
     if (question.module_key) {
       const included = enabledModules.includes(question.module_key);
-      if (process.env.NODE_ENV === 'development') {
-        if (!included) {
-          console.log(`[Filter] Excluding question ${question.id} (module: ${question.module_key})`);
-        }
-      }
+      console.log(`[Filter] Question "${question.label}" (${question.id}) - module: ${question.module_key} - included: ${included}`);
       return included;
     }
     
-    // Question missing module_key: treat as core (include), but warn in dev
-    if (process.env.NODE_ENV === 'development') {
-      console.warn(`[Filter] Question ${question.id} missing module_key, treating as core`);
-    }
-    return true;
+    // Question missing module_key: EXCLUDE (should not happen after auto-tag)
+    console.warn(`[Filter] Question "${question.label}" (${question.id}) has NO module_key - EXCLUDING`);
+    return false;
   };
 
   // Get effective required flag based on preset
@@ -177,17 +180,21 @@ export default function CreateProposal() {
     return (normalized === 'b' || normalized === 'both') && shouldIncludeQuestion(q);
   }) || [];
 
-  // Dev diagnostics
-  if (process.env.NODE_ENV === 'development' && isUniversalTemplate && selectedTemplate) {
+  // Diagnostics for Universal Template
+  if (isUniversalTemplate && selectedTemplate) {
     const moduleStats = {};
     selectedTemplate.questions?.forEach(q => {
-      const key = q.module_key || 'no_module_key';
+      const key = q.module_key || 'NO_MODULE_KEY';
       moduleStats[key] = (moduleStats[key] || 0) + 1;
     });
-    console.log('[Universal Template] Preset:', presetKey);
-    console.log('[Universal Template] Enabled modules:', enabledModules);
-    console.log('[Universal Template] Question count by module:', moduleStats);
-    console.log('[Universal Template] Rendered - Party A:', partyAQuestions.length, 'Party B:', partyBQuestions.length);
+    console.log('=== UNIVERSAL TEMPLATE DEBUG ===');
+    console.log('Selected Preset:', presetKey);
+    console.log('Enabled Modules:', enabledModules);
+    console.log('Total Questions:', selectedTemplate.questions?.length || 0);
+    console.log('Questions by Module:', moduleStats);
+    console.log('Filtered Party A Questions:', partyAQuestions.length);
+    console.log('Filtered Party B Questions:', partyBQuestions.length);
+    console.log('=================================');
   }
 
   // Check if value is empty based on field type
