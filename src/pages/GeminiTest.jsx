@@ -1,13 +1,34 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Loader2, CheckCircle2, XCircle } from 'lucide-react';
+import { Loader2, CheckCircle2, XCircle, RefreshCw } from 'lucide-react';
 
 export default function GeminiTest() {
+    const [user, setUser] = useState(null);
     const [loading, setLoading] = useState(false);
     const [result, setResult] = useState(null);
+    const [autoRan, setAutoRan] = useState(false);
+
+    useEffect(() => {
+        const loadUser = async () => {
+            try {
+                const userData = await base44.auth.me();
+                setUser(userData);
+            } catch (e) {
+                setUser(null);
+            }
+        };
+        loadUser();
+    }, []);
+
+    useEffect(() => {
+        if (user?.role === 'admin' && !autoRan && !loading) {
+            setAutoRan(true);
+            runTest();
+        }
+    }, [user, autoRan, loading]);
 
     const runTest = async () => {
         setLoading(true);
@@ -19,12 +40,40 @@ export default function GeminiTest() {
         } catch (error) {
             setResult({
                 ok: false,
-                error: error.message || 'Network error'
+                stage: 'network_error',
+                text: null,
+                status: null,
+                error: error.message || 'Network error',
+                raw: {
+                    message: error.message,
+                    stack: error.stack
+                }
             });
         } finally {
             setLoading(false);
         }
     };
+
+    if (!user) {
+        return (
+            <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+                <Loader2 className="w-8 h-8 animate-spin text-slate-400" />
+            </div>
+        );
+    }
+
+    if (user.role !== 'admin') {
+        return (
+            <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+                <Card className="max-w-md">
+                    <CardHeader>
+                        <CardTitle className="text-red-600">Access Denied</CardTitle>
+                        <CardDescription>Admin access required</CardDescription>
+                    </CardHeader>
+                </Card>
+            </div>
+        );
+    }
 
     return (
         <div className="min-h-screen bg-slate-50 p-6">
@@ -51,72 +100,88 @@ export default function GeminiTest() {
                             </div>
                         </div>
 
-                        <Button 
-                            onClick={runTest} 
-                            disabled={loading}
-                            className="w-full"
-                        >
-                            {loading ? (
-                                <>
-                                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                    Testing Integration...
-                                </>
-                            ) : (
-                                'Run Gemini Test'
+                        <div className="flex gap-2">
+                            <Button 
+                                onClick={runTest} 
+                                disabled={loading}
+                                className="flex-1"
+                            >
+                                {loading ? (
+                                    <>
+                                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                        Testing...
+                                    </>
+                                ) : (
+                                    <>
+                                        <RefreshCw className="w-4 h-4 mr-2" />
+                                        Run Test
+                                    </>
+                                )}
+                            </Button>
+                            {result && (
+                                <Button 
+                                    onClick={() => setResult(null)} 
+                                    variant="outline"
+                                >
+                                    Clear
+                                </Button>
                             )}
-                        </Button>
+                        </div>
 
                         {result && (
-                            <Alert className={result.ok ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'}>
-                                <div className="flex items-start gap-3">
-                                    {result.ok ? (
-                                        <CheckCircle2 className="w-5 h-5 text-green-600 mt-0.5" />
-                                    ) : (
-                                        <XCircle className="w-5 h-5 text-red-600 mt-0.5" />
-                                    )}
-                                    <div className="flex-1 space-y-2">
-                                        <div className="font-semibold">
-                                            {result.ok ? 'Success' : 'Error'}
-                                        </div>
+                            <div className="space-y-4">
+                                <Alert className={result.ok ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'}>
+                                    <div className="flex items-start gap-3">
                                         {result.ok ? (
-                                            <div className="space-y-2">
+                                            <CheckCircle2 className="w-5 h-5 text-green-600 mt-0.5" />
+                                        ) : (
+                                            <XCircle className="w-5 h-5 text-red-600 mt-0.5" />
+                                        )}
+                                        <div className="flex-1 space-y-2">
+                                            <div className="font-semibold">
+                                                {result.ok ? 'Success' : 'Error'}
+                                            </div>
+                                            
+                                            <div className="grid grid-cols-2 gap-2 text-xs">
+                                                <div>
+                                                    <span className="text-slate-500">Stage:</span>{' '}
+                                                    <span className="font-mono">{result.stage || 'unknown'}</span>
+                                                </div>
+                                                <div>
+                                                    <span className="text-slate-500">Status:</span>{' '}
+                                                    <span className="font-mono">{result.status || 'null'}</span>
+                                                </div>
+                                            </div>
+
+                                            {result.ok && result.text && (
                                                 <div>
                                                     <div className="text-sm text-slate-600 mb-1">Response Text:</div>
                                                     <div className="bg-white rounded p-3 font-mono text-sm border">
                                                         {result.text}
                                                     </div>
                                                 </div>
-                                                {result.raw && (
-                                                    <details className="text-xs">
-                                                        <summary className="cursor-pointer text-slate-600 hover:text-slate-900">
-                                                            View raw response
-                                                        </summary>
-                                                        <pre className="mt-2 bg-white rounded p-3 overflow-auto border max-h-64">
-                                                            {JSON.stringify(result.raw, null, 2)}
-                                                        </pre>
-                                                    </details>
-                                                )}
-                                            </div>
-                                        ) : (
-                                            <div className="space-y-2">
+                                            )}
+                                            
+                                            {!result.ok && result.error && (
                                                 <AlertDescription className="text-red-800">
                                                     {result.error}
                                                 </AlertDescription>
-                                                {result.raw && (
-                                                    <details className="text-xs">
-                                                        <summary className="cursor-pointer text-slate-600 hover:text-slate-900">
-                                                            View error details
-                                                        </summary>
-                                                        <pre className="mt-2 bg-white rounded p-3 overflow-auto border max-h-64">
-                                                            {JSON.stringify(result.raw, null, 2)}
-                                                        </pre>
-                                                    </details>
-                                                )}
-                                            </div>
-                                        )}
+                                            )}
+                                        </div>
                                     </div>
-                                </div>
-                            </Alert>
+                                </Alert>
+
+                                <Card>
+                                    <CardHeader>
+                                        <CardTitle className="text-sm">Full JSON Response</CardTitle>
+                                    </CardHeader>
+                                    <CardContent>
+                                        <pre className="text-xs bg-slate-900 text-slate-100 rounded p-4 overflow-auto max-h-96">
+                                            {JSON.stringify(result, null, 2)}
+                                        </pre>
+                                    </CardContent>
+                                </Card>
+                            </div>
                         )}
                     </CardContent>
                 </Card>
