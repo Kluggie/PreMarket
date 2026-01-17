@@ -135,10 +135,13 @@ export default function TemplateBuilder() {
   ).length || 0;
 
   const handleSaveDraft = async () => {
-    await saveTemplateMutation.mutateAsync({
+    console.log('[Save Draft] Saving template with', template.questions?.length, 'questions');
+    const result = await saveTemplateMutation.mutateAsync({
       ...template,
       status: 'hidden'
     });
+    console.log('[Save Draft] Saved successfully');
+    return result;
   };
 
   const handlePublish = () => {
@@ -152,10 +155,26 @@ export default function TemplateBuilder() {
   };
 
   const confirmPublish = async () => {
+    console.log('[Publish] Publishing template with', template.questions?.length, 'questions');
+    
+    // Log a sample question to verify Advanced fields are present
+    if (template.questions?.length > 0) {
+      const sample = template.questions[0];
+      console.log('[Publish] Sample question:', {
+        id: sample.id,
+        label: sample.label,
+        module_key: sample.module_key,
+        supports_visibility: sample.supports_visibility,
+        preset_required: sample.preset_required
+      });
+    }
+
     await saveTemplateMutation.mutateAsync({
       ...template,
       status: 'active'
     });
+    
+    console.log('[Publish] Published successfully');
     setShowPublishDialog(false);
     navigate(createPageUrl('Admin'));
   };
@@ -172,6 +191,7 @@ export default function TemplateBuilder() {
       field_type: 'text',
       allowed_values: [],
       required: false,
+      supports_visibility: false,
       visibility_default: 'full',
       evidence_requirement: 'none',
       verifiability_level: 'self_declared',
@@ -189,7 +209,8 @@ export default function TemplateBuilder() {
       ...question,
       module_key: question.module_key || '',
       preset_required: question.preset_required || {},
-      preset_visible: question.preset_visible || {}
+      preset_visible: question.preset_visible || {},
+      supports_visibility: question.supports_visibility || false
     });
     setShowQuestionEditor(true);
     setShowAdvanced(false);
@@ -202,14 +223,30 @@ export default function TemplateBuilder() {
       return;
     }
 
-    const existingIdx = template.questions.findIndex(q => q.id === editingQuestion.id);
+    // Ensure all Advanced fields are explicitly included
+    const questionToSave = {
+      ...editingQuestion,
+      module_key: editingQuestion.module_key || '',
+      preset_required: editingQuestion.preset_required || {},
+      preset_visible: editingQuestion.preset_visible || {},
+      supports_visibility: editingQuestion.supports_visibility || false
+    };
+
+    const existingIdx = template.questions.findIndex(q => q.id === questionToSave.id);
     if (existingIdx >= 0) {
       const updated = [...template.questions];
-      updated[existingIdx] = editingQuestion;
+      updated[existingIdx] = questionToSave;
       setTemplate({ ...template, questions: updated });
     } else {
-      setTemplate({ ...template, questions: [...template.questions, editingQuestion] });
+      setTemplate({ ...template, questions: [...template.questions, questionToSave] });
     }
+
+    console.log('[Save Question] Saved with Advanced fields:', {
+      id: questionToSave.id,
+      module_key: questionToSave.module_key,
+      supports_visibility: questionToSave.supports_visibility,
+      preset_required: questionToSave.preset_required
+    });
 
     setShowQuestionEditor(false);
     setEditingQuestion(null);
