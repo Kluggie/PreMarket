@@ -575,7 +575,7 @@ export default function ProposalDetail() {
 
           {/* AI Report Tab */}
           <TabsContent value="evaluation">
-            {!latestReport ? (
+            {!latestReport && (
               <Card className="border-0 shadow-sm">
                 <CardContent className="py-16 text-center">
                   <Sparkles className="w-12 h-12 text-slate-300 mx-auto mb-4" />
@@ -594,7 +594,9 @@ export default function ProposalDetail() {
                   )}
                 </CardContent>
               </Card>
-            ) : latestReport.output_report_json ? (
+            )}
+            
+            {latestReport && latestReport.output_report_json && (
               <div className="space-y-6">
                 {/* Quality Metrics */}
                 <Card className="border-0 shadow-sm">
@@ -748,10 +750,25 @@ export default function ProposalDetail() {
                 )}
               </div>
             )}
-            
-            {/* Legacy Evaluation Display */}
-            {!latestReport && latestEvaluation && (
-              <div className="space-y-6">
+
+            {/* Failed Evaluation Display */}
+            {latestReport && !latestReport.output_report_json && (
+              <Card className="border-0 shadow-sm">
+                <CardContent className="py-16 text-center">
+                  <XCircle className="w-12 h-12 text-red-300 mx-auto mb-4" />
+                  <h3 className="text-lg font-semibold text-slate-900 mb-2">Evaluation Failed</h3>
+                  <p className="text-slate-500 mb-4">{latestReport.error_message || 'Unknown error'}</p>
+                  <Button 
+                    onClick={() => runNewEvaluationMutation.mutate()}
+                    disabled={runNewEvaluationMutation.isPending}
+                    variant="outline"
+                  >
+                    <RefreshCw className="w-4 h-4 mr-2" />
+                    Retry Evaluation
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
                 {/* Summary */}
                 <Card className="border-0 shadow-sm">
                   <CardHeader>
@@ -841,25 +858,6 @@ export default function ProposalDetail() {
                   </Card>
                 )}
               </div>
-            )}
-
-            {/* Failed Evaluation Display */}
-            {latestReport && !latestReport.output_report_json && (
-              <Card className="border-0 shadow-sm">
-                <CardContent className="py-16 text-center">
-                  <XCircle className="w-12 h-12 text-red-300 mx-auto mb-4" />
-                  <h3 className="text-lg font-semibold text-slate-900 mb-2">Evaluation Failed</h3>
-                  <p className="text-slate-500 mb-4">{latestReport.error_message || 'Unknown error'}</p>
-                  <Button 
-                    onClick={() => runNewEvaluationMutation.mutate()}
-                    disabled={runNewEvaluationMutation.isPending}
-                    variant="outline"
-                  >
-                    <RefreshCw className="w-4 h-4 mr-2" />
-                    Retry Evaluation
-                  </Button>
-                </CardContent>
-              </Card>
             )}
           </TabsContent>
 
