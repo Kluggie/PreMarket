@@ -747,7 +747,10 @@ export default function ProposalDetail() {
                   </Card>
                 )}
               </div>
-            ) : (
+            )}
+            
+            {/* Legacy Evaluation Display */}
+            {!latestReport && latestEvaluation && (
               <div className="space-y-6">
                 {/* Summary */}
                 <Card className="border-0 shadow-sm">
@@ -838,7 +841,10 @@ export default function ProposalDetail() {
                   </Card>
                 )}
               </div>
-            ) : (
+            )}
+
+            {/* Failed Evaluation Display */}
+            {latestReport && !latestReport.output_report_json && (
               <Card className="border-0 shadow-sm">
                 <CardContent className="py-16 text-center">
                   <XCircle className="w-12 h-12 text-red-300 mx-auto mb-4" />
