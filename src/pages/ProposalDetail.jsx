@@ -68,6 +68,12 @@ export default function ProposalDetail() {
     enabled: !!proposalId
   });
 
+  const { data: evaluationReports = [] } = useQuery({
+    queryKey: ['evaluationReports', proposalId],
+    queryFn: () => base44.entities.EvaluationReport.filter({ proposal_id: proposalId }, '-created_date'),
+    enabled: !!proposalId
+  });
+
   const { data: verifications = [] } = useQuery({
     queryKey: ['verifications', proposalId],
     queryFn: () => base44.entities.VerificationItem.filter({ proposal_id: proposalId }),
@@ -89,8 +95,20 @@ export default function ProposalDetail() {
   const isPartyA = proposal?.party_a_email === user?.email;
   const isPartyB = proposal?.party_b_email === user?.email;
   const latestEvaluation = evaluations[0];
+  const latestReport = evaluationReports.find(r => r.status === 'succeeded');
 
-  // Run AI Evaluation
+  // Run New Evaluation (Vertex Gemini)
+  const runNewEvaluationMutation = useMutation({
+    mutationFn: async () => {
+      const response = await base44.functions.invoke('EvaluateProposal', { proposal_id: proposalId });
+      return response.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries(['evaluationReports', proposalId]);
+    }
+  });
+
+  // Run AI Evaluation (Legacy)
   const runEvaluationMutation = useMutation({
     mutationFn: async () => {
       // Create evaluation run
@@ -324,16 +342,14 @@ export default function ProposalDetail() {
                 <FileText className="w-4 h-4 mr-2" />
                 Download PDF
               </Button>
-              {!latestEvaluation && (
-                <Button 
-                  onClick={() => runEvaluationMutation.mutate()}
-                  disabled={runEvaluationMutation.isPending}
-                  className="bg-blue-600 hover:bg-blue-700"
-                >
-                  <Sparkles className="w-4 h-4 mr-2" />
-                  {runEvaluationMutation.isPending ? 'Evaluating...' : 'Run AI Evaluation'}
-                </Button>
-              )}
+              <Button 
+                onClick={() => runNewEvaluationMutation.mutate()}
+                disabled={runNewEvaluationMutation.isPending}
+                className="bg-blue-600 hover:bg-blue-700"
+              >
+                <Sparkles className="w-4 h-4 mr-2" />
+                {runNewEvaluationMutation.isPending ? 'Evaluating...' : 'Run AI Evaluation'}
+              </Button>
             </div>
           </div>
         </div>
@@ -559,22 +575,178 @@ export default function ProposalDetail() {
 
           {/* AI Report Tab */}
           <TabsContent value="evaluation">
-            {!latestEvaluation ? (
+            {!latestReport ? (
               <Card className="border-0 shadow-sm">
                 <CardContent className="py-16 text-center">
                   <Sparkles className="w-12 h-12 text-slate-300 mx-auto mb-4" />
                   <h3 className="text-lg font-semibold text-slate-900 mb-2">No evaluation yet</h3>
-                  <p className="text-slate-500 mb-6">Run an AI evaluation to get compatibility analysis.</p>
+                  <p className="text-slate-500 mb-6">Run an AI evaluation to get comprehensive compatibility analysis.</p>
                   <Button 
-                    onClick={() => runEvaluationMutation.mutate()}
-                    disabled={runEvaluationMutation.isPending}
+                    onClick={() => runNewEvaluationMutation.mutate()}
+                    disabled={runNewEvaluationMutation.isPending}
                     className="bg-blue-600 hover:bg-blue-700"
                   >
                     <Sparkles className="w-4 h-4 mr-2" />
-                    Run Evaluation
+                    {runNewEvaluationMutation.isPending ? 'Evaluating...' : 'Run Evaluation'}
                   </Button>
+                  {runNewEvaluationMutation.isPending && (
+                    <p className="text-sm text-slate-500 mt-4">This may take 10-30 seconds...</p>
+                  )}
                 </CardContent>
               </Card>
+            ) : latestReport.output_report_json ? (
+              <div className="space-y-6">
+                {/* Quality Metrics */}
+                <Card className="border-0 shadow-sm">
+                  <CardHeader>
+                    <CardTitle>Quality Assessment</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <p className="text-sm text-slate-500">Party A Completeness</p>
+                        <p className="text-2xl font-bold">{Math.round((latestReport.output_report_json.quality?.completeness_a || 0) * 100)}%</p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-slate-500">Party B Completeness</p>
+                        <p className="text-2xl font-bold">{Math.round((latestReport.output_report_json.quality?.completeness_b || 0) * 100)}%</p>
+                      </div>
+                      <div className="col-span-2">
+                        <p className="text-sm text-slate-500 mb-2">Overall Confidence</p>
+                        <Progress value={(latestReport.output_report_json.quality?.confidence_overall || 0) * 100} className="h-3" />
+                        <p className="text-xs text-slate-500 mt-1">
+                          {latestReport.output_report_json.quality?.confidence_reasoning?.join(' • ')}
+                        </p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* Summary */}
+                <Card className="border-0 shadow-sm">
+                  <CardHeader>
+                    <CardTitle>Executive Summary</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="flex items-center gap-4">
+                      <Badge className={
+                        latestReport.output_report_json.summary?.fit_level === 'high' ? 'bg-green-600' :
+                        latestReport.output_report_json.summary?.fit_level === 'medium' ? 'bg-amber-600' :
+                        'bg-slate-600'
+                      }>
+                        {latestReport.output_report_json.summary?.fit_level || 'unknown'} fit
+                      </Badge>
+                    </div>
+                    
+                    {latestReport.output_report_json.summary?.top_fit_reasons?.length > 0 && (
+                      <div>
+                        <p className="font-medium mb-2">Top Fit Reasons</p>
+                        <ul className="space-y-1">
+                          {latestReport.output_report_json.summary.top_fit_reasons.map((reason, i) => (
+                            <li key={i} className="text-sm text-slate-600 flex items-start gap-2">
+                              <CheckCircle2 className="w-4 h-4 text-green-600 flex-shrink-0 mt-0.5" />
+                              {reason.text}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {latestReport.output_report_json.summary?.top_blockers?.length > 0 && (
+                      <div>
+                        <p className="font-medium mb-2">Top Blockers</p>
+                        <ul className="space-y-1">
+                          {latestReport.output_report_json.summary.top_blockers.map((blocker, i) => (
+                            <li key={i} className="text-sm text-red-600 flex items-start gap-2">
+                              <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                              {blocker.text}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {latestReport.output_report_json.summary?.next_actions?.length > 0 && (
+                      <div>
+                        <p className="font-medium mb-2">Next Actions</p>
+                        <ul className="space-y-1">
+                          {latestReport.output_report_json.summary.next_actions.map((action, i) => (
+                            <li key={i} className="text-sm text-blue-600 flex items-start gap-2">
+                              <ChevronRight className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                              {action}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                {/* Flags */}
+                {latestReport.output_report_json.flags?.length > 0 && (
+                  <Card className="border-0 shadow-sm">
+                    <CardHeader>
+                      <CardTitle>Flags & Risks</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-3">
+                        {latestReport.output_report_json.flags.map((flag, i) => (
+                          <div key={i} className={`p-3 rounded-lg ${
+                            flag.severity === 'high' ? 'bg-red-50' :
+                            flag.severity === 'med' ? 'bg-amber-50' :
+                            'bg-slate-50'
+                          }`}>
+                            <div className="flex items-start gap-2">
+                              <Badge className={
+                                flag.severity === 'high' ? 'bg-red-600' :
+                                flag.severity === 'med' ? 'bg-amber-600' :
+                                'bg-slate-600'
+                              }>
+                                {flag.severity}
+                              </Badge>
+                              <div>
+                                <p className="font-medium">{flag.title}</p>
+                                <p className="text-sm text-slate-600">{flag.detail}</p>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* Follow-up Questions */}
+                {latestReport.output_report_json.followup_questions?.length > 0 && (
+                  <Card className="border-0 shadow-sm">
+                    <CardHeader>
+                      <CardTitle>Recommended Follow-up Questions</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-3">
+                        {latestReport.output_report_json.followup_questions.map((q, i) => (
+                          <div key={i} className="p-3 bg-blue-50 rounded-lg">
+                            <div className="flex items-start gap-2">
+                              <Badge className={
+                                q.priority === 'high' ? 'bg-red-600' :
+                                q.priority === 'med' ? 'bg-amber-600' :
+                                'bg-slate-600'
+                              }>
+                                {q.priority}
+                              </Badge>
+                              <div>
+                                <p className="font-medium">{q.question_text}</p>
+                                <p className="text-sm text-slate-600 mt-1">{q.why_this_matters}</p>
+                                <Badge variant="outline" className="text-xs mt-2">To: Party {q.to_party.toUpperCase()}</Badge>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
             ) : (
               <div className="space-y-6">
                 {/* Summary */}
@@ -666,6 +838,22 @@ export default function ProposalDetail() {
                   </Card>
                 )}
               </div>
+            ) : (
+              <Card className="border-0 shadow-sm">
+                <CardContent className="py-16 text-center">
+                  <XCircle className="w-12 h-12 text-red-300 mx-auto mb-4" />
+                  <h3 className="text-lg font-semibold text-slate-900 mb-2">Evaluation Failed</h3>
+                  <p className="text-slate-500 mb-4">{latestReport.error_message || 'Unknown error'}</p>
+                  <Button 
+                    onClick={() => runNewEvaluationMutation.mutate()}
+                    disabled={runNewEvaluationMutation.isPending}
+                    variant="outline"
+                  >
+                    <RefreshCw className="w-4 h-4 mr-2" />
+                    Retry Evaluation
+                  </Button>
+                </CardContent>
+              </Card>
             )}
           </TabsContent>
 
