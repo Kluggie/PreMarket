@@ -45,12 +45,20 @@ export default function GeminiTest() {
             });
             setResult(data);
         } catch (error) {
+            const status = error.response?.status;
+            const errorMessage = status === 401 
+                ? 'Authentication failed - please refresh the page and try again'
+                : status === 403
+                ? 'Access denied - admin privileges required'
+                : error.message || 'Network error';
+            
             setResult({
                 ok: false,
                 outputText: null,
                 raw: {
-                    error: error.message || 'Network error',
-                    stack: error.stack
+                    error: errorMessage,
+                    status: status,
+                    details: error.response?.data || error.message
                 }
             });
         } finally {
