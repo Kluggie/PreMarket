@@ -35,17 +35,21 @@ export default function GeminiTest() {
         setResult(null);
         
         try {
-            const { data } = await base44.functions.invoke('testVertexGemini');
+            const { data } = await base44.functions.invoke('GenerateContent', {
+                projectId: 'premarket-484606',
+                location: 'us-central1',
+                model: 'gemini-3-flash-preview',
+                text: 'Reply with exactly: OK',
+                temperature: 0.2,
+                maxOutputTokens: 32
+            });
             setResult(data);
         } catch (error) {
             setResult({
                 ok: false,
-                stage: 'network_error',
-                text: null,
-                status: null,
-                error: error.message || 'Network error',
+                outputText: null,
                 raw: {
-                    message: error.message,
+                    error: error.message || 'Network error',
                     stack: error.stack
                 }
             });
@@ -141,30 +145,21 @@ export default function GeminiTest() {
                                             <div className="font-semibold">
                                                 {result.ok ? 'Success' : 'Error'}
                                             </div>
-                                            
-                                            <div className="grid grid-cols-2 gap-2 text-xs">
-                                                <div>
-                                                    <span className="text-slate-500">Stage:</span>{' '}
-                                                    <span className="font-mono">{result.stage || 'unknown'}</span>
-                                                </div>
-                                                <div>
-                                                    <span className="text-slate-500">Status:</span>{' '}
-                                                    <span className="font-mono">{result.status || 'null'}</span>
-                                                </div>
-                                            </div>
 
-                                            {result.ok && result.text && (
+                                            {result.ok && result.outputText && (
                                                 <div>
-                                                    <div className="text-sm text-slate-600 mb-1">Response Text:</div>
+                                                    <div className="text-sm text-slate-600 mb-1">Output Text:</div>
                                                     <div className="bg-white rounded p-3 font-mono text-sm border">
-                                                        {result.text}
+                                                        {result.outputText}
                                                     </div>
                                                 </div>
                                             )}
                                             
-                                            {!result.ok && result.error && (
+                                            {!result.ok && result.raw?.error && (
                                                 <AlertDescription className="text-red-800">
-                                                    {result.error}
+                                                    {typeof result.raw.error === 'string' 
+                                                        ? result.raw.error 
+                                                        : JSON.stringify(result.raw.error)}
                                                 </AlertDescription>
                                             )}
                                         </div>
