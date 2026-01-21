@@ -86,8 +86,8 @@ async function getAccessToken(serviceAccountJson) {
 /**
  * Calls Vertex AI generateContent using OAuth2 access token
  */
-async function callVertexAI({ projectId, location, model, text, temperature = 0.7, maxOutputTokens = 2048 }, accessToken) {
-  const url = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:generateContent`;
+async function callVertexAI({ projectId, location, model, text, temperature, maxOutputTokens, thinkingBudget }, accessToken) {
+  const url = `https://aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:generateContent`;
 
   const body = {
     contents: [
@@ -98,7 +98,10 @@ async function callVertexAI({ projectId, location, model, text, temperature = 0.
     ],
     generationConfig: {
       temperature,
-      maxOutputTokens
+      maxOutputTokens,
+      thinkingConfig: {
+        thinkingBudget
+      }
     }
   };
 
@@ -135,19 +138,20 @@ Deno.serve(async (req) => {
 
     const payload = await req.json();
     const {
-      projectId,
-      location,
-      model,
+      projectId = 'premarket-484606',
+      location = 'global',
+      model = 'gemini-3-flash-preview',
       text,
-      temperature,
-      maxOutputTokens
+      temperature = 0.2,
+      maxOutputTokens = 1200,
+      thinkingBudget = 0
     } = payload;
 
     // Validate required params
-    if (!projectId || !location || !model || !text) {
+    if (!text) {
       return Response.json({
         ok: false,
-        error: 'Missing required parameters: projectId, location, model, text'
+        error: 'Missing required parameter: text'
       }, { status: 400 });
     }
 
@@ -165,7 +169,7 @@ Deno.serve(async (req) => {
 
     // Call Vertex AI
     const vertexResponse = await callVertexAI(
-      { projectId, location, model, text, temperature, maxOutputTokens },
+      { projectId, location, model, text, temperature, maxOutputTokens, thinkingBudget },
       accessToken
     );
 
@@ -183,14 +187,14 @@ Deno.serve(async (req) => {
     });
 
   } catch (error) {
-    console.error('GenerateContent error:', error);
+    // Log error without exposing secrets
+    console.error('GenerateContent error:', error.message);
     return Response.json({
       ok: false,
       outputText: null,
       error: error.message,
       raw: {
-        error: error.message,
-        stack: error.stack
+        error: error.message
       }
     }, { status: 500 });
   }

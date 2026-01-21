@@ -36,12 +36,7 @@ export default function GeminiTest() {
         
         try {
             const { data } = await base44.functions.invoke('GenerateContent', {
-                projectId: 'premarket-484606',
-                location: 'us-central1',
-                model: 'gemini-3-flash-preview',
-                text: 'Reply with exactly: OK',
-                temperature: 0.2,
-                maxOutputTokens: 32
+                text: 'Reply with exactly: OK'
             });
             setResult(data);
         } catch (error) {
