@@ -636,7 +636,7 @@ export default function ProposalDetail() {
                         latestReport.output_report_json.summary?.fit_level === 'medium' ? 'bg-amber-600' :
                         'bg-slate-600'
                       }>
-                        {latestReport.output_report_json.summary?.fit_level || 'unknown'} fit
+                        {(latestReport.output_report_json.summary?.fit_level || 'unknown')} fit
                       </Badge>
                     </div>
                     
@@ -821,7 +821,7 @@ export default function ProposalDetail() {
                                 {response.question_id.replace(/_/g, ' ')}
                               </p>
                               <Badge variant="outline" className="text-xs">
-                                Party {response.party.toUpperCase()}
+                                Party {(response.party || '').toUpperCase()}
                               </Badge>
                             </div>
                             <Badge className={
