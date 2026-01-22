@@ -543,12 +543,10 @@ export default function CreateProposal() {
     <div className="min-h-screen bg-slate-50 py-8">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="mb-8">
-          {user && (
-            <Link to={createPageUrl('Dashboard')} className="inline-flex items-center text-slate-600 hover:text-slate-900 mb-4">
-              <ArrowLeft className="w-4 h-4 mr-2" />
-              Back to Dashboard
-            </Link>
-          )}
+          <Link to={createPageUrl('Templates')} className="inline-flex items-center text-slate-600 hover:text-slate-900 mb-4">
+            <ArrowLeft className="w-4 h-4 mr-2" />
+            Back to Template Library
+          </Link>
           <h1 className="text-2xl font-bold text-slate-900">Create Proposal</h1>
           <p className="text-slate-500 mt-1">Fill out the template to create a pre-qualification proposal.</p>
         </div>
@@ -638,7 +636,7 @@ export default function CreateProposal() {
                   </div>
 
                   <div className="space-y-2">
-                    <Label>Recipient Email (optional)</Label>
+                    <Label>Recipient Email (Optional - leave blank to save as draft)</Label>
                     <Input 
                       type="email"
                       value={recipientEmail}
@@ -646,7 +644,7 @@ export default function CreateProposal() {
                       placeholder="recipient@example.com"
                     />
                     <p className="text-xs text-slate-500">
-                      Leave empty to save as draft. The recipient will receive an email invitation.
+                      Leave empty to save as draft and send later. Once sent, recipient can access and verify the proposal.
                     </p>
                   </div>
 

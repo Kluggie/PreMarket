@@ -301,14 +301,21 @@ export default function Landing() {
           <p className="text-lg text-slate-400 mb-10 max-w-2xl mx-auto">
             Create your first proposal in minutes. No commitment required.
           </p>
-          <Button 
-            size="lg"
-            onClick={handleStartFree}
-            className="bg-white text-slate-900 hover:bg-slate-100 px-8 py-6 text-lg h-auto"
-          >
-            Get Started Free
-            <ArrowRight className="ml-2 w-5 h-5" />
-          </Button>
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+            <Button 
+              size="lg"
+              onClick={handleStartFree}
+              className="bg-white text-slate-900 hover:bg-slate-100 px-8 py-6 text-lg h-auto"
+            >
+              Get Started
+              <ArrowRight className="ml-2 w-5 h-5" />
+            </Button>
+            <Link to={createPageUrl('Documentation')}>
+              <Button variant="outline" size="lg" className="px-8 py-6 text-lg h-auto border-white/30 text-white hover:bg-white/10">
+                View Documentation
+              </Button>
+            </Link>
+          </div>
         </div>
       </section>
     </div>

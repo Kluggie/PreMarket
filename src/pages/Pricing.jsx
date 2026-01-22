@@ -79,7 +79,7 @@ export default function Pricing() {
     },
     {
       name: 'Professional',
-      price: '$49',
+      price: '$49.99',
       period: 'per month',
       description: 'For professionals who need more volume and features.',
       icon: Building2,
@@ -232,22 +232,6 @@ export default function Pricing() {
               {
                 q: 'Does the AI report reveal confidential values?',
                 a: 'No. The AI evaluation report respects all field privacy settings you configure. Hidden or partial-visibility fields are never shown in exact detail—only match statuses, scores, and recommendations are provided.'
-              },
-              {
-                q: 'Can I cancel anytime?',
-                a: 'Yes. Cancellations take effect at the end of your current billing period. You retain full access until then, and no further charges occur after that.'
-              },
-              {
-                q: 'Is my data secure?',
-                a: 'We follow industry-standard security practices. All data is transmitted over encrypted connections, and access controls are enforced throughout the platform.'
-              },
-              {
-                q: 'What counts as a proposal?',
-                a: 'Each new pre-qualification proposal you create (sent or drafted) counts toward your monthly limit. Receiving proposals does not count toward your limit.'
-              },
-              {
-                q: 'Do I need a credit card for the Starter plan?',
-                a: 'No. The Starter plan is completely free and does not require payment information.'
               },
               {
                 q: 'What is pseudonymous mode?',
