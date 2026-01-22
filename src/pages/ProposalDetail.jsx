@@ -80,7 +80,7 @@ export default function ProposalDetail() {
     },
     enabled: !!proposalId,
     refetchInterval: (data) => {
-      const hasRunning = data?.some(r => ['queued', 'running'].includes(r.status));
+      const hasRunning = Array.isArray(data) && data.some(r => ['queued', 'running'].includes(r.status));
       return hasRunning ? 2000 : false;
     }
   });
