@@ -70,8 +70,19 @@ export default function ProposalDetail() {
 
   const { data: evaluationReports = [] } = useQuery({
     queryKey: ['evaluationReports', proposalId],
-    queryFn: () => base44.entities.EvaluationReport.filter({ proposal_id: proposalId }, '-created_date'),
-    enabled: !!proposalId
+    queryFn: async () => {
+      const reports = await base44.entities.EvaluationReport.filter({ proposal_id: proposalId });
+      return reports.sort((a, b) => {
+        const dateA = a.generated_at || a.created_date;
+        const dateB = b.generated_at || b.created_date;
+        return new Date(dateB) - new Date(dateA);
+      }).slice(0, 5);
+    },
+    enabled: !!proposalId,
+    refetchInterval: (data) => {
+      const hasRunning = data?.some(r => ['queued', 'running'].includes(r.status));
+      return hasRunning ? 2000 : false;
+    }
   });
 
   const { data: verifications = [] } = useQuery({
@@ -95,16 +106,18 @@ export default function ProposalDetail() {
   const isPartyA = proposal?.party_a_email === user?.email;
   const isPartyB = proposal?.party_b_email === user?.email;
   const latestEvaluation = evaluations[0];
-  const latestReport = evaluationReports.find(r => r.status === 'succeeded');
+  const latestReport = evaluationReports?.[0];
+  const latestSuccessReport = evaluationReports?.find(r => r.status === 'succeeded');
 
   // Run New Evaluation (Vertex Gemini)
   const runNewEvaluationMutation = useMutation({
     mutationFn: async () => {
-      const response = await base44.functions.invoke('EvaluateProposal', { proposal_id: proposalId });
+      const response = await base44.functions.invoke('EvaluateProposal', { proposal_id: proposal.id });
       return response.data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries(['evaluationReports', proposalId]);
+      queryClient.invalidateQueries(['proposal', proposalId]);
     }
   });
 
@@ -308,35 +321,55 @@ export default function ProposalDetail() {
                   const { jsPDF } = await import('jspdf');
                   const doc = new jsPDF();
                   
-                  doc.setFontSize(20);
-                  doc.text(proposal.title || 'Untitled Proposal', 20, 20);
-                  doc.setFontSize(10);
-                  doc.text(`Template: ${proposal.template_name}`, 20, 30);
-                  doc.text(`Created: ${new Date(proposal.created_date).toLocaleDateString()}`, 20, 36);
-                  
+                  doc.setFontSize(18);
+                  doc.text('Full Proposal Document', 20, 20);
                   doc.setFontSize(12);
-                  doc.text('Parties:', 20, 50);
-                  doc.setFontSize(10);
-                  doc.text(`Party A: ${proposal.mutual_reveal || isPartyA ? proposal.party_a_email : 'Protected'}`, 20, 58);
-                  doc.text(`Party B: ${proposal.mutual_reveal || isPartyB ? proposal.party_b_email || 'Not specified' : 'Protected'}`, 20, 64);
+                  doc.text(proposal.title || 'Untitled Proposal', 20, 30);
+                  doc.setFontSize(9);
+                  doc.text(`Template: ${proposal.template_name}`, 20, 37);
+                  doc.text(`Created: ${new Date(proposal.created_date).toLocaleDateString()}`, 20, 42);
                   
-                  if (latestEvaluation) {
-                    doc.setFontSize(12);
-                    doc.text('AI Evaluation:', 20, 78);
-                    doc.setFontSize(10);
-                    doc.text(`Overall Score: ${latestEvaluation.overall_score}%`, 20, 86);
-                    doc.text(`Confidence: ${latestEvaluation.confidence}%`, 20, 92);
-                    
-                    let y = 102;
-                    doc.text('Criteria Scores:', 20, y);
-                    (latestEvaluation.criteria_scores || []).forEach(c => {
-                      y += 6;
+                  let y = 52;
+                  doc.setFontSize(11);
+                  doc.text('Parties', 20, y);
+                  y += 6;
+                  doc.setFontSize(9);
+                  doc.text(`Party A (Proposer): ${proposal.mutual_reveal || isPartyA ? proposal.party_a_email : 'Identity Protected'}`, 20, y);
+                  y += 5;
+                  doc.text(`Party B (Recipient): ${proposal.mutual_reveal || isPartyB ? proposal.party_b_email || 'Not specified' : 'Identity Protected'}`, 20, y);
+                  y += 12;
+                  
+                  // Responses
+                  doc.setFontSize(11);
+                  doc.text('Proposal Responses', 20, y);
+                  y += 8;
+                  
+                  if (responses.length > 0) {
+                    responses.forEach(response => {
                       if (y > 270) { doc.addPage(); y = 20; }
-                      doc.text(`${c.name}: ${c.score}%`, 25, y);
+                      
+                      doc.setFontSize(9);
+                      const questionLabel = response.question_id.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                      doc.text(`${questionLabel} [${response.visibility}]`, 20, y);
+                      y += 5;
+                      
+                      const value = response.value_type === 'range' 
+                        ? `Range: ${response.range_min} - ${response.range_max}`
+                        : response.value || 'Not provided';
+                      
+                      const lines = doc.splitTextToSize(value, 170);
+                      lines.forEach(line => {
+                        if (y > 275) { doc.addPage(); y = 20; }
+                        doc.text(line, 22, y);
+                        y += 4;
+                      });
+                      y += 3;
                     });
+                  } else {
+                    doc.text('No responses recorded', 20, y);
                   }
                   
-                  doc.save(`${proposal.title || 'proposal'}.pdf`);
+                  doc.save(`${proposal.title || 'proposal'}_full.pdf`);
                 }}
               >
                 <FileText className="w-4 h-4 mr-2" />
@@ -344,12 +377,82 @@ export default function ProposalDetail() {
               </Button>
               <Button 
                 onClick={() => runNewEvaluationMutation.mutate()}
-                disabled={runNewEvaluationMutation.isPending}
+                disabled={runNewEvaluationMutation.isPending || latestReport?.status === 'running' || latestReport?.status === 'queued'}
                 className="bg-blue-600 hover:bg-blue-700"
               >
                 <Sparkles className="w-4 h-4 mr-2" />
-                {runNewEvaluationMutation.isPending ? 'Evaluating...' : 'Run AI Evaluation'}
+                {(runNewEvaluationMutation.isPending || latestReport?.status === 'running' || latestReport?.status === 'queued') ? 'Evaluating...' : 'Run AI Evaluation'}
               </Button>
+              {latestSuccessReport && (
+                <Button 
+                  variant="outline"
+                  onClick={async () => {
+                    const { jsPDF } = await import('jspdf');
+                    const doc = new jsPDF();
+                    const report = latestSuccessReport.output_report_json;
+                    
+                    doc.setFontSize(18);
+                    doc.text('AI Evaluation Report', 20, 20);
+                    doc.setFontSize(10);
+                    doc.text(`Generated: ${new Date(latestSuccessReport.generated_at || latestSuccessReport.created_date).toLocaleString()}`, 20, 28);
+                    
+                    let y = 40;
+                    
+                    // Summary
+                    doc.setFontSize(14);
+                    doc.text('Executive Summary', 20, y);
+                    y += 8;
+                    doc.setFontSize(10);
+                    doc.text(`Fit Level: ${report.summary?.fit_level || 'unknown'}`, 20, y);
+                    y += 10;
+                    
+                    // Quality
+                    doc.setFontSize(12);
+                    doc.text('Quality Metrics', 20, y);
+                    y += 6;
+                    doc.setFontSize(9);
+                    doc.text(`Party A Completeness: ${Math.round((report.quality?.completeness_a || 0) * 100)}%`, 20, y);
+                    y += 5;
+                    doc.text(`Party B Completeness: ${Math.round((report.quality?.completeness_b || 0) * 100)}%`, 20, y);
+                    y += 5;
+                    doc.text(`Overall Confidence: ${Math.round((report.quality?.confidence_overall || 0) * 100)}%`, 20, y);
+                    y += 10;
+                    
+                    // Flags
+                    if (report.flags?.length > 0) {
+                      doc.setFontSize(12);
+                      doc.text('Flags & Risks', 20, y);
+                      y += 6;
+                      doc.setFontSize(9);
+                      report.flags.forEach(flag => {
+                        if (y > 270) { doc.addPage(); y = 20; }
+                        doc.text(`[${flag.severity?.toUpperCase()}] ${flag.title}`, 22, y);
+                        y += 5;
+                      });
+                      y += 5;
+                    }
+                    
+                    // Follow-ups
+                    if (report.followup_questions?.length > 0) {
+                      if (y > 250) { doc.addPage(); y = 20; }
+                      doc.setFontSize(12);
+                      doc.text('Follow-up Questions', 20, y);
+                      y += 6;
+                      doc.setFontSize(9);
+                      report.followup_questions.slice(0, 10).forEach(q => {
+                        if (y > 270) { doc.addPage(); y = 20; }
+                        doc.text(`[${q.priority}] ${q.question_text}`, 22, y);
+                        y += 5;
+                      });
+                    }
+                    
+                    doc.save(`${proposal.title || 'proposal'}_ai_report.pdf`);
+                  }}
+                >
+                  <FileText className="w-4 h-4 mr-2" />
+                  Download AI Report PDF
+                </Button>
+              )}
             </div>
           </div>
         </div>
@@ -575,6 +678,52 @@ export default function ProposalDetail() {
 
           {/* AI Report Tab */}
           <TabsContent value="evaluation">
+            {/* Evaluation History */}
+            {evaluationReports.length > 0 && (
+              <Card className="border-0 shadow-sm mb-6">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Clock className="w-5 h-5" />
+                    Evaluation History ({evaluationReports.length})
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2">
+                    {evaluationReports.map((report, idx) => (
+                      <div key={report.id} className={`p-3 rounded-lg border ${
+                        idx === 0 ? 'border-blue-200 bg-blue-50' : 'border-slate-200 bg-white'
+                      }`}>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <Badge className={
+                              report.status === 'succeeded' ? 'bg-green-600' :
+                              report.status === 'failed' ? 'bg-red-600' :
+                              report.status === 'running' ? 'bg-blue-600' :
+                              'bg-slate-600'
+                            }>
+                              {report.status}
+                            </Badge>
+                            <span className="text-sm text-slate-600">
+                              {new Date(report.generated_at || report.created_date).toLocaleString()}
+                            </span>
+                            {idx === 0 && <Badge variant="outline">Latest</Badge>}
+                          </div>
+                          {report.status === 'succeeded' && report.output_report_json && (
+                            <span className="text-sm font-medium text-blue-600">
+                              {Math.round((report.output_report_json.quality?.confidence_overall || 0) * 100)}% confidence
+                            </span>
+                          )}
+                        </div>
+                        {report.status === 'failed' && report.error_message && (
+                          <p className="text-xs text-red-600 mt-2">{report.error_message}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
             {!latestReport && (
               <Card className="border-0 shadow-sm">
                 <CardContent className="py-16 text-center">
@@ -595,8 +744,19 @@ export default function ProposalDetail() {
                 </CardContent>
               </Card>
             )}
+
+            {latestReport && (latestReport.status === 'queued' || latestReport.status === 'running') && (
+              <Card className="border-0 shadow-sm">
+                <CardContent className="py-16 text-center">
+                  <RefreshCw className="w-12 h-12 text-blue-500 mx-auto mb-4 animate-spin" />
+                  <h3 className="text-lg font-semibold text-slate-900 mb-2">Evaluation in progress</h3>
+                  <p className="text-slate-500">This may take 10-30 seconds...</p>
+                  <Badge className="mt-4 bg-blue-600">{latestReport.status}</Badge>
+                </CardContent>
+              </Card>
+            )}
             
-            {latestReport && latestReport.output_report_json && (
+            {latestReport && latestReport.status === 'succeeded' && latestReport.output_report_json && (
               <div className="space-y-6">
                 {/* Quality Metrics */}
                 <Card className="border-0 shadow-sm">
@@ -752,16 +912,25 @@ export default function ProposalDetail() {
             )}
 
             {/* Failed Evaluation Display */}
-            {latestReport && !latestReport.output_report_json && (
+            {latestReport && latestReport.status === 'failed' && (
               <Card className="border-0 shadow-sm">
                 <CardContent className="py-16 text-center">
                   <XCircle className="w-12 h-12 text-red-300 mx-auto mb-4" />
                   <h3 className="text-lg font-semibold text-slate-900 mb-2">Evaluation Failed</h3>
                   <p className="text-slate-500 mb-4">{latestReport.error_message || 'Unknown error'}</p>
+                  {latestReport.raw_output && (
+                    <details className="mt-4 text-left">
+                      <summary className="cursor-pointer text-sm text-slate-600">View raw output</summary>
+                      <pre className="mt-2 p-3 bg-slate-100 rounded text-xs overflow-auto max-h-48">
+                        {latestReport.raw_output}
+                      </pre>
+                    </details>
+                  )}
                   <Button 
                     onClick={() => runNewEvaluationMutation.mutate()}
                     disabled={runNewEvaluationMutation.isPending}
                     variant="outline"
+                    className="mt-4"
                   >
                     <RefreshCw className="w-4 h-4 mr-2" />
                     Retry Evaluation

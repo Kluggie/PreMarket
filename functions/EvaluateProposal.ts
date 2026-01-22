@@ -138,11 +138,11 @@ Deno.serve(async (req) => {
       system_prompt_version: 'v1_2026-01-18'
     });
 
-    // Load data
+    // Load data using service role
     const [proposals, responses, templates] = await Promise.all([
-      base44.entities.Proposal.filter({ id: proposal_id }),
-      base44.entities.ProposalResponse.filter({ proposal_id }),
-      base44.entities.Template.list()
+      base44.asServiceRole.entities.Proposal.filter({ id: proposal_id }),
+      base44.asServiceRole.entities.ProposalResponse.filter({ proposal_id }),
+      base44.asServiceRole.entities.Template.list()
     ]);
 
     const proposal = proposals[0];
@@ -206,22 +206,24 @@ Generate the evaluation report as valid JSON matching the schema exactly.`;
     // Call Vertex AI via GenerateContent
     const result = await base44.asServiceRole.functions.invoke('GenerateContent', {
       projectId: 'premarket-484606',
-      location: 'us-central1',
-      model: 'gemini-2.0-flash-exp',
+      location: 'global',
+      model: 'gemini-3-flash-preview',
       text: promptText,
       temperature: 0.2,
       maxOutputTokens: 8000
     });
 
-    if (!result.ok) {
+    if (!result.data || !result.data.ok) {
+      const errorMsg = result.data?.error || 'Unknown Vertex AI error';
       await base44.asServiceRole.entities.EvaluationReport.update(report.id, {
         status: 'failed',
-        error_message: `Vertex AI error: ${JSON.stringify(result.raw)}`,
-        raw_output: result.outputText || ''
+        error_message: errorMsg,
+        raw_output: result.data?.outputText || ''
       });
       return Response.json({ 
         error: 'Evaluation failed',
-        reportId: report.id 
+        reportId: report.id,
+        details: errorMsg
       }, { status: 500 });
     }
 
@@ -229,7 +231,7 @@ Generate the evaluation report as valid JSON matching the schema exactly.`;
     let outputReport;
     try {
       // Extract JSON from markdown if needed
-      let jsonText = result.outputText || '';
+      let jsonText = result.data.outputText || '';
       if (jsonText.includes('```json')) {
         jsonText = jsonText.split('```json')[1].split('```')[0].trim();
       } else if (jsonText.includes('```')) {
@@ -243,13 +245,24 @@ Generate the evaluation report as valid JSON matching the schema exactly.`;
         throw new Error('Invalid report structure: missing required fields');
       }
 
+      // Privacy check: ensure hidden values not leaked
+      const hiddenResponses = responses.filter(r => r.visibility === 'hidden');
+      const reportStr = JSON.stringify(outputReport).toLowerCase();
+      
+      for (const hidden of hiddenResponses) {
+        if (hidden.value && reportStr.includes(hidden.value.toLowerCase())) {
+          throw new Error('Privacy violation: hidden value detected in report');
+        }
+      }
+
       // Update report with success
       await base44.asServiceRole.entities.EvaluationReport.update(report.id, {
         status: 'succeeded',
         input_snapshot_json: inputSnapshot,
         output_report_json: outputReport,
         confidence_overall: outputReport.quality?.confidence_overall || 0,
-        generated_at: new Date().toISOString()
+        generated_at: new Date().toISOString(),
+        model_name: 'gemini-3-flash-preview'
       });
 
       return Response.json({
@@ -262,7 +275,7 @@ Generate the evaluation report as valid JSON matching the schema exactly.`;
       await base44.asServiceRole.entities.EvaluationReport.update(report.id, {
         status: 'failed',
         error_message: `JSON parse error: ${parseError.message}`,
-        raw_output: result.outputText || ''
+        raw_output: result.data?.outputText || ''
       });
       
       return Response.json({
