@@ -130,14 +130,6 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Missing proposal_id' }, { status: 400 });
     }
 
-    // Create queued report
-    const report = await base44.asServiceRole.entities.EvaluationReport.create({
-      proposal_id,
-      template_id: '',
-      status: 'queued',
-      system_prompt_version: 'v1_2026-01-18'
-    });
-
     // Load data using service role
     const [proposals, responses, templates] = await Promise.all([
       base44.asServiceRole.entities.Proposal.filter({ id: proposal_id }),
@@ -147,29 +139,13 @@ Deno.serve(async (req) => {
 
     const proposal = proposals[0];
     if (!proposal) {
-      await base44.asServiceRole.entities.EvaluationReport.update(report.id, {
-        status: 'failed',
-        error_message: 'Proposal not found'
-      });
       return Response.json({ error: 'Proposal not found' }, { status: 404 });
     }
 
     const template = templates.find(t => t.id === proposal.template_id);
     if (!template) {
-      await base44.asServiceRole.entities.EvaluationReport.update(report.id, {
-        status: 'failed',
-        error_message: 'Template not found'
-      });
       return Response.json({ error: 'Template not found' }, { status: 404 });
     }
-
-    // Update report with template info and mark running
-    await base44.asServiceRole.entities.EvaluationReport.update(report.id, {
-      template_id: template.id,
-      template_version: template.updated_date || template.created_date,
-      rubric_version: template.rubric_version || 'default',
-      status: 'running'
-    });
 
     // Build input snapshot
     const inputSnapshot = {
@@ -190,10 +166,53 @@ Deno.serve(async (req) => {
         visibility: r.visibility || 'full',
         updated_by: r.entered_by_party === 'a' ? 'proposer' : 'recipient',
         verified_status: 'self_declared'
-      })),
+      })).sort((a, b) => a.question_id.localeCompare(b.question_id)),
       rubric: template.evaluation_rubric_json || null,
       computedSignals: null
     };
+
+    // Compute deterministic fingerprint
+    const fingerprintData = {
+      template_id: template.id,
+      template_version: template.updated_date || template.created_date,
+      rubric_version: template.rubric_version || 'default',
+      responses_hash: JSON.stringify(inputSnapshot.responses),
+      model_name: 'gemini-3-flash-preview',
+      system_prompt_version: 'v1_2026-01-18'
+    };
+    
+    const encoder = new TextEncoder();
+    const data = encoder.encode(JSON.stringify(fingerprintData));
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const inputFingerprint = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
+    // Check for existing report with same fingerprint
+    const existingReports = await base44.asServiceRole.entities.EvaluationReport.filter({
+      proposal_id,
+      status: 'succeeded'
+    });
+    
+    const cachedReport = existingReports.find(r => r.input_fingerprint === inputFingerprint);
+    if (cachedReport) {
+      return Response.json({
+        success: true,
+        reportId: cachedReport.id,
+        report: cachedReport.output_report_json,
+        cached: true
+      });
+    }
+
+    // Create new report
+    const report = await base44.asServiceRole.entities.EvaluationReport.create({
+      proposal_id,
+      template_id: template.id,
+      template_version: template.updated_date || template.created_date,
+      rubric_version: template.rubric_version || 'default',
+      status: 'running',
+      system_prompt_version: 'v1_2026-01-18',
+      input_fingerprint: inputFingerprint
+    });
 
     // Build prompt
     const promptText = `${SYSTEM_PROMPT}

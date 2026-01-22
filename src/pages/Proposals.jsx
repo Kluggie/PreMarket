@@ -66,7 +66,8 @@ export default function Proposals() {
 
   const getFilteredProposals = () => {
     let proposals = activeTab === 'sent' ? sentProposals : 
-                   activeTab === 'received' ? receivedProposals : 
+                   activeTab === 'received' ? receivedProposals :
+                   activeTab === 'drafts' ? sentProposals.filter(p => p.status === 'draft') :
                    allProposals;
 
     if (statusFilter !== 'all') {
@@ -203,6 +204,10 @@ export default function Proposals() {
             <TabsTrigger value="received" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
               <Inbox className="w-4 h-4 mr-2" />
               Received ({receivedProposals.length})
+            </TabsTrigger>
+            <TabsTrigger value="drafts" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
+              <FileText className="w-4 h-4 mr-2" />
+              Drafts ({sentProposals.filter(p => p.status === 'draft').length})
             </TabsTrigger>
           </TabsList>
 

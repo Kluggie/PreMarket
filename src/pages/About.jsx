@@ -43,12 +43,17 @@ export default function About() {
           <p className="text-xl text-blue-100 mb-8">
             A privacy-preserving pre-qualification platform for structured trust-building before commitment.
           </p>
-          <Link to={createPageUrl('Templates')}>
-            <Button size="lg" className="bg-white text-slate-900 hover:bg-blue-50">
-              Get Started
-              <ArrowRight className="ml-2 w-5 h-5" />
-            </Button>
-          </Link>
+          <Button 
+            size="lg" 
+            className="bg-white text-slate-900 hover:bg-blue-50"
+            onClick={() => {
+              window.location.href = createPageUrl('Templates');
+              setTimeout(() => window.scrollTo(0, 0), 100);
+            }}
+          >
+            Get Started
+            <ArrowRight className="ml-2 w-5 h-5" />
+          </Button>
         </div>
       </section>
 
@@ -145,17 +150,27 @@ export default function About() {
             Join PreMarket and verify fit before you reveal.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Link to={createPageUrl('Templates')}>
-              <Button size="lg" className="bg-blue-600 hover:bg-blue-700">
-                Get Started
-                <ArrowRight className="ml-2 w-5 h-5" />
-              </Button>
-            </Link>
-            <Link to={createPageUrl('Documentation')}>
-              <Button size="lg" variant="outline">
-                View Documentation
-              </Button>
-            </Link>
+            <Button 
+              size="lg" 
+              className="bg-blue-600 hover:bg-blue-700"
+              onClick={() => {
+                window.location.href = createPageUrl('Templates');
+                setTimeout(() => window.scrollTo(0, 0), 100);
+              }}
+            >
+              Get Started
+              <ArrowRight className="ml-2 w-5 h-5" />
+            </Button>
+            <Button 
+              size="lg" 
+              variant="outline"
+              onClick={() => {
+                window.location.href = createPageUrl('Documentation');
+                setTimeout(() => window.scrollTo(0, 0), 100);
+              }}
+            >
+              View Documentation
+            </Button>
           </div>
         </div>
       </section>

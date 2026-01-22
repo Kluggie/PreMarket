@@ -304,17 +304,26 @@ export default function Landing() {
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
             <Button 
               size="lg"
-              onClick={handleStartFree}
+              onClick={() => {
+                handleStartFree();
+                setTimeout(() => window.scrollTo(0, 0), 100);
+              }}
               className="bg-white text-slate-900 hover:bg-slate-100 px-8 py-6 text-lg h-auto"
             >
               Get Started
               <ArrowRight className="ml-2 w-5 h-5" />
             </Button>
-            <Link to={createPageUrl('Documentation')}>
-              <Button variant="outline" size="lg" className="px-8 py-6 text-lg h-auto border-white/30 text-white hover:bg-white/10">
-                View Documentation
-              </Button>
-            </Link>
+            <Button 
+              variant="outline" 
+              size="lg" 
+              className="px-8 py-6 text-lg h-auto border-white/30 text-white hover:bg-white/10 hover:text-white"
+              onClick={() => {
+                window.location.href = createPageUrl('Documentation');
+                setTimeout(() => window.scrollTo(0, 0), 100);
+              }}
+            >
+              View Documentation
+            </Button>
           </div>
         </div>
       </section>
