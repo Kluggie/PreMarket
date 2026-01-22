@@ -319,61 +319,76 @@ export default function ProposalDetail() {
                 variant="outline"
                 onClick={async () => {
                   const { jsPDF } = await import('jspdf');
+                  const { default: autoTable } = await import('jspdf-autotable');
                   const doc = new jsPDF();
                   
-                  doc.setFontSize(18);
-                  doc.text('Full Proposal Document', 20, 20);
-                  doc.setFontSize(12);
-                  doc.text(proposal.title || 'Untitled Proposal', 20, 30);
-                  doc.setFontSize(9);
-                  doc.text(`Template: ${proposal.template_name}`, 20, 37);
-                  doc.text(`Created: ${new Date(proposal.created_date).toLocaleDateString()}`, 20, 42);
+                  // Header
+                  doc.setFillColor(15, 23, 42);
+                  doc.rect(0, 0, 210, 35, 'F');
+                  doc.setTextColor(255, 255, 255);
+                  doc.setFontSize(20);
+                  doc.text('PreMarket', 20, 15);
+                  doc.setFontSize(14);
+                  doc.text('Proposal Information', 20, 25);
                   
-                  let y = 52;
-                  doc.setFontSize(11);
-                  doc.text('Parties', 20, y);
-                  y += 6;
-                  doc.setFontSize(9);
-                  doc.text(`Party A (Proposer): ${proposal.mutual_reveal || isPartyA ? proposal.party_a_email : 'Identity Protected'}`, 20, y);
-                  y += 5;
-                  doc.text(`Party B (Recipient): ${proposal.mutual_reveal || isPartyB ? proposal.party_b_email || 'Not specified' : 'Identity Protected'}`, 20, y);
-                  y += 12;
+                  doc.setTextColor(0, 0, 0);
                   
-                  // Responses
-                  doc.setFontSize(11);
-                  doc.text('Proposal Responses', 20, y);
-                  y += 8;
+                  // Title Section
+                  doc.setFontSize(16);
+                  doc.setFont(undefined, 'bold');
+                  doc.text(proposal.title || 'Untitled Proposal', 20, 45);
+                  doc.setFont(undefined, 'normal');
+                  doc.setFontSize(10);
+                  doc.setTextColor(100, 100, 100);
+                  doc.text(`Template: ${proposal.template_name}`, 20, 52);
+                  doc.text(`Created: ${new Date(proposal.created_date).toLocaleDateString()}`, 20, 58);
                   
-                  if (responses.length > 0) {
-                    responses.forEach(response => {
-                      if (y > 270) { doc.addPage(); y = 20; }
-                      
-                      doc.setFontSize(9);
-                      const questionLabel = response.question_id.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-                      doc.text(`${questionLabel} [${response.visibility}]`, 20, y);
-                      y += 5;
-                      
-                      const value = response.value_type === 'range' 
-                        ? `Range: ${response.range_min} - ${response.range_max}`
-                        : response.value || 'Not provided';
-                      
-                      const lines = doc.splitTextToSize(value, 170);
-                      lines.forEach(line => {
-                        if (y > 275) { doc.addPage(); y = 20; }
-                        doc.text(line, 22, y);
-                        y += 4;
-                      });
-                      y += 3;
-                    });
-                  } else {
-                    doc.text('No responses recorded', 20, y);
+                  // Parties Table
+                  doc.setTextColor(0, 0, 0);
+                  autoTable(doc, {
+                    startY: 68,
+                    head: [['Party', 'Identity']],
+                    body: [
+                      ['Party A (Proposer)', isPartyA ? proposal.party_a_email : (proposal.party_a_email || 'Identity Protected')],
+                      ['Party B (Recipient)', proposal.party_b_email || 'Not specified']
+                    ],
+                    theme: 'grid',
+                    headStyles: { fillColor: [37, 99, 235], fontSize: 11, fontStyle: 'bold' },
+                    styles: { fontSize: 10, cellPadding: 5 }
+                  });
+                  
+                  // Responses Table
+                  const responsesData = responses.map(r => [
+                    r.question_id.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+                    r.value_type === 'range' ? `${r.range_min} - ${r.range_max}` : (r.value || 'Not provided'),
+                    r.visibility || 'full'
+                  ]);
+                  
+                  autoTable(doc, {
+                    startY: doc.lastAutoTable.finalY + 10,
+                    head: [['Field', 'Value', 'Visibility']],
+                    body: responsesData.length > 0 ? responsesData : [['No responses recorded', '', '']],
+                    theme: 'striped',
+                    headStyles: { fillColor: [37, 99, 235], fontSize: 11, fontStyle: 'bold' },
+                    styles: { fontSize: 9, cellPadding: 4 },
+                    columnStyles: { 0: { cellWidth: 50 }, 1: { cellWidth: 100 }, 2: { cellWidth: 30 } }
+                  });
+                  
+                  // Footer
+                  const pageCount = doc.internal.getNumberOfPages();
+                  for (let i = 1; i <= pageCount; i++) {
+                    doc.setPage(i);
+                    doc.setFontSize(8);
+                    doc.setTextColor(150, 150, 150);
+                    doc.text(`Page ${i} of ${pageCount}`, 20, 285);
+                    doc.text(`Generated: ${new Date().toLocaleString()}`, 150, 285);
                   }
                   
-                  doc.save(`${proposal.title || 'proposal'}_full.pdf`);
+                  doc.save(`${proposal.title || 'proposal'}_info.pdf`);
                 }}
               >
                 <FileText className="w-4 h-4 mr-2" />
-                Download PDF
+                Download Proposal Info PDF
               </Button>
               <Button 
                 onClick={() => runNewEvaluationMutation.mutate()}
@@ -388,62 +403,126 @@ export default function ProposalDetail() {
                   variant="outline"
                   onClick={async () => {
                     const { jsPDF } = await import('jspdf');
+                    const { default: autoTable } = await import('jspdf-autotable');
                     const doc = new jsPDF();
                     const report = latestSuccessReport.output_report_json;
                     
-                    doc.setFontSize(18);
-                    doc.text('AI Evaluation Report', 20, 20);
-                    doc.setFontSize(10);
-                    doc.text(`Generated: ${new Date(latestSuccessReport.generated_at || latestSuccessReport.created_date).toLocaleString()}`, 20, 28);
-                    
-                    let y = 40;
-                    
-                    // Summary
+                    // Header
+                    doc.setFillColor(15, 23, 42);
+                    doc.rect(0, 0, 210, 35, 'F');
+                    doc.setTextColor(255, 255, 255);
+                    doc.setFontSize(20);
+                    doc.text('PreMarket', 20, 15);
                     doc.setFontSize(14);
-                    doc.text('Executive Summary', 20, y);
-                    y += 8;
+                    doc.text('AI Evaluation Report', 20, 25);
+                    
+                    doc.setTextColor(0, 0, 0);
                     doc.setFontSize(10);
-                    doc.text(`Fit Level: ${report.summary?.fit_level || 'unknown'}`, 20, y);
-                    y += 10;
+                    doc.setTextColor(100, 100, 100);
+                    doc.text(`Generated: ${new Date(latestSuccessReport.generated_at || latestSuccessReport.created_date).toLocaleString()}`, 20, 45);
                     
-                    // Quality
-                    doc.setFontSize(12);
-                    doc.text('Quality Metrics', 20, y);
-                    y += 6;
-                    doc.setFontSize(9);
-                    doc.text(`Party A Completeness: ${Math.round((report.quality?.completeness_a || 0) * 100)}%`, 20, y);
-                    y += 5;
-                    doc.text(`Party B Completeness: ${Math.round((report.quality?.completeness_b || 0) * 100)}%`, 20, y);
-                    y += 5;
-                    doc.text(`Overall Confidence: ${Math.round((report.quality?.confidence_overall || 0) * 100)}%`, 20, y);
-                    y += 10;
+                    // Executive Summary Card
+                    doc.setTextColor(0, 0, 0);
+                    doc.setFontSize(14);
+                    doc.setFont(undefined, 'bold');
+                    doc.text('Executive Summary', 20, 55);
+                    doc.setFont(undefined, 'normal');
                     
-                    // Flags
+                    const fitLevel = report.summary?.fit_level || 'unknown';
+                    const fitColor = fitLevel === 'high' ? [34, 197, 94] : fitLevel === 'medium' ? [251, 191, 36] : [148, 163, 184];
+                    doc.setFillColor(...fitColor);
+                    doc.roundedRect(20, 60, 30, 8, 2, 2, 'F');
+                    doc.setTextColor(255, 255, 255);
+                    doc.setFontSize(10);
+                    doc.text(fitLevel + ' fit', 22, 65);
+                    
+                    // Quality Metrics Table
+                    doc.setTextColor(0, 0, 0);
+                    autoTable(doc, {
+                      startY: 75,
+                      head: [['Metric', 'Value']],
+                      body: [
+                        ['Party A Completeness', `${Math.round((report.quality?.completeness_a || 0) * 100)}%`],
+                        ['Party B Completeness', `${Math.round((report.quality?.completeness_b || 0) * 100)}%`],
+                        ['Overall Confidence', `${Math.round((report.quality?.confidence_overall || 0) * 100)}%`]
+                      ],
+                      theme: 'grid',
+                      headStyles: { fillColor: [37, 99, 235], fontSize: 11, fontStyle: 'bold' },
+                      styles: { fontSize: 10, cellPadding: 5 }
+                    });
+                    
+                    // Flags & Risks
                     if (report.flags?.length > 0) {
-                      doc.setFontSize(12);
-                      doc.text('Flags & Risks', 20, y);
-                      y += 6;
-                      doc.setFontSize(9);
-                      report.flags.forEach(flag => {
-                        if (y > 270) { doc.addPage(); y = 20; }
-                        doc.text(`[${flag.severity?.toUpperCase()}] ${flag.title}`, 22, y);
-                        y += 5;
+                      const flagsData = report.flags.map(f => [
+                        f.severity?.toUpperCase() || 'N/A',
+                        f.title || '',
+                        f.detail || ''
+                      ]);
+                      
+                      autoTable(doc, {
+                        startY: doc.lastAutoTable.finalY + 10,
+                        head: [['Severity', 'Title', 'Detail']],
+                        body: flagsData,
+                        theme: 'striped',
+                        headStyles: { fillColor: [239, 68, 68], fontSize: 11, fontStyle: 'bold' },
+                        styles: { fontSize: 9, cellPadding: 4 },
+                        columnStyles: { 0: { cellWidth: 25 }, 1: { cellWidth: 50 }, 2: { cellWidth: 105 } },
+                        didParseCell: function(data) {
+                          if (data.section === 'body' && data.column.index === 0) {
+                            const severity = data.cell.raw;
+                            if (severity === 'HIGH') data.cell.styles.fillColor = [254, 226, 226];
+                            else if (severity === 'MED') data.cell.styles.fillColor = [254, 243, 199];
+                          }
+                        }
                       });
-                      y += 5;
                     }
                     
-                    // Follow-ups
+                    // Follow-up Questions
                     if (report.followup_questions?.length > 0) {
-                      if (y > 250) { doc.addPage(); y = 20; }
-                      doc.setFontSize(12);
-                      doc.text('Follow-up Questions', 20, y);
-                      y += 6;
-                      doc.setFontSize(9);
-                      report.followup_questions.slice(0, 10).forEach(q => {
-                        if (y > 270) { doc.addPage(); y = 20; }
-                        doc.text(`[${q.priority}] ${q.question_text}`, 22, y);
-                        y += 5;
+                      const followupData = report.followup_questions.slice(0, 10).map(q => [
+                        q.priority?.toUpperCase() || 'N/A',
+                        q.to_party?.toUpperCase() || 'N/A',
+                        q.question_text || ''
+                      ]);
+                      
+                      autoTable(doc, {
+                        startY: doc.lastAutoTable.finalY + 10,
+                        head: [['Priority', 'To', 'Question']],
+                        body: followupData,
+                        theme: 'striped',
+                        headStyles: { fillColor: [37, 99, 235], fontSize: 11, fontStyle: 'bold' },
+                        styles: { fontSize: 9, cellPadding: 4 },
+                        columnStyles: { 0: { cellWidth: 25 }, 1: { cellWidth: 20 }, 2: { cellWidth: 145 } }
                       });
+                    }
+                    
+                    // Appendix - Field Digest
+                    if (report.appendix?.field_digest?.length > 0) {
+                      const digestData = report.appendix.field_digest.slice(0, 20).map(f => [
+                        f.label || f.question_id || '',
+                        f.value_summary || '',
+                        f.visibility || 'N/A'
+                      ]);
+                      
+                      autoTable(doc, {
+                        startY: doc.lastAutoTable.finalY + 10,
+                        head: [['Field', 'Summary', 'Visibility']],
+                        body: digestData,
+                        theme: 'grid',
+                        headStyles: { fillColor: [100, 116, 139], fontSize: 10, fontStyle: 'bold' },
+                        styles: { fontSize: 8, cellPadding: 3 },
+                        columnStyles: { 0: { cellWidth: 50 }, 1: { cellWidth: 100 }, 2: { cellWidth: 30 } }
+                      });
+                    }
+                    
+                    // Footer
+                    const pageCount = doc.internal.getNumberOfPages();
+                    for (let i = 1; i <= pageCount; i++) {
+                      doc.setPage(i);
+                      doc.setFontSize(8);
+                      doc.setTextColor(150, 150, 150);
+                      doc.text(`Page ${i} of ${pageCount}`, 20, 285);
+                      doc.text(`Generated: ${new Date().toLocaleString()}`, 150, 285);
                     }
                     
                     doc.save(`${proposal.title || 'proposal'}_ai_report.pdf`);
@@ -528,9 +607,7 @@ export default function ProposalDetail() {
                       <div className="p-4 bg-indigo-50 rounded-xl">
                         <p className="text-sm text-indigo-600 font-medium mb-2">Party B (Recipient)</p>
                         <p className="font-medium text-slate-900">
-                          {proposal.mutual_reveal || isPartyB 
-                            ? proposal.party_b_email || 'Not specified' 
-                            : 'Identity Protected'}
+                          {proposal.party_b_email || 'Not specified'}
                         </p>
                         {isPartyB && <Badge className="mt-2 bg-indigo-100 text-indigo-700">You</Badge>}
                       </div>
@@ -964,7 +1041,7 @@ export default function ProposalDetail() {
                     <div className="p-4 bg-indigo-50 rounded-xl">
                       <p className="text-sm text-indigo-600 font-medium mb-2">Party B (Recipient)</p>
                       <p className="font-medium text-slate-900">
-                        {proposal.mutual_reveal || isPartyB ? proposal.party_b_email || 'Not specified' : 'Identity Protected'}
+                        {proposal.party_b_email || 'Not specified'}
                       </p>
                     </div>
                   </div>
