@@ -145,10 +145,10 @@ export default function Templates() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: index * 0.1 }}
               >
-                <Card className={`h-full border-0 shadow-sm hover:shadow-lg transition-all duration-300 ${
+                <Card className={`h-full border-0 shadow-sm hover:shadow-lg transition-all duration-300 flex flex-col ${
                   isComingSoon ? 'opacity-75' : ''
                 }`}>
-                  <CardContent className="p-6">
+                  <CardContent className="p-6 flex flex-col flex-1">
                     <div className="flex items-start justify-between mb-4">
                       <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
                         isComingSoon 
@@ -173,11 +173,11 @@ export default function Templates() {
                     <h3 className="text-lg font-semibold text-slate-900 mb-2">
                       {template.name}
                     </h3>
-                    <p className="text-slate-600 text-sm mb-4 line-clamp-3">
+                    <p className="text-slate-600 text-sm mb-4 line-clamp-3 flex-1">
                       {template.description}
                     </p>
 
-                    <div className="flex items-center gap-3 mb-6 text-xs text-slate-500">
+                    <div className="flex items-center gap-3 mb-4 text-xs text-slate-500">
                       <span className="px-2 py-1 bg-slate-100 rounded">
                         {template.party_a_label}
                       </span>
@@ -187,22 +187,24 @@ export default function Templates() {
                       </span>
                     </div>
 
-                    {isComingSoon ? (
-                      <Button disabled variant="outline" className="w-full">
-                        <Lock className="w-4 h-4 mr-2" />
-                        Coming Soon
-                      </Button>
-                    ) : (
-                              <Link to={createPageUrl(`CreateProposal?template=${template.id}`)}>
-                        <Button 
-                          onClick={() => incrementViewCount(template.id)}
-                          className="w-full bg-slate-900 hover:bg-slate-800"
-                        >
-                          Use Template
-                          <ArrowRight className="w-4 h-4 ml-2" />
+                    <div className="mt-auto">
+                      {isComingSoon ? (
+                        <Button disabled variant="outline" className="w-full">
+                          <Lock className="w-4 h-4 mr-2" />
+                          Coming Soon
                         </Button>
-                      </Link>
-                    )}
+                      ) : (
+                        <Link to={createPageUrl(`CreateProposal?template=${template.id}`)}>
+                          <Button 
+                            onClick={() => incrementViewCount(template.id)}
+                            className="w-full bg-slate-900 hover:bg-slate-800"
+                          >
+                            Use Template
+                            <ArrowRight className="w-4 h-4 ml-2" />
+                          </Button>
+                        </Link>
+                      )}
+                    </div>
                   </CardContent>
                 </Card>
               </motion.div>
