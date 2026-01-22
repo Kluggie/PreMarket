@@ -398,13 +398,14 @@ export default function ProposalDetail() {
                 <Sparkles className="w-4 h-4 mr-2" />
                 {(runNewEvaluationMutation.isPending || latestReport?.status === 'running' || latestReport?.status === 'queued') ? 'Evaluating...' : 'Run AI Evaluation'}
               </Button>
-              {latestSuccessReport && (
+              {latestSuccessReport && latestSuccessReport.output_report_json && (
                 <Button 
                   variant="outline"
                   onClick={async () => {
-                    const { jsPDF } = await import('jspdf');
-                    const { default: autoTable } = await import('jspdf-autotable');
-                    const doc = new jsPDF();
+                    try {
+                      const { jsPDF } = await import('jspdf');
+                      const { default: autoTable } = await import('jspdf-autotable');
+                      const doc = new jsPDF();
                     const report = latestSuccessReport.output_report_json;
                     
                     // Header
@@ -525,7 +526,11 @@ export default function ProposalDetail() {
                       doc.text(`Generated: ${new Date().toLocaleString()}`, 150, 285);
                     }
                     
-                    doc.save(`${proposal.title || 'proposal'}_ai_report.pdf`);
+                      doc.save(`${proposal.title || 'proposal'}_ai_report.pdf`);
+                    } catch (error) {
+                      console.error('PDF generation error:', error);
+                      alert('Failed to generate PDF. Please try again.');
+                    }
                   }}
                 >
                   <FileText className="w-4 h-4 mr-2" />
@@ -580,10 +585,7 @@ export default function ProposalDetail() {
               <BarChart3 className="w-4 h-4 mr-2" />
               AI Report
             </TabsTrigger>
-            <TabsTrigger value="fullproposal" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
-              <FileText className="w-4 h-4 mr-2" />
-              Full Proposal
-            </TabsTrigger>
+
           </TabsList>
 
           {/* Overview Tab */}
@@ -615,11 +617,11 @@ export default function ProposalDetail() {
                   </CardContent>
                 </Card>
 
-                {/* Responses */}
+                {/* Detailed Responses */}
                 <Card className="border-0 shadow-sm">
                   <CardHeader>
-                    <CardTitle>Template Responses</CardTitle>
-                    <CardDescription>Information provided in this proposal.</CardDescription>
+                    <CardTitle>Complete Proposal Details</CardTitle>
+                    <CardDescription>All information provided in this proposal.</CardDescription>
                   </CardHeader>
                   <CardContent>
                     {responses.length === 0 ? (
@@ -627,27 +629,32 @@ export default function ProposalDetail() {
                     ) : (
                       <div className="space-y-4">
                         {responses.map(response => (
-                          <div key={response.id} className="p-4 bg-slate-50 rounded-xl">
-                            <div className="flex items-start justify-between mb-2">
-                              <p className="font-medium text-slate-900 capitalize">
-                                {response.question_id.replace(/_/g, ' ')}
-                              </p>
-                              <Badge variant="outline" className="text-xs">
-                                {response.visibility === 'full' ? (
-                                  <><Eye className="w-3 h-3 mr-1" /> Visible</>
-                                ) : response.visibility === 'partial' ? (
-                                  <><Eye className="w-3 h-3 mr-1" /> Partial</>
-                                ) : (
-                                  <><Lock className="w-3 h-3 mr-1" /> Hidden</>
-                                )}
+                          <div key={response.id} className="p-4 border border-slate-200 rounded-xl">
+                            <div className="flex items-start justify-between mb-3">
+                              <div>
+                                <p className="font-semibold text-slate-900 capitalize mb-1">
+                                  {response.question_id.replace(/_/g, ' ')}
+                                </p>
+                                <Badge variant="outline" className="text-xs">
+                                  Party {response.entered_by_party?.toUpperCase() || 'A'}
+                                </Badge>
+                              </div>
+                              <Badge className={
+                                response.visibility === 'full' ? 'bg-green-100 text-green-700' :
+                                response.visibility === 'partial' ? 'bg-amber-100 text-amber-700' :
+                                'bg-slate-100 text-slate-700'
+                              }>
+                                {response.visibility}
                               </Badge>
                             </div>
-                            <p className="text-slate-600">
-                              {response.value_type === 'range' 
-                                ? `${response.range_min} - ${response.range_max}`
-                                : response.value || 'Not provided'
-                              }
-                            </p>
+                            <div className="bg-slate-50 p-3 rounded-lg">
+                              <p className="text-slate-700">
+                                {response.value_type === 'range' 
+                                  ? `Range: ${response.range_min} - ${response.range_max}`
+                                  : response.value || 'Not provided'
+                                }
+                              </p>
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -1020,105 +1027,7 @@ export default function ProposalDetail() {
 
 
           {/* Full Proposal Tab */}
-          <TabsContent value="fullproposal">
-            <div className="space-y-6">
-              {/* Proposal Header */}
-              <Card className="border-0 shadow-sm">
-                <CardHeader>
-                  <CardTitle>{proposal.title || 'Untitled Proposal'}</CardTitle>
-                  <CardDescription>
-                    {proposal.template_name} • Created {new Date(proposal.created_date).toLocaleDateString()}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="p-4 bg-blue-50 rounded-xl">
-                      <p className="text-sm text-blue-600 font-medium mb-2">Party A (Proposer)</p>
-                      <p className="font-medium text-slate-900">
-                        {proposal.mutual_reveal || isPartyA ? proposal.party_a_email : 'Identity Protected'}
-                      </p>
-                    </div>
-                    <div className="p-4 bg-indigo-50 rounded-xl">
-                      <p className="text-sm text-indigo-600 font-medium mb-2">Party B (Recipient)</p>
-                      <p className="font-medium text-slate-900">
-                        {proposal.party_b_email || 'Not specified'}
-                      </p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
 
-              {/* Full Template Responses */}
-              <Card className="border-0 shadow-sm">
-                <CardHeader>
-                  <CardTitle>Complete Proposal Answers</CardTitle>
-                  <CardDescription>All information provided in this proposal.</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  {responses.length === 0 ? (
-                    <p className="text-slate-500 text-center py-8">No responses recorded yet.</p>
-                  ) : (
-                    <div className="space-y-4">
-                      {responses.map(response => (
-                        <div key={response.id} className="p-4 border border-slate-200 rounded-xl">
-                          <div className="flex items-start justify-between mb-3">
-                            <div>
-                              <p className="font-semibold text-slate-900 capitalize mb-1">
-                                {response.question_id.replace(/_/g, ' ')}
-                              </p>
-                              <Badge variant="outline" className="text-xs">
-                                Party {(response.party || '').toUpperCase()}
-                              </Badge>
-                            </div>
-                            <Badge className={
-                              response.visibility === 'full' ? 'bg-green-100 text-green-700' :
-                              response.visibility === 'partial' ? 'bg-amber-100 text-amber-700' :
-                              'bg-slate-100 text-slate-700'
-                            }>
-                              {response.visibility}
-                            </Badge>
-                          </div>
-                          <div className="bg-slate-50 p-3 rounded-lg">
-                            <p className="text-slate-700">
-                              {response.value_type === 'range' 
-                                ? `Range: ${response.range_min} - ${response.range_max}`
-                                : response.value || 'Not provided'
-                              }
-                            </p>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              {/* AI Evaluation Summary */}
-              {latestEvaluation && (
-                <Card className="border-0 shadow-sm">
-                  <CardHeader>
-                    <CardTitle>AI Evaluation Summary</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="flex items-center gap-6 mb-6">
-                      <div className="text-center">
-                        <p className="text-4xl font-bold text-blue-600">{latestEvaluation.overall_score}%</p>
-                        <p className="text-sm text-slate-500 mt-1">Match Score</p>
-                      </div>
-                      <div>
-                        <p className="text-sm text-slate-500 mb-1">Confidence</p>
-                        <div className="flex items-center gap-2">
-                          <Progress value={latestEvaluation.confidence || 0} className="w-32 h-2" />
-                          <span className="text-sm font-medium">{latestEvaluation.confidence}%</span>
-                        </div>
-                      </div>
-                    </div>
-                    <p className="text-slate-600">{latestEvaluation.summary}</p>
-                  </CardContent>
-                </Card>
-              )}
-            </div>
-          </TabsContent>
         </Tabs>
       </div>
     </div>

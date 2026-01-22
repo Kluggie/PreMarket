@@ -316,7 +316,7 @@ export default function Landing() {
             <Button 
               variant="outline" 
               size="lg" 
-              className="px-8 py-6 text-lg h-auto border-white/30 text-white hover:bg-white/10 hover:text-white"
+              className="px-8 py-6 text-lg h-auto border-white/30 text-white hover:bg-white/10 bg-transparent"
               onClick={() => {
                 window.location.href = createPageUrl('Documentation');
                 setTimeout(() => window.scrollTo(0, 0), 100);
