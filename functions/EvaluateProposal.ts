@@ -249,8 +249,139 @@ Deno.serve(async (req) => {
       input_fingerprint: inputFingerprint
     });
 
+    // Build system prompt with optional context
+    const systemPromptWithContext = `SYSTEM / DEVELOPER PROMPT — VertexGemini3Evaluator (GenerateContent)
+You generate a structured evaluation report for a pre-qualification proposal.
+You MUST use only the provided template, responses, and optional computedSignals.
+You MUST NOT invent facts. If data is missing/ambiguous, say "unknown".
+
+NON-NEGOTIABLE RULES
+1) Evidence-only: Every finding/flag/recommendation/follow-up question MUST cite relevant question_id(s).
+2) No hallucinations: Do not claim certifications, controls, revenue, pricing, or documents unless present in responses or computedSignals.
+3) Visibility compliance:
+   - If visibility="hidden": do NOT reveal the value; set detail_level="redacted" and use a generic description.
+   - If visibility="partial": summarize without specific numbers/URLs; detail_level="partial".
+   - If visibility="full": you may summarize normally; detail_level="full".
+4) Use computedSignals when provided for overlaps/gates/contradictions. Do not recompute complex logic if not provided.
+5) Output MUST be valid JSON only. No prose outside JSON.
+
+${profileContext || organisationContext ? `
+**ADDITIONAL CONTEXT (OPTIONAL):**
+The proposer has opted to include additional context for this evaluation. Use this information ONLY if relevant to the template/rubric, and respect privacy settings.
+
+${profileContext ? `**Proposer Profile:**
+${JSON.stringify(profileContext, null, 2)}
+` : ''}
+
+${organisationContext ? `**Proposer Organisation:**
+${JSON.stringify(organisationContext, null, 2)}
+` : ''}
+
+DO NOT reveal this context in the report if it's unrelated to the evaluation criteria.
+` : ''}
+
+CONTEXT (how the workflow works)
+- Party A (proposer) fills:
+  - their own info (party="a")
+  - AND initial info about Party B (still stored as responses, with updated_by="proposer")
+- Party B can later verify/correct/update responses (updated_by="recipient" and/or verified_status changes)
+- The report should reflect:
+  - what is self-declared vs evidence-backed vs tier1_verified vs disputed
+  - what is missing or unverified
+  - what is blocked by hard constraints (if computedSignals includes gate_results)
+
+OUTPUT JSON SCHEMA (MUST MATCH)
+{
+  "template_id": "string",
+  "template_name": "string",
+  "generated_at_iso": "string",
+  "parties": { "a_label": "string", "b_label": "string" },
+  "quality": {
+    "completeness_a": 0.0,
+    "completeness_b": 0.0,
+    "confidence_overall": 0.0,
+    "confidence_reasoning": ["string"],
+    "missing_high_impact_question_ids": ["string"],
+    "disputed_question_ids": ["string"]
+  },
+  "summary": {
+    "overall_score_0_100": null,
+    "fit_level": "high" | "medium" | "low" | "unknown",
+    "top_fit_reasons": [{ "text": "string", "evidence_question_ids": ["string"] }],
+    "top_blockers": [{ "text": "string", "evidence_question_ids": ["string"] }],
+    "next_actions": ["string"]
+  },
+  "category_breakdown": [
+    {
+      "category_key": "string",
+      "name": "string",
+      "weight": 0.0,
+      "score_0_100": null,
+      "confidence_0_1": 0.0,
+      "notes": ["string"],
+      "evidence_question_ids": ["string"]
+    }
+  ],
+  "gates": [{ "gate_key":"string", "outcome":"pass"|"fail"|"unknown", "message":"string", "evidence_question_ids":["string"] }],
+  "overlaps_and_constraints": [{ "key":"string", "outcome":"pass"|"fail"|"unknown", "short_explanation":"string", "evidence_question_ids":["string"] }],
+  "contradictions": [{ "key":"string", "severity":"low"|"med"|"high", "description":"string", "evidence_question_ids":["string"] }],
+  "flags": [
+    {
+      "severity":"low"|"med"|"high",
+      "type":"security"|"privacy"|"ops"|"commercial"|"integrity"|"other",
+      "title":"string",
+      "detail":"string",
+      "detail_level":"full"|"partial"|"redacted",
+      "evidence_question_ids":["string"]
+    }
+  ],
+  "verification": {
+    "summary": {
+      "self_declared_count": 0,
+      "evidence_attached_count": 0,
+      "tier1_verified_count": 0,
+      "disputed_count": 0
+    },
+    "evidence_requested": [{ "item":"string", "reason":"string", "related_question_ids":["string"] }]
+  },
+  "followup_questions": [
+    {
+      "priority":"high"|"med"|"low",
+      "to_party":"a"|"b"|"both",
+      "question_text":"string",
+      "why_this_matters":"string",
+      "targets": { "category_key":"string", "question_ids":["string"] }
+    }
+  ],
+  "appendix": {
+    "field_digest": [
+      {
+        "question_id":"string",
+        "label":"string",
+        "party":"a"|"b",
+        "value_summary":"string",
+        "visibility":"full"|"partial"|"hidden",
+        "verified_status":"self_declared"|"evidence_attached"|"tier1_verified"|"disputed"|"unknown",
+        "last_updated_by":"proposer"|"recipient"|"system"
+      }
+    ]
+  }
+}
+
+HOW TO FILL THE REPORT:
+- Completeness: answered_required / total_required per party
+- Confidence: low if many required fields missing, disputes, or missing evidence
+- Category breakdown: If rubric provided, use categories; else group by module_key
+- DO NOT compute numeric scores yet; leave score_0_100 null
+- Gates/overlaps/contradictions: use computedSignals if provided
+- Flags: max 8, cite evidence_question_ids
+- Follow-up questions: max 10, prioritize blockers and disputed items
+- Respect visibility: hidden fields must have detail_level="redacted"
+
+OUTPUT: Valid JSON only, no prose.`;
+
     // Build prompt
-    const promptText = `${SYSTEM_PROMPT}
+    const promptText = `${systemPromptWithContext}
 
 INPUTS (JSON):
 ${JSON.stringify(inputSnapshot, null, 2)}
