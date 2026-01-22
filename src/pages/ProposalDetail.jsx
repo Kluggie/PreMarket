@@ -739,7 +739,7 @@ export default function ProposalDetail() {
                               <div>
                                 <p className="font-medium">{q.question_text}</p>
                                 <p className="text-sm text-slate-600 mt-1">{q.why_this_matters}</p>
-                                <Badge variant="outline" className="text-xs mt-2">To: Party {q.to_party.toUpperCase()}</Badge>
+                                <Badge variant="outline" className="text-xs mt-2">To: Party {(q.to_party || '').toUpperCase()}</Badge>
                               </div>
                             </div>
                           </div>
