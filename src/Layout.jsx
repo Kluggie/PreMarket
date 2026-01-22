@@ -132,7 +132,7 @@ export default function Layout({ children, currentPageName }) {
                     <DropdownMenuTrigger asChild>
                       <Button variant="ghost" className="flex items-center gap-2 pl-2 pr-3">
                         <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white text-sm font-medium">
-                          {user.full_name?.charAt(0)?.toUpperCase() || user.email?.charAt(0)?.toUpperCase() || 'U'}
+                          {((user?.full_name?.[0] || user?.email?.[0] || 'U').toUpperCase())}
                         </div>
                         <span className="hidden sm:block text-sm font-medium text-slate-700">
                           {user.full_name || 'User'}
