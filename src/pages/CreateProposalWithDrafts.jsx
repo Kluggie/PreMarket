@@ -17,6 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Progress } from '@/components/ui/progress';
+import { Switch } from '@/components/ui/switch';
 import {
   ArrowLeft, ArrowRight, FileText, User, Eye, EyeOff, Lock,
   Building2, Users, TrendingUp, Handshake, Briefcase, CheckCircle2,
@@ -159,7 +160,9 @@ export default function CreateProposal() {
         party_a_user_id: user.id,
         party_a_email: user.email,
         party_b_email: recipientEmail || null,
-        disclosure_mode: responses['disclosure_mode'] || 'open'
+        disclosure_mode: responses['disclosure_mode'] || 'open',
+        include_profile: responses['_include_profile'] || false,
+        include_organisation: responses['_include_organisation'] || false
       };
 
       if (presetKey) {
@@ -182,6 +185,8 @@ export default function CreateProposal() {
       const existingIds = new Set(existingResponses.map(r => r.question_id));
 
       for (const [questionId, value] of Object.entries(responses)) {
+        if (questionId.startsWith('_include_')) continue;
+        
         const question = selectedTemplate.questions.find(q => q.id === questionId);
         const visibility = visibilitySettings[questionId] || 'full';
 
@@ -375,7 +380,9 @@ export default function CreateProposal() {
         party_a_email: isGuestMode ? guestEmailParam : user?.email,
         party_b_email: recipientEmail,
         disclosure_mode: responses['disclosure_mode'] || 'open',
-        sent_at: new Date().toISOString()
+        sent_at: new Date().toISOString(),
+        include_profile: responses['_include_profile'] || false,
+        include_organisation: responses['_include_organisation'] || false
       };
 
       if (isUniversalTemplate && presetKey) {
@@ -460,7 +467,7 @@ export default function CreateProposal() {
 
   const renderQuestionInput = (question) => {
     const value = responses[question.id] || '';
-    const visibility = visibilitySettings[question.id] || 'full';
+    const visibility = visibilitySettings[question.id] || question.visibility_default || 'full';
     const hasError = validationErrors[question.id];
     const isConditionalReq = isConditionallyRequired(question);
     const effectiveRequired = getEffectiveRequired(question);
@@ -477,27 +484,25 @@ export default function CreateProposal() {
               <p className="text-sm text-slate-600 mt-1">{question.description}</p>
             )}
           </div>
-          {question.supports_visibility && (
-            <Select 
-              value={visibility}
-              onValueChange={(v) => handleVisibilityChange(question.id, v)}
-            >
-              <SelectTrigger className="w-32 h-8 text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="full">
-                  <span className="flex items-center gap-1"><Eye className="w-3 h-3" /> Full</span>
-                </SelectItem>
-                <SelectItem value="partial">
-                  <span className="flex items-center gap-1"><EyeOff className="w-3 h-3" /> Partial</span>
-                </SelectItem>
-                <SelectItem value="hidden">
-                  <span className="flex items-center gap-1"><Lock className="w-3 h-3" /> Hidden</span>
-                </SelectItem>
-              </SelectContent>
-            </Select>
-          )}
+          <Select 
+            value={visibility}
+            onValueChange={(v) => handleVisibilityChange(question.id, v)}
+          >
+            <SelectTrigger className="w-32 h-8 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="full">
+                <span className="flex items-center gap-1"><Eye className="w-3 h-3" /> Full</span>
+              </SelectItem>
+              <SelectItem value="partial">
+                <span className="flex items-center gap-1"><EyeOff className="w-3 h-3" /> Partial</span>
+              </SelectItem>
+              <SelectItem value="hidden">
+                <span className="flex items-center gap-1"><Lock className="w-3 h-3" /> Hidden</span>
+              </SelectItem>
+            </SelectContent>
+          </Select>
         </div>
 
         <div className="space-y-2">
@@ -724,6 +729,36 @@ export default function CreateProposal() {
                       Optional: You can send this later from the Drafts tab.
                     </p>
                   </div>
+
+                  {user && (
+                    <div className="space-y-3 p-4 border border-slate-200 bg-slate-50 rounded-xl">
+                      <Label className="text-sm font-semibold text-slate-900">
+                        Additional Context for AI Evaluation
+                      </Label>
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-sm font-medium text-slate-700">Include my Profile</p>
+                            <p className="text-xs text-slate-500">Use your profile information in the AI assessment</p>
+                          </div>
+                          <Switch 
+                            checked={responses['_include_profile'] || false}
+                            onCheckedChange={(checked) => handleResponseChange('_include_profile', checked)}
+                          />
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-sm font-medium text-slate-700">Include my Organisation</p>
+                            <p className="text-xs text-slate-500">Use your organisation details in the AI assessment</p>
+                          </div>
+                          <Switch 
+                            checked={responses['_include_organisation'] || false}
+                            onCheckedChange={(checked) => handleResponseChange('_include_organisation', checked)}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {isUniversalTemplate && (
                     <div className="space-y-3 p-4 border-2 border-blue-200 bg-blue-50 rounded-xl">

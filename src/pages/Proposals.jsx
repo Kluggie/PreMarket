@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '../utils';
 import { base44 } from '@/api/base44Client';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -11,9 +11,17 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import DeleteDraftDialog from '../components/proposal/DeleteDraftDialog';
+import {
   Plus, Search, Filter, Send, Inbox, FileText, BarChart3,
-  ChevronRight, Clock, CheckCircle2, AlertTriangle, Eye, Users
+  ChevronRight, Clock, CheckCircle2, AlertTriangle, Eye, Users, MoreVertical, Trash2
 } from 'lucide-react';
+import { toast } from 'sonner';
 
 const StatusBadge = ({ status }) => {
   const config = {
@@ -43,31 +51,34 @@ export default function Proposals() {
   const [activeTab, setActiveTab] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     base44.auth.me().then(setUser);
   }, []);
 
-  const { data: sentProposals = [], isLoading: loadingSent } = useQuery({
-    queryKey: ['proposals', 'sent', user?.email],
-    queryFn: () => base44.entities.Proposal.filter({ party_a_email: user?.email }, '-created_date'),
+  const { data: allUserProposals = [], isLoading: loadingAll } = useQuery({
+    queryKey: ['proposals', 'all', user?.email],
+    queryFn: async () => {
+      const sent = await base44.entities.Proposal.filter({ party_a_email: user?.email }, '-created_date');
+      const received = await base44.entities.Proposal.filter({ party_b_email: user?.email }, '-created_date');
+      return { sent, received };
+    },
     enabled: !!user?.email
   });
 
-  const { data: receivedProposals = [], isLoading: loadingReceived } = useQuery({
-    queryKey: ['proposals', 'received', user?.email],
-    queryFn: () => base44.entities.Proposal.filter({ party_b_email: user?.email }, '-created_date'),
-    enabled: !!user?.email
-  });
+  const sentProposals = allUserProposals?.sent?.filter(p => p.status !== 'draft') || [];
+  const receivedProposals = allUserProposals?.received || [];
+  const draftProposals = allUserProposals?.sent?.filter(p => p.status === 'draft') || [];
 
-  const allProposals = [...sentProposals, ...receivedProposals].sort(
+  const allProposals = [...sentProposals, ...receivedProposals, ...draftProposals].sort(
     (a, b) => new Date(b.created_date) - new Date(a.created_date)
   );
 
   const getFilteredProposals = () => {
     let proposals = activeTab === 'sent' ? sentProposals : 
                    activeTab === 'received' ? receivedProposals :
-                   activeTab === 'drafts' ? sentProposals.filter(p => p.status === 'draft') :
+                   activeTab === 'drafts' ? draftProposals :
                    allProposals;
 
     if (statusFilter !== 'all') {
@@ -88,19 +99,45 @@ export default function Proposals() {
   };
 
   const filteredProposals = getFilteredProposals();
-  const isLoading = loadingSent || loadingReceived;
+  const isLoading = loadingAll;
+
+  const deleteDraftMutation = useMutation({
+    mutationFn: async (proposalId) => {
+      const responses = await base44.entities.ProposalResponse.filter({ proposal_id: proposalId });
+      const reports = await base44.entities.EvaluationReport.filter({ proposal_id: proposalId });
+      const attachments = await base44.entities.Attachment.filter({ proposal_id: proposalId });
+      
+      await Promise.all([
+        ...responses.map(r => base44.entities.ProposalResponse.delete(r.id)),
+        ...reports.map(r => base44.entities.EvaluationReport.delete(r.id)),
+        ...attachments.map(a => base44.entities.Attachment.delete(a.id))
+      ]);
+      
+      await base44.entities.Proposal.delete(proposalId);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries(['proposals']);
+      toast.success('Draft deleted successfully');
+    },
+    onError: () => {
+      toast.error('Failed to delete draft');
+    }
+  });
 
   const ProposalRow = ({ proposal }) => {
     const isSent = proposal.party_a_email === user?.email;
+    const isDraft = proposal.status === 'draft';
     
     return (
-      <Link to={createPageUrl(`ProposalDetail?id=${proposal.id}`)}>
-        <motion.div
-          whileHover={{ backgroundColor: 'rgb(248, 250, 252)' }}
-          className="p-4 border-b border-slate-100 flex items-center gap-4 cursor-pointer"
-        >
+      <motion.div
+        whileHover={{ backgroundColor: 'rgb(248, 250, 252)' }}
+        className="p-4 border-b border-slate-100 flex items-center gap-4"
+      >
+        <Link to={createPageUrl(`ProposalDetail?id=${proposal.id}`)} className="flex items-center gap-4 flex-1 min-w-0 cursor-pointer">
           <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center">
-            {isSent ? (
+            {isDraft ? (
+              <FileText className="w-5 h-5 text-slate-600" />
+            ) : isSent ? (
               <Send className="w-5 h-5 text-blue-600" />
             ) : (
               <Inbox className="w-5 h-5 text-amber-600" />
@@ -118,7 +155,7 @@ export default function Proposals() {
               <span>{proposal.template_name}</span>
               <span>•</span>
               <span>
-                {isSent ? `To: ${proposal.party_b_email || 'Draft'}` : `From: ${proposal.party_a_email}`}
+                {isSent ? `To: ${proposal.party_b_email || 'Not specified'}` : `From: ${proposal.party_a_email}`}
               </span>
             </div>
           </div>
@@ -137,8 +174,32 @@ export default function Proposals() {
             </div>
             <ChevronRight className="w-5 h-5 text-slate-400" />
           </div>
-        </motion.div>
-      </Link>
+        </Link>
+        
+        {isDraft && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={(e) => e.stopPropagation()}>
+                <MoreVertical className="w-4 h-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem 
+                className="text-red-600 cursor-pointer"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (window.confirm('This will permanently delete this draft. Continue?')) {
+                    deleteDraftMutation.mutate(proposal.id);
+                  }
+                }}
+              >
+                <Trash2 className="w-4 h-4 mr-2" />
+                Delete Draft
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+      </motion.div>
     );
   };
 
@@ -207,7 +268,7 @@ export default function Proposals() {
             </TabsTrigger>
             <TabsTrigger value="drafts" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
               <FileText className="w-4 h-4 mr-2" />
-              Drafts ({sentProposals.filter(p => p.status === 'draft').length})
+              Drafts ({draftProposals.length})
             </TabsTrigger>
           </TabsList>
 

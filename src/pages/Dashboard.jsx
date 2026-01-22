@@ -38,17 +38,21 @@ export default function Dashboard() {
     base44.auth.me().then(setUser);
   }, []);
 
-  const { data: sentProposals = [], isLoading: loadingSent } = useQuery({
-    queryKey: ['proposals', 'sent', user?.email],
-    queryFn: () => base44.entities.Proposal.filter({ party_a_email: user?.email }, '-created_date', 10),
+  const { data: allUserProposals = [], isLoading: loadingAll } = useQuery({
+    queryKey: ['proposals', 'all', user?.email],
+    queryFn: async () => {
+      const sent = await base44.entities.Proposal.filter({ party_a_email: user?.email }, '-created_date', 10);
+      const received = await base44.entities.Proposal.filter({ party_b_email: user?.email }, '-created_date', 10);
+      return { sent, received };
+    },
     enabled: !!user?.email
   });
 
-  const { data: receivedProposals = [], isLoading: loadingReceived } = useQuery({
-    queryKey: ['proposals', 'received', user?.email],
-    queryFn: () => base44.entities.Proposal.filter({ party_b_email: user?.email }, '-created_date', 10),
-    enabled: !!user?.email
-  });
+  const sentProposals = allUserProposals?.sent?.filter(p => p.status !== 'draft') || [];
+  const receivedProposals = allUserProposals?.received || [];
+  
+  const loadingSent = loadingAll;
+  const loadingReceived = loadingAll;
 
   const stats = [
     { 

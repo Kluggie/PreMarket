@@ -2,6 +2,7 @@ import About from './pages/About';
 import Admin from './pages/Admin';
 import Billing from './pages/Billing';
 import Contact from './pages/Contact';
+import CreateProposal from './pages/CreateProposal';
 import Dashboard from './pages/Dashboard';
 import Documentation from './pages/Documentation';
 import GeminiTest from './pages/GeminiTest';
@@ -19,7 +20,6 @@ import Templates from './pages/Templates';
 import Terms from './pages/Terms';
 import Verification from './pages/Verification';
 import CreateProposalWithDrafts from './pages/CreateProposalWithDrafts';
-import CreateProposal from './pages/CreateProposal';
 import __Layout from './Layout.jsx';
 
 
@@ -28,6 +28,7 @@ export const PAGES = {
     "Admin": Admin,
     "Billing": Billing,
     "Contact": Contact,
+    "CreateProposal": CreateProposal,
     "Dashboard": Dashboard,
     "Documentation": Documentation,
     "GeminiTest": GeminiTest,
@@ -45,7 +46,6 @@ export const PAGES = {
     "Terms": Terms,
     "Verification": Verification,
     "CreateProposalWithDrafts": CreateProposalWithDrafts,
-    "CreateProposal": CreateProposal,
 }
 
 export const pagesConfig = {

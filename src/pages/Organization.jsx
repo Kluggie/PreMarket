@@ -10,9 +10,11 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
+import ManageOrgDialog from '../components/organization/ManageOrgDialog';
 import {
   Building2, Users, Plus, Save, CheckCircle2, Trash2, Mail, Crown, UserMinus
 } from 'lucide-react';
+import { toast } from 'sonner';
 
 export default function Organization() {
   const [user, setUser] = useState(null);
@@ -83,6 +85,20 @@ export default function Organization() {
         is_public_directory: false,
         social_links: { linkedin: '', twitter: '', crunchbase: '' }
       });
+      toast.success('Organization created successfully');
+    }
+  });
+
+  const updateOrgMutation = useMutation({
+    mutationFn: async ({ orgId, data }) => {
+      await base44.entities.Organization.update(orgId, data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries(['organizations']);
+      toast.success('Organization updated successfully');
+    },
+    onError: () => {
+      toast.error('Failed to update organization');
     }
   });
 
@@ -284,9 +300,10 @@ export default function Organization() {
                           )}
                         </div>
                       </div>
-                      <Button variant="outline" size="sm">
-                        Manage
-                      </Button>
+                      <ManageOrgDialog 
+                        org={org}
+                        onSave={(data) => updateOrgMutation.mutate({ orgId: org.id, data })}
+                      />
                     </div>
                   </CardContent>
                 </Card>

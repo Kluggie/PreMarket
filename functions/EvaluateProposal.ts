@@ -147,6 +147,39 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Template not found' }, { status: 404 });
     }
 
+    // Fetch optional profile/org context
+    let profileContext = null;
+    let organisationContext = null;
+
+    if (proposal.include_profile) {
+      const profiles = await base44.asServiceRole.entities.UserProfile.filter({ user_id: proposal.party_a_user_id });
+      if (profiles[0]) {
+        const profile = profiles[0];
+        profileContext = {
+          title: profile.title,
+          industry: profile.industry,
+          location: profile.location,
+          bio: profile.bio,
+          verification_status: profile.verification_status
+        };
+      }
+    }
+
+    if (proposal.include_organisation && proposal.party_a_org_id) {
+      const orgs = await base44.asServiceRole.entities.Organization.filter({ id: proposal.party_a_org_id });
+      if (orgs[0]) {
+        const org = orgs[0];
+        organisationContext = {
+          name: org.name,
+          type: org.type,
+          industry: org.industry,
+          location: org.location,
+          bio: org.bio,
+          verification_status: org.verification_status
+        };
+      }
+    }
+
     // Build input snapshot
     const inputSnapshot = {
       template: {
@@ -168,7 +201,9 @@ Deno.serve(async (req) => {
         verified_status: 'self_declared'
       })).sort((a, b) => a.question_id.localeCompare(b.question_id)),
       rubric: template.evaluation_rubric_json || null,
-      computedSignals: null
+      computedSignals: null,
+      profile: profileContext,
+      organisation: organisationContext
     };
 
     // Compute deterministic fingerprint

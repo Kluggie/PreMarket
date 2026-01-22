@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '../utils';
 import { base44 } from '@/api/base44Client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
 import { Separator } from '@/components/ui/separator';
+import DeleteDraftDialog from '../components/proposal/DeleteDraftDialog';
 import {
   ArrowLeft, FileText, BarChart3, Shield, Eye, Clock, CheckCircle2,
   AlertTriangle, XCircle, Users, MessageSquare, Paperclip, RefreshCw,
@@ -39,6 +40,7 @@ export default function ProposalDetail() {
   const [user, setUser] = useState(null);
   const [activeTab, setActiveTab] = useState('overview');
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
 
   const params = new URLSearchParams(window.location.search);
   const proposalId = params.get('id');
@@ -315,6 +317,29 @@ export default function ProposalDetail() {
             </div>
 
             <div className="flex items-center gap-3">
+              {proposal.status === 'draft' && isPartyA && (
+                <DeleteDraftDialog 
+                  onConfirm={async () => {
+                    try {
+                      const responses = await base44.entities.ProposalResponse.filter({ proposal_id: proposalId });
+                      const reports = await base44.entities.EvaluationReport.filter({ proposal_id: proposalId });
+                      const attachments = await base44.entities.Attachment.filter({ proposal_id: proposalId });
+                      
+                      await Promise.all([
+                        ...responses.map(r => base44.entities.ProposalResponse.delete(r.id)),
+                        ...reports.map(r => base44.entities.EvaluationReport.delete(r.id)),
+                        ...attachments.map(a => base44.entities.Attachment.delete(a.id))
+                      ]);
+                      
+                      await base44.entities.Proposal.delete(proposalId);
+                      navigate(createPageUrl('Proposals'));
+                    } catch (error) {
+                      console.error('Delete failed:', error);
+                      alert('Failed to delete draft');
+                    }
+                  }}
+                />
+              )}
               <Button 
                 variant="outline"
                 onClick={async () => {
