@@ -135,7 +135,7 @@ export default function Layout({ children, currentPageName }) {
                           {((user?.full_name?.[0] || user?.email?.[0] || 'U').toUpperCase())}
                         </div>
                         <span className="hidden sm:block text-sm font-medium text-slate-700">
-                          {user.full_name || 'User'}
+                          {user?.full_name || 'User'}
                         </span>
                         <ChevronDown className="w-4 h-4 text-slate-400" />
                       </Button>
