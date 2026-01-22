@@ -136,7 +136,7 @@ export default function Dashboard() {
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
           <div>
             <h1 className="text-2xl font-bold text-slate-900">
-              Welcome back, {user?.full_name?.split(' ')[0] || 'there'}
+              Welcome back, {user?.full_name?.split(' ')?.[0] || 'there'}
             </h1>
             <p className="text-slate-500 mt-1">Here's what's happening with your proposals.</p>
           </div>
