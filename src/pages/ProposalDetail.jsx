@@ -87,6 +87,22 @@ export default function ProposalDetail() {
     }
   });
 
+  const { data: sharedReports = [] } = useQuery({
+    queryKey: ['sharedReports', proposalId],
+    queryFn: () => base44.entities.EvaluationReportShared.filter({ proposal_id: proposalId }),
+    enabled: !!proposalId,
+    refetchInterval: (data) => {
+      const hasRunning = Array.isArray(data) && data.some(r => ['queued', 'running'].includes(r.status));
+      return hasRunning ? 2000 : false;
+    }
+  });
+
+  const { data: templates = [] } = useQuery({
+    queryKey: ['templates'],
+    queryFn: () => base44.entities.Template.list(),
+    enabled: !!proposal?.template_id
+  });
+
   const { data: verifications = [] } = useQuery({
     queryKey: ['verifications', proposalId],
     queryFn: () => base44.entities.VerificationItem.filter({ proposal_id: proposalId }),
@@ -110,15 +126,24 @@ export default function ProposalDetail() {
   const latestEvaluation = evaluations[0];
   const latestReport = evaluationReports?.[0];
   const latestSuccessReport = evaluationReports?.find(r => r.status === 'succeeded');
+  const sharedReport = sharedReports?.[0];
+
+  const isFinanceTemplate = templates.find(t => t.id === proposal?.template_id)?.slug === 'universal_finance_deal_prequal';
 
   // Run New Evaluation (Vertex Gemini)
   const runNewEvaluationMutation = useMutation({
     mutationFn: async () => {
-      const response = await base44.functions.invoke('EvaluateProposal', { proposal_id: proposal.id });
-      return response.data;
+      if (isFinanceTemplate) {
+        const response = await base44.functions.invoke('EvaluateProposalShared', { proposal_id: proposal.id });
+        return response.data;
+      } else {
+        const response = await base44.functions.invoke('EvaluateProposal', { proposal_id: proposal.id });
+        return response.data;
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries(['evaluationReports', proposalId]);
+      queryClient.invalidateQueries(['sharedReports', proposalId]);
       queryClient.invalidateQueries(['proposal', proposalId]);
     }
   });
@@ -609,6 +634,11 @@ export default function ProposalDetail() {
             <TabsTrigger value="evaluation" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
               <BarChart3 className="w-4 h-4 mr-2" />
               AI Report
+              {(latestSuccessReport || sharedReport?.status === 'succeeded') && (
+                <Badge className="ml-2 bg-green-100 text-green-700 text-xs">
+                  Complete
+                </Badge>
+              )}
             </TabsTrigger>
 
           </TabsList>
@@ -787,8 +817,186 @@ export default function ProposalDetail() {
 
           {/* AI Report Tab */}
           <TabsContent value="evaluation">
-            {/* Evaluation History */}
-            {evaluationReports.length > 0 && (
+            {/* Shared Report for Finance Template */}
+            {isFinanceTemplate && sharedReport?.status === 'succeeded' && sharedReport.output_report_json && (
+              <div className="space-y-6">
+                <Card className="border-0 shadow-sm bg-gradient-to-br from-emerald-50 to-blue-50">
+                  <CardHeader>
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="flex items-center gap-2">
+                        <Sparkles className="w-5 h-5 text-emerald-600" />
+                        Shared Evaluation Report
+                      </CardTitle>
+                      <Badge variant="outline">
+                        Both parties see this report
+                      </Badge>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-2 gap-4 mb-4">
+                      <div className="p-4 bg-white rounded-lg">
+                        <p className="text-sm text-slate-600">Deal Mode</p>
+                        <p className="text-xl font-bold">{sharedReport.mode_value}</p>
+                      </div>
+                      <div className="p-4 bg-white rounded-lg">
+                        <p className="text-sm text-slate-600">Overall Fit</p>
+                        <p className="text-xl font-bold capitalize">{sharedReport.output_report_json.summary?.fit_level || 'Unknown'}</p>
+                      </div>
+                    </div>
+
+                    {sharedReport.output_report_json.summary?.top_fit_reasons?.length > 0 && (
+                      <div className="mb-4">
+                        <h4 className="font-semibold mb-2 flex items-center gap-2">
+                          <CheckCircle2 className="w-4 h-4 text-green-600" />
+                          Top Fit Reasons
+                        </h4>
+                        <div className="space-y-2">
+                          {sharedReport.output_report_json.summary.top_fit_reasons.map((reason, idx) => (
+                            <div key={idx} className="p-3 bg-green-50 border border-green-100 rounded-lg">
+                              <p className="text-sm text-slate-800">{reason.text}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {sharedReport.output_report_json.summary?.top_blockers?.length > 0 && (
+                      <div className="mb-4">
+                        <h4 className="font-semibold mb-2 flex items-center gap-2">
+                          <XCircle className="w-4 h-4 text-red-600" />
+                          Top Blockers
+                        </h4>
+                        <div className="space-y-2">
+                          {sharedReport.output_report_json.summary.top_blockers.map((blocker, idx) => (
+                            <div key={idx} className="p-3 bg-red-50 border border-red-100 rounded-lg">
+                              <p className="text-sm text-slate-800">{blocker.text}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {sharedReport.output_report_json.flags?.length > 0 && (
+                      <div className="mb-4">
+                        <h4 className="font-semibold mb-2 flex items-center gap-2">
+                          <AlertTriangle className="w-4 h-4 text-amber-600" />
+                          Flags & Concerns
+                        </h4>
+                        <div className="space-y-2">
+                          {sharedReport.output_report_json.flags.map((flag, idx) => (
+                            <div key={idx} className={`p-3 rounded-lg border ${
+                              flag.severity === 'high' ? 'bg-red-50 border-red-200' :
+                              flag.severity === 'med' ? 'bg-amber-50 border-amber-200' :
+                              'bg-blue-50 border-blue-200'
+                            }`}>
+                              <div className="flex items-start gap-2">
+                                <Badge className={
+                                  flag.severity === 'high' ? 'bg-red-600' :
+                                  flag.severity === 'med' ? 'bg-amber-600' :
+                                  'bg-blue-600'
+                                }>
+                                  {flag.severity}
+                                </Badge>
+                                <div className="flex-1">
+                                  <p className="font-medium text-sm">{flag.title}</p>
+                                  <p className="text-sm text-slate-600 mt-1">{flag.detail}</p>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {sharedReport.output_report_json.followup_questions?.length > 0 && (
+                      <div>
+                        <h4 className="font-semibold mb-2 flex items-center gap-2">
+                          <MessageSquare className="w-4 h-4 text-blue-600" />
+                          Follow-up Questions
+                        </h4>
+                        <div className="space-y-2">
+                          {sharedReport.output_report_json.followup_questions.map((q, idx) => (
+                            <div key={idx} className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
+                              <div className="flex items-start gap-2">
+                                <Badge variant="outline" className="text-xs">
+                                  {q.priority}
+                                </Badge>
+                                <div className="flex-1">
+                                  <p className="text-sm font-medium">{q.question_text}</p>
+                                  <p className="text-xs text-slate-600 mt-1">{q.why_this_matters}</p>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Button 
+                  variant="outline"
+                  onClick={() => runNewEvaluationMutation.mutate()}
+                  disabled={runNewEvaluationMutation.isPending || sharedReport?.status === 'running'}
+                  className="w-full"
+                >
+                  <RefreshCw className="w-4 h-4 mr-2" />
+                  Re-run Evaluation
+                </Button>
+              </div>
+            )}
+
+            {isFinanceTemplate && sharedReport?.status === 'running' && (
+              <Card className="border-0 shadow-sm">
+                <CardContent className="py-16 text-center">
+                  <RefreshCw className="w-12 h-12 text-blue-500 mx-auto mb-4 animate-spin" />
+                  <h3 className="text-lg font-semibold text-slate-900 mb-2">Generating shared evaluation</h3>
+                  <p className="text-slate-500">This may take 10-30 seconds...</p>
+                </CardContent>
+              </Card>
+            )}
+
+            {isFinanceTemplate && sharedReport?.status === 'failed' && (
+              <Card className="border-0 shadow-sm">
+                <CardContent className="py-16 text-center">
+                  <XCircle className="w-12 h-12 text-red-300 mx-auto mb-4" />
+                  <h3 className="text-lg font-semibold text-slate-900 mb-2">Evaluation Failed</h3>
+                  <p className="text-slate-500 mb-4">{sharedReport.error_message || 'Unknown error'}</p>
+                  <Button 
+                    onClick={() => runNewEvaluationMutation.mutate()}
+                    disabled={runNewEvaluationMutation.isPending}
+                    variant="outline"
+                  >
+                    <RefreshCw className="w-4 h-4 mr-2" />
+                    Retry Evaluation
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
+
+            {isFinanceTemplate && !sharedReport && (
+              <Card className="border-0 shadow-sm">
+                <CardContent className="py-16 text-center">
+                  <Sparkles className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+                  <h3 className="text-lg font-semibold text-slate-900 mb-2">No evaluation yet</h3>
+                  <p className="text-slate-500 mb-6">Run an AI evaluation to get comprehensive compatibility analysis.</p>
+                  <Button 
+                    onClick={() => runNewEvaluationMutation.mutate()}
+                    disabled={runNewEvaluationMutation.isPending}
+                    className="bg-blue-600 hover:bg-blue-700"
+                  >
+                    <Sparkles className="w-4 h-4 mr-2" />
+                    {runNewEvaluationMutation.isPending ? 'Evaluating...' : 'Run Evaluation'}
+                  </Button>
+                  {runNewEvaluationMutation.isPending && (
+                    <p className="text-sm text-slate-500 mt-4">This may take 10-30 seconds...</p>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Standard Reports (Non-Finance Templates) */}
+            {!isFinanceTemplate && evaluationReports.length > 0 && (
               <Card className="border-0 shadow-sm mb-6">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
@@ -833,7 +1041,7 @@ export default function ProposalDetail() {
               </Card>
             )}
 
-            {!latestReport && (
+            {!isFinanceTemplate && !latestReport && (
               <Card className="border-0 shadow-sm">
                 <CardContent className="py-16 text-center">
                   <Sparkles className="w-12 h-12 text-slate-300 mx-auto mb-4" />
@@ -854,7 +1062,7 @@ export default function ProposalDetail() {
               </Card>
             )}
 
-            {latestReport && (latestReport.status === 'queued' || latestReport.status === 'running') && (
+            {!isFinanceTemplate && latestReport && (latestReport.status === 'queued' || latestReport.status === 'running') && (
               <Card className="border-0 shadow-sm">
                 <CardContent className="py-16 text-center">
                   <RefreshCw className="w-12 h-12 text-blue-500 mx-auto mb-4 animate-spin" />
@@ -865,7 +1073,7 @@ export default function ProposalDetail() {
               </Card>
             )}
             
-            {latestReport && latestReport.status === 'succeeded' && latestReport.output_report_json && (
+            {!isFinanceTemplate && latestReport && latestReport.status === 'succeeded' && latestReport.output_report_json && (
               <div className="space-y-6">
                 {/* Quality Metrics */}
                 <Card className="border-0 shadow-sm">
@@ -1021,7 +1229,7 @@ export default function ProposalDetail() {
             )}
 
             {/* Failed Evaluation Display */}
-            {latestReport && latestReport.status === 'failed' && (
+            {!isFinanceTemplate && latestReport && latestReport.status === 'failed' && (
               <Card className="border-0 shadow-sm">
                 <CardContent className="py-16 text-center">
                   <XCircle className="w-12 h-12 text-red-300 mx-auto mb-4" />
