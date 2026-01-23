@@ -95,15 +95,15 @@ Rules:
     });
 
     return Response.json({
-      success: true,
-      ...result
+      ok: true,
+      inferred_fields: result.inferred_fields || []
     });
 
   } catch (error) {
     console.error('ExtractJobRequirementsFromUrl error:', error);
     return Response.json({ 
       error: error.message,
-      success: false
+      ok: false
     }, { status: 500 });
   }
 });

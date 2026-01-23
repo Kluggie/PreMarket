@@ -1166,7 +1166,7 @@ export default function CreateProposal() {
                    <>
                      <div className="space-y-3 p-4 border-2 border-purple-200 bg-purple-50 rounded-xl">
                        <Label className="text-sm font-semibold text-purple-900">
-                         Matching Mode *
+                         Profile Matching Mode *
                        </Label>
                        <RadioGroup value={responses['mode']} onValueChange={(value) => handleResponseChange('mode', value)}>
                          <div className="space-y-2">
@@ -1254,7 +1254,23 @@ export default function CreateProposal() {
                                  }
 
                                  const results = await Promise.all(promises);
+
+                                 // Check for errors
+                                 const errors = results.filter(r => !r.data.ok);
+                                 if (errors.length > 0) {
+                                   const errorMsg = errors.map(e => e.data.error).join('; ');
+                                   alert('Extraction failed: ' + errorMsg);
+                                   setExtracting(false);
+                                   return;
+                                 }
+
                                  const allFields = results.flatMap(r => r.data.inferred_fields || []);
+
+                                 if (allFields.length === 0) {
+                                   alert('No information could be extracted from the provided URLs');
+                                   setExtracting(false);
+                                   return;
+                                 }
 
                                  setExtractedFields(allFields.map(f => ({
                                    ...f,
@@ -1262,11 +1278,11 @@ export default function CreateProposal() {
                                    edited_value: f.suggested_value
                                  })));
                                  setShowReviewExtracted(true);
-                               } catch (error) {
-                                 alert('Extraction failed: ' + error.message);
-                               } finally {
+                                 } catch (error) {
+                                 alert('Extraction failed: ' + (error.response?.data?.error || error.message));
+                                 } finally {
                                  setExtracting(false);
-                               }
+                                 }
                              }}
                              disabled={extracting}
                              variant="outline"
@@ -1575,55 +1591,155 @@ export default function CreateProposal() {
                       </div>
                     </div>
 
-                    <div className="p-4 bg-blue-50 border border-blue-100 rounded-xl">
-                      <div className="flex items-start gap-3">
-                        <Sparkles className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
-                        <div>
-                          <p className="font-medium text-blue-900">AI Evaluation</p>
-                          <p className="text-sm text-blue-700 mt-1">
-                            After submission, AI will generate a compatibility score, identify red flags, 
-                            and provide recommendations based on the information provided.
-                          </p>
+                    {isProfileMatchingTemplate ? (
+                      <>
+                        <div className="p-4 bg-purple-50 border border-purple-100 rounded-xl">
+                          <div className="flex items-start gap-3">
+                            <Sparkles className="w-5 h-5 text-purple-600 flex-shrink-0 mt-0.5" />
+                            <div>
+                              <p className="font-medium text-purple-900">AI Profile Match Evaluation</p>
+                              <p className="text-sm text-purple-700 mt-1">
+                                Run AI evaluation to generate a match score and detailed compatibility analysis between the profile and requirements.
+                              </p>
+                            </div>
+                          </div>
                         </div>
-                      </div>
-                    </div>
 
-                    <div className="flex justify-between">
-                      <Button variant="outline" onClick={() => handleBack(3)}>
-                        <ArrowLeft className="w-4 h-4 mr-2" />
-                        Back
-                      </Button>
-                      {recipientEmail ? (
-                        <Button 
-                          onClick={() => {
-                            if (!validateAll()) {
-                              setStep(2);
-                              return;
-                            }
-                            sendProposalMutation.mutate(guestEmail);
-                          }}
-                          disabled={sendProposalMutation.isPending || (isGuestMode && !guestEmail)}
-                          className="bg-blue-600 hover:bg-blue-700"
-                        >
-                          {sendProposalMutation.isPending ? (
-                            'Sending...'
+                        <div className="flex justify-between">
+                          <Button variant="outline" onClick={() => handleBack(3)}>
+                            <ArrowLeft className="w-4 h-4 mr-2" />
+                            Back
+                          </Button>
+                          <Button 
+                            onClick={async () => {
+                              if (!validateAll()) {
+                                setStep(2);
+                                return;
+                              }
+
+                              try {
+                                // Save as ready for evaluation
+                                const proposalData = {
+                                  title: proposalTitle || `${selectedTemplate.name} Proposal`,
+                                  template_id: selectedTemplate.id,
+                                  template_name: selectedTemplate.name,
+                                  status: 'submitted',
+                                  draft_step: null,
+                                  draft_state_json: null,
+                                  party_a_user_id: user?.id,
+                                  party_a_email: user?.email,
+                                  party_b_email: recipientEmail || null,
+                                  include_profile: responses['_include_profile'] || false,
+                                  include_organisation: responses['_include_organisation'] || false
+                                };
+
+                                let proposal;
+                                if (draftProposalId) {
+                                  await base44.entities.Proposal.update(draftProposalId, proposalData);
+                                  const proposals = await base44.entities.Proposal.filter({ id: draftProposalId });
+                                  proposal = proposals[0];
+                                } else {
+                                  proposal = await base44.entities.Proposal.create(proposalData);
+
+                                  const responsePromises = Object.entries(responses).map(([responseKey, value]) => {
+                                    if (responseKey.startsWith('_include_') || responseKey.startsWith('_profile_') || responseKey.startsWith('_target_')) return null;
+
+                                    const [questionId] = responseKey.includes('__') ? responseKey.split('__') : [responseKey, null];
+                                    const question = selectedTemplate.questions.find(q => q.id === questionId);
+                                    if (!question) return null;
+
+                                    return base44.entities.ProposalResponse.create({
+                                      proposal_id: proposal.id,
+                                      question_id: questionId,
+                                      entered_by_party: 'a',
+                                      author_party: 'a',
+                                      subject_party: 'a',
+                                      claim_type: 'self',
+                                      value: typeof value === 'object' && !Array.isArray(value) ? JSON.stringify(value) : String(value),
+                                      visibility: visibilitySettings[responseKey] || 'full'
+                                    });
+                                  }).filter(Boolean);
+
+                                  await Promise.all(responsePromises);
+                                }
+
+                                // Run evaluation
+                                const result = await base44.functions.invoke('EvaluateFitCardShared', {
+                                  proposal_id: proposal.id
+                                });
+
+                                if (!result.data.ok) {
+                                  alert('Evaluation failed: ' + (result.data.error || 'Unknown error'));
+                                  return;
+                                }
+
+                                queryClient.invalidateQueries(['proposals']);
+                                navigate(createPageUrl(`ProposalDetail?id=${proposal.id}`));
+                              } catch (error) {
+                                alert('Evaluation failed: ' + error.message);
+                              }
+                            }}
+                            disabled={sendProposalMutation.isPending}
+                            className="bg-purple-600 hover:bg-purple-700"
+                          >
+                            <Sparkles className="w-4 h-4 mr-2" />
+                            Run Profile Evaluation
+                          </Button>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="p-4 bg-blue-50 border border-blue-100 rounded-xl">
+                          <div className="flex items-start gap-3">
+                            <Sparkles className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+                            <div>
+                              <p className="font-medium text-blue-900">AI Evaluation</p>
+                              <p className="text-sm text-blue-700 mt-1">
+                                After submission, AI will generate a compatibility score, identify red flags, 
+                                and provide recommendations based on the information provided.
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex justify-between">
+                          <Button variant="outline" onClick={() => handleBack(3)}>
+                            <ArrowLeft className="w-4 h-4 mr-2" />
+                            Back
+                          </Button>
+                          {recipientEmail ? (
+                            <Button 
+                              onClick={() => {
+                                if (!validateAll()) {
+                                  setStep(2);
+                                  return;
+                                }
+                                sendProposalMutation.mutate(guestEmail);
+                              }}
+                              disabled={sendProposalMutation.isPending || (isGuestMode && !guestEmail)}
+                              className="bg-blue-600 hover:bg-blue-700"
+                            >
+                              {sendProposalMutation.isPending ? (
+                                'Sending...'
+                              ) : (
+                                <>
+                                  <Send className="w-4 h-4 mr-2" />
+                                  Send Proposal
+                                </>
+                              )}
+                            </Button>
                           ) : (
-                            <>
-                              <Send className="w-4 h-4 mr-2" />
-                              Send Proposal
-                            </>
+                            <Button 
+                              onClick={() => navigate(createPageUrl('Proposals'))}
+                              variant="outline"
+                            >
+                              <CheckCircle2 className="w-4 h-4 mr-2" />
+                              Go to Drafts
+                            </Button>
                           )}
-                        </Button>
-                      ) : (
-                        <Button 
-                          onClick={() => navigate(createPageUrl('Proposals'))}
-                          variant="outline"
-                        >
-                          <CheckCircle2 className="w-4 h-4 mr-2" />
-                          Go to Drafts
-                        </Button>
-                      )}
-                    </div>
+                        </div>
+                      </>
+                    )}
                   </CardContent>
                 </Card>
               )}
