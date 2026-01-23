@@ -240,6 +240,9 @@ export default function CreateProposal() {
   const isFinanceTemplate = selectedTemplate?.slug === 'universal_finance_deal_prequal' ||
                             selectedTemplate?.template_key === 'universal_finance_deal_prequal';
 
+  const isProfileMatchingTemplate = selectedTemplate?.slug === 'universal_profile_matching' ||
+                                     selectedTemplate?.template_key === 'universal_profile_matching';
+
   const getModulesForPreset = (preset) => {
     const baseModules = ['org_profile', 'security_compliance', 'privacy_data_handling', 'operations_sla', 'implementation_it', 'legal_commercial', 'references'];
     if (preset === 'api_data_provider') {
@@ -288,6 +291,28 @@ export default function CreateProposal() {
       return false;
     }
 
+    // Universal Profile Matching filtering
+    if (isProfileMatchingTemplate) {
+      const selectedMode = responses['mode'];
+      
+      // Mode selector always shown
+      if (question.module_key === 'mode_selector') return true;
+      
+      // Require mode selection before showing other questions
+      if (!selectedMode) return false;
+      
+      // Shared core always included
+      if (question.module_key === 'shared_core') return true;
+      
+      // Mode-specific questions
+      if (selectedMode === 'Job Fit' && question.module_key === 'job_fit') return true;
+      if (selectedMode === 'Beta Access Fit' && question.module_key === 'beta_access_fit') return true;
+      if (selectedMode === 'Program/Accelerator Fit' && question.module_key === 'program_fit') return true;
+      if (selectedMode === 'Grant/Scholarship Fit' && question.module_key === 'grant_fit') return true;
+      
+      return false;
+    }
+
     // All other templates: show all questions
     return true;
   };
@@ -310,6 +335,24 @@ export default function CreateProposal() {
         const modeKey = selectedMode === 'Investor Fit' ? 'investor_fit' 
                       : selectedMode === 'M&A Fit' ? 'm_and_a_fit'
                       : selectedMode === 'Lending Fit' ? 'lending_fit'
+                      : null;
+        if (modeKey && question.preset_required[modeKey] !== undefined) {
+          return question.preset_required[modeKey];
+        }
+      }
+    }
+
+    // Universal Profile Matching mode-based requirements
+    if (isProfileMatchingTemplate) {
+      const selectedMode = responses['mode'];
+      if (!selectedMode) return question.required;
+      
+      // Check preset_required for mode-specific questions
+      if (question.preset_required) {
+        const modeKey = selectedMode === 'Job Fit' ? 'job_fit'
+                      : selectedMode === 'Beta Access Fit' ? 'beta_access_fit'
+                      : selectedMode === 'Program/Accelerator Fit' ? 'program_fit'
+                      : selectedMode === 'Grant/Scholarship Fit' ? 'grant_fit'
                       : null;
         if (modeKey && question.preset_required[modeKey] !== undefined) {
           return question.preset_required[modeKey];
@@ -851,42 +894,81 @@ export default function CreateProposal() {
                   )}
 
                   {isFinanceTemplate && (
-                   <div className="space-y-3 p-4 border-2 border-emerald-200 bg-emerald-50 rounded-xl">
-                     <Label className="text-sm font-semibold text-emerald-900">
-                       Deal Mode *
-                     </Label>
-                     <RadioGroup value={responses['mode']} onValueChange={(value) => handleResponseChange('mode', value)}>
-                       <div className="space-y-2">
-                         <div className="flex items-center space-x-2">
-                           <RadioGroupItem value="Investor Fit" id="mode-investor" />
-                           <Label htmlFor="mode-investor" className="font-normal cursor-pointer">
-                             Investor Fit
-                           </Label>
-                         </div>
-                         <div className="flex items-center space-x-2">
-                           <RadioGroupItem value="M&A Fit" id="mode-ma" />
-                           <Label htmlFor="mode-ma" className="font-normal cursor-pointer">
-                             M&A Fit
-                           </Label>
-                         </div>
-                         <div className="flex items-center space-x-2">
-                           <RadioGroupItem value="Lending Fit" id="mode-lending" />
-                           <Label htmlFor="mode-lending" className="font-normal cursor-pointer">
-                             Lending Fit
-                           </Label>
-                         </div>
-                       </div>
-                     </RadioGroup>
-                     <p className="text-xs text-emerald-700 mt-2">
-                       This determines which questions you'll see in the next steps.
-                     </p>
-                   </div>
+                    <div className="space-y-3 p-4 border-2 border-emerald-200 bg-emerald-50 rounded-xl">
+                      <Label className="text-sm font-semibold text-emerald-900">
+                        Deal Mode *
+                      </Label>
+                      <RadioGroup value={responses['mode']} onValueChange={(value) => handleResponseChange('mode', value)}>
+                        <div className="space-y-2">
+                          <div className="flex items-center space-x-2">
+                            <RadioGroupItem value="Investor Fit" id="mode-investor" />
+                            <Label htmlFor="mode-investor" className="font-normal cursor-pointer">
+                              Investor Fit
+                            </Label>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <RadioGroupItem value="M&A Fit" id="mode-ma" />
+                            <Label htmlFor="mode-ma" className="font-normal cursor-pointer">
+                              M&A Fit
+                            </Label>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <RadioGroupItem value="Lending Fit" id="mode-lending" />
+                            <Label htmlFor="mode-lending" className="font-normal cursor-pointer">
+                              Lending Fit
+                            </Label>
+                          </div>
+                        </div>
+                      </RadioGroup>
+                      <p className="text-xs text-emerald-700 mt-2">
+                        This determines which questions you'll see in the next steps.
+                      </p>
+                    </div>
+                  )}
+
+                  {isProfileMatchingTemplate && (
+                    <div className="space-y-3 p-4 border-2 border-purple-200 bg-purple-50 rounded-xl">
+                      <Label className="text-sm font-semibold text-purple-900">
+                        Matching Mode *
+                      </Label>
+                      <RadioGroup value={responses['mode']} onValueChange={(value) => handleResponseChange('mode', value)}>
+                        <div className="space-y-2">
+                          <div className="flex items-center space-x-2">
+                            <RadioGroupItem value="Job Fit" id="mode-job" />
+                            <Label htmlFor="mode-job" className="font-normal cursor-pointer">
+                              Job Fit
+                            </Label>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <RadioGroupItem value="Beta Access Fit" id="mode-beta" />
+                            <Label htmlFor="mode-beta" className="font-normal cursor-pointer">
+                              Beta Access Fit
+                            </Label>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <RadioGroupItem value="Program/Accelerator Fit" id="mode-program" />
+                            <Label htmlFor="mode-program" className="font-normal cursor-pointer">
+                              Program/Accelerator Fit
+                            </Label>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <RadioGroupItem value="Grant/Scholarship Fit" id="mode-grant" />
+                            <Label htmlFor="mode-grant" className="font-normal cursor-pointer">
+                              Grant/Scholarship Fit
+                            </Label>
+                          </div>
+                        </div>
+                      </RadioGroup>
+                      <p className="text-xs text-purple-700 mt-2">
+                        This determines which questions you'll see in the next steps.
+                      </p>
+                    </div>
                   )}
 
                   <div className="flex justify-end mt-6">
                     <Button 
                       onClick={() => setStep(2)}
-                      disabled={(isUniversalTemplate && !presetKey) || (isFinanceTemplate && !responses['mode'])}
+                      disabled={(isUniversalTemplate && !presetKey) || (isFinanceTemplate && !responses['mode']) || (isProfileMatchingTemplate && !responses['mode'])}
                       className="bg-blue-600 hover:bg-blue-700"
                     >
                       Continue
