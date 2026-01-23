@@ -267,28 +267,52 @@ export default function DocumentComparisonCreate() {
     
     setExtractingUrls(true);
     try {
-      const result = await base44.functions.invoke('ExtractTextFromUrls', {
+      const result = await base44.functions.invoke('ExtractFromUrls', {
         urlA: docAUrl || null,
         urlB: docBUrl || null
       });
       
-      if (result.data.ok) {
-        if (result.data.textA) {
-          setDocAText(result.data.textA);
-          setDocALocked(false);
-        }
-        if (result.data.textB) {
-          setDocBText(result.data.textB);
-          setDocBLocked(false);
-        }
+      if (!result.data.ok) {
+        const sources = result.data.sources || [];
+        const failedSources = sources.filter(s => s.status === 'failed');
         
-        // Jump to step 3 (evaluation)
-        setStep(3);
-      } else {
-        alert(result.data.error || 'Failed to extract text from URLs');
+        if (failedSources.length > 0) {
+          const isLinkedIn = failedSources.some(s => s.url.includes('linkedin.com'));
+          const errors = failedSources.map(s => `${s.url}: ${s.error}`).join('\n\n');
+          alert(
+            `Extraction failed:\n\n${errors}\n\n` +
+            (isLinkedIn ? 'TIP: LinkedIn often blocks automated extraction. Please paste text or upload a file instead.' : '')
+          );
+        } else {
+          alert('Extraction failed: ' + (result.data.error || 'Unknown error'));
+        }
+        setExtractingUrls(false);
+        return;
       }
+      
+      if (result.data.textA) {
+        setDocAText(result.data.textA);
+        setDocALocked(false);
+      }
+      if (result.data.textB) {
+        setDocBText(result.data.textB);
+        setDocBLocked(false);
+      }
+      
+      // Save draft before jumping to step 3
+      if (comparisonId && user) {
+        await base44.entities.DocumentComparison.update(comparisonId, {
+          doc_a_plaintext: result.data.textA || docAText,
+          doc_b_plaintext: result.data.textB || docBText,
+          draft_step: 3,
+          draft_updated_at: new Date().toISOString()
+        });
+      }
+      
+      // Jump to step 3 (evaluation)
+      setStep(3);
     } catch (error) {
-      alert('Extraction failed: ' + error.message);
+      alert('Extraction failed: ' + (error.response?.data?.error || error.message));
     } finally {
       setExtractingUrls(false);
     }
@@ -297,38 +321,38 @@ export default function DocumentComparisonCreate() {
   const handleFileUpload = async (doc, file) => {
     if (!file) return;
     
-    const allowedTypes = ['.pdf', '.docx', '.txt', '.md'];
     const fileName = file.name.toLowerCase();
-    const isAllowed = allowedTypes.some(ext => fileName.endsWith(ext));
     
-    if (!isAllowed) {
-      alert('Only .pdf, .docx, .txt, and .md files are supported');
+    // Handle .txt and .md client-side
+    if (fileName.endsWith('.txt') || fileName.endsWith('.md')) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const text = e.target.result;
+        if (doc === 'a') {
+          setDocAText(text);
+          setDocALocked(false);
+          setDocASource('uploaded');
+        } else {
+          setDocBText(text);
+          setDocBLocked(false);
+          setDocBSource('uploaded');
+        }
+      };
+      reader.onerror = () => {
+        alert('Failed to read file');
+      };
+      reader.readAsText(file);
       return;
     }
     
-    setUploadingFile(doc);
-    try {
-      const formData = new FormData();
-      formData.append('file', file);
-      
-      const result = await base44.functions.invoke('ExtractTextFromFile', formData);
-      
-      if (result.data.ok) {
-        if (doc === 'a') {
-          setDocAText(result.data.text);
-          setDocALocked(false);
-        } else {
-          setDocBText(result.data.text);
-          setDocBLocked(false);
-        }
-      } else {
-        alert(result.data.error || 'Failed to extract text from file');
-      }
-    } catch (error) {
-      alert('File upload failed: ' + error.message);
-    } finally {
-      setUploadingFile(null);
+    // Block PDF
+    if (fileName.endsWith('.pdf')) {
+      alert('PDF files are not supported yet. Please use .txt or .md files, or paste text directly.');
+      return;
     }
+    
+    // Block other types
+    alert('Only .txt and .md files are supported. For other formats, please paste text directly.');
   };
 
   const renderHighlightedText = (text, spans) => {
@@ -610,22 +634,18 @@ export default function DocumentComparisonCreate() {
                 <CardContent className="space-y-4">
                   {docASource === 'uploaded' && (
                     <div className="space-y-2">
-                      <Label>Upload File (.pdf, .docx, .txt, .md)</Label>
+                      <Label>Upload File (.txt, .md)</Label>
                       <Input 
                         type="file"
-                        accept=".pdf,.docx,.txt,.md"
+                        accept=".txt,.md"
                         onChange={(e) => {
                           const file = e.target.files?.[0];
                           if (file) handleFileUpload('a', file);
                         }}
-                        disabled={uploadingFile === 'a'}
                       />
-                      {uploadingFile === 'a' && (
-                        <div className="flex items-center gap-2 text-sm text-blue-600">
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          Extracting text...
-                        </div>
-                      )}
+                      <p className="text-xs text-slate-500">
+                        Supports .txt and .md files. For PDF, please copy and paste text.
+                      </p>
                     </div>
                   )}
                   
@@ -740,22 +760,18 @@ export default function DocumentComparisonCreate() {
                 <CardContent className="space-y-4">
                   {docBSource === 'uploaded' && (
                     <div className="space-y-2">
-                      <Label>Upload File (.pdf, .docx, .txt, .md)</Label>
+                      <Label>Upload File (.txt, .md)</Label>
                       <Input 
                         type="file"
-                        accept=".pdf,.docx,.txt,.md"
+                        accept=".txt,.md"
                         onChange={(e) => {
                           const file = e.target.files?.[0];
                           if (file) handleFileUpload('b', file);
                         }}
-                        disabled={uploadingFile === 'b'}
                       />
-                      {uploadingFile === 'b' && (
-                        <div className="flex items-center gap-2 text-sm text-blue-600">
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          Extracting text...
-                        </div>
-                      )}
+                      <p className="text-xs text-slate-500">
+                        Supports .txt and .md files. For PDF, please copy and paste text.
+                      </p>
                     </div>
                   )}
                   
