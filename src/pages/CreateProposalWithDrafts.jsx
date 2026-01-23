@@ -539,7 +539,15 @@ export default function CreateProposal() {
       }
     }
     setValidationErrors({});
-    setStep(step + 1);
+    const nextStep = step + 1;
+    setStep(nextStep);
+    
+    // Update draft step immediately
+    if (draftProposalId && user && !isGuestMode) {
+      base44.entities.Proposal.update(draftProposalId, { draft_step: nextStep }).catch(err => {
+        console.error('Failed to update draft step:', err);
+      });
+    }
   };
 
   const sendProposalMutation = useMutation({
