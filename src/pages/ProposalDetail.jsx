@@ -97,6 +97,16 @@ export default function ProposalDetail() {
     }
   });
 
+  const { data: fitCardReports = [] } = useQuery({
+    queryKey: ['fitCardReports', proposalId],
+    queryFn: () => base44.entities.FitCardReportShared.filter({ proposal_id: proposalId }),
+    enabled: !!proposalId,
+    refetchInterval: (data) => {
+      const hasRunning = Array.isArray(data) && data.some(r => ['queued', 'running'].includes(r.status));
+      return hasRunning ? 2000 : false;
+    }
+  });
+
   const { data: templates = [] } = useQuery({
     queryKey: ['templates'],
     queryFn: () => base44.entities.Template.list(),
