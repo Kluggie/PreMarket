@@ -146,11 +146,31 @@ export default function DocumentComparisonCreate() {
     }
   };
 
-  const addHighlight = (level) => {
+  const addHighlight = (level, withNote = false) => {
     if (!selectionRange) return;
     
-    setPendingHighlight({ level, range: selectionRange });
-    setShowNoteInput(true);
+    if (withNote) {
+      setPendingHighlight({ level, range: selectionRange });
+      setShowNoteInput(true);
+    } else {
+      // Add immediately without note
+      const newSpan = {
+        start: selectionRange.start,
+        end: selectionRange.end,
+        level,
+      };
+      
+      if (editingDoc === 'a') {
+        setDocASpans([...docASpans, newSpan].sort((a, b) => a.start - b.start));
+        setDocALocked(true);
+      } else {
+        setDocBSpans([...docBSpans, newSpan].sort((a, b) => a.start - b.start));
+        setDocBLocked(true);
+      }
+      
+      setSelectedText('');
+      setSelectionRange(null);
+    }
   };
 
   const confirmHighlight = () => {
@@ -176,6 +196,16 @@ export default function DocumentComparisonCreate() {
     setHighlightNote('');
     setShowNoteInput(false);
     setPendingHighlight(null);
+  };
+
+  const exportHighlights = (doc) => {
+    const data = {
+      text: doc === 'a' ? docAText : docBText,
+      spans: doc === 'a' ? docASpans : docBSpans
+    };
+    const json = JSON.stringify(data, null, 2);
+    navigator.clipboard.writeText(json);
+    alert('Highlights JSON copied to clipboard!');
   };
 
   const removeHighlight = (doc, index) => {
@@ -631,25 +661,37 @@ export default function DocumentComparisonCreate() {
                     </div>
                   )}
 
-                  <div className="space-y-2">
-                    <Label className="text-xs font-semibold">Import JSON Highlights (Optional)</Label>
-                    <div className="flex gap-2">
-                      <Textarea 
-                        value={jsonImportA}
-                        onChange={(e) => setJsonImportA(e.target.value)}
-                        placeholder='{"text":"...","spans":[{"start":0,"end":10,"level":"confidential"}]}'
-                        className="text-xs font-mono"
-                        rows={3}
-                      />
-                      <Button 
-                        onClick={() => handleImportJSON('a', jsonImportA)}
-                        disabled={!jsonImportA}
+                  <div className="flex gap-2">
+                    <div className="space-y-2 flex-1">
+                      <Label className="text-xs font-semibold">Import JSON Highlights (Optional)</Label>
+                      <div className="flex gap-2">
+                        <Textarea 
+                          value={jsonImportA}
+                          onChange={(e) => setJsonImportA(e.target.value)}
+                          placeholder='{"text":"...","spans":[{"start":0,"end":10,"level":"confidential"}]}'
+                          className="text-xs font-mono"
+                          rows={3}
+                        />
+                        <Button 
+                          onClick={() => handleImportJSON('a', jsonImportA)}
+                          disabled={!jsonImportA}
+                          variant="outline"
+                          size="sm"
+                        >
+                          Import
+                        </Button>
+                      </div>
+                    </div>
+                    {(docAText || docASpans.length > 0) && (
+                      <Button
+                        onClick={() => exportHighlights('a')}
                         variant="outline"
                         size="sm"
+                        className="mt-6"
                       >
-                        Import
+                        Export JSON
                       </Button>
-                    </div>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -749,50 +791,66 @@ export default function DocumentComparisonCreate() {
                     </div>
                   )}
 
-                  <div className="space-y-2">
-                    <Label className="text-xs font-semibold">Import JSON Highlights (Optional)</Label>
-                    <div className="flex gap-2">
-                      <Textarea 
-                        value={jsonImportB}
-                        onChange={(e) => setJsonImportB(e.target.value)}
-                        placeholder='{"text":"...","spans":[{"start":0,"end":10,"level":"confidential"}]}'
-                        className="text-xs font-mono"
-                        rows={3}
-                      />
-                      <Button 
-                        onClick={() => handleImportJSON('b', jsonImportB)}
-                        disabled={!jsonImportB}
+                  <div className="flex gap-2">
+                    <div className="space-y-2 flex-1">
+                      <Label className="text-xs font-semibold">Import JSON Highlights (Optional)</Label>
+                      <div className="flex gap-2">
+                        <Textarea 
+                          value={jsonImportB}
+                          onChange={(e) => setJsonImportB(e.target.value)}
+                          placeholder='{"text":"...","spans":[{"start":0,"end":10,"level":"confidential"}]}'
+                          className="text-xs font-mono"
+                          rows={3}
+                        />
+                        <Button 
+                          onClick={() => handleImportJSON('b', jsonImportB)}
+                          disabled={!jsonImportB}
+                          variant="outline"
+                          size="sm"
+                        >
+                          Import
+                        </Button>
+                      </div>
+                    </div>
+                    {(docBText || docBSpans.length > 0) && (
+                      <Button
+                        onClick={() => exportHighlights('b')}
                         variant="outline"
                         size="sm"
+                        className="mt-6"
                       >
-                        Import
+                        Export JSON
                       </Button>
-                    </div>
+                    )}
                   </div>
                 </CardContent>
               </Card>
 
               {/* Highlight Controls */}
               {selectedText && selectionRange && !showNoteInput && (
-                <Card className="border-2 border-blue-500 shadow-lg">
+                <Card className="border-2 border-purple-500 shadow-lg sticky bottom-4 z-10">
                   <CardContent className="p-4">
                     <div className="space-y-3">
                       <div>
-                        <Label className="text-sm font-semibold mb-1 block">Selected Text ({editingDoc === 'a' ? partyALabel : partyBLabel}):</Label>
-                        <p className="text-sm bg-slate-100 p-2 rounded font-mono">"{selectedText.substring(0, 150)}{selectedText.length > 150 ? '...' : ''}"</p>
+                        <Label className="text-sm font-semibold mb-1 block">
+                          ✨ Highlight Toolbar - Selected Text ({editingDoc === 'a' ? partyALabel : partyBLabel}):
+                        </Label>
+                        <p className="text-sm bg-slate-100 p-2 rounded font-mono border border-slate-200">
+                          "{selectedText.substring(0, 150)}{selectedText.length > 150 ? '...' : ''}"
+                        </p>
                       </div>
-                      <div className="flex gap-2">
+                      <div className="grid grid-cols-3 gap-2">
                         <Button 
                           onClick={() => addHighlight('confidential')}
-                          className="bg-red-600 hover:bg-red-700 flex-1"
+                          className="bg-red-600 hover:bg-red-700"
                           size="sm"
                         >
-                          <Highlighter className="w-4 h-4 mr-2" />
+                          <Lock className="w-4 h-4 mr-2" />
                           Confidential
                         </Button>
                         <Button 
                           onClick={() => addHighlight('partial')}
-                          className="bg-yellow-600 hover:bg-yellow-700 flex-1"
+                          className="bg-yellow-600 hover:bg-yellow-700"
                           size="sm"
                         >
                           <Highlighter className="w-4 h-4 mr-2" />
@@ -807,41 +865,18 @@ export default function DocumentComparisonCreate() {
                           size="sm"
                         >
                           <X className="w-4 h-4" />
+                          Clear
                         </Button>
+                      </div>
+                      <div className="text-xs text-slate-600 bg-blue-50 p-2 rounded border border-blue-200">
+                        <strong>Legend:</strong> Red = Confidential (excluded from output) • Yellow = Partial (high-level summary only)
                       </div>
                     </div>
                   </CardContent>
                 </Card>
               )}
 
-              {showNoteInput && (
-                <Card className="border-2 border-purple-500 shadow-lg">
-                  <CardContent className="p-4 space-y-3">
-                    <Label>Optional Note (visible only in editing view)</Label>
-                    <Input 
-                      value={highlightNote}
-                      onChange={(e) => setHighlightNote(e.target.value)}
-                      placeholder="e.g., Client name, pricing details..."
-                      autoFocus
-                    />
-                    <div className="flex justify-end gap-2">
-                      <Button 
-                        variant="outline"
-                        onClick={() => {
-                          setShowNoteInput(false);
-                          setPendingHighlight(null);
-                          setHighlightNote('');
-                        }}
-                      >
-                        Cancel
-                      </Button>
-                      <Button onClick={confirmHighlight} className="bg-purple-600 hover:bg-purple-700">
-                        Add Highlight
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
+
 
               <div className="flex justify-between">
                 <Button variant="outline" onClick={async () => {
