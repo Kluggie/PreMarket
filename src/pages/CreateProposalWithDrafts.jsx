@@ -774,7 +774,8 @@ export default function CreateProposal() {
             question.allowed_values && question.allowed_values.length > 0 ? (
               <Select 
                 value={value}
-                onValueChange={(v) => handleResponseChange(question.id, v)}
+                onValueChange={(v) => handleResponseChange(responseKey, v)}
+                disabled={isSharedFact && value}
               >
                 <SelectTrigger className={hasError ? 'border-red-500' : ''}>
                   <SelectValue placeholder="Select..." />
@@ -789,9 +790,10 @@ export default function CreateProposal() {
               <Input 
                 type="text"
                 value={value}
-                onChange={(e) => handleResponseChange(question.id, e.target.value)}
+                onChange={(e) => handleResponseChange(responseKey, e.target.value)}
                 placeholder="Enter value..."
                 className={hasError ? 'border-red-500' : ''}
+                disabled={isSharedFact && value}
               />
             )
           ) : question.field_type === 'multi_select' ? (
@@ -806,15 +808,16 @@ export default function CreateProposal() {
                       const newValue = checked 
                         ? [...current, opt]
                         : current.filter(v => v !== opt);
-                      handleResponseChange(question.id, newValue);
+                      handleResponseChange(responseKey, newValue);
                     }}
+                    disabled={isSharedFact && value}
                   />
                   <label htmlFor={`${question.id}-${opt}`} className="text-sm">{opt}</label>
                 </div>
               ))}
             </div>
           ) : question.field_type === 'boolean' ? (
-            <RadioGroup value={value} onValueChange={(v) => handleResponseChange(question.id, v)}>
+            <RadioGroup value={value} onValueChange={(v) => handleResponseChange(responseKey, v)} disabled={isSharedFact && value}>
               <div className="flex items-center space-x-2">
                 <RadioGroupItem value="Yes" id={`${question.id}-yes`} />
                 <Label htmlFor={`${question.id}-yes`}>Yes</Label>
@@ -827,17 +830,19 @@ export default function CreateProposal() {
           ) : question.field_type === 'textarea' ? (
             <Textarea 
               value={value}
-              onChange={(e) => handleResponseChange(question.id, e.target.value)}
+              onChange={(e) => handleResponseChange(responseKey, e.target.value)}
               placeholder={`Enter ${question.label.toLowerCase()}...`}
               className={`min-h-[100px] ${hasError ? 'border-red-500' : ''}`}
+              disabled={isSharedFact && value}
             />
           ) : question.field_type === 'url' ? (
             <Input 
               type="url"
               value={value}
-              onChange={(e) => handleResponseChange(question.id, e.target.value)}
+              onChange={(e) => handleResponseChange(responseKey, e.target.value)}
               placeholder="https://..."
               className={hasError ? 'border-red-500' : ''}
+              disabled={isSharedFact && value}
             />
           ) : question.field_type === 'file' ? (
             <Input 
@@ -845,18 +850,20 @@ export default function CreateProposal() {
               onChange={(e) => {
                 const file = e.target.files?.[0];
                 if (file) {
-                  handleResponseChange(question.id, file.name);
+                  handleResponseChange(responseKey, file.name);
                 }
               }}
               className={hasError ? 'border-red-500' : ''}
+              disabled={isSharedFact && value}
             />
           ) : (
             <Input 
               type={question.field_type === 'number' ? 'number' : 'text'}
               value={value}
-              onChange={(e) => handleResponseChange(question.id, e.target.value)}
+              onChange={(e) => handleResponseChange(responseKey, e.target.value)}
               placeholder={`Enter ${question.label.toLowerCase()}...`}
               className={hasError ? 'border-red-500' : ''}
+              disabled={isSharedFact && value}
             />
           )}
           
