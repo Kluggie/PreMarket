@@ -191,11 +191,18 @@ export default function CreateProposal() {
 
     setAutoSaving(true);
     try {
+      const draftStateJson = {
+        mode: responses['mode'],
+        presetKey: presetKey
+      };
+
       const proposalData = {
         title: proposalTitle || `${selectedTemplate.name} Proposal`,
         template_id: selectedTemplate.id,
         template_name: selectedTemplate.name,
         status: 'draft',
+        draft_step: step,
+        draft_state_json: draftStateJson,
         party_a_user_id: user.id,
         party_a_email: user.email,
         party_b_email: recipientEmail || null,
@@ -221,18 +228,55 @@ export default function CreateProposal() {
       }
 
       const existingResponses = await base44.entities.ProposalResponse.filter({ proposal_id: proposalId });
-      const existingIds = new Set(existingResponses.map(r => r.question_id));
 
-      for (const [questionId, value] of Object.entries(responses)) {
-        if (questionId.startsWith('_include_')) continue;
+      for (const [responseKey, value] of Object.entries(responses)) {
+        if (responseKey.startsWith('_include_')) continue;
+        
+        // Parse key: questionId__subjectParty or just questionId
+        const [questionId, subjectParty] = responseKey.includes('__') 
+          ? responseKey.split('__') 
+          : [responseKey, null];
         
         const question = selectedTemplate.questions.find(q => q.id === questionId);
-        const visibility = visibilitySettings[questionId] || 'full';
+        if (!question) continue;
+        
+        // Determine subject_party and claim_type
+        let finalSubjectParty = subjectParty;
+        let claimType = 'self';
+        
+        if (!finalSubjectParty) {
+          // Infer from question
+          const roleType = question.role_type || 'party_attribute';
+          if (roleType === 'shared_fact') {
+            finalSubjectParty = 'shared';
+            claimType = 'shared_fact';
+          } else if (question.is_about_counterparty) {
+            finalSubjectParty = 'b';
+            claimType = 'counterparty_claim';
+          } else {
+            finalSubjectParty = 'a';
+            claimType = 'self';
+          }
+        } else {
+          // Explicit subject_party from key
+          if (finalSubjectParty === 'shared') {
+            claimType = 'shared_fact';
+          } else if (finalSubjectParty === 'b') {
+            claimType = 'counterparty_claim';
+          } else {
+            claimType = 'self';
+          }
+        }
+        
+        const visibility = visibilitySettings[responseKey] || visibilitySettings[questionId] || 'full';
 
         const responseData = {
           proposal_id: proposalId,
           question_id: questionId,
           entered_by_party: 'a',
+          author_party: 'a',
+          subject_party: finalSubjectParty,
+          claim_type: claimType,
           is_about_counterparty: question?.is_about_counterparty || false,
           value: typeof value === 'object' && !Array.isArray(value) ? JSON.stringify(value) : Array.isArray(value) ? JSON.stringify(value) : String(value),
           visibility: visibility
@@ -244,8 +288,14 @@ export default function CreateProposal() {
           responseData.range_max = value.max;
         }
 
-        if (existingIds.has(questionId)) {
-          const existing = existingResponses.find(r => r.question_id === questionId);
+        // Find existing by question_id + subject_party + author_party
+        const existing = existingResponses.find(r => 
+          r.question_id === questionId && 
+          (r.subject_party || (r.is_about_counterparty ? 'b' : 'a')) === finalSubjectParty &&
+          (r.author_party || r.entered_by_party) === 'a'
+        );
+
+        if (existing) {
           await base44.entities.ProposalResponse.update(existing.id, responseData);
         } else {
           await base44.entities.ProposalResponse.create(responseData);
