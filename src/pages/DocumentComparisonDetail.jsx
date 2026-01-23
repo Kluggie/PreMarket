@@ -43,10 +43,18 @@ export default function DocumentComparisonDetail() {
       const result = await base44.functions.invoke('EvaluateDocumentComparison', {
         comparison_id: comparisonId
       });
+      
+      if (!result.data.ok) {
+        throw new Error(result.data.error || 'Evaluation failed');
+      }
+      
       return result.data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries(['documentComparison', comparisonId]);
+    },
+    onError: (error) => {
+      alert(`Evaluation failed: ${error.message}`);
     }
   });
 

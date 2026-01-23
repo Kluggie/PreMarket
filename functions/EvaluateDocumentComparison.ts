@@ -121,7 +121,7 @@ Return JSON only with this structure:
       status: 'submitted'
     });
 
-    // Call GenerateContent
+    // Call GenerateContent via service role
     const result = await base44.asServiceRole.functions.invoke('GenerateContent', {
       systemPrompt,
       userContent,
@@ -129,28 +129,31 @@ Return JSON only with this structure:
       modelName: 'gemini-2.0-flash-exp'
     });
 
-    if (!result.data.ok) {
+    if (!result.data || !result.data.ok) {
+      const errorMsg = result.data?.error || 'AI generation failed';
       await base44.entities.DocumentComparison.update(comparison_id, {
         status: 'failed',
-        error_message: result.data.error || 'AI generation failed'
+        error_message: errorMsg
       });
       return Response.json({ 
-        success: false, 
-        error: result.data.error || 'AI generation failed' 
+        ok: false,
+        error: errorMsg
       }, { status: 500 });
     }
 
     // Parse output
     let reportJson;
     try {
-      reportJson = JSON.parse(result.data.outputText);
+      reportJson = typeof result.data.outputText === 'string' 
+        ? JSON.parse(result.data.outputText)
+        : result.data.outputText;
     } catch (error) {
       await base44.entities.DocumentComparison.update(comparison_id, {
         status: 'failed',
         error_message: 'Failed to parse AI output as JSON'
       });
       return Response.json({ 
-        success: false, 
+        ok: false,
         error: 'Invalid AI output format' 
       }, { status: 500 });
     }
@@ -193,15 +196,28 @@ Return JSON only with this structure:
     });
 
     return Response.json({
-      success: true,
+      ok: true,
       report: reportJson
     });
 
   } catch (error) {
     console.error('EvaluateDocumentComparison error:', error);
+    
+    // Try to update comparison with error
+    if (comparison_id) {
+      try {
+        await base44.entities.DocumentComparison.update(comparison_id, {
+          status: 'failed',
+          error_message: error.message
+        });
+      } catch (updateError) {
+        console.error('Failed to update comparison with error:', updateError);
+      }
+    }
+    
     return Response.json({ 
       error: error.message,
-      success: false
+      ok: false
     }, { status: 500 });
   }
 });

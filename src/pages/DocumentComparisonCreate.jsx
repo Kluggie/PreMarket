@@ -15,7 +15,7 @@ import { Progress } from '@/components/ui/progress';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import {
   ArrowLeft, ArrowRight, FileText, Upload, Type, Clipboard,
-  Save, Sparkles, AlertTriangle, Highlighter, Lock, Unlock, X, Check
+  Save, Sparkles, AlertTriangle, Highlighter, Lock, Unlock, X, Check, Loader2, Link as LinkIcon
 } from 'lucide-react';
 
 export default function DocumentComparisonCreate() {
@@ -35,6 +35,10 @@ export default function DocumentComparisonCreate() {
   const [docBText, setDocBText] = useState('');
   const [docASpans, setDocASpans] = useState([]);
   const [docBSpans, setDocBSpans] = useState([]);
+  const [docAUrl, setDocAUrl] = useState('');
+  const [docBUrl, setDocBUrl] = useState('');
+  const [extractingUrls, setExtractingUrls] = useState(false);
+  const [uploadingFile, setUploadingFile] = useState(null);
   
   const [editingDoc, setEditingDoc] = useState('a');
   const [selectedText, setSelectedText] = useState('');
@@ -216,6 +220,78 @@ export default function DocumentComparisonCreate() {
     }
   };
 
+  const handleExtractFromUrls = async () => {
+    if (!docAUrl && !docBUrl) {
+      alert('Please enter at least one URL');
+      return;
+    }
+    
+    setExtractingUrls(true);
+    try {
+      const result = await base44.functions.invoke('ExtractTextFromUrls', {
+        urlA: docAUrl || null,
+        urlB: docBUrl || null
+      });
+      
+      if (result.data.ok) {
+        if (result.data.textA) {
+          setDocAText(result.data.textA);
+          setDocALocked(false);
+        }
+        if (result.data.textB) {
+          setDocBText(result.data.textB);
+          setDocBLocked(false);
+        }
+        
+        // Jump to step 3 (evaluation)
+        setStep(3);
+      } else {
+        alert(result.data.error || 'Failed to extract text from URLs');
+      }
+    } catch (error) {
+      alert('Extraction failed: ' + error.message);
+    } finally {
+      setExtractingUrls(false);
+    }
+  };
+
+  const handleFileUpload = async (doc, file) => {
+    if (!file) return;
+    
+    const allowedTypes = ['.pdf', '.docx', '.txt', '.md'];
+    const fileName = file.name.toLowerCase();
+    const isAllowed = allowedTypes.some(ext => fileName.endsWith(ext));
+    
+    if (!isAllowed) {
+      alert('Only .pdf, .docx, .txt, and .md files are supported');
+      return;
+    }
+    
+    setUploadingFile(doc);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      const result = await base44.functions.invoke('ExtractTextFromFile', formData);
+      
+      if (result.data.ok) {
+        if (doc === 'a') {
+          setDocAText(result.data.text);
+          setDocALocked(false);
+        } else {
+          setDocBText(result.data.text);
+          setDocBLocked(false);
+        }
+      } else {
+        alert(result.data.error || 'Failed to extract text from file');
+      }
+    } catch (error) {
+      alert('File upload failed: ' + error.message);
+    } finally {
+      setUploadingFile(null);
+    }
+  };
+
   const renderHighlightedText = (text, spans) => {
     if (!text || spans.length === 0) return text;
     
@@ -330,6 +406,54 @@ export default function DocumentComparisonCreate() {
                     </div>
                   </div>
 
+                  <div className="space-y-4 p-4 border-2 border-purple-200 bg-purple-50 rounded-xl">
+                    <Label className="font-semibold text-purple-900 flex items-center gap-2">
+                      <LinkIcon className="w-4 h-4" />
+                      Quick Start: Extract from URLs
+                    </Label>
+                    <p className="text-xs text-purple-700">
+                      Extract text from web pages (automatically jumps to evaluation when done)
+                    </p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <Label className="text-xs">{partyALabel} URL</Label>
+                        <Input 
+                          placeholder="https://..."
+                          value={docAUrl}
+                          onChange={(e) => setDocAUrl(e.target.value)}
+                          className="text-sm"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">{partyBLabel} URL</Label>
+                        <Input 
+                          placeholder="https://..."
+                          value={docBUrl}
+                          onChange={(e) => setDocBUrl(e.target.value)}
+                          className="text-sm"
+                        />
+                      </div>
+                    </div>
+                    <Button 
+                      onClick={handleExtractFromUrls}
+                      disabled={(!docAUrl && !docBUrl) || extractingUrls}
+                      className="w-full bg-purple-600 hover:bg-purple-700"
+                      size="sm"
+                    >
+                      {extractingUrls ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Extracting...
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-4 h-4 mr-2" />
+                          Extract & Jump to Evaluation
+                        </>
+                      )}
+                    </Button>
+                  </div>
+
                   <div className="grid grid-cols-2 gap-6">
                     <div className="space-y-3 p-4 border border-slate-200 rounded-xl">
                       <Label className="font-semibold">{partyALabel} Input Method</Label>
@@ -338,14 +462,7 @@ export default function DocumentComparisonCreate() {
                           <RadioGroupItem value="typed" id="a-typed" />
                           <Label htmlFor="a-typed" className="font-normal cursor-pointer flex items-center gap-2">
                             <Type className="w-4 h-4" />
-                            Type directly
-                          </Label>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          <RadioGroupItem value="pasted" id="a-pasted" />
-                          <Label htmlFor="a-pasted" className="font-normal cursor-pointer flex items-center gap-2">
-                            <Clipboard className="w-4 h-4" />
-                            Paste text
+                            Enter text
                           </Label>
                         </div>
                         <div className="flex items-center space-x-2">
@@ -365,14 +482,7 @@ export default function DocumentComparisonCreate() {
                           <RadioGroupItem value="typed" id="b-typed" />
                           <Label htmlFor="b-typed" className="font-normal cursor-pointer flex items-center gap-2">
                             <Type className="w-4 h-4" />
-                            Type directly
-                          </Label>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          <RadioGroupItem value="pasted" id="b-pasted" />
-                          <Label htmlFor="b-pasted" className="font-normal cursor-pointer flex items-center gap-2">
-                            <Clipboard className="w-4 h-4" />
-                            Paste text
+                            Enter text
                           </Label>
                         </div>
                         <div className="flex items-center space-x-2">
@@ -451,30 +561,73 @@ export default function DocumentComparisonCreate() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
+                  {docASource === 'uploaded' && (
+                    <div className="space-y-2">
+                      <Label>Upload File (.pdf, .docx, .txt, .md)</Label>
+                      <Input 
+                        type="file"
+                        accept=".pdf,.docx,.txt,.md"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) handleFileUpload('a', file);
+                        }}
+                        disabled={uploadingFile === 'a'}
+                      />
+                      {uploadingFile === 'a' && (
+                        <div className="flex items-center gap-2 text-sm text-blue-600">
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Extracting text...
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  
                   <div className="space-y-2">
                     <Textarea 
                       id="doc-a-textarea"
                       value={docAText}
-                      onChange={(e) => !docALocked && setDocAText(e.target.value)}
+                      onChange={(e) => {
+                        if (!docALocked) {
+                          setDocAText(e.target.value);
+                        } else if (docASpans.length > 0) {
+                          if (confirm('Editing text will clear all highlights. Continue?')) {
+                            setDocAText(e.target.value);
+                            setDocASpans([]);
+                            setDocALocked(false);
+                          }
+                        }
+                      }}
                       onMouseUp={() => handleTextSelection('a')}
                       placeholder="Enter or paste document text..."
                       className="min-h-[200px] font-mono text-sm"
-                      disabled={docALocked}
+                      disabled={docASource === 'uploaded' && uploadingFile === 'a'}
                     />
                     {docALocked && (
                       <Alert>
                         <Lock className="w-4 h-4" />
                         <AlertDescription>
-                          Text editing locked. Highlights: {docASpans.length}
+                          Text locked with {docASpans.length} highlight(s). Click Unlock to edit.
                         </AlertDescription>
                       </Alert>
                     )}
                   </div>
 
                   {docASpans.length > 0 && (
-                    <div className="p-4 border border-slate-200 rounded-xl bg-slate-50">
-                      <Label className="text-sm font-semibold mb-2 block">Preview with Highlights</Label>
-                      {renderHighlightedText(docAText, docASpans)}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-sm font-semibold">Highlights ({docASpans.length})</Label>
+                        <div className="flex gap-1">
+                          <Badge className="bg-red-100 text-red-700 text-xs">
+                            {docASpans.filter(s => s.level === 'confidential').length} confidential
+                          </Badge>
+                          <Badge className="bg-yellow-100 text-yellow-700 text-xs">
+                            {docASpans.filter(s => s.level === 'partial').length} partial
+                          </Badge>
+                        </div>
+                      </div>
+                      <div className="p-4 border border-slate-200 rounded-xl bg-slate-50 max-h-64 overflow-auto">
+                        {renderHighlightedText(docAText, docASpans)}
+                      </div>
                     </div>
                   )}
 
@@ -526,30 +679,73 @@ export default function DocumentComparisonCreate() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
+                  {docBSource === 'uploaded' && (
+                    <div className="space-y-2">
+                      <Label>Upload File (.pdf, .docx, .txt, .md)</Label>
+                      <Input 
+                        type="file"
+                        accept=".pdf,.docx,.txt,.md"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) handleFileUpload('b', file);
+                        }}
+                        disabled={uploadingFile === 'b'}
+                      />
+                      {uploadingFile === 'b' && (
+                        <div className="flex items-center gap-2 text-sm text-blue-600">
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Extracting text...
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  
                   <div className="space-y-2">
                     <Textarea 
                       id="doc-b-textarea"
                       value={docBText}
-                      onChange={(e) => !docBLocked && setDocBText(e.target.value)}
+                      onChange={(e) => {
+                        if (!docBLocked) {
+                          setDocBText(e.target.value);
+                        } else if (docBSpans.length > 0) {
+                          if (confirm('Editing text will clear all highlights. Continue?')) {
+                            setDocBText(e.target.value);
+                            setDocBSpans([]);
+                            setDocBLocked(false);
+                          }
+                        }
+                      }}
                       onMouseUp={() => handleTextSelection('b')}
                       placeholder="Enter or paste document text..."
                       className="min-h-[200px] font-mono text-sm"
-                      disabled={docBLocked}
+                      disabled={docBSource === 'uploaded' && uploadingFile === 'b'}
                     />
                     {docBLocked && (
                       <Alert>
                         <Lock className="w-4 h-4" />
                         <AlertDescription>
-                          Text editing locked. Highlights: {docBSpans.length}
+                          Text locked with {docBSpans.length} highlight(s). Click Unlock to edit.
                         </AlertDescription>
                       </Alert>
                     )}
                   </div>
 
                   {docBSpans.length > 0 && (
-                    <div className="p-4 border border-slate-200 rounded-xl bg-slate-50">
-                      <Label className="text-sm font-semibold mb-2 block">Preview with Highlights</Label>
-                      {renderHighlightedText(docBText, docBSpans)}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-sm font-semibold">Highlights ({docBSpans.length})</Label>
+                        <div className="flex gap-1">
+                          <Badge className="bg-red-100 text-red-700 text-xs">
+                            {docBSpans.filter(s => s.level === 'confidential').length} confidential
+                          </Badge>
+                          <Badge className="bg-yellow-100 text-yellow-700 text-xs">
+                            {docBSpans.filter(s => s.level === 'partial').length} partial
+                          </Badge>
+                        </div>
+                      </div>
+                      <div className="p-4 border border-slate-200 rounded-xl bg-slate-50 max-h-64 overflow-auto">
+                        {renderHighlightedText(docBText, docBSpans)}
+                      </div>
                     </div>
                   )}
 
@@ -580,22 +776,24 @@ export default function DocumentComparisonCreate() {
               {selectedText && selectionRange && !showNoteInput && (
                 <Card className="border-2 border-blue-500 shadow-lg">
                   <CardContent className="p-4">
-                    <div className="flex items-center justify-between gap-4">
-                      <div className="flex-1">
-                        <Label className="text-sm font-semibold mb-1 block">Selected Text:</Label>
-                        <p className="text-sm bg-slate-100 p-2 rounded">"{selectedText.substring(0, 100)}{selectedText.length > 100 ? '...' : ''}"</p>
+                    <div className="space-y-3">
+                      <div>
+                        <Label className="text-sm font-semibold mb-1 block">Selected Text ({editingDoc === 'a' ? partyALabel : partyBLabel}):</Label>
+                        <p className="text-sm bg-slate-100 p-2 rounded font-mono">"{selectedText.substring(0, 150)}{selectedText.length > 150 ? '...' : ''}"</p>
                       </div>
                       <div className="flex gap-2">
                         <Button 
                           onClick={() => addHighlight('confidential')}
-                          className="bg-red-600 hover:bg-red-700"
+                          className="bg-red-600 hover:bg-red-700 flex-1"
+                          size="sm"
                         >
                           <Highlighter className="w-4 h-4 mr-2" />
                           Confidential
                         </Button>
                         <Button 
                           onClick={() => addHighlight('partial')}
-                          className="bg-yellow-600 hover:bg-yellow-700"
+                          className="bg-yellow-600 hover:bg-yellow-700 flex-1"
+                          size="sm"
                         >
                           <Highlighter className="w-4 h-4 mr-2" />
                           Partial
@@ -606,6 +804,7 @@ export default function DocumentComparisonCreate() {
                             setSelectedText('');
                             setSelectionRange(null);
                           }}
+                          size="sm"
                         >
                           <X className="w-4 h-4" />
                         </Button>
@@ -765,9 +964,15 @@ export default function DocumentComparisonCreate() {
                         onClick={async () => {
                           try {
                             const id = comparisonId || await saveDraftMutation.mutateAsync();
-                            await base44.functions.invoke('EvaluateDocumentComparison', {
+                            const result = await base44.functions.invoke('EvaluateDocumentComparison', {
                               comparison_id: id
                             });
+                            
+                            if (!result.data.ok) {
+                              alert('Evaluation failed: ' + (result.data.error || 'Unknown error'));
+                              return;
+                            }
+                            
                             navigate(createPageUrl(`DocumentComparisonDetail?id=${id}`));
                           } catch (error) {
                             alert('Evaluation failed: ' + error.message);
