@@ -453,11 +453,17 @@ export default function CreateProposal() {
   };
 
   const partyAQuestions = selectedTemplate?.questions?.filter(q => {
+    const roleType = q.role_type || 'party_attribute';
+    if (roleType === 'shared_fact') return true; // Shared facts shown in Step 2
+    
     const normalized = getNormalizedParty(q);
     return (normalized === 'a' || normalized === 'both') && shouldIncludeQuestion(q);
   }) || [];
   
   const partyBQuestions = selectedTemplate?.questions?.filter(q => {
+    const roleType = q.role_type || 'party_attribute';
+    if (roleType === 'shared_fact') return false; // Already shown in Step 2
+    
     const normalized = getNormalizedParty(q);
     return (normalized === 'b' || normalized === 'both') && shouldIncludeQuestion(q);
   }) || [];
