@@ -127,14 +127,20 @@ export default function ProposalDetail() {
   const latestReport = evaluationReports?.[0];
   const latestSuccessReport = evaluationReports?.find(r => r.status === 'succeeded');
   const sharedReport = sharedReports?.[0];
+  const fitCardReport = fitCardReports?.[0];
 
-  const isFinanceTemplate = templates.find(t => t.id === proposal?.template_id)?.slug === 'universal_finance_deal_prequal';
+  const currentTemplate = templates.find(t => t.id === proposal?.template_id);
+  const isFinanceTemplate = currentTemplate?.slug === 'universal_finance_deal_prequal';
+  const isProfileMatchingTemplate = currentTemplate?.slug === 'universal_profile_matching';
 
   // Run New Evaluation (Vertex Gemini)
   const runNewEvaluationMutation = useMutation({
     mutationFn: async () => {
       if (isFinanceTemplate) {
         const response = await base44.functions.invoke('EvaluateProposalShared', { proposal_id: proposal.id });
+        return response.data;
+      } else if (isProfileMatchingTemplate) {
+        const response = await base44.functions.invoke('EvaluateFitCardShared', { proposal_id: proposal.id });
         return response.data;
       } else {
         const response = await base44.functions.invoke('EvaluateProposal', { proposal_id: proposal.id });
@@ -144,6 +150,7 @@ export default function ProposalDetail() {
     onSuccess: () => {
       queryClient.invalidateQueries(['evaluationReports', proposalId]);
       queryClient.invalidateQueries(['sharedReports', proposalId]);
+      queryClient.invalidateQueries(['fitCardReports', proposalId]);
       queryClient.invalidateQueries(['proposal', proposalId]);
     }
   });
@@ -442,11 +449,11 @@ export default function ProposalDetail() {
               </Button>
               <Button 
                 onClick={() => runNewEvaluationMutation.mutate()}
-                disabled={runNewEvaluationMutation.isPending || latestReport?.status === 'running' || latestReport?.status === 'queued'}
+                disabled={runNewEvaluationMutation.isPending || latestReport?.status === 'running' || latestReport?.status === 'queued' || sharedReport?.status === 'running' || fitCardReport?.status === 'running'}
                 className="bg-blue-600 hover:bg-blue-700"
               >
                 <Sparkles className="w-4 h-4 mr-2" />
-                {(runNewEvaluationMutation.isPending || latestReport?.status === 'running' || latestReport?.status === 'queued') ? 'Evaluating...' : 'Run AI Evaluation'}
+                {(runNewEvaluationMutation.isPending || latestReport?.status === 'running' || latestReport?.status === 'queued' || sharedReport?.status === 'running' || fitCardReport?.status === 'running') ? 'Evaluating...' : (isProfileMatchingTemplate ? 'Run FitCard' : 'Run AI Evaluation')}
               </Button>
               {latestSuccessReport && latestSuccessReport.output_report_json && (
                 <Button 
@@ -633,8 +640,8 @@ export default function ProposalDetail() {
             </TabsTrigger>
             <TabsTrigger value="evaluation" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
               <BarChart3 className="w-4 h-4 mr-2" />
-              AI Report
-              {(latestSuccessReport || sharedReport?.status === 'succeeded') && (
+              {isProfileMatchingTemplate ? 'FitCard' : 'AI Report'}
+              {(latestSuccessReport || sharedReport?.status === 'succeeded' || fitCardReport?.status === 'succeeded') && (
                 <Badge className="ml-2 bg-green-100 text-green-700 text-xs">
                   Complete
                 </Badge>
@@ -817,6 +824,195 @@ export default function ProposalDetail() {
 
           {/* AI Report Tab */}
           <TabsContent value="evaluation">
+            {/* FitCard Report for Profile Matching Template */}
+            {isProfileMatchingTemplate && fitCardReport?.status === 'succeeded' && fitCardReport.output_report_json && (
+              <div className="space-y-6">
+                <Card className="border-0 shadow-sm bg-gradient-to-br from-purple-50 to-indigo-50">
+                  <CardHeader>
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="flex items-center gap-2">
+                        <Sparkles className="w-5 h-5 text-purple-600" />
+                        FitCard Report
+                      </CardTitle>
+                      <Badge variant="outline">Shared with both parties</Badge>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-2 gap-4 mb-4">
+                      <div className="p-4 bg-white rounded-lg">
+                        <p className="text-sm text-slate-600">Mode</p>
+                        <p className="text-xl font-bold">{fitCardReport.mode_value}</p>
+                      </div>
+                      <div className="p-4 bg-white rounded-lg">
+                        <p className="text-sm text-slate-600">Fit Level</p>
+                        <p className="text-xl font-bold capitalize">{fitCardReport.output_report_json.summary?.fit_level || 'Unknown'}</p>
+                      </div>
+                    </div>
+
+                    {fitCardReport.output_report_json.must_haves_check && (
+                      <div className="mb-4 p-4 bg-white rounded-lg">
+                        <h4 className="font-semibold mb-2">Must-Haves Check</h4>
+                        <p className="text-2xl font-bold text-blue-600">
+                          {fitCardReport.output_report_json.must_haves_check.satisfied_count} / {fitCardReport.output_report_json.must_haves_check.total_count}
+                        </p>
+                        {fitCardReport.output_report_json.must_haves_check.missing_items?.length > 0 && (
+                          <div className="mt-3 space-y-2">
+                            {fitCardReport.output_report_json.must_haves_check.missing_items.map((item, idx) => (
+                              <div key={idx} className="text-sm p-2 bg-red-50 border border-red-100 rounded">
+                                {item.text}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {fitCardReport.output_report_json.summary?.top_strengths?.length > 0 && (
+                      <div className="mb-4">
+                        <h4 className="font-semibold mb-2 flex items-center gap-2">
+                          <CheckCircle2 className="w-4 h-4 text-green-600" />
+                          Top Strengths
+                        </h4>
+                        <div className="space-y-2">
+                          {fitCardReport.output_report_json.summary.top_strengths.map((strength, idx) => (
+                            <div key={idx} className="p-3 bg-green-50 border border-green-100 rounded-lg">
+                              <p className="text-sm text-slate-800">{strength.text}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {fitCardReport.output_report_json.summary?.key_gaps?.length > 0 && (
+                      <div className="mb-4">
+                        <h4 className="font-semibold mb-2 flex items-center gap-2">
+                          <XCircle className="w-4 h-4 text-red-600" />
+                          Key Gaps
+                        </h4>
+                        <div className="space-y-2">
+                          {fitCardReport.output_report_json.summary.key_gaps.map((gap, idx) => (
+                            <div key={idx} className="p-3 bg-red-50 border border-red-100 rounded-lg">
+                              <p className="text-sm text-slate-800">{gap.text}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {fitCardReport.output_report_json.flags?.length > 0 && (
+                      <div className="mb-4">
+                        <h4 className="font-semibold mb-2 flex items-center gap-2">
+                          <AlertTriangle className="w-4 h-4 text-amber-600" />
+                          Flags & Concerns
+                        </h4>
+                        <div className="space-y-2">
+                          {fitCardReport.output_report_json.flags.map((flag, idx) => (
+                            <div key={idx} className={`p-3 rounded-lg border ${
+                              flag.severity === 'high' ? 'bg-red-50 border-red-200' :
+                              flag.severity === 'med' ? 'bg-amber-50 border-amber-200' :
+                              'bg-blue-50 border-blue-200'
+                            }`}>
+                              <div className="flex items-start gap-2">
+                                <Badge className={
+                                  flag.severity === 'high' ? 'bg-red-600' :
+                                  flag.severity === 'med' ? 'bg-amber-600' :
+                                  'bg-blue-600'
+                                }>
+                                  {flag.severity}
+                                </Badge>
+                                <div className="flex-1">
+                                  <p className="font-medium text-sm">{flag.title}</p>
+                                  <p className="text-sm text-slate-600 mt-1">{flag.detail}</p>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {fitCardReport.output_report_json.followup_questions?.length > 0 && (
+                      <div>
+                        <h4 className="font-semibold mb-2 flex items-center gap-2">
+                          <MessageSquare className="w-4 h-4 text-blue-600" />
+                          Follow-up Questions
+                        </h4>
+                        <div className="space-y-2">
+                          {fitCardReport.output_report_json.followup_questions.map((q, idx) => (
+                            <div key={idx} className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
+                              <div className="flex items-start gap-2">
+                                <Badge variant="outline" className="text-xs">{q.priority}</Badge>
+                                <div className="flex-1">
+                                  <p className="text-sm font-medium">{q.question_text}</p>
+                                  <p className="text-xs text-slate-600 mt-1">{q.why_this_matters}</p>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Button 
+                  variant="outline"
+                  onClick={() => runNewEvaluationMutation.mutate()}
+                  disabled={runNewEvaluationMutation.isPending || fitCardReport?.status === 'running'}
+                  className="w-full"
+                >
+                  <RefreshCw className="w-4 h-4 mr-2" />
+                  Re-run FitCard
+                </Button>
+              </div>
+            )}
+
+            {isProfileMatchingTemplate && fitCardReport?.status === 'running' && (
+              <Card className="border-0 shadow-sm">
+                <CardContent className="py-16 text-center">
+                  <RefreshCw className="w-12 h-12 text-purple-500 mx-auto mb-4 animate-spin" />
+                  <h3 className="text-lg font-semibold text-slate-900 mb-2">Generating FitCard</h3>
+                  <p className="text-slate-500">This may take 10-30 seconds...</p>
+                </CardContent>
+              </Card>
+            )}
+
+            {isProfileMatchingTemplate && fitCardReport?.status === 'failed' && (
+              <Card className="border-0 shadow-sm">
+                <CardContent className="py-16 text-center">
+                  <XCircle className="w-12 h-12 text-red-300 mx-auto mb-4" />
+                  <h3 className="text-lg font-semibold text-slate-900 mb-2">Evaluation Failed</h3>
+                  <p className="text-slate-500 mb-4">{fitCardReport.error_message || 'Unknown error'}</p>
+                  <Button 
+                    onClick={() => runNewEvaluationMutation.mutate()}
+                    disabled={runNewEvaluationMutation.isPending}
+                    variant="outline"
+                  >
+                    <RefreshCw className="w-4 h-4 mr-2" />
+                    Retry
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
+
+            {isProfileMatchingTemplate && !fitCardReport && (
+              <Card className="border-0 shadow-sm">
+                <CardContent className="py-16 text-center">
+                  <Sparkles className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+                  <h3 className="text-lg font-semibold text-slate-900 mb-2">No FitCard yet</h3>
+                  <p className="text-slate-500 mb-6">Run a FitCard evaluation to see compatibility analysis.</p>
+                  <Button 
+                    onClick={() => runNewEvaluationMutation.mutate()}
+                    disabled={runNewEvaluationMutation.isPending}
+                    className="bg-purple-600 hover:bg-purple-700"
+                  >
+                    <Sparkles className="w-4 h-4 mr-2" />
+                    {runNewEvaluationMutation.isPending ? 'Generating...' : 'Run FitCard'}
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
+
             {/* Shared Report for Finance Template */}
             {isFinanceTemplate && sharedReport?.status === 'succeeded' && sharedReport.output_report_json && (
               <div className="space-y-6">

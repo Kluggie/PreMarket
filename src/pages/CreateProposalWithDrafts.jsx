@@ -21,7 +21,7 @@ import { Switch } from '@/components/ui/switch';
 import {
   ArrowLeft, ArrowRight, FileText, User, Eye, EyeOff, Lock,
   Building2, Users, TrendingUp, Handshake, Briefcase, CheckCircle2,
-  Send, Sparkles, AlertTriangle, XCircle, Save
+  Send, Sparkles, AlertTriangle, XCircle, Save, Link as LinkIcon, Loader2, X, Check
 } from 'lucide-react';
 
 const iconMap = {
@@ -51,6 +51,10 @@ export default function CreateProposal() {
   const [enabledModules, setEnabledModules] = useState([]);
   const [draftProposalId, setDraftProposalId] = useState(null);
   const [autoSaving, setAutoSaving] = useState(false);
+  const [extractUrl, setExtractUrl] = useState('');
+  const [extracting, setExtracting] = useState(false);
+  const [extractedFields, setExtractedFields] = useState([]);
+  const [showReviewExtracted, setShowReviewExtracted] = useState(false);
 
   const { data: templates = [], isLoading } = useQuery({
     queryKey: ['templates'],
@@ -556,6 +560,58 @@ export default function CreateProposal() {
     setVisibilitySettings(prev => ({ ...prev, [questionId]: visibility }));
   };
 
+  const handleExtractFromUrl = async () => {
+    if (!extractUrl) return;
+    
+    setExtracting(true);
+    try {
+      const result = await base44.functions.invoke('ExtractRequirementsFromUrl', {
+        url: extractUrl,
+        mode: responses['mode'],
+        maxPages: 6
+      });
+      
+      if (result.data.ok && result.data.inferred_fields) {
+        setExtractedFields(result.data.inferred_fields.map(f => ({
+          ...f,
+          accepted: false,
+          edited_value: f.suggested_value
+        })));
+        setShowReviewExtracted(true);
+      } else {
+        alert(result.data.error || 'Failed to extract requirements');
+      }
+    } catch (error) {
+      alert('Extraction failed: ' + error.message);
+    } finally {
+      setExtracting(false);
+    }
+  };
+
+  const handleApplyExtracted = () => {
+    const accepted = extractedFields.filter(f => f.accepted);
+    
+    accepted.forEach(field => {
+      // Find matching question by label
+      const question = partyBQuestions.find(q => 
+        q.label.toLowerCase() === field.question_label.toLowerCase() ||
+        q.label.toLowerCase().includes(field.question_label.toLowerCase()) ||
+        field.question_label.toLowerCase().includes(q.label.toLowerCase())
+      );
+      
+      if (question) {
+        handleResponseChange(question.id, field.edited_value);
+        if (question.supports_visibility) {
+          handleVisibilityChange(question.id, 'partial');
+        }
+      }
+    });
+    
+    setShowReviewExtracted(false);
+    setExtractedFields([]);
+    setExtractUrl('');
+  };
+
   const renderQuestionInput = (question) => {
     const value = responses[question.id] || '';
     const visibility = visibilitySettings[question.id] || question.visibility_default || 'full';
@@ -1037,6 +1093,131 @@ export default function CreateProposal() {
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -20 }}
             >
+              {/* URL Extraction (Profile Matching only) */}
+              {isProfileMatchingTemplate && !showReviewExtracted && (
+                <Card className="border-0 shadow-sm mb-6 bg-gradient-to-br from-purple-50 to-blue-50">
+                  <CardHeader>
+                    <CardTitle className="text-lg flex items-center gap-2">
+                      <LinkIcon className="w-5 h-5 text-purple-600" />
+                      Auto-build Requirements from URL (Optional)
+                    </CardTitle>
+                    <CardDescription>
+                      Extract requirements from a job posting, company page, GitHub repo, or program page
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex gap-2">
+                      <Input 
+                        placeholder="https://..."
+                        value={extractUrl}
+                        onChange={(e) => setExtractUrl(e.target.value)}
+                        className="flex-1"
+                      />
+                      <Button 
+                        onClick={handleExtractFromUrl}
+                        disabled={!extractUrl || extracting}
+                        className="bg-purple-600 hover:bg-purple-700"
+                      >
+                        {extracting ? (
+                          <>
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            Extracting...
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="w-4 h-4 mr-2" />
+                            Extract
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Review Extracted Fields */}
+              {isProfileMatchingTemplate && showReviewExtracted && (
+                <Card className="border-0 shadow-sm mb-6">
+                  <CardHeader>
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-lg">Review Extracted Requirements</CardTitle>
+                      <Button 
+                        variant="ghost" 
+                        size="sm"
+                        onClick={() => {
+                          setShowReviewExtracted(false);
+                          setExtractedFields([]);
+                        }}
+                      >
+                        <X className="w-4 h-4" />
+                      </Button>
+                    </div>
+                    <CardDescription>
+                      Accept, edit, or remove AI-extracted fields
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {extractedFields.map((field, idx) => (
+                      <div key={idx} className="p-3 border rounded-lg bg-white">
+                        <div className="flex items-start gap-3">
+                          <Checkbox 
+                            checked={field.accepted}
+                            onCheckedChange={(checked) => {
+                              setExtractedFields(prev => prev.map((f, i) => 
+                                i === idx ? {...f, accepted: checked} : f
+                              ));
+                            }}
+                            className="mt-1"
+                          />
+                          <div className="flex-1 space-y-2">
+                            <div>
+                              <Label className="text-sm font-medium">{field.question_label}</Label>
+                              <Badge className="ml-2 text-xs" variant="outline">
+                                {Math.round(field.confidence * 100)}% confidence
+                              </Badge>
+                            </div>
+                            <Input 
+                              value={field.edited_value}
+                              onChange={(e) => {
+                                setExtractedFields(prev => prev.map((f, i) => 
+                                  i === idx ? {...f, edited_value: e.target.value} : f
+                                ));
+                              }}
+                              className="text-sm"
+                            />
+                            {field.source_excerpt && (
+                              <p className="text-xs text-slate-500 italic">
+                                Source: "{field.source_excerpt.substring(0, 100)}..."
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    
+                    <div className="flex justify-end gap-2 mt-4">
+                      <Button 
+                        variant="outline"
+                        onClick={() => {
+                          setShowReviewExtracted(false);
+                          setExtractedFields([]);
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                      <Button 
+                        onClick={handleApplyExtracted}
+                        disabled={!extractedFields.some(f => f.accepted)}
+                        className="bg-purple-600 hover:bg-purple-700"
+                      >
+                        <Check className="w-4 h-4 mr-2" />
+                        Apply Selected ({extractedFields.filter(f => f.accepted).length})
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
               <Card className="border-0 shadow-sm">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
