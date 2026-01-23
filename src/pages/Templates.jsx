@@ -102,17 +102,37 @@ export default function Templates() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Header */}
         <div className="text-center mb-12">
-          <h1 className="text-3xl font-bold text-slate-900 mb-4">Template Library</h1>
+          <h1 className="text-3xl font-bold text-slate-900 mb-4">Templates & Tools</h1>
           <p className="text-lg text-slate-600 max-w-2xl mx-auto">
-            Choose from industry-specific templates to structure your pre-qualification proposals.
-            Each template includes tailored questions and evaluation criteria.
+            Choose from templates and tools for your pre-qualification needs.
           </p>
         </div>
 
+        {/* Tools Section */}
+        <div className="mb-12">
+          <h2 className="text-xl font-semibold text-slate-900 mb-4">Tools</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <Link to={createPageUrl('DocumentComparisonCreate')}>
+              <Card className="border-0 shadow-sm hover:shadow-lg transition-all duration-300 cursor-pointer h-full">
+                <CardContent className="p-6">
+                  <div className="w-12 h-12 rounded-lg bg-purple-100 flex items-center justify-center mb-4">
+                    <FileText className="w-6 h-6 text-purple-600" />
+                  </div>
+                  <h3 className="font-semibold text-lg mb-2">Document Comparison</h3>
+                  <p className="text-sm text-slate-500 mb-4">
+                    Compare two documents with AI evaluation and confidentiality controls
+                  </p>
+                  <Badge className="bg-purple-100 text-purple-700">Tool</Badge>
+                </CardContent>
+              </Card>
+            </Link>
+          </div>
+        </div>
 
-
-        {/* Templates Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {/* Templates Section */}
+        <div>
+          <h2 className="text-xl font-semibold text-slate-900 mb-4">Proposal Templates</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {displayTemplates.length === 0 ? (
             <div className="col-span-full">
               <Card className="border-0 shadow-sm text-center py-16">
@@ -210,6 +230,7 @@ export default function Templates() {
               </motion.div>
             );
           })}
+          </div>
         </div>
 
         {/* Custom Template CTA */}

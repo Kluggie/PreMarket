@@ -184,6 +184,36 @@ export default function Dashboard() {
           <ProposalsChart sentProposals={sentProposals} receivedProposals={receivedProposals} />
         </div>
 
+        {/* Quick Actions */}
+        <div className="mb-8">
+          <h2 className="text-lg font-semibold text-slate-900 mb-4">Quick Actions</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <Link to={createPageUrl('Proposals')}>
+              <Card className="border-0 shadow-sm hover:shadow-md transition-shadow cursor-pointer">
+                <CardContent className="p-6">
+                  <FileText className="w-8 h-8 text-blue-600 mb-3" />
+                  <h3 className="font-semibold text-lg mb-2">Proposals</h3>
+                  <p className="text-sm text-slate-500">
+                    {sentProposals.length} sent • {receivedProposals.length} received
+                  </p>
+                </CardContent>
+              </Card>
+            </Link>
+
+            <Link to={createPageUrl('DocumentComparisonCreate')}>
+              <Card className="border-0 shadow-sm hover:shadow-md transition-shadow cursor-pointer">
+                <CardContent className="p-6">
+                  <FileText className="w-8 h-8 text-purple-600 mb-3" />
+                  <h3 className="font-semibold text-lg mb-2">Document Comparison</h3>
+                  <p className="text-sm text-slate-500">
+                    Compare documents with confidentiality controls
+                  </p>
+                </CardContent>
+              </Card>
+            </Link>
+          </div>
+        </div>
+
         {/* Proposals Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
           <TabsList className="bg-white border border-slate-200 p-1">
