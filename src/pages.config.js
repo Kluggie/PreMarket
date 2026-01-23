@@ -5,6 +5,8 @@ import Contact from './pages/Contact';
 import CreateProposal from './pages/CreateProposal';
 import CreateProposalWithDrafts from './pages/CreateProposalWithDrafts';
 import Dashboard from './pages/Dashboard';
+import DocumentComparisonCreate from './pages/DocumentComparisonCreate';
+import DocumentComparisonDetail from './pages/DocumentComparisonDetail';
 import Documentation from './pages/Documentation';
 import GeminiTest from './pages/GeminiTest';
 import Landing from './pages/Landing';
@@ -20,8 +22,6 @@ import TemplateDedupe from './pages/TemplateDedupe';
 import Templates from './pages/Templates';
 import Terms from './pages/Terms';
 import Verification from './pages/Verification';
-import DocumentComparisonCreate from './pages/DocumentComparisonCreate';
-import DocumentComparisonDetail from './pages/DocumentComparisonDetail';
 import __Layout from './Layout.jsx';
 
 
@@ -33,6 +33,8 @@ export const PAGES = {
     "CreateProposal": CreateProposal,
     "CreateProposalWithDrafts": CreateProposalWithDrafts,
     "Dashboard": Dashboard,
+    "DocumentComparisonCreate": DocumentComparisonCreate,
+    "DocumentComparisonDetail": DocumentComparisonDetail,
     "Documentation": Documentation,
     "GeminiTest": GeminiTest,
     "Landing": Landing,
@@ -48,8 +50,6 @@ export const PAGES = {
     "Templates": Templates,
     "Terms": Terms,
     "Verification": Verification,
-    "DocumentComparisonCreate": DocumentComparisonCreate,
-    "DocumentComparisonDetail": DocumentComparisonDetail,
 }
 
 export const pagesConfig = {

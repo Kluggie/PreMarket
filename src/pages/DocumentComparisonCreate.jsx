@@ -81,7 +81,9 @@ export default function DocumentComparisonCreate() {
       if (comparison.doc_a_spans_json?.length > 0) setDocALocked(true);
       if (comparison.doc_b_spans_json?.length > 0) setDocBLocked(true);
       
-      setStep(2);
+      // Resume at saved draft step
+      const resumeStep = comparison.draft_step || 1;
+      setStep(resumeStep);
     } catch (error) {
       console.error('Failed to load draft:', error);
     }
@@ -100,7 +102,9 @@ export default function DocumentComparisonCreate() {
         doc_b_spans_json: docBSpans,
         doc_a_source: docASource,
         doc_b_source: docBSource,
-        status: 'draft'
+        status: 'draft',
+        draft_step: step,
+        draft_updated_at: new Date().toISOString()
       };
       
       if (comparisonId) {
@@ -621,7 +625,15 @@ export default function DocumentComparisonCreate() {
               )}
 
               <div className="flex justify-between">
-                <Button variant="outline" onClick={() => setStep(1)}>
+                <Button variant="outline" onClick={async () => {
+                  if (comparisonId && user) {
+                    await base44.entities.DocumentComparison.update(comparisonId, { 
+                      draft_step: 1,
+                      draft_updated_at: new Date().toISOString()
+                    });
+                  }
+                  setStep(1);
+                }}>
                   <ArrowLeft className="w-4 h-4 mr-2" />
                   Back
                 </Button>
@@ -635,7 +647,15 @@ export default function DocumentComparisonCreate() {
                     {saveDraftMutation.isPending ? 'Saving...' : 'Save Draft'}
                   </Button>
                   <Button 
-                    onClick={() => setStep(3)}
+                    onClick={async () => {
+                      if (comparisonId && user) {
+                        await base44.entities.DocumentComparison.update(comparisonId, { 
+                          draft_step: 3,
+                          draft_updated_at: new Date().toISOString()
+                        });
+                      }
+                      setStep(3);
+                    }}
                     disabled={!docAText || !docBText}
                     className="bg-blue-600 hover:bg-blue-700"
                   >
@@ -700,7 +720,15 @@ export default function DocumentComparisonCreate() {
                   </Alert>
 
                   <div className="flex justify-between">
-                    <Button variant="outline" onClick={() => setStep(2)}>
+                    <Button variant="outline" onClick={async () => {
+                      if (comparisonId && user) {
+                        await base44.entities.DocumentComparison.update(comparisonId, { 
+                          draft_step: 2,
+                          draft_updated_at: new Date().toISOString()
+                        });
+                      }
+                      setStep(2);
+                    }}>
                       <ArrowLeft className="w-4 h-4 mr-2" />
                       Back
                     </Button>

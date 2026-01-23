@@ -548,9 +548,27 @@ export default function CreateProposal() {
     const nextStep = step + 1;
     setStep(nextStep);
     
-    // Update draft step immediately
+    // Update draft step and completed steps immediately
     if (draftProposalId && user && !isGuestMode) {
-      base44.entities.Proposal.update(draftProposalId, { draft_step: nextStep }).catch(err => {
+      base44.entities.Proposal.update(draftProposalId, { 
+        draft_step: nextStep,
+        draft_updated_at: new Date().toISOString()
+      }).catch(err => {
+        console.error('Failed to update draft step:', err);
+      });
+    }
+  };
+
+  const handleBack = (targetStep) => {
+    setValidationErrors({});
+    setStep(targetStep);
+    
+    // Update draft step when going back
+    if (draftProposalId && user && !isGuestMode) {
+      base44.entities.Proposal.update(draftProposalId, { 
+        draft_step: targetStep,
+        draft_updated_at: new Date().toISOString()
+      }).catch(err => {
         console.error('Failed to update draft step:', err);
       });
     }
@@ -1322,7 +1340,7 @@ export default function CreateProposal() {
               </Card>
 
               <div className="flex justify-between mt-6">
-                <Button variant="outline" onClick={() => setStep(1)}>
+                <Button variant="outline" onClick={() => handleBack(1)}>
                   <ArrowLeft className="w-4 h-4 mr-2" />
                   Back
                 </Button>
@@ -1498,7 +1516,7 @@ export default function CreateProposal() {
               </Card>
 
               <div className="flex justify-between mt-6">
-                <Button variant="outline" onClick={() => { setValidationErrors({}); setStep(2); }}>
+                <Button variant="outline" onClick={() => handleBack(2)}>
                   <ArrowLeft className="w-4 h-4 mr-2" />
                   Back
                 </Button>
@@ -1571,7 +1589,7 @@ export default function CreateProposal() {
                     </div>
 
                     <div className="flex justify-between">
-                      <Button variant="outline" onClick={() => setStep(3)}>
+                      <Button variant="outline" onClick={() => handleBack(3)}>
                         <ArrowLeft className="w-4 h-4 mr-2" />
                         Back
                       </Button>
