@@ -133,7 +133,7 @@ export default function Proposals() {
         whileHover={{ backgroundColor: 'rgb(248, 250, 252)' }}
         className="p-4 border-b border-slate-100 flex items-center gap-4"
       >
-        <Link to={createPageUrl(`ProposalDetail?id=${proposal.id}`)} className="flex items-center gap-4 flex-1 min-w-0 cursor-pointer">
+        <Link to={isDraft ? createPageUrl(`CreateProposal?draft=${proposal.id}`) : createPageUrl(`ProposalDetail?id=${proposal.id}`)} className="flex items-center gap-4 flex-1 min-w-0 cursor-pointer">
           <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center">
             {isDraft ? (
               <FileText className="w-5 h-5 text-slate-600" />
