@@ -3,6 +3,7 @@ import Admin from './pages/Admin';
 import Billing from './pages/Billing';
 import Contact from './pages/Contact';
 import CreateProposal from './pages/CreateProposal';
+import CreateProposalWithDrafts from './pages/CreateProposalWithDrafts';
 import Dashboard from './pages/Dashboard';
 import Documentation from './pages/Documentation';
 import GeminiTest from './pages/GeminiTest';
@@ -19,7 +20,6 @@ import TemplateDedupe from './pages/TemplateDedupe';
 import Templates from './pages/Templates';
 import Terms from './pages/Terms';
 import Verification from './pages/Verification';
-import CreateProposalWithDrafts from './pages/CreateProposalWithDrafts';
 import __Layout from './Layout.jsx';
 
 
@@ -29,6 +29,7 @@ export const PAGES = {
     "Billing": Billing,
     "Contact": Contact,
     "CreateProposal": CreateProposal,
+    "CreateProposalWithDrafts": CreateProposalWithDrafts,
     "Dashboard": Dashboard,
     "Documentation": Documentation,
     "GeminiTest": GeminiTest,
@@ -45,7 +46,6 @@ export const PAGES = {
     "Templates": Templates,
     "Terms": Terms,
     "Verification": Verification,
-    "CreateProposalWithDrafts": CreateProposalWithDrafts,
 }
 
 export const pagesConfig = {

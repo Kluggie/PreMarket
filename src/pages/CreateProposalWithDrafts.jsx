@@ -234,8 +234,11 @@ export default function CreateProposal() {
   const allTemplates = templates;
 
   const isUniversalTemplate = selectedTemplate?.slug === 'universal_enterprise_onboarding' || 
-                               selectedTemplate?.template_key === 'universal_enterprise_onboarding' ||
-                               selectedTemplate?.name === 'Universal Enterprise Onboarding';
+                                selectedTemplate?.template_key === 'universal_enterprise_onboarding' ||
+                                selectedTemplate?.name === 'Universal Enterprise Onboarding';
+
+  const isFinanceTemplate = selectedTemplate?.slug === 'universal_finance_deal_prequal' ||
+                            selectedTemplate?.template_key === 'universal_finance_deal_prequal';
 
   const getModulesForPreset = (preset) => {
     const baseModules = ['org_profile', 'security_compliance', 'privacy_data_handling', 'operations_sla', 'implementation_it', 'legal_commercial', 'references'];
@@ -255,20 +258,65 @@ export default function CreateProposal() {
   };
 
   const shouldIncludeQuestion = (question) => {
-    if (!isUniversalTemplate) return true;
-    if (!presetKey || enabledModules.length === 0) return false;
-    if (question.module_key) {
-      return enabledModules.includes(question.module_key);
+    // Universal Enterprise Onboarding filtering
+    if (isUniversalTemplate) {
+      if (!presetKey || enabledModules.length === 0) return false;
+      if (question.module_key) {
+        return enabledModules.includes(question.module_key);
+      }
+      return false;
     }
-    return false;
+
+    // Universal Finance Deal Pre-Qual filtering
+    if (isFinanceTemplate) {
+      const selectedMode = responses['mode'];
+      
+      // Mode selector always shown
+      if (question.module_key === 'mode_selector') return true;
+      
+      // Require mode selection before showing other questions
+      if (!selectedMode) return false;
+      
+      // Common core always included
+      if (question.module_key === 'common_core') return true;
+      
+      // Mode-specific questions
+      if (selectedMode === 'Investor Fit' && question.module_key === 'investor_fit') return true;
+      if (selectedMode === 'M&A Fit' && question.module_key === 'm_and_a_fit') return true;
+      if (selectedMode === 'Lending Fit' && question.module_key === 'lending_fit') return true;
+      
+      return false;
+    }
+
+    // All other templates: show all questions
+    return true;
   };
 
   const getEffectiveRequired = (question) => {
+    // Universal Enterprise Onboarding preset-based requirements
     if (isUniversalTemplate && presetKey && question.preset_required) {
       return question.preset_required[presetKey] !== undefined 
         ? question.preset_required[presetKey]
         : question.required;
     }
+
+    // Universal Finance Deal Pre-Qual mode-based requirements
+    if (isFinanceTemplate) {
+      const selectedMode = responses['mode'];
+      if (!selectedMode) return question.required;
+      
+      // Check preset_required for mode-specific questions
+      if (question.preset_required) {
+        const modeKey = selectedMode === 'Investor Fit' ? 'investor_fit' 
+                      : selectedMode === 'M&A Fit' ? 'm_and_a_fit'
+                      : selectedMode === 'Lending Fit' ? 'lending_fit'
+                      : null;
+        if (modeKey && question.preset_required[modeKey] !== undefined) {
+          return question.preset_required[modeKey];
+        }
+      }
+    }
+
     return question.required;
   };
 
@@ -761,51 +809,84 @@ export default function CreateProposal() {
                   )}
 
                   {isUniversalTemplate && (
-                    <div className="space-y-3 p-4 border-2 border-blue-200 bg-blue-50 rounded-xl">
-                      <Label className="text-sm font-semibold text-blue-900">
-                        Onboarding Type *
-                      </Label>
-                      <RadioGroup value={presetKey} onValueChange={(value) => {
-                        setPresetKey(value);
-                        setEnabledModules(getModulesForPreset(value));
-                      }}>
-                        <div className="space-y-2">
-                          <div className="flex items-center space-x-2">
-                            <RadioGroupItem value="vendor_prequal" id="preset-vendor" />
-                            <Label htmlFor="preset-vendor" className="font-normal cursor-pointer">
-                              Vendor Pre-Qualification
-                            </Label>
-                          </div>
-                          <div className="flex items-center space-x-2">
-                            <RadioGroupItem value="saas_procurement" id="preset-saas" />
-                            <Label htmlFor="preset-saas" className="font-normal cursor-pointer">
-                              SaaS Procurement
-                            </Label>
-                          </div>
-                          <div className="flex items-center space-x-2">
-                            <RadioGroupItem value="private_rfp_prequal" id="preset-rfp" />
-                            <Label htmlFor="preset-rfp" className="font-normal cursor-pointer">
-                              Private RFP Pre-Qualification
-                            </Label>
-                          </div>
-                          <div className="flex items-center space-x-2">
-                            <RadioGroupItem value="api_data_provider" id="preset-api" />
-                            <Label htmlFor="preset-api" className="font-normal cursor-pointer">
-                              API / Data Provider Matching
-                            </Label>
-                          </div>
-                        </div>
-                      </RadioGroup>
-                      <p className="text-xs text-blue-700 mt-2">
-                        This determines which questions you'll see in the next steps.
-                      </p>
-                    </div>
+                   <div className="space-y-3 p-4 border-2 border-blue-200 bg-blue-50 rounded-xl">
+                     <Label className="text-sm font-semibold text-blue-900">
+                       Onboarding Type *
+                     </Label>
+                     <RadioGroup value={presetKey} onValueChange={(value) => {
+                       setPresetKey(value);
+                       setEnabledModules(getModulesForPreset(value));
+                     }}>
+                       <div className="space-y-2">
+                         <div className="flex items-center space-x-2">
+                           <RadioGroupItem value="vendor_prequal" id="preset-vendor" />
+                           <Label htmlFor="preset-vendor" className="font-normal cursor-pointer">
+                             Vendor Pre-Qualification
+                           </Label>
+                         </div>
+                         <div className="flex items-center space-x-2">
+                           <RadioGroupItem value="saas_procurement" id="preset-saas" />
+                           <Label htmlFor="preset-saas" className="font-normal cursor-pointer">
+                             SaaS Procurement
+                           </Label>
+                         </div>
+                         <div className="flex items-center space-x-2">
+                           <RadioGroupItem value="private_rfp_prequal" id="preset-rfp" />
+                           <Label htmlFor="preset-rfp" className="font-normal cursor-pointer">
+                             Private RFP Pre-Qualification
+                           </Label>
+                         </div>
+                         <div className="flex items-center space-x-2">
+                           <RadioGroupItem value="api_data_provider" id="preset-api" />
+                           <Label htmlFor="preset-api" className="font-normal cursor-pointer">
+                             API / Data Provider Matching
+                           </Label>
+                         </div>
+                       </div>
+                     </RadioGroup>
+                     <p className="text-xs text-blue-700 mt-2">
+                       This determines which questions you'll see in the next steps.
+                     </p>
+                   </div>
+                  )}
+
+                  {isFinanceTemplate && (
+                   <div className="space-y-3 p-4 border-2 border-emerald-200 bg-emerald-50 rounded-xl">
+                     <Label className="text-sm font-semibold text-emerald-900">
+                       Deal Mode *
+                     </Label>
+                     <RadioGroup value={responses['mode']} onValueChange={(value) => handleResponseChange('mode', value)}>
+                       <div className="space-y-2">
+                         <div className="flex items-center space-x-2">
+                           <RadioGroupItem value="Investor Fit" id="mode-investor" />
+                           <Label htmlFor="mode-investor" className="font-normal cursor-pointer">
+                             Investor Fit
+                           </Label>
+                         </div>
+                         <div className="flex items-center space-x-2">
+                           <RadioGroupItem value="M&A Fit" id="mode-ma" />
+                           <Label htmlFor="mode-ma" className="font-normal cursor-pointer">
+                             M&A Fit
+                           </Label>
+                         </div>
+                         <div className="flex items-center space-x-2">
+                           <RadioGroupItem value="Lending Fit" id="mode-lending" />
+                           <Label htmlFor="mode-lending" className="font-normal cursor-pointer">
+                             Lending Fit
+                           </Label>
+                         </div>
+                       </div>
+                     </RadioGroup>
+                     <p className="text-xs text-emerald-700 mt-2">
+                       This determines which questions you'll see in the next steps.
+                     </p>
+                   </div>
                   )}
 
                   <div className="flex justify-end mt-6">
                     <Button 
                       onClick={() => setStep(2)}
-                      disabled={isUniversalTemplate && !presetKey}
+                      disabled={(isUniversalTemplate && !presetKey) || (isFinanceTemplate && !responses['mode'])}
                       className="bg-blue-600 hover:bg-blue-700"
                     >
                       Continue
