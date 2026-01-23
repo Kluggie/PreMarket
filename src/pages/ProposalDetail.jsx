@@ -463,7 +463,7 @@ export default function ProposalDetail() {
                 className="bg-blue-600 hover:bg-blue-700"
               >
                 <Sparkles className="w-4 h-4 mr-2" />
-                {(runNewEvaluationMutation.isPending || latestReport?.status === 'running' || latestReport?.status === 'queued' || sharedReport?.status === 'running' || fitCardReport?.status === 'running') ? 'Evaluating...' : (isProfileMatchingTemplate ? 'Run FitCard' : 'Run AI Evaluation')}
+                {(runNewEvaluationMutation.isPending || latestReport?.status === 'running' || latestReport?.status === 'queued' || sharedReport?.status === 'running' || fitCardReport?.status === 'running') ? 'Evaluating...' : (isProfileMatchingTemplate ? 'Run Profile Evaluation' : 'Run AI Evaluation')}
               </Button>
               {latestSuccessReport && latestSuccessReport.output_report_json && (
                 <Button 
@@ -650,7 +650,7 @@ export default function ProposalDetail() {
             </TabsTrigger>
             <TabsTrigger value="evaluation" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
               <BarChart3 className="w-4 h-4 mr-2" />
-              {isProfileMatchingTemplate ? 'FitCard' : 'AI Report'}
+              {isProfileMatchingTemplate ? 'Profile Evaluation' : 'AI Report'}
               {(latestSuccessReport || sharedReport?.status === 'succeeded' || fitCardReport?.status === 'succeeded') && (
                 <Badge className="ml-2 bg-green-100 text-green-700 text-xs">
                   Complete
@@ -842,7 +842,7 @@ export default function ProposalDetail() {
                     <div className="flex items-center justify-between">
                       <CardTitle className="flex items-center gap-2">
                         <Sparkles className="w-5 h-5 text-purple-600" />
-                        FitCard Report
+                        Profile Evaluation Report
                       </CardTitle>
                       <Badge variant="outline">Shared with both parties</Badge>
                     </div>
@@ -854,7 +854,7 @@ export default function ProposalDetail() {
                         <p className="text-xl font-bold">{fitCardReport.mode_value}</p>
                       </div>
                       <div className="p-4 bg-white rounded-lg">
-                        <p className="text-sm text-slate-600">Fit Level</p>
+                        <p className="text-sm text-slate-600">Match Level</p>
                         <p className="text-xl font-bold capitalize">{fitCardReport.output_report_json.summary?.fit_level || 'Unknown'}</p>
                       </div>
                     </div>
@@ -881,7 +881,7 @@ export default function ProposalDetail() {
                       <div className="mb-4">
                         <h4 className="font-semibold mb-2 flex items-center gap-2">
                           <CheckCircle2 className="w-4 h-4 text-green-600" />
-                          Top Strengths
+                          Top Match Reasons
                         </h4>
                         <div className="space-y-2">
                           {fitCardReport.output_report_json.summary.top_strengths.map((strength, idx) => (
@@ -972,7 +972,7 @@ export default function ProposalDetail() {
                   className="w-full"
                 >
                   <RefreshCw className="w-4 h-4 mr-2" />
-                  Re-run FitCard
+                  Re-run Profile Evaluation
                 </Button>
               </div>
             )}
@@ -981,7 +981,7 @@ export default function ProposalDetail() {
               <Card className="border-0 shadow-sm">
                 <CardContent className="py-16 text-center">
                   <RefreshCw className="w-12 h-12 text-purple-500 mx-auto mb-4 animate-spin" />
-                  <h3 className="text-lg font-semibold text-slate-900 mb-2">Generating FitCard</h3>
+                  <h3 className="text-lg font-semibold text-slate-900 mb-2">Generating Profile Evaluation</h3>
                   <p className="text-slate-500">This may take 10-30 seconds...</p>
                 </CardContent>
               </Card>
@@ -1009,15 +1009,15 @@ export default function ProposalDetail() {
               <Card className="border-0 shadow-sm">
                 <CardContent className="py-16 text-center">
                   <Sparkles className="w-12 h-12 text-slate-300 mx-auto mb-4" />
-                  <h3 className="text-lg font-semibold text-slate-900 mb-2">No FitCard yet</h3>
-                  <p className="text-slate-500 mb-6">Run a FitCard evaluation to see compatibility analysis.</p>
+                  <h3 className="text-lg font-semibold text-slate-900 mb-2">No profile evaluation yet</h3>
+                  <p className="text-slate-500 mb-6">Run a profile evaluation to see compatibility analysis.</p>
                   <Button 
                     onClick={() => runNewEvaluationMutation.mutate()}
                     disabled={runNewEvaluationMutation.isPending}
                     className="bg-purple-600 hover:bg-purple-700"
                   >
                     <Sparkles className="w-4 h-4 mr-2" />
-                    {runNewEvaluationMutation.isPending ? 'Generating...' : 'Run FitCard'}
+                    {runNewEvaluationMutation.isPending ? 'Generating...' : 'Run Profile Evaluation'}
                   </Button>
                 </CardContent>
               </Card>
@@ -1054,7 +1054,7 @@ export default function ProposalDetail() {
                       <div className="mb-4">
                         <h4 className="font-semibold mb-2 flex items-center gap-2">
                           <CheckCircle2 className="w-4 h-4 text-green-600" />
-                          Top Fit Reasons
+                          Top Match Reasons
                         </h4>
                         <div className="space-y-2">
                           {sharedReport.output_report_json.summary.top_fit_reasons.map((reason, idx) => (
@@ -1324,8 +1324,8 @@ export default function ProposalDetail() {
                     </div>
                     
                     {latestReport.output_report_json.summary?.top_fit_reasons?.length > 0 && (
-                      <div>
-                        <p className="font-medium mb-2">Top Fit Reasons</p>
+                          <div>
+                            <p className="font-medium mb-2">Top Match Reasons</p>
                         <ul className="space-y-1">
                           {latestReport.output_report_json.summary.top_fit_reasons.map((reason, i) => (
                             <li key={i} className="text-sm text-slate-600 flex items-start gap-2">
