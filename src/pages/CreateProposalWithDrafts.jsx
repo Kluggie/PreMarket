@@ -739,30 +739,34 @@ export default function CreateProposal() {
             <Label className="text-sm font-medium text-slate-900">
               {question.label}
               {(effectiveRequired || isConditionalReq) && <span className="text-red-500 ml-1">*</span>}
+              {isSharedFact && <Badge className="ml-2 text-xs bg-blue-100 text-blue-700">Shared</Badge>}
+              {isCounterpartyObs && <Badge className="ml-2 text-xs bg-purple-100 text-purple-700">Your observation</Badge>}
             </Label>
             {question.description && (
               <p className="text-sm text-slate-600 mt-1">{question.description}</p>
             )}
           </div>
-          <Select 
-            value={visibility}
-            onValueChange={(v) => handleVisibilityChange(question.id, v)}
-          >
-            <SelectTrigger className="w-32 h-8 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="full">
-                <span className="flex items-center gap-1"><Eye className="w-3 h-3" /> Full</span>
-              </SelectItem>
-              <SelectItem value="partial">
-                <span className="flex items-center gap-1"><EyeOff className="w-3 h-3" /> Partial</span>
-              </SelectItem>
-              <SelectItem value="hidden">
-                <span className="flex items-center gap-1"><Lock className="w-3 h-3" /> Hidden</span>
-              </SelectItem>
-            </SelectContent>
-          </Select>
+          {!isSharedFact && question.supports_visibility && (
+            <Select 
+              value={visibility}
+              onValueChange={(v) => handleVisibilityChange(responseKey, v)}
+            >
+              <SelectTrigger className="w-32 h-8 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="full">
+                  <span className="flex items-center gap-1"><Eye className="w-3 h-3" /> Full</span>
+                </SelectItem>
+                <SelectItem value="partial">
+                  <span className="flex items-center gap-1"><EyeOff className="w-3 h-3" /> Partial</span>
+                </SelectItem>
+                <SelectItem value="hidden">
+                  <span className="flex items-center gap-1"><Lock className="w-3 h-3" /> Hidden</span>
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          )}
         </div>
 
         <div className="space-y-2">
