@@ -711,9 +711,23 @@ export default function CreateProposal() {
     setExtractUrl('');
   };
 
-  const renderQuestionInput = (question) => {
-    const value = responses[question.id] || '';
-    const visibility = visibilitySettings[question.id] || question.visibility_default || 'full';
+  const renderQuestionInput = (question, forSubjectParty = 'a') => {
+    const roleType = question.role_type || 'party_attribute';
+    const isSharedFact = roleType === 'shared_fact';
+    const isCounterpartyObs = roleType === 'counterparty_observation';
+    
+    // Build response key based on context
+    let responseKey = question.id;
+    if (!isSharedFact && step === 3) {
+      // Step 3: counterparty info, store with subject_party=b
+      responseKey = `${question.id}__b`;
+    } else if (!isSharedFact && step === 2) {
+      // Step 2: own info, subject_party=a (or use plain key)
+      responseKey = question.id;
+    }
+    
+    const value = responses[responseKey] || responses[question.id] || '';
+    const visibility = visibilitySettings[responseKey] || visibilitySettings[question.id] || question.visibility_default || 'full';
     const hasError = validationErrors[question.id];
     const isConditionalReq = isConditionallyRequired(question);
     const effectiveRequired = getEffectiveRequired(question);
