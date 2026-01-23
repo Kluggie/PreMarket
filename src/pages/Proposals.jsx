@@ -128,12 +128,21 @@ export default function Proposals() {
     const isSent = proposal.party_a_email === user?.email;
     const isDraft = proposal.status === 'draft';
     
+    const handleClick = () => {
+      if (isDraft) {
+        window.location.href = createPageUrl(`CreateProposal?draft=${proposal.id}`);
+      } else {
+        window.location.href = createPageUrl(`ProposalDetail?id=${proposal.id}`);
+      }
+    };
+    
     return (
       <motion.div
         whileHover={{ backgroundColor: 'rgb(248, 250, 252)' }}
-        className="p-4 border-b border-slate-100 flex items-center gap-4"
+        className="p-4 border-b border-slate-100 flex items-center gap-4 cursor-pointer"
+        onClick={handleClick}
       >
-        <Link to={isDraft ? createPageUrl(`CreateProposal?draft=${proposal.id}`) : createPageUrl(`ProposalDetail?id=${proposal.id}`)} className="flex items-center gap-4 flex-1 min-w-0 cursor-pointer">
+        <div className="flex items-center gap-4 flex-1 min-w-0">
           <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center">
             {isDraft ? (
               <FileText className="w-5 h-5 text-slate-600" />
@@ -174,7 +183,7 @@ export default function Proposals() {
             </div>
             <ChevronRight className="w-5 h-5 text-slate-400" />
           </div>
-        </Link>
+        </div>
         
         {isDraft && (
           <DropdownMenu>

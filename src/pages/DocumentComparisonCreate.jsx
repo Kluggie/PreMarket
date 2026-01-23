@@ -387,7 +387,27 @@ export default function DocumentComparisonCreate() {
                   </div>
 
                   <div className="flex justify-end">
-                    <Button onClick={() => setStep(2)} className="bg-blue-600 hover:bg-blue-700">
+                    <Button onClick={async () => {
+                      // Create draft immediately on first step completion
+                      if (!comparisonId && user) {
+                        const draft = await base44.entities.DocumentComparison.create({
+                          title: title || 'Untitled Comparison',
+                          created_by_user_id: user.id,
+                          party_a_label: partyALabel,
+                          party_b_label: partyBLabel,
+                          status: 'draft',
+                          draft_step: 2,
+                          draft_updated_at: new Date().toISOString()
+                        });
+                        setComparisonId(draft.id);
+                      } else if (comparisonId && user) {
+                        await base44.entities.DocumentComparison.update(comparisonId, {
+                          draft_step: 2,
+                          draft_updated_at: new Date().toISOString()
+                        });
+                      }
+                      setStep(2);
+                    }} className="bg-blue-600 hover:bg-blue-700">
                       Continue
                       <ArrowRight className="w-4 h-4 ml-2" />
                     </Button>
