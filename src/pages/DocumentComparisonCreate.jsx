@@ -15,7 +15,7 @@ import { Progress } from '@/components/ui/progress';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import {
   ArrowLeft, ArrowRight, FileText, Upload, Type, Clipboard,
-  Save, Sparkles, AlertTriangle, Highlighter, Lock, Unlock, X
+  Save, Sparkles, AlertTriangle, Highlighter, Lock, Unlock, X, Check
 } from 'lucide-react';
 
 export default function DocumentComparisonCreate() {
@@ -715,8 +715,15 @@ export default function DocumentComparisonCreate() {
                       </Button>
                       <Button 
                         onClick={async () => {
-                          await saveDraftMutation.mutateAsync();
-                          alert('Part 2 evaluation runner not implemented yet');
+                          try {
+                            const id = comparisonId || await saveDraftMutation.mutateAsync();
+                            await base44.functions.invoke('EvaluateDocumentComparison', {
+                              comparison_id: id
+                            });
+                            navigate(createPageUrl(`DocumentComparisonDetail?id=${id}`));
+                          } catch (error) {
+                            alert('Evaluation failed: ' + error.message);
+                          }
                         }}
                         className="bg-purple-600 hover:bg-purple-700"
                       >

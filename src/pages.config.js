@@ -21,6 +21,7 @@ import Templates from './pages/Templates';
 import Terms from './pages/Terms';
 import Verification from './pages/Verification';
 import DocumentComparisonCreate from './pages/DocumentComparisonCreate';
+import DocumentComparisonDetail from './pages/DocumentComparisonDetail';
 import __Layout from './Layout.jsx';
 
 
@@ -48,6 +49,7 @@ export const PAGES = {
     "Terms": Terms,
     "Verification": Verification,
     "DocumentComparisonCreate": DocumentComparisonCreate,
+    "DocumentComparisonDetail": DocumentComparisonDetail,
 }
 
 export const pagesConfig = {
