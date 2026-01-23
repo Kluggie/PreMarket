@@ -570,6 +570,8 @@ export default function CreateProposal() {
         template_id: selectedTemplate.id,
         template_name: selectedTemplate.name,
         status: 'sent',
+        draft_step: null,
+        draft_state_json: null,
         party_a_user_id: user?.id || 'guest',
         party_a_email: isGuestMode ? guestEmailParam : user?.email,
         party_b_email: recipientEmail,
@@ -592,14 +594,50 @@ export default function CreateProposal() {
       } else {
         proposal = await base44.entities.Proposal.create(proposalData);
 
-        const responsePromises = Object.entries(responses).map(([questionId, value]) => {
+        const responsePromises = Object.entries(responses).map(([responseKey, value]) => {
+          if (responseKey.startsWith('_include_')) return null;
+          
+          const [questionId, subjectParty] = responseKey.includes('__') 
+            ? responseKey.split('__') 
+            : [responseKey, null];
+          
           const question = selectedTemplate.questions.find(q => q.id === questionId);
-          const visibility = visibilitySettings[questionId] || 'full';
+          if (!question) return null;
+          
+          let finalSubjectParty = subjectParty;
+          let claimType = 'self';
+          
+          if (!finalSubjectParty) {
+            const roleType = question.role_type || 'party_attribute';
+            if (roleType === 'shared_fact') {
+              finalSubjectParty = 'shared';
+              claimType = 'shared_fact';
+            } else if (question.is_about_counterparty) {
+              finalSubjectParty = 'b';
+              claimType = 'counterparty_claim';
+            } else {
+              finalSubjectParty = 'a';
+              claimType = 'self';
+            }
+          } else {
+            if (finalSubjectParty === 'shared') {
+              claimType = 'shared_fact';
+            } else if (finalSubjectParty === 'b') {
+              claimType = 'counterparty_claim';
+            } else {
+              claimType = 'self';
+            }
+          }
+          
+          const visibility = visibilitySettings[responseKey] || visibilitySettings[questionId] || 'full';
           
           let responseData = {
             proposal_id: proposal.id,
             question_id: questionId,
             entered_by_party: 'a',
+            author_party: 'a',
+            subject_party: finalSubjectParty,
+            claim_type: claimType,
             is_about_counterparty: question?.is_about_counterparty || false,
             value: typeof value === 'object' && !Array.isArray(value) ? JSON.stringify(value) : Array.isArray(value) ? JSON.stringify(value) : String(value),
             visibility: visibility
@@ -612,7 +650,7 @@ export default function CreateProposal() {
           }
 
           return base44.entities.ProposalResponse.create(responseData);
-        });
+        }).filter(Boolean);
 
         await Promise.all(responsePromises);
       }
