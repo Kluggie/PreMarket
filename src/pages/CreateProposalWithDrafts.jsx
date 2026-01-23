@@ -318,7 +318,7 @@ export default function CreateProposal() {
     return () => clearTimeout(timer);
   }, [responses, proposalTitle, recipientEmail, selectedTemplate, presetKey]);
 
-  const totalSteps = hasTemplatePreselected ? 4 : 5;
+  const totalSteps = 4;
 
   const allTemplates = templates;
 
@@ -1145,42 +1145,132 @@ export default function CreateProposal() {
                   )}
 
                   {isProfileMatchingTemplate && (
-                    <div className="space-y-3 p-4 border-2 border-purple-200 bg-purple-50 rounded-xl">
-                      <Label className="text-sm font-semibold text-purple-900">
-                        Matching Mode *
-                      </Label>
-                      <RadioGroup value={responses['mode']} onValueChange={(value) => handleResponseChange('mode', value)}>
-                        <div className="space-y-2">
-                          <div className="flex items-center space-x-2">
-                            <RadioGroupItem value="Job Fit" id="mode-job" />
-                            <Label htmlFor="mode-job" className="font-normal cursor-pointer">
-                              Job Fit
-                            </Label>
-                          </div>
-                          <div className="flex items-center space-x-2">
-                            <RadioGroupItem value="Beta Access Fit" id="mode-beta" />
-                            <Label htmlFor="mode-beta" className="font-normal cursor-pointer">
-                              Beta Access Fit
-                            </Label>
-                          </div>
-                          <div className="flex items-center space-x-2">
-                            <RadioGroupItem value="Program/Accelerator Fit" id="mode-program" />
-                            <Label htmlFor="mode-program" className="font-normal cursor-pointer">
-                              Program/Accelerator Fit
-                            </Label>
-                          </div>
-                          <div className="flex items-center space-x-2">
-                            <RadioGroupItem value="Grant/Scholarship Fit" id="mode-grant" />
-                            <Label htmlFor="mode-grant" className="font-normal cursor-pointer">
-                              Grant/Scholarship Fit
-                            </Label>
-                          </div>
-                        </div>
-                      </RadioGroup>
-                      <p className="text-xs text-purple-700 mt-2">
-                        This determines which questions you'll see in the next steps.
-                      </p>
-                    </div>
+                   <>
+                     <div className="space-y-3 p-4 border-2 border-purple-200 bg-purple-50 rounded-xl">
+                       <Label className="text-sm font-semibold text-purple-900">
+                         Matching Mode *
+                       </Label>
+                       <RadioGroup value={responses['mode']} onValueChange={(value) => handleResponseChange('mode', value)}>
+                         <div className="space-y-2">
+                           <div className="flex items-center space-x-2">
+                             <RadioGroupItem value="Job Fit" id="mode-job" />
+                             <Label htmlFor="mode-job" className="font-normal cursor-pointer">
+                               Job Match
+                             </Label>
+                           </div>
+                           <div className="flex items-center space-x-2">
+                             <RadioGroupItem value="Beta Access Fit" id="mode-beta" />
+                             <Label htmlFor="mode-beta" className="font-normal cursor-pointer">
+                               Beta Access Match
+                             </Label>
+                           </div>
+                           <div className="flex items-center space-x-2">
+                             <RadioGroupItem value="Program/Accelerator Fit" id="mode-program" />
+                             <Label htmlFor="mode-program" className="font-normal cursor-pointer">
+                               Program/Accelerator Match
+                             </Label>
+                           </div>
+                           <div className="flex items-center space-x-2">
+                             <RadioGroupItem value="Grant/Scholarship Fit" id="mode-grant" />
+                             <Label htmlFor="mode-grant" className="font-normal cursor-pointer">
+                               Grant/Scholarship Match
+                             </Label>
+                           </div>
+                         </div>
+                       </RadioGroup>
+                       <p className="text-xs text-purple-700 mt-2">
+                         This determines which questions you'll see in the next steps.
+                       </p>
+                     </div>
+
+                     {responses['mode'] && (
+                       <div className="space-y-3 p-4 border border-purple-200 bg-white rounded-xl">
+                         <Label className="text-sm font-semibold text-purple-900 flex items-center gap-2">
+                           <LinkIcon className="w-4 h-4" />
+                           Quick Start: Extract from URLs (Optional)
+                         </Label>
+                         <p className="text-xs text-slate-600 mb-3">
+                           Extract profile and requirements from URLs to auto-fill fields
+                         </p>
+                         <div className="space-y-2">
+                           <div>
+                             <Label className="text-xs text-slate-600">Your Profile URL</Label>
+                             <Input 
+                               placeholder="e.g., LinkedIn, GitHub, Portfolio..."
+                               value={responses['_profile_url'] || ''}
+                               onChange={(e) => handleResponseChange('_profile_url', e.target.value)}
+                               className="text-sm"
+                             />
+                           </div>
+                           <div>
+                             <Label className="text-xs text-slate-600">Target URL (Job/Program/Opportunity)</Label>
+                             <Input 
+                               placeholder="e.g., Job posting, program page, GitHub project..."
+                               value={responses['_target_url'] || ''}
+                               onChange={(e) => handleResponseChange('_target_url', e.target.value)}
+                               className="text-sm"
+                             />
+                           </div>
+                         </div>
+                         {(responses['_profile_url'] || responses['_target_url']) && (
+                           <Button 
+                             onClick={async () => {
+                               setExtracting(true);
+                               try {
+                                 const promises = [];
+                                 if (responses['_profile_url']) {
+                                   promises.push(
+                                     base44.functions.invoke('ExtractProfileFromUrl', {
+                                       url: responses['_profile_url'],
+                                       mode: responses['mode']
+                                     })
+                                   );
+                                 }
+                                 if (responses['_target_url']) {
+                                   promises.push(
+                                     base44.functions.invoke('ExtractJobRequirementsFromUrl', {
+                                       url: responses['_target_url'],
+                                       mode: responses['mode']
+                                     })
+                                   );
+                                 }
+
+                                 const results = await Promise.all(promises);
+                                 const allFields = results.flatMap(r => r.data.inferred_fields || []);
+
+                                 setExtractedFields(allFields.map(f => ({
+                                   ...f,
+                                   accepted: true,
+                                   edited_value: f.suggested_value
+                                 })));
+                                 setShowReviewExtracted(true);
+                               } catch (error) {
+                                 alert('Extraction failed: ' + error.message);
+                               } finally {
+                                 setExtracting(false);
+                               }
+                             }}
+                             disabled={extracting}
+                             variant="outline"
+                             size="sm"
+                             className="w-full"
+                           >
+                             {extracting ? (
+                               <>
+                                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                 Extracting...
+                               </>
+                             ) : (
+                               <>
+                                 <Sparkles className="w-4 h-4 mr-2" />
+                                 Extract & Review
+                               </>
+                             )}
+                           </Button>
+                         )}
+                       </div>
+                     )}
+                   </>
                   )}
 
                   <div className="flex justify-end mt-6">
