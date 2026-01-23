@@ -58,19 +58,24 @@ export default function DocumentComparisonCreate() {
   }, []);
 
   useEffect(() => {
+    if (!user) return;
+    
     const params = new URLSearchParams(window.location.search);
     const draftId = params.get('draft');
     if (draftId) {
       setComparisonId(draftId);
       loadDraft(draftId);
     }
-  }, []);
+  }, [user]);
 
   const loadDraft = async (id) => {
     try {
       const comparisons = await base44.entities.DocumentComparison.filter({ id });
       const comparison = comparisons[0];
-      if (!comparison) return;
+      if (!comparison) {
+        console.error('Draft comparison not found');
+        return;
+      }
       
       setTitle(comparison.title || '');
       setPartyALabel(comparison.party_a_label || 'Document A');
@@ -85,9 +90,9 @@ export default function DocumentComparisonCreate() {
       if (comparison.doc_a_spans_json?.length > 0) setDocALocked(true);
       if (comparison.doc_b_spans_json?.length > 0) setDocBLocked(true);
       
-      // Resume at saved draft step
+      // CRITICAL: Set step LAST after all state is loaded
       const resumeStep = comparison.draft_step || 1;
-      setStep(resumeStep);
+      setTimeout(() => setStep(resumeStep), 50);
     } catch (error) {
       console.error('Failed to load draft:', error);
     }
@@ -95,9 +100,13 @@ export default function DocumentComparisonCreate() {
 
   const saveDraftMutation = useMutation({
     mutationFn: async () => {
+      if (!user) {
+        throw new Error('Must be logged in to save draft');
+      }
+      
       const data = {
         title: title || 'Untitled Comparison',
-        created_by_user_id: user?.id,
+        created_by_user_id: user.id,
         party_a_label: partyALabel,
         party_b_label: partyBLabel,
         doc_a_plaintext: docAText,
@@ -528,8 +537,13 @@ export default function DocumentComparisonCreate() {
 
                   <div className="flex justify-end">
                     <Button onClick={async () => {
-                      // Create draft immediately on first step completion
-                      if (!comparisonId && user) {
+                      if (!user) {
+                        alert('Please log in to continue');
+                        return;
+                      }
+                      
+                      // Save draft before moving to step 2
+                      if (!comparisonId) {
                         const draft = await base44.entities.DocumentComparison.create({
                           title: title || 'Untitled Comparison',
                           created_by_user_id: user.id,
@@ -540,8 +554,11 @@ export default function DocumentComparisonCreate() {
                           draft_updated_at: new Date().toISOString()
                         });
                         setComparisonId(draft.id);
-                      } else if (comparisonId && user) {
+                      } else {
                         await base44.entities.DocumentComparison.update(comparisonId, {
+                          title: title || 'Untitled Comparison',
+                          party_a_label: partyALabel,
+                          party_b_label: partyBLabel,
                           draft_step: 2,
                           draft_updated_at: new Date().toISOString()
                         });
@@ -882,9 +899,13 @@ export default function DocumentComparisonCreate() {
                 <Button variant="outline" onClick={async () => {
                   if (comparisonId && user) {
                     await base44.entities.DocumentComparison.update(comparisonId, { 
+                      doc_a_plaintext: docAText,
+                      doc_b_plaintext: docBText,
+                      doc_a_spans_json: docASpans,
+                      doc_b_spans_json: docBSpans,
                       draft_step: 1,
                       draft_updated_at: new Date().toISOString()
-                    });
+                    }).catch(err => console.error('Failed to save on back:', err));
                   }
                   setStep(1);
                 }}>
@@ -904,9 +925,13 @@ export default function DocumentComparisonCreate() {
                     onClick={async () => {
                       if (comparisonId && user) {
                         await base44.entities.DocumentComparison.update(comparisonId, { 
+                          doc_a_plaintext: docAText,
+                          doc_b_plaintext: docBText,
+                          doc_a_spans_json: docASpans,
+                          doc_b_spans_json: docBSpans,
                           draft_step: 3,
                           draft_updated_at: new Date().toISOString()
-                        });
+                        }).catch(err => console.error('Failed to save on next:', err));
                       }
                       setStep(3);
                     }}
@@ -977,9 +1002,13 @@ export default function DocumentComparisonCreate() {
                     <Button variant="outline" onClick={async () => {
                       if (comparisonId && user) {
                         await base44.entities.DocumentComparison.update(comparisonId, { 
+                          doc_a_plaintext: docAText,
+                          doc_b_plaintext: docBText,
+                          doc_a_spans_json: docASpans,
+                          doc_b_spans_json: docBSpans,
                           draft_step: 2,
                           draft_updated_at: new Date().toISOString()
-                        });
+                        }).catch(err => console.error('Failed to save on back:', err));
                       }
                       setStep(2);
                     }}>

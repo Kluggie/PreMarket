@@ -87,99 +87,104 @@ export default function CreateProposal() {
     const params = new URLSearchParams(window.location.search);
     const isGuest = params.get('guest') === 'true';
     const resumeDraftId = params.get('draft');
+    const templateId = params.get('template');
+    
     setIsGuestMode(isGuest);
     
     if (resumeDraftId) {
       setDraftProposalId(resumeDraftId);
+      // Load draft - this will set the correct step
       loadDraft(resumeDraftId);
-    }
-  }, []);
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const templateId = params.get('template');
-    
-    if (templateId && !selectedTemplate) {
+    } else if (templateId && !selectedTemplate && templates.length > 0) {
+      // Only set template and step 1 if NOT loading a draft
       const template = templates.find(t => t.id === templateId);
-      
       if (template) {
         setSelectedTemplate(template);
         setHasTemplatePreselected(true);
         setStep(1);
       }
     }
-  }, [templates, selectedTemplate]);
+  }, [templates]);
 
   const loadDraft = async (proposalId) => {
     try {
       const proposals = await base44.entities.Proposal.filter({ id: proposalId });
       const proposal = proposals[0];
-      if (!proposal) return;
+      if (!proposal) {
+        console.error('Draft not found');
+        return;
+      }
 
       const template = templates.find(t => t.id === proposal.template_id);
-      if (template) {
-        setSelectedTemplate(template);
-        setProposalTitle(proposal.title || '');
-        setRecipientEmail(proposal.party_b_email || '');
-        setPresetKey(proposal.preset_key || '');
-        setEnabledModules(proposal.enabled_modules || []);
+      if (!template) {
+        console.error('Template not found for draft');
+        return;
+      }
+      
+      setSelectedTemplate(template);
+      setProposalTitle(proposal.title || '');
+      setRecipientEmail(proposal.party_b_email || '');
+      setPresetKey(proposal.preset_key || '');
+      setEnabledModules(proposal.enabled_modules || []);
 
-        // Load all responses (both subject_party a and b)
-        const draftResponses = await base44.entities.ProposalResponse.filter({ proposal_id: proposalId });
-        const responsesObj = {};
-        const visibilityObj = {};
+      // Load all responses
+      const draftResponses = await base44.entities.ProposalResponse.filter({ proposal_id: proposalId });
+      const responsesObj = {};
+      const visibilityObj = {};
 
-        draftResponses.forEach(r => {
-          // Build unique key: question_id + subject_party
-          const key = r.question_id;
-          const subjectParty = r.subject_party || (r.is_about_counterparty ? 'b' : 'a');
-          
-          // Store with subject indication for later filtering
-          const responseKey = `${key}__${subjectParty}`;
-          
-          if (r.value_type === 'range') {
-            responsesObj[responseKey] = { type: 'range', min: r.range_min, max: r.range_max };
-          } else {
-            try {
-              responsesObj[responseKey] = JSON.parse(r.value);
-            } catch {
-              responsesObj[responseKey] = r.value;
-            }
-          }
-          visibilityObj[responseKey] = r.visibility || 'full';
-          
-          // Also store without suffix for backward compatibility with shared facts
-          if (subjectParty === 'shared' || subjectParty === 'a') {
-            if (!responsesObj[key]) {
-              if (r.value_type === 'range') {
-                responsesObj[key] = { type: 'range', min: r.range_min, max: r.range_max };
-              } else {
-                try {
-                  responsesObj[key] = JSON.parse(r.value);
-                } catch {
-                  responsesObj[key] = r.value;
-                }
-              }
-              visibilityObj[key] = r.visibility || 'full';
-            }
-          }
-        });
-
-        setResponses(responsesObj);
-        setVisibilitySettings(visibilityObj);
+      draftResponses.forEach(r => {
+        const key = r.question_id;
+        const subjectParty = r.subject_party || (r.is_about_counterparty ? 'b' : 'a');
+        const responseKey = `${key}__${subjectParty}`;
         
-        // Resume at saved draft step
-        const resumeStep = proposal.draft_step || 1;
-        setStep(resumeStep);
-        
-        // Restore draft state
-        if (proposal.draft_state_json) {
-          const draftState = proposal.draft_state_json;
-          if (draftState.mode) {
-            handleResponseChange('mode', draftState.mode);
+        if (r.value_type === 'range') {
+          responsesObj[responseKey] = { type: 'range', min: r.range_min, max: r.range_max };
+        } else {
+          try {
+            responsesObj[responseKey] = JSON.parse(r.value);
+          } catch {
+            responsesObj[responseKey] = r.value;
           }
         }
+        visibilityObj[responseKey] = r.visibility || 'full';
+        
+        if (subjectParty === 'shared' || subjectParty === 'a') {
+          if (!responsesObj[key]) {
+            if (r.value_type === 'range') {
+              responsesObj[key] = { type: 'range', min: r.range_min, max: r.range_max };
+            } else {
+              try {
+                responsesObj[key] = JSON.parse(r.value);
+              } catch {
+                responsesObj[key] = r.value;
+              }
+            }
+            visibilityObj[key] = r.visibility || 'full';
+          }
+        }
+      });
+
+      setResponses(responsesObj);
+      setVisibilitySettings(visibilityObj);
+      
+      // Restore draft state
+      if (proposal.draft_state_json) {
+        const draftState = proposal.draft_state_json;
+        if (draftState.mode) {
+          setResponses(prev => ({ ...prev, mode: draftState.mode }));
+        }
+        if (draftState._profile_url) {
+          setResponses(prev => ({ ...prev, _profile_url: draftState._profile_url }));
+        }
+        if (draftState._target_url) {
+          setResponses(prev => ({ ...prev, _target_url: draftState._target_url }));
+        }
       }
+      
+      // CRITICAL: Set step LAST to avoid it being overridden
+      const resumeStep = proposal.draft_step || 1;
+      setTimeout(() => setStep(resumeStep), 50);
+      
     } catch (error) {
       console.error('Failed to load draft:', error);
     }
@@ -193,7 +198,11 @@ export default function CreateProposal() {
     try {
       const draftStateJson = {
         mode: responses['mode'],
-        presetKey: presetKey
+        presetKey: presetKey,
+        _profile_url: responses['_profile_url'],
+        _target_url: responses['_target_url'],
+        _include_profile: responses['_include_profile'],
+        _include_organisation: responses['_include_organisation']
       };
 
       const proposalData = {
@@ -203,6 +212,7 @@ export default function CreateProposal() {
         status: 'draft',
         draft_step: step,
         draft_state_json: draftStateJson,
+        draft_updated_at: new Date().toISOString(),
         party_a_user_id: user.id,
         party_a_email: user.email,
         party_b_email: recipientEmail || null,
