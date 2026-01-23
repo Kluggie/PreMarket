@@ -1,17 +1,19 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.6';
 
 Deno.serve(async (req) => {
+  let comparison_id;
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
     if (!user) {
-      return Response.json({ error: 'Unauthorized' }, { status: 401 });
+      return Response.json({ error: 'Unauthorized', ok: false }, { status: 401 });
     }
 
-    const { comparison_id } = await req.json();
+    const body = await req.json();
+    comparison_id = body.comparison_id;
     
     if (!comparison_id) {
-      return Response.json({ error: 'comparison_id is required' }, { status: 400 });
+      return Response.json({ error: 'comparison_id is required', ok: false }, { status: 400 });
     }
 
     // Load comparison record
@@ -19,7 +21,14 @@ Deno.serve(async (req) => {
     const comparison = comparisons[0];
     
     if (!comparison) {
-      return Response.json({ error: 'Comparison not found' }, { status: 404 });
+      return Response.json({ error: 'Comparison not found', ok: false }, { status: 404 });
+    }
+    
+    if (!comparison.doc_a_plaintext || !comparison.doc_b_plaintext) {
+      return Response.json({ 
+        error: 'Both documents must have text content before evaluation',
+        ok: false
+      }, { status: 400 });
     }
 
     // Build redacted views
@@ -179,7 +188,7 @@ Return JSON only with this structure:
             error_message: 'Report blocked due to potential disclosure of confidential content'
           });
           return Response.json({ 
-            success: false, 
+            ok: false, 
             error: 'Report blocked due to potential disclosure' 
           }, { status: 400 });
         }
