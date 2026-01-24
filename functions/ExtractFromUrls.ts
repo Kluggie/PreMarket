@@ -20,87 +20,120 @@ Deno.serve(async (req) => {
     const correlationId = `extract_${Date.now()}_${Math.random().toString(36).substring(7)}`;
     const results = { ok: true, textA: '', textB: '', sources: [], correlationId };
 
-    // Fetch URL A
-    if (urlA) {
+    const extractFromUrl = async (url, label) => {
+      const isLinkedIn = url.includes('linkedin.com');
+      
       try {
-        const response = await fetch(urlA, {
+        const response = await fetch(url, {
           headers: {
             'User-Agent': 'Mozilla/5.0 (compatible; PreMarket/1.0)'
           }
         });
         
-        if (response.ok) {
-          const html = await response.text();
-          
-          // Use AI to extract main content
-          const result = await base44.integrations.Core.InvokeLLM({
-            prompt: `Extract the main text content from this webpage, removing navigation, ads, and boilerplate.
+        if (!response.ok) {
+          return {
+            status: 'failed',
+            url,
+            errorCode: isLinkedIn ? 'LINKEDIN_BLOCKED' : 'FETCH_FAILED',
+            message: isLinkedIn 
+              ? 'LinkedIn blocks automated extraction. Please paste text or upload a file instead.'
+              : `HTTP ${response.status}: ${response.statusText}`,
+            statusCode: response.status,
+            extractedText: ''
+          };
+        }
+        
+        const html = await response.text();
+        
+        if (!html || html.length < 100) {
+          return {
+            status: 'failed',
+            url,
+            errorCode: 'EMPTY_RESPONSE',
+            message: 'URL returned empty or very short content',
+            statusCode: response.status,
+            extractedText: ''
+          };
+        }
+        
+        // Use AI to extract main content
+        const result = await base44.integrations.Core.InvokeLLM({
+          prompt: `Extract the main text content from this webpage, removing navigation, ads, and boilerplate.
 
-URL: ${urlA}
+URL: ${url}
 
 HTML (truncated):
 ${html.substring(0, 100000)}
 
 Return only the main readable content as plain text. Be comprehensive but clean.`,
-            add_context_from_internet: false
-          });
-          
-          results.textA = result || '';
-          results.sources.push({ url: urlA, status: 'success' });
-        } else {
-          results.sources.push({ 
-            url: urlA, 
+          add_context_from_internet: false
+        });
+        
+        const extractedText = result || '';
+        
+        if (!extractedText || extractedText.length < 50) {
+          return {
             status: 'failed',
-            error: `HTTP ${response.status}: ${response.statusText}`
-          });
+            url,
+            errorCode: isLinkedIn ? 'LINKEDIN_BLOCKED' : 'PARSE_FAILED',
+            message: isLinkedIn
+              ? 'LinkedIn blocks automated extraction. Please paste text or upload a file instead.'
+              : 'Could not extract meaningful text from this page',
+            statusCode: response.status,
+            extractedText: ''
+          };
         }
+        
+        return {
+          status: 'success',
+          url,
+          extractedText
+        };
+        
       } catch (error) {
-        results.sources.push({ 
-          url: urlA, 
+        return {
           status: 'failed',
-          error: error.message
+          url,
+          errorCode: isLinkedIn ? 'LINKEDIN_BLOCKED' : 'FETCH_FAILED',
+          message: isLinkedIn
+            ? 'LinkedIn blocks automated extraction. Please paste text or upload a file instead.'
+            : error.message,
+          statusCode: null,
+          extractedText: ''
+        };
+      }
+    };
+
+    // Extract URL A
+    if (urlA) {
+      const resultA = await extractFromUrl(urlA, 'A');
+      if (resultA.status === 'success') {
+        results.textA = resultA.extractedText;
+        results.sources.push({ url: urlA, status: 'success' });
+      } else {
+        results.sources.push({
+          url: urlA,
+          status: 'failed',
+          errorCode: resultA.errorCode,
+          message: resultA.message,
+          statusCode: resultA.statusCode
         });
       }
     }
 
-    // Fetch URL B
+    // Extract URL B
     if (urlB) {
-      try {
-        const response = await fetch(urlB, {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (compatible; PreMarket/1.0)'
-          }
-        });
-        
-        if (response.ok) {
-          const html = await response.text();
-          
-          const result = await base44.integrations.Core.InvokeLLM({
-            prompt: `Extract the main text content from this webpage, removing navigation, ads, and boilerplate.
-
-URL: ${urlB}
-
-HTML (truncated):
-${html.substring(0, 100000)}
-
-Return only the main readable content as plain text. Be comprehensive but clean.`,
-            add_context_from_internet: false
-          });
-          
-          results.textB = result || '';
-          results.sources.push({ url: urlB, status: 'success' });
-        } else {
-          results.sources.push({ 
-            url: urlB, 
-            status: 'failed',
-            error: `HTTP ${response.status}: ${response.statusText}`
-          });
-        }
-      } catch (error) {
-        results.sources.push({ 
-          url: urlB, 
+      const resultB = await extractFromUrl(urlB, 'B');
+      if (resultB.status === 'success') {
+        results.textB = resultB.extractedText;
+        results.sources.push({ url: urlB, status: 'success' });
+      } else {
+        results.sources.push({
+          url: urlB,
           status: 'failed',
-          error: error.message
+          errorCode: resultB.errorCode,
+          message: resultB.message,
+          statusCode: resultB.statusCode
         });
       }
     }
@@ -110,20 +143,23 @@ Return only the main readable content as plain text. Be comprehensive but clean.
     if (!anySuccess) {
       return Response.json({
         ok: false,
-        error: 'Failed to extract text from any URL',
+        error: 'Failed to extract text from all provided URLs',
         sources: results.sources,
         correlationId
-      }, { status: 400 });
+      }, { status: 200 }); // Return 200 so frontend can handle gracefully
     }
 
     return Response.json(results);
 
   } catch (error) {
     console.error('ExtractFromUrls error:', error);
+    const correlationId = `error_${Date.now()}`;
     return Response.json({ 
       error: error.message,
       ok: false,
-      correlationId: `error_${Date.now()}`
+      errorCode: 'INTERNAL_ERROR',
+      message: 'Internal server error during extraction',
+      correlationId
     }, { status: 500 });
   }
 });

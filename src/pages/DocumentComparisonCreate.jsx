@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '../utils';
 import { base44 } from '@/api/base44Client';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -14,8 +14,8 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Progress } from '@/components/ui/progress';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import {
-  ArrowLeft, ArrowRight, FileText, Upload, Type, Clipboard,
-  Save, Sparkles, AlertTriangle, Highlighter, Lock, Unlock, X, Check, Loader2, Link as LinkIcon
+  ArrowLeft, ArrowRight, FileText, Upload, Type, Save, Sparkles, 
+  AlertTriangle, Highlighter, X, Loader2, Link as LinkIcon, Download
 } from 'lucide-react';
 
 export default function DocumentComparisonCreate() {
@@ -38,17 +38,7 @@ export default function DocumentComparisonCreate() {
   const [docAUrl, setDocAUrl] = useState('');
   const [docBUrl, setDocBUrl] = useState('');
   const [extractingUrls, setExtractingUrls] = useState(false);
-  const [uploadingFile, setUploadingFile] = useState(null);
-  
-  const [editingDoc, setEditingDoc] = useState('a');
-  const [selectedText, setSelectedText] = useState('');
-  const [selectionRange, setSelectionRange] = useState(null);
-  const [highlightNote, setHighlightNote] = useState('');
-  const [showNoteInput, setShowNoteInput] = useState(false);
-  const [pendingHighlight, setPendingHighlight] = useState(null);
-  
-  const [docALocked, setDocALocked] = useState(false);
-  const [docBLocked, setDocBLocked] = useState(false);
+  const [extractionError, setExtractionError] = useState(null);
   
   const [jsonImportA, setJsonImportA] = useState('');
   const [jsonImportB, setJsonImportB] = useState('');
@@ -72,10 +62,7 @@ export default function DocumentComparisonCreate() {
     try {
       const comparisons = await base44.entities.DocumentComparison.filter({ id });
       const comparison = comparisons[0];
-      if (!comparison) {
-        console.error('Draft comparison not found');
-        return;
-      }
+      if (!comparison) return;
       
       setTitle(comparison.title || '');
       setPartyALabel(comparison.party_a_label || 'Document A');
@@ -87,10 +74,6 @@ export default function DocumentComparisonCreate() {
       setDocASource(comparison.doc_a_source || 'typed');
       setDocBSource(comparison.doc_b_source || 'typed');
       
-      if (comparison.doc_a_spans_json?.length > 0) setDocALocked(true);
-      if (comparison.doc_b_spans_json?.length > 0) setDocBLocked(true);
-      
-      // CRITICAL: Set step LAST after all state is loaded
       const resumeStep = comparison.draft_step || 1;
       setTimeout(() => setStep(resumeStep), 50);
     } catch (error) {
@@ -98,165 +81,61 @@ export default function DocumentComparisonCreate() {
     }
   };
 
-  const saveDraftMutation = useMutation({
-    mutationFn: async () => {
-      if (!user) {
-        throw new Error('Must be logged in to save draft');
-      }
-      
-      const data = {
-        title: title || 'Untitled Comparison',
-        created_by_user_id: user.id,
-        party_a_label: partyALabel,
-        party_b_label: partyBLabel,
-        doc_a_plaintext: docAText,
-        doc_b_plaintext: docBText,
-        doc_a_spans_json: docASpans,
-        doc_b_spans_json: docBSpans,
-        doc_a_source: docASource,
-        doc_b_source: docBSource,
-        status: 'draft',
-        draft_step: step,
-        draft_updated_at: new Date().toISOString()
-      };
-      
-      if (comparisonId) {
-        await base44.entities.DocumentComparison.update(comparisonId, data);
-        return comparisonId;
-      } else {
-        const comparison = await base44.entities.DocumentComparison.create(data);
-        setComparisonId(comparison.id);
-        return comparison.id;
-      }
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries(['documentComparisons']);
-    }
-  });
-
-  const handleTextSelection = (doc) => {
-    const selection = window.getSelection();
-    if (!selection || selection.isCollapsed) return;
+  const saveDraft = async (stepToSave) => {
+    if (!user) return null;
     
-    const textarea = doc === 'a' 
-      ? document.getElementById('doc-a-textarea')
-      : document.getElementById('doc-b-textarea');
-    
-    if (!textarea) return;
-    
-    const start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
-    const text = textarea.value.substring(start, end);
-    
-    if (text && text.length > 0) {
-      setSelectedText(text);
-      setSelectionRange({ start, end });
-      setEditingDoc(doc);
-    }
-  };
-
-  const addHighlight = (level, withNote = false) => {
-    if (!selectionRange) return;
-    
-    if (withNote) {
-      setPendingHighlight({ level, range: selectionRange });
-      setShowNoteInput(true);
-    } else {
-      // Add immediately without note
-      const newSpan = {
-        start: selectionRange.start,
-        end: selectionRange.end,
-        level,
-      };
-      
-      if (editingDoc === 'a') {
-        setDocASpans([...docASpans, newSpan].sort((a, b) => a.start - b.start));
-        setDocALocked(true);
-      } else {
-        setDocBSpans([...docBSpans, newSpan].sort((a, b) => a.start - b.start));
-        setDocBLocked(true);
-      }
-      
-      setSelectedText('');
-      setSelectionRange(null);
-    }
-  };
-
-  const confirmHighlight = () => {
-    if (!pendingHighlight) return;
-    
-    const newSpan = {
-      start: pendingHighlight.range.start,
-      end: pendingHighlight.range.end,
-      level: pendingHighlight.level,
-      note: highlightNote || undefined
-    };
-    
-    if (editingDoc === 'a') {
-      setDocASpans([...docASpans, newSpan].sort((a, b) => a.start - b.start));
-      setDocALocked(true);
-    } else {
-      setDocBSpans([...docBSpans, newSpan].sort((a, b) => a.start - b.start));
-      setDocBLocked(true);
-    }
-    
-    setSelectedText('');
-    setSelectionRange(null);
-    setHighlightNote('');
-    setShowNoteInput(false);
-    setPendingHighlight(null);
-  };
-
-  const exportHighlights = (doc) => {
     const data = {
-      text: doc === 'a' ? docAText : docBText,
-      spans: doc === 'a' ? docASpans : docBSpans
+      title: title || 'Untitled Comparison',
+      created_by_user_id: user.id,
+      party_a_label: partyALabel,
+      party_b_label: partyBLabel,
+      doc_a_plaintext: docAText,
+      doc_b_plaintext: docBText,
+      doc_a_spans_json: docASpans,
+      doc_b_spans_json: docBSpans,
+      doc_a_source: docASource,
+      doc_b_source: docBSource,
+      status: 'draft',
+      draft_step: stepToSave,
+      draft_updated_at: new Date().toISOString()
     };
-    const json = JSON.stringify(data, null, 2);
-    navigator.clipboard.writeText(json);
-    alert('Highlights JSON copied to clipboard!');
-  };
-
-  const removeHighlight = (doc, index) => {
-    if (doc === 'a') {
-      setDocASpans(docASpans.filter((_, i) => i !== index));
-      if (docASpans.length === 1) setDocALocked(false);
+    
+    if (comparisonId) {
+      await base44.entities.DocumentComparison.update(comparisonId, data);
+      return comparisonId;
     } else {
-      setDocBSpans(docBSpans.filter((_, i) => i !== index));
-      if (docBSpans.length === 1) setDocBLocked(false);
+      const comparison = await base44.entities.DocumentComparison.create(data);
+      setComparisonId(comparison.id);
+      return comparison.id;
     }
   };
 
-  const unlockDoc = (doc) => {
-    if (doc === 'a') {
-      setDocASpans([]);
-      setDocALocked(false);
-    } else {
-      setDocBSpans([]);
-      setDocBLocked(false);
-    }
-  };
-
-  const handleImportJSON = (doc, jsonStr) => {
-    try {
-      const data = JSON.parse(jsonStr);
-      if (doc === 'a') {
-        if (data.text) setDocAText(data.text);
-        if (data.spans) {
-          setDocASpans(data.spans);
-          setDocALocked(data.spans.length > 0);
+  const handleFileUpload = (doc, file) => {
+    if (!file) return;
+    
+    const fileName = file.name.toLowerCase();
+    
+    if (fileName.endsWith('.txt') || fileName.endsWith('.md')) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const text = e.target.result;
+        if (doc === 'a') {
+          setDocAText(text);
+        } else {
+          setDocBText(text);
         }
-      } else {
-        if (data.text) setDocBText(data.text);
-        if (data.spans) {
-          setDocBSpans(data.spans);
-          setDocBLocked(data.spans.length > 0);
-        }
-      }
-      alert('JSON imported successfully');
-    } catch (error) {
-      alert('Invalid JSON format');
+      };
+      reader.onerror = () => alert('Failed to read file');
+      reader.readAsText(file);
+      return;
     }
+    
+    if (fileName.endsWith('.pdf')) {
+      alert('PDF files are not supported yet. Please use .txt or .md files, or paste text directly.');
+      return;
+    }
+    
+    alert('Only .txt and .md files are supported. For other formats, please paste text directly.');
   };
 
   const handleExtractFromUrls = async () => {
@@ -266,6 +145,8 @@ export default function DocumentComparisonCreate() {
     }
     
     setExtractingUrls(true);
+    setExtractionError(null);
+    
     try {
       const result = await base44.functions.invoke('ExtractFromUrls', {
         urlA: docAUrl || null,
@@ -277,130 +158,174 @@ export default function DocumentComparisonCreate() {
         const failedSources = sources.filter(s => s.status === 'failed');
         
         if (failedSources.length > 0) {
-          const isLinkedIn = failedSources.some(s => s.url.includes('linkedin.com'));
-          const errors = failedSources.map(s => `${s.url}: ${s.error}`).join('\n\n');
-          alert(
-            `Extraction failed:\n\n${errors}\n\n` +
-            (isLinkedIn ? 'TIP: LinkedIn often blocks automated extraction. Please paste text or upload a file instead.' : '')
-          );
+          const errorMessages = failedSources.map(s => 
+            `${s.url}:\n${s.message}`
+          ).join('\n\n');
+          
+          setExtractionError({
+            message: errorMessages,
+            correlationId: result.data.correlationId
+          });
         } else {
-          alert('Extraction failed: ' + (result.data.error || 'Unknown error'));
+          setExtractionError({
+            message: result.data.error || 'Failed to extract text from URLs',
+            correlationId: result.data.correlationId
+          });
         }
+        
+        // Still populate any successful extractions
+        if (result.data.textA) setDocAText(result.data.textA);
+        if (result.data.textB) setDocBText(result.data.textB);
+        
         setExtractingUrls(false);
         return;
       }
       
-      if (result.data.textA) {
-        setDocAText(result.data.textA);
-        setDocALocked(false);
-      }
-      if (result.data.textB) {
-        setDocBText(result.data.textB);
-        setDocBLocked(false);
-      }
+      if (result.data.textA) setDocAText(result.data.textA);
+      if (result.data.textB) setDocBText(result.data.textB);
       
-      // Save draft before jumping to step 3
-      if (comparisonId && user) {
-        await base44.entities.DocumentComparison.update(comparisonId, {
-          doc_a_plaintext: result.data.textA || docAText,
-          doc_b_plaintext: result.data.textB || docBText,
-          draft_step: 3,
-          draft_updated_at: new Date().toISOString()
-        });
+      // Auto-advance to step 2 if extraction succeeded
+      if (result.data.textA || result.data.textB) {
+        await saveDraft(2);
+        setStep(2);
       }
-      
-      // Jump to step 3 (evaluation)
-      setStep(3);
     } catch (error) {
-      alert('Extraction failed: ' + (error.response?.data?.error || error.message));
+      setExtractionError({
+        message: error.response?.data?.message || error.message,
+        correlationId: error.response?.data?.correlationId || 'unknown'
+      });
     } finally {
       setExtractingUrls(false);
     }
   };
 
-  const handleFileUpload = async (doc, file) => {
-    if (!file) return;
+  const handleTextSelection = (doc) => {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return null;
     
-    const fileName = file.name.toLowerCase();
+    const selectedText = selection.toString();
+    if (!selectedText) return null;
     
-    // Handle .txt and .md client-side
-    if (fileName.endsWith('.txt') || fileName.endsWith('.md')) {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const text = e.target.result;
-        if (doc === 'a') {
-          setDocAText(text);
-          setDocALocked(false);
-          setDocASource('uploaded');
-        } else {
-          setDocBText(text);
-          setDocBLocked(false);
-          setDocBSource('uploaded');
-        }
-      };
-      reader.onerror = () => {
-        alert('Failed to read file');
-      };
-      reader.readAsText(file);
-      return;
-    }
+    const range = selection.getRangeAt(0);
+    const container = doc === 'a' 
+      ? document.getElementById('preview-a')
+      : document.getElementById('preview-b');
     
-    // Block PDF
-    if (fileName.endsWith('.pdf')) {
-      alert('PDF files are not supported yet. Please use .txt or .md files, or paste text directly.');
-      return;
-    }
+    if (!container || !container.contains(range.commonAncestorContainer)) return null;
     
-    // Block other types
-    alert('Only .txt and .md files are supported. For other formats, please paste text directly.');
+    const fullText = doc === 'a' ? docAText : docBText;
+    const start = fullText.indexOf(selectedText);
+    
+    if (start === -1) return null;
+    
+    return {
+      start,
+      end: start + selectedText.length,
+      text: selectedText
+    };
   };
 
-  const renderHighlightedText = (text, spans) => {
-    if (!text || spans.length === 0) return text;
+  const addHighlight = (doc, level) => {
+    const selection = handleTextSelection(doc);
+    if (!selection) {
+      alert('Please select text to highlight');
+      return;
+    }
     
+    const newSpan = {
+      start: selection.start,
+      end: selection.end,
+      level
+    };
+    
+    if (doc === 'a') {
+      setDocASpans([...docASpans, newSpan].sort((a, b) => a.start - b.start));
+    } else {
+      setDocBSpans([...docBSpans, newSpan].sort((a, b) => a.start - b.start));
+    }
+    
+    window.getSelection().removeAllRanges();
+  };
+
+  const removeHighlight = (doc, index) => {
+    if (doc === 'a') {
+      setDocASpans(docASpans.filter((_, i) => i !== index));
+    } else {
+      setDocBSpans(docBSpans.filter((_, i) => i !== index));
+    }
+  };
+
+  const exportHighlights = (doc) => {
+    const spans = doc === 'a' ? docASpans : docBSpans;
+    const json = JSON.stringify(spans, null, 2);
+    navigator.clipboard.writeText(json);
+    alert('Highlights copied to clipboard as JSON');
+  };
+
+  const importHighlights = (doc, jsonStr) => {
+    try {
+      const spans = JSON.parse(jsonStr);
+      if (!Array.isArray(spans)) throw new Error('Invalid format - must be array');
+      
+      if (doc === 'a') {
+        setDocASpans(spans);
+      } else {
+        setDocBSpans(spans);
+      }
+      
+      alert('Highlights imported successfully');
+    } catch (error) {
+      alert('Invalid JSON format: ' + error.message);
+    }
+  };
+
+  const renderHighlightedText = (text, spans, docId) => {
+    if (!text) return null;
+    
+    if (spans.length === 0) {
+      return <div id={docId} className="whitespace-pre-wrap font-mono text-sm select-text">{text}</div>;
+    }
+    
+    const sortedSpans = [...spans].sort((a, b) => a.start - b.start);
     const parts = [];
     let lastIndex = 0;
     
-    spans.forEach((span, idx) => {
+    sortedSpans.forEach((span) => {
       if (span.start > lastIndex) {
-        parts.push({ type: 'text', content: text.substring(lastIndex, span.start) });
+        parts.push({ text: text.substring(lastIndex, span.start), highlight: null });
       }
-      parts.push({
-        type: 'highlight',
-        content: text.substring(span.start, span.end),
-        level: span.level,
-        note: span.note,
-        index: idx
+      parts.push({ 
+        text: text.substring(span.start, span.end), 
+        highlight: span.level 
       });
       lastIndex = span.end;
     });
     
     if (lastIndex < text.length) {
-      parts.push({ type: 'text', content: text.substring(lastIndex) });
+      parts.push({ text: text.substring(lastIndex), highlight: null });
     }
     
     return (
-      <div className="whitespace-pre-wrap font-mono text-sm">
-        {parts.map((part, i) => 
-          part.type === 'text' ? (
-            <span key={i}>{part.content}</span>
-          ) : (
-            <span 
-              key={i}
-              className={`${
-                part.level === 'confidential' ? 'bg-red-200 text-red-900' : 'bg-yellow-200 text-yellow-900'
-              } px-1 rounded relative group cursor-help`}
-              title={part.note || `${part.level} content`}
-            >
-              {part.content}
-            </span>
-          )
-        )}
+      <div id={docId} className="whitespace-pre-wrap font-mono text-sm select-text">
+        {parts.map((part, idx) => (
+          <span 
+            key={idx}
+            className={
+              part.highlight === 'confidential' 
+                ? 'bg-red-200 text-red-900 px-0.5 rounded'
+                : part.highlight === 'partial'
+                ? 'bg-yellow-200 text-yellow-900 px-0.5 rounded'
+                : ''
+            }
+          >
+            {part.text}
+          </span>
+        ))}
       </div>
     );
   };
 
-  const progress = (step / 3) * 100;
+  const progress = (step / 4) * 100;
 
   return (
     <div className="min-h-screen bg-slate-50 py-8">
@@ -420,24 +345,19 @@ export default function DocumentComparisonCreate() {
 
         <div className="mb-8">
           <div className="flex items-center justify-between text-sm text-slate-500 mb-2">
-            <span>Step {step} of 3</span>
+            <span>Step {step} of 4</span>
             <span>{Math.round(progress)}% complete</span>
           </div>
           <Progress value={progress} className="h-2" />
         </div>
 
         <AnimatePresence mode="wait">
-          {/* Step 1: Setup */}
+          {/* Step 1: Source Selection */}
           {step === 1 && (
-            <motion.div
-              key="step1"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-            >
-              <Card className="border-0 shadow-sm">
+            <motion.div key="step1" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
+              <Card>
                 <CardHeader>
-                  <CardTitle>Comparison Setup</CardTitle>
+                  <CardTitle>Step 1: Source Selection</CardTitle>
                   <CardDescription>Set title and choose how you'll provide each document</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-6">
@@ -446,7 +366,7 @@ export default function DocumentComparisonCreate() {
                     <Input 
                       value={title}
                       onChange={(e) => setTitle(e.target.value)}
-                      placeholder="e.g., Contract A vs Contract B"
+                      placeholder="e.g., LinkedIn Profile vs Job Posting"
                     />
                   </div>
 
@@ -456,7 +376,7 @@ export default function DocumentComparisonCreate() {
                       <Input 
                         value={partyALabel}
                         onChange={(e) => setPartyALabel(e.target.value)}
-                        placeholder="Document A"
+                        placeholder="e.g., Profile"
                       />
                     </div>
                     <div className="space-y-2">
@@ -464,44 +384,131 @@ export default function DocumentComparisonCreate() {
                       <Input 
                         value={partyBLabel}
                         onChange={(e) => setPartyBLabel(e.target.value)}
-                        placeholder="Document B"
+                        placeholder="e.g., Job Posting"
                       />
                     </div>
                   </div>
 
-                  <div className="space-y-4 p-4 border-2 border-purple-200 bg-purple-50 rounded-xl">
-                    <Label className="font-semibold text-purple-900 flex items-center gap-2">
-                      <LinkIcon className="w-4 h-4" />
-                      Quick Start: Extract from URLs
-                    </Label>
-                    <p className="text-xs text-purple-700">
-                      Extract text from web pages (automatically jumps to evaluation when done)
-                    </p>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-1">
-                        <Label className="text-xs">{partyALabel} URL</Label>
+                  <div className="grid grid-cols-2 gap-6">
+                    <div className="space-y-3 p-4 border border-slate-200 rounded-xl">
+                      <Label className="font-semibold">{partyALabel} Source</Label>
+                      <RadioGroup value={docASource} onValueChange={setDocASource}>
+                        <div className="flex items-center space-x-2">
+                          <RadioGroupItem value="typed" id="a-typed" />
+                          <Label htmlFor="a-typed" className="font-normal cursor-pointer flex items-center gap-2">
+                            <Type className="w-4 h-4" />
+                            Paste / Type
+                          </Label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <RadioGroupItem value="uploaded" id="a-uploaded" />
+                          <Label htmlFor="a-uploaded" className="font-normal cursor-pointer flex items-center gap-2">
+                            <Upload className="w-4 h-4" />
+                            Upload File
+                          </Label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <RadioGroupItem value="url" id="a-url" />
+                          <Label htmlFor="a-url" className="font-normal cursor-pointer flex items-center gap-2">
+                            <LinkIcon className="w-4 h-4" />
+                            Extract from URL
+                          </Label>
+                        </div>
+                      </RadioGroup>
+                    </div>
+
+                    <div className="space-y-3 p-4 border border-slate-200 rounded-xl">
+                      <Label className="font-semibold">{partyBLabel} Source</Label>
+                      <RadioGroup value={docBSource} onValueChange={setDocBSource}>
+                        <div className="flex items-center space-x-2">
+                          <RadioGroupItem value="typed" id="b-typed" />
+                          <Label htmlFor="b-typed" className="font-normal cursor-pointer flex items-center gap-2">
+                            <Type className="w-4 h-4" />
+                            Paste / Type
+                          </Label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <RadioGroupItem value="uploaded" id="b-uploaded" />
+                          <Label htmlFor="b-uploaded" className="font-normal cursor-pointer flex items-center gap-2">
+                            <Upload className="w-4 h-4" />
+                            Upload File
+                          </Label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <RadioGroupItem value="url" id="b-url" />
+                          <Label htmlFor="b-url" className="font-normal cursor-pointer flex items-center gap-2">
+                            <LinkIcon className="w-4 h-4" />
+                            Extract from URL
+                          </Label>
+                        </div>
+                      </RadioGroup>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end">
+                    <Button onClick={async () => {
+                      await saveDraft(2);
+                      setStep(2);
+                    }} className="bg-blue-600 hover:bg-blue-700">
+                      Continue to Input
+                      <ArrowRight className="w-4 h-4 ml-2" />
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </motion.div>
+          )}
+
+          {/* Step 2: Content Input */}
+          {step === 2 && (
+            <motion.div key="step2" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-6">
+              {/* URL Extraction Section (if either source is URL) */}
+              {(docASource === 'url' || docBSource === 'url') && (
+                <Card className="border-2 border-purple-200 bg-purple-50">
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2 text-purple-900">
+                      <LinkIcon className="w-5 h-5" />
+                      Extract from URLs
+                    </CardTitle>
+                    <CardDescription>Enter URLs to automatically extract text content</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {docASource === 'url' && (
+                      <div className="space-y-2">
+                        <Label>{partyALabel} URL</Label>
                         <Input 
-                          placeholder="https://..."
+                          placeholder="https://www.linkedin.com/in/..."
                           value={docAUrl}
                           onChange={(e) => setDocAUrl(e.target.value)}
-                          className="text-sm"
                         />
                       </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs">{partyBLabel} URL</Label>
+                    )}
+                    {docBSource === 'url' && (
+                      <div className="space-y-2">
+                        <Label>{partyBLabel} URL</Label>
                         <Input 
                           placeholder="https://..."
                           value={docBUrl}
                           onChange={(e) => setDocBUrl(e.target.value)}
-                          className="text-sm"
                         />
                       </div>
-                    </div>
+                    )}
+                    
+                    {extractionError && (
+                      <Alert className="border-red-200 bg-red-50">
+                        <AlertTriangle className="w-4 h-4 text-red-600" />
+                        <AlertDescription className="text-red-800">
+                          <div className="font-semibold mb-2">Extraction Failed</div>
+                          <div className="text-sm whitespace-pre-wrap mb-2">{extractionError.message}</div>
+                          <div className="text-xs text-red-600">Correlation ID: {extractionError.correlationId}</div>
+                        </AlertDescription>
+                      </Alert>
+                    )}
+                    
                     <Button 
                       onClick={handleExtractFromUrls}
-                      disabled={(!docAUrl && !docBUrl) || extractingUrls}
+                      disabled={extractingUrls || (docASource === 'url' && !docAUrl && docBSource === 'url' && !docBUrl)}
                       className="w-full bg-purple-600 hover:bg-purple-700"
-                      size="sm"
                     >
                       {extractingUrls ? (
                         <>
@@ -511,124 +518,25 @@ export default function DocumentComparisonCreate() {
                       ) : (
                         <>
                           <Sparkles className="w-4 h-4 mr-2" />
-                          Extract & Jump to Evaluation
+                          Extract Text
                         </>
                       )}
                     </Button>
-                  </div>
+                  </CardContent>
+                </Card>
+              )}
 
-                  <div className="grid grid-cols-2 gap-6">
-                    <div className="space-y-3 p-4 border border-slate-200 rounded-xl">
-                      <Label className="font-semibold">{partyALabel} Input Method</Label>
-                      <RadioGroup value={docASource} onValueChange={setDocASource}>
-                        <div className="flex items-center space-x-2">
-                          <RadioGroupItem value="typed" id="a-typed" />
-                          <Label htmlFor="a-typed" className="font-normal cursor-pointer flex items-center gap-2">
-                            <Type className="w-4 h-4" />
-                            Enter text
-                          </Label>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          <RadioGroupItem value="uploaded" id="a-uploaded" />
-                          <Label htmlFor="a-uploaded" className="font-normal cursor-pointer flex items-center gap-2">
-                            <Upload className="w-4 h-4" />
-                            Upload file
-                          </Label>
-                        </div>
-                      </RadioGroup>
-                    </div>
-
-                    <div className="space-y-3 p-4 border border-slate-200 rounded-xl">
-                      <Label className="font-semibold">{partyBLabel} Input Method</Label>
-                      <RadioGroup value={docBSource} onValueChange={setDocBSource}>
-                        <div className="flex items-center space-x-2">
-                          <RadioGroupItem value="typed" id="b-typed" />
-                          <Label htmlFor="b-typed" className="font-normal cursor-pointer flex items-center gap-2">
-                            <Type className="w-4 h-4" />
-                            Enter text
-                          </Label>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          <RadioGroupItem value="uploaded" id="b-uploaded" />
-                          <Label htmlFor="b-uploaded" className="font-normal cursor-pointer flex items-center gap-2">
-                            <Upload className="w-4 h-4" />
-                            Upload file
-                          </Label>
-                        </div>
-                      </RadioGroup>
-                    </div>
-                  </div>
-
-                  <div className="flex justify-end">
-                    <Button onClick={async () => {
-                      if (!user) {
-                        alert('Please log in to continue');
-                        return;
-                      }
-                      
-                      // Save draft before moving to step 2
-                      if (!comparisonId) {
-                        const draft = await base44.entities.DocumentComparison.create({
-                          title: title || 'Untitled Comparison',
-                          created_by_user_id: user.id,
-                          party_a_label: partyALabel,
-                          party_b_label: partyBLabel,
-                          status: 'draft',
-                          draft_step: 2,
-                          draft_updated_at: new Date().toISOString()
-                        });
-                        setComparisonId(draft.id);
-                      } else {
-                        await base44.entities.DocumentComparison.update(comparisonId, {
-                          title: title || 'Untitled Comparison',
-                          party_a_label: partyALabel,
-                          party_b_label: partyBLabel,
-                          draft_step: 2,
-                          draft_updated_at: new Date().toISOString()
-                        });
-                      }
-                      setStep(2);
-                    }} className="bg-blue-600 hover:bg-blue-700">
-                      Continue
-                      <ArrowRight className="w-4 h-4 ml-2" />
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            </motion.div>
-          )}
-
-          {/* Step 2: Highlight Tagging */}
-          {step === 2 && (
-            <motion.div
-              key="step2"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              className="space-y-6"
-            >
-              {/* Document A */}
-              <Card className="border-0 shadow-sm">
+              {/* Document A Input */}
+              <Card>
                 <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="flex items-center gap-2">
-                      <FileText className="w-5 h-5 text-blue-600" />
-                      {partyALabel}
-                    </CardTitle>
-                    {docALocked && (
-                      <Button 
-                        variant="outline" 
-                        size="sm"
-                        onClick={() => unlockDoc('a')}
-                        className="text-orange-600"
-                      >
-                        <Unlock className="w-4 h-4 mr-2" />
-                        Unlock (clears highlights)
-                      </Button>
-                    )}
-                  </div>
+                  <CardTitle className="flex items-center gap-2">
+                    <FileText className="w-5 h-5 text-blue-600" />
+                    {partyALabel}
+                  </CardTitle>
                   <CardDescription>
-                    {docALocked ? 'Text locked. Remove highlights to edit.' : 'Enter or paste text, then select to highlight'}
+                    {docASource === 'typed' && 'Paste or type document content'}
+                    {docASource === 'uploaded' && 'Upload a .txt or .md file'}
+                    {docASource === 'url' && 'Extract text from URL above, then review and edit if needed'}
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -638,123 +546,37 @@ export default function DocumentComparisonCreate() {
                       <Input 
                         type="file"
                         accept=".txt,.md"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          if (file) handleFileUpload('a', file);
-                        }}
+                        onChange={(e) => handleFileUpload('a', e.target.files[0])}
                       />
                       <p className="text-xs text-slate-500">
-                        Supports .txt and .md files. For PDF, please copy and paste text.
+                        For PDF files, please copy and paste the text content.
                       </p>
                     </div>
                   )}
                   
                   <div className="space-y-2">
+                    <Label>Document Content</Label>
                     <Textarea 
-                      id="doc-a-textarea"
                       value={docAText}
-                      onChange={(e) => {
-                        if (!docALocked) {
-                          setDocAText(e.target.value);
-                        } else if (docASpans.length > 0) {
-                          if (confirm('Editing text will clear all highlights. Continue?')) {
-                            setDocAText(e.target.value);
-                            setDocASpans([]);
-                            setDocALocked(false);
-                          }
-                        }
-                      }}
-                      onMouseUp={() => handleTextSelection('a')}
+                      onChange={(e) => setDocAText(e.target.value)}
                       placeholder="Enter or paste document text..."
-                      className="min-h-[200px] font-mono text-sm"
-                      disabled={docASource === 'uploaded' && uploadingFile === 'a'}
+                      className="min-h-[300px] font-mono text-sm"
                     />
-                    {docALocked && (
-                      <Alert>
-                        <Lock className="w-4 h-4" />
-                        <AlertDescription>
-                          Text locked with {docASpans.length} highlight(s). Click Unlock to edit.
-                        </AlertDescription>
-                      </Alert>
-                    )}
-                  </div>
-
-                  {docASpans.length > 0 && (
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <Label className="text-sm font-semibold">Highlights ({docASpans.length})</Label>
-                        <div className="flex gap-1">
-                          <Badge className="bg-red-100 text-red-700 text-xs">
-                            {docASpans.filter(s => s.level === 'confidential').length} confidential
-                          </Badge>
-                          <Badge className="bg-yellow-100 text-yellow-700 text-xs">
-                            {docASpans.filter(s => s.level === 'partial').length} partial
-                          </Badge>
-                        </div>
-                      </div>
-                      <div className="p-4 border border-slate-200 rounded-xl bg-slate-50 max-h-64 overflow-auto">
-                        {renderHighlightedText(docAText, docASpans)}
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="flex gap-2">
-                    <div className="space-y-2 flex-1">
-                      <Label className="text-xs font-semibold">Import JSON Highlights (Optional)</Label>
-                      <div className="flex gap-2">
-                        <Textarea 
-                          value={jsonImportA}
-                          onChange={(e) => setJsonImportA(e.target.value)}
-                          placeholder='{"text":"...","spans":[{"start":0,"end":10,"level":"confidential"}]}'
-                          className="text-xs font-mono"
-                          rows={3}
-                        />
-                        <Button 
-                          onClick={() => handleImportJSON('a', jsonImportA)}
-                          disabled={!jsonImportA}
-                          variant="outline"
-                          size="sm"
-                        >
-                          Import
-                        </Button>
-                      </div>
-                    </div>
-                    {(docAText || docASpans.length > 0) && (
-                      <Button
-                        onClick={() => exportHighlights('a')}
-                        variant="outline"
-                        size="sm"
-                        className="mt-6"
-                      >
-                        Export JSON
-                      </Button>
-                    )}
                   </div>
                 </CardContent>
               </Card>
 
-              {/* Document B */}
-              <Card className="border-0 shadow-sm">
+              {/* Document B Input */}
+              <Card>
                 <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="flex items-center gap-2">
-                      <FileText className="w-5 h-5 text-indigo-600" />
-                      {partyBLabel}
-                    </CardTitle>
-                    {docBLocked && (
-                      <Button 
-                        variant="outline" 
-                        size="sm"
-                        onClick={() => unlockDoc('b')}
-                        className="text-orange-600"
-                      >
-                        <Unlock className="w-4 h-4 mr-2" />
-                        Unlock (clears highlights)
-                      </Button>
-                    )}
-                  </div>
+                  <CardTitle className="flex items-center gap-2">
+                    <FileText className="w-5 h-5 text-indigo-600" />
+                    {partyBLabel}
+                  </CardTitle>
                   <CardDescription>
-                    {docBLocked ? 'Text locked. Remove highlights to edit.' : 'Enter or paste text, then select to highlight'}
+                    {docBSource === 'typed' && 'Paste or type document content'}
+                    {docBSource === 'uploaded' && 'Upload a .txt or .md file'}
+                    {docBSource === 'url' && 'Extract text from URL above, then review and edit if needed'}
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -764,165 +586,29 @@ export default function DocumentComparisonCreate() {
                       <Input 
                         type="file"
                         accept=".txt,.md"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          if (file) handleFileUpload('b', file);
-                        }}
+                        onChange={(e) => handleFileUpload('b', e.target.files[0])}
                       />
                       <p className="text-xs text-slate-500">
-                        Supports .txt and .md files. For PDF, please copy and paste text.
+                        For PDF files, please copy and paste the text content.
                       </p>
                     </div>
                   )}
                   
                   <div className="space-y-2">
+                    <Label>Document Content</Label>
                     <Textarea 
-                      id="doc-b-textarea"
                       value={docBText}
-                      onChange={(e) => {
-                        if (!docBLocked) {
-                          setDocBText(e.target.value);
-                        } else if (docBSpans.length > 0) {
-                          if (confirm('Editing text will clear all highlights. Continue?')) {
-                            setDocBText(e.target.value);
-                            setDocBSpans([]);
-                            setDocBLocked(false);
-                          }
-                        }
-                      }}
-                      onMouseUp={() => handleTextSelection('b')}
+                      onChange={(e) => setDocBText(e.target.value)}
                       placeholder="Enter or paste document text..."
-                      className="min-h-[200px] font-mono text-sm"
-                      disabled={docBSource === 'uploaded' && uploadingFile === 'b'}
+                      className="min-h-[300px] font-mono text-sm"
                     />
-                    {docBLocked && (
-                      <Alert>
-                        <Lock className="w-4 h-4" />
-                        <AlertDescription>
-                          Text locked with {docBSpans.length} highlight(s). Click Unlock to edit.
-                        </AlertDescription>
-                      </Alert>
-                    )}
-                  </div>
-
-                  {docBSpans.length > 0 && (
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <Label className="text-sm font-semibold">Highlights ({docBSpans.length})</Label>
-                        <div className="flex gap-1">
-                          <Badge className="bg-red-100 text-red-700 text-xs">
-                            {docBSpans.filter(s => s.level === 'confidential').length} confidential
-                          </Badge>
-                          <Badge className="bg-yellow-100 text-yellow-700 text-xs">
-                            {docBSpans.filter(s => s.level === 'partial').length} partial
-                          </Badge>
-                        </div>
-                      </div>
-                      <div className="p-4 border border-slate-200 rounded-xl bg-slate-50 max-h-64 overflow-auto">
-                        {renderHighlightedText(docBText, docBSpans)}
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="flex gap-2">
-                    <div className="space-y-2 flex-1">
-                      <Label className="text-xs font-semibold">Import JSON Highlights (Optional)</Label>
-                      <div className="flex gap-2">
-                        <Textarea 
-                          value={jsonImportB}
-                          onChange={(e) => setJsonImportB(e.target.value)}
-                          placeholder='{"text":"...","spans":[{"start":0,"end":10,"level":"confidential"}]}'
-                          className="text-xs font-mono"
-                          rows={3}
-                        />
-                        <Button 
-                          onClick={() => handleImportJSON('b', jsonImportB)}
-                          disabled={!jsonImportB}
-                          variant="outline"
-                          size="sm"
-                        >
-                          Import
-                        </Button>
-                      </div>
-                    </div>
-                    {(docBText || docBSpans.length > 0) && (
-                      <Button
-                        onClick={() => exportHighlights('b')}
-                        variant="outline"
-                        size="sm"
-                        className="mt-6"
-                      >
-                        Export JSON
-                      </Button>
-                    )}
                   </div>
                 </CardContent>
               </Card>
 
-              {/* Highlight Controls */}
-              {selectedText && selectionRange && !showNoteInput && (
-                <Card className="border-2 border-purple-500 shadow-lg sticky bottom-4 z-10">
-                  <CardContent className="p-4">
-                    <div className="space-y-3">
-                      <div>
-                        <Label className="text-sm font-semibold mb-1 block">
-                          ✨ Highlight Toolbar - Selected Text ({editingDoc === 'a' ? partyALabel : partyBLabel}):
-                        </Label>
-                        <p className="text-sm bg-slate-100 p-2 rounded font-mono border border-slate-200">
-                          "{selectedText.substring(0, 150)}{selectedText.length > 150 ? '...' : ''}"
-                        </p>
-                      </div>
-                      <div className="grid grid-cols-3 gap-2">
-                        <Button 
-                          onClick={() => addHighlight('confidential')}
-                          className="bg-red-600 hover:bg-red-700"
-                          size="sm"
-                        >
-                          <Lock className="w-4 h-4 mr-2" />
-                          Confidential
-                        </Button>
-                        <Button 
-                          onClick={() => addHighlight('partial')}
-                          className="bg-yellow-600 hover:bg-yellow-700"
-                          size="sm"
-                        >
-                          <Highlighter className="w-4 h-4 mr-2" />
-                          Partial
-                        </Button>
-                        <Button 
-                          variant="outline"
-                          onClick={() => {
-                            setSelectedText('');
-                            setSelectionRange(null);
-                          }}
-                          size="sm"
-                        >
-                          <X className="w-4 h-4" />
-                          Clear
-                        </Button>
-                      </div>
-                      <div className="text-xs text-slate-600 bg-blue-50 p-2 rounded border border-blue-200">
-                        <strong>Legend:</strong> Red = Confidential (excluded from output) • Yellow = Partial (high-level summary only)
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-
-
-
               <div className="flex justify-between">
                 <Button variant="outline" onClick={async () => {
-                  if (comparisonId && user) {
-                    await base44.entities.DocumentComparison.update(comparisonId, { 
-                      doc_a_plaintext: docAText,
-                      doc_b_plaintext: docBText,
-                      doc_a_spans_json: docASpans,
-                      doc_b_spans_json: docBSpans,
-                      draft_step: 1,
-                      draft_updated_at: new Date().toISOString()
-                    }).catch(err => console.error('Failed to save on back:', err));
-                  }
+                  await saveDraft(1);
                   setStep(1);
                 }}>
                   <ArrowLeft className="w-4 h-4 mr-2" />
@@ -931,30 +617,20 @@ export default function DocumentComparisonCreate() {
                 <div className="flex gap-2">
                   <Button 
                     variant="outline"
-                    onClick={() => saveDraftMutation.mutate()}
-                    disabled={saveDraftMutation.isPending}
+                    onClick={() => saveDraft(2)}
                   >
                     <Save className="w-4 h-4 mr-2" />
-                    {saveDraftMutation.isPending ? 'Saving...' : 'Save Draft'}
+                    Save Draft
                   </Button>
                   <Button 
                     onClick={async () => {
-                      if (comparisonId && user) {
-                        await base44.entities.DocumentComparison.update(comparisonId, { 
-                          doc_a_plaintext: docAText,
-                          doc_b_plaintext: docBText,
-                          doc_a_spans_json: docASpans,
-                          doc_b_spans_json: docBSpans,
-                          draft_step: 3,
-                          draft_updated_at: new Date().toISOString()
-                        }).catch(err => console.error('Failed to save on next:', err));
-                      }
+                      await saveDraft(3);
                       setStep(3);
                     }}
                     disabled={!docAText || !docBText}
                     className="bg-blue-600 hover:bg-blue-700"
                   >
-                    Review
+                    Continue to Highlighting
                     <ArrowRight className="w-4 h-4 ml-2" />
                   </Button>
                 </div>
@@ -962,17 +638,219 @@ export default function DocumentComparisonCreate() {
             </motion.div>
           )}
 
-          {/* Step 3: Review */}
+          {/* Step 3: Highlighting */}
           {step === 3 && (
-            <motion.div
-              key="step3"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-            >
-              <Card className="border-0 shadow-sm">
+            <motion.div key="step3" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-6">
+              <Alert className="bg-blue-50 border-blue-200">
+                <Highlighter className="w-4 h-4 text-blue-600" />
+                <AlertDescription className="text-blue-800">
+                  <strong>How to highlight:</strong> Select text in the preview below, then click "Mark Confidential" or "Mark Partial" buttons.
+                  Confidential content will be excluded from the AI report. Partial content will only be summarized at a high level.
+                </AlertDescription>
+              </Alert>
+
+              {/* Document A Highlighting */}
+              <Card>
                 <CardHeader>
-                  <CardTitle>Review & Submit</CardTitle>
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="flex items-center gap-2">
+                      <FileText className="w-5 h-5 text-blue-600" />
+                      {partyALabel}
+                    </CardTitle>
+                    <div className="flex gap-2">
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        onClick={() => addHighlight('a', 'confidential')}
+                      >
+                        <span className="w-3 h-3 bg-red-500 rounded mr-2"></span>
+                        Mark Confidential
+                      </Button>
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        onClick={() => addHighlight('a', 'partial')}
+                      >
+                        <span className="w-3 h-3 bg-yellow-500 rounded mr-2"></span>
+                        Mark Partial
+                      </Button>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="p-4 border border-slate-200 rounded-xl bg-white max-h-96 overflow-auto">
+                    {renderHighlightedText(docAText, docASpans, 'preview-a')}
+                  </div>
+                  
+                  {docASpans.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-sm font-semibold">Highlights ({docASpans.length})</Label>
+                        <Button variant="outline" size="sm" onClick={() => exportHighlights('a')}>
+                          <Download className="w-4 h-4 mr-2" />
+                          Export JSON
+                        </Button>
+                      </div>
+                      <div className="space-y-2 max-h-32 overflow-y-auto">
+                        {docASpans.map((span, idx) => (
+                          <div key={idx} className="flex items-center justify-between text-sm bg-slate-50 p-2 rounded">
+                            <div className="flex items-center gap-2 flex-1 min-w-0">
+                              <span className={`w-3 h-3 rounded flex-shrink-0 ${span.level === 'confidential' ? 'bg-red-500' : 'bg-yellow-500'}`}></span>
+                              <span className="text-slate-600 truncate">
+                                {docAText.substring(span.start, Math.min(span.end, span.start + 50))}
+                                {span.end - span.start > 50 ? '...' : ''}
+                              </span>
+                            </div>
+                            <Button variant="ghost" size="sm" onClick={() => removeHighlight('a', idx)}>
+                              <X className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  
+                  <div className="space-y-2">
+                    <Label className="text-xs font-semibold">Import Highlights JSON (Optional)</Label>
+                    <div className="flex gap-2">
+                      <Textarea 
+                        value={jsonImportA}
+                        onChange={(e) => setJsonImportA(e.target.value)}
+                        placeholder='[{"start":0,"end":10,"level":"confidential"}]'
+                        className="text-xs font-mono"
+                        rows={2}
+                      />
+                      <Button 
+                        onClick={() => importHighlights('a', jsonImportA)}
+                        disabled={!jsonImportA}
+                        variant="outline"
+                        size="sm"
+                      >
+                        Import
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Document B Highlighting */}
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="flex items-center gap-2">
+                      <FileText className="w-5 h-5 text-indigo-600" />
+                      {partyBLabel}
+                    </CardTitle>
+                    <div className="flex gap-2">
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        onClick={() => addHighlight('b', 'confidential')}
+                      >
+                        <span className="w-3 h-3 bg-red-500 rounded mr-2"></span>
+                        Mark Confidential
+                      </Button>
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        onClick={() => addHighlight('b', 'partial')}
+                      >
+                        <span className="w-3 h-3 bg-yellow-500 rounded mr-2"></span>
+                        Mark Partial
+                      </Button>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="p-4 border border-slate-200 rounded-xl bg-white max-h-96 overflow-auto">
+                    {renderHighlightedText(docBText, docBSpans, 'preview-b')}
+                  </div>
+                  
+                  {docBSpans.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-sm font-semibold">Highlights ({docBSpans.length})</Label>
+                        <Button variant="outline" size="sm" onClick={() => exportHighlights('b')}>
+                          <Download className="w-4 h-4 mr-2" />
+                          Export JSON
+                        </Button>
+                      </div>
+                      <div className="space-y-2 max-h-32 overflow-y-auto">
+                        {docBSpans.map((span, idx) => (
+                          <div key={idx} className="flex items-center justify-between text-sm bg-slate-50 p-2 rounded">
+                            <div className="flex items-center gap-2 flex-1 min-w-0">
+                              <span className={`w-3 h-3 rounded flex-shrink-0 ${span.level === 'confidential' ? 'bg-red-500' : 'bg-yellow-500'}`}></span>
+                              <span className="text-slate-600 truncate">
+                                {docBText.substring(span.start, Math.min(span.end, span.start + 50))}
+                                {span.end - span.start > 50 ? '...' : ''}
+                              </span>
+                            </div>
+                            <Button variant="ghost" size="sm" onClick={() => removeHighlight('b', idx)}>
+                              <X className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  
+                  <div className="space-y-2">
+                    <Label className="text-xs font-semibold">Import Highlights JSON (Optional)</Label>
+                    <div className="flex gap-2">
+                      <Textarea 
+                        value={jsonImportB}
+                        onChange={(e) => setJsonImportB(e.target.value)}
+                        placeholder='[{"start":0,"end":10,"level":"confidential"}]'
+                        className="text-xs font-mono"
+                        rows={2}
+                      />
+                      <Button 
+                        onClick={() => importHighlights('b', jsonImportB)}
+                        disabled={!jsonImportB}
+                        variant="outline"
+                        size="sm"
+                      >
+                        Import
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <div className="flex justify-between">
+                <Button variant="outline" onClick={async () => {
+                  await saveDraft(2);
+                  setStep(2);
+                }}>
+                  <ArrowLeft className="w-4 h-4 mr-2" />
+                  Back to Input
+                </Button>
+                <div className="flex gap-2">
+                  <Button variant="outline" onClick={() => saveDraft(3)}>
+                    <Save className="w-4 h-4 mr-2" />
+                    Save Draft
+                  </Button>
+                  <Button 
+                    onClick={async () => {
+                      await saveDraft(4);
+                      setStep(4);
+                    }}
+                    className="bg-blue-600 hover:bg-blue-700"
+                  >
+                    Continue to Evaluation
+                    <ArrowRight className="w-4 h-4 ml-2" />
+                  </Button>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {/* Step 4: Evaluation */}
+          {step === 4 && (
+            <motion.div key="step4" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
+              <Card>
+                <CardHeader>
+                  <CardTitle>Step 4: Review & Evaluate</CardTitle>
                   <CardDescription>Review your comparison before running AI evaluation</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-6">
@@ -994,13 +872,17 @@ export default function DocumentComparisonCreate() {
                   <div className="grid grid-cols-2 gap-4">
                     <div className="p-4 border border-red-200 bg-red-50 rounded-xl">
                       <div className="text-center">
-                        <p className="text-3xl font-bold text-red-700">{docASpans.filter(s => s.level === 'confidential').length + docBSpans.filter(s => s.level === 'confidential').length}</p>
+                        <p className="text-3xl font-bold text-red-700">
+                          {docASpans.filter(s => s.level === 'confidential').length + docBSpans.filter(s => s.level === 'confidential').length}
+                        </p>
                         <p className="text-sm text-red-600 mt-1">Confidential Spans</p>
                       </div>
                     </div>
                     <div className="p-4 border border-yellow-200 bg-yellow-50 rounded-xl">
                       <div className="text-center">
-                        <p className="text-3xl font-bold text-yellow-700">{docASpans.filter(s => s.level === 'partial').length + docBSpans.filter(s => s.level === 'partial').length}</p>
+                        <p className="text-3xl font-bold text-yellow-700">
+                          {docASpans.filter(s => s.level === 'partial').length + docBSpans.filter(s => s.level === 'partial').length}
+                        </p>
                         <p className="text-sm text-yellow-600 mt-1">Partial Spans</p>
                       </div>
                     </div>
@@ -1009,53 +891,44 @@ export default function DocumentComparisonCreate() {
                   <Alert>
                     <AlertTriangle className="w-4 h-4" />
                     <AlertDescription>
-                      <strong>Confidentiality Guarantee:</strong> Confidential and partial content will never be quoted or revealed in the shared AI report. 
-                      The AI will read them for analysis but will only provide high-level, redacted insights.
+                      <strong>Confidentiality Guarantee:</strong> Confidential content will never be quoted in the AI report. 
+                      Partial content will only be referenced at a high level. The AI reads them for analysis but provides redacted insights only.
                     </AlertDescription>
                   </Alert>
 
                   <div className="flex justify-between">
                     <Button variant="outline" onClick={async () => {
-                      if (comparisonId && user) {
-                        await base44.entities.DocumentComparison.update(comparisonId, { 
-                          doc_a_plaintext: docAText,
-                          doc_b_plaintext: docBText,
-                          doc_a_spans_json: docASpans,
-                          doc_b_spans_json: docBSpans,
-                          draft_step: 2,
-                          draft_updated_at: new Date().toISOString()
-                        }).catch(err => console.error('Failed to save on back:', err));
-                      }
-                      setStep(2);
+                      await saveDraft(3);
+                      setStep(3);
                     }}>
                       <ArrowLeft className="w-4 h-4 mr-2" />
-                      Back
+                      Back to Highlighting
                     </Button>
                     <div className="flex gap-2">
-                      <Button 
-                        variant="outline"
-                        onClick={() => saveDraftMutation.mutate()}
-                        disabled={saveDraftMutation.isPending}
-                      >
+                      <Button variant="outline" onClick={() => saveDraft(4)}>
                         <Save className="w-4 h-4 mr-2" />
                         Save Draft
                       </Button>
                       <Button 
                         onClick={async () => {
                           try {
-                            const id = comparisonId || await saveDraftMutation.mutateAsync();
+                            const id = comparisonId || await saveDraft(4);
                             const result = await base44.functions.invoke('EvaluateDocumentComparison', {
                               comparison_id: id
                             });
                             
                             if (!result.data.ok) {
-                              alert('Evaluation failed: ' + (result.data.error || 'Unknown error'));
+                              const errorMsg = result.data.message || result.data.error || 'Evaluation failed';
+                              const correlationId = result.data.correlationId || 'unknown';
+                              alert(`Evaluation failed:\n\n${errorMsg}\n\nCorrelation ID: ${correlationId}`);
                               return;
                             }
                             
                             navigate(createPageUrl(`DocumentComparisonDetail?id=${id}`));
                           } catch (error) {
-                            alert('Evaluation failed: ' + error.message);
+                            const errorMsg = error.response?.data?.message || error.message;
+                            const correlationId = error.response?.data?.correlationId || 'unknown';
+                            alert(`Evaluation failed:\n\n${errorMsg}\n\nCorrelation ID: ${correlationId}`);
                           }
                         }}
                         className="bg-purple-600 hover:bg-purple-700"

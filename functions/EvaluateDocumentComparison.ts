@@ -2,18 +2,28 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.6';
 
 Deno.serve(async (req) => {
   let comparison_id;
+  const correlationId = `eval_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+  
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
     if (!user) {
-      return Response.json({ error: 'Unauthorized', ok: false }, { status: 401 });
+      return Response.json({ 
+        error: 'Unauthorized', 
+        ok: false,
+        correlationId 
+      }, { status: 401 });
     }
 
     const body = await req.json();
     comparison_id = body.comparison_id;
     
     if (!comparison_id) {
-      return Response.json({ error: 'comparison_id is required', ok: false }, { status: 400 });
+      return Response.json({ 
+        error: 'comparison_id is required', 
+        ok: false,
+        correlationId 
+      }, { status: 400 });
     }
 
     // Load comparison record
@@ -21,13 +31,19 @@ Deno.serve(async (req) => {
     const comparison = comparisons[0];
     
     if (!comparison) {
-      return Response.json({ error: 'Comparison not found', ok: false }, { status: 404 });
+      return Response.json({ 
+        error: 'Comparison not found', 
+        ok: false,
+        correlationId 
+      }, { status: 404 });
     }
     
     if (!comparison.doc_a_plaintext || !comparison.doc_b_plaintext) {
       return Response.json({ 
         error: 'Both documents must have text content before evaluation',
-        ok: false
+        message: 'Please complete document input in steps 1-2 before running evaluation',
+        ok: false,
+        correlationId
       }, { status: 400 });
     }
 
@@ -146,7 +162,9 @@ Return JSON only with this structure:
       });
       return Response.json({ 
         ok: false,
-        error: errorMsg
+        error: errorMsg,
+        message: 'AI evaluation failed. Please try again or contact support.',
+        correlationId
       }, { status: 500 });
     }
 
@@ -163,7 +181,9 @@ Return JSON only with this structure:
       });
       return Response.json({ 
         ok: false,
-        error: 'Invalid AI output format' 
+        error: 'Invalid AI output format',
+        message: 'AI returned invalid format. Please try again.',
+        correlationId
       }, { status: 500 });
     }
 
@@ -189,7 +209,9 @@ Return JSON only with this structure:
           });
           return Response.json({ 
             ok: false, 
-            error: 'Report blocked due to potential disclosure' 
+            error: 'Report blocked due to potential disclosure',
+            message: 'Report blocked: confidential content detected in output. Please review highlights.',
+            correlationId
           }, { status: 400 });
         }
       }
@@ -226,7 +248,9 @@ Return JSON only with this structure:
     
     return Response.json({ 
       error: error.message,
-      ok: false
+      message: 'Evaluation failed with internal error. Please try again or contact support.',
+      ok: false,
+      correlationId
     }, { status: 500 });
   }
 });
