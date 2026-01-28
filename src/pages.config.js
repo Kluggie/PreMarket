@@ -16,13 +16,13 @@ import Privacy from './pages/Privacy';
 import Profile from './pages/Profile';
 import ProposalDetail from './pages/ProposalDetail';
 import Proposals from './pages/Proposals';
+import ReportViewer from './pages/ReportViewer';
 import Settings from './pages/Settings';
 import TemplateBuilder from './pages/TemplateBuilder';
 import TemplateDedupe from './pages/TemplateDedupe';
 import Templates from './pages/Templates';
 import Terms from './pages/Terms';
 import Verification from './pages/Verification';
-import ReportViewer from './pages/ReportViewer';
 import __Layout from './Layout.jsx';
 
 
@@ -45,13 +45,13 @@ export const PAGES = {
     "Profile": Profile,
     "ProposalDetail": ProposalDetail,
     "Proposals": Proposals,
+    "ReportViewer": ReportViewer,
     "Settings": Settings,
     "TemplateBuilder": TemplateBuilder,
     "TemplateDedupe": TemplateDedupe,
     "Templates": Templates,
     "Terms": Terms,
     "Verification": Verification,
-    "ReportViewer": ReportViewer,
 }
 
 export const pagesConfig = {

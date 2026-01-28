@@ -1410,23 +1410,30 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                               alert('Failed to save comparison. Please try again.');
                               return;
                             }
-                            
+
                             const result = await base44.functions.invoke('EvaluateDocumentComparison', {
                               comparison_id: id
                             });
-                            
+
                             if (!result.data.ok) {
+                              const errorCode = result.data.errorCode || 'UNKNOWN';
                               const errorMsg = result.data.message || result.data.error || 'Evaluation failed';
+                              const details = result.data.detailsSafe || '';
                               const correlationId = result.data.correlationId || `error_${Date.now()}`;
-                              alert(`Evaluation failed:\n\n${errorMsg}\n\nCorrelation ID: ${correlationId}\n\nPlease try again or contact support with this ID.`);
+
+                              alert(`Evaluation failed:\n\n${errorMsg}\n\n${details ? `Details: ${details}\n\n` : ''}Error Code: ${errorCode}\nCorrelation ID: ${correlationId}\n\nPlease try again or contact support with this ID.`);
                               return;
                             }
-                            
+
                             navigate(createPageUrl(`DocumentComparisonDetail?id=${id}`));
                           } catch (error) {
-                            const errorMsg = error.response?.data?.message || error.message;
-                            const correlationId = error.response?.data?.correlationId || `error_${Date.now()}`;
-                            alert(`Evaluation failed:\n\n${errorMsg}\n\nCorrelation ID: ${correlationId}\n\nPlease try again or contact support with this ID.`);
+                            const errorData = error.response?.data || {};
+                            const errorMsg = errorData.message || error.message;
+                            const errorCode = errorData.errorCode || 'UNKNOWN';
+                            const details = errorData.detailsSafe || '';
+                            const correlationId = errorData.correlationId || `error_${Date.now()}`;
+
+                            alert(`Evaluation failed:\n\n${errorMsg}\n\n${details ? `Details: ${details}\n\n` : ''}Error Code: ${errorCode}\nCorrelation ID: ${correlationId}\n\nPlease try again or contact support with this ID.`);
                           }
                         }}
                         disabled={!docAText || !docBText}
