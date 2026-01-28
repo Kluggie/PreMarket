@@ -152,27 +152,32 @@ export default function SharedReportViewer() {
 
     setSendingBack(true);
     try {
-      // Increment revision number
-      await base44.asServiceRole.entities.EvaluationItem.update(evalItem.id, {
-        revision_number: currentRevision + 1
-      });
-
-      // Send report back
+      // Send report back (backend will increment revision)
       const result = await base44.functions.invoke('SendReportEmail', {
         evaluationItemId: evalItem.id,
         recipientEmail: sendBackEmail
       });
 
       if (!result.data.ok) {
-        toast.error(result.data.message || 'Failed to send report');
+        const errorMsg = result.data.message || 'Failed to send report';
+        const corrId = result.data.correlationId ? `\n\nCorrelation ID: ${result.data.correlationId}` : '';
+        toast.error(errorMsg);
+        alert(`${errorMsg}${corrId}`);
         return;
       }
 
       toast.success(`Report sent to ${sendBackEmail}`);
       setSendBackEmail('');
+      
+      // Refresh validation data
+      const refreshResult = await base44.functions.invoke('ValidateShareLink', { token });
+      if (refreshResult.data.ok) {
+        setValidationData(refreshResult.data);
+      }
     } catch (error) {
       toast.error('Failed to send report back');
       console.error(error);
+      alert(`Failed to send report:\n\n${error.message}`);
     } finally {
       setSendingBack(false);
     }

@@ -153,6 +153,11 @@ Deno.serve(async (req) => {
       }, { status: 400 });
     }
 
+    // Increment revision number
+    await base44.asServiceRole.entities.EvaluationItem.update(evalItemId, {
+      revision_number: currentRevision + 1
+    });
+
     // Determine recipient role
     const recipientRole = evalItem.party_b_email === recipientEmail ? 'party_b' : 'party_a';
 
