@@ -284,10 +284,20 @@ Return JSON only with this structure:
       }
     }
 
-    // Update with successful report
+    // Build public report (sanitized) - store both internal and public
+    const publicReportResult = await base44.asServiceRole.functions.invoke('BuildPublicReport', {
+      internalReportJson: reportJson,
+      evaluationResponses: [] // Document comparison doesn't have ProposalResponse records
+    });
+    
+    const publicReport = publicReportResult.data.ok 
+      ? publicReportResult.data.publicReportJson 
+      : reportJson; // Fallback if sanitization fails
+
+    // Update with successful report - store public report only in legacy field
     await base44.entities.DocumentComparison.update(comparison_id, {
       status: 'evaluated',
-      evaluation_report_json: reportJson,
+      evaluation_report_json: publicReport, // Store public/sanitized version
       model_name: 'gemini-2.0-flash-exp',
       prompt_version: 'v1.0',
       generated_at: new Date().toISOString()
@@ -297,7 +307,9 @@ Return JSON only with this structure:
 
     return Response.json({
       ok: true,
-      report: reportJson,
+      report: publicReport,
+      public_report: publicReport,
+      internal_report: reportJson,
       correlationId
     });
 

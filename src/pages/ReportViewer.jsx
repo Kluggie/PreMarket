@@ -8,8 +8,11 @@ import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   Loader2, XCircle, AlertTriangle, Lock, Eye, Sparkles,
-  CheckCircle2, ArrowLeft, LogIn, UserPlus
+  CheckCircle2, ArrowLeft, LogIn, UserPlus, Edit, Send
 } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { toast } from 'sonner';
 
 export default function ReportViewer() {
   const [user, setUser] = useState(null);
