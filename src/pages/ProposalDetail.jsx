@@ -17,8 +17,10 @@ import {
   ArrowLeft, FileText, BarChart3, Shield, Eye, Clock, CheckCircle2,
   AlertTriangle, XCircle, Users, MessageSquare, Paperclip, RefreshCw,
   Send, Lock, Unlock, Sparkles, TrendingUp, TrendingDown, Minus,
-  ChevronRight, Upload, ThumbsUp, ThumbsDown
+  ChevronRight, Upload, ThumbsUp, ThumbsDown, Mail, Loader2
 } from 'lucide-react';
+import { Label } from '@/components/ui/label';
+import { toast } from 'sonner';
 
 const StatusBadge = ({ status }) => {
   const config = {
@@ -39,6 +41,8 @@ const StatusBadge = ({ status }) => {
 export default function ProposalDetail() {
   const [user, setUser] = useState(null);
   const [activeTab, setActiveTab] = useState('overview');
+  const [recipientEmail, setRecipientEmail] = useState('');
+  const [sendingEmail, setSendingEmail] = useState(false);
   const queryClient = useQueryClient();
   const navigate = useNavigate();
 
@@ -316,6 +320,38 @@ export default function ProposalDetail() {
       queryClient.invalidateQueries(['proposal', proposalId]);
     }
   });
+
+  const handleSendEmail = async () => {
+    if (!recipientEmail || !recipientEmail.includes('@')) {
+      toast.error('Please enter a valid email address');
+      return;
+    }
+
+    setSendingEmail(true);
+    try {
+      const result = await base44.functions.invoke('SendReportEmail', {
+        proposalId,
+        recipientEmail
+      });
+
+      if (!result.data.ok) {
+        const errorMsg = result.data.message || 'Failed to send email';
+        const corrId = result.data.correlationId ? `\n\nCorrelation ID: ${result.data.correlationId}` : '';
+        toast.error(errorMsg);
+        alert(`${errorMsg}${corrId}`);
+        return;
+      }
+
+      toast.success(`Report sent to ${recipientEmail}`);
+      setRecipientEmail('');
+    } catch (error) {
+      toast.error('Failed to send email');
+      console.error('Send email error:', error);
+      alert(`Failed to send email:\n\n${error.message}`);
+    } finally {
+      setSendingEmail(false);
+    }
+  };
 
   if (loadingProposal || !proposal) {
     return (
@@ -737,6 +773,49 @@ export default function ProposalDetail() {
 
               {/* Sidebar */}
               <div className="space-y-6">
+                {/* Share Report */}
+                {(latestSuccessReport || sharedReport?.status === 'succeeded' || fitCardReport?.status === 'succeeded') && (
+                  <Card className="border-0 shadow-sm">
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2 text-base">
+                        <Mail className="w-4 h-4 text-blue-600" />
+                        Share Report
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="space-y-2">
+                        <Label htmlFor="recipient-email" className="text-sm">Recipient Email</Label>
+                        <Input 
+                          id="recipient-email"
+                          type="email"
+                          placeholder="recipient@example.com"
+                          value={recipientEmail}
+                          onChange={(e) => setRecipientEmail(e.target.value)}
+                          disabled={sendingEmail}
+                        />
+                      </div>
+                      <Button 
+                        onClick={handleSendEmail}
+                        disabled={sendingEmail || !recipientEmail}
+                        className="w-full bg-blue-600 hover:bg-blue-700"
+                        size="sm"
+                      >
+                        {sendingEmail ? (
+                          <>
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            Sending...
+                          </>
+                        ) : (
+                          <>
+                            <Send className="w-4 h-4 mr-2" />
+                            Send Report
+                          </>
+                        )}
+                      </Button>
+                    </CardContent>
+                  </Card>
+                )}
+
                 {/* Quick Actions */}
                 <Card className="border-0 shadow-sm">
                   <CardHeader>
