@@ -22,6 +22,7 @@ import TemplateDedupe from './pages/TemplateDedupe';
 import Templates from './pages/Templates';
 import Terms from './pages/Terms';
 import Verification from './pages/Verification';
+import ReportViewer from './pages/ReportViewer';
 import __Layout from './Layout.jsx';
 
 
@@ -50,6 +51,7 @@ export const PAGES = {
     "Templates": Templates,
     "Terms": Terms,
     "Verification": Verification,
+    "ReportViewer": ReportViewer,
 }
 
 export const pagesConfig = {
