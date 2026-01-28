@@ -18,11 +18,11 @@ Deno.serve(async (req) => {
 
     const { evaluationItemId, proposalId, documentComparisonId, recipientEmail } = await req.json();
     
-    if (!recipientEmail) {
+    if (!recipientEmail || !recipientEmail.includes('@')) {
       return Response.json({
         ok: false,
-        errorCode: 'MISSING_EMAIL',
-        message: 'Recipient email is required',
+        errorCode: 'INVALID_EMAIL',
+        message: 'Valid recipient email is required',
         correlationId
       }, { status: 400 });
     }
@@ -30,8 +30,11 @@ Deno.serve(async (req) => {
     // Determine which entity to work with
     let evalItemId = evaluationItemId;
     let evalItem = null;
+    let sourceEntity = null;
+    let sourceType = 'other';
+    let sourceTitle = 'Untitled';
 
-    // If evaluationItemId not provided, create one
+    // Load or create EvaluationItem
     if (!evalItemId) {
       if (!proposalId && !documentComparisonId) {
         return Response.json({
@@ -42,13 +45,11 @@ Deno.serve(async (req) => {
         }, { status: 400 });
       }
 
-      // Load the source entity
-      let title = 'Untitled';
-      let type = 'other';
-      
+      // Load source entity
       if (documentComparisonId) {
         const comps = await base44.asServiceRole.entities.DocumentComparison.filter({ id: documentComparisonId });
-        if (!comps[0]) {
+        sourceEntity = comps[0];
+        if (!sourceEntity) {
           return Response.json({
             ok: false,
             errorCode: 'NOT_FOUND',
@@ -56,11 +57,23 @@ Deno.serve(async (req) => {
             correlationId
           }, { status: 404 });
         }
-        title = comps[0].title || 'Document Comparison';
-        type = 'document_comparison';
+        
+        // Check if evaluation exists
+        if (sourceEntity.status !== 'evaluated' || !sourceEntity.evaluation_report_json) {
+          return Response.json({
+            ok: false,
+            errorCode: 'NO_REPORT',
+            message: 'No evaluation report available. Please run evaluation first.',
+            correlationId
+          }, { status: 400 });
+        }
+        
+        sourceTitle = sourceEntity.title || 'Document Comparison';
+        sourceType = 'document_comparison';
       } else if (proposalId) {
         const proposals = await base44.asServiceRole.entities.Proposal.filter({ id: proposalId });
-        if (!proposals[0]) {
+        sourceEntity = proposals[0];
+        if (!sourceEntity) {
           return Response.json({
             ok: false,
             errorCode: 'NOT_FOUND',
@@ -68,11 +81,11 @@ Deno.serve(async (req) => {
             correlationId
           }, { status: 404 });
         }
-        title = proposals[0].title || 'Proposal';
-        type = 'proposal';
+        sourceTitle = sourceEntity.title || 'Proposal';
+        sourceType = 'proposal';
       }
 
-      // Create or find EvaluationItem
+      // Find or create EvaluationItem
       const existingItems = await base44.asServiceRole.entities.EvaluationItem.filter({
         ...(proposalId ? { linked_proposal_id: proposalId } : {}),
         ...(documentComparisonId ? { linked_document_comparison_id: documentComparisonId } : {})
@@ -83,8 +96,8 @@ Deno.serve(async (req) => {
         evalItemId = evalItem.id;
       } else {
         evalItem = await base44.asServiceRole.entities.EvaluationItem.create({
-          type,
-          title,
+          type: sourceType,
+          title: sourceTitle,
           created_by_user_id: user.id,
           party_a_user_id: user.id,
           party_a_email: user.email,
@@ -92,7 +105,8 @@ Deno.serve(async (req) => {
           status: 'completed',
           linked_proposal_id: proposalId || null,
           linked_document_comparison_id: documentComparisonId || null,
-          revision_number: 0
+          revision_number: 0,
+          max_revisions: 5
         });
         evalItemId = evalItem.id;
       }
@@ -110,16 +124,31 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Check if report exists
-    const runs = await base44.asServiceRole.entities.EvaluationRun.filter({ 
-      evaluation_item_id: evalItemId 
-    }, '-created_date', 1);
+    // Verify report exists
+    if (evalItem.type === 'proposal') {
+      const runs = await base44.asServiceRole.entities.EvaluationRun.filter({ 
+        evaluation_item_id: evalItemId 
+      }, '-created_date', 1);
+      
+      if (!runs[0] || !runs[0].public_report_json) {
+        return Response.json({
+          ok: false,
+          errorCode: 'NO_REPORT',
+          message: 'No evaluation report available. Please run evaluation first.',
+          correlationId
+        }, { status: 400 });
+      }
+    }
+
+    // Check revision limit
+    const currentRevision = evalItem.revision_number || 0;
+    const maxRevisions = evalItem.max_revisions || 5;
     
-    if (!runs[0] || !runs[0].public_report_json) {
+    if (currentRevision >= maxRevisions) {
       return Response.json({
         ok: false,
-        errorCode: 'NO_REPORT',
-        message: 'No evaluation report available yet. Please run evaluation first.',
+        errorCode: 'MAX_REVISIONS',
+        message: `Maximum revision limit (${maxRevisions}) reached`,
         correlationId
       }, { status: 400 });
     }
@@ -141,6 +170,7 @@ Deno.serve(async (req) => {
         ok: false,
         errorCode: 'SHARELINK_FAILED',
         message: shareLinkResult.data.message || 'Failed to create share link',
+        detailsSafe: shareLinkResult.data.errorCode,
         correlationId
       }, { status: 500 });
     }
@@ -149,9 +179,9 @@ Deno.serve(async (req) => {
     
     // Build magic link
     const origin = req.headers.get('origin') || 'https://premarket.base44.app';
-    const magicLink = `${origin}/shared/${shareLinkId}?token=${token}`;
-
-    // Determine email content based on type
+    const magicLink = `${origin}/sharedreportviewer?id=${shareLinkId}&token=${token}`;
+    
+    // Prepare email content
     const senderName = user.full_name || user.email || 'A PreMarket user';
     const itemTypeLabel = evalItem.type === 'proposal' ? 'proposal' 
                         : evalItem.type === 'document_comparison' ? 'document comparison'
@@ -171,7 +201,7 @@ You can:
 • Re-run the evaluation
 • Send your response back
 
-This secure link expires in 14 days.
+This secure link expires in 14 days and can be used up to 25 times.
 
 ---
 PreMarket: Privacy-preserving pre-qualification platform
@@ -184,7 +214,7 @@ This is an information exchange only. PreMarket is not a broker, advisor, or tra
       return Response.json({
         ok: false,
         errorCode: 'NO_API_KEY',
-        message: 'Email service not configured',
+        message: 'Email service not configured. Please contact support.',
         correlationId
       }, { status: 500 });
     }
@@ -203,25 +233,28 @@ This is an information exchange only. PreMarket is not a broker, advisor, or tra
       })
     });
 
-    const emailData = await emailResponse.json();
-
     if (!emailResponse.ok) {
-      console.error('[SendReportEmail] Resend error:', emailData, 'correlationId:', correlationId);
+      const emailData = await emailResponse.json().catch(() => ({}));
+      console.error('[SendReportEmail] Resend error:', emailData, 'status:', emailResponse.status, 'correlationId:', correlationId);
       return Response.json({
         ok: false,
         errorCode: 'EMAIL_SEND_FAILED',
-        message: `Email provider error: ${emailData.message || 'Unknown error'}`,
-        detailsSafe: `Status: ${emailResponse.status}`,
+        message: `Email provider error: ${emailData.message || 'Failed to send email'}`,
+        detailsSafe: `Provider status: ${emailResponse.status}`,
         correlationId
       }, { status: 500 });
     }
 
-    console.log(`[SendReportEmail] Sent to ${recipientEmail.split('@')[0]}@${recipientEmail.split('@')[1]}, status: ${emailResponse.status}, correlationId: ${correlationId}`);
+    const emailData = await emailResponse.json();
+    
+    const maskedEmail = `${recipientEmail.split('@')[0].substring(0, 2)}***@${recipientEmail.split('@')[1]}`;
+    console.log(`[SendReportEmail] Sent to ${maskedEmail}, provider status: ${emailResponse.status}, emailId: ${emailData.id}, correlationId: ${correlationId}`);
 
     return Response.json({
       ok: true,
       message: 'Report sent successfully',
       emailId: emailData.id,
+      shareLinkId,
       correlationId
     });
 
