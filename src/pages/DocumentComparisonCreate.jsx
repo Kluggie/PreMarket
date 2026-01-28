@@ -91,7 +91,7 @@ export default function DocumentComparisonCreate() {
     }
   }, [user]);
 
-  // Autosave every 3 seconds when data changes
+  // Autosave every 1.5 seconds when data changes
   useEffect(() => {
     if (!user || !comparisonId) return;
     
@@ -105,10 +105,10 @@ export default function DocumentComparisonCreate() {
     const timer = setTimeout(() => {
       saveDraft(step, true);
       setLastSavedState(currentState);
-    }, 3000);
+    }, 1500);
     
     return () => clearTimeout(timer);
-  }, [title, partyALabel, partyBLabel, docASource, docBSource, docAText, docBText, docASpans, docBSpans, step, user, comparisonId, lastSavedState]);
+  }, [title, partyALabel, partyBLabel, docASource, docBSource, docAText, docBText, docASpans, docBSpans, docAFiles, docBFiles, step, user, comparisonId, lastSavedState]);
 
   const loadDraft = async (id) => {
     try {
