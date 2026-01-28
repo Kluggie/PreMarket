@@ -40,20 +40,22 @@ Deno.serve(async (req) => {
       }, { status: 404 });
     }
     
-    if (!comparison.doc_a_plaintext || !comparison.doc_b_plaintext) {
+    if (!comparison.doc_a_plaintext || !comparison.doc_a_plaintext.trim()) {
       return Response.json({ 
-        error: 'Both documents must have text content before evaluation',
-        message: 'Please complete document input in steps 1-2 before running evaluation',
         ok: false,
+        errorCode: 'MISSING_TEXT',
+        error: 'Document A has no text',
+        message: `${comparison.party_a_label || 'Document A'} has no extracted text. Please add content in Step 2.`,
         correlationId
       }, { status: 400 });
     }
     
-    if (!comparison.doc_a_plaintext.trim() || !comparison.doc_b_plaintext.trim()) {
+    if (!comparison.doc_b_plaintext || !comparison.doc_b_plaintext.trim()) {
       return Response.json({ 
-        error: 'Documents cannot be empty',
-        message: 'Both documents must contain text content',
         ok: false,
+        errorCode: 'MISSING_TEXT',
+        error: 'Document B has no text',
+        message: `${comparison.party_b_label || 'Document B'} has no extracted text. Please add content in Step 2.`,
         correlationId
       }, { status: 400 });
     }
@@ -160,17 +162,37 @@ Return JSON only with this structure:
     // Call GenerateContent via service role (uses Vertex OAuth)
     console.log('[EvaluateDocumentComparison] Calling GenerateContent with correlationId:', correlationId);
     
-    const result = await base44.asServiceRole.functions.invoke('GenerateContent', {
-      text: systemPrompt + '\n\n' + userContent,
-      temperature: 0.2,
-      maxOutputTokens: 2000,
-      thinkingBudget: 0
-    });
+    let result;
+    try {
+      result = await base44.asServiceRole.functions.invoke('GenerateContent', {
+        text: systemPrompt + '\n\n' + userContent,
+        temperature: 0.2,
+        maxOutputTokens: 2000,
+        thinkingBudget: 0
+      });
+    } catch (invokeError) {
+      console.error('[EvaluateDocumentComparison] GenerateContent invoke error:', invokeError.message, 'correlationId:', correlationId);
+      
+      await base44.entities.DocumentComparison.update(comparison_id, {
+        status: 'failed',
+        error_message: invokeError.message
+      });
+      
+      return Response.json({ 
+        ok: false,
+        errorCode: 'VERTEX_CALL_FAILED',
+        error: invokeError.message,
+        message: 'AI evaluation service failed. Please try again or contact support.',
+        detailsSafe: 'The Vertex AI function could not be invoked',
+        correlationId
+      }, { status: 500 });
+    }
 
     console.log('[EvaluateDocumentComparison] GenerateContent result:', result?.data?.ok ? 'success' : 'failed');
 
     if (!result || !result.data || !result.data.ok) {
       const errorMsg = result?.data?.error || 'AI generation failed';
+      const errorDetails = result?.data?.raw?.error || '';
       console.error('[EvaluateDocumentComparison] GenerateContent failed:', errorMsg, 'correlationId:', correlationId);
       
       await base44.entities.DocumentComparison.update(comparison_id, {
@@ -180,8 +202,10 @@ Return JSON only with this structure:
       
       return Response.json({ 
         ok: false,
+        errorCode: 'VERTEX_GENERATION_FAILED',
         error: errorMsg,
-        message: 'AI evaluation failed. The Vertex AI call did not succeed. Please try again or contact support.',
+        message: 'Vertex AI generation failed. Please try again or contact support.',
+        detailsSafe: errorDetails ? `Vertex error: ${errorDetails}` : 'The AI model did not return a successful response',
         correlationId
       }, { status: 500 });
     }
@@ -196,8 +220,10 @@ Return JSON only with this structure:
       
       return Response.json({ 
         ok: false,
+        errorCode: 'EMPTY_AI_OUTPUT',
         error: 'Empty AI output',
         message: 'AI returned empty response. Please try again.',
+        detailsSafe: 'The Vertex AI model did not generate any content',
         correlationId
       }, { status: 500 });
     }
@@ -217,10 +243,11 @@ Return JSON only with this structure:
       
       return Response.json({ 
         ok: false,
+        errorCode: 'INVALID_JSON_OUTPUT',
         error: 'Invalid AI output format',
         message: 'AI returned invalid JSON format. Please try again.',
-        correlationId,
-        rawOutput: outputText.substring(0, 200)
+        detailsSafe: `Parse error: ${parseError.message}`,
+        correlationId
       }, { status: 500 });
     }
 
@@ -246,11 +273,12 @@ Return JSON only with this structure:
           });
           console.error('[EvaluateDocumentComparison] Leak detected:', confidentialText.substring(0, 50), 'correlationId:', correlationId);
           return Response.json({ 
-            ok: false, 
+            ok: false,
+            errorCode: 'CONFIDENTIAL_LEAK_DETECTED',
             error: 'Report blocked due to potential disclosure',
             message: 'Report blocked: confidential content detected in AI output. Please review highlights and try again.',
-            correlationId,
-            leakedContent: confidentialText.substring(0, 100)
+            detailsSafe: 'The AI included text from a confidential span in the report',
+            correlationId
           }, { status: 400 });
         }
       }
@@ -289,9 +317,11 @@ Return JSON only with this structure:
     console.error('[EvaluateDocumentComparison] Stack:', error.stack);
     
     return Response.json({ 
+      ok: false,
+      errorCode: 'INTERNAL_ERROR',
       error: error.message,
       message: 'Evaluation failed with internal error. Please try again or contact support.',
-      ok: false,
+      detailsSafe: error.message,
       correlationId
     }, { status: 500 });
   }
