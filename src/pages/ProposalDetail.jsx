@@ -146,15 +146,33 @@ export default function ProposalDetail() {
   // Run New Evaluation (Vertex Gemini)
   const runNewEvaluationMutation = useMutation({
     mutationFn: async () => {
-      if (isFinanceTemplate) {
-        const response = await base44.functions.invoke('EvaluateProposalShared', { proposal_id: proposal.id });
+      const clientCorrelationId = `client_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      
+      try {
+        let response;
+        if (isFinanceTemplate) {
+          response = await base44.functions.invoke('EvaluateProposalShared', { proposal_id: proposal.id });
+        } else if (isProfileMatchingTemplate) {
+          response = await base44.functions.invoke('EvaluateFitCardShared', { proposal_id: proposal.id });
+        } else {
+          response = await base44.functions.invoke('EvaluateProposal', { proposal_id: proposal.id });
+        }
+        
+        // Check if response is valid JSON
+        if (!response.data || typeof response.data !== 'object') {
+          const rawText = typeof response.data === 'string' ? response.data.substring(0, 300) : JSON.stringify(response.data).substring(0, 300);
+          throw new Error(`Non-JSON response\n\nCorrelation ID: ${clientCorrelationId}\n\nRaw (first 300 chars):\n${rawText}`);
+        }
+        
+        if (response.data.status === 'failed' || response.data.status === 'error') {
+          const errorMsg = response.data.error_message || response.data.error || 'Evaluation failed';
+          const corrId = response.data.correlation_id || clientCorrelationId;
+          throw new Error(`${errorMsg}\n\nCorrelation ID: ${corrId}`);
+        }
+        
         return response.data;
-      } else if (isProfileMatchingTemplate) {
-        const response = await base44.functions.invoke('EvaluateFitCardShared', { proposal_id: proposal.id });
-        return response.data;
-      } else {
-        const response = await base44.functions.invoke('EvaluateProposal', { proposal_id: proposal.id });
-        return response.data;
+      } catch (error) {
+        throw error;
       }
     },
     onSuccess: () => {
@@ -162,6 +180,9 @@ export default function ProposalDetail() {
       queryClient.invalidateQueries(['sharedReports', proposalId]);
       queryClient.invalidateQueries(['fitCardReports', proposalId]);
       queryClient.invalidateQueries(['proposal', proposalId]);
+    },
+    onError: (error) => {
+      alert(`Evaluation failed:\n\n${error.message}`);
     }
   });
 

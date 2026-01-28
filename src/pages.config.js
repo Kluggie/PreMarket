@@ -67,12 +67,12 @@ import ProposalDetail from './pages/ProposalDetail';
 import Proposals from './pages/Proposals';
 import ReportViewer from './pages/ReportViewer';
 import Settings from './pages/Settings';
+import SharedReport from './pages/SharedReport';
 import TemplateBuilder from './pages/TemplateBuilder';
 import TemplateDedupe from './pages/TemplateDedupe';
 import Templates from './pages/Templates';
 import Terms from './pages/Terms';
 import Verification from './pages/Verification';
-import SharedReport from './pages/SharedReport';
 import __Layout from './Layout.jsx';
 
 
@@ -97,12 +97,12 @@ export const PAGES = {
     "Proposals": Proposals,
     "ReportViewer": ReportViewer,
     "Settings": Settings,
+    "SharedReport": SharedReport,
     "TemplateBuilder": TemplateBuilder,
     "TemplateDedupe": TemplateDedupe,
     "Templates": Templates,
     "Terms": Terms,
     "Verification": Verification,
-    "SharedReport": SharedReport,
 }
 
 export const pagesConfig = {

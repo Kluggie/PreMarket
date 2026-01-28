@@ -75,21 +75,32 @@ export default function DocumentComparisonDetail() {
 
   const runEvaluationMutation = useMutation({
     mutationFn: async () => {
-      const result = await base44.functions.invoke('EvaluateDocumentComparison', {
-        comparison_id: comparisonId
-      });
+      const clientCorrelationId = `client_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       
-      if (!result.data.ok) {
-        const errorCode = result.data.errorCode || 'UNKNOWN';
-        const errorMsg = result.data.message || result.data.error || 'Evaluation failed';
-        const details = result.data.detailsSafe || '';
-        const corrId = result.data.correlationId || 'unknown';
+      try {
+        const result = await base44.functions.invoke('EvaluateDocumentComparison', {
+          comparison_id: comparisonId
+        });
         
-        const fullError = `${errorMsg}\n\n${details ? `Details: ${details}\n\n` : ''}Error Code: ${errorCode}\nCorrelation ID: ${corrId}`;
-        throw new Error(fullError);
+        // Check if response is valid JSON
+        if (!result.data || typeof result.data !== 'object') {
+          const rawText = typeof result.data === 'string' ? result.data.substring(0, 300) : JSON.stringify(result.data).substring(0, 300);
+          throw new Error(`Non-JSON response\n\nCorrelation ID: ${clientCorrelationId}\n\nRaw (first 300 chars):\n${rawText}`);
+        }
+        
+        if (!result.data.ok) {
+          const errorCode = result.data.errorCode || 'UNKNOWN';
+          const errorMsg = result.data.message || result.data.error || 'Evaluation failed';
+          const details = result.data.detailsSafe || '';
+          const corrId = result.data.correlationId || clientCorrelationId;
+          
+          throw new Error(`${errorMsg}\n\n${details ? `Details: ${details}\n\n` : ''}Error Code: ${errorCode}\nCorrelation ID: ${corrId}`);
+        }
+        
+        return result.data;
+      } catch (error) {
+        throw error;
       }
-      
-      return result.data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries(['documentComparison', comparisonId]);

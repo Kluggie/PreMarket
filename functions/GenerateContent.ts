@@ -123,18 +123,23 @@ async function callVertexAI({ projectId, location, model, text, temperature, max
 }
 
 Deno.serve(async (req) => {
+  const correlationId = `gencontent_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
 
     if (!user) {
-      return Response.json({ error: 'Unauthorized' }, { status: 401 });
+      console.log(`[${correlationId}] Unauthorized access attempt`);
+      return Response.json({ 
+        ok: false,
+        errorCode: 'UNAUTHORIZED',
+        error: 'Unauthorized',
+        correlationId
+      }, { status: 401 });
     }
 
-    // Allow service role calls from backend functions (no user/admin check)
-    // This function is intended to be called by other backend functions via asServiceRole
-
-    const payload = await req.json();
+    const payload = await req.json().catch(() => ({}));
     const {
       projectId = 'premarket-484606',
       location = 'global',
@@ -147,29 +152,81 @@ Deno.serve(async (req) => {
 
     // Validate required params
     if (!text) {
+      console.log(`[${correlationId}] Missing text parameter`);
       return Response.json({
         ok: false,
-        error: 'Missing required parameter: text'
+        errorCode: 'MISSING_TEXT',
+        error: 'Missing required parameter: text',
+        correlationId
+      }, { status: 400 });
+    }
+
+    // Check payload size
+    const textLength = text.length;
+    console.log(`[${correlationId}] Text length: ${textLength} chars`);
+    
+    if (textLength > 500000) {
+      console.log(`[${correlationId}] Text too large: ${textLength} chars`);
+      return Response.json({
+        ok: false,
+        errorCode: 'PROMPT_TOO_LARGE',
+        error: 'Input text is too large (>500k chars). Please reduce the content.',
+        correlationId
       }, { status: 400 });
     }
 
     // Get service account JSON from secrets
     const serviceAccountJson = Deno.env.get('GCP_SERVICE_ACCOUNT_JSON');
     if (!serviceAccountJson) {
+      console.error(`[${correlationId}] GCP_SERVICE_ACCOUNT_JSON not configured`);
       return Response.json({
         ok: false,
-        error: 'GCP_SERVICE_ACCOUNT_JSON secret not configured'
+        errorCode: 'VERTEX_AUTH',
+        error: 'GCP service account not configured',
+        correlationId
       }, { status: 500 });
     }
 
     // Get OAuth2 access token
-    const accessToken = await getAccessToken(serviceAccountJson);
+    let accessToken;
+    try {
+      accessToken = await getAccessToken(serviceAccountJson);
+      console.log(`[${correlationId}] OAuth token generated successfully`);
+    } catch (tokenError) {
+      console.error(`[${correlationId}] Token generation failed:`, tokenError.message);
+      return Response.json({
+        ok: false,
+        errorCode: 'VERTEX_AUTH',
+        error: 'Failed to generate OAuth token',
+        correlationId
+      }, { status: 500 });
+    }
 
     // Call Vertex AI
-    const vertexResponse = await callVertexAI(
-      { projectId, location, model, text, temperature, maxOutputTokens, thinkingBudget },
-      accessToken
-    );
+    let vertexResponse;
+    try {
+      vertexResponse = await callVertexAI(
+        { projectId, location, model, text, temperature, maxOutputTokens, thinkingBudget },
+        accessToken
+      );
+      console.log(`[${correlationId}] Vertex AI call successful`);
+    } catch (vertexError) {
+      console.error(`[${correlationId}] Vertex AI call failed:`, vertexError.message);
+      
+      // Parse status code from error
+      let statusCode = 500;
+      if (vertexError.message.includes('(401)')) statusCode = 401;
+      else if (vertexError.message.includes('(403)')) statusCode = 403;
+      else if (vertexError.message.includes('(429)')) statusCode = 429;
+      
+      return Response.json({
+        ok: false,
+        errorCode: statusCode === 401 || statusCode === 403 ? 'VERTEX_AUTH' : 'VERTEX_HTTP',
+        error: `Vertex AI error (HTTP ${statusCode})`,
+        details: vertexError.message,
+        correlationId
+      }, { status: 500 });
+    }
 
     // Extract output text from candidates
     let outputText = null;
@@ -178,19 +235,25 @@ Deno.serve(async (req) => {
       outputText = parts.map(part => part.text || '').join('');
     }
 
+    if (!outputText) {
+      console.warn(`[${correlationId}] Empty output from Vertex AI`);
+    }
+
     return Response.json({
       ok: true,
       outputText,
-      raw: vertexResponse
+      raw: vertexResponse,
+      correlationId
     });
 
   } catch (error) {
-    // Log error without exposing secrets
-    console.error('GenerateContent error:', error.message);
+    console.error(`[${correlationId}] Unexpected error:`, error.message);
     return Response.json({
       ok: false,
+      errorCode: 'INTERNAL',
       outputText: null,
       error: error.message,
+      correlationId,
       raw: {
         error: error.message
       }
