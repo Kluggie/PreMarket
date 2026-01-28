@@ -237,6 +237,39 @@ export default function CreateProposal() {
         await base44.entities.Proposal.update(proposalId, proposalData);
       }
 
+      // Create or update EvaluationItem
+      const evalItems = await base44.entities.EvaluationItem.filter({ 
+        linked_proposal_id: proposalId 
+      });
+      
+      const stepState = {
+        proposalTitle,
+        recipientEmail,
+        presetKey,
+        enabledModules,
+        responses,
+        visibilitySettings
+      };
+
+      const evalPayload = {
+        type: 'proposal',
+        title: proposalTitle || `${selectedTemplate.name} Proposal`,
+        created_by_user_id: user?.id,
+        party_a_user_id: user?.id,
+        party_a_email: user?.email,
+        party_b_email: recipientEmail || '',
+        status: 'draft',
+        last_step: step,
+        step_state_json: stepState,
+        linked_proposal_id: proposalId
+      };
+
+      if (evalItems.length > 0) {
+        await base44.entities.EvaluationItem.update(evalItems[0].id, evalPayload);
+      } else {
+        await base44.entities.EvaluationItem.create(evalPayload);
+      }
+
       const existingResponses = await base44.entities.ProposalResponse.filter({ proposal_id: proposalId });
 
       for (const [responseKey, value] of Object.entries(responses)) {
