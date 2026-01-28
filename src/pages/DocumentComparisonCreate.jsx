@@ -1089,13 +1089,15 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                   Back
                 </Button>
                 <div className="flex gap-2">
-                  <Button 
-                    variant="outline"
-                    onClick={() => saveDraft(2)}
-                  >
-                    <Save className="w-4 h-4 mr-2" />
-                    Save Draft
-                  </Button>
+                                <Button 
+                                  variant="outline"
+                                  onClick={async () => {
+                                    await saveDraft(2);
+                                  }}
+                                >
+                                  <Save className="w-4 h-4 mr-2" />
+                                  Save Draft
+                                </Button>
                   <Button 
                     onClick={async () => {
                       await saveDraft(3);
@@ -1326,7 +1328,9 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                   Back to Input
                 </Button>
                 <div className="flex gap-2">
-                  <Button variant="outline" onClick={() => saveDraft(3)}>
+                  <Button variant="outline" onClick={async () => {
+                    await saveDraft(3);
+                  }}>
                     <Save className="w-4 h-4 mr-2" />
                     Save Draft
                   </Button>
@@ -1405,7 +1409,9 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                       Back to Highlighting
                     </Button>
                     <div className="flex gap-2">
-                      <Button variant="outline" onClick={() => saveDraft(4)}>
+                      <Button variant="outline" onClick={async () => {
+                        await saveDraft(4);
+                      }}>
                         <Save className="w-4 h-4 mr-2" />
                         Save Draft
                       </Button>

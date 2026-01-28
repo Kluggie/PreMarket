@@ -293,9 +293,12 @@ Return JSON only with this structure:
       generated_at: new Date().toISOString()
     });
 
+    console.log('[EvaluateDocumentComparison] Success, correlationId:', correlationId);
+
     return Response.json({
       ok: true,
-      report: reportJson
+      report: reportJson,
+      correlationId
     });
 
   } catch (error) {
