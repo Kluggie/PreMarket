@@ -19,6 +19,8 @@ export default function ReportViewer() {
   const [evaluationItem, setEvaluationItem] = useState(null);
   const [evaluationRun, setEvaluationRun] = useState(null);
   const navigate = useNavigate();
+  const [editMode, setEditMode] = useState(false);
+  const [sendBackEmail, setSendBackEmail] = useState('');
 
   // Extract token from URL: /r/:token
   const pathParts = window.location.pathname.split('/');
@@ -340,6 +342,87 @@ export default function ReportViewer() {
                 </ul>
               </CardContent>
             </Card>
+          )}
+
+          {/* Actions for recipient */}
+          {tokenData?.role === 'party_b' && evaluationRun?.cycle_index < 6 && (
+            <Card className="border-2 border-blue-200 bg-blue-50">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Edit className="w-5 h-5 text-blue-600" />
+                  Recipient Actions
+                </CardTitle>
+                <CardDescription>
+                  You can edit your side and request a re-evaluation
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {evaluationItem.linked_document_comparison_id && (
+                  <Button 
+                    onClick={() => {
+                      // TODO: implement recipient editing flow
+                      toast.info('Editing flow coming soon');
+                    }}
+                    variant="outline"
+                    className="w-full"
+                  >
+                    <Edit className="w-4 h-4 mr-2" />
+                    Edit My Side
+                  </Button>
+                )}
+                
+                <div className="space-y-2">
+                  <Label className="text-sm">Send Back to Proposer</Label>
+                  <div className="flex gap-2">
+                    <Input 
+                      type="email"
+                      placeholder="proposer@example.com"
+                      value={sendBackEmail}
+                      onChange={(e) => setSendBackEmail(e.target.value)}
+                    />
+                    <Button 
+                      onClick={async () => {
+                        if (!sendBackEmail.includes('@')) {
+                          toast.error('Please enter a valid email');
+                          return;
+                        }
+                        
+                        try {
+                          const result = await base44.functions.invoke('SendEvaluationReportEmail', {
+                            evaluationItemId: evaluationItem.id,
+                            toEmail: sendBackEmail,
+                            role: 'party_a'
+                          });
+                          
+                          if (result.data.ok) {
+                            toast.success('Report sent back');
+                            setSendBackEmail('');
+                          } else {
+                            toast.error('Failed to send');
+                          }
+                        } catch (error) {
+                          toast.error('Failed to send email');
+                        }
+                      }}
+                      disabled={!sendBackEmail}
+                      size="sm"
+                    >
+                      <Send className="w-4 h-4 mr-2" />
+                      Send
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {evaluationRun?.cycle_index >= 6 && (
+            <Alert>
+              <AlertTriangle className="w-4 h-4" />
+              <AlertDescription>
+                Maximum evaluation cycles reached (6). No further re-evaluations allowed.
+              </AlertDescription>
+            </Alert>
           )}
 
           {/* View full details */}

@@ -212,7 +212,8 @@ Deno.serve(async (req) => {
       ok: true,
       runId: newRun.id,
       cycleIndex: currentCycleIndex,
-      report: evalResult.data.report,
+      report: publicReport,
+      public_report: publicReport,
       correlationId
     });
 
