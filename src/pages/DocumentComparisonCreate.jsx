@@ -109,7 +109,12 @@ export default function DocumentComparisonCreate() {
     try {
       const comparisons = await base44.entities.DocumentComparison.filter({ id });
       const comparison = comparisons[0];
-      if (!comparison) return;
+      
+      if (!comparison) {
+        alert('Draft comparison not found. It may have been deleted.');
+        navigate(createPageUrl('Proposals'));
+        return;
+      }
       
       setTitle(comparison.title || '');
       setPartyALabel(comparison.party_a_label || 'Document A');
@@ -138,6 +143,8 @@ export default function DocumentComparisonCreate() {
       }));
     } catch (error) {
       console.error('Failed to load draft:', error);
+      alert('Error loading draft: ' + error.message);
+      navigate(createPageUrl('Proposals'));
     }
   };
 

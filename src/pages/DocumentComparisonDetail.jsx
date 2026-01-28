@@ -26,16 +26,23 @@ export default function DocumentComparisonDetail() {
     base44.auth.me().then(setUser).catch(() => setUser(null));
   }, []);
 
-  const { data: comparison, isLoading } = useQuery({
+  const { data: comparison, isLoading, error } = useQuery({
     queryKey: ['documentComparison', comparisonId],
     queryFn: async () => {
+      if (!comparisonId) {
+        throw new Error('No comparison ID provided');
+      }
       const comparisons = await base44.entities.DocumentComparison.filter({ id: comparisonId });
+      if (!comparisons[0]) {
+        throw new Error('Comparison not found');
+      }
       return comparisons[0];
     },
     enabled: !!comparisonId,
     refetchInterval: (data) => {
       return data?.status === 'submitted' ? 2000 : false;
-    }
+    },
+    retry: false
   });
 
   const runEvaluationMutation = useMutation({
@@ -57,6 +64,31 @@ export default function DocumentComparisonDetail() {
       alert(`Evaluation failed: ${error.message}`);
     }
   });
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-slate-50 py-8">
+        <div className="max-w-4xl mx-auto px-4">
+          <Link to={createPageUrl('Proposals')} className="inline-flex items-center text-slate-600 hover:text-slate-900 mb-4">
+            <ArrowLeft className="w-4 h-4 mr-2" />
+            Back to Proposals
+          </Link>
+          <Card className="border-0 shadow-sm">
+            <CardContent className="py-16 text-center">
+              <XCircle className="w-12 h-12 text-red-300 mx-auto mb-4" />
+              <h3 className="text-lg font-semibold text-slate-900 mb-2">Comparison Not Found</h3>
+              <p className="text-slate-500 mb-6">
+                This comparison may have been deleted or you don't have access to it.
+              </p>
+              <Button onClick={() => navigate(createPageUrl('Proposals'))}>
+                Return to Proposals
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
 
   if (isLoading || !comparison) {
     return (
