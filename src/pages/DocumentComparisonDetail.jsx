@@ -11,13 +11,18 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Progress } from '@/components/ui/progress';
 import {
   ArrowLeft, Sparkles, CheckCircle2, XCircle, AlertTriangle,
-  FileText, Shield, RefreshCw, Loader2, TrendingUp, TrendingDown, Lock
+  FileText, Shield, RefreshCw, Loader2, TrendingUp, TrendingDown, Lock, Send, Mail
 } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { toast } from 'sonner';
 
 export default function DocumentComparisonDetail() {
   const [user, setUser] = useState(null);
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const [recipientEmail, setRecipientEmail] = useState('');
+  const [sendingEmail, setSendingEmail] = useState(false);
 
   const params = new URLSearchParams(window.location.search);
   const comparisonId = params.get('id');
@@ -52,18 +57,79 @@ export default function DocumentComparisonDetail() {
       });
       
       if (!result.data.ok) {
-        throw new Error(result.data.error || 'Evaluation failed');
+        const errorCode = result.data.errorCode || 'UNKNOWN';
+        const errorMsg = result.data.message || result.data.error || 'Evaluation failed';
+        const details = result.data.detailsSafe || '';
+        const corrId = result.data.correlationId || 'unknown';
+        
+        const fullError = `${errorMsg}\n\n${details ? `Details: ${details}\n\n` : ''}Error Code: ${errorCode}\nCorrelation ID: ${corrId}`;
+        throw new Error(fullError);
       }
       
       return result.data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries(['documentComparison', comparisonId]);
+      toast.success('Evaluation completed successfully');
     },
     onError: (error) => {
-      alert(`Evaluation failed: ${error.message}`);
+      toast.error('Evaluation failed');
+      alert(`Evaluation failed:\n\n${error.message}`);
     }
   });
+
+  const handleSendEmail = async () => {
+    if (!recipientEmail || !recipientEmail.includes('@')) {
+      toast.error('Please enter a valid email address');
+      return;
+    }
+
+    setSendingEmail(true);
+    try {
+      // First ensure there's an EvaluationItem linked to this comparison
+      let evalItems = await base44.entities.EvaluationItem.filter({ 
+        linked_document_comparison_id: comparisonId 
+      });
+      
+      let evalItemId;
+      if (evalItems.length === 0) {
+        // Create EvaluationItem
+        const evalItem = await base44.entities.EvaluationItem.create({
+          type: 'document_comparison',
+          title: comparison.title || 'Untitled Comparison',
+          created_by_user_id: user?.id,
+          party_a_user_id: user?.id,
+          party_a_email: user?.email,
+          party_b_email: recipientEmail,
+          status: 'completed',
+          linked_document_comparison_id: comparisonId
+        });
+        evalItemId = evalItem.id;
+      } else {
+        evalItemId = evalItems[0].id;
+      }
+
+      // Send email with magic link
+      const result = await base44.functions.invoke('SendEvaluationReportEmail', {
+        evaluationItemId: evalItemId,
+        toEmail: recipientEmail,
+        role: 'party_b'
+      });
+
+      if (!result.data.ok) {
+        throw new Error(result.data.error || 'Failed to send email');
+      }
+
+      toast.success(`Report sent to ${recipientEmail}`);
+      setRecipientEmail('');
+    } catch (error) {
+      toast.error('Failed to send email');
+      console.error('Send email error:', error);
+      alert(`Failed to send email:\n\n${error.message}`);
+    } finally {
+      setSendingEmail(false);
+    }
+  };
 
   if (error) {
     return (
@@ -400,6 +466,53 @@ export default function DocumentComparisonDetail() {
                 </CardContent>
               </Card>
             )}
+
+            {/* Send Report */}
+            <Card className="border-0 shadow-sm">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Mail className="w-5 h-5 text-blue-600" />
+                  Share Report
+                </CardTitle>
+                <CardDescription>
+                  Send this comparison report to someone via secure link
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="flex gap-2">
+                  <div className="flex-1">
+                    <Label htmlFor="recipient-email" className="text-sm mb-2 block">Recipient Email</Label>
+                    <Input 
+                      id="recipient-email"
+                      type="email"
+                      placeholder="recipient@example.com"
+                      value={recipientEmail}
+                      onChange={(e) => setRecipientEmail(e.target.value)}
+                      disabled={sendingEmail}
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <Button 
+                      onClick={handleSendEmail}
+                      disabled={sendingEmail || !recipientEmail}
+                      className="bg-blue-600 hover:bg-blue-700"
+                    >
+                      {sendingEmail ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Sending...
+                        </>
+                      ) : (
+                        <>
+                          <Send className="w-4 h-4 mr-2" />
+                          Send Report
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
 
             {/* Re-run Button */}
             <div className="flex justify-center">

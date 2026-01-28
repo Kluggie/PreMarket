@@ -217,81 +217,164 @@ export default function ReportViewer() {
   const renderReport = () => {
     if (!evaluationItem) return null;
 
-    // Document Comparison
-    if (evaluationItem.type === 'document_comparison') {
-      if (!evaluationItem.linked_document_comparison_id) {
-        return <p className="text-slate-500">No linked comparison found.</p>;
-      }
+    // Show public report if available
+    if (evaluationRun?.public_report_json) {
+      const report = evaluationRun.public_report_json;
       
       return (
-        <div className="space-y-4">
+        <div className="space-y-6">
           <Alert>
             <Sparkles className="w-4 h-4" />
             <AlertDescription>
-              This is a document comparison report. {tokenData?.role === 'party_a' ? 'You created this comparison.' : 'You received this comparison.'}
+              {tokenData?.role === 'party_a' ? 'You created this evaluation.' : 'You received this evaluation.'} 
+              {evaluationItem.type === 'document_comparison' && ' This is a document comparison report.'}
+              {evaluationItem.type === 'proposal' && ' This is a proposal evaluation.'}
+              {evaluationItem.type === 'profile_matching' && ' This is a profile matching evaluation.'}
             </AlertDescription>
           </Alert>
-          <Button 
-            onClick={() => navigate(createPageUrl(`DocumentComparisonDetail?id=${evaluationItem.linked_document_comparison_id}`))}
-            className="w-full"
-          >
-            View Full Comparison
-          </Button>
-        </div>
-      );
-    }
 
-    // Proposal
-    if (evaluationItem.type === 'proposal') {
-      if (!evaluationItem.linked_proposal_id) {
-        return <p className="text-slate-500">No linked proposal found.</p>;
-      }
-      
-      return (
-        <div className="space-y-4">
-          <Alert>
-            <Sparkles className="w-4 h-4" />
-            <AlertDescription>
-              This is a proposal evaluation. {tokenData?.role === 'party_a' ? 'You created this proposal.' : 'You received this proposal.'}
-            </AlertDescription>
-          </Alert>
-          <Button 
-            onClick={() => navigate(createPageUrl(`ProposalDetail?id=${evaluationItem.linked_proposal_id}`))}
-            className="w-full"
-          >
-            View Full Proposal
-          </Button>
-        </div>
-      );
-    }
-
-    // Profile Matching
-    if (evaluationItem.type === 'profile_matching') {
-      return (
-        <div className="space-y-4">
-          <Alert>
-            <Sparkles className="w-4 h-4" />
-            <AlertDescription>
-              This is a profile matching evaluation.
-            </AlertDescription>
-          </Alert>
-          {evaluationRun?.public_report_json && (
+          {/* Summary */}
+          {report.summary && (
             <Card>
               <CardHeader>
-                <CardTitle>Match Report</CardTitle>
+                <CardTitle>Summary</CardTitle>
               </CardHeader>
               <CardContent>
-                <pre className="text-sm bg-slate-50 p-4 rounded-lg overflow-auto">
-                  {JSON.stringify(evaluationRun.public_report_json, null, 2)}
-                </pre>
+                <div className="space-y-3">
+                  {report.summary.match_level && (
+                    <div>
+                      <p className="text-sm text-slate-600">Match Level</p>
+                      <p className="text-xl font-bold capitalize">{report.summary.match_level}</p>
+                    </div>
+                  )}
+                  {report.summary.match_score_0_100 !== null && report.summary.match_score_0_100 !== undefined && (
+                    <div>
+                      <p className="text-sm text-slate-600">Match Score</p>
+                      <p className="text-xl font-bold">{Math.round(report.summary.match_score_0_100)}%</p>
+                    </div>
+                  )}
+                  {report.summary.rationale && (
+                    <div>
+                      <p className="text-sm text-slate-600">Rationale</p>
+                      <p className="text-sm text-slate-900">{report.summary.rationale}</p>
+                    </div>
+                  )}
+                </div>
               </CardContent>
             </Card>
+          )}
+
+          {/* Alignment Points */}
+          {report.alignment_points && report.alignment_points.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <CheckCircle2 className="w-5 h-5 text-green-600" />
+                  Alignment Points
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  {report.alignment_points.map((point, idx) => (
+                    <div key={idx} className="p-3 bg-green-50 border border-green-100 rounded-lg">
+                      <h4 className="font-semibold text-slate-900 mb-1">{point.title}</h4>
+                      <p className="text-sm text-slate-700">{point.detail}</p>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Conflicts or Gaps */}
+          {report.conflicts_or_gaps && report.conflicts_or_gaps.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <AlertTriangle className="w-5 h-5 text-amber-600" />
+                  Conflicts & Gaps
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  {report.conflicts_or_gaps.map((conflict, idx) => (
+                    <div key={idx} className={`p-3 rounded-lg border ${
+                      conflict.severity === 'high' ? 'bg-red-50 border-red-200' :
+                      conflict.severity === 'medium' ? 'bg-amber-50 border-amber-200' :
+                      'bg-blue-50 border-blue-200'
+                    }`}>
+                      <div className="flex items-start gap-2">
+                        <Badge className={
+                          conflict.severity === 'high' ? 'bg-red-600' :
+                          conflict.severity === 'medium' ? 'bg-amber-600' :
+                          'bg-blue-600'
+                        }>
+                          {conflict.severity}
+                        </Badge>
+                        <div className="flex-1">
+                          <h4 className="font-semibold text-slate-900 mb-1">{conflict.title}</h4>
+                          <p className="text-sm text-slate-700">{conflict.detail}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Follow-up Requests */}
+          {report.followup_requests && report.followup_requests.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Recommended Follow-up</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ul className="space-y-2">
+                  {report.followup_requests.map((request, idx) => (
+                    <li key={idx} className="flex items-start gap-2 text-sm text-slate-700">
+                      <span className="text-purple-600 font-bold">•</span>
+                      {request}
+                    </li>
+                  ))}
+                </ul>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* View full details */}
+          {evaluationItem.linked_document_comparison_id && (
+            <Button 
+              onClick={() => navigate(createPageUrl(`DocumentComparisonDetail?id=${evaluationItem.linked_document_comparison_id}`))}
+              variant="outline"
+              className="w-full"
+            >
+              View Full Comparison Details
+            </Button>
+          )}
+          
+          {evaluationItem.linked_proposal_id && (
+            <Button 
+              onClick={() => navigate(createPageUrl(`ProposalDetail?id=${evaluationItem.linked_proposal_id}`))}
+              variant="outline"
+              className="w-full"
+            >
+              View Full Proposal Details
+            </Button>
           )}
         </div>
       );
     }
 
-    return <p className="text-slate-500">Unknown evaluation type: {evaluationItem.type}</p>;
+    // Fallback if no run data yet
+    return (
+      <Alert>
+        <AlertTriangle className="w-4 h-4" />
+        <AlertDescription>
+          No evaluation report available yet. The evaluation may still be running or may have failed.
+        </AlertDescription>
+      </Alert>
+    );
   };
 
   return (
