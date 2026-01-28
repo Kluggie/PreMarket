@@ -109,18 +109,29 @@ export default function DocumentComparisonDetail() {
     }
 
     setSendingEmail(true);
+    const clientCorrelationId = `client_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    
     try {
-      const result = await base44.functions.invoke('SendReportEmail', {
+      const result = await base44.functions.invoke('SendReportEmailSafe', {
         documentComparisonId: comparisonId,
         recipientEmail: recipientEmail
       });
 
+      // Check if response is valid JSON
+      if (!result.data || typeof result.data !== 'object') {
+        const rawText = typeof result.data === 'string' ? result.data.substring(0, 300) : JSON.stringify(result.data).substring(0, 300);
+        toast.error('Send failed: Invalid response from backend');
+        console.error(`[${clientCorrelationId}] Non-JSON response:`, rawText);
+        alert(`Send failed: Non-JSON response from backend\n\nCorrelation ID: ${clientCorrelationId}\n\nRaw response (first 300 chars):\n${rawText}`);
+        return;
+      }
+
       if (!result.data.ok) {
         const errorCode = result.data.errorCode || 'UNKNOWN';
         const errorMsg = result.data.message || 'Failed to send email';
-        const corrId = result.data.correlationId || 'unknown';
+        const corrId = result.data.correlationId || clientCorrelationId;
         
-        toast.error(`Failed to send email: ${errorMsg}`);
+        toast.error(`Failed to send: ${errorMsg}`);
         console.error(`[${corrId}] Send email error [${errorCode}]:`, errorMsg);
         
         // Show detailed error in alert
@@ -128,12 +139,14 @@ export default function DocumentComparisonDetail() {
         return;
       }
 
+      const corrId = result.data.correlationId || clientCorrelationId;
+      console.log(`[${corrId}] Email sent successfully`);
       toast.success(`Report sent to ${recipientEmail}`);
       setRecipientEmail('');
     } catch (error) {
       toast.error('Failed to send email');
-      console.error('Send email unexpected error:', error);
-      alert(`Failed to send email:\n\n${error.message || 'Network error occurred'}`);
+      console.error(`[${clientCorrelationId}] Network/unexpected error:`, error);
+      alert(`Failed to send email\n\nNetwork or unexpected error:\n${error.message || 'Unknown error occurred'}\n\nCorrelation ID: ${clientCorrelationId}`);
     } finally {
       setSendingEmail(false);
     }
