@@ -116,17 +116,24 @@ export default function DocumentComparisonDetail() {
       });
 
       if (!result.data.ok) {
+        const errorCode = result.data.errorCode || 'UNKNOWN';
         const errorMsg = result.data.message || 'Failed to send email';
         const corrId = result.data.correlationId || 'unknown';
-        throw new Error(`${errorMsg}\n\nCorrelation ID: ${corrId}`);
+        
+        toast.error(`Failed to send email: ${errorMsg}`);
+        console.error(`[${corrId}] Send email error [${errorCode}]:`, errorMsg);
+        
+        // Show detailed error in alert
+        alert(`Failed to send email\n\nError: ${errorMsg}\n\nError Code: ${errorCode}\nCorrelation ID: ${corrId}`);
+        return;
       }
 
       toast.success(`Report sent to ${recipientEmail}`);
       setRecipientEmail('');
     } catch (error) {
       toast.error('Failed to send email');
-      console.error('Send email error:', error);
-      alert(`Failed to send email:\n\n${error.message}`);
+      console.error('Send email unexpected error:', error);
+      alert(`Failed to send email:\n\n${error.message || 'Network error occurred'}`);
     } finally {
       setSendingEmail(false);
     }
