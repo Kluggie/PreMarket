@@ -110,35 +110,15 @@ export default function DocumentComparisonDetail() {
 
     setSendingEmail(true);
     try {
-      let evalItems = await base44.entities.EvaluationItem.filter({ 
-        linked_document_comparison_id: comparisonId 
-      });
-      
-      let evalItemId;
-      if (evalItems.length === 0) {
-        const evalItem = await base44.entities.EvaluationItem.create({
-          type: 'document_comparison',
-          title: comparison.title || 'Untitled Comparison',
-          created_by_user_id: user?.id,
-          party_a_user_id: user?.id,
-          party_a_email: user?.email,
-          party_b_email: recipientEmail,
-          status: 'completed',
-          linked_document_comparison_id: comparisonId
-        });
-        evalItemId = evalItem.id;
-      } else {
-        evalItemId = evalItems[0].id;
-      }
-
-      const result = await base44.functions.invoke('SendEvaluationReportEmail', {
-        evaluationItemId: evalItemId,
-        toEmail: recipientEmail,
-        role: 'party_b'
+      const result = await base44.functions.invoke('SendReportEmail', {
+        documentComparisonId: comparisonId,
+        recipientEmail: recipientEmail
       });
 
       if (!result.data.ok) {
-        throw new Error(result.data.error || 'Failed to send email');
+        const errorMsg = result.data.message || 'Failed to send email';
+        const corrId = result.data.correlationId || 'unknown';
+        throw new Error(`${errorMsg}\n\nCorrelation ID: ${corrId}`);
       }
 
       toast.success(`Report sent to ${recipientEmail}`);
