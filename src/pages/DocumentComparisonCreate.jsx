@@ -18,6 +18,7 @@ import {
   ArrowLeft, ArrowRight, FileText, Upload, Type, Save, Sparkles, 
   AlertTriangle, Highlighter, X, Loader2, Link as LinkIcon, Download, User, Building2
 } from 'lucide-react';
+import { toast } from 'sonner';
 
 export default function DocumentComparisonCreate() {
   const navigate = useNavigate();
@@ -180,15 +181,21 @@ export default function DocumentComparisonCreate() {
     try {
       if (comparisonId) {
         await base44.entities.DocumentComparison.update(comparisonId, data);
+        if (!isAutosave) {
+          toast.success('Draft saved');
+        }
         return comparisonId;
       } else {
         const comparison = await base44.entities.DocumentComparison.create(data);
         setComparisonId(comparison.id);
+        if (!isAutosave) {
+          toast.success('Draft saved');
+        }
         return comparison.id;
       }
     } catch (error) {
       if (!isAutosave) {
-        alert('Failed to save draft: ' + error.message);
+        toast.error('Failed to save draft: ' + error.message);
       }
       console.error('Save draft error:', error);
       return null;
