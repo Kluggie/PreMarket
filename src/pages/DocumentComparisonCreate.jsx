@@ -42,6 +42,10 @@ export default function DocumentComparisonCreate() {
   const [extractionError, setExtractionError] = useState(null);
   const [uploadingFile, setUploadingFile] = useState(null);
   
+  const [docAFiles, setDocAFiles] = useState([]);
+  const [docBFiles, setDocBFiles] = useState([]);
+  const [extractingFiles, setExtractingFiles] = useState(null);
+  
   const [organizations, setOrganizations] = useState([]);
   const [selectedOrgA, setSelectedOrgA] = useState('');
   const [selectedOrgB, setSelectedOrgB] = useState('');
@@ -92,7 +96,7 @@ export default function DocumentComparisonCreate() {
     
     const currentState = JSON.stringify({
       title, partyALabel, partyBLabel, docASource, docBSource,
-      docAText, docBText, docASpans, docBSpans, step
+      docAText, docBText, docASpans, docBSpans, docAFiles, docBFiles, step
     });
     
     if (currentState === lastSavedState) return;
@@ -125,6 +129,8 @@ export default function DocumentComparisonCreate() {
       setDocBSpans(comparison.doc_b_spans_json || []);
       setDocASource(comparison.doc_a_source || 'typed');
       setDocBSource(comparison.doc_b_source || 'typed');
+      setDocAFiles(comparison.doc_a_files || []);
+      setDocBFiles(comparison.doc_b_files || []);
       
       const resumeStep = comparison.draft_step || 1;
       setTimeout(() => setStep(resumeStep), 50);
@@ -139,6 +145,8 @@ export default function DocumentComparisonCreate() {
         docBText: comparison.doc_b_plaintext,
         docASpans: comparison.doc_a_spans_json,
         docBSpans: comparison.doc_b_spans_json,
+        docAFiles: comparison.doc_a_files,
+        docBFiles: comparison.doc_b_files,
         step: resumeStep
       }));
     } catch (error) {
@@ -162,6 +170,8 @@ export default function DocumentComparisonCreate() {
       doc_b_spans_json: docBSpans,
       doc_a_source: docASource,
       doc_b_source: docBSource,
+      doc_a_files: docAFiles,
+      doc_b_files: docBFiles,
       status: 'draft',
       draft_step: stepToSave,
       draft_updated_at: new Date().toISOString()
@@ -258,68 +268,119 @@ Verification Status: ${org.verification_status || 'N/A'}`;
     }
   };
 
-  const handleFileUpload = async (doc, file) => {
-    if (!file) return;
+  const handleFileUpload = async (doc, files) => {
+    if (!files || files.length === 0) return;
     
-    const fileName = file.name.toLowerCase();
+    setExtractingFiles(doc);
     
-    // Client-side: .txt and .md
-    if (fileName.endsWith('.txt') || fileName.endsWith('.md')) {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const text = e.target.result;
-        if (doc === 'a') {
-          setDocAText(text);
-        } else {
-          setDocBText(text);
-        }
-      };
-      reader.onerror = () => alert('Failed to read file');
-      reader.readAsText(file);
-      return;
-    }
-    
-    // Backend extraction for PDF/DOCX
-    if (fileName.endsWith('.pdf') || fileName.endsWith('.docx')) {
-      setUploadingFile(doc);
-      try {
+    try {
+      const fileRefs = [];
+      
+      // Upload all files first
+      for (const file of files) {
         const uploadResult = await base44.integrations.Core.UploadFile({ file });
         
         if (!uploadResult.file_url) {
-          alert('Failed to upload file');
-          setUploadingFile(null);
-          return;
+          alert(`Failed to upload ${file.name}`);
+          continue;
         }
         
-        const extractResult = await base44.functions.invoke('ExtractTextFromFile', {
-          file_url: uploadResult.file_url,
-          file_name: file.name
+        fileRefs.push({
+          fileUrl: uploadResult.file_url,
+          filename: file.name,
+          mimeType: file.type || 'application/octet-stream',
+          sizeBytes: file.size
         });
-        
-        if (!extractResult.data.ok) {
-          const errorMsg = extractResult.data.errorMessage || extractResult.data.error;
-          const correlationId = extractResult.data.correlationId;
-          alert(`Extraction failed:\n\n${errorMsg}\n\nCorrelation ID: ${correlationId}`);
-          setUploadingFile(null);
-          return;
-        }
-        
-        if (doc === 'a') {
-          setDocAText(extractResult.data.extractedText);
-        } else {
-          setDocBText(extractResult.data.extractedText);
-        }
-      } catch (error) {
-        const errorMsg = error.response?.data?.errorMessage || error.message;
-        const correlationId = error.response?.data?.correlationId || 'unknown';
-        alert(`File upload failed:\n\n${errorMsg}\n\nCorrelation ID: ${correlationId}`);
-      } finally {
-        setUploadingFile(null);
       }
-      return;
+      
+      if (fileRefs.length === 0) {
+        alert('No files were uploaded successfully');
+        setExtractingFiles(null);
+        return;
+      }
+      
+      // Extract text from uploaded files
+      const extractResult = await base44.functions.invoke('ExtractTextFromUploads', {
+        files: fileRefs
+      });
+      
+      if (!extractResult.data.ok) {
+        const errorMsg = extractResult.data.message || extractResult.data.error;
+        const errors = extractResult.data.errors || [];
+        const errorDetails = errors.map(e => `${e.filename}: ${e.message}`).join('\n');
+        alert(`Extraction failed:\n\n${errorMsg}\n\n${errorDetails}\n\nCorrelation ID: ${extractResult.data.correlationId}`);
+        setExtractingFiles(null);
+        return;
+      }
+      
+      // Update state
+      const currentFiles = doc === 'a' ? docAFiles : docBFiles;
+      const newFiles = [...currentFiles, ...fileRefs];
+      
+      if (doc === 'a') {
+        setDocAFiles(newFiles);
+        setDocAText(extractResult.data.combinedText);
+      } else {
+        setDocBFiles(newFiles);
+        setDocBText(extractResult.data.combinedText);
+      }
+      
+      // Show warnings if any
+      const warnings = extractResult.data.extracted?.filter(e => e.warnings?.length > 0);
+      if (warnings && warnings.length > 0) {
+        const warningMsg = warnings.map(w => 
+          `${w.filename}: ${w.warnings.join(', ')}`
+        ).join('\n');
+        alert(`Files uploaded with warnings:\n\n${warningMsg}`);
+      }
+      
+    } catch (error) {
+      const errorMsg = error.response?.data?.message || error.message;
+      const correlationId = error.response?.data?.correlationId || `error_${Date.now()}`;
+      alert(`File upload failed:\n\n${errorMsg}\n\nCorrelation ID: ${correlationId}`);
+    } finally {
+      setExtractingFiles(null);
+    }
+  };
+
+  const removeFile = async (doc, index) => {
+    const files = doc === 'a' ? docAFiles : docBFiles;
+    const newFiles = files.filter((_, i) => i !== index);
+    
+    if (doc === 'a') {
+      setDocAFiles(newFiles);
+    } else {
+      setDocBFiles(newFiles);
     }
     
-    alert('Unsupported file type. Please use .txt, .md, .pdf, or .docx files.');
+    // Re-extract if files remain
+    if (newFiles.length > 0) {
+      setExtractingFiles(doc);
+      try {
+        const extractResult = await base44.functions.invoke('ExtractTextFromUploads', {
+          files: newFiles
+        });
+        
+        if (extractResult.data.ok) {
+          if (doc === 'a') {
+            setDocAText(extractResult.data.combinedText);
+          } else {
+            setDocBText(extractResult.data.combinedText);
+          }
+        }
+      } catch (error) {
+        console.error('Re-extraction failed:', error);
+      } finally {
+        setExtractingFiles(null);
+      }
+    } else {
+      // Clear text if no files left
+      if (doc === 'a') {
+        setDocAText('');
+      } else {
+        setDocBText('');
+      }
+    }
   };
 
   const handleExtractFromUrls = async () => {
@@ -742,23 +803,56 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                 </CardHeader>
                 <CardContent className="space-y-4">
                   {docASource === 'uploaded' && (
-                    <div className="space-y-2">
-                      <Label>Upload File (.txt, .md, .pdf, .docx)</Label>
-                      <Input 
-                        type="file"
-                        accept=".txt,.md,.pdf,.docx"
-                        onChange={(e) => handleFileUpload('a', e.target.files[0])}
-                        disabled={uploadingFile === 'a'}
-                      />
-                      {uploadingFile === 'a' && (
+                    <div className="space-y-3">
+                      <div className="space-y-2">
+                        <Label>Upload Files (.txt, .md, .pdf, .docx)</Label>
+                        <Input 
+                          type="file"
+                          accept=".txt,.md,.pdf,.docx"
+                          multiple
+                          onChange={(e) => handleFileUpload('a', Array.from(e.target.files))}
+                          disabled={extractingFiles === 'a'}
+                        />
+                        <p className="text-xs text-slate-500">
+                          You can upload multiple files. They will be combined into one document.
+                        </p>
+                      </div>
+                      
+                      {extractingFiles === 'a' && (
                         <div className="flex items-center gap-2 text-sm text-blue-600">
                           <Loader2 className="w-4 h-4 animate-spin" />
-                          Extracting text...
+                          Extracting text from files...
                         </div>
                       )}
-                      <p className="text-xs text-slate-500">
-                        PDF/DOCX extraction attempts backend processing (may not be available).
-                      </p>
+                      
+                      {docAFiles.length > 0 && (
+                        <div className="space-y-2">
+                          <Label className="text-sm font-semibold">Uploaded Files ({docAFiles.length})</Label>
+                          <div className="space-y-2">
+                            {docAFiles.map((file, idx) => (
+                              <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200">
+                                <div className="flex items-center gap-3 flex-1 min-w-0">
+                                  <FileText className="w-4 h-4 text-blue-600 flex-shrink-0" />
+                                  <div className="min-w-0 flex-1">
+                                    <p className="text-sm font-medium text-slate-900 truncate">{file.filename}</p>
+                                    <p className="text-xs text-slate-500">
+                                      {Math.round(file.sizeBytes / 1024)}KB • {file.mimeType}
+                                    </p>
+                                  </div>
+                                </div>
+                                <Button 
+                                  variant="ghost" 
+                                  size="sm"
+                                  onClick={() => removeFile('a', idx)}
+                                  disabled={extractingFiles === 'a'}
+                                >
+                                  <X className="w-4 h-4" />
+                                </Button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                   
@@ -849,23 +943,56 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                 </CardHeader>
                 <CardContent className="space-y-4">
                   {docBSource === 'uploaded' && (
-                    <div className="space-y-2">
-                      <Label>Upload File (.txt, .md, .pdf, .docx)</Label>
-                      <Input 
-                        type="file"
-                        accept=".txt,.md,.pdf,.docx"
-                        onChange={(e) => handleFileUpload('b', e.target.files[0])}
-                        disabled={uploadingFile === 'b'}
-                      />
-                      {uploadingFile === 'b' && (
+                    <div className="space-y-3">
+                      <div className="space-y-2">
+                        <Label>Upload Files (.txt, .md, .pdf, .docx)</Label>
+                        <Input 
+                          type="file"
+                          accept=".txt,.md,.pdf,.docx"
+                          multiple
+                          onChange={(e) => handleFileUpload('b', Array.from(e.target.files))}
+                          disabled={extractingFiles === 'b'}
+                        />
+                        <p className="text-xs text-slate-500">
+                          You can upload multiple files. They will be combined into one document.
+                        </p>
+                      </div>
+                      
+                      {extractingFiles === 'b' && (
                         <div className="flex items-center gap-2 text-sm text-blue-600">
                           <Loader2 className="w-4 h-4 animate-spin" />
-                          Extracting text...
+                          Extracting text from files...
                         </div>
                       )}
-                      <p className="text-xs text-slate-500">
-                        PDF/DOCX extraction attempts backend processing (may not be available).
-                      </p>
+                      
+                      {docBFiles.length > 0 && (
+                        <div className="space-y-2">
+                          <Label className="text-sm font-semibold">Uploaded Files ({docBFiles.length})</Label>
+                          <div className="space-y-2">
+                            {docBFiles.map((file, idx) => (
+                              <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200">
+                                <div className="flex items-center gap-3 flex-1 min-w-0">
+                                  <FileText className="w-4 h-4 text-indigo-600 flex-shrink-0" />
+                                  <div className="min-w-0 flex-1">
+                                    <p className="text-sm font-medium text-slate-900 truncate">{file.filename}</p>
+                                    <p className="text-xs text-slate-500">
+                                      {Math.round(file.sizeBytes / 1024)}KB • {file.mimeType}
+                                    </p>
+                                  </div>
+                                </div>
+                                <Button 
+                                  variant="ghost" 
+                                  size="sm"
+                                  onClick={() => removeFile('b', idx)}
+                                  disabled={extractingFiles === 'b'}
+                                >
+                                  <X className="w-4 h-4" />
+                                </Button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                   
