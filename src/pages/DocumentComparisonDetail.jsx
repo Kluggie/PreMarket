@@ -660,6 +660,58 @@ export default function DocumentComparisonDetail() {
                     </CardContent>
                   </Card>
                 )}
+
+                {/* Redaction Summary */}
+                {report.redaction_notes && (
+                  <Card className="border-0 shadow-sm bg-slate-50">
+                    <CardHeader>
+                      <CardTitle className="text-sm flex items-center gap-2">
+                        <Lock className="w-4 h-4" />
+                        Redaction Summary
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="grid grid-cols-2 gap-3 text-xs">
+                        <div>
+                          <p className="text-slate-600">{comparison.party_a_label}</p>
+                          <p className="font-medium text-red-700">
+                            {report.redaction_notes.confidential_spans_a_count} confidential
+                          </p>
+                          <p className="font-medium text-yellow-700">
+                            {report.redaction_notes.partial_spans_a_count} partial
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-slate-600">{comparison.party_b_label}</p>
+                          <p className="font-medium text-red-700">
+                            {report.redaction_notes.confidential_spans_b_count} confidential
+                          </p>
+                          <p className="font-medium text-yellow-700">
+                            {report.redaction_notes.partial_spans_b_count} partial
+                          </p>
+                        </div>
+                      </div>
+                      <Alert className="mt-3">
+                        <Shield className="w-4 h-4" />
+                        <AlertDescription className="text-xs">
+                          This report does not quote or reveal any confidential or partial content
+                        </AlertDescription>
+                      </Alert>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* Re-run Button */}
+                <div className="flex justify-center">
+                  <Button 
+                    variant="outline"
+                    onClick={() => runEvaluationMutation.mutate()}
+                    disabled={runEvaluationMutation.isPending || latestRun?.status === 'running'}
+                  >
+                    <RefreshCw className="w-4 h-4 mr-2" />
+                    Re-run Evaluation
+                  </Button>
+                </div>
               </div>
 
               {/* Sidebar */}
