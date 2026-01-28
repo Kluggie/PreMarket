@@ -157,24 +157,47 @@ Return JSON only with this structure:
       status: 'submitted'
     });
 
-    // Call GenerateContent via service role
+    // Call GenerateContent via service role (uses Vertex OAuth)
+    console.log('[EvaluateDocumentComparison] Calling GenerateContent with correlationId:', correlationId);
+    
     const result = await base44.asServiceRole.functions.invoke('GenerateContent', {
-      systemPrompt,
-      userContent,
-      requireJsonOutput: true,
-      modelName: 'gemini-2.0-flash-exp'
+      text: systemPrompt + '\n\n' + userContent,
+      temperature: 0.2,
+      maxOutputTokens: 2000,
+      thinkingBudget: 0
     });
 
-    if (!result.data || !result.data.ok) {
-      const errorMsg = result.data?.error || 'AI generation failed';
+    console.log('[EvaluateDocumentComparison] GenerateContent result:', result?.data?.ok ? 'success' : 'failed');
+
+    if (!result || !result.data || !result.data.ok) {
+      const errorMsg = result?.data?.error || 'AI generation failed';
+      console.error('[EvaluateDocumentComparison] GenerateContent failed:', errorMsg, 'correlationId:', correlationId);
+      
       await base44.entities.DocumentComparison.update(comparison_id, {
         status: 'failed',
         error_message: errorMsg
       });
+      
       return Response.json({ 
         ok: false,
         error: errorMsg,
-        message: 'AI evaluation failed. Please try again or contact support.',
+        message: 'AI evaluation failed. The Vertex AI call did not succeed. Please try again or contact support.',
+        correlationId
+      }, { status: 500 });
+    }
+
+    const outputText = result.data.outputText;
+    if (!outputText) {
+      console.error('[EvaluateDocumentComparison] Empty output from GenerateContent, correlationId:', correlationId);
+      await base44.entities.DocumentComparison.update(comparison_id, {
+        status: 'failed',
+        error_message: 'Empty AI output'
+      });
+      
+      return Response.json({ 
+        ok: false,
+        error: 'Empty AI output',
+        message: 'AI returned empty response. Please try again.',
         correlationId
       }, { status: 500 });
     }
@@ -182,19 +205,22 @@ Return JSON only with this structure:
     // Parse output
     let reportJson;
     try {
-      reportJson = typeof result.data.outputText === 'string' 
-        ? JSON.parse(result.data.outputText)
-        : result.data.outputText;
-    } catch (error) {
+      reportJson = JSON.parse(outputText);
+    } catch (parseError) {
+      console.error('[EvaluateDocumentComparison] JSON parse failed:', parseError.message, 'correlationId:', correlationId);
+      console.error('[EvaluateDocumentComparison] Raw output:', outputText.substring(0, 500));
+      
       await base44.entities.DocumentComparison.update(comparison_id, {
         status: 'failed',
         error_message: 'Failed to parse AI output as JSON'
       });
+      
       return Response.json({ 
         ok: false,
         error: 'Invalid AI output format',
-        message: 'AI returned invalid format. Please try again.',
-        correlationId
+        message: 'AI returned invalid JSON format. Please try again.',
+        correlationId,
+        rawOutput: outputText.substring(0, 200)
       }, { status: 500 });
     }
 
@@ -218,13 +244,13 @@ Return JSON only with this structure:
             status: 'failed',
             error_message: 'Report blocked due to potential disclosure of confidential content'
           });
-          console.error('[EvaluateDocumentComparison] Leak detected:', leaked, 'correlationId:', correlationId);
+          console.error('[EvaluateDocumentComparison] Leak detected:', confidentialText.substring(0, 50), 'correlationId:', correlationId);
           return Response.json({ 
             ok: false, 
             error: 'Report blocked due to potential disclosure',
             message: 'Report blocked: confidential content detected in AI output. Please review highlights and try again.',
             correlationId,
-            leakedContent: leaked.substring(0, 100)
+            leakedContent: confidentialText.substring(0, 100)
           }, { status: 400 });
         }
       }

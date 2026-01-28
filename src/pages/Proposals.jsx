@@ -19,8 +19,9 @@ import {
 import DeleteDraftDialog from '../components/proposal/DeleteDraftDialog';
 import {
   Plus, Search, Filter, Send, Inbox, FileText, BarChart3,
-  ChevronRight, Clock, CheckCircle2, AlertTriangle, Eye, Users, MoreVertical, Trash2
+  ChevronRight, Clock, CheckCircle2, AlertTriangle, Eye, Users, MoreVertical, Trash2, X
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
 const StatusBadge = ({ status }) => {
@@ -47,6 +48,7 @@ const StatusBadge = ({ status }) => {
 };
 
 export default function Proposals() {
+  const navigate = useNavigate();
   const [user, setUser] = useState(null);
   const [activeTab, setActiveTab] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -67,9 +69,21 @@ export default function Proposals() {
     enabled: !!user?.email
   });
 
+  const { data: documentComparisons = [], isLoading: loadingComparisons } = useQuery({
+    queryKey: ['documentComparisons'],
+    queryFn: async () => {
+      if (!user) return [];
+      return await base44.entities.DocumentComparison.filter({ 
+        created_by_user_id: user.id 
+      }, '-updated_date');
+    },
+    enabled: !!user,
+  });
+
   const sentProposals = allUserProposals?.sent?.filter(p => p.status !== 'draft') || [];
   const receivedProposals = allUserProposals?.received || [];
   const draftProposals = allUserProposals?.sent?.filter(p => p.status === 'draft') || [];
+  const draftComparisons = documentComparisons.filter(c => c.status === 'draft');
 
   const allProposals = [...sentProposals, ...receivedProposals, ...draftProposals].sort(
     (a, b) => new Date(b.created_date) - new Date(a.created_date)
@@ -99,7 +113,7 @@ export default function Proposals() {
   };
 
   const filteredProposals = getFilteredProposals();
-  const isLoading = loadingAll;
+  const isLoading = loadingAll || loadingComparisons;
 
   const deleteDraftMutation = useMutation({
     mutationFn: async (proposalId) => {
@@ -277,7 +291,7 @@ export default function Proposals() {
             </TabsTrigger>
             <TabsTrigger value="drafts" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
               <FileText className="w-4 h-4 mr-2" />
-              Drafts ({draftProposals.length})
+              Drafts ({draftProposals.length + draftComparisons.length})
             </TabsTrigger>
           </TabsList>
 
@@ -319,6 +333,51 @@ export default function Proposals() {
               </CardContent>
             ) : (
               <CardContent className="p-0">
+                {activeTab === 'drafts' && draftComparisons.map(comparison => (
+                  <motion.div
+                    key={comparison.id}
+                    whileHover={{ backgroundColor: 'rgb(248, 250, 252)' }}
+                    className="p-4 border-b border-slate-100 flex items-center gap-4 cursor-pointer"
+                    onClick={() => navigate(createPageUrl(`DocumentComparisonCreate?draft=${comparison.id}`))}
+                  >
+                    <div className="w-10 h-10 rounded-lg bg-purple-100 flex items-center justify-center">
+                      <FileText className="w-5 h-5 text-purple-600" />
+                    </div>
+                    
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <h3 className="font-medium text-slate-900 truncate">
+                          {comparison.title || 'Untitled Comparison'}
+                        </h3>
+                        <Badge className="bg-purple-100 text-purple-700">Document Comparison</Badge>
+                        <Badge variant="outline" className="text-xs">Step {comparison.draft_step}/4</Badge>
+                      </div>
+                      <div className="flex items-center gap-4 text-sm text-slate-500">
+                        <span>{comparison.party_a_label} vs {comparison.party_b_label}</span>
+                        <span>•</span>
+                        <span>{new Date(comparison.draft_updated_at || comparison.updated_date).toLocaleDateString()}</span>
+                      </div>
+                    </div>
+
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-red-500 hover:text-red-700"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (confirm('Delete this draft comparison?')) {
+                          base44.entities.DocumentComparison.delete(comparison.id).then(() => {
+                            queryClient.invalidateQueries(['documentComparisons']);
+                            toast.success('Draft deleted');
+                          });
+                        }
+                      }}
+                    >
+                      <X className="w-4 h-4" />
+                    </Button>
+                  </motion.div>
+                ))}
+                
                 {filteredProposals.map(proposal => (
                   <ProposalRow key={proposal.id} proposal={proposal} />
                 ))}
