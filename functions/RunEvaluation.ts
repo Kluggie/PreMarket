@@ -168,11 +168,32 @@ Deno.serve(async (req) => {
       }, { status: 500 });
     }
 
+    // Store internal report and build public report
+    const internalReport = evalResult.data.report || evalResult.data.internal_report || {};
+    
+    // Gather evaluation responses for sanitization
+    let evaluationResponses = [];
+    if (item.linked_proposal_id) {
+      evaluationResponses = await base44.asServiceRole.entities.ProposalResponse.filter({
+        proposal_id: item.linked_proposal_id
+      });
+    }
+    
+    // Build public report (sanitized)
+    const publicReportResult = await base44.asServiceRole.functions.invoke('BuildPublicReport', {
+      internalReportJson: internalReport,
+      evaluationResponses: evaluationResponses
+    });
+    
+    const publicReport = publicReportResult.data.ok 
+      ? publicReportResult.data.publicReportJson 
+      : internalReport; // Fallback to internal if sanitization fails
+
     // Update run with success
     await base44.asServiceRole.entities.EvaluationRun.update(newRun.id, {
       status: 'completed',
-      public_report_json: evalResult.data.report || evalResult.data.public_report || {},
-      internal_report_json: evalResult.data.internal_report || {},
+      public_report_json: publicReport,
+      internal_report_json: internalReport,
       model_meta_json: {
         model: evalResult.data.model || 'gemini-2.0-flash-exp',
         timestamp: new Date().toISOString()
