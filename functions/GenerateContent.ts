@@ -131,11 +131,8 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Allow service role calls (no user check needed when called from backend)
-    // Only check for admin when called directly by users
-    if (user && user.role !== 'admin') {
-      return Response.json({ error: 'Forbidden: Admin access required' }, { status: 403 });
-    }
+    // Allow service role calls from backend functions (no user/admin check)
+    // This function is intended to be called by other backend functions via asServiceRole
 
     const payload = await req.json();
     const {

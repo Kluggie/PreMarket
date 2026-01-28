@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '../utils';
 import { base44 } from '@/api/base44Client';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -13,9 +13,10 @@ import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Progress } from '@/components/ui/progress';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   ArrowLeft, ArrowRight, FileText, Upload, Type, Save, Sparkles, 
-  AlertTriangle, Highlighter, X, Loader2, Link as LinkIcon, Download
+  AlertTriangle, Highlighter, X, Loader2, Link as LinkIcon, Download, User, Building2
 } from 'lucide-react';
 
 export default function DocumentComparisonCreate() {
@@ -39,9 +40,16 @@ export default function DocumentComparisonCreate() {
   const [docBUrl, setDocBUrl] = useState('');
   const [extractingUrls, setExtractingUrls] = useState(false);
   const [extractionError, setExtractionError] = useState(null);
+  const [uploadingFile, setUploadingFile] = useState(null);
+  
+  const [organizations, setOrganizations] = useState([]);
+  const [selectedOrgA, setSelectedOrgA] = useState('');
+  const [selectedOrgB, setSelectedOrgB] = useState('');
+  const [loadingProfile, setLoadingProfile] = useState(null);
   
   const [jsonImportA, setJsonImportA] = useState('');
   const [jsonImportB, setJsonImportB] = useState('');
+  const [lastSavedState, setLastSavedState] = useState(null);
 
   useEffect(() => {
     base44.auth.me().then(setUser).catch(() => setUser(null));
@@ -50,6 +58,26 @@ export default function DocumentComparisonCreate() {
   useEffect(() => {
     if (!user) return;
     
+    // Load organizations for user
+    const loadOrgs = async () => {
+      try {
+        const memberships = await base44.entities.Membership.filter({ 
+          user_id: user.id, 
+          status: 'active' 
+        });
+        const orgIds = memberships.map(m => m.organization_id);
+        if (orgIds.length > 0) {
+          const orgs = await base44.entities.Organization.filter({ 
+            id: { $in: orgIds } 
+          });
+          setOrganizations(orgs);
+        }
+      } catch (error) {
+        console.error('Failed to load organizations:', error);
+      }
+    };
+    loadOrgs();
+    
     const params = new URLSearchParams(window.location.search);
     const draftId = params.get('draft');
     if (draftId) {
@@ -57,6 +85,25 @@ export default function DocumentComparisonCreate() {
       loadDraft(draftId);
     }
   }, [user]);
+
+  // Autosave every 3 seconds when data changes
+  useEffect(() => {
+    if (!user || !comparisonId) return;
+    
+    const currentState = JSON.stringify({
+      title, partyALabel, partyBLabel, docASource, docBSource,
+      docAText, docBText, docASpans, docBSpans, step
+    });
+    
+    if (currentState === lastSavedState) return;
+    
+    const timer = setTimeout(() => {
+      saveDraft(step, true);
+      setLastSavedState(currentState);
+    }, 3000);
+    
+    return () => clearTimeout(timer);
+  }, [title, partyALabel, partyBLabel, docASource, docBSource, docAText, docBText, docASpans, docBSpans, step, user, comparisonId, lastSavedState]);
 
   const loadDraft = async (id) => {
     try {
@@ -76,12 +123,25 @@ export default function DocumentComparisonCreate() {
       
       const resumeStep = comparison.draft_step || 1;
       setTimeout(() => setStep(resumeStep), 50);
+      
+      setLastSavedState(JSON.stringify({
+        title: comparison.title, 
+        partyALabel: comparison.party_a_label,
+        partyBLabel: comparison.party_b_label,
+        docASource: comparison.doc_a_source,
+        docBSource: comparison.doc_b_source,
+        docAText: comparison.doc_a_plaintext,
+        docBText: comparison.doc_b_plaintext,
+        docASpans: comparison.doc_a_spans_json,
+        docBSpans: comparison.doc_b_spans_json,
+        step: resumeStep
+      }));
     } catch (error) {
       console.error('Failed to load draft:', error);
     }
   };
 
-  const saveDraft = async (stepToSave) => {
+  const saveDraft = async (stepToSave, isAutosave = false) => {
     if (!user) return null;
     
     const data = {
@@ -100,21 +160,103 @@ export default function DocumentComparisonCreate() {
       draft_updated_at: new Date().toISOString()
     };
     
-    if (comparisonId) {
-      await base44.entities.DocumentComparison.update(comparisonId, data);
-      return comparisonId;
-    } else {
-      const comparison = await base44.entities.DocumentComparison.create(data);
-      setComparisonId(comparison.id);
-      return comparison.id;
+    try {
+      if (comparisonId) {
+        await base44.entities.DocumentComparison.update(comparisonId, data);
+        return comparisonId;
+      } else {
+        const comparison = await base44.entities.DocumentComparison.create(data);
+        setComparisonId(comparison.id);
+        return comparison.id;
+      }
+    } catch (error) {
+      if (!isAutosave) {
+        alert('Failed to save draft: ' + error.message);
+      }
+      console.error('Save draft error:', error);
+      return null;
     }
   };
 
-  const handleFileUpload = (doc, file) => {
+  const loadProfileAsDocument = async (doc) => {
+    setLoadingProfile(doc);
+    try {
+      const profiles = await base44.entities.UserProfile.filter({ user_id: user.id });
+      const profile = profiles[0];
+      
+      if (!profile) {
+        alert('No profile found. Please complete your profile first.');
+        setLoadingProfile(null);
+        return;
+      }
+      
+      const text = `USER PROFILE
+Name: ${user.full_name || 'N/A'}
+Email: ${user.email || 'N/A'}
+Title: ${profile.title || 'N/A'}
+Industry: ${profile.industry || 'N/A'}
+Location: ${profile.location || 'N/A'}
+Bio: ${profile.bio || 'N/A'}
+Website: ${profile.website || 'N/A'}
+LinkedIn: ${profile.social_links?.linkedin || 'N/A'}
+Twitter: ${profile.social_links?.twitter || 'N/A'}
+GitHub: ${profile.social_links?.github || 'N/A'}
+Verification Status: ${profile.verification_status || 'N/A'}`;
+      
+      if (doc === 'a') {
+        setDocAText(text);
+      } else {
+        setDocBText(text);
+      }
+    } catch (error) {
+      alert('Failed to load profile: ' + error.message);
+    } finally {
+      setLoadingProfile(null);
+    }
+  };
+
+  const loadOrganizationAsDocument = async (doc, orgId) => {
+    setLoadingProfile(doc);
+    try {
+      const orgs = await base44.entities.Organization.filter({ id: orgId });
+      const org = orgs[0];
+      
+      if (!org) {
+        alert('Organization not found');
+        setLoadingProfile(null);
+        return;
+      }
+      
+      const text = `ORGANIZATION PROFILE
+Name: ${org.name || 'N/A'}
+Type: ${org.type || 'N/A'}
+Industry: ${org.industry || 'N/A'}
+Location: ${org.location || 'N/A'}
+Website: ${org.website || 'N/A'}
+Description: ${org.bio || 'N/A'}
+LinkedIn: ${org.social_links?.linkedin || 'N/A'}
+Twitter: ${org.social_links?.twitter || 'N/A'}
+GitHub: ${org.social_links?.github || 'N/A'}
+Verification Status: ${org.verification_status || 'N/A'}`;
+      
+      if (doc === 'a') {
+        setDocAText(text);
+      } else {
+        setDocBText(text);
+      }
+    } catch (error) {
+      alert('Failed to load organization: ' + error.message);
+    } finally {
+      setLoadingProfile(null);
+    }
+  };
+
+  const handleFileUpload = async (doc, file) => {
     if (!file) return;
     
     const fileName = file.name.toLowerCase();
     
+    // Client-side: .txt and .md
     if (fileName.endsWith('.txt') || fileName.endsWith('.md')) {
       const reader = new FileReader();
       reader.onload = (e) => {
@@ -130,12 +272,47 @@ export default function DocumentComparisonCreate() {
       return;
     }
     
-    if (fileName.endsWith('.pdf')) {
-      alert('PDF files are not supported yet. Please use .txt or .md files, or paste text directly.');
+    // Backend extraction for PDF/DOCX
+    if (fileName.endsWith('.pdf') || fileName.endsWith('.docx')) {
+      setUploadingFile(doc);
+      try {
+        const uploadResult = await base44.integrations.Core.UploadFile({ file });
+        
+        if (!uploadResult.file_url) {
+          alert('Failed to upload file');
+          setUploadingFile(null);
+          return;
+        }
+        
+        const extractResult = await base44.functions.invoke('ExtractTextFromFile', {
+          file_url: uploadResult.file_url,
+          file_name: file.name
+        });
+        
+        if (!extractResult.data.ok) {
+          const errorMsg = extractResult.data.errorMessage || extractResult.data.error;
+          const correlationId = extractResult.data.correlationId;
+          alert(`Extraction failed:\n\n${errorMsg}\n\nCorrelation ID: ${correlationId}`);
+          setUploadingFile(null);
+          return;
+        }
+        
+        if (doc === 'a') {
+          setDocAText(extractResult.data.extractedText);
+        } else {
+          setDocBText(extractResult.data.extractedText);
+        }
+      } catch (error) {
+        const errorMsg = error.response?.data?.errorMessage || error.message;
+        const correlationId = error.response?.data?.correlationId || 'unknown';
+        alert(`File upload failed:\n\n${errorMsg}\n\nCorrelation ID: ${correlationId}`);
+      } finally {
+        setUploadingFile(null);
+      }
       return;
     }
     
-    alert('Only .txt and .md files are supported. For other formats, please paste text directly.');
+    alert('Unsupported file type. Please use .txt, .md, .pdf, or .docx files.');
   };
 
   const handleExtractFromUrls = async () => {
@@ -173,7 +350,6 @@ export default function DocumentComparisonCreate() {
           });
         }
         
-        // Still populate any successful extractions
         if (result.data.textA) setDocAText(result.data.textA);
         if (result.data.textB) setDocBText(result.data.textB);
         
@@ -184,17 +360,12 @@ export default function DocumentComparisonCreate() {
       if (result.data.textA) setDocAText(result.data.textA);
       if (result.data.textB) setDocBText(result.data.textB);
       
-      // Auto-advance to step 2 if extraction succeeded
-      if (result.data.textA || result.data.textB) {
-        await saveDraft(2);
-        setStep(2);
-      }
+      setExtractingUrls(false);
     } catch (error) {
       setExtractionError({
         message: error.response?.data?.message || error.message,
-        correlationId: error.response?.data?.correlationId || 'unknown'
+        correlationId: error.response?.data?.correlationId || `error_${Date.now()}`
       });
-    } finally {
       setExtractingUrls(false);
     }
   };
@@ -331,9 +502,9 @@ export default function DocumentComparisonCreate() {
     <div className="min-h-screen bg-slate-50 py-8">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="mb-8">
-          <Link to={createPageUrl('Dashboard')} className="inline-flex items-center text-slate-600 hover:text-slate-900 mb-4">
+          <Link to={createPageUrl('Proposals')} className="inline-flex items-center text-slate-600 hover:text-slate-900 mb-4">
             <ArrowLeft className="w-4 h-4 mr-2" />
-            Back to Dashboard
+            Back to Proposals
           </Link>
           <div className="flex items-center justify-between">
             <div>
@@ -414,6 +585,20 @@ export default function DocumentComparisonCreate() {
                             Extract from URL
                           </Label>
                         </div>
+                        <div className="flex items-center space-x-2">
+                          <RadioGroupItem value="profile" id="a-profile" />
+                          <Label htmlFor="a-profile" className="font-normal cursor-pointer flex items-center gap-2">
+                            <User className="w-4 h-4" />
+                            Use Profile
+                          </Label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <RadioGroupItem value="organization" id="a-org" />
+                          <Label htmlFor="a-org" className="font-normal cursor-pointer flex items-center gap-2">
+                            <Building2 className="w-4 h-4" />
+                            Use Organization
+                          </Label>
+                        </div>
                       </RadioGroup>
                     </div>
 
@@ -441,6 +626,20 @@ export default function DocumentComparisonCreate() {
                             Extract from URL
                           </Label>
                         </div>
+                        <div className="flex items-center space-x-2">
+                          <RadioGroupItem value="profile" id="b-profile" />
+                          <Label htmlFor="b-profile" className="font-normal cursor-pointer flex items-center gap-2">
+                            <User className="w-4 h-4" />
+                            Use Profile
+                          </Label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <RadioGroupItem value="organization" id="b-org" />
+                          <Label htmlFor="b-org" className="font-normal cursor-pointer flex items-center gap-2">
+                            <Building2 className="w-4 h-4" />
+                            Use Organization
+                          </Label>
+                        </div>
                       </RadioGroup>
                     </div>
                   </div>
@@ -462,7 +661,7 @@ export default function DocumentComparisonCreate() {
           {/* Step 2: Content Input */}
           {step === 2 && (
             <motion.div key="step2" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-6">
-              {/* URL Extraction Section (if either source is URL) */}
+              {/* URL Extraction */}
               {(docASource === 'url' || docBSource === 'url') && (
                 <Card className="border-2 border-purple-200 bg-purple-50">
                   <CardHeader>
@@ -477,7 +676,7 @@ export default function DocumentComparisonCreate() {
                       <div className="space-y-2">
                         <Label>{partyALabel} URL</Label>
                         <Input 
-                          placeholder="https://www.linkedin.com/in/..."
+                          placeholder="https://www.linkedin.com/in/... or https://gameplaygalaxy.pinpointhq.com/..."
                           value={docAUrl}
                           onChange={(e) => setDocAUrl(e.target.value)}
                         />
@@ -533,24 +732,91 @@ export default function DocumentComparisonCreate() {
                     <FileText className="w-5 h-5 text-blue-600" />
                     {partyALabel}
                   </CardTitle>
-                  <CardDescription>
-                    {docASource === 'typed' && 'Paste or type document content'}
-                    {docASource === 'uploaded' && 'Upload a .txt or .md file'}
-                    {docASource === 'url' && 'Extract text from URL above, then review and edit if needed'}
-                  </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   {docASource === 'uploaded' && (
                     <div className="space-y-2">
-                      <Label>Upload File (.txt, .md)</Label>
+                      <Label>Upload File (.txt, .md, .pdf, .docx)</Label>
                       <Input 
                         type="file"
-                        accept=".txt,.md"
+                        accept=".txt,.md,.pdf,.docx"
                         onChange={(e) => handleFileUpload('a', e.target.files[0])}
+                        disabled={uploadingFile === 'a'}
                       />
+                      {uploadingFile === 'a' && (
+                        <div className="flex items-center gap-2 text-sm text-blue-600">
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Extracting text...
+                        </div>
+                      )}
                       <p className="text-xs text-slate-500">
-                        For PDF files, please copy and paste the text content.
+                        PDF/DOCX extraction attempts backend processing (may not be available).
                       </p>
+                    </div>
+                  )}
+                  
+                  {docASource === 'profile' && (
+                    <div className="space-y-2">
+                      <Button 
+                        onClick={() => loadProfileAsDocument('a')}
+                        disabled={loadingProfile === 'a'}
+                        variant="outline"
+                        className="w-full"
+                      >
+                        {loadingProfile === 'a' ? (
+                          <>
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            Loading Profile...
+                          </>
+                        ) : (
+                          <>
+                            <User className="w-4 h-4 mr-2" />
+                            Load My Profile
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  )}
+                  
+                  {docASource === 'organization' && (
+                    <div className="space-y-2">
+                      <Label>Select Organization</Label>
+                      {organizations.length > 0 ? (
+                        <>
+                          <Select value={selectedOrgA} onValueChange={setSelectedOrgA}>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Choose organization..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {organizations.map(org => (
+                                <SelectItem key={org.id} value={org.id}>
+                                  {org.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <Button 
+                            onClick={() => loadOrganizationAsDocument('a', selectedOrgA)}
+                            disabled={!selectedOrgA || loadingProfile === 'a'}
+                            variant="outline"
+                            className="w-full"
+                          >
+                            {loadingProfile === 'a' ? (
+                              <>
+                                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                Loading...
+                              </>
+                            ) : (
+                              <>
+                                <Building2 className="w-4 h-4 mr-2" />
+                                Load Organization Profile
+                              </>
+                            )}
+                          </Button>
+                        </>
+                      ) : (
+                        <p className="text-sm text-slate-500 italic">No organizations found. Create one in your Organization page.</p>
+                      )}
                     </div>
                   )}
                   
@@ -559,7 +825,7 @@ export default function DocumentComparisonCreate() {
                     <Textarea 
                       value={docAText}
                       onChange={(e) => setDocAText(e.target.value)}
-                      placeholder="Enter or paste document text..."
+                      placeholder="Enter, paste, or load document text..."
                       className="min-h-[300px] font-mono text-sm"
                     />
                   </div>
@@ -573,24 +839,91 @@ export default function DocumentComparisonCreate() {
                     <FileText className="w-5 h-5 text-indigo-600" />
                     {partyBLabel}
                   </CardTitle>
-                  <CardDescription>
-                    {docBSource === 'typed' && 'Paste or type document content'}
-                    {docBSource === 'uploaded' && 'Upload a .txt or .md file'}
-                    {docBSource === 'url' && 'Extract text from URL above, then review and edit if needed'}
-                  </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   {docBSource === 'uploaded' && (
                     <div className="space-y-2">
-                      <Label>Upload File (.txt, .md)</Label>
+                      <Label>Upload File (.txt, .md, .pdf, .docx)</Label>
                       <Input 
                         type="file"
-                        accept=".txt,.md"
+                        accept=".txt,.md,.pdf,.docx"
                         onChange={(e) => handleFileUpload('b', e.target.files[0])}
+                        disabled={uploadingFile === 'b'}
                       />
+                      {uploadingFile === 'b' && (
+                        <div className="flex items-center gap-2 text-sm text-blue-600">
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Extracting text...
+                        </div>
+                      )}
                       <p className="text-xs text-slate-500">
-                        For PDF files, please copy and paste the text content.
+                        PDF/DOCX extraction attempts backend processing (may not be available).
                       </p>
+                    </div>
+                  )}
+                  
+                  {docBSource === 'profile' && (
+                    <div className="space-y-2">
+                      <Button 
+                        onClick={() => loadProfileAsDocument('b')}
+                        disabled={loadingProfile === 'b'}
+                        variant="outline"
+                        className="w-full"
+                      >
+                        {loadingProfile === 'b' ? (
+                          <>
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            Loading Profile...
+                          </>
+                        ) : (
+                          <>
+                            <User className="w-4 h-4 mr-2" />
+                            Load My Profile
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  )}
+                  
+                  {docBSource === 'organization' && (
+                    <div className="space-y-2">
+                      <Label>Select Organization</Label>
+                      {organizations.length > 0 ? (
+                        <>
+                          <Select value={selectedOrgB} onValueChange={setSelectedOrgB}>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Choose organization..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {organizations.map(org => (
+                                <SelectItem key={org.id} value={org.id}>
+                                  {org.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <Button 
+                            onClick={() => loadOrganizationAsDocument('b', selectedOrgB)}
+                            disabled={!selectedOrgB || loadingProfile === 'b'}
+                            variant="outline"
+                            className="w-full"
+                          >
+                            {loadingProfile === 'b' ? (
+                              <>
+                                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                Loading...
+                              </>
+                            ) : (
+                              <>
+                                <Building2 className="w-4 h-4 mr-2" />
+                                Load Organization Profile
+                              </>
+                            )}
+                          </Button>
+                        </>
+                      ) : (
+                        <p className="text-sm text-slate-500 italic">No organizations found. Create one in your Organization page.</p>
+                      )}
                     </div>
                   )}
                   
@@ -599,7 +932,7 @@ export default function DocumentComparisonCreate() {
                     <Textarea 
                       value={docBText}
                       onChange={(e) => setDocBText(e.target.value)}
-                      placeholder="Enter or paste document text..."
+                      placeholder="Enter, paste, or load document text..."
                       className="min-h-[300px] font-mono text-sm"
                     />
                   </div>
@@ -638,13 +971,13 @@ export default function DocumentComparisonCreate() {
             </motion.div>
           )}
 
-          {/* Step 3: Highlighting */}
+          {/* Step 3: Highlighting (Read-Only) */}
           {step === 3 && (
             <motion.div key="step3" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-6">
               <Alert className="bg-blue-50 border-blue-200">
                 <Highlighter className="w-4 h-4 text-blue-600" />
                 <AlertDescription className="text-blue-800">
-                  <strong>How to highlight:</strong> Select text in the preview below, then click "Mark Confidential" or "Mark Partial" buttons.
+                  <strong>How to highlight:</strong> Select text in the preview below, then click "Mark Confidential" (red) or "Mark Partial" (yellow).
                   Confidential content will be excluded from the AI report. Partial content will only be summarized at a high level.
                 </AlertDescription>
               </Alert>
@@ -674,6 +1007,15 @@ export default function DocumentComparisonCreate() {
                         <span className="w-3 h-3 bg-yellow-500 rounded mr-2"></span>
                         Mark Partial
                       </Button>
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        onClick={() => exportHighlights('a')}
+                        disabled={docASpans.length === 0}
+                      >
+                        <Download className="w-4 h-4 mr-2" />
+                        Export
+                      </Button>
                     </div>
                   </div>
                 </CardHeader>
@@ -685,11 +1027,15 @@ export default function DocumentComparisonCreate() {
                   {docASpans.length > 0 && (
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
-                        <Label className="text-sm font-semibold">Highlights ({docASpans.length})</Label>
-                        <Button variant="outline" size="sm" onClick={() => exportHighlights('a')}>
-                          <Download className="w-4 h-4 mr-2" />
-                          Export JSON
-                        </Button>
+                        <Label className="text-sm font-semibold">Applied Highlights ({docASpans.length})</Label>
+                        <div className="flex gap-1">
+                          <Badge className="bg-red-100 text-red-700 text-xs">
+                            {docASpans.filter(s => s.level === 'confidential').length} confidential
+                          </Badge>
+                          <Badge className="bg-yellow-100 text-yellow-700 text-xs">
+                            {docASpans.filter(s => s.level === 'partial').length} partial
+                          </Badge>
+                        </div>
                       </div>
                       <div className="space-y-2 max-h-32 overflow-y-auto">
                         {docASpans.map((span, idx) => (
@@ -711,7 +1057,7 @@ export default function DocumentComparisonCreate() {
                   )}
                   
                   <div className="space-y-2">
-                    <Label className="text-xs font-semibold">Import Highlights JSON (Optional)</Label>
+                    <Label className="text-xs font-semibold">Import Highlights JSON</Label>
                     <div className="flex gap-2">
                       <Textarea 
                         value={jsonImportA}
@@ -758,6 +1104,15 @@ export default function DocumentComparisonCreate() {
                         <span className="w-3 h-3 bg-yellow-500 rounded mr-2"></span>
                         Mark Partial
                       </Button>
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        onClick={() => exportHighlights('b')}
+                        disabled={docBSpans.length === 0}
+                      >
+                        <Download className="w-4 h-4 mr-2" />
+                        Export
+                      </Button>
                     </div>
                   </div>
                 </CardHeader>
@@ -769,11 +1124,15 @@ export default function DocumentComparisonCreate() {
                   {docBSpans.length > 0 && (
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
-                        <Label className="text-sm font-semibold">Highlights ({docBSpans.length})</Label>
-                        <Button variant="outline" size="sm" onClick={() => exportHighlights('b')}>
-                          <Download className="w-4 h-4 mr-2" />
-                          Export JSON
-                        </Button>
+                        <Label className="text-sm font-semibold">Applied Highlights ({docBSpans.length})</Label>
+                        <div className="flex gap-1">
+                          <Badge className="bg-red-100 text-red-700 text-xs">
+                            {docBSpans.filter(s => s.level === 'confidential').length} confidential
+                          </Badge>
+                          <Badge className="bg-yellow-100 text-yellow-700 text-xs">
+                            {docBSpans.filter(s => s.level === 'partial').length} partial
+                          </Badge>
+                        </div>
                       </div>
                       <div className="space-y-2 max-h-32 overflow-y-auto">
                         {docBSpans.map((span, idx) => (
@@ -795,7 +1154,7 @@ export default function DocumentComparisonCreate() {
                   )}
                   
                   <div className="space-y-2">
-                    <Label className="text-xs font-semibold">Import Highlights JSON (Optional)</Label>
+                    <Label className="text-xs font-semibold">Import Highlights JSON</Label>
                     <div className="flex gap-2">
                       <Textarea 
                         value={jsonImportB}
@@ -913,24 +1272,30 @@ export default function DocumentComparisonCreate() {
                         onClick={async () => {
                           try {
                             const id = comparisonId || await saveDraft(4);
+                            if (!id) {
+                              alert('Failed to save comparison. Please try again.');
+                              return;
+                            }
+                            
                             const result = await base44.functions.invoke('EvaluateDocumentComparison', {
                               comparison_id: id
                             });
                             
                             if (!result.data.ok) {
                               const errorMsg = result.data.message || result.data.error || 'Evaluation failed';
-                              const correlationId = result.data.correlationId || 'unknown';
-                              alert(`Evaluation failed:\n\n${errorMsg}\n\nCorrelation ID: ${correlationId}`);
+                              const correlationId = result.data.correlationId || `error_${Date.now()}`;
+                              alert(`Evaluation failed:\n\n${errorMsg}\n\nCorrelation ID: ${correlationId}\n\nPlease try again or contact support with this ID.`);
                               return;
                             }
                             
                             navigate(createPageUrl(`DocumentComparisonDetail?id=${id}`));
                           } catch (error) {
                             const errorMsg = error.response?.data?.message || error.message;
-                            const correlationId = error.response?.data?.correlationId || 'unknown';
-                            alert(`Evaluation failed:\n\n${errorMsg}\n\nCorrelation ID: ${correlationId}`);
+                            const correlationId = error.response?.data?.correlationId || `error_${Date.now()}`;
+                            alert(`Evaluation failed:\n\n${errorMsg}\n\nCorrelation ID: ${correlationId}\n\nPlease try again or contact support with this ID.`);
                           }
                         }}
+                        disabled={!docAText || !docBText}
                         className="bg-purple-600 hover:bg-purple-700"
                       >
                         <Sparkles className="w-4 h-4 mr-2" />

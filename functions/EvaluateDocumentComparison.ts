@@ -22,6 +22,7 @@ Deno.serve(async (req) => {
       return Response.json({ 
         error: 'comparison_id is required', 
         ok: false,
+        message: 'Missing comparison ID',
         correlationId 
       }, { status: 400 });
     }
@@ -34,6 +35,7 @@ Deno.serve(async (req) => {
       return Response.json({ 
         error: 'Comparison not found', 
         ok: false,
+        message: 'Comparison record not found in database',
         correlationId 
       }, { status: 404 });
     }
@@ -42,6 +44,15 @@ Deno.serve(async (req) => {
       return Response.json({ 
         error: 'Both documents must have text content before evaluation',
         message: 'Please complete document input in steps 1-2 before running evaluation',
+        ok: false,
+        correlationId
+      }, { status: 400 });
+    }
+    
+    if (!comparison.doc_a_plaintext.trim() || !comparison.doc_b_plaintext.trim()) {
+      return Response.json({ 
+        error: 'Documents cannot be empty',
+        message: 'Both documents must contain text content',
         ok: false,
         correlationId
       }, { status: 400 });
@@ -207,11 +218,13 @@ Return JSON only with this structure:
             status: 'failed',
             error_message: 'Report blocked due to potential disclosure of confidential content'
           });
+          console.error('[EvaluateDocumentComparison] Leak detected:', leaked, 'correlationId:', correlationId);
           return Response.json({ 
             ok: false, 
             error: 'Report blocked due to potential disclosure',
-            message: 'Report blocked: confidential content detected in output. Please review highlights.',
-            correlationId
+            message: 'Report blocked: confidential content detected in AI output. Please review highlights and try again.',
+            correlationId,
+            leakedContent: leaked.substring(0, 100)
           }, { status: 400 });
         }
       }
@@ -245,6 +258,9 @@ Return JSON only with this structure:
         console.error('Failed to update comparison with error:', updateError);
       }
     }
+    
+    console.error('[EvaluateDocumentComparison] Unexpected error:', error.message, 'correlationId:', correlationId);
+    console.error('[EvaluateDocumentComparison] Stack:', error.stack);
     
     return Response.json({ 
       error: error.message,
