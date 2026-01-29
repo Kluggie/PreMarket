@@ -248,9 +248,10 @@ Deno.serve(async (req) => {
       console.log(`[${correlationId}] Could not fetch title: ${titleError.message}`);
     }
 
-    // Get base URL (domain-aware)
+    // Get base URL (domain-aware) and build page route URL
     const baseUrl = Deno.env.get('APP_BASE_URL') || new URL(req.url).origin;
-    const sharePageUrl = `${baseUrl}/shared-report?token=${shareUrl.split('token=')[1]}`;
+    const token = shareResult.data.token;
+    const sharePageUrl = `${baseUrl}/shared-report?token=${token}`;
 
     // Generate PDF attachment
     let pdfAttachment = null;

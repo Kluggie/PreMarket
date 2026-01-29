@@ -105,15 +105,21 @@ Deno.serve(async (req) => {
       status: 'active'
     });
 
-    // Build share URL - use current request origin if available
-    const origin = new URL(req.url).origin;
-    const shareUrl = `${origin}/shared/${shareLink.id}?token=${token}`;
+    // Build share URL - always point to page route, not function endpoint
+    const baseUrl = Deno.env.get('APP_BASE_URL') || new URL(req.url).origin;
+    const shareUrl = `${baseUrl}/shared-report?token=${token}`;
+    
+    // Store the base URL used for this share link
+    await base44.asServiceRole.entities.ShareLink.update(shareLink.id, {
+      base_url_used: baseUrl
+    });
 
     console.log(`[${correlationId}] Share link created successfully: ${shareLink.id}`);
 
     return Response.json({
       ok: true,
       shareUrl,
+      token,
       shareLinkId: shareLink.id,
       expiresAt: expiresAt.toISOString(),
       correlationId

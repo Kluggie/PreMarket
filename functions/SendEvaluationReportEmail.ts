@@ -54,8 +54,8 @@ Deno.serve(async (req) => {
     }
 
     const token = tokenResult.data.token;
-    const origin = req.headers.get('origin') || 'https://app.base44.com';
-    const reportUrl = `${origin}/r/${token}`;
+    const baseUrl = Deno.env.get('APP_BASE_URL') || new URL(req.url).origin;
+    const reportUrl = `${baseUrl}/shared-report?token=${token}`;
 
     // Determine sender name
     const senderName = user.full_name || user.email || 'A PreMarket user';
