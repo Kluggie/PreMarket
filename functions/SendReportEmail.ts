@@ -97,6 +97,25 @@ Deno.serve(async (req) => {
       }, { status: 500 });
     }
 
+    // Get email configuration
+    const fromEmailAddress = Deno.env.get('RESEND_FROM_EMAIL');
+    const fromName = Deno.env.get('RESEND_FROM_NAME') || 'PreMarket';
+    const replyTo = Deno.env.get('RESEND_REPLY_TO');
+
+    if (!fromEmailAddress) {
+      console.error(`[${correlationId}] RESEND_FROM_EMAIL not configured`);
+      return Response.json({
+        ok: false,
+        errorCode: 'EMAIL_CONFIG_MISSING',
+        message: 'Email sender not configured. Please add RESEND_FROM_EMAIL secret in app settings.',
+        correlationId
+      }, { status: 500 });
+    }
+
+    const fromEmail = `${fromName} <${fromEmailAddress}>`;
+    const fromDomain = fromEmailAddress.split('@')[1];
+    console.log(`[${correlationId}] Sending from domain: ${fromDomain}`);
+
     // Create share link
     const shareLinkResult = await base44.functions.invoke('CreateShareLink', {
       proposalId,
@@ -154,46 +173,44 @@ ${shareUrl}
 This link will expire in 14 days and can be accessed up to 25 times.
 
 Best regards,
-Trust Exchange Team
+${fromName} Team
     `.trim();
 
     // Send email using Resend
     let emailResponse;
     try {
+      const emailPayload = {
+        from: fromEmail,
+        to: email,
+        subject: `${user.full_name || user.email} shared: ${itemTitle}`,
+        text: emailBody,
+        html: emailBody.replace(/\n/g, '<br>')
+      };
+
+      // Add reply_to if configured
+      if (replyTo) {
+        emailPayload.reply_to = replyTo;
+      }
+
       emailResponse = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${resendApiKey}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-          from: 'Trust Exchange <reports@trustexchange.app>',
-          to: email,
-          subject: `${user.full_name || user.email} shared: ${itemTitle}`,
-          text: emailBody,
-          html: emailBody.replace(/\n/g, '<br>')
-        })
+        body: JSON.stringify(emailPayload)
       });
 
       if (!emailResponse.ok) {
         const errorData = await emailResponse.json().catch(() => ({}));
         console.error(`[${correlationId}] Resend API error ${emailResponse.status}:`, errorData);
+        console.error(`[${correlationId}] From domain: ${fromDomain}, To domain: ${emailDomain}`);
         
         let errorMessage = 'Email delivery failed';
-        if (emailResponse.status === 422 && errorData.message) {
-          errorMessage = `Email provider error: ${errorData.message}`;
-          if (errorData.message.includes('not verified') || errorData.message.includes('domain')) {
-            return Response.json({
-              ok: false,
-              errorCode: 'SENDER_NOT_VERIFIED',
-              message: 'Email sender domain not verified in Resend. Please verify your sender domain in Resend settings.',
-              correlationId
-            }, { status: 500 });
-          }
-        } else if (errorData.message) {
-          errorMessage = `Email provider error: ${errorData.message}`;
+        if (errorData.message) {
+          errorMessage = `Resend: ${errorData.message}`;
         } else {
-          errorMessage = `Email provider error: HTTP ${emailResponse.status}`;
+          errorMessage = `Resend HTTP ${emailResponse.status}`;
         }
 
         return Response.json({

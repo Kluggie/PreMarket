@@ -114,9 +114,14 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Validate sender
-    const fromEmail = 'Trust Exchange <reports@trustexchange.app>';
-    if (!fromEmail || !fromEmail.includes('@')) {
+    // Get email configuration
+    const fromEmailAddress = Deno.env.get('RESEND_FROM_EMAIL');
+    const fromName = Deno.env.get('RESEND_FROM_NAME') || 'PreMarket';
+    const replyTo = Deno.env.get('RESEND_REPLY_TO');
+
+    if (!fromEmailAddress) {
+      console.error(`[${correlationId}] RESEND_FROM_EMAIL not configured`);
+      
       await logEmailSend(base44, {
         correlationId,
         proposalId,
@@ -124,18 +129,23 @@ Deno.serve(async (req) => {
         documentComparisonId,
         recipientDomain,
         ok: false,
-        errorCode: 'INVALID_SENDER',
-        message: 'Missing/invalid FROM email',
+        errorCode: 'EMAIL_CONFIG_MISSING',
+        message: 'Missing RESEND_FROM_EMAIL',
         provider: 'resend'
       });
       
       return Response.json({
         ok: false,
         correlationId,
-        errorCode: 'INVALID_SENDER',
-        message: 'Missing/invalid FROM email. Verify sender domain.'
+        errorCode: 'EMAIL_CONFIG_MISSING',
+        message: 'Email sender not configured. Please add RESEND_FROM_EMAIL secret in app settings.'
       });
     }
+
+    const fromEmail = `${fromName} <${fromEmailAddress}>`;
+    const fromDomain = fromEmailAddress.split('@')[1];
+    console.log(`[${correlationId}] Sending from domain: ${fromDomain}`);
+    console.log(`[${correlationId}] Sending to domain: ${recipientDomain}`);
 
     // Create share link
     let shareLinkResult;
@@ -224,26 +234,33 @@ ${shareUrl}
 This link will expire in 14 days and can be accessed up to 25 times.
 
 Best regards,
-Trust Exchange Team`;
+${fromName} Team`;
 
     // Send email via Resend
     let emailResponse;
     let providerStatus = 0;
     
     try {
+      const emailPayload = {
+        from: fromEmail,
+        to: recipientEmail,
+        subject: `${user.full_name || user.email} shared: ${itemTitle}`,
+        text: emailBody,
+        html: emailBody.replace(/\n/g, '<br>')
+      };
+
+      // Add reply_to if configured
+      if (replyTo) {
+        emailPayload.reply_to = replyTo;
+      }
+
       emailResponse = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${resendApiKey}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-          from: fromEmail,
-          to: recipientEmail,
-          subject: `${user.full_name || user.email} shared: ${itemTitle}`,
-          text: emailBody,
-          html: emailBody.replace(/\n/g, '<br>')
-        })
+        body: JSON.stringify(emailPayload)
       });
 
       providerStatus = emailResponse.status;
@@ -251,19 +268,12 @@ Trust Exchange Team`;
       if (!emailResponse.ok) {
         const errorData = await emailResponse.json().catch(() => ({}));
         console.error(`[${correlationId}] Resend error ${providerStatus}:`, errorData);
+        console.error(`[${correlationId}] From domain: ${fromDomain}, To domain: ${recipientDomain}`);
         
         let errorMessage = 'Email delivery failed';
-        let errorCode = 'EMAIL_PROVIDER_ERROR';
         
-        if (providerStatus === 422 && errorData.message) {
-          if (errorData.message.includes('not verified') || errorData.message.includes('domain')) {
-            errorCode = 'SENDER_NOT_VERIFIED';
-            errorMessage = `Sender not verified: ${errorData.message}`;
-          } else {
-            errorMessage = `Resend error: ${errorData.message}`;
-          }
-        } else if (errorData.message) {
-          errorMessage = `Resend error: ${errorData.message}`;
+        if (errorData.message) {
+          errorMessage = `Resend: ${errorData.message}`;
         } else {
           errorMessage = `Resend HTTP ${providerStatus}`;
         }
@@ -275,7 +285,7 @@ Trust Exchange Team`;
           documentComparisonId,
           recipientDomain,
           ok: false,
-          errorCode,
+          errorCode: 'EMAIL_PROVIDER_ERROR',
           message: errorMessage,
           provider: 'resend',
           providerStatus
@@ -284,9 +294,9 @@ Trust Exchange Team`;
         return Response.json({
           ok: false,
           correlationId,
-          errorCode,
+          errorCode: 'EMAIL_PROVIDER_ERROR',
           message: errorMessage,
-          debug: { providerStatus }
+          debug: { providerStatus, fromDomain, toDomain: recipientDomain }
         });
       }
 
