@@ -1,61 +1,47 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { createPageUrl } from '../utils';
 import { base44 } from '@/api/base44Client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Loader2, XCircle, FileText, CheckCircle2, AlertTriangle, Sparkles, RefreshCw, Send, Lock } from 'lucide-react';
-import { toast } from 'sonner';
+import { Loader2, XCircle, AlertTriangle, Sparkles, CheckCircle2, Lock } from 'lucide-react';
 
 export default function SharedReport() {
-  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [shareData, setShareData] = useState(null);
-  const [user, setUser] = useState(null);
   const [reportData, setReportData] = useState(null);
+  const [shareData, setShareData] = useState(null);
 
   const params = new URLSearchParams(window.location.search);
   const token = params.get('token');
 
   useEffect(() => {
-    // Try to get user, but don't require it
-    base44.auth.me().then(setUser).catch(() => setUser(null));
-  }, []);
-
-  useEffect(() => {
     if (!token) {
-      setError('Missing access token in URL');
+      setError('Missing token');
       setLoading(false);
       return;
     }
-    loadSharedReport();
+
+    loadReport();
   }, [token]);
 
-  const loadSharedReport = async () => {
+  const loadReport = async () => {
     try {
       setLoading(true);
-      
-      // Load report data via backend (guest-safe, no auth required)
       const result = await base44.functions.invoke('GetSharedReportData', { token });
       
       if (!result.data.ok) {
-        console.error('Load report failed:', result.data);
-        setError(result.data.message || 'Invalid share link');
+        setError(result.data.message || 'Invalid or expired link');
         setLoading(false);
         return;
       }
 
-      const { shareLink, permissions, reportData: report } = result.data;
-      setShareData({ ...shareLink, permissions });
-      setReportData(report);
+      setShareData(result.data.shareLink);
+      setReportData(result.data.reportData);
       setLoading(false);
-
     } catch (err) {
-      console.error('Load shared report error:', err);
-      setError(err.message || 'Failed to load shared report');
+      console.error('Load report error:', err);
+      setError('Failed to load report');
       setLoading(false);
     }
   };
@@ -67,7 +53,7 @@ export default function SharedReport() {
           <CardContent className="py-16 text-center">
             <Loader2 className="w-12 h-12 text-blue-500 mx-auto mb-4 animate-spin" />
             <h3 className="text-lg font-semibold text-slate-900 mb-2">Loading report...</h3>
-            <p className="text-slate-500">Please wait while we verify your access.</p>
+            <p className="text-slate-500">Verifying access...</p>
           </CardContent>
         </Card>
       </div>
@@ -97,7 +83,7 @@ export default function SharedReport() {
         <Card className="border-0 shadow-sm w-full max-w-md">
           <CardContent className="py-16 text-center">
             <XCircle className="w-12 h-12 text-red-300 mx-auto mb-4" />
-            <h3 className="text-lg font-semibold text-slate-900 mb-2">Access Denied</h3>
+            <h3 className="text-lg font-semibold text-slate-900 mb-2">Invalid or Expired Link</h3>
             <p className="text-slate-500 mb-6">{error}</p>
             <Button onClick={() => window.location.href = '/'}>
               Go to Home
@@ -108,172 +94,99 @@ export default function SharedReport() {
     );
   }
 
-  const report = reportData?.type === 'document_comparison' 
-    ? reportData.report 
-    : reportData?.report;
+  const report = reportData?.report;
 
   return (
     <div className="min-h-screen bg-slate-50 py-8">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-        {/* Guest Banner */}
-        {!user && (
-          <Alert className="mb-6 bg-blue-50 border-blue-200">
-            <Lock className="w-4 h-4 text-blue-600" />
-            <AlertDescription className="text-blue-900">
-              You're viewing this report as a guest. You can edit, re-evaluate, and send it back.
-            </AlertDescription>
-          </Alert>
-        )}
+        <Alert className="mb-6 bg-blue-50 border-blue-200">
+          <Lock className="w-4 h-4 text-blue-600" />
+          <AlertDescription className="text-blue-900">
+            Viewing shared report
+          </AlertDescription>
+        </Alert>
 
-        {/* Link Usage Stats */}
-        <Card className="border-0 shadow-sm mb-6">
-          <CardContent className="py-4">
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-slate-600">
-                Link uses: {shareData?.uses || 0} / {shareData?.maxUses || 25}
-              </span>
-              <span className="text-slate-600">
-                Expires: {shareData?.expiresAt ? new Date(shareData.expiresAt).toLocaleDateString() : 'N/A'}
-              </span>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Report Content */}
-        {reportData?.type === 'document_comparison' && (
-          <Card className="border-0 shadow-sm mb-6 bg-gradient-to-br from-purple-50 to-blue-50">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Sparkles className="w-5 h-5 text-purple-600" />
-                {reportData.title || 'Document Comparison'}
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {report ? (
-                <div className="space-y-4">
-                  {report.summary && (
-                    <div className="p-4 bg-white rounded-lg">
-                      <p className="text-sm text-slate-600">Match Level</p>
-                      <p className="text-2xl font-bold capitalize">{report.summary.match_level || 'Unknown'}</p>
-                      {report.summary.rationale && (
-                        <p className="text-sm text-slate-700 mt-2">{report.summary.rationale}</p>
-                      )}
-                    </div>
-                  )}
-
-                  {report.alignment_points?.length > 0 && (
-                    <div>
-                      <h4 className="font-semibold mb-2 flex items-center gap-2">
-                        <CheckCircle2 className="w-4 h-4 text-green-600" />
-                        Alignment Points
-                      </h4>
-                      <div className="space-y-2">
-                        {report.alignment_points.map((point, idx) => (
-                          <div key={idx} className="p-3 bg-green-50 border border-green-100 rounded-lg">
-                            <p className="font-medium text-sm">{point.title}</p>
-                            <p className="text-sm text-slate-700 mt-1">{point.detail}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {report.conflicts_or_gaps?.length > 0 && (
-                    <div>
-                      <h4 className="font-semibold mb-2 flex items-center gap-2">
-                        <AlertTriangle className="w-4 h-4 text-amber-600" />
-                        Conflicts & Gaps
-                      </h4>
-                      <div className="space-y-2">
-                        {report.conflicts_or_gaps.map((conflict, idx) => (
-                          <div key={idx} className={`p-3 rounded-lg border ${
-                            conflict.severity === 'high' ? 'bg-red-50 border-red-200' :
-                            conflict.severity === 'medium' ? 'bg-amber-50 border-amber-200' :
-                            'bg-blue-50 border-blue-200'
-                          }`}>
-                            <div className="flex items-start gap-2">
-                              <Badge className={
-                                conflict.severity === 'high' ? 'bg-red-600' :
-                                conflict.severity === 'medium' ? 'bg-amber-600' :
-                                'bg-blue-600'
-                              }>
-                                {conflict.severity}
-                              </Badge>
-                              <div className="flex-1">
-                                <p className="font-medium text-sm">{conflict.title}</p>
-                                <p className="text-sm text-slate-600 mt-1">{conflict.detail}</p>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <p className="text-slate-500">No evaluation report available yet.</p>
-              )}
+        {shareData && (
+          <Card className="border-0 shadow-sm mb-6">
+            <CardContent className="py-4">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-slate-600">
+                  Uses: {shareData.uses || 0} / {shareData.maxUses || 25}
+                </span>
+                <span className="text-slate-600">
+                  Expires: {shareData.expiresAt ? new Date(shareData.expiresAt).toLocaleDateString() : 'N/A'}
+                </span>
+              </div>
             </CardContent>
           </Card>
         )}
 
-        {reportData?.type === 'proposal' && report && (
-          <Card className="border-0 shadow-sm mb-6 bg-gradient-to-br from-emerald-50 to-blue-50">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Sparkles className="w-5 h-5 text-emerald-600" />
-                {reportData.title || 'Proposal Report'}
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
+        <Card className="border-0 shadow-sm mb-6">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-blue-600" />
+              {reportData?.title || 'Shared Report'}
+            </CardTitle>
+            <p className="text-sm text-slate-500">
+              Type: {reportData?.type || 'unknown'} | Created: {reportData?.created_date ? new Date(reportData.created_date).toLocaleDateString() : 'N/A'}
+            </p>
+          </CardHeader>
+          <CardContent>
+            {report ? (
               <div className="space-y-4">
                 {report.summary && (
-                  <div className="p-4 bg-white rounded-lg">
-                    <p className="text-sm text-slate-600">Overall Fit</p>
-                    <p className="text-2xl font-bold capitalize">{report.summary.fit_level || 'Unknown'}</p>
+                  <div className="p-4 bg-slate-50 rounded-lg">
+                    <p className="text-sm text-slate-600">Overall Assessment</p>
+                    <p className="text-2xl font-bold capitalize">
+                      {report.summary.match_level || report.summary.fit_level || 'N/A'}
+                    </p>
+                    {report.summary.rationale && (
+                      <p className="text-sm text-slate-700 mt-2">{report.summary.rationale}</p>
+                    )}
                   </div>
                 )}
 
-                {report.summary?.top_fit_reasons?.length > 0 && (
+                {report.alignment_points?.length > 0 && (
                   <div>
                     <h4 className="font-semibold mb-2 flex items-center gap-2">
                       <CheckCircle2 className="w-4 h-4 text-green-600" />
-                      Top Match Reasons
+                      Strengths
                     </h4>
                     <div className="space-y-2">
-                      {report.summary.top_fit_reasons.map((reason, idx) => (
+                      {report.alignment_points.map((point, idx) => (
                         <div key={idx} className="p-3 bg-green-50 border border-green-100 rounded-lg">
-                          <p className="text-sm text-slate-800">{reason.text}</p>
+                          <p className="text-sm font-medium">{point.title || point.text}</p>
+                          {point.detail && <p className="text-sm text-slate-700 mt-1">{point.detail}</p>}
                         </div>
                       ))}
                     </div>
                   </div>
                 )}
 
-                {report.flags?.length > 0 && (
+                {(report.conflicts_or_gaps?.length > 0 || report.flags?.length > 0) && (
                   <div>
                     <h4 className="font-semibold mb-2 flex items-center gap-2">
                       <AlertTriangle className="w-4 h-4 text-amber-600" />
-                      Flags & Concerns
+                      Concerns
                     </h4>
                     <div className="space-y-2">
-                      {report.flags.map((flag, idx) => (
+                      {(report.conflicts_or_gaps || report.flags || []).map((item, idx) => (
                         <div key={idx} className={`p-3 rounded-lg border ${
-                          flag.severity === 'high' ? 'bg-red-50 border-red-200' :
-                          flag.severity === 'med' ? 'bg-amber-50 border-amber-200' :
+                          item.severity === 'high' ? 'bg-red-50 border-red-200' :
+                          item.severity === 'medium' || item.severity === 'med' ? 'bg-amber-50 border-amber-200' :
                           'bg-blue-50 border-blue-200'
                         }`}>
                           <div className="flex items-start gap-2">
                             <Badge className={
-                              flag.severity === 'high' ? 'bg-red-600' :
-                              flag.severity === 'med' ? 'bg-amber-600' :
+                              item.severity === 'high' ? 'bg-red-600' :
+                              item.severity === 'medium' || item.severity === 'med' ? 'bg-amber-600' :
                               'bg-blue-600'
                             }>
-                              {flag.severity}
+                              {item.severity}
                             </Badge>
                             <div className="flex-1">
-                              <p className="font-medium text-sm">{flag.title}</p>
-                              <p className="text-sm text-slate-600 mt-1">{flag.detail}</p>
+                              <p className="font-medium text-sm">{item.title}</p>
+                              {item.detail && <p className="text-sm text-slate-600 mt-1">{item.detail}</p>}
                             </div>
                           </div>
                         </div>
@@ -282,94 +195,11 @@ export default function SharedReport() {
                   </div>
                 )}
               </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Actions */}
-        {shareData?.permissions && (
-          <div className="flex flex-wrap gap-3">
-            {shareData.permissions.canReevaluate && (
-              <Button 
-                onClick={async () => {
-                  if (!reportData?.id) return;
-
-                  try {
-                    toast.info('Running evaluation...');
-                    
-                    if (reportData.type === 'document_comparison') {
-                      const result = await base44.functions.invoke('EvaluateDocumentComparison', {
-                        comparison_id: reportData.id
-                      });
-                      
-                      if (!result.data.ok) {
-                        toast.error(result.data.message || 'Evaluation failed');
-                        return;
-                      }
-                    } else if (reportData.type === 'proposal') {
-                      const result = await base44.functions.invoke('EvaluateProposalShared', {
-                        proposal_id: reportData.id
-                      });
-                      
-                      if (result.data.status === 'failed') {
-                        toast.error(result.data.error_message || 'Evaluation failed');
-                        return;
-                      }
-                    }
-                    
-                    toast.success('Evaluation completed');
-                    loadSharedReport();
-                  } catch (error) {
-                    toast.error('Evaluation failed');
-                    console.error('Re-evaluate error:', error);
-                  }
-                }}
-                variant="outline"
-              >
-                <RefreshCw className="w-4 h-4 mr-2" />
-                Re-evaluate
-              </Button>
+            ) : (
+              <p className="text-slate-500">No evaluation report available yet.</p>
             )}
-            {shareData.permissions.canSendBack && (
-              <Button 
-                onClick={async () => {
-                  if (!reportData?.id) return;
-                  
-                  const recipientEmail = prompt('Enter email to send report back to:');
-                  if (!recipientEmail || !recipientEmail.includes('@')) {
-                    toast.error('Invalid email address');
-                    return;
-                  }
-
-                  try {
-                    toast.info('Sending...');
-                    
-                    const result = await base44.functions.invoke('SendReportEmailSafe', {
-                      proposalId: reportData.type === 'proposal' ? reportData.id : null,
-                      documentComparisonId: reportData.type === 'document_comparison' ? reportData.id : null,
-                      evaluationItemId: reportData.type === 'evaluation' ? reportData.id : null,
-                      recipientEmail
-                    });
-
-                    if (result.data.ok) {
-                      toast.success(`Report sent to ${recipientEmail}`);
-                    } else {
-                      toast.error(result.data.message || 'Failed to send');
-                      alert(`Failed to send:\n\n${result.data.message}\n\nError Code: ${result.data.errorCode}\nCorrelation ID: ${result.data.correlationId}`);
-                    }
-                  } catch (error) {
-                    toast.error('Failed to send report');
-                    console.error('Send back error:', error);
-                  }
-                }}
-                className="bg-blue-600 hover:bg-blue-700"
-              >
-                <Send className="w-4 h-4 mr-2" />
-                Send Back
-              </Button>
-            )}
-          </div>
-        )}
+          </CardContent>
+        </Card>
       </div>
     </div>
   );
