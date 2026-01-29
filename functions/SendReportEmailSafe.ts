@@ -248,6 +248,10 @@ Deno.serve(async (req) => {
       console.log(`[${correlationId}] Could not fetch title: ${titleError.message}`);
     }
 
+    // Get base URL from request
+    const requestUrl = new URL(req.url);
+    const baseUrl = requestUrl.origin;
+
     // Build email
     const emailBody = `Hello,
 
@@ -258,8 +262,22 @@ ${shareUrl}
 
 This link will expire in 14 days and can be accessed up to 25 times.
 
-Best regards,
-${fromName} Team`;
+---
+${fromName}
+${baseUrl}`;
+
+    const emailHtml = `
+<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+  <p>Hello,</p>
+  <p>${user.full_name || user.email} has shared a report with you: <strong>"${itemTitle}"</strong></p>
+  <div style="margin: 30px 0;">
+    <a href="${shareUrl}" style="background-color: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Open Report</a>
+  </div>
+  <p style="color: #64748b; font-size: 14px;">This link will expire in 14 days and can be accessed up to 25 times.</p>
+  <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 30px 0;">
+  <p style="color: #64748b; font-size: 12px;">${fromName}<br>${baseUrl}</p>
+</div>
+    `.trim();
 
     // Send email via Resend
     let emailResponse;
