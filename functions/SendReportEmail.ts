@@ -174,9 +174,27 @@ Deno.serve(async (req) => {
 
     console.log(`[${correlationId}] Preparing email for: ${itemTitle}`);
 
-    // Get base URL from request
-    const requestUrl = new URL(req.url);
-    const baseUrl = requestUrl.origin;
+    // Get base URL (domain-aware)
+    const baseUrl = Deno.env.get('APP_BASE_URL') || new URL(req.url).origin;
+    const sharePageUrl = `${baseUrl}/shared-report?token=${shareUrl.split('token=')[1]}`;
+
+    // Generate PDF attachment
+    let pdfAttachment = null;
+    try {
+      const pdfResult = await base44.functions.invoke('DownloadReportPDF', {
+        proposalId,
+        evaluationItemId,
+        documentComparisonId
+      });
+      if (pdfResult.data.ok) {
+        pdfAttachment = {
+          filename: pdfResult.data.filename,
+          content: pdfResult.data.pdfBase64
+        };
+      }
+    } catch (pdfError) {
+      console.warn(`[${correlationId}] PDF generation failed:`, pdfError.message);
+    }
 
     const emailBody = `
 Hello,
@@ -184,7 +202,7 @@ Hello,
 ${user.full_name || user.email} has shared a report with you: "${itemTitle}"
 
 View the report here:
-${shareUrl}
+${sharePageUrl}
 
 This link will expire in 14 days and can be accessed up to 25 times.
 
@@ -198,7 +216,7 @@ ${baseUrl}
   <p>Hello,</p>
   <p>${user.full_name || user.email} has shared a report with you: <strong>"${itemTitle}"</strong></p>
   <div style="margin: 30px 0;">
-    <a href="${shareUrl}" style="background-color: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Open Report</a>
+    <a href="${sharePageUrl}" style="background-color: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Open Report</a>
   </div>
   <p style="color: #64748b; font-size: 14px;">This link will expire in 14 days and can be accessed up to 25 times.</p>
   <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 30px 0;">
@@ -220,6 +238,14 @@ ${baseUrl}
       // Add reply_to if configured
       if (replyTo) {
         emailPayload.reply_to = replyTo;
+      }
+
+      // Attach PDF if available
+      if (pdfAttachment) {
+        emailPayload.attachments = [{
+          filename: pdfAttachment.filename,
+          content: pdfAttachment.content
+        }];
       }
 
       emailResponse = await fetch('https://api.resend.com/emails', {
