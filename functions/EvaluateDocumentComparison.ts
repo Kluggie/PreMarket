@@ -303,6 +303,18 @@ Return JSON only with this structure:
       generated_at: new Date().toISOString()
     });
 
+    // Update linked Proposal status to 'evaluated'
+    const proposals = await base44.asServiceRole.entities.Proposal.filter({ 
+      document_comparison_id: comparison_id 
+    });
+    if (proposals.length > 0) {
+      await base44.asServiceRole.entities.Proposal.update(proposals[0].id, {
+        status: 'evaluated',
+        draft_step: null,
+        draft_updated_at: new Date().toISOString()
+      });
+    }
+
     console.log('[EvaluateDocumentComparison] Success, correlationId:', correlationId);
 
     return Response.json({
