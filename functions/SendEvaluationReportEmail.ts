@@ -1,4 +1,5 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.6';
+import { buildSharedReportUrl, validateShareUrl } from './_utils/shareUrl.js';
 
 Deno.serve(async (req) => {
   const correlationId = `email_${Date.now()}_${Math.random().toString(36).substring(7)}`;
@@ -54,8 +55,20 @@ Deno.serve(async (req) => {
     }
 
     const token = tokenResult.data.token;
-    const baseUrl = Deno.env.get('APP_BASE_URL') || new URL(req.url).origin;
-    const reportUrl = `${baseUrl}/shared-report?token=${token}`;
+    
+    let reportUrl;
+    try {
+      reportUrl = buildSharedReportUrl(token);
+      validateShareUrl(reportUrl); // Hard guardrail
+    } catch (urlError) {
+      console.error(`[${correlationId}] Share URL construction failed:`, urlError.message);
+      return Response.json({
+        ok: false,
+        errorCode: urlError.message.includes('APP_BASE_URL') ? 'APP_BASE_URL_MISSING' : 'BAD_SHARE_LINK_DOMAIN',
+        error: urlError.message,
+        correlationId
+      }, { status: 500 });
+    }
 
     // Determine sender name
     const senderName = user.full_name || user.email || 'A PreMarket user';

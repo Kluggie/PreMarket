@@ -1,4 +1,5 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.6';
+import { buildSharedReportUrl, validateShareUrl } from './_utils/shareUrl.js';
 
 Deno.serve(async (req) => {
   const correlationId = `email_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -223,7 +224,57 @@ Deno.serve(async (req) => {
       });
     }
 
-    const { shareUrl } = shareLinkResult.data;
+    // Recompute share URL using token (overrides any stored URL that may be outdated)
+    const shareToken = shareLinkResult.data.token || shareLinkResult.data.shareUrl?.split('token=')[1];
+    if (!shareToken) {
+      console.error(`[${correlationId}] No token in share link result`);
+      
+      await logEmailSend(base44, {
+        correlationId,
+        proposalId,
+        evaluationItemId,
+        documentComparisonId,
+        recipientDomain,
+        ok: false,
+        errorCode: 'SHARE_LINK_INVALID',
+        message: 'Share link token missing',
+        provider: 'resend'
+      });
+      
+      return Response.json({
+        ok: false,
+        correlationId,
+        errorCode: 'SHARE_LINK_INVALID',
+        message: 'Share link token missing'
+      });
+    }
+
+    let shareUrl;
+    try {
+      shareUrl = buildSharedReportUrl(shareToken);
+      validateShareUrl(shareUrl); // Hard guardrail
+    } catch (urlError) {
+      console.error(`[${correlationId}] Share URL construction failed:`, urlError.message);
+      
+      await logEmailSend(base44, {
+        correlationId,
+        proposalId,
+        evaluationItemId,
+        documentComparisonId,
+        recipientDomain,
+        ok: false,
+        errorCode: urlError.message.includes('APP_BASE_URL') ? 'APP_BASE_URL_MISSING' : 'BAD_SHARE_LINK_DOMAIN',
+        message: urlError.message,
+        provider: 'resend'
+      });
+      
+      return Response.json({
+        ok: false,
+        correlationId,
+        errorCode: urlError.message.includes('APP_BASE_URL') ? 'APP_BASE_URL_MISSING' : 'BAD_SHARE_LINK_DOMAIN',
+        message: urlError.message
+      });
+    }
 
     // Get item title
     let itemTitle = 'Evaluation Report';
@@ -248,9 +299,7 @@ Deno.serve(async (req) => {
       console.log(`[${correlationId}] Could not fetch title: ${titleError.message}`);
     }
 
-    // Build share URL - use provided URL or construct from token
-    const baseUrl = Deno.env.get('APP_BASE_URL') || new URL(req.url).origin;
-    const sharePageUrl = shareUrl || `${baseUrl}/shared-report?token=${shareLinkResult.data.token}`;
+    console.log(`[${correlationId}] Share URL: ${shareUrl}`);
 
     // Generate PDF attachment
     let pdfAttachment = null;
@@ -276,24 +325,24 @@ Deno.serve(async (req) => {
 ${user.full_name || user.email} has shared a report with you: "${itemTitle}"
 
 View the report here:
-${sharePageUrl}
+${shareUrl}
 
 This link will expire in 14 days and can be accessed up to 25 times.
 
 ---
 ${fromName}
-${baseUrl}`;
+https://getpremarket.com`;
 
     const emailHtml = `
 <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
   <p>Hello,</p>
   <p>${user.full_name || user.email} has shared a report with you: <strong>"${itemTitle}"</strong></p>
   <div style="margin: 30px 0;">
-    <a href="${sharePageUrl}" style="background-color: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Open Report</a>
+    <a href="${shareUrl}" style="background-color: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Open Report</a>
   </div>
   <p style="color: #64748b; font-size: 14px;">This link will expire in 14 days and can be accessed up to 25 times.</p>
   <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 30px 0;">
-  <p style="color: #64748b; font-size: 12px;">${fromName}<br>${baseUrl}</p>
+  <p style="color: #64748b; font-size: 12px;">${fromName}<br>https://getpremarket.com</p>
 </div>
     `.trim();
 

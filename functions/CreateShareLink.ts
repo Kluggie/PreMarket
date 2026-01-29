@@ -1,4 +1,5 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.6';
+import { buildSharedReportUrl, getPublicBaseUrl, validateShareUrl } from './_utils/shareUrl.js';
 
 Deno.serve(async (req) => {
   const correlationId = `sharelink_${Date.now()}_${Math.random().toString(36).substring(7)}`;
@@ -105,9 +106,22 @@ Deno.serve(async (req) => {
       status: 'active'
     });
 
-    // Build share URL - always point to page route, not function endpoint
-    const baseUrl = Deno.env.get('APP_BASE_URL') || new URL(req.url).origin;
-    const shareUrl = `${baseUrl}/shared-report?token=${token}`;
+    // Build share URL using centralized helper (enforces APP_BASE_URL only)
+    let shareUrl;
+    let baseUrl;
+    try {
+      baseUrl = getPublicBaseUrl();
+      shareUrl = buildSharedReportUrl(token);
+      validateShareUrl(shareUrl); // Hard guardrail
+    } catch (urlError) {
+      console.error(`[${correlationId}] URL construction failed:`, urlError.message);
+      return Response.json({
+        ok: false,
+        errorCode: urlError.message.includes('APP_BASE_URL') ? 'APP_BASE_URL_MISSING' : 'BAD_SHARE_LINK_DOMAIN',
+        message: urlError.message,
+        correlationId
+      }, { status: 500 });
+    }
     
     // Store the base URL used for this share link
     await base44.asServiceRole.entities.ShareLink.update(shareLink.id, {
