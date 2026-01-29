@@ -78,54 +78,6 @@ export default function SharedReport() {
     }
   };
 
-  const handleReEvaluate = async () => {
-    if (!shareData?.proposalId && !shareData?.documentComparisonId) return;
-
-    try {
-      toast.info('Running evaluation...');
-      
-      if (shareData.documentComparisonId) {
-        await base44.functions.invoke('EvaluateDocumentComparison', {
-          comparison_id: shareData.documentComparisonId
-        });
-      } else if (shareData.proposalId) {
-        await base44.functions.invoke('EvaluateProposalShared', {
-          proposal_id: shareData.proposalId
-        });
-      }
-      
-      toast.success('Evaluation completed');
-      loadSharedReport();
-    } catch (error) {
-      toast.error('Evaluation failed');
-      console.error('Re-evaluate error:', error);
-    }
-  };
-
-  const handleSendBack = async () => {
-    if (!shareData?.proposalId && !shareData?.documentComparisonId) return;
-    
-    const recipientEmail = prompt('Enter email to send report back to:');
-    if (!recipientEmail) return;
-
-    try {
-      const result = await base44.functions.invoke('SendReportEmailSafe', {
-        proposalId: shareData.proposalId,
-        documentComparisonId: shareData.documentComparisonId,
-        recipientEmail
-      });
-
-      if (result.data.ok) {
-        toast.success(`Report sent to ${recipientEmail}`);
-      } else {
-        toast.error(result.data.message || 'Failed to send');
-      }
-    } catch (error) {
-      toast.error('Failed to send report');
-      console.error('Send back error:', error);
-    }
-  };
-
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
@@ -340,7 +292,39 @@ export default function SharedReport() {
           <div className="flex flex-wrap gap-3">
             {shareData.permissions.canReevaluate && (
               <Button 
-                onClick={handleReEvaluate}
+                onClick={async () => {
+                  if (!shareData?.proposalId && !shareData?.documentComparisonId) return;
+
+                  try {
+                    toast.info('Running evaluation...');
+                    
+                    if (shareData.documentComparisonId) {
+                      const result = await base44.functions.invoke('EvaluateDocumentComparison', {
+                        comparison_id: shareData.documentComparisonId
+                      });
+                      
+                      if (!result.data.ok) {
+                        toast.error(result.data.message || 'Evaluation failed');
+                        return;
+                      }
+                    } else if (shareData.proposalId) {
+                      const result = await base44.functions.invoke('EvaluateProposalShared', {
+                        proposal_id: shareData.proposalId
+                      });
+                      
+                      if (result.data.status === 'failed') {
+                        toast.error(result.data.error_message || 'Evaluation failed');
+                        return;
+                      }
+                    }
+                    
+                    toast.success('Evaluation completed');
+                    loadSharedReport();
+                  } catch (error) {
+                    toast.error('Evaluation failed');
+                    console.error('Re-evaluate error:', error);
+                  }
+                }}
                 variant="outline"
               >
                 <RefreshCw className="w-4 h-4 mr-2" />
@@ -349,7 +333,35 @@ export default function SharedReport() {
             )}
             {shareData.permissions.canSendBack && (
               <Button 
-                onClick={handleSendBack}
+                onClick={async () => {
+                  if (!shareData?.proposalId && !shareData?.documentComparisonId) return;
+                  
+                  const recipientEmail = prompt('Enter email to send report back to:');
+                  if (!recipientEmail || !recipientEmail.includes('@')) {
+                    toast.error('Invalid email address');
+                    return;
+                  }
+
+                  try {
+                    toast.info('Sending...');
+                    
+                    const result = await base44.functions.invoke('SendReportEmailSafe', {
+                      proposalId: shareData.proposalId,
+                      documentComparisonId: shareData.documentComparisonId,
+                      recipientEmail
+                    });
+
+                    if (result.data.ok) {
+                      toast.success(`Report sent to ${recipientEmail}`);
+                    } else {
+                      toast.error(result.data.message || 'Failed to send');
+                      alert(`Failed to send:\n\n${result.data.message}\n\nError Code: ${result.data.errorCode}\nCorrelation ID: ${result.data.correlationId}`);
+                    }
+                  } catch (error) {
+                    toast.error('Failed to send report');
+                    console.error('Send back error:', error);
+                  }
+                }}
                 className="bg-blue-600 hover:bg-blue-700"
               >
                 <Send className="w-4 h-4 mr-2" />
@@ -361,68 +373,4 @@ export default function SharedReport() {
       </div>
     </div>
   );
-
-  async function handleReEvaluate() {
-    if (!shareData?.proposalId && !shareData?.documentComparisonId) return;
-
-    try {
-      toast.info('Running evaluation...');
-      
-      if (shareData.documentComparisonId) {
-        const result = await base44.functions.invoke('EvaluateDocumentComparison', {
-          comparison_id: shareData.documentComparisonId
-        });
-        
-        if (!result.data.ok) {
-          toast.error(result.data.message || 'Evaluation failed');
-          return;
-        }
-      } else if (shareData.proposalId) {
-        const result = await base44.functions.invoke('EvaluateProposalShared', {
-          proposal_id: shareData.proposalId
-        });
-        
-        if (result.data.status === 'failed') {
-          toast.error(result.data.error_message || 'Evaluation failed');
-          return;
-        }
-      }
-      
-      toast.success('Evaluation completed');
-      loadSharedReport();
-    } catch (error) {
-      toast.error('Evaluation failed');
-      console.error('Re-evaluate error:', error);
-    }
-  }
-
-  async function handleSendBack() {
-    if (!shareData?.proposalId && !shareData?.documentComparisonId) return;
-    
-    const recipientEmail = prompt('Enter email to send report back to:');
-    if (!recipientEmail || !recipientEmail.includes('@')) {
-      toast.error('Invalid email address');
-      return;
-    }
-
-    try {
-      toast.info('Sending...');
-      
-      const result = await base44.functions.invoke('SendReportEmailSafe', {
-        proposalId: shareData.proposalId,
-        documentComparisonId: shareData.documentComparisonId,
-        recipientEmail
-      });
-
-      if (result.data.ok) {
-        toast.success(`Report sent to ${recipientEmail}`);
-      } else {
-        toast.error(result.data.message || 'Failed to send');
-        alert(`Failed to send:\n\n${result.data.message}\n\nError Code: ${result.data.errorCode}\nCorrelation ID: ${result.data.correlationId}`);
-      }
-    } catch (error) {
-      toast.error('Failed to send report');
-      console.error('Send back error:', error);
-    }
-  }
 }
