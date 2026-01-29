@@ -36,6 +36,7 @@ Deno.serve(async (req) => {
 
     const fromDomain = fromEmail ? fromEmail.split('@')[1] : null;
     const replyToDomain = replyTo ? replyTo.split('@')[1] : null;
+    const baseUrl = Deno.env.get('APP_BASE_URL') || new URL(req.url).origin;
 
     console.log(`[${correlationId}] Email config check - hasKey: ${!!resendApiKey}, fromDomain: ${fromDomain}`);
 
@@ -47,6 +48,7 @@ Deno.serve(async (req) => {
       fromDomain: fromDomain || null,
       replyTo: replyTo || null,
       replyToDomain: replyToDomain || null,
+      baseUrl: baseUrl,
       environment: Deno.env.get('DENO_DEPLOYMENT_ID') ? 'production' : 'development',
       isValidConfig: !!resendApiKey && fromDomain === 'mail.getpremarket.com',
       correlationId

@@ -211,6 +211,10 @@ export default function Settings() {
                           <span className="font-medium">{emailConfig.environment}</span>
                         </div>
                         <div className="flex justify-between">
+                          <span className="text-slate-600">Base URL:</span>
+                          <span className="font-medium text-xs">{emailConfig.baseUrl}</span>
+                        </div>
+                        <div className="flex justify-between">
                           <span className="text-slate-600">Valid Config:</span>
                           <span className={`font-medium ${emailConfig.isValidConfig ? 'text-green-600' : 'text-red-600'}`}>
                             {emailConfig.isValidConfig ? '✓ Valid' : '✗ Invalid'}

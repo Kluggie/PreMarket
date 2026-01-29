@@ -33,71 +33,31 @@ export default function SharedReport() {
     try {
       setLoading(true);
       
-      // Try to load via service role (works without auth)
-      let links;
-      try {
-        links = await base44.asServiceRole.entities.ShareLink.filter({ id: shareLinkId });
-      } catch (serviceRoleError) {
-        // If service role fails, try regular call (user might be logged in)
-        console.log('Service role access failed, trying regular access');
-        links = await base44.entities.ShareLink.filter({ id: shareLinkId });
+      if (!token) {
+        setError('Missing access token');
+        setLoading(false);
+        return;
       }
+
+      // Validate token via backend (guest-safe)
+      const result = await base44.functions.invoke('ValidateShareLink', { token });
       
-      if (links.length === 0) {
-        setError('Share link not found');
+      if (!result.data.ok) {
+        setError(result.data.message || 'Invalid share link');
         setLoading(false);
         return;
       }
 
-      const link = links[0];
-
-      // Validate token
-      if (link.token !== token) {
-        setError('Invalid access token');
-        setLoading(false);
-        return;
-      }
-
-      // Check expiration
-      if (new Date(link.expires_at) < new Date()) {
-        setError('This share link has expired');
-        setLoading(false);
-        return;
-      }
-
-      // Check max uses
-      if (link.uses >= link.max_uses) {
-        setError('This share link has reached its maximum number of uses');
-        setLoading(false);
-        return;
-      }
-
-      // Check status
-      if (link.status !== 'active') {
-        setError('This share link is no longer active');
-        setLoading(false);
-        return;
-      }
-
-      // Update usage count
-      try {
-        await base44.asServiceRole.entities.ShareLink.update(link.id, {
-          uses: (link.uses || 0) + 1,
-          last_used_at: new Date().toISOString()
-        });
-      } catch (updateError) {
-        console.warn('Failed to update usage count:', updateError);
-      }
-
-      setShareLink(link);
+      const { shareLink: link, permissions } = result.data;
+      setShareLink({ ...link, permissions });
 
       // Redirect to appropriate page with share token for guest access
-      if (link.document_comparison_id) {
-        navigate(createPageUrl(`DocumentComparisonDetail?id=${link.document_comparison_id}&shareToken=${token}`));
-      } else if (link.proposal_id) {
-        navigate(createPageUrl(`ProposalDetail?id=${link.proposal_id}&shareToken=${token}`));
-      } else if (link.evaluation_item_id) {
-        navigate(createPageUrl(`ReportViewer?evalItemId=${link.evaluation_item_id}&shareToken=${token}`));
+      if (link.documentComparisonId) {
+        navigate(createPageUrl(`DocumentComparisonDetail?id=${link.documentComparisonId}&shareToken=${token}`));
+      } else if (link.proposalId) {
+        navigate(createPageUrl(`ProposalDetail?id=${link.proposalId}&shareToken=${token}`));
+      } else if (link.evaluationItemId) {
+        navigate(createPageUrl(`ReportViewer?evalItemId=${link.evaluationItemId}&shareToken=${token}`));
       } else {
         setError('Unable to determine report location');
       }
