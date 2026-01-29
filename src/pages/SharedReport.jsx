@@ -38,39 +38,21 @@ export default function SharedReport() {
     try {
       setLoading(true);
       
-      // Validate token via backend (guest-safe, no auth required)
-      const result = await base44.functions.invoke('ValidateShareLink', { token });
+      // Load report data via backend (guest-safe, no auth required)
+      const result = await base44.functions.invoke('GetSharedReportData', { token });
       
       if (!result.data.ok) {
+        console.error('Load report failed:', result.data);
         setError(result.data.message || 'Invalid share link');
         setLoading(false);
         return;
       }
 
-      const { shareLink, permissions } = result.data;
+      const { shareLink, permissions, reportData: report } = result.data;
       setShareData({ ...shareLink, permissions });
-
-      // Load report data based on type
-      if (shareLink.documentComparisonId) {
-        const comparisons = await base44.asServiceRole.entities.DocumentComparison.filter({ 
-          id: shareLink.documentComparisonId 
-        });
-        if (comparisons[0]) {
-          setReportData({ type: 'comparison', data: comparisons[0] });
-        }
-      } else if (shareLink.proposalId) {
-        const proposals = await base44.asServiceRole.entities.Proposal.filter({ 
-          id: shareLink.proposalId 
-        });
-        if (proposals[0]) {
-          const reports = await base44.asServiceRole.entities.EvaluationReportShared.filter({ 
-            proposal_id: shareLink.proposalId 
-          }, '-created_date', 1);
-          setReportData({ type: 'proposal', data: proposals[0], report: reports[0] });
-        }
-      }
-
+      setReportData(report);
       setLoading(false);
+
     } catch (err) {
       console.error('Load shared report error:', err);
       setError(err.message || 'Failed to load shared report');
@@ -86,6 +68,23 @@ export default function SharedReport() {
             <Loader2 className="w-12 h-12 text-blue-500 mx-auto mb-4 animate-spin" />
             <h3 className="text-lg font-semibold text-slate-900 mb-2">Loading report...</h3>
             <p className="text-slate-500">Please wait while we verify your access.</p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (!token) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <Card className="border-0 shadow-sm w-full max-w-md">
+          <CardContent className="py-16 text-center">
+            <AlertTriangle className="w-12 h-12 text-amber-300 mx-auto mb-4" />
+            <h3 className="text-lg font-semibold text-slate-900 mb-2">Missing Access Token</h3>
+            <p className="text-slate-500 mb-6">This link is incomplete. Please request a new share link.</p>
+            <Button onClick={() => window.location.href = '/'}>
+              Go to Home
+            </Button>
           </CardContent>
         </Card>
       </div>
@@ -109,9 +108,9 @@ export default function SharedReport() {
     );
   }
 
-  const report = reportData?.type === 'comparison' 
-    ? reportData.data.evaluation_report_json 
-    : reportData?.report?.output_report_json;
+  const report = reportData?.type === 'document_comparison' 
+    ? reportData.report 
+    : reportData?.report;
 
   return (
     <div className="min-h-screen bg-slate-50 py-8">
@@ -141,12 +140,12 @@ export default function SharedReport() {
         </Card>
 
         {/* Report Content */}
-        {reportData?.type === 'comparison' && (
+        {reportData?.type === 'document_comparison' && (
           <Card className="border-0 shadow-sm mb-6 bg-gradient-to-br from-purple-50 to-blue-50">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Sparkles className="w-5 h-5 text-purple-600" />
-                {reportData.data.title || 'Document Comparison'}
+                {reportData.title || 'Document Comparison'}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -223,7 +222,7 @@ export default function SharedReport() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Sparkles className="w-5 h-5 text-emerald-600" />
-                {reportData.data.title || 'Proposal Report'}
+                {reportData.title || 'Proposal Report'}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -293,23 +292,23 @@ export default function SharedReport() {
             {shareData.permissions.canReevaluate && (
               <Button 
                 onClick={async () => {
-                  if (!shareData?.proposalId && !shareData?.documentComparisonId) return;
+                  if (!reportData?.id) return;
 
                   try {
                     toast.info('Running evaluation...');
                     
-                    if (shareData.documentComparisonId) {
+                    if (reportData.type === 'document_comparison') {
                       const result = await base44.functions.invoke('EvaluateDocumentComparison', {
-                        comparison_id: shareData.documentComparisonId
+                        comparison_id: reportData.id
                       });
                       
                       if (!result.data.ok) {
                         toast.error(result.data.message || 'Evaluation failed');
                         return;
                       }
-                    } else if (shareData.proposalId) {
+                    } else if (reportData.type === 'proposal') {
                       const result = await base44.functions.invoke('EvaluateProposalShared', {
-                        proposal_id: shareData.proposalId
+                        proposal_id: reportData.id
                       });
                       
                       if (result.data.status === 'failed') {
@@ -334,7 +333,7 @@ export default function SharedReport() {
             {shareData.permissions.canSendBack && (
               <Button 
                 onClick={async () => {
-                  if (!shareData?.proposalId && !shareData?.documentComparisonId) return;
+                  if (!reportData?.id) return;
                   
                   const recipientEmail = prompt('Enter email to send report back to:');
                   if (!recipientEmail || !recipientEmail.includes('@')) {
@@ -346,8 +345,9 @@ export default function SharedReport() {
                     toast.info('Sending...');
                     
                     const result = await base44.functions.invoke('SendReportEmailSafe', {
-                      proposalId: shareData.proposalId,
-                      documentComparisonId: shareData.documentComparisonId,
+                      proposalId: reportData.type === 'proposal' ? reportData.id : null,
+                      documentComparisonId: reportData.type === 'document_comparison' ? reportData.id : null,
+                      evaluationItemId: reportData.type === 'evaluation' ? reportData.id : null,
                       recipientEmail
                     });
 
