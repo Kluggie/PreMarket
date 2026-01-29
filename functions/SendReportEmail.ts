@@ -112,9 +112,21 @@ Deno.serve(async (req) => {
       }, { status: 500 });
     }
 
-    const fromEmail = `${fromName} <${fromEmailAddress}>`;
     const fromDomain = fromEmailAddress.split('@')[1];
-    console.log(`[${correlationId}] Sending from domain: ${fromDomain}`);
+    
+    // Validate verified domain
+    if (fromDomain !== 'mail.getpremarket.com') {
+      console.error(`[${correlationId}] Invalid domain: ${fromDomain}`);
+      return Response.json({
+        ok: false,
+        errorCode: 'EMAIL_CONFIG_INVALID',
+        message: 'RESEND_FROM_EMAIL must be @mail.getpremarket.com',
+        correlationId
+      }, { status: 500 });
+    }
+
+    const fromEmail = `${fromName} <${fromEmailAddress}>`;
+    console.log(`[${correlationId}] Sending from: ${fromDomain}`);
 
     // Create share link
     const shareLinkResult = await base44.functions.invoke('CreateShareLink', {
@@ -162,6 +174,10 @@ Deno.serve(async (req) => {
 
     console.log(`[${correlationId}] Preparing email for: ${itemTitle}`);
 
+    // Get base URL from request
+    const requestUrl = new URL(req.url);
+    const baseUrl = requestUrl.origin;
+
     const emailBody = `
 Hello,
 
@@ -172,8 +188,22 @@ ${shareUrl}
 
 This link will expire in 14 days and can be accessed up to 25 times.
 
-Best regards,
-${fromName} Team
+---
+${fromName}
+${baseUrl}
+    `.trim();
+
+    const emailHtml = `
+<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+  <p>Hello,</p>
+  <p>${user.full_name || user.email} has shared a report with you: <strong>"${itemTitle}"</strong></p>
+  <div style="margin: 30px 0;">
+    <a href="${shareUrl}" style="background-color: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Open Report</a>
+  </div>
+  <p style="color: #64748b; font-size: 14px;">This link will expire in 14 days and can be accessed up to 25 times.</p>
+  <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 30px 0;">
+  <p style="color: #64748b; font-size: 12px;">${fromName}<br>${baseUrl}</p>
+</div>
     `.trim();
 
     // Send email using Resend
@@ -184,7 +214,7 @@ ${fromName} Team
         to: email,
         subject: `${user.full_name || user.email} shared: ${itemTitle}`,
         text: emailBody,
-        html: emailBody.replace(/\n/g, '<br>')
+        html: emailHtml
       };
 
       // Add reply_to if configured

@@ -9,18 +9,32 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
 import {
-  Bell, Lock, Mail, Shield, Trash2, AlertTriangle, LogOut, CheckCircle2, CreditCard
+  Bell, Lock, Mail, Shield, Trash2, AlertTriangle, LogOut, CheckCircle2, CreditCard, RefreshCw
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '../utils';
 
 export default function Settings() {
   const [user, setUser] = useState(null);
+  const [emailConfig, setEmailConfig] = useState(null);
+  const [loadingConfig, setLoadingConfig] = useState(false);
   const queryClient = useQueryClient();
 
   useEffect(() => {
     base44.auth.me().then(setUser);
   }, []);
+
+  const loadEmailConfig = async () => {
+    setLoadingConfig(true);
+    try {
+      const result = await base44.functions.invoke('EmailConfigStatus', {});
+      setEmailConfig(result.data);
+    } catch (error) {
+      console.error('Failed to load email config:', error);
+      setEmailConfig({ error: error.message });
+    }
+    setLoadingConfig(false);
+  };
 
   const { data: profile } = useQuery({
     queryKey: ['userProfile', user?.email],
@@ -135,6 +149,80 @@ export default function Settings() {
               </div>
             </CardContent>
           </Card>
+
+          {/* Email Configuration (Admin Only) */}
+          {user?.role === 'admin' && (
+            <Card className="border-0 shadow-sm">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Mail className="w-5 h-5 text-slate-400" />
+                  Email Configuration
+                </CardTitle>
+                <CardDescription>Check email provider settings (Admin only)</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-medium">Email Provider Status</p>
+                    <p className="text-sm text-slate-500">Verify Resend configuration.</p>
+                  </div>
+                  <Button 
+                    variant="outline"
+                    onClick={loadEmailConfig}
+                    disabled={loadingConfig}
+                  >
+                    {loadingConfig ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                        Checking...
+                      </>
+                    ) : (
+                      'Check Status'
+                    )}
+                  </Button>
+                </div>
+                
+                {emailConfig && (
+                  <div className="mt-4 p-4 bg-slate-50 rounded-lg space-y-2 text-sm">
+                    {emailConfig.error ? (
+                      <p className="text-red-600">Error: {emailConfig.error}</p>
+                    ) : (
+                      <>
+                        <div className="flex justify-between">
+                          <span className="text-slate-600">Resend API Key:</span>
+                          <span className="font-medium">{emailConfig.hasResendKey ? '✓ Set' : '✗ Missing'}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-600">From Email:</span>
+                          <span className="font-medium">{emailConfig.fromEmail || 'Not set'}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-600">From Domain:</span>
+                          <span className={`font-medium ${emailConfig.fromDomain === 'mail.getpremarket.com' ? 'text-green-600' : 'text-red-600'}`}>
+                            {emailConfig.fromDomain || 'Not set'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-600">Reply To:</span>
+                          <span className="font-medium">{emailConfig.replyTo || 'Not set'}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-600">Environment:</span>
+                          <span className="font-medium">{emailConfig.environment}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-600">Valid Config:</span>
+                          <span className={`font-medium ${emailConfig.isValidConfig ? 'text-green-600' : 'text-red-600'}`}>
+                            {emailConfig.isValidConfig ? '✓ Valid' : '✗ Invalid'}
+                          </span>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
           {/* Notifications */}
           <Card className="border-0 shadow-sm">

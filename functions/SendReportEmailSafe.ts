@@ -142,10 +142,35 @@ Deno.serve(async (req) => {
       });
     }
 
-    const fromEmail = `${fromName} <${fromEmailAddress}>`;
     const fromDomain = fromEmailAddress.split('@')[1];
-    console.log(`[${correlationId}] Sending from domain: ${fromDomain}`);
-    console.log(`[${correlationId}] Sending to domain: ${recipientDomain}`);
+    
+    // Validate verified domain
+    if (fromDomain !== 'mail.getpremarket.com') {
+      console.error(`[${correlationId}] Invalid domain: ${fromDomain}`);
+      
+      await logEmailSend(base44, {
+        correlationId,
+        proposalId,
+        evaluationItemId,
+        documentComparisonId,
+        recipientDomain,
+        ok: false,
+        errorCode: 'EMAIL_CONFIG_INVALID',
+        message: `RESEND_FROM_EMAIL must be @mail.getpremarket.com, got @${fromDomain}`,
+        provider: 'resend'
+      });
+      
+      return Response.json({
+        ok: false,
+        correlationId,
+        errorCode: 'EMAIL_CONFIG_INVALID',
+        message: 'RESEND_FROM_EMAIL must be @mail.getpremarket.com'
+      });
+    }
+
+    const fromEmail = `${fromName} <${fromEmailAddress}>`;
+    console.log(`[${correlationId}] Sending from: ${fromDomain}`);
+    console.log(`[${correlationId}] Sending to: ${recipientDomain}`);
 
     // Create share link
     let shareLinkResult;
@@ -246,7 +271,7 @@ ${fromName} Team`;
         to: recipientEmail,
         subject: `${user.full_name || user.email} shared: ${itemTitle}`,
         text: emailBody,
-        html: emailBody.replace(/\n/g, '<br>')
+        html: emailHtml
       };
 
       // Add reply_to if configured

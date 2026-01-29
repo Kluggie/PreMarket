@@ -32,7 +32,16 @@ export default function SharedReport() {
   const loadShareLink = async () => {
     try {
       setLoading(true);
-      const links = await base44.asServiceRole.entities.ShareLink.filter({ id: shareLinkId });
+      
+      // Try to load via service role (works without auth)
+      let links;
+      try {
+        links = await base44.asServiceRole.entities.ShareLink.filter({ id: shareLinkId });
+      } catch (serviceRoleError) {
+        // If service role fails, try regular call (user might be logged in)
+        console.log('Service role access failed, trying regular access');
+        links = await base44.entities.ShareLink.filter({ id: shareLinkId });
+      }
       
       if (links.length === 0) {
         setError('Share link not found');
@@ -71,20 +80,24 @@ export default function SharedReport() {
       }
 
       // Update usage count
-      await base44.asServiceRole.entities.ShareLink.update(link.id, {
-        uses: (link.uses || 0) + 1,
-        last_used_at: new Date().toISOString()
-      });
+      try {
+        await base44.asServiceRole.entities.ShareLink.update(link.id, {
+          uses: (link.uses || 0) + 1,
+          last_used_at: new Date().toISOString()
+        });
+      } catch (updateError) {
+        console.warn('Failed to update usage count:', updateError);
+      }
 
       setShareLink(link);
 
-      // Redirect to appropriate page
+      // Redirect to appropriate page with share token for guest access
       if (link.document_comparison_id) {
-        navigate(createPageUrl(`DocumentComparisonDetail?id=${link.document_comparison_id}`));
+        navigate(createPageUrl(`DocumentComparisonDetail?id=${link.document_comparison_id}&shareToken=${token}`));
       } else if (link.proposal_id) {
-        navigate(createPageUrl(`ProposalDetail?id=${link.proposal_id}`));
+        navigate(createPageUrl(`ProposalDetail?id=${link.proposal_id}&shareToken=${token}`));
       } else if (link.evaluation_item_id) {
-        navigate(createPageUrl(`ReportViewer?evalItemId=${link.evaluation_item_id}`));
+        navigate(createPageUrl(`ReportViewer?evalItemId=${link.evaluation_item_id}&shareToken=${token}`));
       } else {
         setError('Unable to determine report location');
       }
