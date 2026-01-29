@@ -85,9 +85,23 @@ export default function DocumentComparisonCreate() {
     
     const params = new URLSearchParams(window.location.search);
     const draftId = params.get('draft');
+    const proposalId = params.get('proposalId');
+    const stepParam = params.get('step');
+    
     if (draftId) {
       setComparisonId(draftId);
       loadDraft(draftId);
+      
+      // Jump to saved step if provided
+      if (stepParam) {
+        const savedStep = parseInt(stepParam, 10);
+        if (savedStep >= 1 && savedStep <= 4) {
+          setTimeout(() => setStep(savedStep), 100);
+        }
+      }
+    } else if (proposalId) {
+      // Load via proposalId if provided
+      loadDraftViaProposal(proposalId);
     }
   }, [user]);
 
@@ -153,6 +167,37 @@ export default function DocumentComparisonCreate() {
     } catch (error) {
       console.error('Failed to load draft:', error);
       alert('Error loading draft: ' + error.message);
+      navigate(createPageUrl('Proposals'));
+    }
+  };
+
+  const loadDraftViaProposal = async (proposalId) => {
+    try {
+      const proposals = await base44.entities.Proposal.filter({ id: proposalId });
+      const proposal = proposals[0];
+      
+      if (!proposal) {
+        alert('Proposal not found.');
+        navigate(createPageUrl('Proposals'));
+        return;
+      }
+      
+      if (proposal.proposal_type !== 'document_comparison' || !proposal.document_comparison_id) {
+        alert('This is not a document comparison proposal.');
+        navigate(createPageUrl('Proposals'));
+        return;
+      }
+      
+      setComparisonId(proposal.document_comparison_id);
+      loadDraft(proposal.document_comparison_id);
+      
+      // Jump to saved step
+      if (proposal.draft_step) {
+        setTimeout(() => setStep(proposal.draft_step), 100);
+      }
+    } catch (error) {
+      console.error('Failed to load via proposal:', error);
+      alert('Error loading proposal: ' + error.message);
       navigate(createPageUrl('Proposals'));
     }
   };

@@ -144,7 +144,12 @@ export default function Proposals() {
     
     const handleClick = () => {
       if (isDraft) {
-        window.location.href = createPageUrl(`CreateProposal?draft=${proposal.id}`);
+        // Route based on proposal type
+        if (proposal.proposal_type === 'document_comparison' && proposal.document_comparison_id) {
+          window.location.href = createPageUrl(`DocumentComparisonCreate?draft=${proposal.document_comparison_id}&proposalId=${proposal.id}&step=${proposal.draft_step || 1}`);
+        } else {
+          window.location.href = createPageUrl(`CreateProposal?draft=${proposal.id}`);
+        }
       } else {
         window.location.href = createPageUrl(`ProposalDetail?id=${proposal.id}`);
       }
