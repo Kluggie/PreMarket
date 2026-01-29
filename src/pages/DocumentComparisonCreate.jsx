@@ -1496,6 +1496,17 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                               return;
                             }
 
+                            // Update Proposal status to submitted
+                            const proposals = await base44.entities.Proposal.filter({ 
+                              document_comparison_id: id 
+                            });
+                            if (proposals.length > 0) {
+                              await base44.entities.Proposal.update(proposals[0].id, {
+                                status: 'submitted',
+                                draft_step: null
+                              });
+                            }
+
                             const result = await base44.functions.invoke('EvaluateDocumentComparison', {
                               comparison_id: id
                             });
@@ -1510,6 +1521,7 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                               return;
                             }
 
+                            queryClient.invalidateQueries(['proposals']);
                             navigate(createPageUrl(`DocumentComparisonDetail?id=${id}`));
                           } catch (error) {
                             const errorData = error.response?.data || {};

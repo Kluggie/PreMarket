@@ -115,6 +115,13 @@ export default function CreateProposal() {
         return;
       }
 
+      // Defensive redirect: if this is a document_comparison, redirect to correct page
+      if (proposal.proposal_type === 'document_comparison' && proposal.document_comparison_id) {
+        console.log('Redirecting to DocumentComparisonCreate for document_comparison type proposal');
+        navigate(createPageUrl(`DocumentComparisonCreate?draft=${proposal.document_comparison_id}&proposalId=${proposalId}&step=${proposal.draft_step || 1}`));
+        return;
+      }
+
       const template = templates.find(t => t.id === proposal.template_id);
       if (!template) {
         console.error('Template not found for draft');
