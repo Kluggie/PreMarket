@@ -174,10 +174,9 @@ Deno.serve(async (req) => {
 
     console.log(`[${correlationId}] Preparing email for: ${itemTitle}`);
 
-    // Get base URL (domain-aware) and build page route URL
+    // Build share URL - use provided URL or construct from token
     const baseUrl = Deno.env.get('APP_BASE_URL') || new URL(req.url).origin;
-    const token = shareResult.data.token;
-    const sharePageUrl = `${baseUrl}/shared-report?token=${token}`;
+    const sharePageUrl = shareUrl || `${baseUrl}/shared-report?token=${shareLinkResult.data.token}`;
 
     // Generate PDF attachment
     let pdfAttachment = null;
