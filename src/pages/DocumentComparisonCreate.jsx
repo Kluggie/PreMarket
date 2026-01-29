@@ -160,7 +160,7 @@ export default function DocumentComparisonCreate() {
   const saveDraft = async (stepToSave, isAutosave = false) => {
     if (!user) return null;
     
-    const data = {
+    const comparisonData = {
       title: title || 'Untitled Comparison',
       created_by_user_id: user.id,
       party_a_label: partyALabel,
@@ -179,20 +179,47 @@ export default function DocumentComparisonCreate() {
     };
     
     try {
+      let savedComparisonId = comparisonId;
+      
       if (comparisonId) {
-        await base44.entities.DocumentComparison.update(comparisonId, data);
-        if (!isAutosave) {
-          toast.success('Draft saved');
-        }
-        return comparisonId;
+        // Update existing comparison
+        await base44.entities.DocumentComparison.update(comparisonId, comparisonData);
       } else {
-        const comparison = await base44.entities.DocumentComparison.create(data);
+        // Create new comparison
+        const comparison = await base44.entities.DocumentComparison.create(comparisonData);
+        savedComparisonId = comparison.id;
         setComparisonId(comparison.id);
-        if (!isAutosave) {
-          toast.success('Draft saved');
-        }
-        return comparison.id;
       }
+      
+      // Create or update Proposal entry for this comparison
+      const proposals = await base44.entities.Proposal.filter({ 
+        document_comparison_id: savedComparisonId 
+      });
+      
+      const proposalData = {
+        title: title || 'Untitled Comparison',
+        proposal_type: 'document_comparison',
+        document_comparison_id: savedComparisonId,
+        party_a_user_id: user.id,
+        party_a_email: user.email,
+        status: 'draft',
+        draft_step: stepToSave,
+        draft_updated_at: new Date().toISOString()
+      };
+      
+      if (proposals.length > 0) {
+        // Update existing proposal
+        await base44.entities.Proposal.update(proposals[0].id, proposalData);
+      } else {
+        // Create new proposal
+        await base44.entities.Proposal.create(proposalData);
+      }
+      
+      if (!isAutosave) {
+        toast.success('Draft saved');
+      }
+      
+      return savedComparisonId;
     } catch (error) {
       if (!isAutosave) {
         toast.error('Failed to save draft: ' + error.message);
