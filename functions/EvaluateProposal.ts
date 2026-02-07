@@ -116,18 +116,38 @@ HOW TO FILL THE REPORT:
 OUTPUT: Valid JSON only, no prose.`;
 
 Deno.serve(async (req) => {
+  const correlationId = `eval_proposal_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+  const fail = (
+    status: number,
+    errorCode: string,
+    message: string,
+    detailsSafe?: string,
+  ) =>
+    Response.json(
+      {
+        ok: false,
+        errorCode,
+        error: message,
+        message,
+        ...(detailsSafe ? { detailsSafe } : {}),
+        correlationId,
+      },
+      { status },
+    );
+
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
 
     if (!user) {
-      return Response.json({ error: 'Unauthorized' }, { status: 401 });
+      return fail(401, 'UNAUTHORIZED', 'Unauthorized');
     }
 
-    const { proposal_id } = await req.json();
+    const { proposal_id, force } = await req.json().catch(() => ({}));
+    const isForce = Boolean(force);
 
     if (!proposal_id) {
-      return Response.json({ error: 'Missing proposal_id' }, { status: 400 });
+      return fail(400, 'MISSING_PROPOSAL_ID', 'Missing proposal_id');
     }
 
     // Load data using service role
@@ -139,7 +159,7 @@ Deno.serve(async (req) => {
 
     const proposal = proposals[0];
     if (!proposal) {
-      return Response.json({ error: 'Proposal not found' }, { status: 404 });
+      return fail(404, 'PROPOSAL_NOT_FOUND', 'Proposal not found');
     }
 
     // Compatibility: if this proposal is a document comparison draft, forward to EvaluateDocumentComparison
@@ -150,19 +170,37 @@ Deno.serve(async (req) => {
           comparison_id: proposal.document_comparison_id
         });
 
-        // If forward returned a body, just echo it back
+        // Normalize forwarded response to the EvaluateProposal contract.
         if (forwardResult && forwardResult.data) {
-          return Response.json(forwardResult.data);
+          const data = forwardResult.data;
+          if (data.ok === true || data.success === true) {
+            return Response.json({
+              ok: true,
+              reportId: data.reportId || null,
+              report: data.report || data.internal_report || null,
+              cached: Boolean(data.cached),
+              correlationId: data.correlationId || correlationId,
+            });
+          }
+          return Response.json({
+            ok: false,
+            errorCode: data.errorCode || 'FORWARD_FAILED',
+            error: data.error || data.message || 'Forwarded evaluation failed',
+            message: data.message || data.error || 'Forwarded evaluation failed',
+            detailsSafe: data.detailsSafe,
+            correlationId: data.correlationId || correlationId,
+          }, { status: 500 });
         }
       } catch (forwardError) {
         console.error('[EvaluateProposal] Forward to EvaluateDocumentComparison failed:', forwardError);
-        return Response.json({ error: 'Forwarding to EvaluateDocumentComparison failed', details: forwardError?.message || null }, { status: 500 });
+        const forwardErr = forwardError instanceof Error ? forwardError : new Error(String(forwardError));
+        return fail(500, 'FORWARD_FAILED', 'Forwarding to EvaluateDocumentComparison failed', forwardErr.message);
       }
     }
 
     const template = templates.find(t => t.id === proposal.template_id);
     if (!template) {
-      return Response.json({ error: 'Template not found' }, { status: 404 });
+      return fail(404, 'TEMPLATE_NOT_FOUND', 'Template not found');
     }
 
     // Fetch optional profile/org context
@@ -240,32 +278,98 @@ Deno.serve(async (req) => {
     const hashArray = Array.from(new Uint8Array(hashBuffer));
     const inputFingerprint = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 
-    // Check for existing report with same fingerprint
+    // Load all reports for this proposal:
+    // - cached report lookup uses succeeded status
+    // - force rate-limiting counts forced attempts across all statuses
     const existingReports = await base44.asServiceRole.entities.EvaluationReport.filter({
-      proposal_id,
-      status: 'succeeded'
+      proposal_id
     });
     
-    const cachedReport = existingReports.find(r => r.input_fingerprint === inputFingerprint);
-    if (cachedReport) {
+    const cachedReport = existingReports.find(
+      (r) => r.status === 'succeeded' && r.input_fingerprint === inputFingerprint,
+    );
+    if (cachedReport && !isForce) {
       return Response.json({
-        success: true,
+        ok: true,
         reportId: cachedReport.id,
         report: cachedReport.output_report_json,
-        cached: true
+        cached: true,
+        correlationId
       });
     }
 
-    // Create new report
-    const report = await base44.asServiceRole.entities.EvaluationReport.create({
+    if (isForce) {
+      const now = Date.now();
+      const dayStart = new Date();
+      dayStart.setHours(0, 0, 0, 0);
+
+      const forcedByUser = existingReports.filter((report) => {
+        const reportUserId = String(report.created_by_user_id || '');
+        const rawOutput = String(report.raw_output || '');
+        const wasForced = Boolean(report.force_rerun) || rawOutput.startsWith('__force_rerun__');
+        return reportUserId === String(user.id) && wasForced;
+      });
+
+      const latestForcedTs = forcedByUser.reduce((maxTs, report) => {
+        const ts = Date.parse(String(report.created_date || report.createdAt || ''));
+        return Number.isNaN(ts) ? maxTs : Math.max(maxTs, ts);
+      }, 0);
+
+      const cooldownMs = 15 * 60 * 1000;
+      if (latestForcedTs > 0 && now - latestForcedTs < cooldownMs) {
+        const retryAfterSeconds = Math.ceil((cooldownMs - (now - latestForcedTs)) / 1000);
+        return Response.json({
+          ok: false,
+          errorCode: 'RATE_LIMITED',
+          error: 'Forced rerun cooldown active',
+          message: 'Please wait before forcing another rerun for this proposal.',
+          retryAfterSeconds,
+          correlationId
+        }, { status: 200 });
+      }
+
+      const forcedTodayCount = forcedByUser.filter((report) => {
+        const ts = Date.parse(String(report.created_date || report.createdAt || ''));
+        return !Number.isNaN(ts) && ts >= dayStart.getTime();
+      }).length;
+
+      const dailyCap = 5;
+      if (forcedTodayCount >= dailyCap) {
+        const tomorrow = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
+        const retryAfterSeconds = Math.max(1, Math.ceil((tomorrow.getTime() - now) / 1000));
+        return Response.json({
+          ok: false,
+          errorCode: 'RATE_LIMITED',
+          error: 'Daily forced rerun limit reached',
+          message: 'You have reached the daily forced rerun limit for this proposal.',
+          retryAfterSeconds,
+          correlationId
+        }, { status: 200 });
+      }
+    }
+
+    // Create new report with schema-safe fallback when custom fields are unavailable.
+    let report;
+    const safeCreatePayload = {
       proposal_id,
-      template_id: template.id,
-      template_version: template.updated_date || template.created_date,
-      rubric_version: template.rubric_version || 'default',
-      status: 'running',
-      system_prompt_version: 'v1_2026-01-18',
-      input_fingerprint: inputFingerprint
-    });
+      input_fingerprint: inputFingerprint,
+    };
+    const optionalCreatePayload = {
+      created_by_user_id: user.id,
+      force_rerun: isForce,
+    };
+
+    try {
+      report = await base44.asServiceRole.entities.EvaluationReport.create({
+        ...safeCreatePayload,
+        ...optionalCreatePayload,
+      });
+    } catch (_) {
+      report = await base44.asServiceRole.entities.EvaluationReport.create({
+        ...safeCreatePayload,
+        raw_output: isForce ? '__force_rerun__' : '',
+      });
+    }
 
     // Build system prompt with optional context
     const systemPromptWithContext = `SYSTEM / DEVELOPER PROMPT — VertexGemini3Evaluator (GenerateContent)
@@ -421,12 +525,16 @@ Generate the evaluation report as valid JSON matching the schema exactly.`;
       await base44.asServiceRole.entities.EvaluationReport.update(report.id, {
         status: 'failed',
         error_message: errorMsg,
-        raw_output: result.data?.outputText || ''
+        raw_output: `${isForce ? '__force_rerun__\n' : ''}${result.data?.outputText || ''}`
       });
-      return Response.json({ 
+      return Response.json({
+        ok: false,
+        errorCode: 'MODEL_ERROR',
         error: 'Evaluation failed',
+        message: 'Evaluation failed',
+        detailsSafe: errorMsg,
         reportId: report.id,
-        details: errorMsg
+        correlationId
       }, { status: 500 });
     }
 
@@ -469,30 +577,35 @@ Generate the evaluation report as valid JSON matching the schema exactly.`;
       });
 
       return Response.json({
-        success: true,
+        ok: true,
         reportId: report.id,
-        report: outputReport
+        report: outputReport,
+        cached: false,
+        correlationId
       });
 
     } catch (parseError) {
+      const parseErr = parseError instanceof Error ? parseError : new Error(String(parseError));
       await base44.asServiceRole.entities.EvaluationReport.update(report.id, {
         status: 'failed',
-        error_message: `JSON parse error: ${parseError.message}`,
-        raw_output: result.data?.outputText || ''
+        error_message: `JSON parse error: ${parseErr.message}`,
+        raw_output: `${isForce ? '__force_rerun__\n' : ''}${result.data?.outputText || ''}`
       });
-      
+
       return Response.json({
+        ok: false,
+        errorCode: 'PARSE_ERROR',
         error: 'Failed to parse evaluation report',
+        message: 'Failed to parse evaluation report',
         reportId: report.id,
-        parseError: parseError.message
+        detailsSafe: parseErr.message,
+        correlationId
       }, { status: 500 });
     }
 
   } catch (error) {
     const err = error instanceof Error ? error : new Error(String(error));
     console.error('EvaluateProposal error:', error);
-    return Response.json({
-      error: err.message
-    }, { status: 500 });
+    return fail(500, 'INTERNAL_ERROR', 'EvaluateProposal failed with internal error', err.message);
   }
 });

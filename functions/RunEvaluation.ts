@@ -17,7 +17,7 @@ Deno.serve(async (req) => {
       }, { status: 401 });
     }
 
-    const { evaluationItemId, initiatedByRole, draftPayloadOptional } = await req.json();
+    const { evaluationItemId, initiatedByRole, draftPayloadOptional, force } = await req.json();
     
     if (!evaluationItemId) {
       return Response.json({
@@ -113,8 +113,9 @@ Deno.serve(async (req) => {
         }, { status: 400 });
       }
       
-      evalResult = await base44.asServiceRole.functions.invoke('EvaluateProposalShared', {
-        proposal_id: item.linked_proposal_id
+      evalResult = await base44.asServiceRole.functions.invoke('EvaluateProposal', {
+        proposal_id: item.linked_proposal_id,
+        force: Boolean(force)
       });
       
     } else if (item.type === 'profile_matching') {
@@ -152,20 +153,54 @@ Deno.serve(async (req) => {
       }, { status: 400 });
     }
 
-    if (!evalResult.data.ok) {
-      await base44.asServiceRole.entities.EvaluationRun.update(newRun.id, {
-        status: 'failed',
-        error_message: evalResult.data.error || 'Evaluation failed'
-      });
-      
+    if (!evalResult.data?.ok) {
+      const errorCode = evalResult?.data?.errorCode || 'EVAL_FUNCTION_FAILED';
+      const retryAfterSeconds = Number(evalResult?.data?.retryAfterSeconds || 0);
+      const baseErrorMessage = evalResult?.data?.error || 'Evaluation failed';
+      const errorMessageWithRetry =
+        errorCode === 'RATE_LIMITED' && retryAfterSeconds > 0
+          ? `${baseErrorMessage} (retryAfterSeconds=${retryAfterSeconds})`
+          : baseErrorMessage;
+
+      if (errorCode === 'RATE_LIMITED') {
+        try {
+          await base44.asServiceRole.entities.EvaluationRun.update(newRun.id, {
+            status: 'rate_limited',
+            error_message: errorMessageWithRetry
+          });
+        } catch (_) {
+          await base44.asServiceRole.entities.EvaluationRun.update(newRun.id, {
+            status: 'blocked',
+            error_message: errorMessageWithRetry
+          });
+        }
+      } else {
+        await base44.asServiceRole.entities.EvaluationRun.update(newRun.id, {
+          status: 'failed',
+          error_message: errorMessageWithRetry
+        });
+      }
+
+      const status =
+        errorCode === 'RATE_LIMITED'
+          ? 200
+          : errorCode === 'UNAUTHORIZED'
+            ? 401
+            : errorCode === 'MISSING_PROPOSAL_ID' || errorCode === 'MISSING_LINKED_ENTITY'
+              ? 400
+              : errorCode === 'PROPOSAL_NOT_FOUND' || errorCode === 'TEMPLATE_NOT_FOUND'
+                ? 404
+                : 500;
+
       return Response.json({
         ok: false,
-        errorCode: evalResult.data.errorCode || 'EVAL_FUNCTION_FAILED',
-        error: evalResult.data.error,
-        message: evalResult.data.message || 'Evaluation function failed',
-        detailsSafe: evalResult.data.detailsSafe,
-        correlationId: evalResult.data.correlationId || correlationId
-      }, { status: 500 });
+        errorCode,
+        error: evalResult?.data?.error,
+        message: evalResult?.data?.message || 'Evaluation function failed',
+        detailsSafe: evalResult?.data?.detailsSafe,
+        retryAfterSeconds,
+        correlationId: evalResult?.data?.correlationId || correlationId
+      }, { status });
     }
 
     // Store internal report and build public report
