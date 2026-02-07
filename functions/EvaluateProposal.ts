@@ -489,9 +489,10 @@ Generate the evaluation report as valid JSON matching the schema exactly.`;
     }
 
   } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
     console.error('EvaluateProposal error:', error);
     return Response.json({
-      error: error.message
+      error: err.message
     }, { status: 500 });
   }
 });

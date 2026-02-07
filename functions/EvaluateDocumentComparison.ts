@@ -2,10 +2,11 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.6';
 
 Deno.serve(async (req) => {
   let comparison_id;
+  let base44;
   const correlationId = `eval_${Date.now()}_${Math.random().toString(36).substring(7)}`;
   
   try {
-    const base44 = createClientFromRequest(req);
+    base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
     if (!user) {
       return Response.json({ 
@@ -326,29 +327,31 @@ Return JSON only with this structure:
     });
 
   } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
     console.error('EvaluateDocumentComparison error:', error);
     
     // Try to update comparison with error
     if (comparison_id) {
       try {
-        await base44.entities.DocumentComparison.update(comparison_id, {
+        const base44Client = base44 ?? createClientFromRequest(req);
+        await base44Client.entities.DocumentComparison.update(comparison_id, {
           status: 'failed',
-          error_message: error.message
+          error_message: err.message
         });
       } catch (updateError) {
         console.error('Failed to update comparison with error:', updateError);
       }
     }
     
-    console.error('[EvaluateDocumentComparison] Unexpected error:', error.message, 'correlationId:', correlationId);
-    console.error('[EvaluateDocumentComparison] Stack:', error.stack);
+    console.error('[EvaluateDocumentComparison] Unexpected error:', err.message, 'correlationId:', correlationId);
+    console.error('[EvaluateDocumentComparison] Stack:', err.stack);
     
     return Response.json({ 
       ok: false,
       errorCode: 'INTERNAL_ERROR',
-      error: error.message,
+      error: err.message,
       message: 'Evaluation failed with internal error. Please try again or contact support.',
-      detailsSafe: error.message,
+      detailsSafe: err.message,
       correlationId
     }, { status: 500 });
   }

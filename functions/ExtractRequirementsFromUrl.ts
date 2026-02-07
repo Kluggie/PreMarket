@@ -62,7 +62,8 @@ async function fetchPage(url) {
     
     return text;
   } catch (error) {
-    console.error(`Failed to fetch ${url}:`, error.message);
+    const err = error instanceof Error ? error : new Error(String(error));
+    console.error(`Failed to fetch ${url}:`, err.message);
     return null;
   }
 }
@@ -297,10 +298,11 @@ Return ONLY the JSON, no markdown, no extra text.`;
     return Response.json(response);
     
   } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
     console.error('ExtractRequirementsFromUrl error:', error);
     return Response.json({
       ok: false,
-      error: error.message
+      error: err.message
     }, { status: 500 });
   }
 });

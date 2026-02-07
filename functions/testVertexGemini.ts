@@ -65,6 +65,7 @@ Deno.serve(async (req) => {
         });
 
     } catch (error) {
+        const err = error instanceof Error ? error : new Error(String(error));
         console.error('[testVertexGemini] Stage: error', stage, error);
         
         return Response.json({
@@ -72,14 +73,14 @@ Deno.serve(async (req) => {
             stage: 'error',
             text: null,
             status: error.status || null,
-            error: error.message || 'Unknown error',
+            error: err.message || 'Unknown error',
             raw: {
                 name: error.name,
-                message: error.message,
+                message: err.message,
                 status: error.status,
                 statusText: error.statusText,
                 data: error.data,
-                stack: error.stack?.split('\n').slice(0, 5)
+                stack: err.stack?.split('\n').slice(0, 5)
             }
         }, { status: 500 });
     }

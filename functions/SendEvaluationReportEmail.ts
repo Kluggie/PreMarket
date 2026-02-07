@@ -1,5 +1,5 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.6';
-import { buildSharedReportUrl, validateShareUrl } from './_utils/shareUrl.js';
+import { buildSharedReportUrl, validateShareUrl } from './_utils/shareUrl.ts';
 
 Deno.serve(async (req) => {
   const correlationId = `email_${Date.now()}_${Math.random().toString(36).substring(7)}`;
@@ -106,10 +106,11 @@ This is an information exchange only. PreMarket is not a broker, advisor, or tra
     });
 
   } catch (error) {
-    console.error('[SendEvaluationReportEmail] Error:', error.message, 'correlationId:', correlationId);
+    const err = error instanceof Error ? error : new Error(String(error));
+    console.error('[SendEvaluationReportEmail] Error:', err.message, 'correlationId:', correlationId);
     return Response.json({
       ok: false,
-      error: error.message,
+      error: err.message,
       correlationId
     }, { status: 500 });
   }

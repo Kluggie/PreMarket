@@ -117,12 +117,13 @@ Deno.serve(async (req) => {
     });
 
   } catch (error) {
-    console.error('[BuildPublicReport] Error:', error.message);
+    const err = error instanceof Error ? error : new Error(String(error));
+    console.error('[BuildPublicReport] Error:', err.message);
     
     return Response.json({
       ok: false,
       errorCode: 'INTERNAL_ERROR',
-      error: error.message,
+      error: err.message,
       correlationId
     }, { status: 500 });
   }

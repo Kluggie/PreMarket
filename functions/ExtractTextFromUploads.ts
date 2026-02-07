@@ -1,6 +1,7 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.6';
 import pdfParse from 'npm:pdf-parse@1.1.1';
 import mammoth from 'npm:mammoth@1.8.0';
+import { Buffer } from 'node:buffer';
 
 Deno.serve(async (req) => {
   const correlationId = `upload_${Date.now()}_${Math.random().toString(36).substring(7)}`;
@@ -98,7 +99,7 @@ Deno.serve(async (req) => {
         ) {
           try {
             const arrayBuffer = await fileResponse.arrayBuffer();
-            const buffer = new Uint8Array(arrayBuffer);
+            const buffer = Buffer.from(arrayBuffer);
             const result = await mammoth.extractRawText({ buffer });
             text = result.value || '';
             
@@ -149,11 +150,12 @@ Deno.serve(async (req) => {
         });
         
       } catch (error) {
-        console.error(`[ExtractTextFromUploads] Error processing ${filename}:`, error.message);
+        const err = error instanceof Error ? error : new Error(String(error));
+        console.error(`[ExtractTextFromUploads] Error processing ${filename}:`, err.message);
         errors.push({
           filename,
           error: 'Processing failed',
-          message: error.message,
+          message: err.message,
           mimeType
         });
       }
@@ -186,10 +188,11 @@ Deno.serve(async (req) => {
     });
 
   } catch (error) {
-    console.error('[ExtractTextFromUploads] Unexpected error:', error.message, 'correlationId:', correlationId);
+    const err = error instanceof Error ? error : new Error(String(error));
+    console.error('[ExtractTextFromUploads] Unexpected error:', err.message, 'correlationId:', correlationId);
     return Response.json({
       ok: false,
-      error: error.message,
+      error: err.message,
       message: 'Internal error during file extraction',
       correlationId
     }, { status: 500 });

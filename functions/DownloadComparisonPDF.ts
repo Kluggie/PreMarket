@@ -121,8 +121,8 @@ Deno.serve(async (req) => {
           y = 20;
         }
         
-        const color = conflict.severity === 'high' ? [200, 0, 0] : 
-                     conflict.severity === 'medium' ? [200, 150, 0] : [0, 100, 200];
+        const color: [number, number, number] = conflict.severity === 'high' ? [200, 0, 0] : 
+          conflict.severity === 'medium' ? [200, 150, 0] : [0, 100, 200];
         doc.setTextColor(...color);
         doc.text(`⚠ ${conflict.title} [${conflict.severity?.toUpperCase()}]`, 20, y);
         y += 6;
@@ -169,7 +169,8 @@ Deno.serve(async (req) => {
     });
 
   } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
     console.error('[DownloadComparisonPDF] Error:', error);
-    return Response.json({ error: error.message }, { status: 500 });
+    return Response.json({ error: err.message }, { status: 500 });
   }
 });

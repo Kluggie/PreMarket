@@ -1,7 +1,7 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.6';
 import Stripe from 'npm:stripe@17.5.0';
 
-const stripe = new Stripe(Deno.env.get('STRIPE_SECRET_KEY'), {
+const stripe = new Stripe(Deno.env.get('STRIPE_SECRET_KEY')!, {
   apiVersion: '2024-12-18.acacia'
 });
 
@@ -31,7 +31,13 @@ Deno.serve(async (req) => {
         const session = event.data.object;
         if (session.mode === 'subscription') {
           const userId = session.metadata.user_id;
-          const subscription = await stripe.subscriptions.retrieve(session.subscription);
+          const subId = typeof session.subscription === 'string'
+            ? session.subscription
+            : session.subscription?.id;
+          if (!subId) {
+            return Response.json({ error: 'Missing subscription id' }, { status: 400 });
+          }
+          const subscription = await stripe.subscriptions.retrieve(subId);
 
           await base44.asServiceRole.entities.User.update(userId, {
             plan_tier: 'professional',
@@ -55,7 +61,7 @@ Deno.serve(async (req) => {
         
         if (users.length > 0) {
           const user = users[0];
-          const updates = {
+          const updates: any = {
             subscription_status: subscription.status,
             current_period_end: new Date(subscription.current_period_end * 1000).toISOString(),
             cancel_at_period_end: subscription.cancel_at_period_end
@@ -93,7 +99,13 @@ Deno.serve(async (req) => {
       case 'invoice.payment_succeeded': {
         const invoice = event.data.object;
         if (invoice.subscription && invoice.customer) {
-          const subscription = await stripe.subscriptions.retrieve(invoice.subscription);
+          const subId = typeof invoice.subscription === 'string'
+            ? invoice.subscription
+            : invoice.subscription?.id;
+          if (!subId) {
+            return Response.json({ error: 'Missing subscription id' }, { status: 400 });
+          }
+          const subscription = await stripe.subscriptions.retrieve(subId);
           
           // Look up user by customer ID
           const users = await base44.asServiceRole.entities.User.filter({ 
@@ -133,9 +145,10 @@ Deno.serve(async (req) => {
 
     return Response.json({ received: true });
   } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
     console.error('Webhook error:', error);
     return Response.json({ 
-      error: error.message 
+      error: err.message 
     }, { status: 400 });
   }
 });

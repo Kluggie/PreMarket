@@ -61,7 +61,8 @@ Deno.serve(async (req) => {
     });
 
   } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
     console.error('[DownloadComparisonInputs] Error:', error);
-    return Response.json({ error: error.message }, { status: 500 });
+    return Response.json({ error: err.message }, { status: 500 });
   }
 });

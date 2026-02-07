@@ -27,6 +27,15 @@ Deno.serve(async (req) => {
       }, { status: 400 });
     }
 
+    if (!(file instanceof File)) {
+      return Response.json({
+        ok: false,
+        error: 'Invalid file',
+        errorMessage: 'File upload is invalid or missing',
+        correlationId
+      }, { status: 400 });
+    }
+
     const fileName = file.name.toLowerCase();
     
     // Handle .txt and .md (should be handled client-side but support here too)
@@ -66,10 +75,11 @@ Deno.serve(async (req) => {
     }, { status: 400 });
 
   } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
     console.error('ExtractTextFromFile error:', error);
     return Response.json({
       ok: false,
-      error: error.message,
+      error: err.message,
       errorMessage: 'Internal error during file extraction',
       correlationId
     }, { status: 500 });

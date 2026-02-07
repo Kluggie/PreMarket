@@ -150,7 +150,7 @@ Deno.serve(async (req) => {
     }
     
     // Footer
-    const pageCount = doc.internal.getNumberOfPages();
+    const pageCount = (doc.internal as unknown as { getNumberOfPages: () => number }).getNumberOfPages();
     for (let i = 1; i <= pageCount; i++) {
       doc.setPage(i);
       doc.setFontSize(8);
@@ -172,11 +172,12 @@ Deno.serve(async (req) => {
     });
 
   } catch (error) {
-    console.error(`[${correlationId}] PDF generation error:`, error.message);
+    const err = error instanceof Error ? error : new Error(String(error));
+    console.error(`[${correlationId}] PDF generation error:`, err.message);
     return Response.json({
       ok: false,
       errorCode: 'PDF_GENERATION_FAILED',
-      error: error.message,
+      error: err.message,
       correlationId
     }, { status: 500 });
   }
