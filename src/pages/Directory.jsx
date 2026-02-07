@@ -70,6 +70,21 @@ export default function Directory() {
     setPage(1);
   }, [mode, debouncedQuery, filters.user_type, filters.org_type, filters.industry, filters.location]);
 
+  useEffect(() => {
+    setFilters((prev) => {
+      if (mode === 'people') {
+        if (!prev.org_type) return prev;
+        return { ...prev, org_type: '' };
+      }
+      if (mode === 'orgs') {
+        if (!prev.user_type) return prev;
+        return { ...prev, user_type: '' };
+      }
+      if (!prev.user_type && !prev.org_type) return prev;
+      return { ...prev, user_type: '', org_type: '' };
+    });
+  }, [mode]);
+
   const { data, isLoading, error } = useQuery({
     queryKey: ['publicDirectorySearch', mode, debouncedQuery, filters, page, PAGE_SIZE],
     queryFn: async () => {
@@ -98,8 +113,8 @@ export default function Directory() {
     [data],
   );
 
-  const showUserType = mode === 'people' || mode === 'both';
-  const showOrgType = mode === 'orgs' || mode === 'both';
+  const showUserType = mode === 'people';
+  const showOrgType = mode === 'orgs';
 
   return (
     <div className="min-h-screen bg-slate-50 py-8">
