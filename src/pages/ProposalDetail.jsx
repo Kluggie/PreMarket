@@ -153,10 +153,10 @@ export default function ProposalDetail() {
       if (!resolvedProposalId) {
         throw new Error('Cannot evaluate: proposal id missing');
       }
+      let comparisonId = proposal?.document_comparison_id || null;
 
       try {
         // Prefer resolving a linked DocumentComparison by proposal id rather than relying solely on proposal shape.
-        let comparisonId = proposal?.document_comparison_id || null;
         try {
           const comparisons = await base44.entities.DocumentComparison.filter({ proposal_id: resolvedProposalId }, '-created_date');
           if (comparisons && comparisons.length > 0) {
