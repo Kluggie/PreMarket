@@ -55,8 +55,6 @@ export default function Directory() {
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [page, setPage] = useState(1);
   const [filters, setFilters] = useState({
-    user_type: '',
-    org_type: '',
     industry: '',
     location: '',
   });
@@ -68,22 +66,7 @@ export default function Directory() {
 
   useEffect(() => {
     setPage(1);
-  }, [mode, debouncedQuery, filters.user_type, filters.org_type, filters.industry, filters.location]);
-
-  useEffect(() => {
-    setFilters((prev) => {
-      if (mode === 'people') {
-        if (!prev.org_type) return prev;
-        return { ...prev, org_type: '' };
-      }
-      if (mode === 'orgs') {
-        if (!prev.user_type) return prev;
-        return { ...prev, user_type: '' };
-      }
-      if (!prev.user_type && !prev.org_type) return prev;
-      return { ...prev, user_type: '', org_type: '' };
-    });
-  }, [mode]);
+  }, [mode, debouncedQuery, filters.industry, filters.location]);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['publicDirectorySearch', mode, debouncedQuery, filters, page, PAGE_SIZE],
@@ -105,16 +88,11 @@ export default function Directory() {
 
   const facets = useMemo(
     () => ({
-      userTypes: data?.facets?.user_types || [],
-      orgTypes: data?.facets?.org_types || [],
       industries: data?.facets?.industries || [],
       locations: data?.facets?.locations || [],
     }),
     [data],
   );
-
-  const showUserType = mode === 'people';
-  const showOrgType = mode === 'orgs';
 
   return (
     <div className="min-h-screen bg-slate-50 py-8">
@@ -144,39 +122,7 @@ export default function Directory() {
               />
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-              {showUserType && (
-                <Select value={filters.user_type || 'all'} onValueChange={(value) => setFilters((prev) => ({ ...prev, user_type: value === 'all' ? '' : value }))}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="User type" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All user types</SelectItem>
-                    {facets.userTypes.map((value) => (
-                      <SelectItem key={value} value={value}>
-                        {value}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-
-              {showOrgType && (
-                <Select value={filters.org_type || 'all'} onValueChange={(value) => setFilters((prev) => ({ ...prev, org_type: value === 'all' ? '' : value }))}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Organization type" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All org types</SelectItem>
-                    {facets.orgTypes.map((value) => (
-                      <SelectItem key={value} value={value}>
-                        {value}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <Select value={filters.industry || 'all'} onValueChange={(value) => setFilters((prev) => ({ ...prev, industry: value === 'all' ? '' : value }))}>
                 <SelectTrigger>
                   <SelectValue placeholder="Industry" />
