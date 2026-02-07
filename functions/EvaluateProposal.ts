@@ -142,6 +142,24 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Proposal not found' }, { status: 404 });
     }
 
+    // Compatibility: if this proposal is a document comparison draft, forward to EvaluateDocumentComparison
+    if (proposal.document_comparison_id) {
+      console.log('[EvaluateProposal] Forwarding to EvaluateDocumentComparison for comparison_id:', proposal.document_comparison_id);
+      try {
+        const forwardResult = await base44.asServiceRole.functions.invoke('EvaluateDocumentComparison', {
+          comparison_id: proposal.document_comparison_id
+        });
+
+        // If forward returned a body, just echo it back
+        if (forwardResult && forwardResult.data) {
+          return Response.json(forwardResult.data);
+        }
+      } catch (forwardError) {
+        console.error('[EvaluateProposal] Forward to EvaluateDocumentComparison failed:', forwardError);
+        return Response.json({ error: 'Forwarding to EvaluateDocumentComparison failed', details: forwardError?.message || null }, { status: 500 });
+      }
+    }
+
     const template = templates.find(t => t.id === proposal.template_id);
     if (!template) {
       return Response.json({ error: 'Template not found' }, { status: 404 });
@@ -471,9 +489,10 @@ Generate the evaluation report as valid JSON matching the schema exactly.`;
     }
 
   } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
     console.error('EvaluateProposal error:', error);
     return Response.json({
-      error: error.message
+      error: err.message
     }, { status: 500 });
   }
 });

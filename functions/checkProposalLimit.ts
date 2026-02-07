@@ -40,9 +40,10 @@ Deno.serve(async (req) => {
       remaining: limit - used
     });
   } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
     console.error('Check limit error:', error);
     return Response.json({ 
-      error: error.message 
+      error: err.message 
     }, { status: 500 });
   }
 });

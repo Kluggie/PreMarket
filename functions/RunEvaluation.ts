@@ -218,15 +218,16 @@ Deno.serve(async (req) => {
     });
 
   } catch (error) {
-    console.error('[RunEvaluation] Error:', error.message, 'correlationId:', correlationId);
-    console.error('[RunEvaluation] Stack:', error.stack);
+    const err = error instanceof Error ? error : new Error(String(error));
+    console.error('[RunEvaluation] Error:', err.message, 'correlationId:', correlationId);
+    console.error('[RunEvaluation] Stack:', err.stack);
     
     return Response.json({
       ok: false,
       errorCode: 'INTERNAL_ERROR',
-      error: error.message,
+      error: err.message,
       message: 'Evaluation runner failed with internal error',
-      detailsSafe: error.message,
+      detailsSafe: err.message,
       correlationId
     }, { status: 500 });
   }

@@ -100,9 +100,10 @@ Rules:
     });
 
   } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
     console.error('ExtractJobRequirementsFromUrl error:', error);
     return Response.json({ 
-      error: error.message,
+      error: err.message,
       ok: false
     }, { status: 500 });
   }

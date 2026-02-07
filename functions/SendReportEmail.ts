@@ -1,5 +1,5 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.6';
-import { buildSharedReportUrl, validateShareUrl } from './_utils/shareUrl.js';
+import { buildSharedReportUrl, validateShareUrl } from './_utils/shareUrl.ts';
 
 Deno.serve(async (req) => {
   const correlationId = `email_${Date.now()}_${Math.random().toString(36).substring(7)}`;
@@ -249,7 +249,7 @@ https://getpremarket.com
     // Send email using Resend
     let emailResponse;
     try {
-      const emailPayload = {
+      const emailPayload: any = {
         from: fromEmail,
         to: email,
         subject: `${user.full_name || user.email} shared: ${itemTitle}`,
@@ -320,11 +320,12 @@ https://getpremarket.com
     }
 
   } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
     console.error(`[${correlationId}] SendReportEmail unexpected error:`, error);
     return Response.json({
       ok: false,
       errorCode: 'INTERNAL_ERROR',
-      message: error.message || 'Failed to send report email',
+      message: err.message || 'Failed to send report email',
       correlationId
     }, { status: 500 });
   }

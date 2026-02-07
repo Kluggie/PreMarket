@@ -1,7 +1,7 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.6';
 import Stripe from 'npm:stripe@17.5.0';
 
-const stripe = new Stripe(Deno.env.get('STRIPE_SECRET_KEY'), {
+const stripe = new Stripe(Deno.env.get('STRIPE_SECRET_KEY')!, {
   apiVersion: '2024-12-18.acacia'
 });
 
@@ -37,9 +37,10 @@ Deno.serve(async (req) => {
       period_end: subscription.current_period_end
     });
   } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
     console.error('Cancel error:', error);
     return Response.json({ 
-      error: error.message 
+      error: err.message 
     }, { status: 500 });
   }
 });

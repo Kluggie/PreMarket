@@ -1,5 +1,5 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.6';
-import { buildSharedReportUrl, validateShareUrl } from './_utils/shareUrl.js';
+import { buildSharedReportUrl, validateShareUrl } from './_utils/shareUrl.ts';
 
 Deno.serve(async (req) => {
   const correlationId = `email_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -351,7 +351,7 @@ https://getpremarket.com`;
     let providerStatus = 0;
     
     try {
-      const emailPayload = {
+      const emailPayload: any = {
         from: fromEmail,
         to: recipientEmail,
         subject: `${user.full_name || user.email} shared: ${itemTitle}`,
@@ -467,6 +467,7 @@ https://getpremarket.com`;
     }
 
   } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
     // Top-level catch - should never reach here but ensures no raw 500
     console.error(`[${correlationId}] Unhandled exception:`, error);
     
@@ -476,7 +477,7 @@ https://getpremarket.com`;
         correlationId,
         ok: false,
         errorCode: 'UNHANDLED_EXCEPTION',
-        message: error.message || 'Unknown error occurred'
+        message: err.message || 'Unknown error occurred'
       });
     } catch (logError) {
       console.error(`[${correlationId}] Could not log error:`, logError);
@@ -486,7 +487,7 @@ https://getpremarket.com`;
       ok: false,
       correlationId,
       errorCode: 'UNHANDLED_EXCEPTION',
-      message: error.message || 'An unexpected error occurred',
+      message: err.message || 'An unexpected error occurred',
       debug: {
         name: error.name,
         status: error.status

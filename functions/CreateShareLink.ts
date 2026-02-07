@@ -1,5 +1,5 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.6';
-import { buildSharedReportUrl, getPublicBaseUrl, validateShareUrl } from './_utils/shareUrl.js';
+import { buildSharedReportUrl, getPublicBaseUrl, validateShareUrl } from './_utils/shareUrl.ts';
 
 Deno.serve(async (req) => {
   const correlationId = `sharelink_${Date.now()}_${Math.random().toString(36).substring(7)}`;
@@ -140,11 +140,12 @@ Deno.serve(async (req) => {
     });
 
   } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
     console.error(`[${correlationId}] CreateShareLink error:`, error);
     return Response.json({
       ok: false,
       errorCode: 'INTERNAL_ERROR',
-      message: error.message || 'Failed to create share link',
+      message: err.message || 'Failed to create share link',
       correlationId
     }, { status: 500 });
   }

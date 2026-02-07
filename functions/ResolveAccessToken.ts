@@ -66,10 +66,11 @@ Deno.serve(async (req) => {
     });
 
   } catch (error) {
-    console.error('[ResolveAccessToken] Error:', error.message, 'correlationId:', correlationId);
+    const err = error instanceof Error ? error : new Error(String(error));
+    console.error('[ResolveAccessToken] Error:', err.message, 'correlationId:', correlationId);
     return Response.json({
       ok: false,
-      error: error.message,
+      error: err.message,
       correlationId
     }, { status: 500 });
   }

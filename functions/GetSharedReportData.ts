@@ -128,11 +128,12 @@ Deno.serve(async (req) => {
     });
 
   } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
     console.error(`[${correlationId}] GetSharedReportData error:`, error);
     return Response.json({
       ok: false,
       errorCode: 'INTERNAL_ERROR',
-      message: error.message || 'Failed to load shared report',
+      message: err.message || 'Failed to load shared report',
       correlationId
     }, { status: 500 });
   }

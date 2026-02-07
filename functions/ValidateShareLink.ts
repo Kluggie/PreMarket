@@ -100,11 +100,12 @@ Deno.serve(async (req) => {
     });
 
   } catch (error) {
-    console.error(`[${correlationId}] Unexpected error:`, error.message);
+    const err = error instanceof Error ? error : new Error(String(error));
+    console.error(`[${correlationId}] Unexpected error:`, err.message);
     return Response.json({
       ok: false,
       errorCode: 'INTERNAL',
-      error: error.message,
+      error: err.message,
       correlationId
     }, { status: 500 });
   }

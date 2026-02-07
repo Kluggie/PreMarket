@@ -91,13 +91,14 @@ Return only the main readable content as plain text. Be comprehensive but clean.
         };
         
       } catch (error) {
+        const err = error instanceof Error ? error : new Error(String(error));
         return {
           status: 'failed',
           url,
           errorCode: isLinkedIn ? 'LINKEDIN_BLOCKED' : 'FETCH_FAILED',
           message: isLinkedIn
             ? 'LinkedIn blocks automated extraction. Please paste text or upload a file instead.'
-            : error.message,
+            : err.message,
           statusCode: null,
           extractedText: ''
         };
@@ -152,10 +153,11 @@ Return only the main readable content as plain text. Be comprehensive but clean.
     return Response.json(results);
 
   } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
     console.error('ExtractFromUrls error:', error);
     const correlationId = `error_${Date.now()}`;
     return Response.json({ 
-      error: error.message,
+      error: err.message,
       ok: false,
       errorCode: 'INTERNAL_ERROR',
       message: 'Internal server error during extraction',

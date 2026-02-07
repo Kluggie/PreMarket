@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '../utils';
+import { getProposalId } from '@/lib/utils';
 import { base44 } from '@/api/base44Client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -147,31 +148,76 @@ export default function ProposalDetail() {
   const runNewEvaluationMutation = useMutation({
     mutationFn: async () => {
       const clientCorrelationId = `client_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-      
+
+      const resolvedProposalId = getProposalId(proposal) || proposalId;
+      if (!resolvedProposalId) {
+        throw new Error('Cannot evaluate: proposal id missing');
+      }
+
       try {
-        let response;
-        if (isFinanceTemplate) {
-          response = await base44.functions.invoke('EvaluateProposalShared', { proposal_id: proposal.id });
-        } else if (isProfileMatchingTemplate) {
-          response = await base44.functions.invoke('EvaluateFitCardShared', { proposal_id: proposal.id });
-        } else {
-          response = await base44.functions.invoke('EvaluateProposal', { proposal_id: proposal.id });
+        // Prefer resolving a linked DocumentComparison by proposal id rather than relying solely on proposal shape.
+        let comparisonId = proposal?.document_comparison_id || null;
+        try {
+          const comparisons = await base44.entities.DocumentComparison.filter({ proposal_id: resolvedProposalId }, '-created_date');
+          if (comparisons && comparisons.length > 0) {
+            comparisonId = comparisons[0].id || comparisonId;
+          }
+        } catch (cmpErr) {
+          // Non-fatal: if lookup fails, fall back to proposal fields
+          if (import.meta.env.DEV) console.debug('DocumentComparison lookup error', cmpErr);
         }
-        
+
+        let functionName = null;
+        let payload = null;
+
+        if (isFinanceTemplate) {
+          functionName = 'EvaluateProposalShared';
+          payload = { proposal_id: resolvedProposalId };
+        } else if (isProfileMatchingTemplate) {
+          functionName = 'EvaluateFitCardShared';
+          payload = { proposal_id: resolvedProposalId };
+        } else if (comparisonId) {
+          // Always prefer the working DocumentComparison flow for proposals with a comparison
+          functionName = 'EvaluateDocumentComparison';
+          payload = { comparison_id: comparisonId };
+        } else {
+          functionName = 'EvaluateProposal';
+          payload = { proposal_id: resolvedProposalId };
+        }
+
+        if (import.meta.env.DEV) {
+          console.debug('Invoking evaluation', { functionName, proposalId: resolvedProposalId, comparisonId, payload });
+        }
+
+        const response = await base44.functions.invoke(functionName, payload);
+
         // Check if response is valid JSON
         if (!response.data || typeof response.data !== 'object') {
           const rawText = typeof response.data === 'string' ? response.data.substring(0, 300) : JSON.stringify(response.data).substring(0, 300);
           throw new Error(`Non-JSON response\n\nCorrelation ID: ${clientCorrelationId}\n\nRaw (first 300 chars):\n${rawText}`);
         }
-        
-        if (response.data.status === 'failed' || response.data.status === 'error') {
-          const errorMsg = response.data.error_message || response.data.error || 'Evaluation failed';
-          const corrId = response.data.correlation_id || clientCorrelationId;
+
+        // Normalize success/failure checks across different functions
+        if (response.data.status === 'failed' || response.data.status === 'error' || response.data.ok === false) {
+          const errorMsg = response.data.error_message || response.data.error || response.data.message || 'Evaluation failed';
+          const corrId = response.data.correlation_id || response.data.correlationId || clientCorrelationId;
           throw new Error(`${errorMsg}\n\nCorrelation ID: ${corrId}`);
         }
-        
+
         return response.data;
       } catch (error) {
+        // Dev-only enhanced logging for easy diagnosis of 404s and other failures
+        if (import.meta.env.DEV) {
+          console.error('Evaluation request failed', {
+            message: error?.message,
+            status: error?.response?.status || error?.status,
+            responseData: error?.response?.data || null,
+            url: error?.config?.url || error?.request?.responseURL || null,
+            proposalId: resolvedProposalId,
+            comparisonId: comparisonId || null
+          });
+        }
+
         throw error;
       }
     },
