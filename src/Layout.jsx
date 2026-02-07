@@ -4,7 +4,7 @@ import { createPageUrl } from './utils';
 import { base44 } from '@/api/base44Client';
 import { 
   Menu, X, ChevronDown, User, LogOut, Settings, Building2, 
-  FileText, Inbox, LayoutDashboard, Shield
+  FileText, LayoutDashboard, Shield, Globe
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -57,6 +57,12 @@ export default function Layout({ children, currentPageName }) {
     { name: 'Pricing', href: createPageUrl('Pricing'), icon: FileText }
   ] : [];
 
+  const publicNavLinks = [
+    { name: 'Home', href: createPageUrl('Landing'), icon: LayoutDashboard },
+    { name: 'Templates', href: createPageUrl('Templates'), icon: FileText },
+    { name: 'Pricing', href: createPageUrl('Pricing'), icon: FileText }
+  ];
+
   if (isAuthPage) {
     return (
       <div className="min-h-screen bg-slate-50">
@@ -96,15 +102,11 @@ export default function Layout({ children, currentPageName }) {
             <nav className="hidden md:flex items-center gap-1">
               {!user && (
                 <>
-                  <Link to={createPageUrl('Landing')} className="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors">
-                    Home
-                  </Link>
-                  <Link to={createPageUrl('Templates')} className="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors">
-                    Templates
-                  </Link>
-                  <Link to={createPageUrl('Pricing')} className="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors">
-                    Pricing
-                  </Link>
+                  {publicNavLinks.map(link => (
+                    <Link key={link.name} to={link.href} className="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors">
+                      {link.name}
+                    </Link>
+                  ))}
                 </>
               )}
               {navLinks.map(link => (
@@ -117,7 +119,7 @@ export default function Layout({ children, currentPageName }) {
                       : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
-                  <link.icon className="w-4 h-4" />
+                  {link.icon ? <link.icon className="w-4 h-4" /> : <Globe className="w-4 h-4" />}
                   {link.name}
                 </Link>
               ))}
@@ -155,6 +157,12 @@ export default function Layout({ children, currentPageName }) {
                         <Link to={createPageUrl('Organization')} className="flex items-center gap-2 cursor-pointer">
                           <Building2 className="w-4 h-4" />
                           Organization
+                        </Link>
+                      </DropdownMenuItem>
+                      <DropdownMenuItem asChild>
+                        <Link to="/directory" className="flex items-center gap-2 cursor-pointer">
+                          <Globe className="w-4 h-4" />
+                          Directory
                         </Link>
                       </DropdownMenuItem>
                       <DropdownMenuItem asChild>
@@ -217,14 +225,14 @@ export default function Layout({ children, currentPageName }) {
         {isMenuOpen && (
           <div className="md:hidden bg-white border-t border-slate-100 shadow-lg">
             <div className="px-4 py-4 space-y-1">
-              {navLinks.map(link => (
+              {(user ? navLinks : publicNavLinks).map(link => (
                 <Link 
                   key={link.name}
                   to={link.href}
                   onClick={() => setIsMenuOpen(false)}
                   className="flex items-center gap-3 px-4 py-3 text-slate-600 hover:bg-slate-50 rounded-lg transition-colors"
                 >
-                  <link.icon className="w-5 h-5" />
+                  {link.icon ? <link.icon className="w-5 h-5" /> : <Globe className="w-5 h-5" />}
                   {link.name}
                 </Link>
               ))}
