@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useRef } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { createPageUrl } from '../utils';
 import { base44 } from '@/api/base44Client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -35,6 +35,7 @@ const iconMap = {
 
 export default function CreateProposal() {
   const navigate = useNavigate();
+  const { proposalId: routeProposalId } = useParams();
   const queryClient = useQueryClient();
   const [user, setUser] = useState(null);
   const [step, setStep] = useState(1);
@@ -55,6 +56,15 @@ export default function CreateProposal() {
   const [extracting, setExtracting] = useState(false);
   const [extractedFields, setExtractedFields] = useState([]);
   const [showReviewExtracted, setShowReviewExtracted] = useState(false);
+  const hasInitializedLoad = useRef(false);
+  const routeParams = new URLSearchParams(window.location.search);
+  const isEditMode = !!routeProposalId;
+  const editProposalId = routeProposalId || null;
+  const requestedStep = Number.parseInt(routeParams.get('step') || '', 10);
+  const maxInitialStep = isEditMode ? 3 : 4;
+  const initialStepFromQuery = Number.isFinite(requestedStep) && requestedStep >= 1 && requestedStep <= maxInitialStep
+    ? requestedStep
+    : null;
 
   const { data: templates = [], isLoading } = useQuery({
     queryKey: ['templates'],
@@ -84,6 +94,8 @@ export default function CreateProposal() {
   }, []);
 
   useEffect(() => {
+    if (hasInitializedLoad.current || templates.length === 0) return;
+
     const params = new URLSearchParams(window.location.search);
     const isGuest = params.get('guest') === 'true';
     const resumeDraftId = params.get('draft');
@@ -91,11 +103,17 @@ export default function CreateProposal() {
     
     setIsGuestMode(isGuest);
     
-    if (resumeDraftId) {
+    if (isEditMode && editProposalId) {
+      hasInitializedLoad.current = true;
+      setDraftProposalId(editProposalId);
+      loadDraft(editProposalId, { isEdit: true });
+    } else if (resumeDraftId) {
+      hasInitializedLoad.current = true;
       setDraftProposalId(resumeDraftId);
       // Load draft - this will set the correct step
-      loadDraft(resumeDraftId);
+      loadDraft(resumeDraftId, { isEdit: false });
     } else if (templateId && !selectedTemplate && templates.length > 0) {
+      hasInitializedLoad.current = true;
       // Only set template and step 1 if NOT loading a draft
       const template = templates.find(t => t.id === templateId);
       if (template) {
@@ -103,10 +121,13 @@ export default function CreateProposal() {
         setHasTemplatePreselected(true);
         setStep(1);
       }
+    } else {
+      hasInitializedLoad.current = true;
     }
-  }, [templates]);
+  }, [templates, isEditMode, editProposalId, selectedTemplate]);
 
-  const loadDraft = async (proposalId) => {
+  const loadDraft = async (proposalId, options = {}) => {
+    const { isEdit = false } = options;
     try {
       const proposals = await base44.entities.Proposal.filter({ id: proposalId });
       const proposal = proposals[0];
@@ -189,7 +210,7 @@ export default function CreateProposal() {
       }
       
       // CRITICAL: Set step LAST to avoid it being overridden
-      const resumeStep = proposal.draft_step || 1;
+      const resumeStep = initialStepFromQuery || (isEdit ? 1 : (proposal.draft_step || 1));
       setTimeout(() => setStep(resumeStep), 50);
       
     } catch (error) {
@@ -360,15 +381,15 @@ export default function CreateProposal() {
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      if (selectedTemplate && Object.keys(responses).length > 0) {
+      if (!isEditMode && selectedTemplate && Object.keys(responses).length > 0) {
         autoSaveDraft();
       }
     }, 2000);
 
     return () => clearTimeout(timer);
-  }, [responses, proposalTitle, recipientEmail, selectedTemplate, presetKey]);
+  }, [responses, proposalTitle, recipientEmail, selectedTemplate, presetKey, isEditMode]);
 
-  const totalSteps = 4;
+  const totalSteps = isEditMode ? 3 : 4;
 
   const allTemplates = templates;
 
@@ -750,6 +771,112 @@ export default function CreateProposal() {
     }
   });
 
+  const saveProposalChangesMutation = useMutation({
+    mutationFn: async () => {
+      if (!draftProposalId) {
+        throw new Error('No proposal selected for editing');
+      }
+      if (!selectedTemplate) {
+        throw new Error('Template is required');
+      }
+
+      const nowIso = new Date().toISOString();
+      const proposalData = {
+        title: proposalTitle || `${selectedTemplate.name} Proposal`,
+        template_id: selectedTemplate.id,
+        template_name: selectedTemplate.name,
+        party_b_email: recipientEmail || null,
+        disclosure_mode: responses['disclosure_mode'] || 'open',
+        include_profile: responses['_include_profile'] || false,
+        include_organisation: responses['_include_organisation'] || false,
+        draft_updated_at: nowIso,
+        updated_at: nowIso
+      };
+
+      if (isUniversalTemplate) {
+        proposalData.preset_key = presetKey || null;
+        proposalData.enabled_modules = enabledModules || [];
+      }
+
+      await base44.entities.Proposal.update(draftProposalId, proposalData);
+      const existingResponses = await base44.entities.ProposalResponse.filter({ proposal_id: draftProposalId });
+
+      for (const [responseKey, value] of Object.entries(responses)) {
+        if (responseKey.startsWith('_include_')) continue;
+
+        const [questionId, subjectParty] = responseKey.includes('__')
+          ? responseKey.split('__')
+          : [responseKey, null];
+
+        const question = selectedTemplate.questions.find(q => q.id === questionId);
+        if (!question) continue;
+
+        let finalSubjectParty = subjectParty;
+        let claimType = 'self';
+
+        if (!finalSubjectParty) {
+          const roleType = question.role_type || 'party_attribute';
+          if (roleType === 'shared_fact') {
+            finalSubjectParty = 'shared';
+            claimType = 'shared_fact';
+          } else if (question.is_about_counterparty) {
+            finalSubjectParty = 'b';
+            claimType = 'counterparty_claim';
+          } else {
+            finalSubjectParty = 'a';
+            claimType = 'self';
+          }
+        } else if (finalSubjectParty === 'shared') {
+          claimType = 'shared_fact';
+        } else if (finalSubjectParty === 'b') {
+          claimType = 'counterparty_claim';
+        }
+
+        const visibility = visibilitySettings[responseKey] || visibilitySettings[questionId] || 'full';
+        const responseData = {
+          proposal_id: draftProposalId,
+          question_id: questionId,
+          entered_by_party: 'a',
+          author_party: 'a',
+          subject_party: finalSubjectParty,
+          claim_type: claimType,
+          is_about_counterparty: question?.is_about_counterparty || false,
+          value: typeof value === 'object' && !Array.isArray(value) ? JSON.stringify(value) : Array.isArray(value) ? JSON.stringify(value) : String(value),
+          visibility
+        };
+
+        if (typeof value === 'object' && value.type === 'range') {
+          responseData.value_type = 'range';
+          responseData.range_min = value.min;
+          responseData.range_max = value.max;
+        }
+
+        const existing = existingResponses.find(r =>
+          r.question_id === questionId &&
+          (r.subject_party || (r.is_about_counterparty ? 'b' : 'a')) === finalSubjectParty &&
+          (r.author_party || r.entered_by_party) === 'a'
+        );
+
+        if (existing) {
+          await base44.entities.ProposalResponse.update(existing.id, responseData);
+        } else {
+          await base44.entities.ProposalResponse.create(responseData);
+        }
+      }
+
+      return draftProposalId;
+    },
+    onSuccess: (savedProposalId) => {
+      queryClient.invalidateQueries(['proposals']);
+      queryClient.invalidateQueries(['proposal', savedProposalId]);
+      queryClient.invalidateQueries(['proposalResponses', savedProposalId]);
+      navigate(createPageUrl(`ProposalDetail?id=${savedProposalId}`));
+    },
+    onError: (error) => {
+      alert(`Failed to save changes: ${error.message}`);
+    }
+  });
+
   const handleResponseChange = (questionId, value) => {
     setResponses(prev => ({ ...prev, [questionId]: value }));
     if (validationErrors[questionId]) {
@@ -987,19 +1114,22 @@ export default function CreateProposal() {
   const progress = (step / totalSteps) * 100;
 
   const hasValidationErrors = Object.keys(validationErrors).length > 0;
+  const detailPageUrl = draftProposalId ? createPageUrl(`ProposalDetail?id=${draftProposalId}`) : createPageUrl('Proposals');
 
   return (
     <div className="min-h-screen bg-slate-50 py-8">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="mb-8">
-          <Link to={createPageUrl('Templates')} className="inline-flex items-center text-slate-600 hover:text-slate-900 mb-4">
+          <Link to={isEditMode ? detailPageUrl : createPageUrl('Templates')} className="inline-flex items-center text-slate-600 hover:text-slate-900 mb-4">
             <ArrowLeft className="w-4 h-4 mr-2" />
-            Back to Template Library
+            {isEditMode ? 'Back to Proposal' : 'Back to Template Library'}
           </Link>
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-2xl font-bold text-slate-900">Create Proposal</h1>
-              <p className="text-slate-500 mt-1">Fill out the template to create a pre-qualification proposal.</p>
+              <h1 className="text-2xl font-bold text-slate-900">{isEditMode ? 'Edit Proposal' : 'Create Proposal'}</h1>
+              <p className="text-slate-500 mt-1">
+                {isEditMode ? 'Update proposal details and save changes.' : 'Fill out the template to create a pre-qualification proposal.'}
+              </p>
             </div>
             {autoSaving && (
               <Badge variant="outline" className="text-blue-600">
@@ -1586,13 +1716,34 @@ export default function CreateProposal() {
                   <ArrowLeft className="w-4 h-4 mr-2" />
                   Back
                 </Button>
-                <Button 
-                  onClick={handleNext}
-                  className="bg-blue-600 hover:bg-blue-700"
-                >
-                  Review
-                  <ArrowRight className="w-4 h-4 ml-2" />
-                </Button>
+                {isEditMode ? (
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => navigate(detailPageUrl)}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      onClick={() => {
+                        if (!validateCurrentStep()) return;
+                        saveProposalChangesMutation.mutate();
+                      }}
+                      disabled={saveProposalChangesMutation.isPending}
+                      className="bg-blue-600 hover:bg-blue-700"
+                    >
+                      {saveProposalChangesMutation.isPending ? 'Saving...' : 'Save changes'}
+                    </Button>
+                  </div>
+                ) : (
+                  <Button 
+                    onClick={handleNext}
+                    className="bg-blue-600 hover:bg-blue-700"
+                  >
+                    Review
+                    <ArrowRight className="w-4 h-4 ml-2" />
+                  </Button>
+                )}
               </div>
             </motion.div>
           )}

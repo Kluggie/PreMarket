@@ -231,6 +231,32 @@ export default function ProposalDetail() {
   const latestSuccessReport = evaluationReports?.find(r => r.status === 'succeeded');
   const sharedReport = sharedReports?.[0];
   const fitCardReport = fitCardReports?.[0];
+  const toTime = (value) => {
+    if (!value) return 0;
+    const timestamp = new Date(value).getTime();
+    return Number.isFinite(timestamp) ? timestamp : 0;
+  };
+  const proposalUpdatedTime = Math.max(
+    toTime(proposal?.updated_at),
+    toTime(proposal?.updated_date),
+    toTime(proposal?.draft_updated_at)
+  );
+  const lastEvaluatedTime = Math.max(
+    toTime(proposal?.last_evaluated_at),
+    toTime(latestSuccessReport?.generated_at),
+    toTime(latestSuccessReport?.created_date),
+    toTime(latestReport?.generated_at),
+    toTime(latestReport?.created_date),
+    toTime(sharedReport?.generated_at),
+    toTime(sharedReport?.created_date),
+    toTime(fitCardReport?.generated_at),
+    toTime(fitCardReport?.created_date),
+    toTime(latestEvaluation?.created_date)
+  );
+  const hasExistingEvaluation = Boolean(
+    latestReport || latestSuccessReport || sharedReport || fitCardReport || latestEvaluation
+  );
+  const isReportOutOfDate = hasExistingEvaluation && proposalUpdatedTime > 0 && lastEvaluatedTime > 0 && proposalUpdatedTime > lastEvaluatedTime;
 
   const currentTemplate = templates.find(t => t.id === proposal?.template_id);
   const isFinanceTemplate = currentTemplate?.slug === 'universal_finance_deal_prequal';
@@ -619,6 +645,14 @@ export default function ProposalDetail() {
                 <FileText className="w-4 h-4 mr-2" />
                 Download Proposal Info PDF
               </Button>
+              {proposal?.id && (
+                <Button
+                  variant="outline"
+                  onClick={() => navigate(`/proposals/${proposal.id}/edit?step=3`)}
+                >
+                  Edit proposal
+                </Button>
+              )}
               <Button 
                 onClick={() => runNewEvaluationMutation.mutate()}
                 disabled={runNewEvaluationMutation.isPending || latestReport?.status === 'running' || latestReport?.status === 'queued' || sharedReport?.status === 'running' || fitCardReport?.status === 'running'}
@@ -996,6 +1030,14 @@ export default function ProposalDetail() {
 
           {/* AI Report Tab */}
           <TabsContent value="evaluation">
+            {isReportOutOfDate && (
+              <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                  <p>Proposal updated since last evaluation — re-run to refresh.</p>
+                </div>
+              </div>
+            )}
             {/* FitCard Report for Profile Matching Template */}
             {isProfileMatchingTemplate && fitCardReport?.status === 'succeeded' && fitCardReport.output_report_json && (
               <div className="space-y-6">

@@ -14,6 +14,7 @@ import DirectoryOrgDetail from '@/pages/DirectoryOrgDetail';
 const { Pages, Layout, mainPage } = pagesConfig;
 const mainPageKey = mainPage ?? Object.keys(Pages)[0];
 const MainPage = mainPageKey ? Pages[mainPageKey] : <></>;
+const EditProposalPage = Pages.CreateProposalWithDrafts || Pages.CreateProposal;
 
 const LayoutWrapper = ({ children, currentPageName }) => Layout ?
   <Layout currentPageName={currentPageName}>{children}</Layout>
@@ -43,6 +44,14 @@ const PublicRoutes = () => {
         element={
           <LayoutWrapper currentPageName="Directory">
             <DirectoryOrgDetail />
+          </LayoutWrapper>
+        }
+      />
+      <Route
+        path="/proposals/:proposalId/edit"
+        element={
+          <LayoutWrapper currentPageName="CreateProposalWithDrafts">
+            <EditProposalPage />
           </LayoutWrapper>
         }
       />
