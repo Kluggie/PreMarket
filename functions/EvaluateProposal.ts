@@ -124,10 +124,19 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { proposal_id } = await req.json();
+    const { proposal_id, trigger } = await req.json();
 
     if (!proposal_id) {
       return Response.json({ error: 'Missing proposal_id' }, { status: 400 });
+    }
+
+    if (trigger !== 'user_click') {
+      return Response.json({
+        ok: false,
+        errorCode: 'USER_TRIGGER_REQUIRED',
+        error: 'Explicit user trigger required',
+        message: 'Evaluation can only run from an explicit user click.'
+      }, { status: 400 });
     }
 
     // Load data using service role
@@ -147,7 +156,8 @@ Deno.serve(async (req) => {
       console.log('[EvaluateProposal] Forwarding to EvaluateDocumentComparison for comparison_id:', proposal.document_comparison_id);
       try {
         const forwardResult = await base44.asServiceRole.functions.invoke('EvaluateDocumentComparison', {
-          comparison_id: proposal.document_comparison_id
+          comparison_id: proposal.document_comparison_id,
+          trigger
         });
 
         // If forward returned a body, just echo it back

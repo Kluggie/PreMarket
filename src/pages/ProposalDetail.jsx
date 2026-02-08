@@ -238,7 +238,14 @@ export default function ProposalDetail() {
 
   // Run New Evaluation (Vertex Gemini)
   const runNewEvaluationMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async ({ trigger } = {}) => {
+      if (trigger !== 'user_click') {
+        if (import.meta.env.DEV) {
+          console.warn('[EvaluationGuard] Blocked evaluation without explicit user trigger', { proposalId });
+        }
+        throw new Error('Evaluation can only run from explicit user action');
+      }
+
       const clientCorrelationId = `client_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
       const resolvedProposalId = getProposalId(proposal) || proposalId;
@@ -267,17 +274,17 @@ export default function ProposalDetail() {
 
         if (isFinanceTemplate) {
           functionName = 'EvaluateProposalShared';
-          payload = { proposal_id: resolvedProposalId };
+          payload = { proposal_id: resolvedProposalId, trigger };
         } else if (isProfileMatchingTemplate) {
           functionName = 'EvaluateFitCardShared';
-          payload = { proposal_id: resolvedProposalId };
+          payload = { proposal_id: resolvedProposalId, trigger };
         } else if (comparisonId) {
           // Always prefer the working DocumentComparison flow for proposals with a comparison
           functionName = 'EvaluateDocumentComparison';
-          payload = { comparison_id: comparisonId };
+          payload = { comparison_id: comparisonId, trigger };
         } else {
           functionName = 'EvaluateProposal';
-          payload = { proposal_id: resolvedProposalId };
+          payload = { proposal_id: resolvedProposalId, trigger };
         }
 
         if (import.meta.env.DEV) {
@@ -326,6 +333,13 @@ export default function ProposalDetail() {
       alert(`Evaluation failed:\n\n${error.message}`);
     }
   });
+
+  const handleRunEvaluationClick = () => {
+    if (import.meta.env.DEV) {
+      console.debug('[EvaluationGuard] User clicked Run AI Evaluation', { proposalId });
+    }
+    runNewEvaluationMutation.mutate({ trigger: 'user_click' });
+  };
 
   // Run AI Evaluation (Legacy)
   const runEvaluationMutation = useMutation({
@@ -620,7 +634,7 @@ export default function ProposalDetail() {
                 Download Proposal Info PDF
               </Button>
               <Button 
-                onClick={() => runNewEvaluationMutation.mutate()}
+                onClick={() => handleRunEvaluationClick()}
                 disabled={runNewEvaluationMutation.isPending || latestReport?.status === 'running' || latestReport?.status === 'queued' || sharedReport?.status === 'running' || fitCardReport?.status === 'running'}
                 className="bg-blue-600 hover:bg-blue-700"
               >
@@ -1129,7 +1143,7 @@ export default function ProposalDetail() {
 
                 <Button 
                   variant="outline"
-                  onClick={() => runNewEvaluationMutation.mutate()}
+                  onClick={() => handleRunEvaluationClick()}
                   disabled={runNewEvaluationMutation.isPending || fitCardReport?.status === 'running'}
                   className="w-full"
                 >
@@ -1156,7 +1170,7 @@ export default function ProposalDetail() {
                   <h3 className="text-lg font-semibold text-slate-900 mb-2">Evaluation Failed</h3>
                   <p className="text-slate-500 mb-4">{fitCardReport.error_message || 'Unknown error'}</p>
                   <Button 
-                    onClick={() => runNewEvaluationMutation.mutate()}
+                    onClick={() => handleRunEvaluationClick()}
                     disabled={runNewEvaluationMutation.isPending}
                     variant="outline"
                   >
@@ -1174,7 +1188,7 @@ export default function ProposalDetail() {
                   <h3 className="text-lg font-semibold text-slate-900 mb-2">No profile evaluation yet</h3>
                   <p className="text-slate-500 mb-6">Run a profile evaluation to see compatibility analysis.</p>
                   <Button 
-                    onClick={() => runNewEvaluationMutation.mutate()}
+                    onClick={() => handleRunEvaluationClick()}
                     disabled={runNewEvaluationMutation.isPending}
                     className="bg-purple-600 hover:bg-purple-700"
                   >
@@ -1304,7 +1318,7 @@ export default function ProposalDetail() {
 
                 <Button 
                   variant="outline"
-                  onClick={() => runNewEvaluationMutation.mutate()}
+                  onClick={() => handleRunEvaluationClick()}
                   disabled={runNewEvaluationMutation.isPending || sharedReport?.status === 'running'}
                   className="w-full"
                 >
@@ -1331,7 +1345,7 @@ export default function ProposalDetail() {
                   <h3 className="text-lg font-semibold text-slate-900 mb-2">Evaluation Failed</h3>
                   <p className="text-slate-500 mb-4">{sharedReport.error_message || 'Unknown error'}</p>
                   <Button 
-                    onClick={() => runNewEvaluationMutation.mutate()}
+                    onClick={() => handleRunEvaluationClick()}
                     disabled={runNewEvaluationMutation.isPending}
                     variant="outline"
                   >
@@ -1349,7 +1363,7 @@ export default function ProposalDetail() {
                   <h3 className="text-lg font-semibold text-slate-900 mb-2">No evaluation yet</h3>
                   <p className="text-slate-500 mb-6">Run an AI evaluation to get comprehensive compatibility analysis.</p>
                   <Button 
-                    onClick={() => runNewEvaluationMutation.mutate()}
+                    onClick={() => handleRunEvaluationClick()}
                     disabled={runNewEvaluationMutation.isPending}
                     className="bg-blue-600 hover:bg-blue-700"
                   >
@@ -1416,7 +1430,7 @@ export default function ProposalDetail() {
                   <h3 className="text-lg font-semibold text-slate-900 mb-2">No evaluation yet</h3>
                   <p className="text-slate-500 mb-6">Run an AI evaluation to get comprehensive compatibility analysis.</p>
                   <Button 
-                    onClick={() => runNewEvaluationMutation.mutate()}
+                    onClick={() => handleRunEvaluationClick()}
                     disabled={runNewEvaluationMutation.isPending}
                     className="bg-blue-600 hover:bg-blue-700"
                   >
@@ -1612,7 +1626,7 @@ export default function ProposalDetail() {
                     </details>
                   )}
                   <Button 
-                    onClick={() => runNewEvaluationMutation.mutate()}
+                    onClick={() => handleRunEvaluationClick()}
                     disabled={runNewEvaluationMutation.isPending}
                     variant="outline"
                     className="mt-4"

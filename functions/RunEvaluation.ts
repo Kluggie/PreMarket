@@ -94,7 +94,8 @@ Deno.serve(async (req) => {
       }
       
       evalResult = await base44.asServiceRole.functions.invoke('EvaluateDocumentComparison', {
-        comparison_id: item.linked_document_comparison_id
+        comparison_id: item.linked_document_comparison_id,
+        trigger: 'user_click'
       });
       
     } else if (item.type === 'proposal') {
@@ -114,7 +115,8 @@ Deno.serve(async (req) => {
       }
       
       evalResult = await base44.asServiceRole.functions.invoke('EvaluateProposalShared', {
-        proposal_id: item.linked_proposal_id
+        proposal_id: item.linked_proposal_id,
+        trigger: 'user_click'
       });
       
     } else if (item.type === 'profile_matching') {
@@ -134,7 +136,8 @@ Deno.serve(async (req) => {
       }
       
       evalResult = await base44.asServiceRole.functions.invoke('EvaluateFitCardShared', {
-        proposal_id: item.linked_proposal_id
+        proposal_id: item.linked_proposal_id,
+        trigger: 'user_click'
       });
       
     } else {

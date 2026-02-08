@@ -1508,7 +1508,8 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                             }
 
                             const result = await base44.functions.invoke('EvaluateDocumentComparison', {
-                              comparison_id: id
+                              comparison_id: id,
+                              trigger: 'user_click'
                             });
 
                             if (!result.data.ok) {

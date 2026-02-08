@@ -1714,8 +1714,12 @@ export default function CreateProposal() {
                                 }
 
                                 // Run evaluation
+                                if (import.meta.env.DEV) {
+                                  console.debug('[EvaluationGuard] User clicked Run Profile Evaluation', { proposalId: proposal.id });
+                                }
                                 const result = await base44.functions.invoke('EvaluateFitCardShared', {
-                                  proposal_id: proposal.id
+                                  proposal_id: proposal.id,
+                                  trigger: 'user_click'
                                 });
 
                                 if (!result.data.ok) {

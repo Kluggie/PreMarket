@@ -299,7 +299,8 @@ export default function SharedReport() {
                     
                     if (reportData.type === 'document_comparison') {
                       const result = await base44.functions.invoke('EvaluateDocumentComparison', {
-                        comparison_id: reportData.id
+                        comparison_id: reportData.id,
+                        trigger: 'user_click'
                       });
                       
                       if (!result.data.ok) {
@@ -308,7 +309,8 @@ export default function SharedReport() {
                       }
                     } else if (reportData.type === 'proposal') {
                       const result = await base44.functions.invoke('EvaluateProposalShared', {
-                        proposal_id: reportData.id
+                        proposal_id: reportData.id,
+                        trigger: 'user_click'
                       });
                       
                       if (result.data.status === 'failed') {

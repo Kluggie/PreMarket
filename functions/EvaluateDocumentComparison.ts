@@ -5,6 +5,7 @@ const UI_REPORT_FIELD = 'output_report_json';
 Deno.serve(async (req) => {
   let comparison_id;
   let force = false;
+  let trigger: string | null = null;
   let base44;
   let linkedProposalId = null;
   let reportShapeLogged = false;
@@ -55,12 +56,23 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     comparison_id = body.comparison_id;
     force = body.force === true;
+    trigger = body.trigger || null;
     
     if (!comparison_id) {
       return respond({
         error: 'comparison_id is required', 
         ok: false,
         message: 'Missing comparison ID',
+        correlationId
+      }, 400);
+    }
+
+    if (trigger !== 'user_click') {
+      return respond({
+        ok: false,
+        errorCode: 'USER_TRIGGER_REQUIRED',
+        error: 'Explicit user trigger required',
+        message: 'Evaluation can only run from an explicit user click.',
         correlationId
       }, 400);
     }

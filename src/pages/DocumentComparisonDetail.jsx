@@ -74,12 +74,19 @@ export default function DocumentComparisonDetail() {
                     (latestRun?.status === 'completed' && latestRun.public_report_json);
 
   const runEvaluationMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async ({ trigger } = {}) => {
+      if (trigger !== 'user_click') {
+        if (import.meta.env.DEV) {
+          console.warn('[EvaluationGuard] Blocked document comparison evaluation without user trigger', { comparisonId });
+        }
+        throw new Error('Evaluation can only run from explicit user action');
+      }
       const clientCorrelationId = `client_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       
       try {
         const result = await base44.functions.invoke('EvaluateDocumentComparison', {
-          comparison_id: comparisonId
+          comparison_id: comparisonId,
+          trigger
         });
         
         // Check if response is valid JSON
@@ -323,7 +330,7 @@ export default function DocumentComparisonDetail() {
                 </>
               )}
               <Button 
-                onClick={() => runEvaluationMutation.mutate()}
+                onClick={() => runEvaluationMutation.mutate({ trigger: 'user_click' })}
                 disabled={runEvaluationMutation.isPending || comparison.status === 'submitted' || latestRun?.status === 'running'}
                 className="bg-purple-600 hover:bg-purple-700"
               >
@@ -511,7 +518,7 @@ export default function DocumentComparisonDetail() {
                   <h3 className="text-lg font-semibold text-slate-900 mb-2">No evaluation yet</h3>
                   <p className="text-slate-500 mb-6">Run AI evaluation to compare these documents.</p>
                   <Button 
-                    onClick={() => runEvaluationMutation.mutate()}
+                    onClick={() => runEvaluationMutation.mutate({ trigger: 'user_click' })}
                     disabled={runEvaluationMutation.isPending}
                     className="bg-purple-600 hover:bg-purple-700"
                   >
@@ -542,7 +549,7 @@ export default function DocumentComparisonDetail() {
                   <h3 className="text-lg font-semibold text-slate-900 mb-2">Evaluation Failed</h3>
                   <p className="text-slate-500 mb-4">{comparison.error_message || latestRun?.error_message || 'Unknown error'}</p>
                   <Button 
-                    onClick={() => runEvaluationMutation.mutate()}
+                    onClick={() => runEvaluationMutation.mutate({ trigger: 'user_click' })}
                     disabled={runEvaluationMutation.isPending}
                     variant="outline"
                   >
@@ -717,7 +724,7 @@ export default function DocumentComparisonDetail() {
                 <div className="flex justify-center">
                   <Button 
                     variant="outline"
-                    onClick={() => runEvaluationMutation.mutate()}
+                    onClick={() => runEvaluationMutation.mutate({ trigger: 'user_click' })}
                     disabled={runEvaluationMutation.isPending || latestRun?.status === 'running'}
                   >
                     <RefreshCw className="w-4 h-4 mr-2" />
