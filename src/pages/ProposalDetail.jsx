@@ -72,16 +72,108 @@ export default function ProposalDetail() {
   });
 
   const { data: evaluationReports = [] } = useQuery({
-    queryKey: ['evaluationReports', proposalId],
+    queryKey: ['evaluationReports', proposalId, proposal?.document_comparison_id || null],
     queryFn: async () => {
-      const reports = await base44.entities.EvaluationReport.filter({ proposal_id: proposalId });
-      return reports.sort((a, b) => {
+      const normalizeReport = (report) => {
+        const data = report?.data && typeof report.data === 'object' ? report.data : {};
+        return {
+          ...report,
+          proposal_id: report.proposal_id ?? data.proposal_id ?? proposalId,
+          status: report.status ?? data.status ?? null,
+          output_report_json: report.output_report_json ?? data.output_report_json ?? null,
+          generated_at: report.generated_at ?? data.generated_at ?? null,
+          created_date: report.created_date ?? data.created_date ?? null,
+          error_message: report.error_message ?? data.error_message ?? report.error ?? data.error ?? null
+        };
+      };
+
+      let source = 'none';
+      let reports = await base44.entities.EvaluationReport.filter({ proposal_id: proposalId });
+      let normalizedReports = reports.map(normalizeReport);
+      if (normalizedReports.length > 0) source = 'EvaluationReport.proposal_id';
+
+      if (normalizedReports.length === 0) {
+        const dataPathReports = await base44.entities.EvaluationReport.filter({ 'data.proposal_id': proposalId });
+        normalizedReports = dataPathReports.map(normalizeReport);
+        if (normalizedReports.length > 0) source = 'EvaluationReport.data.proposal_id';
+      }
+
+      if (normalizedReports.length === 0) {
+        let comparisons = await base44.entities.DocumentComparison.filter({ proposal_id: proposalId }, '-created_date');
+        if (!comparisons || comparisons.length === 0) {
+          comparisons = await base44.entities.DocumentComparison.filter({ 'data.proposal_id': proposalId }, '-created_date');
+        }
+        const comparisonWithReport = comparisons.find(c =>
+          c.evaluation_report_json ||
+          c?.data?.evaluation_report_json ||
+          c.output_report_json ||
+          c?.data?.output_report_json
+        );
+        if (comparisonWithReport) {
+          const data = comparisonWithReport?.data && typeof comparisonWithReport.data === 'object' ? comparisonWithReport.data : {};
+          const comparisonReport =
+            comparisonWithReport.evaluation_report_json ||
+            data.evaluation_report_json ||
+            comparisonWithReport.output_report_json ||
+            data.output_report_json;
+          if (comparisonReport && typeof comparisonReport === 'object') {
+            const comparisonGeneratedAt = comparisonWithReport.generated_at || data.generated_at;
+            normalizedReports = [{
+              id: `comparison-${comparisonWithReport.id}`,
+              proposal_id: proposalId,
+              status: 'succeeded',
+              output_report_json: comparisonReport,
+              generated_at: comparisonGeneratedAt || comparisonWithReport.created_date || data.created_date || new Date().toISOString(),
+              created_date: comparisonWithReport.created_date || data.created_date || new Date().toISOString(),
+              error_message: null
+            }];
+            source = 'DocumentComparison.byProposal';
+          }
+        }
+      }
+
+      if (normalizedReports.length === 0 && proposal?.document_comparison_id) {
+        const byId = await base44.entities.DocumentComparison.filter({ id: proposal.document_comparison_id });
+        const comparisonById = byId?.[0];
+        if (comparisonById) {
+          const data = comparisonById?.data && typeof comparisonById.data === 'object' ? comparisonById.data : {};
+          const comparisonReport =
+            comparisonById.evaluation_report_json ||
+            data.evaluation_report_json ||
+            comparisonById.output_report_json ||
+            data.output_report_json;
+          if (comparisonReport && typeof comparisonReport === 'object') {
+            const comparisonGeneratedAt = comparisonById.generated_at || data.generated_at;
+            normalizedReports = [{
+              id: `comparison-${comparisonById.id}`,
+              proposal_id: proposalId,
+              status: 'succeeded',
+              output_report_json: comparisonReport,
+              generated_at: comparisonGeneratedAt || comparisonById.created_date || data.created_date || new Date().toISOString(),
+              created_date: comparisonById.created_date || data.created_date || new Date().toISOString(),
+              error_message: null
+            }];
+            source = 'DocumentComparison.byId';
+          }
+        }
+      }
+
+      if (import.meta.env.DEV) {
+        console.debug('[ProposalDetail] evaluationReports source', {
+          proposalId,
+          documentComparisonId: proposal?.document_comparison_id || null,
+          source,
+          count: normalizedReports.length
+        });
+      }
+
+      return normalizedReports.sort((a, b) => {
         const dateA = a.generated_at || a.created_date;
         const dateB = b.generated_at || b.created_date;
         return new Date(dateB) - new Date(dateA);
       }).slice(0, 5);
     },
-    enabled: !!proposalId,
+    enabled: !!proposalId && !!proposal,
     refetchInterval: (data) => {
       const hasRunning = Array.isArray(data) && data.some(r => ['queued', 'running'].includes(r.status));
       return hasRunning ? 2000 : false;
@@ -154,11 +246,14 @@ export default function ProposalDetail() {
         throw new Error('Cannot evaluate: proposal id missing');
       }
 
+      let comparisonId = proposal?.document_comparison_id || null;
       try {
         // Prefer resolving a linked DocumentComparison by proposal id rather than relying solely on proposal shape.
-        let comparisonId = proposal?.document_comparison_id || null;
         try {
-          const comparisons = await base44.entities.DocumentComparison.filter({ proposal_id: resolvedProposalId }, '-created_date');
+          let comparisons = await base44.entities.DocumentComparison.filter({ proposal_id: resolvedProposalId }, '-created_date');
+          if ((!comparisons || comparisons.length === 0) && resolvedProposalId) {
+            comparisons = await base44.entities.DocumentComparison.filter({ 'data.proposal_id': resolvedProposalId }, '-created_date');
+          }
           if (comparisons && comparisons.length > 0) {
             comparisonId = comparisons[0].id || comparisonId;
           }

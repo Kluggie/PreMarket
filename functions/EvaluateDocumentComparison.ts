@@ -1,31 +1,68 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.6';
 
+const UI_REPORT_FIELD = 'output_report_json';
+
 Deno.serve(async (req) => {
   let comparison_id;
+  let force = false;
   let base44;
+  let linkedProposalId = null;
+  let reportShapeLogged = false;
+  let persistEvaluationReport: null | ((params: {
+    proposalId: string | null;
+    status: 'succeeded' | 'failed';
+    outputReport?: any;
+    errorMessage?: string | null;
+  }) => Promise<{
+    persistedEvaluationReport: boolean;
+    persistedReportId: string | null;
+    persistErrorSafe: string | null;
+  }>) = null;
   const correlationId = `eval_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+  let persistOutcome: {
+    persistedEvaluationReport: boolean;
+    persistedReportId: string | null;
+    persistErrorSafe: string | null;
+  } = {
+    persistedEvaluationReport: false,
+    persistedReportId: null,
+    persistErrorSafe: null
+  };
+
+  const respond = (payload: Record<string, any>, status = 200, override?: typeof persistOutcome) => {
+    const info = override ?? persistOutcome;
+    return Response.json({
+      ...payload,
+      persistedEvaluationReport: info.persistedEvaluationReport,
+      persistedReportId: info.persistedReportId,
+      persistErrorSafe: info.persistErrorSafe,
+      linkedProposalId
+    }, { status });
+  };
   
   try {
     base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
     if (!user) {
-      return Response.json({ 
+      return respond({
         error: 'Unauthorized', 
         ok: false,
-        correlationId 
-      }, { status: 401 });
+        errorCode: 'UNAUTHORIZED',
+        correlationId
+      }, 401);
     }
 
-    const body = await req.json();
+    const body = await req.json().catch(() => ({}));
     comparison_id = body.comparison_id;
+    force = body.force === true;
     
     if (!comparison_id) {
-      return Response.json({ 
+      return respond({
         error: 'comparison_id is required', 
         ok: false,
         message: 'Missing comparison ID',
-        correlationId 
-      }, { status: 400 });
+        correlationId
+      }, 400);
     }
 
     // Load comparison record
@@ -33,32 +70,318 @@ Deno.serve(async (req) => {
     const comparison = comparisons[0];
     
     if (!comparison) {
-      return Response.json({ 
+      return respond({
         error: 'Comparison not found', 
         ok: false,
         message: 'Comparison record not found in database',
-        correlationId 
-      }, { status: 404 });
+        correlationId
+      }, 404);
     }
-    
+
+    const sortByNewest = (items: any[]) =>
+      [...items].sort((a, b) => {
+        const dateA = a?.generated_at || a?.data?.generated_at || a?.created_date || a?.data?.created_date || 0;
+        const dateB = b?.generated_at || b?.data?.generated_at || b?.created_date || b?.data?.created_date || 0;
+        return new Date(dateB).getTime() - new Date(dateA).getTime();
+      });
+
+    const asPersistError = (value: unknown): string => {
+      if (value instanceof Error) return value.message;
+      if (typeof value === 'string') return value;
+      return 'Unknown persistence error';
+    };
+
+    const logPersistError = (context: string, error: unknown) => {
+      console.error(
+        `[Persist] ${context}`,
+        asPersistError(error),
+        (error as any)?.response?.data || (error as any)?.data || null,
+        { correlationId }
+      );
+    };
+
+    const sanitizePersistPayload = (payload: any) => {
+      if (!payload || typeof payload !== 'object') return payload;
+      const clone: Record<string, any> = { ...payload };
+      if (clone[UI_REPORT_FIELD] && typeof clone[UI_REPORT_FIELD] === 'object') {
+        clone[UI_REPORT_FIELD] = {
+          _type: 'object',
+          keys: Object.keys(clone[UI_REPORT_FIELD])
+        };
+      }
+      if (clone.data && typeof clone.data === 'object') {
+        clone.data = { ...clone.data };
+        if (clone.data[UI_REPORT_FIELD] && typeof clone.data[UI_REPORT_FIELD] === 'object') {
+          clone.data[UI_REPORT_FIELD] = {
+            _type: 'object',
+            keys: Object.keys(clone.data[UI_REPORT_FIELD])
+          };
+        }
+      }
+      return clone;
+    };
+
+    linkedProposalId = comparison.proposal_id || comparison?.data?.proposal_id || null;
+    if (!linkedProposalId) {
+      const linkedProposals = await base44.asServiceRole.entities.Proposal.filter({
+        document_comparison_id: comparison_id
+      });
+      linkedProposalId = linkedProposals[0]?.id || null;
+    }
+    if (!linkedProposalId) {
+      const linkedProposalsData = await base44.asServiceRole.entities.Proposal.filter({
+        'data.document_comparison_id': comparison_id
+      } as any).catch(() => []);
+      linkedProposalId = linkedProposalsData[0]?.id || null;
+    }
+    if (!linkedProposalId) {
+      return respond({
+        ok: false,
+        errorCode: 'MISSING_LINKED_PROPOSAL',
+        error: 'No linked proposal found for this document comparison',
+        message: 'Could not resolve the linked proposal. Please reconnect this comparison to a proposal and retry.',
+        correlationId
+      }, 400);
+    }
+
+    const markProposalEvaluated = async () => {
+      if (!linkedProposalId) return;
+      try {
+        await base44.asServiceRole.entities.Proposal.update(linkedProposalId, {
+          status: 'evaluated',
+          draft_step: null,
+          draft_updated_at: new Date().toISOString()
+        });
+      } catch (proposalUpdateError) {
+        console.warn(
+          '[EvaluateDocumentComparison] Proposal update failed:',
+          proposalUpdateError?.message || proposalUpdateError
+        );
+      }
+    };
+
+    persistEvaluationReport = async ({
+      proposalId,
+      status,
+      outputReport,
+      errorMessage
+    }: {
+      proposalId: string | null;
+      status: 'succeeded' | 'failed';
+      outputReport?: any;
+      errorMessage?: string | null;
+    }) => {
+      if (!proposalId) {
+        return {
+          persistedEvaluationReport: false,
+          persistedReportId: null,
+          persistErrorSafe: 'No linked proposal id available for EvaluationReport persistence'
+        };
+      }
+
+      if (status === 'succeeded' && (!outputReport || typeof outputReport !== 'object')) {
+        return {
+          persistedEvaluationReport: false,
+          persistedReportId: null,
+          persistErrorSafe: 'Missing output_report_json for succeeded EvaluationReport persistence'
+        };
+      }
+
+      const nowIso = new Date().toISOString();
+      const failureMessage = errorMessage || 'Evaluation failed';
+      let persistedReportId: string | null = null;
+
+      try {
+        const existingReports = await base44.asServiceRole.entities.EvaluationReport.filter({
+          'data.proposal_id': proposalId
+        } as any);
+        if (existingReports.length === 0) {
+          const fallbackTopLevelReports = await base44.asServiceRole.entities.EvaluationReport.filter({
+            proposal_id: proposalId
+          });
+          existingReports.push(...fallbackTopLevelReports);
+        }
+        if (!reportShapeLogged && existingReports.length > 0) {
+          reportShapeLogged = true;
+          const sample = existingReports[0];
+          console.log('[Persist] EvaluationReport row shape sample', {
+            correlationId,
+            topLevelKeys: Object.keys(sample || {}),
+            dataKeys: sample?.data && typeof sample.data === 'object'
+              ? Object.keys(sample.data)
+              : []
+          });
+        }
+        const latestReport = sortByNewest(existingReports)[0] || null;
+        const operation = latestReport?.id ? 'update' : 'create';
+        const existingData = latestReport?.data && typeof latestReport.data === 'object'
+          ? { ...latestReport.data }
+          : {};
+
+        const updateData = status === 'succeeded'
+          ? {
+              ...existingData,
+              proposal_id: proposalId,
+              status: 'succeeded',
+              output_report_json: outputReport,
+              generated_at: nowIso,
+              error_message: null
+            }
+          : {
+              ...existingData,
+              proposal_id: proposalId,
+              status: 'failed',
+              error_message: failureMessage
+            };
+
+        const createData = status === 'succeeded'
+          ? {
+              proposal_id: proposalId,
+              status: 'succeeded',
+              output_report_json: outputReport,
+              generated_at: nowIso
+            }
+          : {
+              proposal_id: proposalId,
+              status: 'failed',
+              error_message: failureMessage
+            };
+
+        const updatePayload = { data: updateData };
+        const createPayload = { data: createData };
+
+        const attemptedPayload = operation === 'update' ? updatePayload : createPayload;
+        console.log('[Persist] attempting EvaluationReport write', {
+          proposalId,
+          correlationId,
+          operation,
+          payload: sanitizePersistPayload(attemptedPayload)
+        });
+
+        if (latestReport?.id) {
+          await base44.asServiceRole.entities.EvaluationReport.update(latestReport.id, updatePayload);
+          persistedReportId = latestReport.id;
+        } else {
+          const created = await base44.asServiceRole.entities.EvaluationReport.create(createPayload);
+          persistedReportId = created?.id || null;
+        }
+
+        const verifyRows = await base44.asServiceRole.entities.EvaluationReport.filter({
+          'data.proposal_id': proposalId
+        });
+        const effectiveVerifyRows = verifyRows.length > 0
+          ? verifyRows
+          : await base44.asServiceRole.entities.EvaluationReport.filter({ proposal_id: proposalId });
+        const latestVerified = sortByNewest(effectiveVerifyRows)[0] || null;
+        const latestVerifiedData = latestVerified?.data && typeof latestVerified.data === 'object'
+          ? latestVerified.data
+          : {};
+        const verified = status === 'succeeded'
+          ? (
+              (latestVerifiedData?.status || latestVerified?.status) === 'succeeded' &&
+              !!(latestVerifiedData?.output_report_json || latestVerified?.output_report_json) &&
+              typeof (latestVerifiedData?.output_report_json || latestVerified?.output_report_json) === 'object'
+            )
+          : (latestVerifiedData?.status || latestVerified?.status) === 'failed';
+
+        if (!verified) {
+          const verifyError = status === 'succeeded'
+            ? 'EvaluationReport verification failed: latest row is missing data.status=succeeded and data.output_report_json'
+            : 'EvaluationReport verification failed: latest row is missing data.status=failed';
+          console.error('[Persist] verification failed', {
+            proposalId,
+            correlationId,
+            latestReportId: latestVerified?.id || null,
+            latestStatus: latestVerifiedData?.status || latestVerified?.status || null,
+            hasOutputReportJson: !!(latestVerifiedData?.output_report_json || latestVerified?.output_report_json)
+          });
+          return {
+            persistedEvaluationReport: false,
+            persistedReportId: persistedReportId || latestVerified?.id || null,
+            persistErrorSafe: verifyError
+          };
+        }
+
+        console.log('[Persist] success', {
+          id: latestVerified?.id || persistedReportId,
+          proposalId,
+          correlationId
+        });
+        return {
+          persistedEvaluationReport: true,
+          persistedReportId: latestVerified?.id || persistedReportId,
+          persistErrorSafe: null
+        };
+      } catch (persistError) {
+        logPersistError('EvaluationReport create/update failed', persistError);
+        return {
+          persistedEvaluationReport: false,
+          persistedReportId,
+          persistErrorSafe: asPersistError(persistError)
+        };
+      }
+    };
+
     if (!comparison.doc_a_plaintext || !comparison.doc_a_plaintext.trim()) {
-      return Response.json({ 
+      const errorMessage = 'Document A has no text';
+      persistOutcome = await persistEvaluationReport({
+        proposalId: linkedProposalId,
+        status: 'failed',
+        errorMessage
+      });
+      return respond({
         ok: false,
         errorCode: 'MISSING_TEXT',
-        error: 'Document A has no text',
+        error: errorMessage,
         message: `${comparison.party_a_label || 'Document A'} has no extracted text. Please add content in Step 2.`,
         correlationId
-      }, { status: 400 });
+      }, 400);
     }
     
     if (!comparison.doc_b_plaintext || !comparison.doc_b_plaintext.trim()) {
-      return Response.json({ 
+      const errorMessage = 'Document B has no text';
+      persistOutcome = await persistEvaluationReport({
+        proposalId: linkedProposalId,
+        status: 'failed',
+        errorMessage
+      });
+      return respond({
         ok: false,
         errorCode: 'MISSING_TEXT',
-        error: 'Document B has no text',
+        error: errorMessage,
         message: `${comparison.party_b_label || 'Document B'} has no extracted text. Please add content in Step 2.`,
         correlationId
-      }, { status: 400 });
+      }, 400);
+    }
+
+    const comparisonCachedReport = comparison.evaluation_report_json || comparison?.data?.evaluation_report_json || null;
+
+    // Fast path for reruns: return existing report unless force=true
+    if (!force && comparisonCachedReport) {
+      if (comparison.status !== 'evaluated') {
+        await base44.asServiceRole.entities.DocumentComparison.update(comparison_id, {
+          status: 'evaluated',
+          generated_at: comparison.generated_at || new Date().toISOString()
+        });
+      }
+
+      const persistResult = await persistEvaluationReport({
+        proposalId: linkedProposalId,
+        status: 'succeeded',
+        outputReport: comparisonCachedReport
+      });
+      persistOutcome = persistResult;
+      await markProposalEvaluated();
+
+      return respond({
+        ok: true,
+        cached: true,
+        reportId: persistResult.persistedReportId || null,
+        report: comparisonCachedReport,
+        public_report: comparisonCachedReport,
+        internal_report: comparisonCachedReport,
+        correlationId
+      }, 200, persistResult);
     }
 
     // Build redacted views
@@ -156,7 +479,7 @@ Return JSON only with this structure:
     });
 
     // Update status to running
-    await base44.entities.DocumentComparison.update(comparison_id, {
+    await base44.asServiceRole.entities.DocumentComparison.update(comparison_id, {
       status: 'submitted'
     });
 
@@ -172,61 +495,93 @@ Return JSON only with this structure:
         thinkingBudget: 0
       });
     } catch (invokeError) {
-      console.error('[EvaluateDocumentComparison] GenerateContent invoke error:', invokeError.message, 'correlationId:', correlationId);
-      
-      await base44.entities.DocumentComparison.update(comparison_id, {
-        status: 'failed',
-        error_message: invokeError.message
-      });
-      
-      return Response.json({ 
-        ok: false,
-        errorCode: 'VERTEX_CALL_FAILED',
-        error: invokeError.message,
-        message: 'AI evaluation service failed. Please try again or contact support.',
-        detailsSafe: 'The Vertex AI function could not be invoked',
+      const err = invokeError instanceof Error ? invokeError : new Error(String(invokeError));
+      const innerData = (invokeError as any)?.response?.data || (invokeError as any)?.data || null;
+
+      console.error(
+        '[EvaluateDocumentComparison] GenerateContent invoke error:',
+        err.message,
+        'innerData:',
+        innerData,
+        'correlationId:',
         correlationId
-      }, { status: 500 });
+      );
+
+      if (!innerData) {
+        await base44.asServiceRole.entities.DocumentComparison.update(comparison_id, {
+          status: 'failed',
+          error_message: err.message
+        });
+        persistOutcome = await persistEvaluationReport({
+          proposalId: linkedProposalId,
+          status: 'failed',
+          errorMessage: err.message
+        });
+
+        return respond({
+          ok: false,
+          errorCode: 'VERTEX_CALL_FAILED',
+          error: err.message,
+          message: 'AI evaluation service failed. Please try again or contact support.',
+          detailsSafe: 'The Vertex AI function could not be invoked',
+          correlationId
+        }, 500);
+      }
+
+      result = { data: innerData };
     }
 
     console.log('[EvaluateDocumentComparison] GenerateContent result:', result?.data?.ok ? 'success' : 'failed');
 
     if (!result || !result.data || !result.data.ok) {
-      const errorMsg = result?.data?.error || 'AI generation failed';
-      const errorDetails = result?.data?.raw?.error || '';
+      const errorCode = result?.data?.errorCode || 'VERTEX_GENERATION_FAILED';
+      const errorMsg = result?.data?.error || result?.data?.message || 'AI generation failed';
+      const errorDetails = result?.data?.detailsSafe || result?.data?.raw?.error || '';
       console.error('[EvaluateDocumentComparison] GenerateContent failed:', errorMsg, 'correlationId:', correlationId);
       
-      await base44.entities.DocumentComparison.update(comparison_id, {
+      await base44.asServiceRole.entities.DocumentComparison.update(comparison_id, {
         status: 'failed',
         error_message: errorMsg
       });
-      
-      return Response.json({ 
+      persistOutcome = await persistEvaluationReport({
+        proposalId: linkedProposalId,
+        status: 'failed',
+        errorMessage: errorMsg
+      });
+
+      const responseStatus = errorCode === 'UNAUTHORIZED' ? 401 : 200;
+      return respond({
         ok: false,
-        errorCode: 'VERTEX_GENERATION_FAILED',
+        errorCode,
         error: errorMsg,
-        message: 'Vertex AI generation failed. Please try again or contact support.',
+        message: result?.data?.message || 'Vertex AI generation failed. Please try again or contact support.',
         detailsSafe: errorDetails ? `Vertex error: ${errorDetails}` : 'The AI model did not return a successful response',
-        correlationId
-      }, { status: 500 });
+        correlationId,
+        innerCorrelationId: result?.data?.correlationId
+      }, responseStatus);
     }
 
     const outputText = result.data.outputText;
     if (!outputText) {
       console.error('[EvaluateDocumentComparison] Empty output from GenerateContent, correlationId:', correlationId);
-      await base44.entities.DocumentComparison.update(comparison_id, {
+      await base44.asServiceRole.entities.DocumentComparison.update(comparison_id, {
         status: 'failed',
         error_message: 'Empty AI output'
       });
+      persistOutcome = await persistEvaluationReport({
+        proposalId: linkedProposalId,
+        status: 'failed',
+        errorMessage: 'Empty AI output'
+      });
       
-      return Response.json({ 
+      return respond({
         ok: false,
         errorCode: 'EMPTY_AI_OUTPUT',
         error: 'Empty AI output',
         message: 'AI returned empty response. Please try again.',
         detailsSafe: 'The Vertex AI model did not generate any content',
         correlationId
-      }, { status: 500 });
+      }, 200);
     }
 
     // Parse output
@@ -237,19 +592,24 @@ Return JSON only with this structure:
       console.error('[EvaluateDocumentComparison] JSON parse failed:', parseError.message, 'correlationId:', correlationId);
       console.error('[EvaluateDocumentComparison] Raw output:', outputText.substring(0, 500));
       
-      await base44.entities.DocumentComparison.update(comparison_id, {
+      await base44.asServiceRole.entities.DocumentComparison.update(comparison_id, {
         status: 'failed',
         error_message: 'Failed to parse AI output as JSON'
       });
+      persistOutcome = await persistEvaluationReport({
+        proposalId: linkedProposalId,
+        status: 'failed',
+        errorMessage: `Failed to parse AI output as JSON: ${parseError.message}`
+      });
       
-      return Response.json({ 
+      return respond({
         ok: false,
         errorCode: 'INVALID_JSON_OUTPUT',
         error: 'Invalid AI output format',
         message: 'AI returned invalid JSON format. Please try again.',
         detailsSafe: `Parse error: ${parseError.message}`,
         correlationId
-      }, { status: 500 });
+      }, 200);
     }
 
     // Leak check: ensure no confidential span text appears in report
@@ -268,19 +628,24 @@ Return JSON only with this structure:
       // Only check spans over 10 chars to avoid false positives on common words
       if (confidentialText.length > 10) {
         if (reportString.includes(confidentialText.toLowerCase())) {
-          await base44.entities.DocumentComparison.update(comparison_id, {
+          await base44.asServiceRole.entities.DocumentComparison.update(comparison_id, {
             status: 'failed',
             error_message: 'Report blocked due to potential disclosure of confidential content'
           });
+          persistOutcome = await persistEvaluationReport({
+            proposalId: linkedProposalId,
+            status: 'failed',
+            errorMessage: 'Report blocked due to potential disclosure of confidential content'
+          });
           console.error('[EvaluateDocumentComparison] Leak detected:', confidentialText.substring(0, 50), 'correlationId:', correlationId);
-          return Response.json({ 
+          return respond({
             ok: false,
             errorCode: 'CONFIDENTIAL_LEAK_DETECTED',
             error: 'Report blocked due to potential disclosure',
             message: 'Report blocked: confidential content detected in AI output. Please review highlights and try again.',
             detailsSafe: 'The AI included text from a confidential span in the report',
             correlationId
-          }, { status: 400 });
+          }, 400);
         }
       }
     }
@@ -296,7 +661,7 @@ Return JSON only with this structure:
       : reportJson; // Fallback if sanitization fails
 
     // Update with successful report - store public report only in legacy field
-    await base44.entities.DocumentComparison.update(comparison_id, {
+    await base44.asServiceRole.entities.DocumentComparison.update(comparison_id, {
       status: 'evaluated',
       evaluation_report_json: publicReport, // Store public/sanitized version
       model_name: 'gemini-2.0-flash-exp',
@@ -304,27 +669,25 @@ Return JSON only with this structure:
       generated_at: new Date().toISOString()
     });
 
-    // Update linked Proposal status to 'evaluated'
-    const proposals = await base44.asServiceRole.entities.Proposal.filter({ 
-      document_comparison_id: comparison_id 
+    const persistResult = await persistEvaluationReport({
+      proposalId: linkedProposalId,
+      status: 'succeeded',
+      outputReport: publicReport
     });
-    if (proposals.length > 0) {
-      await base44.asServiceRole.entities.Proposal.update(proposals[0].id, {
-        status: 'evaluated',
-        draft_step: null,
-        draft_updated_at: new Date().toISOString()
-      });
-    }
+    persistOutcome = persistResult;
+    await markProposalEvaluated();
 
     console.log('[EvaluateDocumentComparison] Success, correlationId:', correlationId);
 
-    return Response.json({
+    return respond({
       ok: true,
+      cached: false,
+      reportId: persistResult.persistedReportId || null,
       report: publicReport,
       public_report: publicReport,
       internal_report: reportJson,
       correlationId
-    });
+    }, 200, persistResult);
 
   } catch (error) {
     const err = error instanceof Error ? error : new Error(String(error));
@@ -333,11 +696,28 @@ Return JSON only with this structure:
     // Try to update comparison with error
     if (comparison_id) {
       try {
-        const base44Client = base44 ?? createClientFromRequest(req);
-        await base44Client.entities.DocumentComparison.update(comparison_id, {
+        if (!base44) {
+          base44 = createClientFromRequest(req);
+        }
+        await base44.asServiceRole.entities.DocumentComparison.update(comparison_id, {
           status: 'failed',
           error_message: err.message
         });
+        try {
+          if (linkedProposalId && persistEvaluationReport) {
+            persistOutcome = await persistEvaluationReport({
+              proposalId: linkedProposalId,
+              status: 'failed',
+              errorMessage: err.message
+            });
+          }
+        } catch (reportUpdateError) {
+          console.error(
+            '[EvaluateDocumentComparison] Failed to persist EvaluationReport failure:',
+            reportUpdateError?.message || reportUpdateError,
+            (reportUpdateError as any)?.response?.data || (reportUpdateError as any)?.data || null
+          );
+        }
       } catch (updateError) {
         console.error('Failed to update comparison with error:', updateError);
       }
@@ -346,13 +726,13 @@ Return JSON only with this structure:
     console.error('[EvaluateDocumentComparison] Unexpected error:', err.message, 'correlationId:', correlationId);
     console.error('[EvaluateDocumentComparison] Stack:', err.stack);
     
-    return Response.json({ 
+    return respond({
       ok: false,
       errorCode: 'INTERNAL_ERROR',
       error: err.message,
       message: 'Evaluation failed with internal error. Please try again or contact support.',
       detailsSafe: err.message,
       correlationId
-    }, { status: 500 });
+    }, 500);
   }
 });

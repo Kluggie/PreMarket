@@ -1,9 +1,62 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.6';
 
+const MAX_VERTEX_ERROR_DETAILS = 500;
+
+const toMessage = (error: unknown): string => {
+  if (error instanceof Error) return error.message;
+  return String(error);
+};
+
+const truncate = (value: string | null | undefined, max = MAX_VERTEX_ERROR_DETAILS): string => {
+  if (!value) return '';
+  return value.length > max ? `${value.slice(0, max)}...` : value;
+};
+
+const stripWrappingQuotes = (value: string): string => {
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+};
+
+async function loadServiceAccountJson(correlationId: string): Promise<string | null> {
+  const inline = Deno.env.get('GCP_SERVICE_ACCOUNT_JSON');
+  if (inline?.trim()) {
+    return inline.trim();
+  }
+
+  const jsonPath = Deno.env.get('GCP_SERVICE_ACCOUNT_FILE');
+  if (jsonPath?.trim()) {
+    try {
+      return (await Deno.readTextFile(jsonPath.trim())).trim();
+    } catch (error) {
+      console.warn(`[${correlationId}] Failed to read GCP_SERVICE_ACCOUNT_FILE: ${toMessage(error)}`);
+    }
+  }
+
+  for (const envPath of ['.env.local', '../.env.local']) {
+    try {
+      const envText = await Deno.readTextFile(envPath);
+      const match = envText.match(/^GCP_SERVICE_ACCOUNT_JSON=(.+)$/m);
+      if (match && match[1]) {
+        return stripWrappingQuotes(match[1]);
+      }
+    } catch {
+      // ignore local env fallback misses
+    }
+  }
+
+  return null;
+}
+
 /**
  * Creates an OAuth2 access token using Google Service Account JWT bearer flow
  */
-async function getAccessToken(serviceAccountJson) {
+async function getAccessToken(serviceAccountJson: string) {
   const serviceAccount = JSON.parse(serviceAccountJson);
   const { client_email, private_key } = serviceAccount;
 
@@ -86,7 +139,23 @@ async function getAccessToken(serviceAccountJson) {
 /**
  * Calls Vertex AI generateContent using OAuth2 access token
  */
-async function callVertexAI({ projectId, location, model, text, temperature, maxOutputTokens, thinkingBudget }, accessToken) {
+async function callVertexAI({
+  projectId,
+  location,
+  model,
+  text,
+  temperature,
+  maxOutputTokens,
+  thinkingBudget
+}: {
+  projectId: string;
+  location: string;
+  model: string;
+  text: string;
+  temperature: number;
+  maxOutputTokens: number;
+  thinkingBudget: number;
+}, accessToken: string) {
   const url = `https://aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:generateContent`;
 
   const body = {
@@ -116,7 +185,10 @@ async function callVertexAI({ projectId, location, model, text, temperature, max
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`Vertex AI call failed (${response.status}): ${errorText}`);
+    const err = new Error(`Vertex AI call failed (${response.status})`);
+    (err as any).vertexStatusCode = response.status;
+    (err as any).vertexErrorText = errorText;
+    throw err;
   }
 
   return await response.json();
@@ -127,17 +199,10 @@ Deno.serve(async (req) => {
   
   try {
     const base44 = createClientFromRequest(req);
-    const user = await base44.auth.me();
-
-    if (!user) {
-      console.log(`[${correlationId}] Unauthorized access attempt`);
-      return Response.json({ 
-        ok: false,
-        errorCode: 'UNAUTHORIZED',
-        error: 'Unauthorized',
-        correlationId
-      }, { status: 401 });
-    }
+    const user = await base44.auth.me().catch(() => null);
+    console.log(
+      `[${correlationId}] caller=${user?.id ? `user:${user.id}` : 'service_or_anonymous'}`
+    );
 
     const payload = await req.json().catch(() => ({}));
     const {
@@ -151,12 +216,13 @@ Deno.serve(async (req) => {
     } = payload;
 
     // Validate required params
-    if (!text) {
+    if (typeof text !== 'string' || !text.trim()) {
       console.log(`[${correlationId}] Missing text parameter`);
       return Response.json({
         ok: false,
         errorCode: 'MISSING_TEXT',
         error: 'Missing required parameter: text',
+        message: 'The text field is required.',
         correlationId
       }, { status: 400 });
     }
@@ -176,15 +242,17 @@ Deno.serve(async (req) => {
     }
 
     // Get service account JSON from secrets
-    const serviceAccountJson = Deno.env.get('GCP_SERVICE_ACCOUNT_JSON');
+    const serviceAccountJson = await loadServiceAccountJson(correlationId);
     if (!serviceAccountJson) {
       console.error(`[${correlationId}] GCP_SERVICE_ACCOUNT_JSON not configured`);
       return Response.json({
         ok: false,
-        errorCode: 'VERTEX_AUTH',
-        error: 'GCP service account not configured',
+        errorCode: 'VERTEX_MISCONFIGURED',
+        error: 'Missing GCP_SERVICE_ACCOUNT_JSON',
+        message: 'Vertex credentials are not configured.',
+        detailsSafe: 'Set GCP_SERVICE_ACCOUNT_JSON in Base44 secrets or local .env.local',
         correlationId
-      }, { status: 500 });
+      }, { status: 200 });
     }
 
     // Get OAuth2 access token
@@ -193,13 +261,16 @@ Deno.serve(async (req) => {
       accessToken = await getAccessToken(serviceAccountJson);
       console.log(`[${correlationId}] OAuth token generated successfully`);
     } catch (tokenError) {
-      console.error(`[${correlationId}] Token generation failed:`, tokenError.message);
+      const message = toMessage(tokenError);
+      console.error(`[${correlationId}] Token generation failed:`, message);
       return Response.json({
         ok: false,
         errorCode: 'VERTEX_AUTH',
         error: 'Failed to generate OAuth token',
+        message: 'Could not authenticate with Vertex AI.',
+        detailsSafe: truncate(message),
         correlationId
-      }, { status: 500 });
+      }, { status: 200 });
     }
 
     // Call Vertex AI
@@ -211,21 +282,28 @@ Deno.serve(async (req) => {
       );
       console.log(`[${correlationId}] Vertex AI call successful`);
     } catch (vertexError) {
-      console.error(`[${correlationId}] Vertex AI call failed:`, vertexError.message);
-      
-      // Parse status code from error
-      let statusCode = 500;
-      if (vertexError.message.includes('(401)')) statusCode = 401;
-      else if (vertexError.message.includes('(403)')) statusCode = 403;
-      else if (vertexError.message.includes('(429)')) statusCode = 429;
-      
+      const parsedStatus = typeof (vertexError as any)?.vertexStatusCode === 'number'
+        ? (vertexError as any).vertexStatusCode
+        : undefined;
+      const rawDetails = (vertexError as any)?.vertexErrorText || toMessage(vertexError);
+      const errorCode =
+        parsedStatus === 401 || parsedStatus === 403
+          ? 'VERTEX_AUTH'
+          : parsedStatus === 429
+            ? 'VERTEX_RATE_LIMITED'
+            : 'VERTEX_REQUEST_FAILED';
+      console.error(
+        `[${correlationId}] Vertex AI call failed status=${parsedStatus ?? 'unknown'} details=${truncate(rawDetails)}`
+      );
       return Response.json({
         ok: false,
-        errorCode: statusCode === 401 || statusCode === 403 ? 'VERTEX_AUTH' : 'VERTEX_HTTP',
-        error: `Vertex AI error (HTTP ${statusCode})`,
-        details: vertexError.message,
+        errorCode,
+        error: toMessage(vertexError),
+        message: 'Vertex AI request failed.',
+        vertexStatusCode: parsedStatus,
+        detailsSafe: truncate(rawDetails),
         correlationId
-      }, { status: 500 });
+      }, { status: 200 });
     }
 
     // Extract output text from candidates
@@ -247,16 +325,18 @@ Deno.serve(async (req) => {
     });
 
   } catch (error) {
-    const err = error instanceof Error ? error : new Error(String(error));
-    console.error(`[${correlationId}] Unexpected error:`, err.message);
+    const message = toMessage(error);
+    console.error(`[${correlationId}] Unexpected error:`, message);
     return Response.json({
       ok: false,
       errorCode: 'INTERNAL',
       outputText: null,
-      error: err.message,
+      error: message,
+      message: 'GenerateContent failed with an internal error.',
+      detailsSafe: truncate(message),
       correlationId,
       raw: {
-        error: err.message
+        error: message
       }
     }, { status: 500 });
   }
