@@ -10,7 +10,7 @@ export const SHARE_REPORT_PATH = '/SharedReport';
  * @throws {Error} if APP_BASE_URL is not set
  * @returns {string} Base URL (e.g., "https://getpremarket.com")
  */
-export function getPublicBaseUrl() {
+export function getPublicBaseUrl(): string {
   const baseUrl = Deno.env.get('APP_BASE_URL');
   
   if (!baseUrl) {
@@ -30,7 +30,7 @@ export function getPublicBaseUrl() {
  * @param {string} token - The share link token
  * @returns {string} Full URL to shared report page
  */
-export function buildSharedReportUrl(token) {
+export function buildSharedReportUrl(token: string): string {
   if (!token) {
     throw new Error('Token is required to build share URL');
   }
@@ -44,7 +44,7 @@ export function buildSharedReportUrl(token) {
  * @param {string} url - The URL to validate
  * @throws {Error} if URL doesn't use getpremarket.com
  */
-export function validateShareUrl(url) {
+export function validateShareUrl(url: string): void {
   if (!url) {
     throw new Error('Share URL is empty');
   }

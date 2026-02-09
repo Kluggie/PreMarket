@@ -1,6 +1,24 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.6';
 import { buildSharedReportUrl, getPublicBaseUrl, SHARE_REPORT_PATH, validateShareUrl } from './_utils/shareUrl.ts';
 
+function logInfo(payload: Record<string, unknown>) {
+  console.log(JSON.stringify({ level: 'info', ...payload }));
+}
+
+function extractProposalId(source: any): string | null {
+  if (!source || typeof source !== 'object') return null;
+  const data = source.data && typeof source.data === 'object' ? source.data : {};
+  return (
+    source.proposal_id ||
+    source.linked_proposal_id ||
+    source.proposalId ||
+    source.linkedProposalId ||
+    data.proposal_id ||
+    data.proposalId ||
+    null
+  );
+}
+
 Deno.serve(async (req) => {
   const correlationId = `sharelink_${Date.now()}_${Math.random().toString(36).substring(7)}`;
   
@@ -20,6 +38,7 @@ Deno.serve(async (req) => {
 
     const body = await req.json().catch(() => ({}));
     const { proposalId, evaluationItemId, documentComparisonId, recipientEmail } = body;
+    let resolvedProposalId = proposalId || null;
     
     if (!recipientEmail || !recipientEmail.includes('@')) {
       console.log(`[${correlationId}] Invalid email provided`);
@@ -42,9 +61,9 @@ Deno.serve(async (req) => {
       }, { status: 400 });
     }
 
-    // Validate that the item exists
+    // Validate and resolve proposal linkage from the provided identifiers.
     if (proposalId) {
-      const proposals = await base44.entities.Proposal.filter({ id: proposalId });
+      const proposals = await base44.asServiceRole.entities.Proposal.filter({ id: proposalId }, '-created_date', 1);
       if (proposals.length === 0) {
         console.log(`[${correlationId}] Proposal not found: ${proposalId}`);
         return Response.json({
@@ -57,7 +76,7 @@ Deno.serve(async (req) => {
     }
 
     if (evaluationItemId) {
-      const items = await base44.entities.EvaluationItem.filter({ id: evaluationItemId });
+      const items = await base44.asServiceRole.entities.EvaluationItem.filter({ id: evaluationItemId }, '-created_date', 1);
       if (items.length === 0) {
         console.log(`[${correlationId}] Evaluation item not found: ${evaluationItemId}`);
         return Response.json({
@@ -67,10 +86,13 @@ Deno.serve(async (req) => {
           correlationId
         }, { status: 404 });
       }
+      if (!resolvedProposalId) {
+        resolvedProposalId = extractProposalId(items[0]);
+      }
     }
 
     if (documentComparisonId) {
-      const comparisons = await base44.entities.DocumentComparison.filter({ id: documentComparisonId });
+      const comparisons = await base44.asServiceRole.entities.DocumentComparison.filter({ id: documentComparisonId }, '-created_date', 1);
       if (comparisons.length === 0) {
         console.log(`[${correlationId}] Document comparison not found: ${documentComparisonId}`);
         return Response.json({
@@ -80,6 +102,36 @@ Deno.serve(async (req) => {
           correlationId
         }, { status: 404 });
       }
+      if (!resolvedProposalId) {
+        resolvedProposalId = extractProposalId(comparisons[0]);
+      }
+    }
+
+    if (!resolvedProposalId) {
+      logInfo({
+        correlationId,
+        event: 'share_link_resolution_failed',
+        proposalId: proposalId || null,
+        evaluationItemId: evaluationItemId || null,
+        documentComparisonId: documentComparisonId || null,
+        resolvedProposalId: null
+      });
+      return Response.json({
+        ok: false,
+        errorCode: 'MISSING_PROPOSAL_ID',
+        message: 'Share link must be linked to a proposal',
+        correlationId
+      }, { status: 400 });
+    }
+
+    const resolvedProposals = await base44.asServiceRole.entities.Proposal.filter({ id: resolvedProposalId }, '-created_date', 1);
+    if (resolvedProposals.length === 0) {
+      return Response.json({
+        ok: false,
+        errorCode: 'NOT_FOUND',
+        message: 'Resolved proposal not found',
+        correlationId
+      }, { status: 404 });
     }
 
     // Generate random token
@@ -90,10 +142,18 @@ Deno.serve(async (req) => {
     expiresAt.setDate(expiresAt.getDate() + 14);
 
     console.log(`[${correlationId}] Creating share link for recipient domain: ${recipientEmail.split('@')[1]}`);
+    logInfo({
+      correlationId,
+      event: 'share_link_resolved',
+      proposalId: proposalId || null,
+      evaluationItemId: evaluationItemId || null,
+      documentComparisonId: documentComparisonId || null,
+      resolvedProposalId
+    });
 
     // Create ShareLink
     const shareLink = await base44.asServiceRole.entities.ShareLink.create({
-      proposal_id: proposalId || null,
+      proposal_id: resolvedProposalId,
       evaluation_item_id: evaluationItemId || null,
       document_comparison_id: documentComparisonId || null,
       recipient_email: recipientEmail,
@@ -123,14 +183,15 @@ Deno.serve(async (req) => {
         throw new Error(`NON_CANONICAL_SHARE_PATH:${parsedUrl.pathname}`);
       }
     } catch (urlError) {
-      console.error(`[${correlationId}] URL construction failed:`, urlError.message);
+      const urlErrorMessage = urlError instanceof Error ? urlError.message : String(urlError);
+      console.error(`[${correlationId}] URL construction failed:`, urlErrorMessage);
       return Response.json({
         ok: false,
         errorCode:
-          urlError.message.includes('NON_CANONICAL_SHARE_PATH')
+          urlErrorMessage.includes('NON_CANONICAL_SHARE_PATH')
             ? 'NON_CANONICAL_SHARE_PATH'
-            : (urlError.message.includes('APP_BASE_URL') ? 'APP_BASE_URL_MISSING' : 'BAD_SHARE_LINK_DOMAIN'),
-        message: urlError.message,
+            : (urlErrorMessage.includes('APP_BASE_URL') ? 'APP_BASE_URL_MISSING' : 'BAD_SHARE_LINK_DOMAIN'),
+        message: urlErrorMessage,
         correlationId
       }, { status: 500 });
     }
@@ -140,12 +201,20 @@ Deno.serve(async (req) => {
       base_url_used: `${baseUrl}${SHARE_REPORT_PATH}`
     });
 
-    console.log(`[${correlationId}] Share link created successfully: ${shareLink.id}`);
+    logInfo({
+      correlationId,
+      event: 'share_link_created',
+      shareLinkId: shareLink.id,
+      proposalId: resolvedProposalId,
+      evaluationItemId: evaluationItemId || null,
+      documentComparisonId: documentComparisonId || null
+    });
 
     return Response.json({
       ok: true,
       shareUrl,
       token,
+      proposalId: resolvedProposalId,
       shareLinkId: shareLink.id,
       expiresAt: expiresAt.toISOString(),
       correlationId
