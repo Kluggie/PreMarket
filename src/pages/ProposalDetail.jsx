@@ -46,6 +46,7 @@ const StatusBadge = ({ status }) => {
 };
 
 const SHARED_ERROR_MESSAGES = {
+  AUTH_REQUIRED: 'Please sign in to continue.',
   TOKEN_NOT_FOUND: 'This shared link is invalid or no longer exists.',
   TOKEN_EXPIRED: 'This shared link has expired. Ask for a fresh link.',
   MAX_VIEWS_REACHED: 'This shared link has reached its view limit.',

@@ -3,6 +3,18 @@ import { toQuestionLookup, toRecipientEditableQuestionIds, validateShareLinkAcce
 
 const PARTY_A_KEYS = new Set(['a', 'party_a', 'proposer']);
 const PARTY_B_KEYS = new Set(['b', 'party_b', 'recipient', 'counterparty']);
+const NO_CACHE_HEADERS = {
+  'Cache-Control': 'no-store, no-cache, must-revalidate',
+  Pragma: 'no-cache',
+  Expires: '0'
+};
+
+function respond(payload: Record<string, unknown>, status = 200) {
+  return Response.json(payload, {
+    status,
+    headers: NO_CACHE_HEADERS
+  });
+}
 
 function logInfo(payload: Record<string, unknown>) {
   console.log(JSON.stringify({ level: 'info', ...payload }));
@@ -69,8 +81,9 @@ function parseConsumeView(req: Request, body: any): boolean {
   return fromQuery !== 'false';
 }
 
-function statusLabel(statusCode: number): 'ok' | 'not_found' | 'forbidden' | 'expired' | 'invalid' {
+function statusLabel(statusCode: number): 'ok' | 'not_found' | 'forbidden' | 'expired' | 'auth_required' | 'invalid' {
   if (statusCode === 404) return 'not_found';
+  if (statusCode === 401) return 'auth_required';
   if (statusCode === 403) return 'forbidden';
   if (statusCode === 410) return 'expired';
   if (statusCode >= 400) return 'invalid';
@@ -256,14 +269,14 @@ Deno.serve(async (req) => {
     const consumeView = parseConsumeView(req, body);
 
     if (!token) {
-      return Response.json({
+      return respond({
         ok: false,
         status: 'invalid',
         code: 'MISSING_TOKEN',
         reason: 'MISSING_TOKEN',
         message: 'Token is required',
         correlationId
-      }, { status: 400 });
+      }, 400);
     }
 
     const validation = await validateShareLinkAccess(base44, { token, consumeView });
@@ -291,7 +304,7 @@ Deno.serve(async (req) => {
         tokenPrefix: token.slice(0, 8)
       });
 
-      return Response.json(payload, { status: validation.statusCode });
+      return respond(payload, validation.statusCode);
     }
 
     const { shareLink, permissions } = validation;
@@ -324,7 +337,7 @@ Deno.serve(async (req) => {
         evaluationItemId: shareLink.evaluationItemId,
         documentComparisonId: shareLink.documentComparisonId
       });
-      return Response.json({
+      return respond({
         ok: false,
         status: 'not_found',
         code: 'PROPOSAL_LINK_MISSING',
@@ -333,7 +346,7 @@ Deno.serve(async (req) => {
         shareLink,
         permissions,
         correlationId
-      }, { status: 404 });
+      }, 404);
     }
 
     const proposals = await base44.asServiceRole.entities.Proposal.filter({ id: resolvedProposalId }, '-created_date', 1);
@@ -346,7 +359,7 @@ Deno.serve(async (req) => {
         resolvedProposalId,
         shareLinkId: shareLink.id
       });
-      return Response.json({
+      return respond({
         ok: false,
         status: 'not_found',
         code: 'PROPOSAL_NOT_FOUND',
@@ -355,7 +368,7 @@ Deno.serve(async (req) => {
         shareLink,
         permissions,
         correlationId
-      }, { status: 404 });
+      }, 404);
     }
 
     const proposalResponses = await base44.asServiceRole.entities.ProposalResponse.filter(
@@ -484,7 +497,7 @@ Deno.serve(async (req) => {
       consumedView: validation.consumedView
     });
 
-    return Response.json({
+    return respond({
       ok: true,
       status: 'ok',
       code: 'OK',
@@ -513,13 +526,13 @@ Deno.serve(async (req) => {
 
   } catch (error) {
     const err = error instanceof Error ? error : new Error(String(error));
-    return Response.json({
+    return respond({
       ok: false,
       status: 'invalid',
       code: 'INTERNAL_ERROR',
       reason: 'INTERNAL_ERROR',
       message: err.message || 'Failed to load shared report',
       correlationId
-    }, { status: 500 });
+    }, 500);
   }
 });

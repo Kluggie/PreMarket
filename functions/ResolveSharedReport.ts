@@ -1,5 +1,18 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.6';
 
+const NO_CACHE_HEADERS = {
+  'Cache-Control': 'no-store, no-cache, must-revalidate',
+  Pragma: 'no-cache',
+  Expires: '0'
+};
+
+function respond(payload: Record<string, unknown>, status = 200) {
+  return Response.json(payload, {
+    status,
+    headers: NO_CACHE_HEADERS
+  });
+}
+
 function toToken(req: Request, body: any): string | null {
   const fromBody = typeof body?.token === 'string' ? body.token.trim() : '';
   if (fromBody) return fromBody;
@@ -41,14 +54,14 @@ Deno.serve(async (req) => {
     const consumeView = toConsumeView(req, body);
 
     if (!token) {
-      return Response.json({
+      return respond({
         ok: false,
         status: 'invalid',
         code: 'MISSING_TOKEN',
         reason: 'MISSING_TOKEN',
         message: 'Token is required',
         correlationId
-      }, { status: 400 });
+      }, 400);
     }
 
     try {
@@ -56,14 +69,14 @@ Deno.serve(async (req) => {
         token,
         consumeView
       });
-      return Response.json({
+      return respond({
         ...upstream.data,
         endpoint: 'ResolveSharedReport',
         correlationId: upstream.data?.correlationId || correlationId
-      }, { status: upstream.status || 200 });
+      }, upstream.status || 200);
     } catch (upstreamError) {
       const { statusCode, payload } = extractError(upstreamError);
-      return Response.json({
+      return respond({
         ...(payload || {
           ok: false,
           status: 'invalid',
@@ -73,11 +86,11 @@ Deno.serve(async (req) => {
         }),
         endpoint: 'ResolveSharedReport',
         correlationId
-      }, { status: statusCode || 500 });
+      }, statusCode || 500);
     }
   } catch (error) {
     const err = error instanceof Error ? error : new Error(String(error));
-    return Response.json({
+    return respond({
       ok: false,
       status: 'invalid',
       code: 'INTERNAL_ERROR',
@@ -85,6 +98,6 @@ Deno.serve(async (req) => {
       message: err.message || 'Failed to resolve shared report',
       endpoint: 'ResolveSharedReport',
       correlationId
-    }, { status: 500 });
+    }, 500);
   }
 });

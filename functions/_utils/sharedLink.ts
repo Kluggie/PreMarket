@@ -252,6 +252,10 @@ export async function validateShareLinkAccess(
   const expectedRecipient = normalizeEmail(shareLink.recipientEmail);
   const matchedRecipient = !expectedRecipient || !currentUserEmail || expectedRecipient === currentUserEmail;
 
+  if (expectedRecipient && !currentUserEmail) {
+    return errorResult(401, 'AUTH_REQUIRED', 'Please sign in to continue', currentUserEmail, false, shareLink);
+  }
+
   if (expectedRecipient && currentUserEmail && expectedRecipient !== currentUserEmail) {
     return errorResult(403, 'RECIPIENT_MISMATCH', 'This link was issued for a different recipient account', currentUserEmail, false, shareLink);
   }

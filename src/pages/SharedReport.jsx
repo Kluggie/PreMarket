@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Loader2, XCircle } from 'lucide-react';
 
 const FRIENDLY_ERROR_MESSAGES = {
+  AUTH_REQUIRED: 'Please sign in to continue.',
   TOKEN_NOT_FOUND: 'This shared link is invalid or no longer exists.',
   TOKEN_EXPIRED: 'This shared link has expired. Request a new link.',
   MAX_VIEWS_REACHED: 'This shared link has reached its maximum number of views.',

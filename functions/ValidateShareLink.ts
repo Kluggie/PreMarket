@@ -1,6 +1,19 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.6';
 import { validateShareLinkAccess } from './_utils/sharedLink.ts';
 
+const NO_CACHE_HEADERS = {
+  'Cache-Control': 'no-store, no-cache, must-revalidate',
+  Pragma: 'no-cache',
+  Expires: '0'
+};
+
+function respond(payload: Record<string, unknown>, status = 200) {
+  return Response.json(payload, {
+    status,
+    headers: NO_CACHE_HEADERS
+  });
+}
+
 function parseConsumeView(req: Request, body: any): boolean {
   if (typeof body?.consumeView === 'boolean') {
     return body.consumeView;
@@ -11,8 +24,9 @@ function parseConsumeView(req: Request, body: any): boolean {
   return raw !== 'false';
 }
 
-function toStatusLabel(statusCode: number): 'ok' | 'not_found' | 'forbidden' | 'expired' | 'invalid' {
+function toStatusLabel(statusCode: number): 'ok' | 'not_found' | 'forbidden' | 'expired' | 'auth_required' | 'invalid' {
   if (statusCode === 404) return 'not_found';
+  if (statusCode === 401) return 'auth_required';
   if (statusCode === 403) return 'forbidden';
   if (statusCode === 410) return 'expired';
   if (statusCode >= 400) return 'invalid';
@@ -48,7 +62,7 @@ Deno.serve(async (req) => {
         correlationId
       };
       console.warn(`[${correlationId}] ValidateShareLink denied`, payload);
-      return Response.json(payload, { status: result.statusCode });
+      return respond(payload, result.statusCode);
     }
 
     const payload = {
@@ -88,17 +102,17 @@ Deno.serve(async (req) => {
       consumedView: result.consumedView
     });
 
-    return Response.json(payload);
+    return respond(payload);
   } catch (error) {
     const err = error instanceof Error ? error : new Error(String(error));
     console.error(`[${correlationId}] ValidateShareLink unexpected error`, err.message);
-    return Response.json({
+    return respond({
       ok: false,
       status: 'invalid',
       code: 'INTERNAL_ERROR',
       reason: 'INTERNAL_ERROR',
       message: 'Failed to validate share link',
       correlationId
-    }, { status: 500 });
+    }, 500);
   }
 });

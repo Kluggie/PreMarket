@@ -16,13 +16,19 @@
 
 ## 2) Open link while logged out
 - Open the shared URL in an incognito window.
-- Expect the link to resolve and render the shared report landing page.
-- Click `Open Shared Workspace`.
-- Expect:
-  - AI report is visible.
-  - Party A section is redacted for confidential values.
-  - Party B editable fields are present.
-  - Re-evaluation button is disabled with sign-in hint.
+- If `ShareLink.recipient_email` is set (recipient-pinned):
+  - Expect HTTP `401`
+  - Response code `AUTH_REQUIRED`
+  - UI shows: `Please sign in to continue`
+  - Shared workspace view/edit should not render.
+- If link is not recipient-pinned:
+  - Expect the link to resolve and render the shared report landing page.
+  - Click `Open Shared Workspace`.
+  - Expect:
+    - AI report is visible.
+    - Party A section is redacted for confidential values.
+    - Party B editable fields are present.
+    - Re-evaluation button is disabled with sign-in hint.
 
 ## 3) Open link while logged in as recipient
 - Sign in as the invited recipient account and open the same URL.
@@ -32,6 +38,14 @@
   - Save action returns `RESPONSES_UPDATED`.
   - Re-evaluate action works and decrements remaining quota.
   - Send-back action returns `SEND_BACK_RECORDED`.
+
+## 3b) Open link while logged in as non-recipient (recipient-pinned)
+- Sign in as an account different from `ShareLink.recipient_email`.
+- Open the same URL.
+- Expect:
+  - HTTP `403`
+  - Response code `RECIPIENT_MISMATCH`
+  - View/edit UI is blocked.
 
 ## 4) Expired token behavior
 - Manually set `expires_at` in `ShareLink` to a past date.
@@ -50,9 +64,4 @@
   - UI shows view-limit-specific message.
 
 ## 6) Recipient mismatch behavior
-- Log in as a different user than `recipient_email`.
-- Open the link.
-- Expect:
-  - HTTP `403`
-  - Response code `RECIPIENT_MISMATCH`
-  - UI shows recipient mismatch message.
+- Covered in section `3b`; keep as a regression check in CI/manual smoke.

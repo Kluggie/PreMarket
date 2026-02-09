@@ -12,8 +12,9 @@ function asString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function statusLabel(statusCode: number): 'ok' | 'not_found' | 'forbidden' | 'expired' | 'invalid' {
+function statusLabel(statusCode: number): 'ok' | 'not_found' | 'forbidden' | 'expired' | 'auth_required' | 'invalid' {
   if (statusCode === 404) return 'not_found';
+  if (statusCode === 401) return 'auth_required';
   if (statusCode === 403) return 'forbidden';
   if (statusCode === 410) return 'expired';
   if (statusCode >= 400) return 'invalid';
@@ -46,9 +47,21 @@ Deno.serve(async (req) => {
 
   try {
     const base44 = createClientFromRequest(req);
+    const user = await base44.auth.me().catch(() => null);
     const body = await req.json().catch(() => ({}));
     const token = asString(body?.token) || asString(new URL(req.url).searchParams.get('token'));
     const responses = Array.isArray(body?.responses) ? body.responses : [];
+
+    if (!user) {
+      return Response.json({
+        ok: false,
+        status: 'auth_required',
+        code: 'AUTH_REQUIRED',
+        reason: 'AUTH_REQUIRED',
+        message: 'Please sign in to continue',
+        correlationId
+      }, { status: 401 });
+    }
 
     if (!token) {
       return Response.json({
