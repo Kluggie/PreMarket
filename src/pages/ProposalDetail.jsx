@@ -422,6 +422,62 @@ export default function ProposalDetail() {
     }
   });
 
+  const handleDownloadAIReportPdf = async () => {
+    try {
+      if (!proposalId) {
+        throw new Error('Missing proposal id');
+      }
+
+      const latestEvaluationItemId =
+        latestEvaluation?.evaluation_item_id ||
+        latestEvaluation?.evaluationItemId ||
+        null;
+
+      const latestEvaluationReportId =
+        latestSuccessReport?.id && !String(latestSuccessReport.id).startsWith('comparison-')
+          ? latestSuccessReport.id
+          : null;
+
+      const pdfResult = await base44.functions.invoke('DownloadReportPDF', {
+        proposalId,
+        evaluationReportId: latestEvaluationReportId,
+        evaluationItemId: latestEvaluationItemId,
+        documentComparisonId: proposal?.document_comparison_id || null
+      });
+
+      if (!pdfResult?.data || typeof pdfResult.data !== 'object') {
+        throw new Error('Could not load report (correlationId: client_non_json_response)');
+      }
+
+      if (!pdfResult.data.ok || !pdfResult.data.pdfBase64) {
+        const correlationId = pdfResult.data.correlationId || 'unknown';
+        const message = pdfResult.data.message || pdfResult.data.error || 'Failed to generate AI report PDF.';
+        throw new Error(`${message} (correlationId: ${correlationId})`);
+      }
+
+      const byteCharacters = atob(pdfResult.data.pdfBase64);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i += 1) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+
+      const blob = new Blob([new Uint8Array(byteNumbers)], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = pdfResult.data.filename || `${proposal.title || 'proposal'}_ai_report.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      a.remove();
+
+      toast.success('AI report PDF downloaded');
+    } catch (error) {
+      console.error('PDF download error:', error);
+      toast.error(error?.message || 'Failed to download AI report PDF.');
+    }
+  };
+
   // Run AI Evaluation (Legacy)
   const runEvaluationMutation = useMutation({
     mutationFn: async () => {
@@ -738,137 +794,7 @@ export default function ProposalDetail() {
               {latestSuccessReport && latestSuccessReport.output_report_json && (
                 <Button 
                   variant="outline"
-                  onClick={async () => {
-                    try {
-                      const { jsPDF } = await import('jspdf');
-                      const { default: autoTable } = await import('jspdf-autotable');
-                      const doc = new jsPDF();
-                    const report = latestSuccessReport.output_report_json;
-                    
-                    // Header
-                    doc.setFillColor(15, 23, 42);
-                    doc.rect(0, 0, 210, 35, 'F');
-                    doc.setTextColor(255, 255, 255);
-                    doc.setFontSize(20);
-                    doc.text('PreMarket', 20, 15);
-                    doc.setFontSize(14);
-                    doc.text('AI Evaluation Report', 20, 25);
-                    
-                    doc.setTextColor(0, 0, 0);
-                    doc.setFontSize(10);
-                    doc.setTextColor(100, 100, 100);
-                    doc.text(`Generated: ${new Date(latestSuccessReport.generated_at || latestSuccessReport.created_date).toLocaleString()}`, 20, 45);
-                    
-                    // Executive Summary Card
-                    doc.setTextColor(0, 0, 0);
-                    doc.setFontSize(14);
-                    doc.setFont(undefined, 'bold');
-                    doc.text('Executive Summary', 20, 55);
-                    doc.setFont(undefined, 'normal');
-                    
-                    const fitLevel = report.summary?.fit_level || 'unknown';
-                    const fitColor = fitLevel === 'high' ? [34, 197, 94] : fitLevel === 'medium' ? [251, 191, 36] : [148, 163, 184];
-                    doc.setFillColor(...fitColor);
-                    doc.roundedRect(20, 60, 30, 8, 2, 2, 'F');
-                    doc.setTextColor(255, 255, 255);
-                    doc.setFontSize(10);
-                    doc.text(fitLevel + ' fit', 22, 65);
-                    
-                    // Quality Metrics Table
-                    doc.setTextColor(0, 0, 0);
-                    autoTable(doc, {
-                      startY: 75,
-                      head: [['Metric', 'Value']],
-                      body: [
-                        ['Party A Completeness', `${Math.round((report.quality?.completeness_a || 0) * 100)}%`],
-                        ['Party B Completeness', `${Math.round((report.quality?.completeness_b || 0) * 100)}%`],
-                        ['Overall Confidence', `${Math.round((report.quality?.confidence_overall || 0) * 100)}%`]
-                      ],
-                      theme: 'grid',
-                      headStyles: { fillColor: [37, 99, 235], fontSize: 11, fontStyle: 'bold' },
-                      styles: { fontSize: 10, cellPadding: 5 }
-                    });
-                    
-                    // Flags & Risks
-                    if (report.flags?.length > 0) {
-                      const flagsData = report.flags.map(f => [
-                        f.severity?.toUpperCase() || 'N/A',
-                        f.title || '',
-                        f.detail || ''
-                      ]);
-                      
-                      autoTable(doc, {
-                        startY: doc.lastAutoTable.finalY + 10,
-                        head: [['Severity', 'Title', 'Detail']],
-                        body: flagsData,
-                        theme: 'striped',
-                        headStyles: { fillColor: [239, 68, 68], fontSize: 11, fontStyle: 'bold' },
-                        styles: { fontSize: 9, cellPadding: 4 },
-                        columnStyles: { 0: { cellWidth: 25 }, 1: { cellWidth: 50 }, 2: { cellWidth: 105 } },
-                        didParseCell: function(data) {
-                          if (data.section === 'body' && data.column.index === 0) {
-                            const severity = data.cell.raw;
-                            if (severity === 'HIGH') data.cell.styles.fillColor = [254, 226, 226];
-                            else if (severity === 'MED') data.cell.styles.fillColor = [254, 243, 199];
-                          }
-                        }
-                      });
-                    }
-                    
-                    // Follow-up Questions
-                    if (report.followup_questions?.length > 0) {
-                      const followupData = report.followup_questions.slice(0, 10).map(q => [
-                        q.priority?.toUpperCase() || 'N/A',
-                        q.to_party?.toUpperCase() || 'N/A',
-                        q.question_text || ''
-                      ]);
-                      
-                      autoTable(doc, {
-                        startY: doc.lastAutoTable.finalY + 10,
-                        head: [['Priority', 'To', 'Question']],
-                        body: followupData,
-                        theme: 'striped',
-                        headStyles: { fillColor: [37, 99, 235], fontSize: 11, fontStyle: 'bold' },
-                        styles: { fontSize: 9, cellPadding: 4 },
-                        columnStyles: { 0: { cellWidth: 25 }, 1: { cellWidth: 20 }, 2: { cellWidth: 145 } }
-                      });
-                    }
-                    
-                    // Appendix - Field Digest
-                    if (report.appendix?.field_digest?.length > 0) {
-                      const digestData = report.appendix.field_digest.slice(0, 20).map(f => [
-                        f.label || f.question_id || '',
-                        f.value_summary || '',
-                        f.visibility || 'N/A'
-                      ]);
-                      
-                      autoTable(doc, {
-                        startY: doc.lastAutoTable.finalY + 10,
-                        head: [['Field', 'Summary', 'Visibility']],
-                        body: digestData,
-                        theme: 'grid',
-                        headStyles: { fillColor: [100, 116, 139], fontSize: 10, fontStyle: 'bold' },
-                        styles: { fontSize: 8, cellPadding: 3 },
-                        columnStyles: { 0: { cellWidth: 50 }, 1: { cellWidth: 100 }, 2: { cellWidth: 30 } }
-                      });
-                    }
-                    
-                    // Footer
-                    const pageCount = doc.internal.getNumberOfPages();
-                    for (let i = 1; i <= pageCount; i++) {
-                      doc.setPage(i);
-                      doc.setFontSize(8);
-                      doc.setTextColor(150, 150, 150);
-                      doc.text(`Page ${i} of ${pageCount}`, 20, 285);
-                      doc.text(`Generated: ${new Date().toLocaleString()}`, 150, 285);
-                    }
-                    
-                      doc.save(`${proposal.title || 'proposal'}_ai_report.pdf`);
-                    } catch (error) {
-                      console.error('PDF generation error:', error);
-                      alert('Failed to generate PDF. Please try again.');
-                    }
-                  }}
+                  onClick={handleDownloadAIReportPdf}
                 >
                   <FileText className="w-4 h-4 mr-2" />
                   Download AI Report PDF
