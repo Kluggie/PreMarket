@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import React, { useMemo, useState, useEffect } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '../utils';
 import { getProposalId } from '@/lib/utils';
 import { base44 } from '@/api/base44Client';
@@ -55,9 +55,13 @@ export default function ProposalDetail() {
   const [emailMessage, setEmailMessage] = useState('');
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const { search } = useLocation();
 
-  const params = new URLSearchParams(window.location.search);
+  const params = useMemo(() => new URLSearchParams(search), [search]);
   const proposalId = params.get('id');
+  const sharedToken = params.get('sharedToken');
+  const sharedRole = params.get('role');
+  const isRecipientView = Boolean(sharedToken && sharedRole === 'recipient');
 
   useEffect(() => {
     base44.auth.me().then(setUser);
@@ -253,6 +257,23 @@ export default function ProposalDetail() {
   const currentTemplate = templates.find(t => t.id === proposal?.template_id);
   const isFinanceTemplate = currentTemplate?.slug === 'universal_finance_deal_prequal';
   const isProfileMatchingTemplate = currentTemplate?.slug === 'universal_profile_matching';
+  const partyAIdentity = isRecipientView
+    ? 'Identity Protected'
+    : (proposal?.mutual_reveal || isPartyA ? proposal?.party_a_email : 'Identity Protected');
+  const partyBIdentity = proposal?.party_b_email || user?.email || 'Not specified';
+
+  const isPartyAResponse = (response) => {
+    const party = String(response?.entered_by_party || 'a').toLowerCase();
+    return party === 'a' || party === 'party_a' || party === 'proposer';
+  };
+
+  const isResponseHiddenForRecipient = (response) => isRecipientView && isPartyAResponse(response);
+
+  const getResponseDisplayValue = (response) => {
+    if (isResponseHiddenForRecipient(response)) return 'Not shared';
+    if (response.value_type === 'range') return `Range: ${response.range_min} - ${response.range_max}`;
+    return response.value || 'Not provided';
+  };
 
   // Run New Evaluation (Vertex Gemini)
   const runNewEvaluationMutation = useMutation({
@@ -729,8 +750,8 @@ export default function ProposalDetail() {
                     startY: 68,
                     head: [['Party', 'Identity']],
                     body: [
-                      ['Party A (Proposer)', isPartyA ? proposal.party_a_email : (proposal.party_a_email || 'Identity Protected')],
-                      ['Party B (Recipient)', proposal.party_b_email || 'Not specified']
+                      ['Party A (Proposer)', partyAIdentity],
+                      ['Party B (Recipient)', partyBIdentity]
                     ],
                     theme: 'grid',
                     headStyles: { fillColor: [37, 99, 235], fontSize: 11, fontStyle: 'bold' },
@@ -740,8 +761,10 @@ export default function ProposalDetail() {
                   // Responses Table
                   const responsesData = responses.map(r => [
                     r.question_id.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
-                    r.value_type === 'range' ? `${r.range_min} - ${r.range_max}` : (r.value || 'Not provided'),
-                    r.visibility || 'full'
+                    isResponseHiddenForRecipient(r)
+                      ? 'Not shared'
+                      : (r.value_type === 'range' ? `${r.range_min} - ${r.range_max}` : (r.value || 'Not provided')),
+                    isResponseHiddenForRecipient(r) ? 'not_shared' : (r.visibility || 'full')
                   ]);
                   
                   autoTable(doc, {
@@ -870,14 +893,14 @@ export default function ProposalDetail() {
                       <div className="p-4 bg-blue-50 rounded-xl">
                         <p className="text-sm text-blue-600 font-medium mb-2">Party A (Proposer)</p>
                         <p className="font-medium text-slate-900">
-                          {proposal.mutual_reveal || isPartyA ? proposal.party_a_email : 'Identity Protected'}
+                          {partyAIdentity}
                         </p>
-                        {isPartyA && <Badge className="mt-2 bg-blue-100 text-blue-700">You</Badge>}
+                        {!isRecipientView && isPartyA && <Badge className="mt-2 bg-blue-100 text-blue-700">You</Badge>}
                       </div>
                       <div className="p-4 bg-indigo-50 rounded-xl">
                         <p className="text-sm text-indigo-600 font-medium mb-2">Party B (Recipient)</p>
                         <p className="font-medium text-slate-900">
-                          {proposal.party_b_email || 'Not specified'}
+                          {partyBIdentity}
                         </p>
                         {isPartyB && <Badge className="mt-2 bg-indigo-100 text-indigo-700">You</Badge>}
                       </div>
@@ -889,14 +912,20 @@ export default function ProposalDetail() {
                 <Card className="border-0 shadow-sm">
                   <CardHeader>
                     <CardTitle>Complete Proposal Details</CardTitle>
-                    <CardDescription>All information provided in this proposal.</CardDescription>
+                    <CardDescription>
+                      {isRecipientView
+                        ? 'Only shared information is visible in recipient view.'
+                        : 'All information provided in this proposal.'}
+                    </CardDescription>
                   </CardHeader>
                   <CardContent>
                     {responses.length === 0 ? (
                       <p className="text-slate-500 text-center py-8">No responses recorded yet.</p>
                     ) : (
                       <div className="space-y-4">
-                        {responses.map(response => (
+                        {responses.map(response => {
+                          const hiddenForRecipient = isResponseHiddenForRecipient(response);
+                          return (
                           <div key={response.id} className="p-4 border border-slate-200 rounded-xl">
                             <div className="flex items-start justify-between mb-3">
                               <div>
@@ -908,23 +937,25 @@ export default function ProposalDetail() {
                                 </Badge>
                               </div>
                               <Badge className={
-                                response.visibility === 'full' ? 'bg-green-100 text-green-700' :
-                                response.visibility === 'partial' ? 'bg-amber-100 text-amber-700' :
-                                'bg-slate-100 text-slate-700'
+                                hiddenForRecipient
+                                  ? 'bg-slate-100 text-slate-700'
+                                  : (response.visibility === 'full'
+                                    ? 'bg-green-100 text-green-700'
+                                    : response.visibility === 'partial'
+                                      ? 'bg-amber-100 text-amber-700'
+                                      : 'bg-slate-100 text-slate-700')
                               }>
-                                {response.visibility}
+                                {hiddenForRecipient ? 'not_shared' : response.visibility}
                               </Badge>
                             </div>
                             <div className="bg-slate-50 p-3 rounded-lg">
                               <p className="text-slate-700">
-                                {response.value_type === 'range' 
-                                  ? `Range: ${response.range_min} - ${response.range_max}`
-                                  : response.value || 'Not provided'
-                                }
+                                {getResponseDisplayValue(response)}
                               </p>
                             </div>
                           </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                   </CardContent>
