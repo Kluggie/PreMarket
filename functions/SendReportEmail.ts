@@ -1,7 +1,5 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.6';
-import { validateShareUrl } from './_utils/shareUrl.ts';
-
-const CANONICAL_SHARED_PATH = '/SharedReport';
+import { SHARE_REPORT_PATH, validateShareUrl } from './_utils/shareUrl.ts';
 
 function assertCanonicalShareUrl(rawShareUrl: unknown, correlationId: string) {
   const shareUrl = String(rawShareUrl || '').trim();
@@ -24,7 +22,7 @@ function assertCanonicalShareUrl(rawShareUrl: unknown, correlationId: string) {
     const parsed = new URL(shareUrl);
     const token = parsed.searchParams.get('token');
 
-    if (parsed.pathname !== CANONICAL_SHARED_PATH || !token) {
+    if (parsed.pathname !== SHARE_REPORT_PATH || !token) {
       console.warn(JSON.stringify({
         level: 'warn',
         correlationId,
@@ -36,7 +34,7 @@ function assertCanonicalShareUrl(rawShareUrl: unknown, correlationId: string) {
       return {
         ok: false as const,
         errorCode: 'NON_CANONICAL_SHARE_URL',
-        message: 'Share URL must use /SharedReport and include token'
+        message: `Share URL must use ${SHARE_REPORT_PATH} and include token`
       };
     }
 

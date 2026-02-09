@@ -1,7 +1,5 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.6';
-import { validateShareUrl } from './_utils/shareUrl.ts';
-
-const CANONICAL_SHARED_PATH = '/SharedReport';
+import { SHARE_REPORT_PATH, validateShareUrl } from './_utils/shareUrl.ts';
 
 function logInfo(payload: Record<string, unknown>) {
   console.log(JSON.stringify({ level: 'info', ...payload }));
@@ -27,7 +25,7 @@ function assertCanonicalShareUrl(rawShareUrl: unknown, correlationId: string) {
     const parsed = new URL(shareUrl);
     const token = parsed.searchParams.get('token');
 
-    if (parsed.pathname !== CANONICAL_SHARED_PATH || !token) {
+    if (parsed.pathname !== SHARE_REPORT_PATH || !token) {
       logWarn({
         correlationId,
         errorCode: 'NON_CANONICAL_SHARE_URL',
@@ -38,7 +36,7 @@ function assertCanonicalShareUrl(rawShareUrl: unknown, correlationId: string) {
       return {
         ok: false as const,
         errorCode: 'NON_CANONICAL_SHARE_URL',
-        message: 'Share URL must use /SharedReport and include token'
+        message: `Share URL must use ${SHARE_REPORT_PATH} and include token`
       };
     }
 
@@ -425,6 +423,9 @@ https://getpremarket.com`;
         }];
       }
 
+      const debugShareUrlPath = new URL(shareUrl).pathname;
+      logInfo({ correlationId, debugShareUrlPath });
+
       emailResponse = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: {
@@ -492,7 +493,9 @@ https://getpremarket.com`;
         correlationId,
         message: `Report sent to ${resolvedRecipientEmail}`,
         shareUrl,
-        token: shareToken
+        token: shareToken,
+        debugShareUrlSent: shareUrl,
+        debugShareUrlPath: new URL(shareUrl).pathname
       });
 
     } catch (emailError) {

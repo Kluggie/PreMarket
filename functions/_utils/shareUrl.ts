@@ -3,6 +3,8 @@
  * Enforces use of APP_BASE_URL only - no runtime/request-derived origins
  */
 
+export const SHARE_REPORT_PATH = '/SharedReport';
+
 /**
  * Get the public base URL (APP_BASE_URL from environment)
  * @throws {Error} if APP_BASE_URL is not set
@@ -34,7 +36,7 @@ export function buildSharedReportUrl(token) {
   }
   
   const baseUrl = getPublicBaseUrl();
-  return `${baseUrl}/SharedReport?token=${encodeURIComponent(token)}`;
+  return `${baseUrl}${SHARE_REPORT_PATH}?token=${encodeURIComponent(token)}`;
 }
 
 /**
@@ -54,5 +56,10 @@ export function validateShareUrl(url) {
   // Additional check for deno.dev or base44.app
   if (url.includes('deno.dev') || url.includes('base44.app')) {
     throw new Error(`Share URL contains non-production domain: ${url}`);
+  }
+
+  const parsed = new URL(url);
+  if (parsed.pathname !== SHARE_REPORT_PATH) {
+    throw new Error(`Share URL path must be ${SHARE_REPORT_PATH}, got: ${parsed.pathname}`);
   }
 }

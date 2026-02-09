@@ -1,7 +1,5 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.6';
-import { getPublicBaseUrl, validateShareUrl } from './_utils/shareUrl.ts';
-
-const SHARE_PATH = '/SharedReport';
+import { buildSharedReportUrl, getPublicBaseUrl, SHARE_REPORT_PATH, validateShareUrl } from './_utils/shareUrl.ts';
 
 Deno.serve(async (req) => {
   const correlationId = `sharelink_${Date.now()}_${Math.random().toString(36).substring(7)}`;
@@ -113,11 +111,11 @@ Deno.serve(async (req) => {
     let baseUrl;
     try {
       baseUrl = getPublicBaseUrl();
-      shareUrl = `${baseUrl}${SHARE_PATH}?token=${encodeURIComponent(token)}`;
+      shareUrl = buildSharedReportUrl(token);
       validateShareUrl(shareUrl); // Hard guardrail
 
       const parsedUrl = new URL(shareUrl);
-      if (parsedUrl.pathname !== SHARE_PATH) {
+      if (parsedUrl.pathname !== SHARE_REPORT_PATH) {
         console.error(`[${correlationId}] NON_CANONICAL_SHARE_PATH`, {
           pathname: parsedUrl.pathname,
           shareUrl
@@ -139,7 +137,7 @@ Deno.serve(async (req) => {
     
     // Store the base URL used for this share link
     await base44.asServiceRole.entities.ShareLink.update(shareLink.id, {
-      base_url_used: baseUrl
+      base_url_used: `${baseUrl}${SHARE_REPORT_PATH}`
     });
 
     console.log(`[${correlationId}] Share link created successfully: ${shareLink.id}`);
