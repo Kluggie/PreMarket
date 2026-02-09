@@ -1,5 +1,36 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.6';
-import { buildSharedReportUrl, validateShareUrl } from './_utils/shareUrl.ts';
+import { validateShareUrl } from './_utils/shareUrl.ts';
+
+const CANONICAL_SHARED_PATH = '/SharedReport';
+
+function enforceCanonicalShareUrl(rawShareUrl: string, correlationId: string) {
+  let shareUrl = String(rawShareUrl || '').trim();
+
+  if (shareUrl.includes('/shared-report')) {
+    console.warn(`[${correlationId}] Lowercase share path detected; correcting before send`);
+    shareUrl = shareUrl.replace(/\/shared-report(?=\?|$)/g, CANONICAL_SHARED_PATH);
+  }
+
+  try {
+    validateShareUrl(shareUrl);
+    const parsed = new URL(shareUrl);
+
+    if (parsed.pathname !== CANONICAL_SHARED_PATH) {
+      console.warn(
+        `[${correlationId}] Non-canonical share path "${parsed.pathname}" detected; forcing ${CANONICAL_SHARED_PATH}`
+      );
+      parsed.pathname = CANONICAL_SHARED_PATH;
+      shareUrl = parsed.toString();
+    }
+
+    console.log(JSON.stringify({ level: 'info', correlationId, shareUrlPath: parsed.pathname }));
+    return shareUrl;
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.warn(`[${correlationId}] Share URL validation failed; sending best-effort canonical URL`, errorMessage);
+    return shareUrl;
+  }
+}
 
 Deno.serve(async (req) => {
   const correlationId = `email_${Date.now()}_${Math.random().toString(36).substring(7)}`;
@@ -38,34 +69,57 @@ Deno.serve(async (req) => {
       }, { status: 404 });
     }
 
-    // Create access token
-    const tokenResult = await base44.functions.invoke('CreateEvaluationAccessToken', {
+    // Create share link via canonical flow
+    const shareLinkResult = await base44.functions.invoke('CreateShareLink', {
       evaluationItemId,
-      email: toEmail,
-      role
+      recipientEmail: toEmail
     });
 
-    if (!tokenResult.data.ok) {
+    if (!shareLinkResult.data?.ok) {
       return Response.json({
         ok: false,
-        error: 'Failed to create access token',
-        details: tokenResult.data.error,
+        error: shareLinkResult.data?.message || 'Failed to create share link',
+        errorCode: shareLinkResult.data?.errorCode || 'SHARE_LINK_FAILED',
         correlationId
       }, { status: 500 });
     }
 
-    const token = tokenResult.data.token;
-    
-    let reportUrl;
-    try {
-      reportUrl = buildSharedReportUrl(token);
-      validateShareUrl(reportUrl); // Hard guardrail
-    } catch (urlError) {
-      console.error(`[${correlationId}] Share URL construction failed:`, urlError.message);
+    const shareUrlFromCreate = shareLinkResult.data.shareUrl;
+    const shareToken =
+      shareLinkResult.data.token ||
+      (() => {
+        try {
+          return shareUrlFromCreate ? new URL(shareUrlFromCreate).searchParams.get('token') : null;
+        } catch {
+          return null;
+        }
+      })();
+
+    if (!shareToken) {
       return Response.json({
         ok: false,
-        errorCode: urlError.message.includes('APP_BASE_URL') ? 'APP_BASE_URL_MISSING' : 'BAD_SHARE_LINK_DOMAIN',
-        error: urlError.message,
+        error: 'Share link token missing',
+        errorCode: 'SHARE_LINK_INVALID',
+        correlationId
+      }, { status: 500 });
+    }
+
+    if (!shareUrlFromCreate || typeof shareUrlFromCreate !== 'string') {
+      return Response.json({
+        ok: false,
+        error: 'Share link URL missing',
+        errorCode: 'SHARE_LINK_INVALID',
+        correlationId
+      }, { status: 500 });
+    }
+
+    const reportUrl = enforceCanonicalShareUrl(shareUrlFromCreate, correlationId);
+
+    if (!reportUrl) {
+      return Response.json({
+        ok: false,
+        errorCode: 'BAD_SHARE_LINK_DOMAIN',
+        error: 'Share URL is invalid',
         correlationId
       }, { status: 500 });
     }

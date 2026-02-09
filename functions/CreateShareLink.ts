@@ -1,5 +1,7 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.6';
-import { buildSharedReportUrl, getPublicBaseUrl, validateShareUrl } from './_utils/shareUrl.ts';
+import { getPublicBaseUrl, validateShareUrl } from './_utils/shareUrl.ts';
+
+const SHARE_PATH = '/SharedReport';
 
 Deno.serve(async (req) => {
   const correlationId = `sharelink_${Date.now()}_${Math.random().toString(36).substring(7)}`;
@@ -106,17 +108,17 @@ Deno.serve(async (req) => {
       status: 'active'
     });
 
-    // Build share URL using centralized helper (enforces APP_BASE_URL only)
+    // Build share URL from canonical share path (enforces APP_BASE_URL only)
     let shareUrl;
     let baseUrl;
     try {
       baseUrl = getPublicBaseUrl();
-      shareUrl = buildSharedReportUrl(token);
+      shareUrl = `${baseUrl}${SHARE_PATH}?token=${encodeURIComponent(token)}`;
       validateShareUrl(shareUrl); // Hard guardrail
 
-      // Runtime safeguard: enforce canonical route casing in generated URLs.
+      // Runtime safeguard: keep legacy lowercase URLs from propagating.
       if (shareUrl.includes('/shared-report')) {
-        shareUrl = shareUrl.replace(/\/shared-report(?=\?|$)/g, '/SharedReport');
+        shareUrl = shareUrl.replace(/\/shared-report(?=\?|$)/g, SHARE_PATH);
       }
     } catch (urlError) {
       console.error(`[${correlationId}] URL construction failed:`, urlError.message);
