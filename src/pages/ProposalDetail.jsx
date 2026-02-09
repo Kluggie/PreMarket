@@ -244,7 +244,11 @@ export default function ProposalDetail() {
   const latestSuccessReport = evaluationReports?.find(r => r.status === 'succeeded');
   const sharedReport = sharedReports?.[0];
   const fitCardReport = fitCardReports?.[0];
-  const hasShareableReport = Boolean(latestSuccessReport?.output_report_json || latestReport || latestEvaluation);
+  const hasShareableReport = Boolean(
+    latestSuccessReport?.output_report_json ||
+    sharedReports.some(r => r.status === 'succeeded' && r.output_report_json) ||
+    fitCardReports.some(r => r.status === 'succeeded' && r.output_report_json)
+  );
 
   const currentTemplate = templates.find(t => t.id === proposal?.template_id);
   const isFinanceTemplate = currentTemplate?.slug === 'universal_finance_deal_prequal';
@@ -379,40 +383,36 @@ export default function ProposalDetail() {
         evaluationItemId = linkedItems?.[0]?.id || null;
       }
 
-      const shareLinkResult = await base44.functions.invoke('CreateShareLink', {
+      const sendResult = await base44.functions.invoke('SendReportEmailSafe', {
         proposalId,
         evaluationItemId,
-        recipientEmail: toEmail
-      });
-
-      if (!shareLinkResult?.data?.ok) {
-        throw new Error(shareLinkResult?.data?.message || 'Failed to create share link.');
-      }
-
-      const token = shareLinkResult?.data?.token;
-      if (!token) {
-        throw new Error('Share token missing.');
-      }
-
-      const shareUrl = `${window.location.origin}${createPageUrl(`SharedReport?token=${encodeURIComponent(token)}`)}`;
-      const sendResult = await base44.functions.invoke('SendReportEmail', {
-        proposalId,
-        evaluationItemId,
-        toEmail,
+        documentComparisonId: proposal?.document_comparison_id || null,
         recipientEmail: toEmail,
-        message: emailMessage,
-        shareToken: token,
-        shareUrlOverride: shareUrl
+        toEmail,
+        message: emailMessage
       });
 
       if (!sendResult?.data?.ok) {
-        throw new Error(sendResult?.data?.message || 'Failed to send report email.');
+        const errorCode = sendResult?.data?.errorCode || 'UNKNOWN';
+        const correlationId = sendResult?.data?.correlationId;
+        const baseMessage = sendResult?.data?.message || 'Failed to send report email.';
+
+        if (['MISSING_EMAIL_PROVIDER_KEY', 'EMAIL_CONFIG_MISSING', 'EMAIL_CONFIG_INVALID'].includes(errorCode)) {
+          const statusResult = await base44.functions.invoke('EmailConfigStatus', {}).catch(() => null);
+          const config = statusResult?.data;
+          const configDetail = config
+            ? `Email config: RESEND_API_KEY ${config.hasResendKey ? 'set' : 'missing'}, RESEND_FROM_EMAIL ${config.hasFromEmail ? 'set' : 'missing'}.`
+            : 'Unable to load email configuration status.';
+          throw new Error(`${baseMessage} ${configDetail}${correlationId ? ` (Correlation ID: ${correlationId})` : ''}`);
+        }
+
+        throw new Error(`${baseMessage}${correlationId ? ` (Correlation ID: ${correlationId})` : ''}`);
       }
 
       return sendResult.data;
     },
     onSuccess: () => {
-      toast.success(`AI report sent to ${recipientEmail.trim()}`);
+      toast.success('Report sent');
       setSendReportModalOpen(false);
       setRecipientEmail('');
       setEmailMessage('');
@@ -714,26 +714,19 @@ export default function ProposalDetail() {
                 <FileText className="w-4 h-4 mr-2" />
                 Download Proposal Info PDF
               </Button>
-              {proposal?.id && proposalId && (
+              {proposalId && hasShareableReport && (
                 <Button
                   variant="outline"
-                  onClick={() => navigate(`/proposals/${proposal.id}/edit?step=3`)}
+                  onClick={() => {
+                    setRecipientEmail(proposal?.party_b_email || '');
+                    setEmailMessage('');
+                    setSendReportModalOpen(true);
+                  }}
                 >
-                  Edit proposal
+                  <Send className="w-4 h-4 mr-2" />
+                  Send AI Report
                 </Button>
               )}
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setRecipientEmail(proposal?.party_b_email || '');
-                  setEmailMessage('');
-                  setSendReportModalOpen(true);
-                }}
-                disabled={!hasShareableReport}
-              >
-                <Send className="w-4 h-4 mr-2" />
-                Send AI Report
-              </Button>
               <Button 
                 onClick={() => handleRunEvaluationClick()}
                 disabled={runNewEvaluationMutation.isPending || latestReport?.status === 'running' || latestReport?.status === 'queued' || sharedReport?.status === 'running' || fitCardReport?.status === 'running'}

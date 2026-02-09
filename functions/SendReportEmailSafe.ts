@@ -47,10 +47,18 @@ Deno.serve(async (req) => {
       });
     }
 
-    const { proposalId, evaluationItemId, documentComparisonId, recipientEmail } = body;
+    const {
+      proposalId,
+      evaluationItemId,
+      documentComparisonId,
+      recipientEmail,
+      toEmail,
+      message
+    } = body;
+    const resolvedRecipientEmail = recipientEmail || toEmail;
     
     // Validate email
-    if (!recipientEmail || !recipientEmail.includes('@')) {
+    if (!resolvedRecipientEmail || !resolvedRecipientEmail.includes('@')) {
       await logEmailSend(base44, {
         correlationId,
         proposalId,
@@ -69,7 +77,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    const recipientDomain = recipientEmail.split('@')[1];
+    const recipientDomain = resolvedRecipientEmail.split('@')[1];
     console.log(`[${correlationId}] Sending to domain: ${recipientDomain}`);
 
     // Validate at least one ID
@@ -180,7 +188,7 @@ Deno.serve(async (req) => {
         proposalId,
         evaluationItemId,
         documentComparisonId,
-        recipientEmail
+        recipientEmail: resolvedRecipientEmail
       });
     } catch (shareLinkError) {
       await logEmailSend(base44, {
@@ -319,10 +327,18 @@ Deno.serve(async (req) => {
       console.warn(`[${correlationId}] PDF generation failed:`, pdfError.message);
     }
 
+    const optionalMessage = typeof message === 'string' ? message.trim() : '';
+    const escapedMessage = optionalMessage
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+
     // Build email
     const emailBody = `Hello,
 
 ${user.full_name || user.email} has shared a report with you: "${itemTitle}"
+
+${optionalMessage ? `Message:\n${optionalMessage}\n` : ''}
 
 View the report here:
 ${shareUrl}
@@ -337,6 +353,7 @@ https://getpremarket.com`;
 <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
   <p>Hello,</p>
   <p>${user.full_name || user.email} has shared a report with you: <strong>"${itemTitle}"</strong></p>
+  ${optionalMessage ? `<div style="margin: 16px 0; padding: 12px; border: 1px solid #e2e8f0; border-radius: 6px; background: #f8fafc;"><p style="margin: 0 0 8px; font-size: 13px; color: #475569;">Message</p><p style="margin: 0; white-space: pre-wrap;">${escapedMessage}</p></div>` : ''}
   <div style="margin: 30px 0;">
     <a href="${shareUrl}" style="background-color: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Open Report</a>
   </div>
@@ -353,7 +370,7 @@ https://getpremarket.com`;
     try {
       const emailPayload: any = {
         from: fromEmail,
-        to: recipientEmail,
+        to: resolvedRecipientEmail,
         subject: `${user.full_name || user.email} shared: ${itemTitle}`,
         text: emailBody,
         html: emailHtml
@@ -437,8 +454,9 @@ https://getpremarket.com`;
       return Response.json({
         ok: true,
         correlationId,
-        message: `Report sent to ${recipientEmail}`,
-        shareUrl
+        message: `Report sent to ${resolvedRecipientEmail}`,
+        shareUrl,
+        token: shareToken
       });
 
     } catch (emailError) {
