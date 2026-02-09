@@ -261,6 +261,11 @@ Deno.serve(async (req) => {
     try {
       shareUrl = buildSharedReportUrl(shareToken);
       validateShareUrl(shareUrl); // Hard guardrail
+
+      // Runtime safeguard: enforce canonical route casing before email send.
+      if (shareUrl.includes('/shared-report')) {
+        shareUrl = shareUrl.replace(/\/shared-report(?=\?|$)/g, '/SharedReport');
+      }
     } catch (urlError) {
       console.error(`[${correlationId}] Share URL construction failed:`, urlError.message);
       

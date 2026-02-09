@@ -113,6 +113,11 @@ Deno.serve(async (req) => {
       baseUrl = getPublicBaseUrl();
       shareUrl = buildSharedReportUrl(token);
       validateShareUrl(shareUrl); // Hard guardrail
+
+      // Runtime safeguard: enforce canonical route casing in generated URLs.
+      if (shareUrl.includes('/shared-report')) {
+        shareUrl = shareUrl.replace(/\/shared-report(?=\?|$)/g, '/SharedReport');
+      }
     } catch (urlError) {
       console.error(`[${correlationId}] URL construction failed:`, urlError.message);
       return Response.json({
