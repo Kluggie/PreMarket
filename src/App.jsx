@@ -3,7 +3,7 @@ import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClientInstance } from '@/lib/query-client'
 import NavigationTracker from '@/lib/NavigationTracker'
 import { pagesConfig } from './pages.config'
-import { BrowserRouter as Router, Route, Routes, useLocation } from 'react-router-dom';
+import { BrowserRouter as Router, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
@@ -18,6 +18,11 @@ const MainPage = mainPageKey ? Pages[mainPageKey] : <></>;
 const LayoutWrapper = ({ children, currentPageName }) => Layout ?
   <Layout currentPageName={currentPageName}>{children}</Layout>
   : <>{children}</>;
+
+const SharedReportAliasRedirect = () => {
+  const location = useLocation();
+  return <Navigate to={`/SharedReport${location.search || ''}`} replace />;
+};
 
 const PublicRoutes = () => {
   return (
@@ -47,13 +52,14 @@ const PublicRoutes = () => {
         }
       />
       <Route
-        path="/shared-report"
+        path="/SharedReport"
         element={
           <LayoutWrapper currentPageName="SharedReport">
             <Pages.SharedReport />
           </LayoutWrapper>
         }
       />
+      <Route path="/shared-report" element={<SharedReportAliasRedirect />} />
       <Route path="/" element={
         <LayoutWrapper currentPageName={mainPageKey}>
           <MainPage />
@@ -110,7 +116,10 @@ const AuthenticatedApp = ({ isPublicDirectoryRoute }) => {
 const AppRoutes = () => {
   const location = useLocation();
   const isPublicDirectoryRoute =
-    location.pathname === '/directory' || location.pathname.startsWith('/directory/');
+    location.pathname === '/directory' ||
+    location.pathname.startsWith('/directory/') ||
+    location.pathname === '/SharedReport' ||
+    location.pathname === '/shared-report';
   return <AuthenticatedApp isPublicDirectoryRoute={isPublicDirectoryRoute} />;
 };
 

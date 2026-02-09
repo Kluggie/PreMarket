@@ -46,9 +46,15 @@ Deno.serve(async (req) => {
       });
       
       if (comparisons[0]) {
+        const comparisonData = comparisons[0]?.data && typeof comparisons[0].data === 'object'
+          ? comparisons[0].data
+          : {};
         reportData = {
           type: 'document_comparison',
           id: shareLink.documentComparisonId,
+          proposal_id: comparisons[0].proposal_id || comparisonData.proposal_id || null,
+          proposalId: comparisons[0].proposal_id || comparisonData.proposal_id || null,
+          documentComparisonId: shareLink.documentComparisonId,
           title: comparisons[0].title,
           status: comparisons[0].status,
           party_a_label: comparisons[0].party_a_label,
@@ -91,6 +97,9 @@ Deno.serve(async (req) => {
         reportData = {
           type: items[0].type || 'evaluation',
           id: shareLink.evaluationItemId,
+          proposal_id: items[0].linked_proposal_id || null,
+          proposalId: items[0].linked_proposal_id || null,
+          evaluationItemId: shareLink.evaluationItemId,
           title: items[0].title,
           status: items[0].status,
           party_a_email: items[0].party_a_email,
@@ -116,6 +125,9 @@ Deno.serve(async (req) => {
       ok: true,
       shareLink: {
         id: shareLink.id,
+        proposalId: shareLink.proposalId || null,
+        evaluationItemId: shareLink.evaluationItemId || null,
+        documentComparisonId: shareLink.documentComparisonId || null,
         recipientEmail: shareLink.recipientEmail,
         expiresAt: shareLink.expiresAt,
         uses: shareLink.uses,

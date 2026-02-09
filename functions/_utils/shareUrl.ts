@@ -34,7 +34,7 @@ export function buildSharedReportUrl(token) {
   }
   
   const baseUrl = getPublicBaseUrl();
-  return `${baseUrl}/shared-report?token=${token}`;
+  return `${baseUrl}/SharedReport?token=${encodeURIComponent(token)}`;
 }
 
 /**

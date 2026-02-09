@@ -1,89 +1,140 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createPageUrl } from '../utils';
 import { base44 } from '@/api/base44Client';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Loader2, XCircle, FileText, CheckCircle2, AlertTriangle, Sparkles, RefreshCw, Send, Lock } from 'lucide-react';
-import { toast } from 'sonner';
+import { Loader2, Lock, XCircle } from 'lucide-react';
 
 export default function SharedReport() {
   const navigate = useNavigate();
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [shareData, setShareData] = useState(null);
+  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
+  const [isResolving, setIsResolving] = useState(false);
+  const [error, setError] = useState('');
   const [user, setUser] = useState(null);
-  const [reportData, setReportData] = useState(null);
 
   const params = new URLSearchParams(window.location.search);
   const token = params.get('token');
 
   useEffect(() => {
-    // Try to get user, but don't require it
-    base44.auth.me().then(setUser).catch(() => setUser(null));
+    let active = true;
+
+    const checkAuth = async () => {
+      try {
+        const me = await base44.auth.me();
+        if (active) {
+          setUser(me || null);
+        }
+      } catch {
+        if (active) {
+          setUser(null);
+        }
+      } finally {
+        if (active) {
+          setIsCheckingAuth(false);
+        }
+      }
+    };
+
+    checkAuth();
+
+    return () => {
+      active = false;
+    };
   }, []);
 
   useEffect(() => {
-    if (!token) {
-      setError('Missing access token in URL');
-      setLoading(false);
+    if (isCheckingAuth || !user) {
       return;
     }
-    loadSharedReport();
-  }, [token]);
 
-  const loadSharedReport = async () => {
-    try {
-      setLoading(true);
-      
-      // Load report data via backend (guest-safe, no auth required)
-      const result = await base44.functions.invoke('GetSharedReportData', { token });
-      
-      if (!result.data.ok) {
-        console.error('Load report failed:', result.data);
-        setError(result.data.message || 'Invalid share link');
-        setLoading(false);
+    const resolveSharedToken = async () => {
+      if (!token) {
+        setError('Missing access token in URL.');
         return;
       }
 
-      const { shareLink, permissions, reportData: report } = result.data;
-      setShareData({ ...shareLink, permissions });
-      setReportData(report);
-      setLoading(false);
+      try {
+        setIsResolving(true);
+        setError('');
 
-    } catch (err) {
-      console.error('Load shared report error:', err);
-      setError(err.message || 'Failed to load shared report');
-      setLoading(false);
-    }
+        const result = await base44.functions.invoke('GetSharedReportData', { token });
+        const data = result?.data;
+
+        if (!data || typeof data !== 'object' || !data.ok) {
+          const correlationId = data?.correlationId ? ` (correlationId: ${data.correlationId})` : '';
+          setError(`${data?.message || 'Invalid or expired share link.'}${correlationId}`);
+          return;
+        }
+
+        const shareLink = data.shareLink || {};
+        const reportData = data.reportData || {};
+
+        const proposalId =
+          shareLink.proposalId ||
+          reportData.proposalId ||
+          reportData.proposal_id ||
+          (reportData.type === 'proposal' ? reportData.id : null);
+
+        if (!proposalId) {
+          setError('This shared report is valid but is not linked to a proposal.');
+          return;
+        }
+
+        const context = {
+          token,
+          proposalId,
+          role: 'recipient',
+          evaluationItemId: shareLink.evaluationItemId || reportData.evaluationItemId || null,
+          documentComparisonId: shareLink.documentComparisonId || reportData.documentComparisonId || null,
+          loadedAt: new Date().toISOString()
+        };
+
+        localStorage.setItem('sharedReportContext', JSON.stringify(context));
+
+        const targetUrl = createPageUrl(
+          `ProposalDetail?id=${encodeURIComponent(proposalId)}&sharedToken=${encodeURIComponent(token)}&role=recipient`
+        );
+        navigate(targetUrl, { replace: true });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        setError(`Failed to resolve shared report: ${message}`);
+      } finally {
+        setIsResolving(false);
+      }
+    };
+
+    resolveSharedToken();
+  }, [isCheckingAuth, user, token, navigate]);
+
+  const handleSignIn = () => {
+    const returnPath = `${window.location.pathname}${window.location.search}`;
+    base44.auth.redirectToLogin(returnPath);
   };
 
-  if (loading) {
+  if (isCheckingAuth) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <Card className="border-0 shadow-sm w-full max-w-md">
-          <CardContent className="py-16 text-center">
-            <Loader2 className="w-12 h-12 text-blue-500 mx-auto mb-4 animate-spin" />
-            <h3 className="text-lg font-semibold text-slate-900 mb-2">Loading report...</h3>
-            <p className="text-slate-500">Please wait while we verify your access.</p>
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+        <Card className="w-full max-w-md border-0 shadow-sm">
+          <CardContent className="py-12 text-center">
+            <Loader2 className="w-10 h-10 text-blue-600 mx-auto mb-4 animate-spin" />
+            <p className="text-slate-700 font-medium">Checking access...</p>
           </CardContent>
         </Card>
       </div>
     );
   }
 
-  if (!token) {
+  if (!user) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <Card className="border-0 shadow-sm w-full max-w-md">
-          <CardContent className="py-16 text-center">
-            <AlertTriangle className="w-12 h-12 text-amber-300 mx-auto mb-4" />
-            <h3 className="text-lg font-semibold text-slate-900 mb-2">Missing Access Token</h3>
-            <p className="text-slate-500 mb-6">This link is incomplete. Please request a new share link.</p>
-            <Button onClick={() => window.location.href = '/'}>
-              Go to Home
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+        <Card className="w-full max-w-md border-0 shadow-sm">
+          <CardContent className="py-12 text-center">
+            <Lock className="w-10 h-10 text-blue-600 mx-auto mb-4" />
+            <h1 className="text-lg font-semibold text-slate-900 mb-2">Please sign in to view this report</h1>
+            <p className="text-slate-600 mb-6">You need to sign in before we can open the shared AI report.</p>
+            <Button onClick={handleSignIn} className="bg-blue-600 hover:bg-blue-700">
+              Sign In
             </Button>
           </CardContent>
         </Card>
@@ -93,14 +144,14 @@ export default function SharedReport() {
 
   if (error) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <Card className="border-0 shadow-sm w-full max-w-md">
-          <CardContent className="py-16 text-center">
-            <XCircle className="w-12 h-12 text-red-300 mx-auto mb-4" />
-            <h3 className="text-lg font-semibold text-slate-900 mb-2">Access Denied</h3>
-            <p className="text-slate-500 mb-6">{error}</p>
-            <Button onClick={() => window.location.href = '/'}>
-              Go to Home
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+        <Card className="w-full max-w-md border-0 shadow-sm">
+          <CardContent className="py-12 text-center">
+            <XCircle className="w-10 h-10 text-red-500 mx-auto mb-4" />
+            <h1 className="text-lg font-semibold text-slate-900 mb-2">Unable to open shared report</h1>
+            <p className="text-slate-600 mb-6">{error}</p>
+            <Button variant="outline" onClick={() => navigate(createPageUrl('Dashboard'))}>
+              Go to Dashboard
             </Button>
           </CardContent>
         </Card>
@@ -108,271 +159,16 @@ export default function SharedReport() {
     );
   }
 
-  const report = reportData?.type === 'document_comparison' 
-    ? reportData.report 
-    : reportData?.report;
-
   return (
-    <div className="min-h-screen bg-slate-50 py-8">
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-        {/* Guest Banner */}
-        {!user && (
-          <Alert className="mb-6 bg-blue-50 border-blue-200">
-            <Lock className="w-4 h-4 text-blue-600" />
-            <AlertDescription className="text-blue-900">
-              You're viewing this report as a guest. You can edit, re-evaluate, and send it back.
-            </AlertDescription>
-          </Alert>
-        )}
-
-        {/* Link Usage Stats */}
-        <Card className="border-0 shadow-sm mb-6">
-          <CardContent className="py-4">
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-slate-600">
-                Link uses: {shareData?.uses || 0} / {shareData?.maxUses || 25}
-              </span>
-              <span className="text-slate-600">
-                Expires: {shareData?.expiresAt ? new Date(shareData.expiresAt).toLocaleDateString() : 'N/A'}
-              </span>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Report Content */}
-        {reportData?.type === 'document_comparison' && (
-          <Card className="border-0 shadow-sm mb-6 bg-gradient-to-br from-purple-50 to-blue-50">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Sparkles className="w-5 h-5 text-purple-600" />
-                {reportData.title || 'Document Comparison'}
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {report ? (
-                <div className="space-y-4">
-                  {report.summary && (
-                    <div className="p-4 bg-white rounded-lg">
-                      <p className="text-sm text-slate-600">Match Level</p>
-                      <p className="text-2xl font-bold capitalize">{report.summary.match_level || 'Unknown'}</p>
-                      {report.summary.rationale && (
-                        <p className="text-sm text-slate-700 mt-2">{report.summary.rationale}</p>
-                      )}
-                    </div>
-                  )}
-
-                  {report.alignment_points?.length > 0 && (
-                    <div>
-                      <h4 className="font-semibold mb-2 flex items-center gap-2">
-                        <CheckCircle2 className="w-4 h-4 text-green-600" />
-                        Alignment Points
-                      </h4>
-                      <div className="space-y-2">
-                        {report.alignment_points.map((point, idx) => (
-                          <div key={idx} className="p-3 bg-green-50 border border-green-100 rounded-lg">
-                            <p className="font-medium text-sm">{point.title}</p>
-                            <p className="text-sm text-slate-700 mt-1">{point.detail}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {report.conflicts_or_gaps?.length > 0 && (
-                    <div>
-                      <h4 className="font-semibold mb-2 flex items-center gap-2">
-                        <AlertTriangle className="w-4 h-4 text-amber-600" />
-                        Conflicts & Gaps
-                      </h4>
-                      <div className="space-y-2">
-                        {report.conflicts_or_gaps.map((conflict, idx) => (
-                          <div key={idx} className={`p-3 rounded-lg border ${
-                            conflict.severity === 'high' ? 'bg-red-50 border-red-200' :
-                            conflict.severity === 'medium' ? 'bg-amber-50 border-amber-200' :
-                            'bg-blue-50 border-blue-200'
-                          }`}>
-                            <div className="flex items-start gap-2">
-                              <Badge className={
-                                conflict.severity === 'high' ? 'bg-red-600' :
-                                conflict.severity === 'medium' ? 'bg-amber-600' :
-                                'bg-blue-600'
-                              }>
-                                {conflict.severity}
-                              </Badge>
-                              <div className="flex-1">
-                                <p className="font-medium text-sm">{conflict.title}</p>
-                                <p className="text-sm text-slate-600 mt-1">{conflict.detail}</p>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <p className="text-slate-500">No evaluation report available yet.</p>
-              )}
-            </CardContent>
-          </Card>
-        )}
-
-        {reportData?.type === 'proposal' && report && (
-          <Card className="border-0 shadow-sm mb-6 bg-gradient-to-br from-emerald-50 to-blue-50">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Sparkles className="w-5 h-5 text-emerald-600" />
-                {reportData.title || 'Proposal Report'}
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                {report.summary && (
-                  <div className="p-4 bg-white rounded-lg">
-                    <p className="text-sm text-slate-600">Overall Fit</p>
-                    <p className="text-2xl font-bold capitalize">{report.summary.fit_level || 'Unknown'}</p>
-                  </div>
-                )}
-
-                {report.summary?.top_fit_reasons?.length > 0 && (
-                  <div>
-                    <h4 className="font-semibold mb-2 flex items-center gap-2">
-                      <CheckCircle2 className="w-4 h-4 text-green-600" />
-                      Top Match Reasons
-                    </h4>
-                    <div className="space-y-2">
-                      {report.summary.top_fit_reasons.map((reason, idx) => (
-                        <div key={idx} className="p-3 bg-green-50 border border-green-100 rounded-lg">
-                          <p className="text-sm text-slate-800">{reason.text}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {report.flags?.length > 0 && (
-                  <div>
-                    <h4 className="font-semibold mb-2 flex items-center gap-2">
-                      <AlertTriangle className="w-4 h-4 text-amber-600" />
-                      Flags & Concerns
-                    </h4>
-                    <div className="space-y-2">
-                      {report.flags.map((flag, idx) => (
-                        <div key={idx} className={`p-3 rounded-lg border ${
-                          flag.severity === 'high' ? 'bg-red-50 border-red-200' :
-                          flag.severity === 'med' ? 'bg-amber-50 border-amber-200' :
-                          'bg-blue-50 border-blue-200'
-                        }`}>
-                          <div className="flex items-start gap-2">
-                            <Badge className={
-                              flag.severity === 'high' ? 'bg-red-600' :
-                              flag.severity === 'med' ? 'bg-amber-600' :
-                              'bg-blue-600'
-                            }>
-                              {flag.severity}
-                            </Badge>
-                            <div className="flex-1">
-                              <p className="font-medium text-sm">{flag.title}</p>
-                              <p className="text-sm text-slate-600 mt-1">{flag.detail}</p>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Actions */}
-        {shareData?.permissions && (
-          <div className="flex flex-wrap gap-3">
-            {shareData.permissions.canReevaluate && (
-              <Button 
-                onClick={async () => {
-                  if (!reportData?.id) return;
-
-                  try {
-                    toast.info('Running evaluation...');
-                    
-                    if (reportData.type === 'document_comparison') {
-                      const result = await base44.functions.invoke('EvaluateDocumentComparison', {
-                        comparison_id: reportData.id,
-                        trigger: 'user_click'
-                      });
-                      
-                      if (!result.data.ok) {
-                        toast.error(result.data.message || 'Evaluation failed');
-                        return;
-                      }
-                    } else if (reportData.type === 'proposal') {
-                      const result = await base44.functions.invoke('EvaluateProposalShared', {
-                        proposal_id: reportData.id,
-                        trigger: 'user_click'
-                      });
-                      
-                      if (result.data.status === 'failed') {
-                        toast.error(result.data.error_message || 'Evaluation failed');
-                        return;
-                      }
-                    }
-                    
-                    toast.success('Evaluation completed');
-                    loadSharedReport();
-                  } catch (error) {
-                    toast.error('Evaluation failed');
-                    console.error('Re-evaluate error:', error);
-                  }
-                }}
-                variant="outline"
-              >
-                <RefreshCw className="w-4 h-4 mr-2" />
-                Re-evaluate
-              </Button>
-            )}
-            {shareData.permissions.canSendBack && (
-              <Button 
-                onClick={async () => {
-                  if (!reportData?.id) return;
-                  
-                  const recipientEmail = prompt('Enter email to send report back to:');
-                  if (!recipientEmail || !recipientEmail.includes('@')) {
-                    toast.error('Invalid email address');
-                    return;
-                  }
-
-                  try {
-                    toast.info('Sending...');
-                    
-                    const result = await base44.functions.invoke('SendReportEmailSafe', {
-                      proposalId: reportData.type === 'proposal' ? reportData.id : null,
-                      documentComparisonId: reportData.type === 'document_comparison' ? reportData.id : null,
-                      evaluationItemId: reportData.type === 'evaluation' ? reportData.id : null,
-                      recipientEmail
-                    });
-
-                    if (result.data.ok) {
-                      toast.success(`Report sent to ${recipientEmail}`);
-                    } else {
-                      toast.error(result.data.message || 'Failed to send');
-                      alert(`Failed to send:\n\n${result.data.message}\n\nError Code: ${result.data.errorCode}\nCorrelation ID: ${result.data.correlationId}`);
-                    }
-                  } catch (error) {
-                    toast.error('Failed to send report');
-                    console.error('Send back error:', error);
-                  }
-                }}
-                className="bg-blue-600 hover:bg-blue-700"
-              >
-                <Send className="w-4 h-4 mr-2" />
-                Send Back
-              </Button>
-            )}
-          </div>
-        )}
-      </div>
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+      <Card className="w-full max-w-md border-0 shadow-sm">
+        <CardContent className="py-12 text-center">
+          <Loader2 className="w-10 h-10 text-blue-600 mx-auto mb-4 animate-spin" />
+          <p className="text-slate-700 font-medium">
+            {isResolving ? 'Opening shared report...' : 'Preparing redirect...'}
+          </p>
+        </CardContent>
+      </Card>
     </div>
   );
 }
