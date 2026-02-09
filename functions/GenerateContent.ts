@@ -24,34 +24,113 @@ const stripWrappingQuotes = (value: string): string => {
 };
 
 async function loadServiceAccountJson(correlationId: string): Promise<string | null> {
-  const inline = Deno.env.get('GCP_SERVICE_ACCOUNT_JSON');
-  if (inline?.trim()) {
-    return inline.trim();
-  }
-
-  const jsonPath = Deno.env.get('GCP_SERVICE_ACCOUNT_FILE');
-  if (jsonPath?.trim()) {
-    try {
-      return (await Deno.readTextFile(jsonPath.trim())).trim();
-    } catch (error) {
-      console.warn(`[${correlationId}] Failed to read GCP_SERVICE_ACCOUNT_FILE: ${toMessage(error)}`);
+  const inlineKeys = [
+    'GCP_SERVICE_ACCOUNT_JSON',
+    'GOOGLE_SERVICE_ACCOUNT_JSON',
+    'VERTEX_GCP_SERVICE_ACCOUNT_JSON'
+  ];
+  for (const key of inlineKeys) {
+    const inline = Deno.env.get(key);
+    if (inline?.trim()) {
+      return stripWrappingQuotes(inline.trim());
     }
   }
 
-  for (const envPath of ['.env.local', '../.env.local']) {
+  const fileKeys = [
+    'GOOGLE_APPLICATION_CREDENTIALS',
+    'GCP_SERVICE_ACCOUNT_FILE'
+  ];
+  for (const key of fileKeys) {
+    const jsonPath = Deno.env.get(key);
+    if (jsonPath?.trim()) {
+      try {
+        const filePath = stripWrappingQuotes(jsonPath.trim());
+        return (await Deno.readTextFile(filePath)).trim();
+      } catch (error) {
+        console.warn(`[${correlationId}] Failed to read ${key}: ${toMessage(error)}`);
+      }
+    }
+  }
+
+  const envCandidates: (string | URL)[] = [
+    '.env.local',
+    '../.env.local',
+    new URL('../.env.local', import.meta.url),
+    new URL('../../.env.local', import.meta.url),
+    new URL('./.env.local', import.meta.url)
+  ];
+  for (const envPath of envCandidates) {
     try {
       const envText = await Deno.readTextFile(envPath);
-      const match = envText.match(/^GCP_SERVICE_ACCOUNT_JSON=(.+)$/m);
-      if (match && match[1]) {
-        return stripWrappingQuotes(match[1]);
+      const inlineRegexes = [
+        /^\s*(?:export\s+)?GCP_SERVICE_ACCOUNT_JSON\s*=\s*(.+)\s*$/m,
+        /^\s*(?:export\s+)?GOOGLE_SERVICE_ACCOUNT_JSON\s*=\s*(.+)\s*$/m,
+        /^\s*(?:export\s+)?VERTEX_GCP_SERVICE_ACCOUNT_JSON\s*=\s*(.+)\s*$/m
+      ];
+      for (const regex of inlineRegexes) {
+        const match = envText.match(regex);
+        if (match?.[1]) {
+          return stripWrappingQuotes(match[1]);
+        }
+      }
+
+      const pathRegexes = [
+        /^\s*(?:export\s+)?GOOGLE_APPLICATION_CREDENTIALS\s*=\s*(.+)\s*$/m,
+        /^\s*(?:export\s+)?GCP_SERVICE_ACCOUNT_FILE\s*=\s*(.+)\s*$/m
+      ];
+      for (const regex of pathRegexes) {
+        const match = envText.match(regex);
+        if (match?.[1]) {
+          const filePath = stripWrappingQuotes(match[1]);
+          try {
+            return (await Deno.readTextFile(filePath)).trim();
+          } catch (error) {
+            console.warn(
+              `[${correlationId}] Failed to read service account file from ${String(envPath)}: ${toMessage(error)}`
+            );
+          }
+        }
       }
     } catch {
-      // ignore local env fallback misses
+      // ignore missing env file candidates
+    }
+  }
+
+  const fallbackFiles: (string | URL)[] = [
+    '../base44-vertex-key.json',
+    '/Users/mac/Desktop/PreMarket/base44-vertex-key.json',
+    new URL('../../base44-vertex-key.json', import.meta.url),
+    new URL('../base44-vertex-key.json', import.meta.url)
+  ];
+  for (const fallback of fallbackFiles) {
+    try {
+      return (await Deno.readTextFile(fallback)).trim();
+    } catch {
+      // ignore fallback misses
     }
   }
 
   return null;
 }
+
+const validateServiceAccountJson = (raw: string): { ok: true } | { ok: false; reason: string } => {
+  let parsed: any;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { ok: false, reason: 'Service account JSON is not valid JSON' };
+  }
+
+  if (typeof parsed?.client_email !== 'string' || !parsed.client_email.trim()) {
+    return { ok: false, reason: 'Service account JSON is missing client_email' };
+  }
+
+  if (typeof parsed?.private_key !== 'string' || !parsed.private_key.trim()) {
+    return { ok: false, reason: 'Service account JSON is missing private_key' };
+  }
+
+  return { ok: true };
+};
 
 /**
  * Creates an OAuth2 access token using Google Service Account JWT bearer flow
@@ -185,9 +264,27 @@ async function callVertexAI({
 
   if (!response.ok) {
     const errorText = await response.text();
-    const err = new Error(`Vertex AI call failed (${response.status})`);
+    let vertexErrorCode: string | undefined;
+    let summary = response.statusText || 'Request failed';
+    try {
+      const parsedError = JSON.parse(errorText);
+      const parsedPayload = parsedError?.error ?? parsedError;
+      if (typeof parsedPayload?.status === 'string' && parsedPayload.status) {
+        vertexErrorCode = parsedPayload.status;
+      } else if (parsedPayload?.code != null) {
+        vertexErrorCode = String(parsedPayload.code);
+      }
+      if (typeof parsedPayload?.message === 'string' && parsedPayload.message.trim()) {
+        summary = parsedPayload.message.trim();
+      }
+    } catch {
+      // keep raw text summary fallback
+      if (errorText?.trim()) summary = errorText.trim();
+    }
+    const err = new Error(`Vertex AI call failed (${response.status}): ${truncate(summary, 180)}`);
     (err as any).vertexStatusCode = response.status;
     (err as any).vertexErrorText = errorText;
+    (err as any).vertexErrorCode = vertexErrorCode;
     throw err;
   }
 
@@ -244,13 +341,27 @@ Deno.serve(async (req) => {
     // Get service account JSON from secrets
     const serviceAccountJson = await loadServiceAccountJson(correlationId);
     if (!serviceAccountJson) {
-      console.error(`[${correlationId}] GCP_SERVICE_ACCOUNT_JSON not configured`);
+      console.error(`[${correlationId}] Missing GCP service account credentials`);
       return Response.json({
         ok: false,
         errorCode: 'VERTEX_MISCONFIGURED',
-        error: 'Missing GCP_SERVICE_ACCOUNT_JSON',
+        error: 'Missing or invalid GCP service account credentials',
         message: 'Vertex credentials are not configured.',
-        detailsSafe: 'Set GCP_SERVICE_ACCOUNT_JSON in Base44 secrets or local .env.local',
+        detailsSafe: 'Set GCP_SERVICE_ACCOUNT_JSON (or GOOGLE_APPLICATION_CREDENTIALS file path) in Base44 secrets.',
+        correlationId
+      }, { status: 200 });
+    }
+
+    const credentialsValidation = validateServiceAccountJson(serviceAccountJson);
+    if (!credentialsValidation.ok) {
+      const validationReason = (credentialsValidation as { reason: string }).reason;
+      console.error(`[${correlationId}] Invalid GCP service account credentials: ${validationReason}`);
+      return Response.json({
+        ok: false,
+        errorCode: 'VERTEX_MISCONFIGURED',
+        error: 'Missing or invalid GCP service account credentials',
+        message: 'Vertex credentials are not configured.',
+        detailsSafe: 'Set GCP_SERVICE_ACCOUNT_JSON (or GOOGLE_APPLICATION_CREDENTIALS file path) in Base44 secrets.',
         correlationId
       }, { status: 200 });
     }
@@ -285,22 +396,20 @@ Deno.serve(async (req) => {
       const parsedStatus = typeof (vertexError as any)?.vertexStatusCode === 'number'
         ? (vertexError as any).vertexStatusCode
         : undefined;
+      const parsedVertexErrorCode = typeof (vertexError as any)?.vertexErrorCode === 'string'
+        ? (vertexError as any).vertexErrorCode
+        : undefined;
       const rawDetails = (vertexError as any)?.vertexErrorText || toMessage(vertexError);
-      const errorCode =
-        parsedStatus === 401 || parsedStatus === 403
-          ? 'VERTEX_AUTH'
-          : parsedStatus === 429
-            ? 'VERTEX_RATE_LIMITED'
-            : 'VERTEX_REQUEST_FAILED';
       console.error(
-        `[${correlationId}] Vertex AI call failed status=${parsedStatus ?? 'unknown'} details=${truncate(rawDetails)}`
+        `[${correlationId}] Vertex call failed status=${parsedStatus ?? 'unknown'} vertexErrorCode=${parsedVertexErrorCode ?? 'unknown'} details=${truncate(rawDetails)}`
       );
       return Response.json({
         ok: false,
-        errorCode,
-        error: toMessage(vertexError),
+        errorCode: 'VERTEX_REQUEST_FAILED',
+        error: `Vertex request failed${parsedStatus ? ` (${parsedStatus})` : ''}`,
         message: 'Vertex AI request failed.',
-        vertexStatusCode: parsedStatus,
+        vertexStatus: parsedStatus,
+        vertexErrorCode: parsedVertexErrorCode,
         detailsSafe: truncate(rawDetails),
         correlationId
       }, { status: 200 });

@@ -13,13 +13,23 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
 import { Separator } from '@/components/ui/separator';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from '@/components/ui/dialog';
 import DeleteDraftDialog from '../components/proposal/DeleteDraftDialog';
+import { toast } from 'sonner';
 import {
   ArrowLeft, FileText, BarChart3, Shield, Eye, Clock, CheckCircle2,
   AlertTriangle, XCircle, Users, MessageSquare, Paperclip, RefreshCw,
   Send, Lock, Unlock, Sparkles, TrendingUp, TrendingDown, Minus,
   ChevronRight, Upload, ThumbsUp, ThumbsDown
 } from 'lucide-react';
+import { Label } from '@/components/ui/label';
 
 const StatusBadge = ({ status }) => {
   const config = {
@@ -40,6 +50,9 @@ const StatusBadge = ({ status }) => {
 export default function ProposalDetail() {
   const [user, setUser] = useState(null);
   const [activeTab, setActiveTab] = useState('overview');
+  const [sendReportModalOpen, setSendReportModalOpen] = useState(false);
+  const [recipientEmail, setRecipientEmail] = useState('');
+  const [emailMessage, setEmailMessage] = useState('');
   const queryClient = useQueryClient();
   const navigate = useNavigate();
 
@@ -231,6 +244,7 @@ export default function ProposalDetail() {
   const latestSuccessReport = evaluationReports?.find(r => r.status === 'succeeded');
   const sharedReport = sharedReports?.[0];
   const fitCardReport = fitCardReports?.[0];
+  const hasShareableReport = Boolean(latestSuccessReport?.output_report_json || latestReport || latestEvaluation);
 
   const currentTemplate = templates.find(t => t.id === proposal?.template_id);
   const isFinanceTemplate = currentTemplate?.slug === 'universal_finance_deal_prequal';
@@ -340,6 +354,73 @@ export default function ProposalDetail() {
     }
     runNewEvaluationMutation.mutate({ trigger: 'user_click' });
   };
+
+  const sendReportMutation = useMutation({
+    mutationFn: async () => {
+      const toEmail = recipientEmail.trim();
+      if (!toEmail || !toEmail.includes('@')) {
+        throw new Error('Please enter a valid recipient email.');
+      }
+      if (!hasShareableReport) {
+        throw new Error('No AI report is available to send yet.');
+      }
+
+      let evaluationItemId =
+        latestEvaluation?.evaluation_item_id ||
+        latestEvaluation?.evaluationItemId ||
+        null;
+
+      if (!evaluationItemId && proposalId) {
+        const linkedItems = await base44.entities.EvaluationItem.filter(
+          { linked_proposal_id: proposalId },
+          '-created_date',
+          1
+        );
+        evaluationItemId = linkedItems?.[0]?.id || null;
+      }
+
+      const shareLinkResult = await base44.functions.invoke('CreateShareLink', {
+        proposalId,
+        evaluationItemId,
+        recipientEmail: toEmail
+      });
+
+      if (!shareLinkResult?.data?.ok) {
+        throw new Error(shareLinkResult?.data?.message || 'Failed to create share link.');
+      }
+
+      const token = shareLinkResult?.data?.token;
+      if (!token) {
+        throw new Error('Share token missing.');
+      }
+
+      const shareUrl = `${window.location.origin}${createPageUrl(`SharedReport?token=${encodeURIComponent(token)}`)}`;
+      const sendResult = await base44.functions.invoke('SendReportEmail', {
+        proposalId,
+        evaluationItemId,
+        toEmail,
+        recipientEmail: toEmail,
+        message: emailMessage,
+        shareToken: token,
+        shareUrlOverride: shareUrl
+      });
+
+      if (!sendResult?.data?.ok) {
+        throw new Error(sendResult?.data?.message || 'Failed to send report email.');
+      }
+
+      return sendResult.data;
+    },
+    onSuccess: () => {
+      toast.success(`AI report sent to ${recipientEmail.trim()}`);
+      setSendReportModalOpen(false);
+      setRecipientEmail('');
+      setEmailMessage('');
+    },
+    onError: (error) => {
+      toast.error(error?.message || 'Failed to send AI report.');
+    }
+  });
 
   // Run AI Evaluation (Legacy)
   const runEvaluationMutation = useMutation({
@@ -632,6 +713,26 @@ export default function ProposalDetail() {
               >
                 <FileText className="w-4 h-4 mr-2" />
                 Download Proposal Info PDF
+              </Button>
+              {proposal?.id && proposalId && (
+                <Button
+                  variant="outline"
+                  onClick={() => navigate(`/proposals/${proposal.id}/edit?step=3`)}
+                >
+                  Edit proposal
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setRecipientEmail(proposal?.party_b_email || '');
+                  setEmailMessage('');
+                  setSendReportModalOpen(true);
+                }}
+                disabled={!hasShareableReport}
+              >
+                <Send className="w-4 h-4 mr-2" />
+                Send AI Report
               </Button>
               <Button 
                 onClick={() => handleRunEvaluationClick()}
@@ -1644,6 +1745,53 @@ export default function ProposalDetail() {
           {/* Full Proposal Tab */}
 
         </Tabs>
+
+        <Dialog open={sendReportModalOpen} onOpenChange={setSendReportModalOpen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Send AI Report</DialogTitle>
+              <DialogDescription>
+                Send a secure report link by email.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label>To</Label>
+                <Input
+                  type="email"
+                  placeholder="recipient@example.com"
+                  value={recipientEmail}
+                  onChange={(e) => setRecipientEmail(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Message (Optional)</Label>
+                <Textarea
+                  placeholder="Add an optional message"
+                  value={emailMessage}
+                  onChange={(e) => setEmailMessage(e.target.value)}
+                  className="min-h-[120px]"
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setSendReportModalOpen(false)}
+                disabled={sendReportMutation.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={() => sendReportMutation.mutate()}
+                disabled={sendReportMutation.isPending || !recipientEmail.trim()}
+                className="bg-blue-600 hover:bg-blue-700"
+              >
+                {sendReportMutation.isPending ? 'Sending...' : 'Send'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );

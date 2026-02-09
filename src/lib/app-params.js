@@ -39,11 +39,18 @@ const getAppParams = () => {
 		storage.removeItem('base44_access_token');
 		storage.removeItem('token');
 	}
+	const urlParams = isNode ? new URLSearchParams() : new URLSearchParams(window.location.search);
+	const functionsVersionFromUrl = urlParams.get("functions_version");
+	const functionsVersionFromEnv = import.meta.env.VITE_BASE44_FUNCTIONS_VERSION || null;
+	// Do not keep a stale functions_version pinned in localStorage.
+	if (!functionsVersionFromUrl) {
+		storage.removeItem('base44_functions_version');
+	}
 	return {
 		appId: getAppParamValue("app_id", { defaultValue: import.meta.env.VITE_BASE44_APP_ID }),
 		token: getAppParamValue("access_token", { removeFromUrl: true }),
 		fromUrl: getAppParamValue("from_url", { defaultValue: window.location.href }),
-		functionsVersion: getAppParamValue("functions_version", { defaultValue: import.meta.env.VITE_BASE44_FUNCTIONS_VERSION }),
+		functionsVersion: functionsVersionFromUrl || functionsVersionFromEnv,
 		appBaseUrl: getAppParamValue("app_base_url", { defaultValue: import.meta.env.VITE_BASE44_APP_BASE_URL }),
 	}
 }

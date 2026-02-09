@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useRef } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { createPageUrl } from '../utils';
 import { base44 } from '@/api/base44Client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -35,6 +35,7 @@ const iconMap = {
 
 export default function CreateProposal() {
   const navigate = useNavigate();
+  const { proposalId: routeProposalId } = useParams();
   const queryClient = useQueryClient();
   const [user, setUser] = useState(null);
   const [step, setStep] = useState(1);
@@ -55,6 +56,14 @@ export default function CreateProposal() {
   const [extracting, setExtracting] = useState(false);
   const [extractedFields, setExtractedFields] = useState([]);
   const [showReviewExtracted, setShowReviewExtracted] = useState(false);
+  const hasInitializedLoad = useRef(false);
+  const routeParams = new URLSearchParams(window.location.search);
+  const isEditMode = !!routeProposalId;
+  const editProposalId = routeProposalId || null;
+  const requestedStep = Number.parseInt(routeParams.get('step') || '', 10);
+  const initialStepFromQuery = Number.isFinite(requestedStep) && requestedStep >= 1 && requestedStep <= 4
+    ? requestedStep
+    : null;
 
   const { data: templates = [], isLoading } = useQuery({
     queryKey: ['templates'],
@@ -84,6 +93,8 @@ export default function CreateProposal() {
   }, []);
 
   useEffect(() => {
+    if (hasInitializedLoad.current || templates.length === 0) return;
+
     const params = new URLSearchParams(window.location.search);
     const isGuest = params.get('guest') === 'true';
     const resumeDraftId = params.get('draft');
@@ -91,11 +102,17 @@ export default function CreateProposal() {
     
     setIsGuestMode(isGuest);
     
-    if (resumeDraftId) {
+    if (isEditMode && editProposalId) {
+      hasInitializedLoad.current = true;
+      setDraftProposalId(editProposalId);
+      loadDraft(editProposalId, { isEdit: true });
+    } else if (resumeDraftId) {
+      hasInitializedLoad.current = true;
       setDraftProposalId(resumeDraftId);
       // Load draft - this will set the correct step
-      loadDraft(resumeDraftId);
+      loadDraft(resumeDraftId, { isEdit: false });
     } else if (templateId && !selectedTemplate && templates.length > 0) {
+      hasInitializedLoad.current = true;
       // Only set template and step 1 if NOT loading a draft
       const template = templates.find(t => t.id === templateId);
       if (template) {
@@ -103,10 +120,13 @@ export default function CreateProposal() {
         setHasTemplatePreselected(true);
         setStep(1);
       }
+    } else {
+      hasInitializedLoad.current = true;
     }
-  }, [templates]);
+  }, [templates, isEditMode, editProposalId, selectedTemplate]);
 
-  const loadDraft = async (proposalId) => {
+  const loadDraft = async (proposalId, options = {}) => {
+    const { isEdit = false } = options;
     try {
       const proposals = await base44.entities.Proposal.filter({ id: proposalId });
       const proposal = proposals[0];
@@ -189,7 +209,7 @@ export default function CreateProposal() {
       }
       
       // CRITICAL: Set step LAST to avoid it being overridden
-      const resumeStep = proposal.draft_step || 1;
+      const resumeStep = initialStepFromQuery || (isEdit ? 1 : (proposal.draft_step || 1));
       setTimeout(() => setStep(resumeStep), 50);
       
     } catch (error) {
@@ -360,13 +380,13 @@ export default function CreateProposal() {
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      if (selectedTemplate && Object.keys(responses).length > 0) {
+      if (!isEditMode && selectedTemplate && Object.keys(responses).length > 0) {
         autoSaveDraft();
       }
     }, 2000);
 
     return () => clearTimeout(timer);
-  }, [responses, proposalTitle, recipientEmail, selectedTemplate, presetKey]);
+  }, [responses, proposalTitle, recipientEmail, selectedTemplate, presetKey, isEditMode]);
 
   const totalSteps = 4;
 

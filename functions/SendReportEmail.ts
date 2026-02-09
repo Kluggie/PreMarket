@@ -19,7 +19,16 @@ Deno.serve(async (req) => {
     }
 
     const body = await req.json().catch(() => ({}));
-    const { proposalId, evaluationItemId, documentComparisonId, recipientEmail, toEmail } = body;
+    const {
+      proposalId,
+      evaluationItemId,
+      documentComparisonId,
+      recipientEmail,
+      toEmail,
+      message,
+      shareToken: providedShareToken,
+      shareUrlOverride
+    } = body;
     const email = recipientEmail || toEmail;
     
     // Validation
@@ -129,26 +138,39 @@ Deno.serve(async (req) => {
     const fromEmail = `${fromName} <${fromEmailAddress}>`;
     console.log(`[${correlationId}] Sending from: ${fromDomain}`);
 
-    // Create share link
-    const shareLinkResult = await base44.functions.invoke('CreateShareLink', {
-      proposalId,
-      evaluationItemId,
-      documentComparisonId,
-      recipientEmail: email
-    });
+    let shareToken = providedShareToken || null;
+    let shareUrl = shareUrlOverride || null;
 
-    if (!shareLinkResult.data.ok) {
-      console.error(`[${correlationId}] CreateShareLink failed:`, shareLinkResult.data);
-      return Response.json({
-        ok: false,
-        errorCode: shareLinkResult.data.errorCode || 'SHARE_LINK_FAILED',
-        message: shareLinkResult.data.message || 'Failed to create share link',
-        correlationId: shareLinkResult.data.correlationId || correlationId
-      }, { status: 500 });
+    if (!shareToken && shareUrl) {
+      try {
+        const parsed = new URL(shareUrl);
+        shareToken = parsed.searchParams.get('token');
+      } catch {
+        // ignore and fallback to CreateShareLink
+      }
     }
 
-    // Recompute share URL using token (overrides any stored URL that may be outdated)
-    const shareToken = shareLinkResult.data.token || shareLinkResult.data.shareUrl?.split('token=')[1];
+    if (!shareToken) {
+      const shareLinkResult = await base44.functions.invoke('CreateShareLink', {
+        proposalId,
+        evaluationItemId,
+        documentComparisonId,
+        recipientEmail: email
+      });
+
+      if (!shareLinkResult.data.ok) {
+        console.error(`[${correlationId}] CreateShareLink failed:`, shareLinkResult.data);
+        return Response.json({
+          ok: false,
+          errorCode: shareLinkResult.data.errorCode || 'SHARE_LINK_FAILED',
+          message: shareLinkResult.data.message || 'Failed to create share link',
+          correlationId: shareLinkResult.data.correlationId || correlationId
+        }, { status: 500 });
+      }
+
+      shareToken = shareLinkResult.data.token || shareLinkResult.data.shareUrl?.split('token=')[1];
+    }
+
     if (!shareToken) {
       console.error(`[${correlationId}] No token in share link result`);
       return Response.json({
@@ -159,18 +181,21 @@ Deno.serve(async (req) => {
       }, { status: 500 });
     }
 
-    let shareUrl;
-    try {
-      shareUrl = buildSharedReportUrl(shareToken);
-      validateShareUrl(shareUrl); // Hard guardrail
-    } catch (urlError) {
-      console.error(`[${correlationId}] Share URL construction failed:`, urlError.message);
-      return Response.json({
-        ok: false,
-        errorCode: urlError.message.includes('APP_BASE_URL') ? 'APP_BASE_URL_MISSING' : 'BAD_SHARE_LINK_DOMAIN',
-        message: urlError.message,
-        correlationId
-      }, { status: 500 });
+    if (!shareUrl) {
+      try {
+        shareUrl = buildSharedReportUrl(shareToken);
+        validateShareUrl(shareUrl); // Hard guardrail for server-built URLs
+      } catch (urlError) {
+        console.error(`[${correlationId}] Share URL construction failed:`, urlError.message);
+        return Response.json({
+          ok: false,
+          errorCode: urlError.message.includes('APP_BASE_URL') ? 'APP_BASE_URL_MISSING' : 'BAD_SHARE_LINK_DOMAIN',
+          message: urlError.message,
+          correlationId
+        }, { status: 500 });
+      }
+    } else if (!shareUrl.includes('token=')) {
+      shareUrl = `${shareUrl}${shareUrl.includes('?') ? '&' : '?'}token=${encodeURIComponent(shareToken)}`;
     }
 
     // Get item details for email
@@ -218,10 +243,18 @@ Deno.serve(async (req) => {
       console.warn(`[${correlationId}] PDF generation failed:`, pdfError.message);
     }
 
+    const optionalMessage = typeof message === 'string' ? message.trim() : '';
+    const escapedMessage = optionalMessage
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+
     const emailBody = `
 Hello,
 
 ${user.full_name || user.email} has shared a report with you: "${itemTitle}"
+
+${optionalMessage ? `Message:\n${optionalMessage}\n` : ''}
 
 View the report here:
 ${shareUrl}
@@ -237,6 +270,7 @@ https://getpremarket.com
 <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
   <p>Hello,</p>
   <p>${user.full_name || user.email} has shared a report with you: <strong>"${itemTitle}"</strong></p>
+  ${optionalMessage ? `<div style="margin: 16px 0; padding: 12px; border: 1px solid #e2e8f0; border-radius: 6px; background: #f8fafc;"><p style="margin: 0 0 8px; font-size: 13px; color: #475569;">Message</p><p style="margin: 0; white-space: pre-wrap;">${escapedMessage}</p></div>` : ''}
   <div style="margin: 30px 0;">
     <a href="${shareUrl}" style="background-color: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">Open Report</a>
   </div>
