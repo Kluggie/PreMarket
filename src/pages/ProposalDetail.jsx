@@ -67,20 +67,58 @@ export default function ProposalDetail() {
     base44.auth.me().then(setUser);
   }, []);
 
-  const { data: proposal, isLoading: loadingProposal } = useQuery({
+  const { data: sharedRecipientData, isLoading: loadingRecipientData, error: sharedRecipientError } = useQuery({
+    queryKey: ['sharedRecipientData', sharedToken],
+    queryFn: async () => {
+      const result = await base44.functions.invoke('GetSharedReportData', { token: sharedToken });
+      const data = result?.data;
+
+      if (!data?.ok) {
+        const correlationSuffix = data?.correlationId ? ` (correlationId: ${data.correlationId})` : '';
+        throw new Error(`${data?.message || 'Invalid or expired shared report link.'}${correlationSuffix}`);
+      }
+
+      const resolvedProposalId =
+        data?.shareLink?.proposalId ||
+        data?.reportData?.proposalId ||
+        data?.reportData?.proposal_id ||
+        (data?.reportData?.type === 'proposal' ? data?.reportData?.id : null);
+
+      if (!resolvedProposalId) {
+        throw new Error('This shared report is not linked to a proposal.');
+      }
+
+      if (proposalId && resolvedProposalId !== proposalId) {
+        throw new Error('Shared report token does not match this proposal.');
+      }
+
+      return data;
+    },
+    enabled: Boolean(isRecipientView && sharedToken)
+  });
+
+  const { data: proposalEntity, isLoading: loadingProposalEntity } = useQuery({
     queryKey: ['proposal', proposalId],
     queryFn: async () => {
       const proposals = await base44.entities.Proposal.filter({ id: proposalId });
       return proposals[0];
     },
-    enabled: !!proposalId
+    enabled: !!proposalId && !isRecipientView
   });
 
-  const { data: responses = [] } = useQuery({
+  const { data: responsesEntity = [] } = useQuery({
     queryKey: ['proposalResponses', proposalId],
     queryFn: () => base44.entities.ProposalResponse.filter({ proposal_id: proposalId }),
-    enabled: !!proposalId
+    enabled: !!proposalId && !isRecipientView
   });
+
+  const proposal = isRecipientView
+    ? (sharedRecipientData?.recipientView?.proposal || sharedRecipientData?.proposalView || null)
+    : proposalEntity;
+  const responses = isRecipientView
+    ? (sharedRecipientData?.recipientView?.responses || sharedRecipientData?.responsesView || [])
+    : responsesEntity;
+  const loadingProposal = isRecipientView ? loadingRecipientData : loadingProposalEntity;
 
   const { data: evaluations = [] } = useQuery({
     queryKey: ['evaluations', proposalId],
@@ -226,19 +264,19 @@ export default function ProposalDetail() {
   const { data: verifications = [] } = useQuery({
     queryKey: ['verifications', proposalId],
     queryFn: () => base44.entities.VerificationItem.filter({ proposal_id: proposalId }),
-    enabled: !!proposalId
+    enabled: !!proposalId && !isRecipientView
   });
 
   const { data: comments = [] } = useQuery({
     queryKey: ['comments', proposalId],
     queryFn: () => base44.entities.ProposalComment.filter({ proposal_id: proposalId }, '-created_date'),
-    enabled: !!proposalId
+    enabled: !!proposalId && !isRecipientView
   });
 
   const { data: attachments = [] } = useQuery({
     queryKey: ['attachments', proposalId],
     queryFn: () => base44.entities.Attachment.filter({ proposal_id: proposalId }),
-    enabled: !!proposalId
+    enabled: !!proposalId && !isRecipientView
   });
 
   const isPartyA = proposal?.party_a_email === user?.email;
@@ -650,6 +688,29 @@ export default function ProposalDetail() {
       queryClient.invalidateQueries(['proposal', proposalId]);
     }
   });
+
+  if (isRecipientView && sharedRecipientError) {
+    return (
+      <div className="min-h-screen bg-slate-50 py-8">
+        <div className="max-w-3xl mx-auto px-4">
+          <Card className="border-0 shadow-sm">
+            <CardContent className="py-10 text-center">
+              <XCircle className="w-10 h-10 text-red-500 mx-auto mb-4" />
+              <h1 className="text-lg font-semibold text-slate-900 mb-2">Unable to load shared proposal</h1>
+              <p className="text-slate-600 mb-6">
+                {sharedRecipientError instanceof Error
+                  ? sharedRecipientError.message
+                  : 'This shared link is invalid or expired.'}
+              </p>
+              <Button variant="outline" onClick={() => navigate(createPageUrl('Dashboard'))}>
+                Go to Dashboard
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
 
   if (loadingProposal || !proposal) {
     return (

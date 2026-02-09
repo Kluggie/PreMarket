@@ -1,5 +1,50 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.6';
 
+const PARTY_A_KEYS = new Set(['a', 'party_a', 'proposer']);
+
+const normalizeParty = (party: unknown) => String(party || 'a').toLowerCase();
+
+const isPartyAResponse = (response: any) => PARTY_A_KEYS.has(normalizeParty(response?.entered_by_party));
+
+const buildRecipientProposalView = (proposal: any) => {
+  if (!proposal) return null;
+
+  return {
+    id: proposal.id,
+    title: proposal.title || 'Untitled Proposal',
+    template_name: proposal.template_name || null,
+    template_id: proposal.template_id || null,
+    status: proposal.status || null,
+    created_date: proposal.created_date || null,
+    sent_at: proposal.sent_at || null,
+    document_comparison_id: proposal.document_comparison_id || null,
+    party_a_email: 'Identity Protected',
+    party_b_email: proposal.party_b_email || null,
+    mutual_reveal: false,
+    reveal_requested_by_a: false,
+    reveal_requested_by_b: Boolean(proposal.reveal_requested_by_b),
+    reveal_level_a: null,
+    reveal_level_b: proposal.reveal_level_b || null
+  };
+};
+
+const buildRecipientResponseView = (response: any) => {
+  const partyAResponse = isPartyAResponse(response);
+
+  return {
+    id: response?.id || null,
+    proposal_id: response?.proposal_id || null,
+    question_id: response?.question_id || '',
+    value_type: response?.value_type || null,
+    entered_by_party: response?.entered_by_party || null,
+    visibility: partyAResponse ? 'not_shared' : (response?.visibility || 'full'),
+    value: partyAResponse ? null : (response?.value ?? null),
+    range_min: partyAResponse ? null : (response?.range_min ?? null),
+    range_max: partyAResponse ? null : (response?.range_max ?? null),
+    created_date: response?.created_date || null
+  };
+};
+
 Deno.serve(async (req) => {
   const correlationId = `get_report_${Date.now()}_${Math.random().toString(36).substring(7)}`;
   
@@ -39,6 +84,8 @@ Deno.serve(async (req) => {
 
     // Load report data based on type
     let reportData = null;
+    let proposalView = null;
+    let responsesView: any[] = [];
     
     if (shareLink.documentComparisonId) {
       const comparisons = await base44.asServiceRole.entities.DocumentComparison.filter({ 
@@ -57,7 +104,7 @@ Deno.serve(async (req) => {
           documentComparisonId: shareLink.documentComparisonId,
           title: comparisons[0].title,
           status: comparisons[0].status,
-          party_a_label: comparisons[0].party_a_label,
+          party_a_label: 'Identity Protected',
           party_b_label: comparisons[0].party_b_label,
           created_date: comparisons[0].created_date,
           generated_at: comparisons[0].generated_at,
@@ -70,6 +117,16 @@ Deno.serve(async (req) => {
       });
       
       if (proposals[0]) {
+        const proposal = proposals[0];
+
+        const proposalResponses = await base44.asServiceRole.entities.ProposalResponse.filter(
+          { proposal_id: shareLink.proposalId },
+          '-created_date'
+        );
+
+        proposalView = buildRecipientProposalView(proposal);
+        responsesView = proposalResponses.map(buildRecipientResponseView);
+
         // Load latest evaluation report
         const reports = await base44.asServiceRole.entities.EvaluationReportShared.filter({ 
           proposal_id: shareLink.proposalId 
@@ -78,13 +135,13 @@ Deno.serve(async (req) => {
         reportData = {
           type: 'proposal',
           id: shareLink.proposalId,
-          title: proposals[0].title,
-          template_name: proposals[0].template_name,
-          status: proposals[0].status,
-          party_a_email: proposals[0].party_a_email,
-          party_b_email: proposals[0].party_b_email,
-          created_date: proposals[0].created_date,
-          sent_at: proposals[0].sent_at,
+          title: proposal.title,
+          template_name: proposal.template_name,
+          status: proposal.status,
+          party_a_email: 'Identity Protected',
+          party_b_email: proposal.party_b_email || null,
+          created_date: proposal.created_date,
+          sent_at: proposal.sent_at,
           report: reports[0]?.output_report_json
         };
       }
@@ -102,7 +159,7 @@ Deno.serve(async (req) => {
           evaluationItemId: shareLink.evaluationItemId,
           title: items[0].title,
           status: items[0].status,
-          party_a_email: items[0].party_a_email,
+          party_a_email: 'Identity Protected',
           party_b_email: items[0].party_b_email,
           created_date: items[0].created_date
         };
@@ -136,6 +193,13 @@ Deno.serve(async (req) => {
       },
       permissions,
       reportData,
+      proposalView,
+      responsesView,
+      recipientView: {
+        role: 'recipient',
+        proposal: proposalView,
+        responses: responsesView
+      },
       correlationId
     });
 
