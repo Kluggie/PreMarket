@@ -16,7 +16,6 @@ export default function SharedReport() {
   const [shareData, setShareData] = useState(null);
   const [reportData, setReportData] = useState(null);
   const [proposalId, setProposalId] = useState(null);
-  const [isRedirecting, setIsRedirecting] = useState(false);
   const location = useLocation();
   const resolvedTokenRef = useRef(null);
 
@@ -71,7 +70,6 @@ export default function SharedReport() {
         if (active) {
           setIsLoadingReport(true);
           setError('');
-          setIsRedirecting(false);
         }
 
         const result = await base44.functions.invoke('GetSharedReportData', { token });
@@ -111,12 +109,6 @@ export default function SharedReport() {
           setError('This shared report is valid but is not linked to a proposal.');
           return;
         }
-
-        setIsRedirecting(true);
-        const targetUrl = createPageUrl(
-          `ProposalDetail?id=${encodeURIComponent(resolvedProposalId)}&sharedToken=${encodeURIComponent(token)}&role=recipient`
-        );
-        navigate(targetUrl, { replace: true });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         if (active) setError(`Failed to resolve shared report: ${message}`);
@@ -129,7 +121,7 @@ export default function SharedReport() {
     return () => {
       active = false;
     };
-  }, [isCheckingAuth, user, token, navigate]);
+  }, [isCheckingAuth, user, token]);
 
   const handleSignIn = () => {
     const returnPath = `${location.pathname}${location.search}`;
@@ -194,9 +186,7 @@ export default function SharedReport() {
         <Card className="w-full max-w-md border-0 shadow-sm">
           <CardContent className="py-12 text-center">
             <Loader2 className="w-10 h-10 text-blue-600 mx-auto mb-4 animate-spin" />
-            <p className="text-slate-700 font-medium">
-              {isRedirecting ? 'Opening proposal...' : 'Loading shared report...'}
-            </p>
+            <p className="text-slate-700 font-medium">Loading shared report...</p>
           </CardContent>
         </Card>
       </div>
@@ -241,6 +231,26 @@ export default function SharedReport() {
             <p className="text-sm text-slate-600">
               Signed in as {user?.email || 'authenticated user'}.
             </p>
+
+            <div
+              className={`rounded-lg border p-4 ${proposalId ? 'cursor-pointer hover:bg-slate-50' : 'bg-slate-50'}`}
+              onClick={proposalId ? handleOpenProposal : undefined}
+              onKeyDown={(e) => {
+                if (!proposalId) return;
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  handleOpenProposal();
+                }
+              }}
+              role={proposalId ? 'button' : undefined}
+              tabIndex={proposalId ? 0 : -1}
+            >
+              <p className="text-lg font-semibold text-slate-900">{reportTitle}</p>
+              <p className="text-sm text-slate-600 mt-1">
+                Type: {reportData?.type || 'unknown'}{' '}
+                {reportData?.created_date ? `| Created: ${new Date(reportData.created_date).toLocaleDateString()}` : ''}
+              </p>
+            </div>
 
             <div className="pt-2">
               <Button
