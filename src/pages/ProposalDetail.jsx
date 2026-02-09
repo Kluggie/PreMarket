@@ -4,7 +4,6 @@ import { createPageUrl } from '../utils';
 import { getProposalId } from '@/lib/utils';
 import { base44 } from '@/api/base44Client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -24,10 +23,9 @@ import {
 import DeleteDraftDialog from '../components/proposal/DeleteDraftDialog';
 import { toast } from 'sonner';
 import {
-  ArrowLeft, FileText, BarChart3, Shield, Eye, Clock, CheckCircle2,
-  AlertTriangle, XCircle, Users, MessageSquare, Paperclip, RefreshCw,
-  Send, Lock, Unlock, Sparkles, TrendingUp, TrendingDown, Minus,
-  ChevronRight, Upload, ThumbsUp, ThumbsDown
+  ArrowLeft, FileText, BarChart3, Clock, CheckCircle2,
+  AlertTriangle, XCircle, MessageSquare, RefreshCw,
+  Send, Sparkles, ChevronRight, Upload, ThumbsUp
 } from 'lucide-react';
 import { Label } from '@/components/ui/label';
 
@@ -47,12 +45,86 @@ const StatusBadge = ({ status }) => {
   return <Badge className={`${color} font-medium`}>{label}</Badge>;
 };
 
+const SHARED_ERROR_MESSAGES = {
+  TOKEN_NOT_FOUND: 'This shared link is invalid or no longer exists.',
+  TOKEN_EXPIRED: 'This shared link has expired. Ask for a fresh link.',
+  MAX_VIEWS_REACHED: 'This shared link has reached its view limit.',
+  RECIPIENT_MISMATCH: 'This link belongs to a different recipient account.',
+  TOKEN_INACTIVE: 'This shared link is inactive.',
+  PROPOSAL_NOT_FOUND: 'The linked proposal could not be found.',
+  PROPOSAL_LINK_MISSING: 'This shared link is not tied to a proposal.'
+};
+
+function extractSharedInvokeError(error) {
+  const statusCode =
+    error?.status ||
+    error?.response?.status ||
+    error?.originalError?.response?.status ||
+    null;
+  const body =
+    error?.data ||
+    error?.response?.data ||
+    error?.originalError?.response?.data ||
+    null;
+  const reasonCode = body?.code || body?.reason || body?.errorCode || error?.code || 'INVOKE_ERROR';
+
+  return {
+    statusCode,
+    reasonCode,
+    body,
+    message: body?.message || error?.message || 'Failed to resolve shared report'
+  };
+}
+
+function extractFunctionFailure(error, fallbackMessage) {
+  const statusCode =
+    error?.status ||
+    error?.response?.status ||
+    error?.originalError?.response?.status ||
+    null;
+  const body =
+    error?.data ||
+    error?.response?.data ||
+    error?.originalError?.response?.data ||
+    null;
+  const reasonCode = body?.code || body?.reason || body?.errorCode || 'REQUEST_FAILED';
+  const message = body?.message || error?.message || fallbackMessage;
+  return {
+    statusCode,
+    reasonCode,
+    message: `${message}${statusCode ? ` (HTTP ${statusCode})` : ''}`
+  };
+}
+
+async function invokeSharedResolver(token, options = {}) {
+  const payload = {
+    token,
+    ...(typeof options.consumeView === 'boolean' ? { consumeView: options.consumeView } : {})
+  };
+  try {
+    return await base44.functions.invoke('ResolveSharedReport', payload);
+  } catch (error) {
+    const parsed = extractSharedInvokeError(error);
+    const missingResolver =
+      parsed.statusCode === 404 &&
+      (!parsed.body || (!parsed.body.code && !parsed.body.reason));
+
+    if (!missingResolver) {
+      throw error;
+    }
+
+    return base44.functions.invoke('GetSharedReportData', payload);
+  }
+}
+
 export default function ProposalDetail() {
   const [user, setUser] = useState(null);
   const [activeTab, setActiveTab] = useState('overview');
   const [sendReportModalOpen, setSendReportModalOpen] = useState(false);
   const [recipientEmail, setRecipientEmail] = useState('');
   const [emailMessage, setEmailMessage] = useState('');
+  const [recipientEdits, setRecipientEdits] = useState({});
+  const [sendBackMessage, setSendBackMessage] = useState('');
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { search } = useLocation();
@@ -70,12 +142,36 @@ export default function ProposalDetail() {
   const { data: sharedRecipientData, isLoading: loadingRecipientData, error: sharedRecipientError } = useQuery({
     queryKey: ['sharedRecipientData', sharedToken],
     queryFn: async () => {
-      const result = await base44.functions.invoke('GetSharedReportData', { token: sharedToken });
+      let result;
+      try {
+        result = await invokeSharedResolver(sharedToken, { consumeView: false });
+      } catch (invokeError) {
+        const parsed = extractSharedInvokeError(invokeError);
+        console.error('[ProposalDetail] shared resolve threw', {
+          token: sharedToken,
+          statusCode: parsed.statusCode,
+          reasonCode: parsed.reasonCode,
+          responseBody: parsed.body
+        });
+
+        const friendly = SHARED_ERROR_MESSAGES[parsed.reasonCode] || parsed.message;
+        throw new Error(`${friendly}${parsed.statusCode ? ` (HTTP ${parsed.statusCode})` : ''}`);
+      }
+
       const data = result?.data;
 
       if (!data?.ok) {
+        const reasonCode = data?.code || data?.reason || 'RESOLVE_FAILED';
+        const statusCode = result?.status || null;
         const correlationSuffix = data?.correlationId ? ` (correlationId: ${data.correlationId})` : '';
-        throw new Error(`${data?.message || 'Invalid or expired shared report link.'}${correlationSuffix}`);
+        const friendly = SHARED_ERROR_MESSAGES[reasonCode] || data?.message || 'Invalid or expired shared report link.';
+        console.error('[ProposalDetail] shared resolve failed', {
+          token: sharedToken,
+          statusCode,
+          reasonCode,
+          responseBody: data
+        });
+        throw new Error(`${friendly}${statusCode ? ` (HTTP ${statusCode})` : ''}${correlationSuffix}`);
       }
 
       const resolvedProposalId =
@@ -119,11 +215,31 @@ export default function ProposalDetail() {
     ? (sharedRecipientData?.recipientView?.responses || sharedRecipientData?.responsesView || [])
     : responsesEntity;
   const loadingProposal = isRecipientView ? loadingRecipientData : loadingProposalEntity;
+  const sharedPermissions = sharedRecipientData?.permissions || {};
+  const partyAView = sharedRecipientData?.partyAView || { proposal: null, responses: [] };
+  const partyBEditableSchema = sharedRecipientData?.partyBEditableSchema || { questions: [], editableQuestionIds: [] };
+
+  useEffect(() => {
+    if (!isRecipientView) return;
+    const nextEdits = {};
+    const questions = Array.isArray(partyBEditableSchema?.questions) ? partyBEditableSchema.questions : [];
+    questions.forEach((question) => {
+      if (!question?.questionId) return;
+      nextEdits[question.questionId] = {
+        questionId: question.questionId,
+        valueType: question?.currentResponse?.rangeMin !== null || question?.currentResponse?.rangeMax !== null ? 'range' : (question?.valueType || 'text'),
+        value: question?.currentResponse?.value ?? '',
+        rangeMin: question?.currentResponse?.rangeMin ?? null,
+        rangeMax: question?.currentResponse?.rangeMax ?? null
+      };
+    });
+    setRecipientEdits(nextEdits);
+  }, [isRecipientView, partyBEditableSchema]);
 
   const { data: evaluations = [] } = useQuery({
     queryKey: ['evaluations', proposalId],
     queryFn: () => base44.entities.EvaluationRun.filter({ proposal_id: proposalId }, '-created_date'),
-    enabled: !!proposalId
+    enabled: !!proposalId && !isRecipientView
   });
 
   const { data: evaluationReports = [] } = useQuery({
@@ -228,7 +344,7 @@ export default function ProposalDetail() {
         return new Date(dateB) - new Date(dateA);
       }).slice(0, 5);
     },
-    enabled: !!proposalId && !!proposal,
+    enabled: !!proposalId && !!proposal && !isRecipientView,
     refetchInterval: (data) => {
       const hasRunning = Array.isArray(data) && data.some(r => ['queued', 'running'].includes(r.status));
       return hasRunning ? 2000 : false;
@@ -238,7 +354,7 @@ export default function ProposalDetail() {
   const { data: sharedReports = [] } = useQuery({
     queryKey: ['sharedReports', proposalId],
     queryFn: () => base44.entities.EvaluationReportShared.filter({ proposal_id: proposalId }),
-    enabled: !!proposalId,
+    enabled: !!proposalId && !isRecipientView,
     refetchInterval: (data) => {
       const hasRunning = Array.isArray(data) && data.some(r => ['queued', 'running'].includes(r.status));
       return hasRunning ? 2000 : false;
@@ -248,7 +364,7 @@ export default function ProposalDetail() {
   const { data: fitCardReports = [] } = useQuery({
     queryKey: ['fitCardReports', proposalId],
     queryFn: () => base44.entities.FitCardReportShared.filter({ proposal_id: proposalId }),
-    enabled: !!proposalId,
+    enabled: !!proposalId && !isRecipientView,
     refetchInterval: (data) => {
       const hasRunning = Array.isArray(data) && data.some(r => ['queued', 'running'].includes(r.status));
       return hasRunning ? 2000 : false;
@@ -258,7 +374,7 @@ export default function ProposalDetail() {
   const { data: templates = [] } = useQuery({
     queryKey: ['templates'],
     queryFn: () => base44.entities.Template.list(),
-    enabled: !!proposal?.template_id
+    enabled: !!proposal?.template_id && !isRecipientView
   });
 
   const { data: verifications = [] } = useQuery({
@@ -689,6 +805,121 @@ export default function ProposalDetail() {
     }
   });
 
+  const recipientEditableQuestions = useMemo(() => (
+    Array.isArray(partyBEditableSchema?.questions) ? partyBEditableSchema.questions : []
+  ), [partyBEditableSchema]);
+
+  const handleRecipientEditChange = (questionId, patch) => {
+    setRecipientEdits((prev) => ({
+      ...prev,
+      [questionId]: {
+        ...prev[questionId],
+        questionId,
+        ...patch
+      }
+    }));
+  };
+
+  const saveRecipientResponsesMutation = useMutation({
+    mutationFn: async () => {
+      const payload = Object.values(recipientEdits)
+        .filter((entry) => entry?.questionId)
+        .map((entry) => ({
+          questionId: entry.questionId,
+          valueType: entry.valueType || 'text',
+          value: entry.value,
+          rangeMin: entry.rangeMin,
+          rangeMax: entry.rangeMax
+        }));
+
+      try {
+        const result = await base44.functions.invoke('UpsertSharedRecipientResponses', {
+          token: sharedToken,
+          responses: payload
+        });
+
+        const data = result?.data;
+        if (!data?.ok) {
+          const reasonCode = data?.code || data?.reason || 'UPDATE_FAILED';
+          throw new Error(`${data?.message || 'Failed to save recipient responses'} (${reasonCode})`);
+        }
+
+        return data;
+      } catch (error) {
+        const parsed = extractFunctionFailure(error, 'Failed to save recipient responses');
+        throw new Error(`${parsed.message} (${parsed.reasonCode})`);
+      }
+    },
+    onSuccess: () => {
+      toast.success('Your Party B updates were saved');
+      queryClient.invalidateQueries(['sharedRecipientData', sharedToken]);
+    },
+    onError: (error) => {
+      toast.error(error?.message || 'Failed to save updates.');
+    }
+  });
+
+  const runSharedReevaluationMutation = useMutation({
+    mutationFn: async () => {
+      try {
+        const result = await base44.functions.invoke('RunSharedReportReevaluation', {
+          token: sharedToken
+        });
+        const data = result?.data;
+        if (!data?.ok) {
+          const reasonCode = data?.code || data?.reason || 'REEVALUATION_FAILED';
+          throw new Error(`${data?.message || 'Re-evaluation failed'} (${reasonCode})`);
+        }
+        return data;
+      } catch (error) {
+        const parsed = extractFunctionFailure(error, 'Re-evaluation failed');
+        throw new Error(`${parsed.message} (${parsed.reasonCode})`);
+      }
+    },
+    onSuccess: (data) => {
+      toast.success(`Re-evaluation complete. Remaining: ${data?.reevaluation?.remaining ?? 0}`);
+      queryClient.invalidateQueries(['sharedRecipientData', sharedToken]);
+    },
+    onError: (error) => {
+      toast.error(error?.message || 'Re-evaluation failed.');
+    }
+  });
+
+  const submitSendBackMutation = useMutation({
+    mutationFn: async () => {
+      const message = sendBackMessage.trim();
+      if (!message) {
+        throw new Error('Enter a response or counterproposal message before sending.');
+      }
+
+      try {
+        const result = await base44.functions.invoke('SubmitSharedReportResponse', {
+          token: sharedToken,
+          message
+        });
+
+        const data = result?.data;
+        if (!data?.ok) {
+          const reasonCode = data?.code || data?.reason || 'SEND_BACK_FAILED';
+          throw new Error(`${data?.message || 'Failed to send response'} (${reasonCode})`);
+        }
+
+        return data;
+      } catch (error) {
+        const parsed = extractFunctionFailure(error, 'Failed to send response');
+        throw new Error(`${parsed.message} (${parsed.reasonCode})`);
+      }
+    },
+    onSuccess: () => {
+      toast.success('Response sent back and recorded');
+      setSendBackMessage('');
+      queryClient.invalidateQueries(['sharedRecipientData', sharedToken]);
+    },
+    onError: (error) => {
+      toast.error(error?.message || 'Failed to send response.');
+    }
+  });
+
   if (isRecipientView && sharedRecipientError) {
     return (
       <div className="min-h-screen bg-slate-50 py-8">
@@ -720,6 +951,178 @@ export default function ProposalDetail() {
             <div className="h-8 bg-slate-200 rounded w-48" />
             <div className="h-64 bg-slate-100 rounded-xl" />
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (isRecipientView) {
+    const canEditRecipient = Boolean(sharedPermissions?.canEditRecipientSide ?? sharedPermissions?.canEdit);
+    const canReevaluate = Boolean(sharedPermissions?.canReevaluate);
+    const canSendBack = Boolean(sharedPermissions?.canSendBack);
+    const reportJson = sharedRecipientData?.reportData?.report || null;
+
+    return (
+      <div className="min-h-screen bg-slate-50 py-8">
+        <div className="max-w-5xl mx-auto px-4 space-y-6">
+          <div className="flex items-center justify-between gap-3">
+            <Link to={createPageUrl(`SharedReport?token=${encodeURIComponent(sharedToken || '')}`)} className="inline-flex items-center text-slate-600 hover:text-slate-900">
+              <ArrowLeft className="w-4 h-4 mr-2" />
+              Back to Shared Report
+            </Link>
+            {!user && (
+              <Button variant="outline" onClick={() => base44.auth.redirectToLogin(window.location.href)}>
+                Sign In to Re-evaluate
+              </Button>
+            )}
+          </div>
+
+          <Card className="border-0 shadow-sm">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-blue-600" />
+                Shared AI Report
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {reportJson ? (
+                <pre className="text-xs bg-slate-950 text-slate-100 p-4 rounded-lg overflow-auto whitespace-pre-wrap">
+                  {JSON.stringify(reportJson, null, 2)}
+                </pre>
+              ) : (
+                <p className="text-slate-600">No report payload was found for this proposal yet.</p>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="border-0 shadow-sm">
+            <CardHeader>
+              <CardTitle>Party A Shared Information</CardTitle>
+              <CardDescription>Confidential fields are redacted before they are returned to this view.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {(partyAView?.responses || []).length === 0 && (
+                <p className="text-slate-500 text-sm">No Party A responses are available.</p>
+              )}
+              {(partyAView?.responses || []).map((item) => (
+                <div key={item.id || item.questionId} className="p-3 border rounded-lg">
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <p className="font-medium text-slate-900">{item.label || item.questionId}</p>
+                    <Badge variant="outline">{item.redaction || item.visibility || 'shared'}</Badge>
+                  </div>
+                  <p className="text-sm text-slate-600">{item.valueSummary || 'Not shared'}</p>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+
+          <Card className="border-0 shadow-sm">
+            <CardHeader>
+              <CardTitle>Party B Editable Information</CardTitle>
+              <CardDescription>
+                Update only your side of the proposal. These edits are validated server-side against the shared token policy.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {recipientEditableQuestions.length === 0 && (
+                <p className="text-slate-500 text-sm">No editable Party B fields were found.</p>
+              )}
+              {recipientEditableQuestions.map((question) => {
+                const edit = recipientEdits[question.questionId] || {};
+                const isRange = String(edit.valueType || question.valueType || '').toLowerCase() === 'range';
+                return (
+                  <div key={question.questionId} className="border rounded-lg p-3 space-y-2">
+                    <Label className="font-medium text-slate-900">{question.label || question.questionId}</Label>
+                    {question.description && (
+                      <p className="text-xs text-slate-500">{question.description}</p>
+                    )}
+                    {isRange ? (
+                      <div className="grid grid-cols-2 gap-3">
+                        <Input
+                          type="number"
+                          value={edit.rangeMin ?? ''}
+                          onChange={(event) => handleRecipientEditChange(question.questionId, {
+                            valueType: 'range',
+                            rangeMin: event.target.value === '' ? null : Number(event.target.value)
+                          })}
+                          disabled={!canEditRecipient || saveRecipientResponsesMutation.isPending}
+                          placeholder="Minimum"
+                        />
+                        <Input
+                          type="number"
+                          value={edit.rangeMax ?? ''}
+                          onChange={(event) => handleRecipientEditChange(question.questionId, {
+                            valueType: 'range',
+                            rangeMax: event.target.value === '' ? null : Number(event.target.value)
+                          })}
+                          disabled={!canEditRecipient || saveRecipientResponsesMutation.isPending}
+                          placeholder="Maximum"
+                        />
+                      </div>
+                    ) : (
+                      <Textarea
+                        rows={3}
+                        value={edit.value ?? ''}
+                        onChange={(event) => handleRecipientEditChange(question.questionId, {
+                          valueType: 'text',
+                          value: event.target.value
+                        })}
+                        disabled={!canEditRecipient || saveRecipientResponsesMutation.isPending}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+
+              <div className="flex flex-wrap gap-2 pt-2">
+                <Button
+                  onClick={() => saveRecipientResponsesMutation.mutate()}
+                  disabled={!canEditRecipient || saveRecipientResponsesMutation.isPending}
+                  className="bg-blue-600 hover:bg-blue-700"
+                >
+                  {saveRecipientResponsesMutation.isPending ? 'Saving...' : 'Save Party B Updates'}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => runSharedReevaluationMutation.mutate()}
+                  disabled={!canReevaluate || runSharedReevaluationMutation.isPending || !user}
+                >
+                  <RefreshCw className="w-4 h-4 mr-2" />
+                  {runSharedReevaluationMutation.isPending ? 'Re-evaluating...' : 'Re-evaluate'}
+                </Button>
+              </div>
+              {runSharedReevaluationMutation.data?.reevaluation && (
+                <p className="text-xs text-slate-500">
+                  Re-evaluations used: {runSharedReevaluationMutation.data.reevaluation.used} / {runSharedReevaluationMutation.data.reevaluation.max}
+                </p>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="border-0 shadow-sm">
+            <CardHeader>
+              <CardTitle>Send Back Response</CardTitle>
+              <CardDescription>
+                Submit your counterproposal or notes. A proposal-linked audit response record is created on send.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <Textarea
+                rows={4}
+                value={sendBackMessage}
+                onChange={(event) => setSendBackMessage(event.target.value)}
+                placeholder="Add your response or counterproposal..."
+                disabled={!canSendBack || submitSendBackMutation.isPending}
+              />
+              <Button
+                onClick={() => submitSendBackMutation.mutate()}
+                disabled={!canSendBack || submitSendBackMutation.isPending}
+              >
+                <Send className="w-4 h-4 mr-2" />
+                {submitSendBackMutation.isPending ? 'Sending...' : 'Send Back'}
+              </Button>
+            </CardContent>
+          </Card>
         </div>
       </div>
     );

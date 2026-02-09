@@ -19,6 +19,16 @@ function extractProposalId(source: any): string | null {
   );
 }
 
+function buildShareContextQuery(req: Request) {
+  const appIdFromHeader = req.headers.get('Base44-App-Id');
+  const functionsVersion = req.headers.get('Base44-Functions-Version');
+
+  return {
+    app_id: appIdFromHeader || undefined,
+    functions_version: functionsVersion || undefined
+  };
+}
+
 Deno.serve(async (req) => {
   const correlationId = `sharelink_${Date.now()}_${Math.random().toString(36).substring(7)}`;
   
@@ -134,6 +144,15 @@ Deno.serve(async (req) => {
       }, { status: 404 });
     }
 
+    const shareMode = 'interactive';
+    const permissions = {
+      canView: true,
+      canEdit: true,
+      canEditRecipientSide: true,
+      canReevaluate: true,
+      canSendBack: true
+    };
+
     // Generate random token
     const token = crypto.randomUUID() + '_' + Math.random().toString(36).substring(2, 15);
     
@@ -169,9 +188,10 @@ Deno.serve(async (req) => {
     // Build share URL from canonical share path (enforces APP_BASE_URL only)
     let shareUrl;
     let baseUrl;
+    const shareContextQuery = buildShareContextQuery(req);
     try {
       baseUrl = getPublicBaseUrl();
-      shareUrl = buildSharedReportUrl(token);
+      shareUrl = buildSharedReportUrl(token, shareContextQuery);
       validateShareUrl(shareUrl); // Hard guardrail
 
       const parsedUrl = new URL(shareUrl);
@@ -196,10 +216,34 @@ Deno.serve(async (req) => {
       }, { status: 500 });
     }
     
-    // Store the base URL used for this share link
-    await base44.asServiceRole.entities.ShareLink.update(shareLink.id, {
+    // Store canonical URL context and, when available in schema, explicit sharing policy metadata.
+    const metadataPatch: Record<string, unknown> = {
       base_url_used: `${baseUrl}${SHARE_REPORT_PATH}`
-    });
+    };
+
+    if (Object.prototype.hasOwnProperty.call(shareLink, 'share_mode')) {
+      metadataPatch.share_mode = shareMode;
+    }
+    if (Object.prototype.hasOwnProperty.call(shareLink, 'mode')) {
+      metadataPatch.mode = shareMode;
+    }
+    if (Object.prototype.hasOwnProperty.call(shareLink, 'permissions_json')) {
+      metadataPatch.permissions_json = permissions;
+    }
+    if (Object.prototype.hasOwnProperty.call(shareLink, 'max_views')) {
+      metadataPatch.max_views = 25;
+    }
+    if (Object.prototype.hasOwnProperty.call(shareLink, 'view_count')) {
+      metadataPatch.view_count = 0;
+    }
+    if (Object.prototype.hasOwnProperty.call(shareLink, 'app_id_used') && shareContextQuery.app_id) {
+      metadataPatch.app_id_used = shareContextQuery.app_id;
+    }
+    if (Object.prototype.hasOwnProperty.call(shareLink, 'functions_version_used') && shareContextQuery.functions_version) {
+      metadataPatch.functions_version_used = shareContextQuery.functions_version;
+    }
+
+    await base44.asServiceRole.entities.ShareLink.update(shareLink.id, metadataPatch);
 
     logInfo({
       correlationId,
@@ -217,6 +261,11 @@ Deno.serve(async (req) => {
       proposalId: resolvedProposalId,
       shareLinkId: shareLink.id,
       expiresAt: expiresAt.toISOString(),
+      viewCount: 0,
+      maxViews: 25,
+      mode: shareMode,
+      permissions,
+      appContext: shareContextQuery,
       correlationId
     });
 

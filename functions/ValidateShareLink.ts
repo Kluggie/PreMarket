@@ -1,111 +1,103 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.6';
+import { validateShareLinkAccess } from './_utils/sharedLink.ts';
+
+function parseConsumeView(req: Request, body: any): boolean {
+  if (typeof body?.consumeView === 'boolean') {
+    return body.consumeView;
+  }
+
+  const raw = new URL(req.url).searchParams.get('consumeView');
+  if (raw === null) return true;
+  return raw !== 'false';
+}
+
+function toStatusLabel(statusCode: number): 'ok' | 'not_found' | 'forbidden' | 'expired' | 'invalid' {
+  if (statusCode === 404) return 'not_found';
+  if (statusCode === 403) return 'forbidden';
+  if (statusCode === 410) return 'expired';
+  if (statusCode >= 400) return 'invalid';
+  return 'ok';
+}
 
 Deno.serve(async (req) => {
   const correlationId = `validate_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  
+
   try {
-    // Guest-safe: NO auth required
     const base44 = createClientFromRequest(req);
-    
-    const body = await req.json().catch(() => ({}));
-    const { token } = body;
-    
-    if (!token) {
-      console.log(`[${correlationId}] Missing token`);
-      return Response.json({
-        ok: false,
-        errorCode: 'MISSING_TOKEN',
-        message: 'Token is required',
-        correlationId
-      }, { status: 400 });
-    }
+    const body = req.method === 'GET' ? {} : await req.json().catch(() => ({}));
+    const token = body?.token || new URL(req.url).searchParams.get('token');
+    const consumeView = parseConsumeView(req, body);
 
-    console.log(`[${correlationId}] Validating share link token`);
-
-    // Find share link by token (guest-safe query)
-    const shareLinks = await base44.asServiceRole.entities.ShareLink.filter({ token });
-    
-    if (shareLinks.length === 0) {
-      console.log(`[${correlationId}] Token not found`);
-      return Response.json({
-        ok: false,
-        errorCode: 'INVALID_TOKEN',
-        message: 'Share link not found',
-        correlationId
-      }, { status: 404 });
-    }
-
-    const shareLink = shareLinks[0];
-
-    // Check expiration
-    if (new Date(shareLink.expires_at) < new Date()) {
-      console.log(`[${correlationId}] Token expired`);
-      return Response.json({
-        ok: false,
-        errorCode: 'TOKEN_EXPIRED',
-        message: 'This share link has expired',
-        correlationId
-      }, { status: 403 });
-    }
-
-    // Check max uses
-    if (shareLink.uses >= shareLink.max_uses) {
-      console.log(`[${correlationId}] Max uses reached`);
-      return Response.json({
-        ok: false,
-        errorCode: 'MAX_USES_REACHED',
-        message: 'This share link has reached its maximum number of uses',
-        correlationId
-      }, { status: 403 });
-    }
-
-    // Check status
-    if (shareLink.status !== 'active') {
-      console.log(`[${correlationId}] Token not active`);
-      return Response.json({
-        ok: false,
-        errorCode: 'TOKEN_INACTIVE',
-        message: 'This share link is no longer active',
-        correlationId
-      }, { status: 403 });
-    }
-
-    // Update usage count
-    await base44.asServiceRole.entities.ShareLink.update(shareLink.id, {
-      uses: (shareLink.uses || 0) + 1,
-      last_used_at: new Date().toISOString()
+    const result = await validateShareLinkAccess(base44, {
+      token,
+      consumeView
     });
 
-    console.log(`[${correlationId}] Token validated successfully`);
+    if (!result.ok) {
+      const payload = {
+        ok: false,
+        status: toStatusLabel(result.statusCode),
+        code: result.code,
+        reason: result.reason,
+        message: result.message,
+        shareLink: result.shareLink || null,
+        permissions: result.permissions || null,
+        matchedRecipient: result.matchedRecipient,
+        currentUserEmail: result.currentUserEmail,
+        consumedView: false,
+        correlationId
+      };
+      console.warn(`[${correlationId}] ValidateShareLink denied`, payload);
+      return Response.json(payload, { status: result.statusCode });
+    }
 
-    return Response.json({
+    const payload = {
       ok: true,
-      correlationId,
+      status: 'ok',
+      code: result.code,
+      reason: result.reason,
+      message: result.message,
       shareLink: {
-        id: shareLink.id,
-        proposalId: shareLink.proposal_id,
-        evaluationItemId: shareLink.evaluation_item_id,
-        documentComparisonId: shareLink.document_comparison_id,
-        recipientEmail: shareLink.recipient_email,
-        expiresAt: shareLink.expires_at,
-        uses: shareLink.uses + 1,
-        maxUses: shareLink.max_uses
+        id: result.shareLink.id,
+        token: result.shareLink.token,
+        proposalId: result.shareLink.proposalId,
+        evaluationItemId: result.shareLink.evaluationItemId,
+        documentComparisonId: result.shareLink.documentComparisonId,
+        recipientEmail: result.shareLink.recipientEmail,
+        status: result.shareLink.status,
+        mode: result.shareLink.mode,
+        createdAt: result.shareLink.createdAt,
+        expiresAt: result.shareLink.expiresAt,
+        uses: result.shareLink.viewCount,
+        maxUses: result.shareLink.maxViews,
+        viewCount: result.shareLink.viewCount,
+        maxViews: result.shareLink.maxViews,
+        lastUsedAt: result.shareLink.lastUsedAt
       },
-      permissions: {
-        canView: true,
-        canEditRecipientSide: true,
-        canReevaluate: true,
-        canSendBack: true
-      }
+      permissions: result.permissions,
+      matchedRecipient: result.matchedRecipient,
+      currentUserEmail: result.currentUserEmail,
+      consumedView: result.consumedView,
+      correlationId
+    };
+
+    console.log(`[${correlationId}] ValidateShareLink success`, {
+      tokenPrefix: String(token || '').slice(0, 8),
+      proposalId: result.shareLink.proposalId,
+      viewCount: result.shareLink.viewCount,
+      consumedView: result.consumedView
     });
 
+    return Response.json(payload);
   } catch (error) {
     const err = error instanceof Error ? error : new Error(String(error));
-    console.error(`[${correlationId}] Unexpected error:`, err.message);
+    console.error(`[${correlationId}] ValidateShareLink unexpected error`, err.message);
     return Response.json({
       ok: false,
-      errorCode: 'INTERNAL',
-      error: err.message,
+      status: 'invalid',
+      code: 'INTERNAL_ERROR',
+      reason: 'INTERNAL_ERROR',
+      message: 'Failed to validate share link',
       correlationId
     }, { status: 500 });
   }

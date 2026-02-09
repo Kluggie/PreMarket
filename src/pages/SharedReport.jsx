@@ -5,18 +5,74 @@ import { base44 } from '@/api/base44Client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, Lock, XCircle } from 'lucide-react';
+import { Loader2, XCircle } from 'lucide-react';
+
+const FRIENDLY_ERROR_MESSAGES = {
+  TOKEN_NOT_FOUND: 'This shared link is invalid or no longer exists.',
+  TOKEN_EXPIRED: 'This shared link has expired. Request a new link.',
+  MAX_VIEWS_REACHED: 'This shared link has reached its maximum number of views.',
+  RECIPIENT_MISMATCH: 'This link belongs to a different recipient account.',
+  TOKEN_INACTIVE: 'This shared link is inactive.',
+  PROPOSAL_NOT_FOUND: 'The linked proposal could not be found.',
+  PROPOSAL_LINK_MISSING: 'This shared link is not connected to a proposal.',
+  VIEW_NOT_ALLOWED: 'Viewing is disabled for this link.'
+};
+
+function buildErrorMeta(error) {
+  const statusCode =
+    error?.status ||
+    error?.response?.status ||
+    error?.originalError?.response?.status ||
+    null;
+  const responseBody =
+    error?.data ||
+    error?.response?.data ||
+    error?.originalError?.response?.data ||
+    null;
+  const reasonCode =
+    responseBody?.code ||
+    responseBody?.reason ||
+    responseBody?.errorCode ||
+    error?.code ||
+    'INVOKE_ERROR';
+
+  return {
+    statusCode,
+    reasonCode,
+    responseBody,
+    message:
+      responseBody?.message ||
+      error?.message ||
+      'Failed to resolve shared report'
+  };
+}
+
+async function invokeSharedResolver(token) {
+  try {
+    return await base44.functions.invoke('ResolveSharedReport', { token });
+  } catch (error) {
+    const meta = buildErrorMeta(error);
+    const missingResolver =
+      meta.statusCode === 404 &&
+      (!meta.responseBody || (!meta.responseBody.code && !meta.responseBody.reason));
+
+    if (!missingResolver) {
+      throw error;
+    }
+
+    return base44.functions.invoke('GetSharedReportData', { token });
+  }
+}
 
 export default function SharedReport() {
   const navigate = useNavigate();
-  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
+  const location = useLocation();
   const [isLoadingReport, setIsLoadingReport] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState(null);
   const [user, setUser] = useState(null);
   const [shareData, setShareData] = useState(null);
   const [reportData, setReportData] = useState(null);
   const [proposalId, setProposalId] = useState(null);
-  const location = useLocation();
   const resolvedTokenRef = useRef(null);
 
   const token = useMemo(() => {
@@ -33,32 +89,19 @@ export default function SharedReport() {
 
   useEffect(() => {
     let active = true;
-
-    const checkAuth = async () => {
-      try {
-        const me = await base44.auth.me();
-        if (active) {
-          setUser(me || null);
-        }
-      } catch {
-        if (active) {
-          setUser(null);
-        }
-      } finally {
-        if (active) {
-          setIsCheckingAuth(false);
-        }
-      }
-    };
-
-    checkAuth();
+    base44.auth.me()
+      .then((me) => {
+        if (active) setUser(me || null);
+      })
+      .catch(() => {
+        if (active) setUser(null);
+      });
     return () => {
       active = false;
     };
   }, []);
 
   useEffect(() => {
-    if (isCheckingAuth || !user) return;
     if (!token) return;
     if (resolvedTokenRef.current === token) return;
 
@@ -69,21 +112,41 @@ export default function SharedReport() {
       try {
         if (active) {
           setIsLoadingReport(true);
-          setError('');
+          setError(null);
         }
 
-        const result = await base44.functions.invoke('GetSharedReportData', { token });
+        const result = await invokeSharedResolver(token);
         const data = result?.data;
 
         if (!data || typeof data !== 'object' || !data.ok) {
-          const correlationId = data?.correlationId ? ` (correlationId: ${data.correlationId})` : '';
-          if (active) setError(`${data?.message || 'Invalid or expired share link.'}${correlationId}`);
+          const reasonCode = data?.code || data?.reason || 'RESOLVE_FAILED';
+          const statusCode = result?.status || null;
+          const friendly = FRIENDLY_ERROR_MESSAGES[reasonCode] || data?.message || 'Unable to resolve shared link.';
+          const errorMeta = {
+            message: friendly,
+            reasonCode,
+            statusCode,
+            correlationId: data?.correlationId || null,
+            responseBody: data || null
+          };
+          console.error('[SharedReport] Resolve failed', {
+            apiCall: {
+              functionName: 'ResolveSharedReport',
+              method: 'POST',
+              payload: { token }
+            },
+            statusCode,
+            reasonCode,
+            responseBody: data
+          });
+          if (active) setError(errorMeta);
           return;
         }
 
         const resolvedShareData = data.shareLink || {};
         const resolvedReportData = data.reportData || {};
         const resolvedProposalId =
+          data.proposalId ||
           resolvedShareData.proposalId ||
           resolvedReportData.proposalId ||
           resolvedReportData.proposal_id ||
@@ -93,7 +156,7 @@ export default function SharedReport() {
           token,
           proposalId: resolvedProposalId || null,
           role: 'recipient',
-          evaluationItemId: resolvedShareData.evaluationItemId || resolvedReportData.evaluationItemId || null,
+          evaluationItemId: data.evaluationId || resolvedShareData.evaluationItemId || resolvedReportData.evaluationItemId || null,
           documentComparisonId: resolvedShareData.documentComparisonId || resolvedReportData.documentComparisonId || null,
           loadedAt: new Date().toISOString()
         };
@@ -106,12 +169,37 @@ export default function SharedReport() {
         setProposalId(resolvedProposalId || null);
 
         if (!resolvedProposalId) {
-          setError('This shared report is valid but is not linked to a proposal.');
+          setError({
+            message: 'This shared report is valid but is not linked to a proposal.',
+            reasonCode: 'PROPOSAL_LINK_MISSING',
+            statusCode: 404,
+            correlationId: data?.correlationId || null,
+            responseBody: data
+          });
           return;
         }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        if (active) setError(`Failed to resolve shared report: ${message}`);
+      } catch (invokeError) {
+        const invokeMeta = buildErrorMeta(invokeError);
+        console.error('[SharedReport] Resolve threw', {
+          apiCall: {
+            functionName: 'ResolveSharedReport',
+            method: 'POST',
+            payload: { token }
+          },
+          statusCode: invokeMeta.statusCode,
+          reasonCode: invokeMeta.reasonCode,
+          responseBody: invokeMeta.responseBody
+        });
+
+        if (active) {
+          setError({
+            message: FRIENDLY_ERROR_MESSAGES[invokeMeta.reasonCode] || invokeMeta.message,
+            reasonCode: invokeMeta.reasonCode,
+            statusCode: invokeMeta.statusCode,
+            correlationId: invokeMeta.responseBody?.correlationId || null,
+            responseBody: invokeMeta.responseBody || null
+          });
+        }
       } finally {
         if (active) setIsLoadingReport(false);
       }
@@ -121,7 +209,7 @@ export default function SharedReport() {
     return () => {
       active = false;
     };
-  }, [isCheckingAuth, user, token]);
+  }, [token]);
 
   const handleSignIn = () => {
     const returnPath = `${location.pathname}${location.search}`;
@@ -136,19 +224,6 @@ export default function SharedReport() {
     navigate(targetUrl);
   };
 
-  if (isCheckingAuth) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-        <Card className="w-full max-w-md border-0 shadow-sm">
-          <CardContent className="py-12 text-center">
-            <Loader2 className="w-10 h-10 text-blue-600 mx-auto mb-4 animate-spin" />
-            <p className="text-slate-700 font-medium">Checking access...</p>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
   if (!token) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
@@ -157,23 +232,6 @@ export default function SharedReport() {
             <XCircle className="w-10 h-10 text-red-500 mx-auto mb-4" />
             <h1 className="text-lg font-semibold text-slate-900 mb-2">Missing access token</h1>
             <p className="text-slate-600 mb-6">This link is incomplete. Request a new report link.</p>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
-  if (!user) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-        <Card className="w-full max-w-md border-0 shadow-sm">
-          <CardContent className="py-12 text-center">
-            <Lock className="w-10 h-10 text-blue-600 mx-auto mb-4" />
-            <h1 className="text-lg font-semibold text-slate-900 mb-2">Please sign in to view this report</h1>
-            <p className="text-slate-600 mb-6">You need to sign in before we can open the shared AI report.</p>
-            <Button onClick={handleSignIn} className="bg-blue-600 hover:bg-blue-700">
-              Sign In
-            </Button>
           </CardContent>
         </Card>
       </div>
@@ -200,7 +258,21 @@ export default function SharedReport() {
           <CardContent className="py-12 text-center">
             <XCircle className="w-10 h-10 text-red-500 mx-auto mb-4" />
             <h1 className="text-lg font-semibold text-slate-900 mb-2">Unable to open shared report</h1>
-            <p className="text-slate-600 mb-6">{error}</p>
+            <p className="text-slate-600 mb-2">{error.message}</p>
+            {error.reasonCode && (
+              <p className="text-xs text-slate-500 mb-1">Reason: {error.reasonCode}</p>
+            )}
+            {error.statusCode && (
+              <p className="text-xs text-slate-500 mb-1">HTTP: {error.statusCode}</p>
+            )}
+            {error.correlationId && (
+              <p className="text-xs text-slate-500 mb-6">Correlation ID: {error.correlationId}</p>
+            )}
+            {!user && (
+              <Button onClick={handleSignIn} className="bg-blue-600 hover:bg-blue-700 mr-2">
+                Sign In
+              </Button>
+            )}
             <Button variant="outline" onClick={() => navigate(createPageUrl('Dashboard'))}>
               Go to Dashboard
             </Button>
@@ -221,7 +293,7 @@ export default function SharedReport() {
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="outline">{reportData?.type || 'shared-report'}</Badge>
               <Badge variant="outline">
-                Uses: {shareData?.uses ?? 0} / {shareData?.maxUses ?? 25}
+                Views: {shareData?.viewCount ?? shareData?.uses ?? 0} / {shareData?.maxViews ?? shareData?.maxUses ?? 25}
               </Badge>
               <Badge variant="outline">
                 Expires: {shareData?.expiresAt ? new Date(shareData.expiresAt).toLocaleDateString() : 'N/A'}
@@ -229,16 +301,16 @@ export default function SharedReport() {
             </div>
 
             <p className="text-sm text-slate-600">
-              Signed in as {user?.email || 'authenticated user'}.
+              {user?.email ? `Signed in as ${user.email}.` : 'Viewing as guest.'}
             </p>
 
             <div
               className={`rounded-lg border p-4 ${proposalId ? 'cursor-pointer hover:bg-slate-50' : 'bg-slate-50'}`}
               onClick={proposalId ? handleOpenProposal : undefined}
-              onKeyDown={(e) => {
+              onKeyDown={(event) => {
                 if (!proposalId) return;
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
                   handleOpenProposal();
                 }
               }}
@@ -252,14 +324,19 @@ export default function SharedReport() {
               </p>
             </div>
 
-            <div className="pt-2">
+            <div className="pt-2 space-x-2">
               <Button
                 onClick={handleOpenProposal}
                 className="bg-blue-600 hover:bg-blue-700"
                 disabled={!proposalId}
               >
-                Open Proposal
+                Open Shared Workspace
               </Button>
+              {!user && (
+                <Button variant="outline" onClick={handleSignIn}>
+                  Sign In for Re-evaluation
+                </Button>
+              )}
             </div>
 
             {!proposalId && (

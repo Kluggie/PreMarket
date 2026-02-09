@@ -30,13 +30,22 @@ export function getPublicBaseUrl(): string {
  * @param {string} token - The share link token
  * @returns {string} Full URL to shared report page
  */
-export function buildSharedReportUrl(token: string): string {
+export function buildSharedReportUrl(token: string, extraQueryParams?: Record<string, string | null | undefined>): string {
   if (!token) {
     throw new Error('Token is required to build share URL');
   }
   
   const baseUrl = getPublicBaseUrl();
-  return `${baseUrl}${SHARE_REPORT_PATH}?token=${encodeURIComponent(token)}`;
+  const query = new URLSearchParams({ token });
+  if (extraQueryParams) {
+    for (const [key, value] of Object.entries(extraQueryParams)) {
+      if (value === null || value === undefined) continue;
+      const normalized = String(value).trim();
+      if (!normalized) continue;
+      query.set(key, normalized);
+    }
+  }
+  return `${baseUrl}${SHARE_REPORT_PATH}?${query.toString()}`;
 }
 
 /**

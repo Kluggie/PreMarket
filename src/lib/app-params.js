@@ -1,16 +1,20 @@
 const isNode = typeof window === 'undefined';
 const windowObj = isNode ? { localStorage: new Map() } : window;
 const storage = windowObj.localStorage;
+const storageScope = isNode
+	? 'node'
+	: (window.location.hostname || 'localhost').replace(/[^a-zA-Z0-9_-]/g, '_');
 
 const toSnakeCase = (str) => {
 	return str.replace(/([A-Z])/g, '_$1').toLowerCase();
 }
 
-const getAppParamValue = (paramName, { defaultValue = undefined, removeFromUrl = false } = {}) => {
+const getAppParamValue = (paramName, { defaultValue = undefined, removeFromUrl = false, allowLegacyStorage = true } = {}) => {
 	if (isNode) {
 		return defaultValue;
 	}
-	const storageKey = `base44_${toSnakeCase(paramName)}`;
+	const baseKey = `base44_${toSnakeCase(paramName)}`;
+	const storageKey = `${baseKey}_${storageScope}`;
 	const urlParams = new URLSearchParams(window.location.search);
 	const searchParam = urlParams.get(paramName);
 	if (removeFromUrl) {
@@ -31,6 +35,13 @@ const getAppParamValue = (paramName, { defaultValue = undefined, removeFromUrl =
 	if (storedValue) {
 		return storedValue;
 	}
+	if (allowLegacyStorage) {
+		const legacyStoredValue = storage.getItem(baseKey);
+		if (legacyStoredValue) {
+			storage.setItem(storageKey, legacyStoredValue);
+			return legacyStoredValue;
+		}
+	}
 	return null;
 }
 
@@ -45,13 +56,14 @@ const getAppParams = () => {
 	// Do not keep a stale functions_version pinned in localStorage.
 	if (!functionsVersionFromUrl) {
 		storage.removeItem('base44_functions_version');
+		storage.removeItem(`base44_functions_version_${storageScope}`);
 	}
 	return {
-		appId: getAppParamValue("app_id", { defaultValue: import.meta.env.VITE_BASE44_APP_ID }),
+		appId: getAppParamValue("app_id", { defaultValue: import.meta.env.VITE_BASE44_APP_ID, allowLegacyStorage: false }),
 		token: getAppParamValue("access_token", { removeFromUrl: true }),
 		fromUrl: getAppParamValue("from_url", { defaultValue: window.location.href }),
 		functionsVersion: functionsVersionFromUrl || functionsVersionFromEnv,
-		appBaseUrl: getAppParamValue("app_base_url", { defaultValue: import.meta.env.VITE_BASE44_APP_BASE_URL }),
+		appBaseUrl: getAppParamValue("app_base_url", { defaultValue: import.meta.env.VITE_BASE44_APP_BASE_URL, allowLegacyStorage: false }),
 	}
 }
 
