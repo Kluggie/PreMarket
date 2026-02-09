@@ -13,6 +13,8 @@
   - `proposalId`
   - `viewCount` and `maxViews`
 - Confirm link query includes `token` and `app_id`.
+- In `ShareLink` storage, verify proposal linkage is present (`proposal_id` or `proposalId`) for the created token.
+- Open the shared URL and verify the shared report resolves without `MISSING_PROPOSAL_ID`.
 
 ## 2) Open link while logged out
 - Open the shared URL in an incognito window.

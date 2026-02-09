@@ -52,6 +52,39 @@ function extractProposalId(source: any): string | null {
   );
 }
 
+function extractShareLinkProposalId(shareLink: any): string | null {
+  if (!shareLink || typeof shareLink !== 'object') return null;
+
+  const context = shareLink.context && typeof shareLink.context === 'object' ? shareLink.context : {};
+  const data = shareLink.data && typeof shareLink.data === 'object' ? shareLink.data : {};
+  const metadata = shareLink.metadata && typeof shareLink.metadata === 'object' ? shareLink.metadata : {};
+
+  return (
+    asString(shareLink.proposalId) ||
+    asString(shareLink.proposal_id) ||
+    asString(shareLink.linkedProposalId) ||
+    asString(shareLink.linked_proposal_id) ||
+    asString(context.proposalId) ||
+    asString(context.proposal_id) ||
+    asString(context.linkedProposalId) ||
+    asString(context.linked_proposal_id) ||
+    asString(data.proposalId) ||
+    asString(data.proposal_id) ||
+    asString(data.linkedProposalId) ||
+    asString(data.linked_proposal_id) ||
+    asString(metadata.proposalId) ||
+    asString(metadata.proposal_id) ||
+    asString(metadata.linkedProposalId) ||
+    asString(metadata.linked_proposal_id) ||
+    null
+  );
+}
+
+function safeKeyList(source: unknown): string[] {
+  if (!source || typeof source !== 'object') return [];
+  return Object.keys(source as Record<string, unknown>).sort();
+}
+
 function extractReportPayload(source: any) {
   if (!source || typeof source !== 'object') return null;
   const data = objectData(source);
@@ -310,7 +343,7 @@ Deno.serve(async (req) => {
     const { shareLink, permissions } = validation;
     let evaluationItem: any = null;
     let documentComparison: any = null;
-    let resolvedProposalId = shareLink.proposalId || null;
+    let resolvedProposalId = extractShareLinkProposalId(shareLink);
 
     if (shareLink.evaluationItemId) {
       const items = await base44.asServiceRole.entities.EvaluationItem.filter({ id: shareLink.evaluationItemId }, '-created_date', 1);
@@ -329,11 +362,18 @@ Deno.serve(async (req) => {
     }
 
     if (!resolvedProposalId) {
+      const shareLinkAny = shareLink as any;
       logWarn({
         correlationId,
         event: 'shared_report_missing_proposal',
         shareLinkId: shareLink.id,
         shareLinkProposalId: shareLink.proposalId,
+        shareLinkProposalIdSnake: shareLinkAny?.proposal_id || null,
+        shareLinkLinkedProposalId: shareLinkAny?.linkedProposalId || shareLinkAny?.linked_proposal_id || null,
+        shareLinkKeys: safeKeyList(shareLink),
+        shareLinkContextKeys: safeKeyList(shareLinkAny?.context),
+        shareLinkDataKeys: safeKeyList(shareLinkAny?.data),
+        shareLinkMetadataKeys: safeKeyList(shareLinkAny?.metadata),
         evaluationItemId: shareLink.evaluationItemId,
         documentComparisonId: shareLink.documentComparisonId
       });
