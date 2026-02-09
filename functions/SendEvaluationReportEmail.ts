@@ -3,32 +3,63 @@ import { validateShareUrl } from './_utils/shareUrl.ts';
 
 const CANONICAL_SHARED_PATH = '/SharedReport';
 
-function enforceCanonicalShareUrl(rawShareUrl: string, correlationId: string) {
-  let shareUrl = String(rawShareUrl || '').trim();
-
-  if (shareUrl.includes('/shared-report')) {
-    console.warn(`[${correlationId}] Lowercase share path detected; correcting before send`);
-    shareUrl = shareUrl.replace(/\/shared-report(?=\?|$)/g, CANONICAL_SHARED_PATH);
+function assertCanonicalShareUrl(rawShareUrl: unknown, correlationId: string) {
+  const shareUrl = String(rawShareUrl || '').trim();
+  if (!shareUrl) {
+    console.warn(JSON.stringify({
+      level: 'warn',
+      correlationId,
+      errorCode: 'SHARE_LINK_INVALID',
+      message: 'Share link URL missing'
+    }));
+    return {
+      ok: false as const,
+      errorCode: 'SHARE_LINK_INVALID',
+      message: 'Share link URL missing'
+    };
   }
 
   try {
     validateShareUrl(shareUrl);
     const parsed = new URL(shareUrl);
+    const token = parsed.searchParams.get('token');
 
-    if (parsed.pathname !== CANONICAL_SHARED_PATH) {
-      console.warn(
-        `[${correlationId}] Non-canonical share path "${parsed.pathname}" detected; forcing ${CANONICAL_SHARED_PATH}`
-      );
-      parsed.pathname = CANONICAL_SHARED_PATH;
-      shareUrl = parsed.toString();
+    if (parsed.pathname !== CANONICAL_SHARED_PATH || !token) {
+      console.warn(JSON.stringify({
+        level: 'warn',
+        correlationId,
+        errorCode: 'NON_CANONICAL_SHARE_URL',
+        shareUrlPath: parsed.pathname,
+        hasToken: Boolean(token),
+        shareUrl
+      }));
+      return {
+        ok: false as const,
+        errorCode: 'NON_CANONICAL_SHARE_URL',
+        message: 'Share URL must use /SharedReport and include token'
+      };
     }
 
     console.log(JSON.stringify({ level: 'info', correlationId, shareUrlPath: parsed.pathname }));
-    return shareUrl;
+    return {
+      ok: true as const,
+      shareUrl,
+      token
+    };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    console.warn(`[${correlationId}] Share URL validation failed; sending best-effort canonical URL`, errorMessage);
-    return shareUrl;
+    console.warn(JSON.stringify({
+      level: 'warn',
+      correlationId,
+      errorCode: 'SHARE_LINK_INVALID',
+      message: 'Share URL validation failed',
+      error: errorMessage
+    }));
+    return {
+      ok: false as const,
+      errorCode: 'SHARE_LINK_INVALID',
+      message: 'Share URL is invalid'
+    };
   }
 }
 
@@ -84,45 +115,17 @@ Deno.serve(async (req) => {
       }, { status: 500 });
     }
 
-    const shareUrlFromCreate = shareLinkResult.data.shareUrl;
-    const shareToken =
-      shareLinkResult.data.token ||
-      (() => {
-        try {
-          return shareUrlFromCreate ? new URL(shareUrlFromCreate).searchParams.get('token') : null;
-        } catch {
-          return null;
-        }
-      })();
-
-    if (!shareToken) {
+    const canonicalShare = assertCanonicalShareUrl(shareLinkResult.data.shareUrl, correlationId);
+    if (!canonicalShare.ok) {
       return Response.json({
         ok: false,
-        error: 'Share link token missing',
-        errorCode: 'SHARE_LINK_INVALID',
+        errorCode: canonicalShare.errorCode,
+        error: canonicalShare.message,
         correlationId
       }, { status: 500 });
     }
 
-    if (!shareUrlFromCreate || typeof shareUrlFromCreate !== 'string') {
-      return Response.json({
-        ok: false,
-        error: 'Share link URL missing',
-        errorCode: 'SHARE_LINK_INVALID',
-        correlationId
-      }, { status: 500 });
-    }
-
-    const reportUrl = enforceCanonicalShareUrl(shareUrlFromCreate, correlationId);
-
-    if (!reportUrl) {
-      return Response.json({
-        ok: false,
-        errorCode: 'BAD_SHARE_LINK_DOMAIN',
-        error: 'Share URL is invalid',
-        correlationId
-      }, { status: 500 });
-    }
+    const reportUrl = canonicalShare.shareUrl;
 
     // Determine sender name
     const senderName = user.full_name || user.email || 'A PreMarket user';

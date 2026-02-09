@@ -11,37 +11,56 @@ function logWarn(payload: Record<string, unknown>) {
   console.warn(JSON.stringify({ level: 'warn', ...payload }));
 }
 
-function enforceCanonicalShareUrl(rawShareUrl: string, correlationId: string) {
-  let shareUrl = String(rawShareUrl || '').trim();
-
-  if (shareUrl.includes('/shared-report')) {
-    logWarn({ correlationId, message: 'Lowercase share path detected; correcting before send' });
-    shareUrl = shareUrl.replace(/\/shared-report(?=\?|$)/g, CANONICAL_SHARED_PATH);
+function assertCanonicalShareUrl(rawShareUrl: unknown, correlationId: string) {
+  const shareUrl = String(rawShareUrl || '').trim();
+  if (!shareUrl) {
+    logWarn({ correlationId, errorCode: 'SHARE_LINK_INVALID', message: 'Share link URL missing' });
+    return {
+      ok: false as const,
+      errorCode: 'SHARE_LINK_INVALID',
+      message: 'Share link URL missing'
+    };
   }
 
   try {
     validateShareUrl(shareUrl);
     const parsed = new URL(shareUrl);
+    const token = parsed.searchParams.get('token');
 
-    if (parsed.pathname !== CANONICAL_SHARED_PATH) {
+    if (parsed.pathname !== CANONICAL_SHARED_PATH || !token) {
       logWarn({
         correlationId,
-        message: `Non-canonical share path "${parsed.pathname}" detected; forcing ${CANONICAL_SHARED_PATH}`
+        errorCode: 'NON_CANONICAL_SHARE_URL',
+        shareUrlPath: parsed.pathname,
+        hasToken: Boolean(token),
+        shareUrl
       });
-      parsed.pathname = CANONICAL_SHARED_PATH;
-      shareUrl = parsed.toString();
+      return {
+        ok: false as const,
+        errorCode: 'NON_CANONICAL_SHARE_URL',
+        message: 'Share URL must use /SharedReport and include token'
+      };
     }
 
     logInfo({ correlationId, shareUrlPath: parsed.pathname });
-    return shareUrl;
+    return {
+      ok: true as const,
+      shareUrl,
+      token
+    };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     logWarn({
       correlationId,
-      message: 'Share URL validation failed; sending best-effort canonical URL',
+      errorCode: 'SHARE_LINK_INVALID',
+      message: 'Share URL validation failed',
       error: errorMessage
     });
-    return shareUrl;
+    return {
+      ok: false as const,
+      errorCode: 'SHARE_LINK_INVALID',
+      message: 'Share URL is invalid'
+    };
   }
 }
 
@@ -276,20 +295,8 @@ Deno.serve(async (req) => {
       });
     }
 
-    const shareUrlFromCreate = shareLinkResult.data.shareUrl;
-    const shareToken =
-      shareLinkResult.data.token ||
-      (() => {
-        try {
-          return shareUrlFromCreate ? new URL(shareUrlFromCreate).searchParams.get('token') : null;
-        } catch {
-          return null;
-        }
-      })();
-
-    if (!shareToken) {
-      console.error(`[${correlationId}] No token in share link result`);
-      
+    const canonicalShare = assertCanonicalShareUrl(shareLinkResult.data.shareUrl, correlationId);
+    if (!canonicalShare.ok) {
       await logEmailSend(base44, {
         correlationId,
         proposalId,
@@ -297,43 +304,21 @@ Deno.serve(async (req) => {
         documentComparisonId,
         recipientDomain,
         ok: false,
-        errorCode: 'SHARE_LINK_INVALID',
-        message: 'Share link token missing',
-        provider: 'resend'
-      });
-      
-      return Response.json({
-        ok: false,
-        correlationId,
-        errorCode: 'SHARE_LINK_INVALID',
-        message: 'Share link token missing'
-      });
-    }
-
-    if (!shareUrlFromCreate || typeof shareUrlFromCreate !== 'string') {
-      console.error(`[${correlationId}] Missing shareUrl in CreateShareLink response`);
-
-      await logEmailSend(base44, {
-        correlationId,
-        proposalId,
-        evaluationItemId,
-        documentComparisonId,
-        recipientDomain,
-        ok: false,
-        errorCode: 'SHARE_LINK_INVALID',
-        message: 'Share link URL missing',
+        errorCode: canonicalShare.errorCode,
+        message: canonicalShare.message,
         provider: 'resend'
       });
 
       return Response.json({
         ok: false,
         correlationId,
-        errorCode: 'SHARE_LINK_INVALID',
-        message: 'Share link URL missing'
+        errorCode: canonicalShare.errorCode,
+        message: canonicalShare.message
       });
     }
 
-    const shareUrl = enforceCanonicalShareUrl(shareUrlFromCreate, correlationId);
+    const shareUrl = canonicalShare.shareUrl;
+    const shareToken = canonicalShare.token;
 
     // Get item title
     let itemTitle = 'Evaluation Report';

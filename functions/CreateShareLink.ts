@@ -116,15 +116,22 @@ Deno.serve(async (req) => {
       shareUrl = `${baseUrl}${SHARE_PATH}?token=${encodeURIComponent(token)}`;
       validateShareUrl(shareUrl); // Hard guardrail
 
-      // Runtime safeguard: keep legacy lowercase URLs from propagating.
-      if (shareUrl.includes('/shared-report')) {
-        shareUrl = shareUrl.replace(/\/shared-report(?=\?|$)/g, SHARE_PATH);
+      const parsedUrl = new URL(shareUrl);
+      if (parsedUrl.pathname !== SHARE_PATH) {
+        console.error(`[${correlationId}] NON_CANONICAL_SHARE_PATH`, {
+          pathname: parsedUrl.pathname,
+          shareUrl
+        });
+        throw new Error(`NON_CANONICAL_SHARE_PATH:${parsedUrl.pathname}`);
       }
     } catch (urlError) {
       console.error(`[${correlationId}] URL construction failed:`, urlError.message);
       return Response.json({
         ok: false,
-        errorCode: urlError.message.includes('APP_BASE_URL') ? 'APP_BASE_URL_MISSING' : 'BAD_SHARE_LINK_DOMAIN',
+        errorCode:
+          urlError.message.includes('NON_CANONICAL_SHARE_PATH')
+            ? 'NON_CANONICAL_SHARE_PATH'
+            : (urlError.message.includes('APP_BASE_URL') ? 'APP_BASE_URL_MISSING' : 'BAD_SHARE_LINK_DOMAIN'),
         message: urlError.message,
         correlationId
       }, { status: 500 });
