@@ -237,6 +237,105 @@ function buildRecipientResponseView(response: any) {
   };
 }
 
+function normalizeComparisonLevel(level: unknown): 'hidden' | null {
+  const normalized = String(level || '').trim().toLowerCase();
+  if (normalized === 'hidden' || normalized === 'confidential' || normalized === 'partial') return 'hidden';
+  return null;
+}
+
+function normalizeComparisonSpans(spans: unknown, textLength: number): Array<{ start: number; end: number; level: 'hidden' }> {
+  if (!Array.isArray(spans)) return [];
+
+  return spans
+    .map((span: any) => {
+      const rawStart = Number(span?.start);
+      const rawEnd = Number(span?.end);
+      const level = normalizeComparisonLevel(span?.level);
+
+      if (!Number.isFinite(rawStart) || !Number.isFinite(rawEnd) || !level) return null;
+
+      const start = Math.max(0, Math.min(rawStart, textLength));
+      const end = Math.max(0, Math.min(rawEnd, textLength));
+      if (end <= start) return null;
+
+      return { start, end, level };
+    })
+    .filter((span): span is { start: number; end: number; level: 'hidden' } => Boolean(span))
+    .sort((a, b) => a.start - b.start);
+}
+
+function removeHiddenComparisonText(text: string, spans: unknown) {
+  const normalizedSpans = normalizeComparisonSpans(spans, text.length);
+  if (normalizedSpans.length === 0) {
+    return {
+      text,
+      hiddenCount: 0
+    };
+  }
+
+  let output = '';
+  let cursor = 0;
+
+  for (const span of normalizedSpans) {
+    if (span.start > cursor) {
+      output += text.slice(cursor, span.start);
+    }
+    cursor = Math.max(cursor, span.end);
+  }
+
+  if (cursor < text.length) {
+    output += text.slice(cursor);
+  }
+
+  return {
+    text: output,
+    hiddenCount: normalizedSpans.length
+  };
+}
+
+function buildComparisonView(documentComparison: any) {
+  if (!documentComparison || typeof documentComparison !== 'object') return null;
+
+  const data = objectData(documentComparison);
+
+  const rawDocAText = String(
+    documentComparison.doc_a_plaintext ??
+    data.doc_a_plaintext ??
+    ''
+  );
+  const rawDocBText = String(
+    documentComparison.doc_b_plaintext ??
+    data.doc_b_plaintext ??
+    ''
+  );
+  const rawDocASpans = Array.isArray(documentComparison.doc_a_spans_json)
+    ? documentComparison.doc_a_spans_json
+    : (Array.isArray(data.doc_a_spans_json) ? data.doc_a_spans_json : []);
+  const rawDocBSpans = Array.isArray(documentComparison.doc_b_spans_json)
+    ? documentComparison.doc_b_spans_json
+    : (Array.isArray(data.doc_b_spans_json) ? data.doc_b_spans_json : []);
+
+  const redactedDocA = removeHiddenComparisonText(rawDocAText, rawDocASpans);
+  const redactedDocB = removeHiddenComparisonText(rawDocBText, rawDocBSpans);
+
+  return {
+    id: asString(documentComparison.id),
+    title: asString(documentComparison.title) || asString(data.title) || null,
+    docA: {
+      label: asString(documentComparison.party_a_label) || asString(data.party_a_label) || 'Document A',
+      source: asString(documentComparison.doc_a_source) || asString(data.doc_a_source) || 'typed',
+      text: redactedDocA.text,
+      hiddenCount: redactedDocA.hiddenCount
+    },
+    docB: {
+      label: asString(documentComparison.party_b_label) || asString(data.party_b_label) || 'Document B',
+      source: asString(documentComparison.doc_b_source) || asString(data.doc_b_source) || 'typed',
+      text: redactedDocB.text,
+      hiddenCount: redactedDocB.hiddenCount
+    }
+  };
+}
+
 function buildPartyBEditableSchema(template: any, proposalResponses: any[]) {
   const questionLookup = toQuestionLookup(template);
   const questionIds = toRecipientEditableQuestionIds(template);
@@ -411,6 +510,33 @@ Deno.serve(async (req) => {
       }, 404);
     }
 
+    if (!documentComparison && proposal?.document_comparison_id) {
+      const linkedComparisons = await base44.asServiceRole.entities.DocumentComparison.filter(
+        { id: proposal.document_comparison_id },
+        '-created_date',
+        1
+      );
+      documentComparison = linkedComparisons?.[0] || null;
+    }
+
+    if (!documentComparison) {
+      const byProposal = await base44.asServiceRole.entities.DocumentComparison.filter(
+        { proposal_id: resolvedProposalId },
+        '-created_date',
+        1
+      );
+      documentComparison = byProposal?.[0] || null;
+    }
+
+    if (!documentComparison) {
+      const byProposalInData = await base44.asServiceRole.entities.DocumentComparison.filter(
+        { 'data.proposal_id': resolvedProposalId },
+        '-created_date',
+        1
+      );
+      documentComparison = byProposalInData?.[0] || null;
+    }
+
     const proposalResponses = await base44.asServiceRole.entities.ProposalResponse.filter(
       { proposal_id: resolvedProposalId },
       '-created_date'
@@ -478,6 +604,7 @@ Deno.serve(async (req) => {
         .map((response: any) => buildPartyAResponseView(response, questionLookup))
     };
     const partyBEditableSchema = buildPartyBEditableSchema(template, proposalResponses);
+    const comparisonView = buildComparisonView(documentComparison);
 
     const normalizedShareLink = {
       id: shareLink.id,
@@ -522,7 +649,8 @@ Deno.serve(async (req) => {
       party_b_email: proposal.party_b_email || evaluationItem?.party_b_email || null,
       created_date: proposal.created_date || documentComparison?.created_date || evaluationItem?.created_date || null,
       generated_at: reportGeneratedAt,
-      report: reportPayload
+      report: reportPayload,
+      comparisonView
     };
 
     logInfo({
@@ -551,6 +679,7 @@ Deno.serve(async (req) => {
       shareLink: normalizedShareLink,
       permissions: normalizedPermissions,
       reportData,
+      comparisonView,
       partyAView,
       partyBEditableSchema,
       proposalView,

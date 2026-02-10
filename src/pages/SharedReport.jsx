@@ -33,6 +33,7 @@ const TEXTAREA_FIELD_TYPES = new Set(['textarea', 'long_text', 'multiline', 'tex
 const SELECT_FIELD_TYPES = new Set(['select', 'enum', 'dropdown', 'radio', 'single_select']);
 const NUMBER_FIELD_TYPES = new Set(['number', 'integer', 'float', 'decimal', 'currency', 'percent']);
 const BOOLEAN_FIELD_TYPES = new Set(['boolean', 'bool', 'checkbox', 'toggle', 'switch']);
+const PARTY_B_KEYS = new Set(['b', 'party_b', 'recipient', 'counterparty']);
 
 function buildErrorMeta(error) {
   const statusCode =
@@ -149,6 +150,30 @@ function toFieldType(question) {
   return String(question?.fieldType || question?.field_type || '').toLowerCase();
 }
 
+function normalizePartyKey(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function isPartyBResponse(response) {
+  return PARTY_B_KEYS.has(normalizePartyKey(response?.entered_by_party));
+}
+
+function formatSharedResponseValue(response) {
+  const valueType = String(response?.value_type || '').toLowerCase();
+  if (valueType === 'range') {
+    const min = response?.range_min;
+    const max = response?.range_max;
+    if (min === null || min === undefined || max === null || max === undefined) return null;
+    return `${min} - ${max}`;
+  }
+
+  const value = response?.value;
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  const text = String(value).trim();
+  return text.length > 0 ? text : null;
+}
+
 function toInitialEdit(question) {
   const hasRange =
     question?.currentResponse?.rangeMin !== null && question?.currentResponse?.rangeMin !== undefined ||
@@ -177,6 +202,8 @@ export default function SharedReport() {
   const [permissions, setPermissions] = useState({});
   const [partyAView, setPartyAView] = useState({ proposal: null, responses: [] });
   const [partyBEditableSchema, setPartyBEditableSchema] = useState({ totalQuestions: 0, editableQuestionIds: [], questions: [] });
+  const [responsesView, setResponsesView] = useState([]);
+  const [comparisonView, setComparisonView] = useState(null);
   const [recipientEdits, setRecipientEdits] = useState({});
   const [sendBackMessage, setSendBackMessage] = useState('');
   const [isSaving, setIsSaving] = useState(false);
@@ -206,6 +233,56 @@ export default function SharedReport() {
   const recipientEditableQuestions = useMemo(() => {
     return toArray(partyBEditableSchema?.questions);
   }, [partyBEditableSchema]);
+
+  const completeDetailsRows = useMemo(() => {
+    const labelByQuestionId = {};
+    toArray(partyAView?.responses).forEach((item) => {
+      if (!item?.questionId || !item?.label) return;
+      labelByQuestionId[item.questionId] = item.label;
+    });
+    recipientEditableQuestions.forEach((question) => {
+      if (!question?.questionId || !question?.label) return;
+      labelByQuestionId[question.questionId] = question.label;
+    });
+
+    const rows = [];
+
+    toArray(partyAView?.responses).forEach((item) => {
+      const questionId = item?.questionId || '';
+      const redaction = String(item?.redaction || '').toLowerCase();
+      const value = String(item?.valueSummary || '').trim();
+
+      if (!questionId || redaction === 'hidden' || !value) return;
+
+      rows.push({
+        key: item?.id || `party_a_${questionId}`,
+        label: item?.label || questionId.replace(/_/g, ' '),
+        value,
+        party: 'Party A'
+      });
+    });
+
+    const partyBRows = toArray(responsesView)
+      .filter((response) => isPartyBResponse(response))
+      .filter((response) => {
+        const visibility = String(response?.visibility || '').toLowerCase();
+        return visibility !== 'hidden' && visibility !== 'not_shared';
+      })
+      .map((response) => {
+        const questionId = response?.question_id || '';
+        const value = formatSharedResponseValue(response);
+        if (!questionId || value === null) return null;
+        return {
+          key: response?.id || `${questionId}_${response?.created_date || ''}`,
+          label: labelByQuestionId[questionId] || questionId.replace(/_/g, ' '),
+          value,
+          party: 'Party B'
+        };
+      })
+      .filter(Boolean);
+
+    return [...rows, ...partyBRows];
+  }, [responsesView, partyAView, recipientEditableQuestions]);
 
   const canEditRecipient = Boolean(permissions?.canEditRecipientSide ?? permissions?.canEdit);
   const canReevaluate = Boolean(permissions?.canReevaluate);
@@ -278,6 +355,8 @@ export default function SharedReport() {
       setPermissions(data.permissions || {});
       setPartyAView(data.partyAView || { proposal: null, responses: [] });
       setPartyBEditableSchema(data.partyBEditableSchema || { totalQuestions: 0, editableQuestionIds: [], questions: [] });
+      setResponsesView(data.responsesView || data?.recipientView?.responses || []);
+      setComparisonView(data.comparisonView || data?.reportData?.comparisonView || null);
       setError(null);
 
       if (!resolvedProposalId) {
@@ -763,6 +842,49 @@ export default function SharedReport() {
                   <p className="text-sm text-slate-600">{item.valueSummary || 'Not shared'}</p>
                 </div>
               ))}
+            </CardContent>
+          </Card>
+
+          <Card className="border-0 shadow-sm">
+            <CardHeader>
+              <CardTitle>Complete Proposal Details</CardTitle>
+              <CardDescription>
+                Read-only shared details. Confidential content is removed for recipients.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {reportData?.type === 'document_comparison' && comparisonView ? (
+                <div className="space-y-4">
+                  {[comparisonView.docA, comparisonView.docB].filter(Boolean).map((doc, index) => (
+                    <div key={`shared-doc-${index}`} className="p-4 border rounded-lg bg-slate-50 space-y-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="font-medium text-slate-900">{doc.label || `Document ${index + 1}`}</p>
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline">Source: {doc.source || 'typed'}</Badge>
+                          <Badge className="bg-red-100 text-red-700">
+                            {Number(doc.hiddenCount || 0)} removed
+                          </Badge>
+                        </div>
+                      </div>
+                      <pre className="text-xs bg-white border rounded-md p-3 overflow-auto whitespace-pre-wrap">
+                        {doc.text || 'No shared text available.'}
+                      </pre>
+                    </div>
+                  ))}
+                </div>
+              ) : completeDetailsRows.length === 0 ? (
+                <p className="text-slate-500 text-sm">No shared proposal details are available.</p>
+              ) : (
+                completeDetailsRows.map((item) => (
+                  <div key={item.key} className="p-3 border rounded-lg">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="font-medium text-slate-900">{item.label}</p>
+                      <Badge variant="outline">{item.party}</Badge>
+                    </div>
+                    <p className="text-sm text-slate-700 mt-1">{item.value}</p>
+                  </div>
+                ))
+              )}
             </CardContent>
           </Card>
 
