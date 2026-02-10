@@ -86,6 +86,22 @@ export default function CreateProposal() {
   const initialStepFromQuery = Number.isFinite(requestedStep) && requestedStep >= 1 && requestedStep <= 4
     ? requestedStep
     : null;
+  const sharedTokenParam = routeParams.get('sharedToken');
+  const sharedRoleParam = routeParams.get('role');
+  const isRecipientSharedRoute = Boolean(sharedTokenParam || sharedRoleParam === 'recipient');
+
+  useEffect(() => {
+    if (!isRecipientSharedRoute) return;
+    if (sharedTokenParam) {
+      navigate(createPageUrl(`SharedReport?token=${encodeURIComponent(sharedTokenParam)}`), { replace: true });
+      return;
+    }
+    navigate(createPageUrl('Proposals'), { replace: true });
+  }, [isRecipientSharedRoute, sharedTokenParam, navigate]);
+
+  if (isRecipientSharedRoute) {
+    return null;
+  }
 
   const { data: templates = [], isLoading } = useQuery({
     queryKey: ['templates'],

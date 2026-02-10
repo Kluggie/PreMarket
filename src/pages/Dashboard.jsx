@@ -37,6 +37,34 @@ function isProposalOwner(proposal, user) {
   return Boolean(userEmail && ownerEmail && userEmail === ownerEmail);
 }
 
+function dedupeById(records = []) {
+  const byId = new Map();
+  records.forEach((record, index) => {
+    const key = String(record?.id || `row_${index}`).trim();
+    if (!key || byId.has(key)) return;
+    byId.set(key, record);
+  });
+  return Array.from(byId.values());
+}
+
+function parseJsonValue(value) {
+  if (typeof value !== 'string') return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function buildReviewedTitle(title, reviewedCount) {
+  const safeTitle = title || 'Untitled Proposal';
+  if (reviewedCount > 1) {
+    return `${safeTitle} - reviewed (${reviewedCount})`;
+  }
+  return `${safeTitle} - reviewed`;
+}
+
 async function getActiveShareLinkForRecipient(proposalId) {
   const normalizedProposalId = String(proposalId || '').trim();
   if (!normalizedProposalId) {
@@ -45,6 +73,57 @@ async function getActiveShareLinkForRecipient(proposalId) {
       message: 'Proposal ID is required'
     };
   }
+
+  const isLocalhost = () => {
+    if (typeof window === 'undefined') return false;
+    return window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  };
+  const isMissingDeployment = (value) =>
+    String(value || '').toLowerCase().includes('deployment does not exist');
+
+  const resolveFromShareLinks = async () => {
+    const me = await base44.auth.me().catch(() => null);
+    const recipientEmail = normalizeEmail(me?.email);
+    if (!recipientEmail) {
+      return { ok: false, message: NO_SHARED_WORKSPACE_LINK_MESSAGE };
+    }
+
+    const buckets = await Promise.all([
+      base44.entities.ShareLink
+        .filter({ proposal_id: normalizedProposalId, recipient_email: recipientEmail }, '-created_date', 10)
+        .catch(() => []),
+      base44.entities.ShareLink
+        .filter({ proposalId: normalizedProposalId, recipientEmail: recipientEmail }, '-created_date', 10)
+        .catch(() => []),
+      base44.entities.ShareLink
+        .filter({ proposal_id: normalizedProposalId, recipientEmail: recipientEmail }, '-created_date', 10)
+        .catch(() => []),
+      base44.entities.ShareLink
+        .filter({ proposalId: normalizedProposalId, recipient_email: recipientEmail }, '-created_date', 10)
+        .catch(() => [])
+    ]);
+
+    const activeRow = buckets
+      .flat()
+      .find((row) => {
+        const status = String(row?.status || '').trim().toLowerCase();
+        if (status && status !== 'active') return false;
+
+        const expiresAt = row?.expires_at || row?.expiresAt || row?.data?.expires_at || row?.data?.expiresAt;
+        if (expiresAt) {
+          const expiry = new Date(expiresAt).getTime();
+          if (Number.isFinite(expiry) && expiry < Date.now()) return false;
+        }
+        return true;
+      });
+
+    const token = activeRow?.token || activeRow?.data?.token || null;
+    if (!token) {
+      return { ok: false, message: NO_SHARED_WORKSPACE_LINK_MESSAGE };
+    }
+
+    return { ok: true, token: String(token) };
+  };
 
   try {
     const result = await base44.functions.invoke('GetActiveShareLinkForRecipient', {
@@ -57,16 +136,29 @@ async function getActiveShareLinkForRecipient(proposalId) {
         token: data.token
       };
     }
+
+    const responseMessage = typeof data === 'string' ? data : (data?.message || data?.error || '');
+    if (isLocalhost() && isMissingDeployment(responseMessage)) {
+      return resolveFromShareLinks();
+    }
+
     return {
       ok: false,
-      message: data?.message || NO_SHARED_WORKSPACE_LINK_MESSAGE
+      message: responseMessage || NO_SHARED_WORKSPACE_LINK_MESSAGE
     };
   } catch (error) {
-    const message =
+    const message = String(
       error?.data?.message ||
       error?.response?.data?.message ||
+      error?.data ||
+      error?.response?.data ||
       error?.message ||
-      NO_SHARED_WORKSPACE_LINK_MESSAGE;
+      NO_SHARED_WORKSPACE_LINK_MESSAGE
+    );
+    if (isLocalhost() && isMissingDeployment(message)) {
+      return resolveFromShareLinks();
+    }
+
     return {
       ok: false,
       message
@@ -109,22 +201,107 @@ export default function Dashboard() {
     enabled: !!user?.email
   });
 
+  const { data: sendBackMeta = { countsByProposal: {}, latestByProposal: {} } } = useQuery({
+    queryKey: ['dashboard', 'sendBackMeta', user?.email],
+    queryFn: async () => {
+      if (!user?.email) {
+        return { countsByProposal: {}, latestByProposal: {} };
+      }
+
+      const currentUserEmail = normalizeEmail(user.email);
+      const rows = await base44.entities.ProposalResponse
+        .filter({ claim_type: 'recipient_counterproposal' }, '-created_date', 100)
+        .catch(() => []);
+
+      const countsByProposal = {};
+      const latestByProposal = {};
+
+      rows.forEach((row) => {
+        const proposalId = String(
+          row?.proposal_id ||
+          row?.proposalId ||
+          row?.data?.proposal_id ||
+          row?.data?.proposalId ||
+          ''
+        ).trim();
+        if (!proposalId) return;
+
+        const payload = parseJsonValue(row?.value);
+        const source = String(payload?.source || '').trim().toLowerCase();
+        if (source && source !== 'shared_report_send_back') return;
+
+        const actorEmail = normalizeEmail(payload?.actorEmail || '');
+        if (actorEmail && actorEmail !== currentUserEmail) return;
+
+        countsByProposal[proposalId] = (countsByProposal[proposalId] || 0) + 1;
+
+        const existing = latestByProposal[proposalId];
+        const nextTime = new Date(row?.created_date || 0).getTime();
+        const existingTime = existing ? new Date(existing?.created_date || 0).getTime() : 0;
+        if (!existing || nextTime > existingTime) {
+          latestByProposal[proposalId] = row;
+        }
+      });
+
+      return { countsByProposal, latestByProposal };
+    },
+    enabled: !!user?.email
+  });
+
   const sentSource = allUserProposals?.sent || [];
   const receivedSource = allUserProposals?.received || [];
+  const currentUserEmail = normalizeEmail(user?.email);
 
-  const uniqueProposalsById = new Map();
-  [...sentSource, ...receivedSource].forEach((proposal) => {
-    const key = String(proposal?.id || '').trim();
-    if (!key || uniqueProposalsById.has(key)) return;
-    uniqueProposalsById.set(key, proposal);
+  const dedupedSent = dedupeById(sentSource);
+  const dedupedReceived = dedupeById(receivedSource);
+
+  const receivedProposals = dedupedReceived.filter((proposal) => {
+    const status = String(proposal?.status || '').trim().toLowerCase();
+    if (status === 'draft') return false;
+    return !isProposalOwner(proposal, user);
   });
-  const uniqueProposals = Array.from(uniqueProposalsById.values());
 
-  const ownerProposals = uniqueProposals.filter((proposal) => isProposalOwner(proposal, user));
-  const recipientProposals = uniqueProposals.filter((proposal) => !isProposalOwner(proposal, user));
+  const receivedIdSet = new Set(
+    receivedProposals
+      .map((proposal) => String(proposal?.id || '').trim())
+      .filter(Boolean)
+  );
 
-  const sentProposals = ownerProposals.filter((proposal) => proposal.status !== 'draft');
-  const receivedProposals = recipientProposals.filter((proposal) => proposal.status !== 'draft');
+  const ownerSentProposals = dedupedSent.filter((proposal) => {
+    const proposalId = String(proposal?.id || '').trim();
+    const status = String(proposal?.status || '').trim().toLowerCase();
+    if (!proposalId || status === 'draft') return false;
+    if (!isProposalOwner(proposal, user)) return false;
+    if (receivedIdSet.has(proposalId)) return false;
+    return true;
+  });
+
+  const reviewedSentProposals = receivedProposals
+    .map((proposal) => {
+      const proposalId = String(proposal?.id || '').trim();
+      if (!proposalId) return null;
+
+      const reviewedCount = Number(sendBackMeta?.countsByProposal?.[proposalId] || 0);
+      if (reviewedCount <= 0) return null;
+
+      const latestReviewRow = sendBackMeta?.latestByProposal?.[proposalId] || null;
+      return {
+        ...proposal,
+        id: `${proposalId}__reviewed`,
+        sourceProposalId: proposalId,
+        status: 'sent',
+        title: buildReviewedTitle(proposal?.title, reviewedCount),
+        reviewedCount,
+        created_date: latestReviewRow?.created_date || proposal?.updated_date || proposal?.created_date,
+        _listType: 'sent_reviewed',
+        _isReviewedVersion: true
+      };
+    })
+    .filter(Boolean);
+
+  const sentProposals = [...ownerSentProposals, ...reviewedSentProposals].sort(
+    (a, b) => new Date(b.created_date || 0) - new Date(a.created_date || 0)
+  );
   
   const loadingSent = loadingAll;
   const loadingReceived = loadingAll;
@@ -165,10 +342,15 @@ export default function Dashboard() {
   ];
 
   const handleOpenProposal = async (proposal, type) => {
-    if (type === 'received' && !isProposalOwner(proposal, user)) {
-      const shareLink = await getActiveShareLinkForRecipient(proposal.id);
+    if (type === 'received' || proposal?._listType === 'sent_reviewed') {
+      const sourceProposalId = proposal?.sourceProposalId || proposal?.id;
+      const shareLink = await getActiveShareLinkForRecipient(sourceProposalId);
       if (shareLink.ok) {
-        navigate(createPageUrl(`SharedReport?token=${encodeURIComponent(shareLink.token)}`));
+        navigate(
+          createPageUrl(
+            `ProposalDetail?id=${encodeURIComponent(sourceProposalId)}&sharedToken=${encodeURIComponent(shareLink.token)}&role=recipient`
+          )
+        );
         return;
       }
       toast.error(shareLink.message || NO_SHARED_WORKSPACE_LINK_MESSAGE);
@@ -179,58 +361,82 @@ export default function Dashboard() {
   };
 
   const ProposalCard = ({ proposal, type }) => (
-    <motion.div
-      whileHover={{ y: -2 }}
-      className="bg-white rounded-xl border border-slate-200 p-5 hover:shadow-md hover:border-blue-200 transition-all cursor-pointer"
-      onClick={() => {
-        handleOpenProposal(proposal, type);
-      }}
-      role="button"
-      tabIndex={0}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault();
-          handleOpenProposal(proposal, type);
-        }
-      }}
-    >
-      <div>
-        <div className="flex items-start justify-between mb-3">
-          <div className="flex-1 min-w-0">
-            <h3 className="font-semibold text-slate-900 truncate">
-              {proposal.title || 'Untitled Proposal'}
-            </h3>
-            <p className="text-sm text-slate-500 mt-1">
-              {proposal.template_name || 'Custom Template'}
-            </p>
-          </div>
-          <StatusBadge status={proposal.status} />
-        </div>
+    (() => {
+      const listType = proposal?._listType || (type === 'received' ? 'received' : 'sent');
+      const directionalStatus = listType === 'received' ? 'received' : 'sent';
+      const rawStatus = String(proposal?.status || '').trim().toLowerCase();
+      const showRawStatus =
+        Boolean(rawStatus) &&
+        rawStatus !== directionalStatus &&
+        !['sent', 'received', 'draft'].includes(rawStatus);
 
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4 text-sm text-slate-500">
-            {type === 'sent' ? (
-              <span>To: {proposal.party_b_email || 'Not specified'}</span>
-            ) : (
-              <span>From: {proposal.party_a_email}</span>
-            )}
-          </div>
-          {proposal.latest_score && (
-            <div className="flex items-center gap-1">
-              <BarChart3 className="w-4 h-4 text-blue-500" />
-              <span className="font-semibold text-blue-600">{proposal.latest_score}%</span>
+      return (
+        <motion.div
+          whileHover={{ y: -2 }}
+          className="bg-white rounded-xl border border-slate-200 p-5 hover:shadow-md hover:border-blue-200 transition-all cursor-pointer"
+          onClick={() => {
+            handleOpenProposal(proposal, type);
+          }}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              handleOpenProposal(proposal, type);
+            }
+          }}
+        >
+          <div>
+              <div className="flex items-start justify-between mb-3">
+                <div className="flex-1 min-w-0">
+                  <h3 className="font-semibold text-slate-900 truncate">
+                    {proposal.title || 'Untitled Proposal'}
+                  </h3>
+                  <p className="text-sm text-slate-500 mt-1">
+                    {proposal.template_name || 'Custom Template'}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <StatusBadge status={directionalStatus} />
+                  {showRawStatus && (
+                    <Badge variant="outline" className="text-xs">
+                      {rawStatus.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase())}
+                    </Badge>
+                  )}
+                  {proposal?._isReviewedVersion && (
+                    <Badge className="bg-emerald-100 text-emerald-700">Reviewed</Badge>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4 text-sm text-slate-500">
+                  {proposal?._isReviewedVersion ? (
+                    <span>To: {proposal.party_a_email || 'Original proposer'}</span>
+                  ) : type === 'sent' ? (
+                    <span>To: {proposal.party_b_email || 'Not specified'}</span>
+                  ) : (
+                    <span>From: {proposal.party_a_email}</span>
+                  )}
+                </div>
+              {proposal.latest_score && (
+                <div className="flex items-center gap-1">
+                  <BarChart3 className="w-4 h-4 text-blue-500" />
+                  <span className="font-semibold text-blue-600">{proposal.latest_score}%</span>
+                </div>
+              )}
             </div>
-          )}
-        </div>
 
-        <div className="flex items-center justify-between mt-4 pt-4 border-t border-slate-100">
-          <span className="text-xs text-slate-400">
-            {new Date(proposal.created_date).toLocaleDateString()}
-          </span>
-          <ChevronRight className="w-4 h-4 text-slate-400" />
-        </div>
-      </div>
-    </motion.div>
+            <div className="flex items-center justify-between mt-4 pt-4 border-t border-slate-100">
+              <span className="text-xs text-slate-400">
+                {new Date(proposal.created_date).toLocaleDateString()}
+              </span>
+              <ChevronRight className="w-4 h-4 text-slate-400" />
+            </div>
+          </div>
+        </motion.div>
+      );
+    })()
   );
 
   return (

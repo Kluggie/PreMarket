@@ -378,18 +378,6 @@ export default function SharedReport() {
         loadedAt: new Date().toISOString()
       };
 
-      localStorage.setItem('sharedReportContext', JSON.stringify(context));
-
-      setShareData(resolvedShareData);
-      setReportData(resolvedReportData);
-      setProposalId(resolvedProposalId || null);
-      setPermissions(data.permissions || {});
-      setPartyAView(data.partyAView || { proposal: null, responses: [] });
-      setPartyBEditableSchema(data.partyBEditableSchema || { totalQuestions: 0, editableQuestionIds: [], questions: [] });
-      setResponsesView(data.responsesView || data?.recipientView?.responses || []);
-      setComparisonView(data.comparisonView || data?.reportData?.comparisonView || null);
-      setError(null);
-
       if (!resolvedProposalId) {
         setError({
           message: 'This shared report is valid but is not linked to a proposal.',
@@ -400,6 +388,23 @@ export default function SharedReport() {
         });
         return false;
       }
+
+      localStorage.setItem('sharedReportContext', JSON.stringify(context));
+      setShareData(resolvedShareData);
+      setReportData(resolvedReportData);
+      setProposalId(resolvedProposalId);
+      setPermissions(data.permissions || {});
+      setPartyAView(data.partyAView || { proposal: null, responses: [] });
+      setPartyBEditableSchema(data.partyBEditableSchema || { totalQuestions: 0, editableQuestionIds: [], questions: [] });
+      setResponsesView(data.responsesView || data?.recipientView?.responses || []);
+      setComparisonView(data.comparisonView || data?.reportData?.comparisonView || null);
+      setError(null);
+      navigate(
+        createPageUrl(
+          `ProposalDetail?id=${encodeURIComponent(resolvedProposalId)}&sharedToken=${encodeURIComponent(token)}&role=recipient`
+        ),
+        { replace: true }
+      );
 
       return true;
     } catch (invokeError) {
@@ -428,7 +433,7 @@ export default function SharedReport() {
         setIsLoadingReport(false);
       }
     }
-  }, [token]);
+  }, [token, navigate]);
 
   useEffect(() => {
     let active = true;
@@ -823,18 +828,6 @@ export default function SharedReport() {
               >
                 Open Shared Workspace
               </Button>
-              {proposalId && (
-                <Button
-                  variant="outline"
-                  onClick={() => navigate(
-                    createPageUrl(
-                      `CreateProposal?draft=${proposalId}&step=4&role=recipient&sharedToken=${encodeURIComponent(token)}`
-                    )
-                  )}
-                >
-                  Edit Proposal
-                </Button>
-              )}
               {!user && (
                 <Button variant="outline" onClick={handleSignIn}>
                   Sign In for Editing

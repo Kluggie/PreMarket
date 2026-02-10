@@ -116,6 +116,24 @@ function extractToken(shareLink: any): string | null {
   return asString(shareLink.token || data.token || null);
 }
 
+async function getProposalRecipientEmail(base44: any, proposalId: string): Promise<string | null> {
+  try {
+    const rows = await base44.asServiceRole.entities.Proposal.filter({ id: proposalId }, '-created_date', 1);
+    const proposal = rows?.[0] || null;
+    if (!proposal || typeof proposal !== 'object') return null;
+    const data = proposal.data && typeof proposal.data === 'object' ? proposal.data : {};
+    return normalizeEmail(
+      proposal.party_b_email ||
+      proposal.partyBEmail ||
+      data.party_b_email ||
+      data.partyBEmail ||
+      null
+    );
+  } catch {
+    return null;
+  }
+}
+
 function extractViewCount(shareLink: any): number {
   return toNumber(shareLink?.uses ?? shareLink?.view_count, 0);
 }
@@ -184,8 +202,16 @@ Deno.serve(async (req) => {
       allRows.push(row);
     }
 
+    const proposalRecipientEmail = await getProposalRecipientEmail(base44, proposalId);
+    const recipientFallbackMatches = proposalRecipientEmail === currentUserEmail;
+
     const matchingProposalRows = allRows.filter((row) => {
-      return extractProposalId(row) === proposalId && extractRecipientEmail(row) === currentUserEmail;
+      if (extractProposalId(row) !== proposalId) return false;
+      const rowRecipient = extractRecipientEmail(row);
+      if (rowRecipient) {
+        return rowRecipient === currentUserEmail;
+      }
+      return recipientFallbackMatches;
     });
 
     const activeRows = matchingProposalRows
