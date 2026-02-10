@@ -75,10 +75,15 @@ export default function SharedReport() {
   const [reportData, setReportData] = useState(null);
   const [proposalId, setProposalId] = useState(null);
   const resolvedTokenRef = useRef(null);
+  const workspaceSectionRef = useRef(null);
 
   const token = useMemo(() => {
     const params = new URLSearchParams(location.search);
     return params.get('token');
+  }, [location.search]);
+  const mode = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    return params.get('mode');
   }, [location.search]);
 
   const reportTitle = useMemo(() => {
@@ -218,12 +223,15 @@ export default function SharedReport() {
   };
 
   const handleOpenProposal = () => {
-    if (!proposalId || !token) return;
-    const targetUrl = createPageUrl(
-      `ProposalDetail?id=${encodeURIComponent(proposalId)}&sharedToken=${encodeURIComponent(token)}&role=recipient`
-    );
+    if (!token) return;
+    const targetUrl = createPageUrl(`SharedReport?token=${encodeURIComponent(token)}&mode=workspace`);
     navigate(targetUrl);
   };
+
+  useEffect(() => {
+    if (mode !== 'workspace') return;
+    workspaceSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [mode, shareData, reportData]);
 
   if (!token) {
     return (
@@ -306,17 +314,17 @@ export default function SharedReport() {
             </p>
 
             <div
-              className={`rounded-lg border p-4 ${proposalId ? 'cursor-pointer hover:bg-slate-50' : 'bg-slate-50'}`}
-              onClick={proposalId ? handleOpenProposal : undefined}
+              className={`rounded-lg border p-4 ${token ? 'cursor-pointer hover:bg-slate-50' : 'bg-slate-50'}`}
+              onClick={token ? handleOpenProposal : undefined}
               onKeyDown={(event) => {
-                if (!proposalId) return;
+                if (!token) return;
                 if (event.key === 'Enter' || event.key === ' ') {
                   event.preventDefault();
                   handleOpenProposal();
                 }
               }}
-              role={proposalId ? 'button' : undefined}
-              tabIndex={proposalId ? 0 : -1}
+              role={token ? 'button' : undefined}
+              tabIndex={token ? 0 : -1}
             >
               <p className="text-lg font-semibold text-slate-900">{reportTitle}</p>
               <p className="text-sm text-slate-600 mt-1">
@@ -329,7 +337,7 @@ export default function SharedReport() {
               <Button
                 onClick={handleOpenProposal}
                 className="bg-blue-600 hover:bg-blue-700"
-                disabled={!proposalId}
+                disabled={!token}
               >
                 Open Shared Workspace
               </Button>
@@ -345,6 +353,19 @@ export default function SharedReport() {
                 This shared report is not linked to a proposal.
               </p>
             )}
+
+            <div ref={workspaceSectionRef} className="pt-4">
+              <Card className="border border-slate-200 shadow-none">
+                <CardHeader>
+                  <CardTitle className="text-base">Recipient Workspace</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-slate-600">
+                    This shared route is the canonical recipient workspace entrypoint. Use this page to review shared data and continue recipient actions.
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
           </CardContent>
         </Card>
       </div>
