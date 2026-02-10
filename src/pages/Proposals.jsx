@@ -255,14 +255,34 @@ export default function Proposals() {
     base44.auth.me().then(setUser);
   }, []);
 
+  useEffect(() => {
+    const handleSharedContextUpdated = () => {
+      queryClient.invalidateQueries({ queryKey: ['proposals', 'all'] });
+    };
+
+    window.addEventListener('shared-report-context-updated', handleSharedContextUpdated);
+    return () => {
+      window.removeEventListener('shared-report-context-updated', handleSharedContextUpdated);
+    };
+  }, [queryClient]);
+
   const { data: allUserProposals = [], isLoading: loadingAll } = useQuery({
     queryKey: ['proposals', 'all', user?.email],
     queryFn: async () => {
       const sent = await base44.entities.Proposal.filter({ party_a_email: user?.email }, '-created_date').catch(() => []);
       const received = await base44.entities.Proposal.filter({ party_b_email: user?.email }, '-created_date').catch(() => []);
-      const mergedReceived = dedupeById(received);
-
       const proposalIdsFromSharedContext = readSharedContextProposalIds(user?.email);
+      const sharedContextProposalIdSet = new Set(proposalIdsFromSharedContext);
+
+      const mergedReceived = dedupeById(received).map((proposal) => {
+        const proposalId = String(proposal?.id || '').trim();
+        if (!proposalId || !sharedContextProposalIdSet.has(proposalId)) return proposal;
+        return {
+          ...proposal,
+          _fromSharedContext: true
+        };
+      });
+
       if (proposalIdsFromSharedContext.length === 0) {
         return { sent, received: mergedReceived };
       }
@@ -284,7 +304,10 @@ export default function Proposals() {
             base44.entities.Proposal.filter({ id: proposalId }, '-created_date', 1).catch(() => [])
           )
         )
-      ).flat();
+      ).flat().map((proposal) => ({
+        ...proposal,
+        _fromSharedContext: true
+      }));
 
       return { sent, received: dedupeById([...mergedReceived, ...proposalsFromSharedContext]) };
     },
@@ -359,6 +382,7 @@ export default function Proposals() {
     .filter((proposal) => {
       const status = String(proposal?.status || '').trim().toLowerCase();
       if (status === 'draft') return false;
+      if (proposal?._fromSharedContext) return true;
       return !isProposalOwner(proposal, user);
     })
     .map((proposal) => ({

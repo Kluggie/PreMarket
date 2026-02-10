@@ -392,12 +392,14 @@ export default function SharedReport() {
       }
 
       localStorage.setItem('sharedReportContext', JSON.stringify(context));
+      window.dispatchEvent(new Event('shared-report-context-updated'));
       try {
         const historyRaw = localStorage.getItem('sharedReportContextHistory');
         const parsedHistory = JSON.parse(historyRaw || '[]');
         const history = Array.isArray(parsedHistory) ? parsedHistory : [];
         const nextHistory = [context, ...history.filter((item) => item?.token !== context.token)].slice(0, 50);
         localStorage.setItem('sharedReportContextHistory', JSON.stringify(nextHistory));
+        window.dispatchEvent(new Event('shared-report-context-updated'));
       } catch {
         // Ignore malformed local storage history.
       }
