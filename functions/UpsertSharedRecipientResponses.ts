@@ -28,6 +28,13 @@ function normalizeValue(input: unknown) {
   return JSON.stringify(input);
 }
 
+function normalizeVisibility(value: unknown): 'full' | 'partial' | 'hidden' {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (['hidden', 'not_shared', 'private', 'confidential'].includes(normalized)) return 'hidden';
+  if (normalized === 'partial') return 'partial';
+  return 'full';
+}
+
 function extractError(error: any) {
   const statusCode =
     error?.status ||
@@ -174,6 +181,7 @@ Deno.serve(async (req) => {
       const valueType = explicitValueType || (hasRange ? 'range' : 'text');
       const rangeMin = incoming?.rangeMin ?? incoming?.range_min ?? null;
       const rangeMax = incoming?.rangeMax ?? incoming?.range_max ?? null;
+      const visibility = normalizeVisibility(incoming?.visibility);
 
       const payload: Record<string, unknown> = {
         proposal_id: proposalId,
@@ -183,7 +191,7 @@ Deno.serve(async (req) => {
         subject_party: 'b',
         claim_type: 'self',
         is_about_counterparty: true,
-        visibility: 'full',
+        visibility,
         value_type: valueType
       };
 
