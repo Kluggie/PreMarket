@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '../utils';
 import { base44 } from '@/api/base44Client';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -232,19 +232,40 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
   const [activeTab, setActiveTab] = useState('sent');
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     base44.auth.me().then(setUser);
   }, []);
+
+  useEffect(() => {
+    const handleSharedContextUpdated = () => {
+      queryClient.invalidateQueries({ queryKey: ['proposals', 'all'] });
+    };
+
+    window.addEventListener('shared-report-context-updated', handleSharedContextUpdated);
+    return () => {
+      window.removeEventListener('shared-report-context-updated', handleSharedContextUpdated);
+    };
+  }, [queryClient]);
 
   const { data: allUserProposals = [], isLoading: loadingAll } = useQuery({
     queryKey: ['proposals', 'all', user?.email],
     queryFn: async () => {
       const sent = await base44.entities.Proposal.filter({ party_a_email: user?.email }, '-created_date', 10).catch(() => []);
       const received = await base44.entities.Proposal.filter({ party_b_email: user?.email }, '-created_date', 10).catch(() => []);
-      const mergedReceived = dedupeById(received);
-
       const proposalIdsFromSharedContext = readSharedContextProposalIds(user?.email);
+      const sharedContextProposalIdSet = new Set(proposalIdsFromSharedContext);
+
+      const mergedReceived = dedupeById(received).map((proposal) => {
+        const proposalId = String(proposal?.id || '').trim();
+        if (!proposalId || !sharedContextProposalIdSet.has(proposalId)) return proposal;
+        return {
+          ...proposal,
+          _fromSharedContext: true
+        };
+      });
+
       if (proposalIdsFromSharedContext.length === 0) {
         return { sent, received: mergedReceived };
       }
@@ -266,7 +287,10 @@ export default function Dashboard() {
             base44.entities.Proposal.filter({ id: proposalId }, '-created_date', 1).catch(() => [])
           )
         )
-      ).flat();
+      ).flat().map((proposal) => ({
+        ...proposal,
+        _fromSharedContext: true
+      }));
 
       return { sent, received: dedupeById([...mergedReceived, ...proposalsFromSharedContext]) };
     },
@@ -329,6 +353,7 @@ export default function Dashboard() {
   const receivedProposals = dedupedReceived.filter((proposal) => {
     const status = String(proposal?.status || '').trim().toLowerCase();
     if (status === 'draft') return false;
+    if (proposal?._fromSharedContext) return true;
     return !isProposalOwner(proposal, user);
   });
 

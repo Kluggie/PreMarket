@@ -722,6 +722,33 @@ export default function ProposalDetail() {
     setRecipientEdits(nextEdits);
   }, [isRecipientView, partyBEditableSchema]);
 
+  useEffect(() => {
+    if (!isRecipientView || !sharedToken || !proposalId) return;
+    if (typeof window === 'undefined') return;
+
+    const context = {
+      token: sharedToken,
+      proposalId,
+      role: 'recipient',
+      recipientEmail: sharedRecipientData?.shareLink?.recipientEmail || proposal?.party_b_email || null,
+      currentUserEmail: normalizeEmail(user?.email) || null,
+      loadedAt: new Date().toISOString()
+    };
+
+    localStorage.setItem('sharedReportContext', JSON.stringify(context));
+    window.dispatchEvent(new Event('shared-report-context-updated'));
+    try {
+      const historyRaw = localStorage.getItem('sharedReportContextHistory');
+      const parsedHistory = JSON.parse(historyRaw || '[]');
+      const history = Array.isArray(parsedHistory) ? parsedHistory : [];
+      const nextHistory = [context, ...history.filter((item) => item?.token !== context.token)].slice(0, 50);
+      localStorage.setItem('sharedReportContextHistory', JSON.stringify(nextHistory));
+      window.dispatchEvent(new Event('shared-report-context-updated'));
+    } catch {
+      // Ignore malformed local storage history.
+    }
+  }, [isRecipientView, sharedToken, proposalId, sharedRecipientData, proposal, user?.email]);
+
   const { data: evaluations = [] } = useQuery({
     queryKey: ['evaluations', proposalId],
     queryFn: () => base44.entities.EvaluationRun.filter({ proposal_id: proposalId }, '-created_date'),
