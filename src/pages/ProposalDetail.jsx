@@ -235,6 +235,115 @@ function dedupeById(records = []) {
   });
 }
 
+function normalizeFallbackVisibility(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (['hidden', 'not_shared', 'private', 'confidential', 'partial'].includes(normalized)) {
+    return 'hidden';
+  }
+  return 'full';
+}
+
+function toFallbackResponseValue(rawValue) {
+  if (rawValue && typeof rawValue === 'object' && !Array.isArray(rawValue)) {
+    const type = String(rawValue.type || '').toLowerCase();
+    if (type === 'range') {
+      const minRaw = Number(rawValue.min);
+      const maxRaw = Number(rawValue.max);
+      return {
+        value_type: 'range',
+        value: null,
+        range_min: Number.isFinite(minRaw) ? minRaw : null,
+        range_max: Number.isFinite(maxRaw) ? maxRaw : null
+      };
+    }
+
+    return {
+      value_type: 'text',
+      value: JSON.stringify(rawValue),
+      range_min: null,
+      range_max: null
+    };
+  }
+
+  if (Array.isArray(rawValue)) {
+    return {
+      value_type: 'text',
+      value: JSON.stringify(rawValue),
+      range_min: null,
+      range_max: null
+    };
+  }
+
+  if (rawValue === null || rawValue === undefined) {
+    return {
+      value_type: 'text',
+      value: '',
+      range_min: null,
+      range_max: null
+    };
+  }
+
+  return {
+    value_type: 'text',
+    value: String(rawValue),
+    range_min: null,
+    range_max: null
+  };
+}
+
+function buildFallbackResponsesFromStepState(stepState, proposalId) {
+  const rawResponses = stepState?.responses;
+  if (!rawResponses || typeof rawResponses !== 'object') return [];
+
+  const rawVisibility = stepState?.visibilitySettings && typeof stepState.visibilitySettings === 'object'
+    ? stepState.visibilitySettings
+    : {};
+
+  const rows = [];
+  const seen = new Set();
+
+  Object.entries(rawResponses).forEach(([responseKey, rawValue], index) => {
+    if (responseKey.startsWith('_')) return;
+
+    const [questionId, subjectSuffix] = responseKey.includes('__')
+      ? responseKey.split('__')
+      : [responseKey, null];
+    if (!questionId) return;
+
+    const normalizedSubject = String(subjectSuffix || '').trim().toLowerCase();
+    const subject_party = normalizedSubject === 'b' || normalizedSubject === 'party_b' || normalizedSubject === 'recipient'
+      ? 'b'
+      : (normalizedSubject === 'shared' ? 'shared' : 'a');
+
+    const dedupeKey = `${questionId}__${subject_party}`;
+    if (seen.has(dedupeKey)) return;
+    seen.add(dedupeKey);
+
+    const parsed = toFallbackResponseValue(rawValue);
+    const visibility = subject_party === 'b'
+      ? 'full'
+      : normalizeFallbackVisibility(rawVisibility[responseKey] ?? rawVisibility[questionId]);
+
+    rows.push({
+      id: `fallback_${proposalId || 'proposal'}_${index}_${dedupeKey}`,
+      proposal_id: proposalId || null,
+      question_id: questionId,
+      entered_by_party: 'a',
+      author_party: 'a',
+      subject_party,
+      is_about_counterparty: subject_party === 'b',
+      value_type: parsed.value_type,
+      value: parsed.value,
+      range_min: parsed.range_min,
+      range_max: parsed.range_max,
+      visibility,
+      created_date: null
+    });
+  });
+
+  return rows;
+}
+
 async function invokeSharedResolver(token, options = {}) {
   const payload = {
     token,
@@ -415,6 +524,33 @@ export default function ProposalDetail() {
     enabled: ownerWorkspaceEnabled
   });
 
+  const { data: fallbackEvaluationItem = null } = useQuery({
+    queryKey: ['fallbackEvaluationItem', proposalId],
+    queryFn: async () => {
+      const itemBuckets = await Promise.all([
+        base44.entities.EvaluationItem.filter({ linked_proposal_id: proposalId }, '-created_date', 1),
+        base44.entities.EvaluationItem.filter({ linkedProposalId: proposalId }, '-created_date', 1),
+        base44.entities.EvaluationItem.filter({ 'data.linked_proposal_id': proposalId }, '-created_date', 1),
+        base44.entities.EvaluationItem.filter({ 'data.linkedProposalId': proposalId }, '-created_date', 1)
+      ]);
+      return itemBuckets.flat()?.[0] || null;
+    },
+    enabled: ownerWorkspaceEnabled
+  });
+
+  const fallbackResponsesEntity = useMemo(() => {
+    if (!ownerWorkspaceEnabled || responsesEntity.length > 0) return [];
+    if (!fallbackEvaluationItem) return [];
+
+    const data = fallbackEvaluationItem?.data && typeof fallbackEvaluationItem.data === 'object'
+      ? fallbackEvaluationItem.data
+      : {};
+    const stepState = fallbackEvaluationItem?.step_state_json || data?.step_state_json || null;
+    if (!stepState) return [];
+
+    return buildFallbackResponsesFromStepState(stepState, proposalId);
+  }, [ownerWorkspaceEnabled, responsesEntity, fallbackEvaluationItem, proposalId]);
+
   const { data: linkedDocumentComparison = null } = useQuery({
     queryKey: ['linkedDocumentComparison', proposalId, proposalEntity?.document_comparison_id || null],
     queryFn: async () => {
@@ -442,7 +578,7 @@ export default function ProposalDetail() {
     : proposalEntity;
   const responses = isRecipientView
     ? (sharedRecipientData?.recipientView?.responses || sharedRecipientData?.responsesView || [])
-    : responsesEntity;
+    : (responsesEntity.length > 0 ? responsesEntity : fallbackResponsesEntity);
   const loadingProposal = isRecipientView ? loadingRecipientData : loadingProposalEntity;
   const sharedPermissions = sharedRecipientData?.permissions || {};
   const partyAView = sharedRecipientData?.partyAView || { proposal: null, responses: [] };
@@ -665,7 +801,13 @@ export default function ProposalDetail() {
   };
 
   const isResponseHiddenForViewer = (response) => {
-    if (isRecipientView && isPartyAResponse(response)) return true;
+    const subjectParty = String(response?.subject_party || response?.subjectParty || '').toLowerCase();
+    const isCounterpartyClaim =
+      subjectParty === 'b' ||
+      subjectParty === 'party_b' ||
+      subjectParty === 'recipient' ||
+      response?.is_about_counterparty === true;
+    if (isRecipientView && isPartyAResponse(response) && !isCounterpartyClaim) return true;
     const visibilityValue = String(response?.visibility || '').toLowerCase();
     const visibility = visibilityValue === 'partial' ? 'hidden' : visibilityValue;
     if (visibility !== 'hidden') return false;
@@ -1299,6 +1441,13 @@ export default function ProposalDetail() {
     const canReevaluate = Boolean(sharedPermissions?.canReevaluate);
     const canSendBack = Boolean(sharedPermissions?.canSendBack);
     const reportJson = sharedRecipientData?.reportData?.report || null;
+    const recipientEditableProposalId =
+      proposal?.id ||
+      proposalId ||
+      sharedRecipientData?.proposalId ||
+      sharedRecipientData?.reportData?.proposalId ||
+      sharedRecipientData?.reportData?.proposal_id ||
+      null;
 
     return (
       <div className="min-h-screen bg-slate-50 py-8">
@@ -1308,11 +1457,23 @@ export default function ProposalDetail() {
               <ArrowLeft className="w-4 h-4 mr-2" />
               Back to Shared Report
             </Link>
-            {!user && (
-              <Button variant="outline" onClick={() => base44.auth.redirectToLogin(window.location.href)}>
-                Sign In to Re-evaluate
-              </Button>
-            )}
+            <div className="flex items-center gap-2">
+              {recipientEditableProposalId && (
+                <Button
+                  variant="outline"
+                  onClick={() => navigate(
+                    createPageUrl(`CreateProposal?draft=${recipientEditableProposalId}&step=4&role=recipient&sharedToken=${encodeURIComponent(sharedToken || '')}`)
+                  )}
+                >
+                  Edit Proposal
+                </Button>
+              )}
+              {!user && (
+                <Button variant="outline" onClick={() => base44.auth.redirectToLogin(window.location.href)}>
+                  Sign In to Re-evaluate
+                </Button>
+              )}
+            </div>
           </div>
 
           <Card className="border-0 shadow-sm">

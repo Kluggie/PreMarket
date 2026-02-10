@@ -262,7 +262,7 @@ export default function SharedReport() {
       });
     });
 
-    const partyBRows = toArray(responsesView)
+    const partyBRowsFromResponses = toArray(responsesView)
       .filter((response) => isPartyBResponse(response))
       .filter((response) => {
         const visibility = String(response?.visibility || '').toLowerCase();
@@ -280,6 +280,36 @@ export default function SharedReport() {
         };
       })
       .filter(Boolean);
+
+    const partyBRowsFromSchema = recipientEditableQuestions
+      .map((question, index) => {
+        const current = question?.currentResponse || {};
+        const visibility = String(current.visibility || 'full').toLowerCase();
+        if (visibility === 'hidden' || visibility === 'not_shared') return null;
+
+        const questionId = question?.questionId || '';
+        if (!questionId) return null;
+
+        const rangeMin = current?.rangeMin;
+        const rangeMax = current?.rangeMax;
+        const hasRange = rangeMin !== null && rangeMin !== undefined && rangeMax !== null && rangeMax !== undefined;
+        const rawValue = current?.value;
+        const textValue = rawValue === null || rawValue === undefined ? '' : String(rawValue).trim();
+
+        if (!hasRange && textValue.length === 0) return null;
+
+        return {
+          key: current?.id || `party_b_schema_${questionId}_${index}`,
+          label: question?.label || labelByQuestionId[questionId] || questionId.replace(/_/g, ' '),
+          value: hasRange ? `${rangeMin} - ${rangeMax}` : textValue,
+          party: 'Party B'
+        };
+      })
+      .filter(Boolean);
+
+    const partyBRows = partyBRowsFromResponses.length > 0
+      ? partyBRowsFromResponses
+      : partyBRowsFromSchema;
 
     return [...rows, ...partyBRows];
   }, [responsesView, partyAView, recipientEditableQuestions]);
@@ -792,6 +822,18 @@ export default function SharedReport() {
               >
                 Open Shared Workspace
               </Button>
+              {proposalId && (
+                <Button
+                  variant="outline"
+                  onClick={() => navigate(
+                    createPageUrl(
+                      `CreateProposal?draft=${proposalId}&step=4&role=recipient&sharedToken=${encodeURIComponent(token)}`
+                    )
+                  )}
+                >
+                  Edit Proposal
+                </Button>
+              )}
               {!user && (
                 <Button variant="outline" onClick={handleSignIn}>
                   Sign In for Editing

@@ -221,7 +221,13 @@ function buildPartyAResponseView(response: any, questionLookup: Record<string, a
 
 function buildRecipientResponseView(response: any) {
   const partyAResponse = isPartyAResponse(response);
-  const hidden = partyAResponse || String(response?.visibility || '').toLowerCase() === 'hidden';
+  const subjectParty = String(response?.subject_party || response?.subjectParty || '').toLowerCase();
+  const isCounterpartyClaim =
+    subjectParty === 'b' ||
+    subjectParty === 'party_b' ||
+    subjectParty === 'recipient' ||
+    response?.is_about_counterparty === true;
+  const hidden = (partyAResponse && !isCounterpartyClaim) || String(response?.visibility || '').toLowerCase() === 'hidden';
 
   return {
     id: response?.id || null,
@@ -235,6 +241,200 @@ function buildRecipientResponseView(response: any) {
     range_max: hidden ? null : (response?.range_max ?? null),
     created_date: response?.created_date || null
   };
+}
+
+function normalizeVisibility(value: unknown): 'full' | 'hidden' {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (['hidden', 'not_shared', 'private', 'confidential', 'partial'].includes(normalized)) {
+    return 'hidden';
+  }
+  return 'full';
+}
+
+function inferSubjectParty(question: any, fromKey: string | null): 'a' | 'b' | 'shared' {
+  const normalizedFromKey = String(fromKey || '').trim().toLowerCase();
+  if (normalizedFromKey === 'b' || normalizedFromKey === 'party_b' || normalizedFromKey === 'recipient') return 'b';
+  if (normalizedFromKey === 'shared') return 'shared';
+  if (normalizedFromKey === 'a' || normalizedFromKey === 'party_a' || normalizedFromKey === 'proposer') return 'a';
+
+  const party = String(
+    question?.party ||
+    question?.party_key ||
+    question?.subject_party ||
+    question?.for_party ||
+    ''
+  ).toLowerCase();
+  if (party === 'b' || party === 'party_b' || party === 'recipient' || party === 'counterparty') return 'b';
+  if (party === 'shared') return 'shared';
+
+  const roleType = String(question?.role_type || '').toLowerCase();
+  if (roleType === 'shared_fact') return 'shared';
+  if (roleType === 'counterparty_observation') return 'b';
+
+  if (question?.is_about_counterparty === true) return 'b';
+  if (String(question?.applies_to_role || '').toLowerCase() === 'recipient') return 'b';
+  return 'a';
+}
+
+function toFallbackResponseValue(rawValue: unknown): { valueType: 'text' | 'range'; value: string | null; rangeMin: number | null; rangeMax: number | null } {
+  if (rawValue && typeof rawValue === 'object' && !Array.isArray(rawValue)) {
+    const type = String((rawValue as Record<string, unknown>).type || '').toLowerCase();
+    if (type === 'range') {
+      const minRaw = Number((rawValue as Record<string, unknown>).min);
+      const maxRaw = Number((rawValue as Record<string, unknown>).max);
+      return {
+        valueType: 'range',
+        value: null,
+        rangeMin: Number.isFinite(minRaw) ? minRaw : null,
+        rangeMax: Number.isFinite(maxRaw) ? maxRaw : null
+      };
+    }
+    return {
+      valueType: 'text',
+      value: JSON.stringify(rawValue),
+      rangeMin: null,
+      rangeMax: null
+    };
+  }
+
+  if (Array.isArray(rawValue)) {
+    return {
+      valueType: 'text',
+      value: JSON.stringify(rawValue),
+      rangeMin: null,
+      rangeMax: null
+    };
+  }
+
+  if (rawValue === null || rawValue === undefined) {
+    return {
+      valueType: 'text',
+      value: '',
+      rangeMin: null,
+      rangeMax: null
+    };
+  }
+
+  return {
+    valueType: 'text',
+    value: String(rawValue),
+    rangeMin: null,
+    rangeMax: null
+  };
+}
+
+function buildFallbackResponsesFromStepState(stepState: any, questionLookup: Record<string, any>, proposalId: string) {
+  const rawResponses = stepState?.responses;
+  const rawVisibility = stepState?.visibilitySettings && typeof stepState.visibilitySettings === 'object'
+    ? stepState.visibilitySettings
+    : {};
+
+  if (!rawResponses || typeof rawResponses !== 'object') return [];
+
+  const rows: any[] = [];
+  const seen = new Set<string>();
+
+  for (const [responseKey, rawValue] of Object.entries(rawResponses as Record<string, unknown>)) {
+    if (responseKey.startsWith('_')) continue;
+
+    const [questionId, subjectFromKey] = responseKey.includes('__')
+      ? responseKey.split('__')
+      : [responseKey, null];
+
+    if (!questionId) continue;
+    const question = questionLookup[questionId] || null;
+    const subjectParty = inferSubjectParty(question, subjectFromKey);
+    const dedupeKey = `${questionId}__${subjectParty}`;
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+
+    const visibility = subjectParty === 'b'
+      ? 'full'
+      : normalizeVisibility(
+          (rawVisibility as Record<string, unknown>)[responseKey] ??
+          (rawVisibility as Record<string, unknown>)[questionId]
+        );
+
+    const parsed = toFallbackResponseValue(rawValue);
+
+    rows.push({
+      id: `fallback_${proposalId}_${dedupeKey}`,
+      proposal_id: proposalId,
+      question_id: questionId,
+      entered_by_party: subjectParty === 'b' ? 'a' : 'a',
+      author_party: subjectParty === 'b' ? 'a' : 'a',
+      subject_party: subjectParty,
+      is_about_counterparty: subjectParty === 'b',
+      value_type: parsed.valueType,
+      value: parsed.value,
+      range_min: parsed.rangeMin,
+      range_max: parsed.rangeMax,
+      visibility,
+      created_date: null
+    });
+  }
+
+  return rows;
+}
+
+function normalizeEnteredByParty(value: unknown): 'a' | 'b' {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'b' || normalized === 'party_b' || normalized === 'recipient' || normalized === 'counterparty') {
+    return 'b';
+  }
+  return 'a';
+}
+
+function buildFallbackResponsesFromInputSnapshot(inputSnapshot: any, questionLookup: Record<string, any>, proposalId: string) {
+  const rawResponses = inputSnapshot?.responses;
+  if (!Array.isArray(rawResponses)) return [];
+
+  const rows: any[] = [];
+  const seen = new Set<string>();
+
+  rawResponses.forEach((rawItem: any, index: number) => {
+    const questionId = asString(rawItem?.question_id || rawItem?.questionId);
+    if (!questionId) return;
+
+    const question = questionLookup[questionId] || null;
+    const enteredByParty = normalizeEnteredByParty(rawItem?.party || rawItem?.entered_by_party || rawItem?.enteredByParty);
+    const subjectParty = inferSubjectParty(question, null);
+    const dedupeKey = `${questionId}__${enteredByParty}__${subjectParty}`;
+    if (seen.has(dedupeKey)) return;
+    seen.add(dedupeKey);
+
+    const valueType = String(rawItem?.value_type || rawItem?.valueType || '').toLowerCase();
+    const parsed = valueType === 'range'
+      ? {
+          valueType: 'range' as const,
+          value: null,
+          rangeMin: Number.isFinite(Number(rawItem?.range_min ?? rawItem?.rangeMin))
+            ? Number(rawItem?.range_min ?? rawItem?.rangeMin)
+            : null,
+          rangeMax: Number.isFinite(Number(rawItem?.range_max ?? rawItem?.rangeMax))
+            ? Number(rawItem?.range_max ?? rawItem?.rangeMax)
+            : null
+        }
+      : toFallbackResponseValue(rawItem?.value);
+
+    rows.push({
+      id: `snapshot_${proposalId}_${index}_${questionId}`,
+      proposal_id: proposalId,
+      question_id: questionId,
+      entered_by_party: enteredByParty,
+      author_party: enteredByParty,
+      subject_party: subjectParty,
+      is_about_counterparty: subjectParty === 'b',
+      value_type: parsed.valueType,
+      value: parsed.value,
+      range_min: parsed.rangeMin,
+      range_max: parsed.rangeMax,
+      visibility: normalizeVisibility(rawItem?.visibility),
+      created_date: null
+    });
+  });
+
+  return rows;
 }
 
 function normalizeComparisonLevel(level: unknown): 'hidden' | null {
@@ -383,11 +583,13 @@ function buildPartyBEditableSchema(template: any, proposalResponses: any[]) {
 
 function pickLatestReportCandidate(records: any[], sourceName: string) {
   const candidate = records?.[0] || null;
+  const data = objectData(candidate);
   return {
     source: sourceName,
     payload: extractReportPayload(candidate),
     generatedAt: extractGeneratedAt(candidate),
-    id: asString(candidate?.id)
+    id: asString(candidate?.id),
+    inputSnapshot: candidate?.input_snapshot_json || data?.input_snapshot_json || null
   };
 }
 
@@ -552,6 +754,16 @@ Deno.serve(async (req) => {
       documentComparison = byProposalInData?.[0] || null;
     }
 
+    if (!evaluationItem) {
+      const itemBuckets = await Promise.all([
+        base44.asServiceRole.entities.EvaluationItem.filter({ linked_proposal_id: resolvedProposalId }, '-created_date', 1),
+        base44.asServiceRole.entities.EvaluationItem.filter({ linkedProposalId: resolvedProposalId }, '-created_date', 1),
+        base44.asServiceRole.entities.EvaluationItem.filter({ 'data.linked_proposal_id': resolvedProposalId }, '-created_date', 1),
+        base44.asServiceRole.entities.EvaluationItem.filter({ 'data.linkedProposalId': resolvedProposalId }, '-created_date', 1)
+      ]);
+      evaluationItem = itemBuckets.flat()?.[0] || null;
+    }
+
     const responseBuckets = await Promise.all([
       base44.asServiceRole.entities.ProposalResponse.filter(
         { proposal_id: resolvedProposalId },
@@ -570,16 +782,24 @@ Deno.serve(async (req) => {
         '-created_date'
       )
     ]);
-    const proposalResponses = dedupeById(responseBuckets.flat());
+    let proposalResponses = dedupeById(responseBuckets.flat());
 
     const templates = await base44.asServiceRole.entities.Template.list();
     const template = templates.find((item: any) => item.id === proposal.template_id) || null;
     const questionLookup = toQuestionLookup(template);
+    if (proposalResponses.length === 0 && evaluationItem) {
+      const evalData = objectData(evaluationItem);
+      const fallbackStepState = evaluationItem.step_state_json || evalData.step_state_json || null;
+      if (fallbackStepState) {
+        proposalResponses = buildFallbackResponsesFromStepState(fallbackStepState, questionLookup, resolvedProposalId);
+      }
+    }
 
     let reportPayload: any = null;
     let reportGeneratedAt: string | null = null;
     let reportId: string | null = null;
     let reportSource = 'none';
+    let reportInputSnapshot: any = null;
 
     const sharedReports = await base44.asServiceRole.entities.EvaluationReportShared.filter(
       { proposal_id: resolvedProposalId },
@@ -591,6 +811,7 @@ Deno.serve(async (req) => {
     reportGeneratedAt = sharedCandidate.generatedAt;
     reportId = sharedCandidate.id;
     reportSource = sharedCandidate.payload ? sharedCandidate.source : reportSource;
+    reportInputSnapshot = sharedCandidate.inputSnapshot || reportInputSnapshot;
 
     if (!reportPayload) {
       const reportsByProposal = await base44.asServiceRole.entities.EvaluationReport.filter(
@@ -603,6 +824,7 @@ Deno.serve(async (req) => {
       reportGeneratedAt = candidate.generatedAt || reportGeneratedAt;
       reportId = candidate.id || reportId;
       reportSource = candidate.payload ? candidate.source : reportSource;
+      reportInputSnapshot = candidate.inputSnapshot || reportInputSnapshot;
     }
 
     if (!reportPayload) {
@@ -616,6 +838,7 @@ Deno.serve(async (req) => {
       reportGeneratedAt = candidate.generatedAt || reportGeneratedAt;
       reportId = candidate.id || reportId;
       reportSource = candidate.payload ? candidate.source : reportSource;
+      reportInputSnapshot = candidate.inputSnapshot || reportInputSnapshot;
     }
 
     if (!reportPayload && documentComparison) {
@@ -623,6 +846,14 @@ Deno.serve(async (req) => {
       reportGeneratedAt = extractGeneratedAt(documentComparison) || reportGeneratedAt;
       reportId = asString(documentComparison?.id) || reportId;
       reportSource = reportPayload ? 'DocumentComparison' : reportSource;
+    }
+
+    if (proposalResponses.length === 0 && reportInputSnapshot) {
+      proposalResponses = buildFallbackResponsesFromInputSnapshot(
+        reportInputSnapshot,
+        questionLookup,
+        resolvedProposalId
+      );
     }
 
     const proposalView = buildRecipientProposalView(proposal);
