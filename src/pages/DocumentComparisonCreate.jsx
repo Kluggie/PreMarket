@@ -20,6 +20,29 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 
+const normalizeHighlightLevel = (level) => {
+  const normalized = String(level || '').trim().toLowerCase();
+  if (normalized === 'confidential' || normalized === 'hidden') return 'confidential';
+  if (normalized === 'partial') return 'confidential';
+  return null;
+};
+
+const normalizeHighlights = (spans) => {
+  if (!Array.isArray(spans)) return [];
+  return spans
+    .map((span) => {
+      const start = Number(span?.start);
+      const end = Number(span?.end);
+      const level = normalizeHighlightLevel(span?.level);
+      if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start || !level) {
+        return null;
+      }
+      return { start, end, level };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.start - b.start);
+};
+
 export default function DocumentComparisonCreate() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -140,8 +163,8 @@ export default function DocumentComparisonCreate() {
       setPartyBLabel(comparison.party_b_label || 'Document B');
       setDocAText(comparison.doc_a_plaintext || '');
       setDocBText(comparison.doc_b_plaintext || '');
-      setDocASpans(comparison.doc_a_spans_json || []);
-      setDocBSpans(comparison.doc_b_spans_json || []);
+      setDocASpans(normalizeHighlights(comparison.doc_a_spans_json || []));
+      setDocBSpans(normalizeHighlights(comparison.doc_b_spans_json || []));
       setDocASource(comparison.doc_a_source || 'typed');
       setDocBSource(comparison.doc_b_source || 'typed');
       setDocAFiles(comparison.doc_a_files || []);
@@ -550,10 +573,13 @@ Verification Status: ${org.verification_status || 'N/A'}`;
       return;
     }
     
+    const normalizedLevel = normalizeHighlightLevel(level);
+    if (!normalizedLevel) return;
+
     const newSpan = {
       start: selection.start,
       end: selection.end,
-      level
+      level: normalizedLevel
     };
     
     if (doc === 'a') {
@@ -582,7 +608,7 @@ Verification Status: ${org.verification_status || 'N/A'}`;
 
   const importHighlights = (doc, jsonStr) => {
     try {
-      const spans = JSON.parse(jsonStr);
+      const spans = normalizeHighlights(JSON.parse(jsonStr));
       if (!Array.isArray(spans)) throw new Error('Invalid format - must be array');
       
       if (doc === 'a') {
@@ -631,8 +657,6 @@ Verification Status: ${org.verification_status || 'N/A'}`;
             className={
               part.highlight === 'confidential' 
                 ? 'bg-red-200 text-red-900 px-0.5 rounded'
-                : part.highlight === 'partial'
-                ? 'bg-yellow-200 text-yellow-900 px-0.5 rounded'
                 : ''
             }
           >
@@ -1192,8 +1216,8 @@ Verification Status: ${org.verification_status || 'N/A'}`;
               <Alert className="bg-blue-50 border-blue-200">
                 <Highlighter className="w-4 h-4 text-blue-600" />
                 <AlertDescription className="text-blue-800">
-                  <strong>How to highlight:</strong> Select text in the preview below, then click "Mark Confidential" (red) or "Mark Partial" (yellow).
-                  Confidential content will be excluded from the AI report. Partial content will only be summarized at a high level.
+                  <strong>How to highlight:</strong> Select text in the preview below, then click "Mark Hidden" (red).
+                  Highlighted content is hidden; all non-highlighted content remains visible.
                 </AlertDescription>
               </Alert>
 
@@ -1212,15 +1236,7 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                         onClick={() => addHighlight('a', 'confidential')}
                       >
                         <span className="w-3 h-3 bg-red-500 rounded mr-2"></span>
-                        Mark Confidential
-                      </Button>
-                      <Button 
-                        variant="outline" 
-                        size="sm"
-                        onClick={() => addHighlight('a', 'partial')}
-                      >
-                        <span className="w-3 h-3 bg-yellow-500 rounded mr-2"></span>
-                        Mark Partial
+                        Mark Hidden
                       </Button>
                       <Button 
                         variant="outline" 
@@ -1245,10 +1261,7 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                         <Label className="text-sm font-semibold">Applied Highlights ({docASpans.length})</Label>
                         <div className="flex gap-1">
                           <Badge className="bg-red-100 text-red-700 text-xs">
-                            {docASpans.filter(s => s.level === 'confidential').length} confidential
-                          </Badge>
-                          <Badge className="bg-yellow-100 text-yellow-700 text-xs">
-                            {docASpans.filter(s => s.level === 'partial').length} partial
+                            {docASpans.filter(s => s.level === 'confidential').length} hidden
                           </Badge>
                         </div>
                       </div>
@@ -1256,7 +1269,7 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                         {docASpans.map((span, idx) => (
                           <div key={idx} className="flex items-center justify-between text-sm bg-slate-50 p-2 rounded">
                             <div className="flex items-center gap-2 flex-1 min-w-0">
-                              <span className={`w-3 h-3 rounded flex-shrink-0 ${span.level === 'confidential' ? 'bg-red-500' : 'bg-yellow-500'}`}></span>
+                              <span className="w-3 h-3 rounded flex-shrink-0 bg-red-500"></span>
                               <span className="text-slate-600 truncate">
                                 {docAText.substring(span.start, Math.min(span.end, span.start + 50))}
                                 {span.end - span.start > 50 ? '...' : ''}
@@ -1309,15 +1322,7 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                         onClick={() => addHighlight('b', 'confidential')}
                       >
                         <span className="w-3 h-3 bg-red-500 rounded mr-2"></span>
-                        Mark Confidential
-                      </Button>
-                      <Button 
-                        variant="outline" 
-                        size="sm"
-                        onClick={() => addHighlight('b', 'partial')}
-                      >
-                        <span className="w-3 h-3 bg-yellow-500 rounded mr-2"></span>
-                        Mark Partial
+                        Mark Hidden
                       </Button>
                       <Button 
                         variant="outline" 
@@ -1342,10 +1347,7 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                         <Label className="text-sm font-semibold">Applied Highlights ({docBSpans.length})</Label>
                         <div className="flex gap-1">
                           <Badge className="bg-red-100 text-red-700 text-xs">
-                            {docBSpans.filter(s => s.level === 'confidential').length} confidential
-                          </Badge>
-                          <Badge className="bg-yellow-100 text-yellow-700 text-xs">
-                            {docBSpans.filter(s => s.level === 'partial').length} partial
+                            {docBSpans.filter(s => s.level === 'confidential').length} hidden
                           </Badge>
                         </div>
                       </div>
@@ -1353,7 +1355,7 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                         {docBSpans.map((span, idx) => (
                           <div key={idx} className="flex items-center justify-between text-sm bg-slate-50 p-2 rounded">
                             <div className="flex items-center gap-2 flex-1 min-w-0">
-                              <span className={`w-3 h-3 rounded flex-shrink-0 ${span.level === 'confidential' ? 'bg-red-500' : 'bg-yellow-500'}`}></span>
+                              <span className="w-3 h-3 rounded flex-shrink-0 bg-red-500"></span>
                               <span className="text-slate-600 truncate">
                                 {docBText.substring(span.start, Math.min(span.end, span.start + 50))}
                                 {span.end - span.start > 50 ? '...' : ''}
@@ -1445,30 +1447,20 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="p-4 border border-red-200 bg-red-50 rounded-xl">
-                      <div className="text-center">
-                        <p className="text-3xl font-bold text-red-700">
-                          {docASpans.filter(s => s.level === 'confidential').length + docBSpans.filter(s => s.level === 'confidential').length}
-                        </p>
-                        <p className="text-sm text-red-600 mt-1">Confidential Spans</p>
-                      </div>
-                    </div>
-                    <div className="p-4 border border-yellow-200 bg-yellow-50 rounded-xl">
-                      <div className="text-center">
-                        <p className="text-3xl font-bold text-yellow-700">
-                          {docASpans.filter(s => s.level === 'partial').length + docBSpans.filter(s => s.level === 'partial').length}
-                        </p>
-                        <p className="text-sm text-yellow-600 mt-1">Partial Spans</p>
-                      </div>
+                  <div className="p-4 border border-red-200 bg-red-50 rounded-xl">
+                    <div className="text-center">
+                      <p className="text-3xl font-bold text-red-700">
+                        {docASpans.filter(s => s.level === 'confidential').length + docBSpans.filter(s => s.level === 'confidential').length}
+                      </p>
+                      <p className="text-sm text-red-600 mt-1">Hidden Spans</p>
                     </div>
                   </div>
 
                   <Alert>
                     <AlertTriangle className="w-4 h-4" />
                     <AlertDescription>
-                      <strong>Confidentiality Guarantee:</strong> Confidential content will never be quoted in the AI report. 
-                      Partial content will only be referenced at a high level. The AI reads them for analysis but provides redacted insights only.
+                      <strong>Confidentiality Guarantee:</strong> Hidden content will never be quoted in the AI report.
+                      The AI reads it for analysis but returns redacted insights only.
                     </AlertDescription>
                   </Alert>
 
@@ -1500,6 +1492,7 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                             const proposals = await base44.entities.Proposal.filter({ 
                               document_comparison_id: id 
                             });
+                            const linkedProposalId = proposals?.[0]?.id || null;
                             if (proposals.length > 0) {
                               await base44.entities.Proposal.update(proposals[0].id, {
                                 status: 'submitted',
@@ -1523,7 +1516,11 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                             }
 
                             queryClient.invalidateQueries(['proposals']);
-                            navigate(createPageUrl(`DocumentComparisonDetail?id=${id}`));
+                            if (linkedProposalId) {
+                              navigate(createPageUrl(`ProposalDetail?id=${linkedProposalId}`));
+                            } else {
+                              navigate(createPageUrl(`DocumentComparisonDetail?id=${id}`));
+                            }
                           } catch (error) {
                             const errorData = error.response?.data || {};
                             const errorMsg = errorData.message || error.message;
