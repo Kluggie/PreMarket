@@ -196,6 +196,7 @@ export default function ProposalDetail() {
   const sharedToken = params.get('sharedToken');
   const sharedRole = params.get('role');
   const isRecipientView = Boolean(sharedToken && sharedRole === 'recipient');
+  const isRecipientRoutedRequest = Boolean(sharedToken || sharedRole === 'recipient');
 
   useEffect(() => {
     let active = true;
@@ -275,9 +276,9 @@ export default function ProposalDetail() {
       const proposals = await base44.entities.Proposal.filter({ id: proposalId });
       return proposals[0];
     },
-    enabled: !!proposalId && !isRecipientView
+    enabled: !!proposalId && !isRecipientRoutedRequest
   });
-  const ownerWorkspaceEnabled = Boolean(!isRecipientView && proposalId && isProposalOwner(proposalEntity, user));
+  const ownerWorkspaceEnabled = Boolean(!isRecipientRoutedRequest && proposalId && isProposalOwner(proposalEntity, user));
 
   const { data: responsesEntity = [] } = useQuery({
     queryKey: ['proposalResponses', proposalId],
@@ -1016,6 +1017,44 @@ export default function ProposalDetail() {
     toast.error(shareLink.message || NO_SHARED_WORKSPACE_LINK_MESSAGE);
     setOpeningSharedWorkspace(false);
   };
+
+  const handleOpenSharedWorkspaceFromRecipientRoute = async () => {
+    if (sharedToken) {
+      navigate(createPageUrl(`SharedReport?token=${encodeURIComponent(sharedToken)}`));
+      return;
+    }
+    await handleOpenSharedWorkspace();
+  };
+
+  if (isRecipientRoutedRequest) {
+    return (
+      <div className="min-h-screen bg-slate-50 py-8">
+        <div className="max-w-3xl mx-auto px-4">
+          <Card className="border-0 shadow-sm">
+            <CardContent className="py-10 text-center">
+              <XCircle className="w-10 h-10 text-amber-500 mx-auto mb-4" />
+              <h1 className="text-lg font-semibold text-slate-900 mb-2">Recipient access is handled in Shared Workspace</h1>
+              <p className="text-slate-600 mb-6">
+                ProposalDetail is owner-only. Open the shared recipient workspace to continue.
+              </p>
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <Button
+                  onClick={handleOpenSharedWorkspaceFromRecipientRoute}
+                  disabled={openingSharedWorkspace}
+                  className="bg-blue-600 hover:bg-blue-700"
+                >
+                  {openingSharedWorkspace ? 'Opening...' : 'Open Shared Workspace'}
+                </Button>
+                <Button variant="outline" onClick={() => navigate(createPageUrl('Proposals'))}>
+                  Back to Proposals
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
 
   if (isRecipientView && sharedRecipientError) {
     return (
