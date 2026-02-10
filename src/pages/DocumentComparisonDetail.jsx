@@ -19,6 +19,72 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 
+const normalizeHighlightLevel = (level) => {
+  const normalized = String(level || '').trim().toLowerCase();
+  if (normalized === 'confidential' || normalized === 'hidden') return 'confidential';
+  if (normalized === 'partial') return 'confidential';
+  return null;
+};
+
+const normalizeHighlights = (spans, textLength) => {
+  if (!Array.isArray(spans)) return [];
+  return spans
+    .map((span) => {
+      const rawStart = Number(span?.start);
+      const rawEnd = Number(span?.end);
+      const level = normalizeHighlightLevel(span?.level);
+      if (!Number.isFinite(rawStart) || !Number.isFinite(rawEnd) || !level) return null;
+
+      const start = Math.max(0, Math.min(rawStart, textLength));
+      const end = Math.max(0, Math.min(rawEnd, textLength));
+      if (end <= start) return null;
+
+      return { start, end, level };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.start - b.start);
+};
+
+const renderHighlightedReadOnlyText = (text, spans) => {
+  if (!text) {
+    return <p className="text-sm text-slate-500 italic">No text available.</p>;
+  }
+
+  const normalizedSpans = normalizeHighlights(spans, text.length);
+  if (normalizedSpans.length === 0) {
+    return <div className="whitespace-pre-wrap font-mono text-sm text-slate-800">{text}</div>;
+  }
+
+  const parts = [];
+  let lastIndex = 0;
+
+  normalizedSpans.forEach((span) => {
+    if (span.start > lastIndex) {
+      parts.push({ text: text.slice(lastIndex, span.start), highlight: null });
+    }
+
+    parts.push({ text: text.slice(span.start, span.end), highlight: span.level });
+    lastIndex = span.end;
+  });
+
+  if (lastIndex < text.length) {
+    parts.push({ text: text.slice(lastIndex), highlight: null });
+  }
+
+  return (
+    <div className="whitespace-pre-wrap font-mono text-sm text-slate-800">
+      {parts.map((part, idx) => (
+        <span
+          key={`doc-part-${idx}`}
+          className={part.highlight === 'confidential' ? 'bg-red-200 text-red-900 px-0.5 rounded' : ''}
+        >
+          {part.text}
+        </span>
+      ))}
+    </div>
+  );
+};
+
 export default function DocumentComparisonDetail() {
   const [user, setUser] = useState(null);
   const queryClient = useQueryClient();
@@ -369,47 +435,43 @@ export default function DocumentComparisonDetail() {
                     <CardTitle>Documents</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="p-4 bg-blue-50 rounded-xl">
-                        <p className="text-sm text-blue-600 font-medium mb-2">{comparison.party_a_label}</p>
-                        <p className="text-2xl font-bold text-slate-900">{comparison.doc_a_plaintext?.length || 0}</p>
-                        <p className="text-xs text-slate-500">characters</p>
-                        <p className="text-xs text-slate-500 mt-1">Source: {comparison.doc_a_source}</p>
-                        {(comparison.doc_a_spans_json?.length || 0) > 0 && (
-                          <div className="mt-2 flex gap-1 flex-wrap">
+                    <p className="text-xs text-slate-500 mb-4">
+                      Read-only preview. Hidden spans are highlighted in red.
+                    </p>
+                    <div className="space-y-4">
+                      <div className="p-4 bg-blue-50 rounded-xl border border-blue-100">
+                        <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                          <p className="text-sm text-blue-700 font-semibold">{comparison.party_a_label}</p>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge variant="outline">Source: {comparison.doc_a_source}</Badge>
                             <Badge className="bg-red-100 text-red-700 text-xs">
-                              {comparison.doc_a_spans_json.filter(s => s.level === 'confidential').length} confidential
-                            </Badge>
-                            <Badge className="bg-yellow-100 text-yellow-700 text-xs">
-                              {comparison.doc_a_spans_json.filter(s => s.level === 'partial').length} partial
+                              {normalizeHighlights(comparison.doc_a_spans_json, (comparison.doc_a_plaintext || '').length).length} hidden
                             </Badge>
                           </div>
-                        )}
+                        </div>
+                        <div className="p-3 bg-white border border-slate-200 rounded-lg max-h-72 overflow-auto">
+                          {renderHighlightedReadOnlyText(comparison.doc_a_plaintext || '', comparison.doc_a_spans_json || [])}
+                        </div>
                         {comparison.doc_a_files?.length > 0 && (
-                          <div className="mt-2">
-                            <p className="text-xs text-slate-600 font-medium">{comparison.doc_a_files.length} file(s)</p>
-                          </div>
+                          <p className="text-xs text-slate-500 mt-2">{comparison.doc_a_files.length} file(s)</p>
                         )}
                       </div>
-                      <div className="p-4 bg-indigo-50 rounded-xl">
-                        <p className="text-sm text-indigo-600 font-medium mb-2">{comparison.party_b_label}</p>
-                        <p className="text-2xl font-bold text-slate-900">{comparison.doc_b_plaintext?.length || 0}</p>
-                        <p className="text-xs text-slate-500">characters</p>
-                        <p className="text-xs text-slate-500 mt-1">Source: {comparison.doc_b_source}</p>
-                        {(comparison.doc_b_spans_json?.length || 0) > 0 && (
-                          <div className="mt-2 flex gap-1 flex-wrap">
+
+                      <div className="p-4 bg-indigo-50 rounded-xl border border-indigo-100">
+                        <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                          <p className="text-sm text-indigo-700 font-semibold">{comparison.party_b_label}</p>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge variant="outline">Source: {comparison.doc_b_source}</Badge>
                             <Badge className="bg-red-100 text-red-700 text-xs">
-                              {comparison.doc_b_spans_json.filter(s => s.level === 'confidential').length} confidential
-                            </Badge>
-                            <Badge className="bg-yellow-100 text-yellow-700 text-xs">
-                              {comparison.doc_b_spans_json.filter(s => s.level === 'partial').length} partial
+                              {normalizeHighlights(comparison.doc_b_spans_json, (comparison.doc_b_plaintext || '').length).length} hidden
                             </Badge>
                           </div>
-                        )}
+                        </div>
+                        <div className="p-3 bg-white border border-slate-200 rounded-lg max-h-72 overflow-auto">
+                          {renderHighlightedReadOnlyText(comparison.doc_b_plaintext || '', comparison.doc_b_spans_json || [])}
+                        </div>
                         {comparison.doc_b_files?.length > 0 && (
-                          <div className="mt-2">
-                            <p className="text-xs text-slate-600 font-medium">{comparison.doc_b_files.length} file(s)</p>
-                          </div>
+                          <p className="text-xs text-slate-500 mt-2">{comparison.doc_b_files.length} file(s)</p>
                         )}
                       </div>
                     </div>
@@ -694,26 +756,20 @@ export default function DocumentComparisonDetail() {
                         <div>
                           <p className="text-slate-600">{comparison.party_a_label}</p>
                           <p className="font-medium text-red-700">
-                            {report.redaction_notes.confidential_spans_a_count} confidential
-                          </p>
-                          <p className="font-medium text-yellow-700">
-                            {report.redaction_notes.partial_spans_a_count} partial
+                            {(report.redaction_notes.confidential_spans_a_count || 0) + (report.redaction_notes.partial_spans_a_count || 0)} hidden
                           </p>
                         </div>
                         <div>
                           <p className="text-slate-600">{comparison.party_b_label}</p>
                           <p className="font-medium text-red-700">
-                            {report.redaction_notes.confidential_spans_b_count} confidential
-                          </p>
-                          <p className="font-medium text-yellow-700">
-                            {report.redaction_notes.partial_spans_b_count} partial
+                            {(report.redaction_notes.confidential_spans_b_count || 0) + (report.redaction_notes.partial_spans_b_count || 0)} hidden
                           </p>
                         </div>
                       </div>
                       <Alert className="mt-3">
                         <Shield className="w-4 h-4" />
                         <AlertDescription className="text-xs">
-                          This report does not quote or reveal any confidential or partial content
+                          This report does not quote or reveal any hidden content
                         </AlertDescription>
                       </Alert>
                     </CardContent>
