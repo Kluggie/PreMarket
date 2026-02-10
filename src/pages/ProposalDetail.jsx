@@ -59,6 +59,70 @@ const SHARED_ERROR_MESSAGES = {
 const NO_SHARED_WORKSPACE_LINK_MESSAGE =
   'No shared workspace link found. Ask the sender to share again.';
 
+function normalizeComparisonSpanLevel(level) {
+  const normalized = String(level || '').trim().toLowerCase();
+  if (normalized === 'confidential' || normalized === 'hidden') return 'confidential';
+  if (normalized === 'partial') return 'confidential';
+  return null;
+}
+
+function normalizeComparisonSpans(spans, textLength) {
+  if (!Array.isArray(spans)) return [];
+  return spans
+    .map((span) => {
+      const rawStart = Number(span?.start);
+      const rawEnd = Number(span?.end);
+      const level = normalizeComparisonSpanLevel(span?.level);
+      if (!Number.isFinite(rawStart) || !Number.isFinite(rawEnd) || !level) return null;
+
+      const start = Math.max(0, Math.min(rawStart, textLength));
+      const end = Math.max(0, Math.min(rawEnd, textLength));
+      if (end <= start) return null;
+      return { start, end, level };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.start - b.start);
+}
+
+function renderReadOnlyComparisonText(text, spans) {
+  if (!text) {
+    return <p className="text-sm text-slate-500 italic">No text available.</p>;
+  }
+
+  const normalizedSpans = normalizeComparisonSpans(spans, text.length);
+  if (normalizedSpans.length === 0) {
+    return <div className="whitespace-pre-wrap font-mono text-sm text-slate-800">{text}</div>;
+  }
+
+  const parts = [];
+  let lastIndex = 0;
+
+  normalizedSpans.forEach((span) => {
+    if (span.start > lastIndex) {
+      parts.push({ text: text.slice(lastIndex, span.start), highlight: null });
+    }
+    parts.push({ text: text.slice(span.start, span.end), highlight: span.level });
+    lastIndex = span.end;
+  });
+
+  if (lastIndex < text.length) {
+    parts.push({ text: text.slice(lastIndex), highlight: null });
+  }
+
+  return (
+    <div className="whitespace-pre-wrap font-mono text-sm text-slate-800">
+      {parts.map((part, idx) => (
+        <span
+          key={`comparison-part-${idx}`}
+          className={part.highlight === 'confidential' ? 'bg-red-200 text-red-900 px-0.5 rounded' : ''}
+        >
+          {part.text}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function normalizeEmail(value) {
   if (typeof value !== 'string') return '';
   return value.trim().toLowerCase();
@@ -327,6 +391,28 @@ export default function ProposalDetail() {
     enabled: ownerWorkspaceEnabled
   });
 
+  const { data: linkedDocumentComparison = null } = useQuery({
+    queryKey: ['linkedDocumentComparison', proposalId, proposalEntity?.document_comparison_id || null],
+    queryFn: async () => {
+      if (!proposalEntity) return null;
+      if (proposalEntity?.proposal_type !== 'document_comparison' && !proposalEntity?.document_comparison_id) {
+        return null;
+      }
+
+      if (proposalEntity?.document_comparison_id) {
+        const byId = await base44.entities.DocumentComparison.filter({ id: proposalEntity.document_comparison_id }, '-created_date', 1);
+        if (byId?.[0]) return byId[0];
+      }
+
+      const byProposal = await base44.entities.DocumentComparison.filter({ proposal_id: proposalId }, '-created_date', 1);
+      if (byProposal?.[0]) return byProposal[0];
+
+      const byProposalInData = await base44.entities.DocumentComparison.filter({ 'data.proposal_id': proposalId }, '-created_date', 1);
+      return byProposalInData?.[0] || null;
+    },
+    enabled: Boolean(ownerWorkspaceEnabled && proposalId && proposalEntity)
+  });
+
   const proposal = isRecipientView
     ? (sharedRecipientData?.recipientView?.proposal || sharedRecipientData?.proposalView || null)
     : proposalEntity;
@@ -337,6 +423,10 @@ export default function ProposalDetail() {
   const sharedPermissions = sharedRecipientData?.permissions || {};
   const partyAView = sharedRecipientData?.partyAView || { proposal: null, responses: [] };
   const partyBEditableSchema = sharedRecipientData?.partyBEditableSchema || { questions: [], editableQuestionIds: [] };
+  const isDocumentComparisonProposal = Boolean(
+    !isRecipientView &&
+    (proposal?.proposal_type === 'document_comparison' || proposal?.document_comparison_id || linkedDocumentComparison)
+  );
 
   useEffect(() => {
     if (!isRecipientView) return;
@@ -1602,13 +1692,71 @@ export default function ProposalDetail() {
                   <CardHeader>
                     <CardTitle>Complete Proposal Details</CardTitle>
                     <CardDescription>
-                      {isRecipientView
-                        ? 'Only shared information is visible in recipient view.'
-                        : 'All information provided in this proposal.'}
+                      {isDocumentComparisonProposal
+                        ? 'Read-only document content with hidden highlights.'
+                        : (isRecipientView
+                          ? 'Only shared information is visible in recipient view.'
+                          : 'All information provided in this proposal.')}
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
-                    {responses.length === 0 ? (
+                    {isDocumentComparisonProposal ? (
+                      <div className="space-y-4">
+                        <p className="text-xs text-slate-500">
+                          Read-only preview. Hidden spans are highlighted in red.
+                        </p>
+
+                        <div className="p-4 bg-blue-50 rounded-xl border border-blue-100">
+                          <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                            <p className="text-sm text-blue-700 font-semibold">
+                              {linkedDocumentComparison?.party_a_label || 'Document A'}
+                            </p>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Badge variant="outline">
+                                Source: {linkedDocumentComparison?.doc_a_source || 'typed'}
+                              </Badge>
+                              <Badge className="bg-red-100 text-red-700 text-xs">
+                                {normalizeComparisonSpans(
+                                  linkedDocumentComparison?.doc_a_spans_json || [],
+                                  String(linkedDocumentComparison?.doc_a_plaintext || '').length
+                                ).length} hidden
+                              </Badge>
+                            </div>
+                          </div>
+                          <div className="p-3 bg-white border border-slate-200 rounded-lg max-h-72 overflow-auto">
+                            {renderReadOnlyComparisonText(
+                              linkedDocumentComparison?.doc_a_plaintext || '',
+                              linkedDocumentComparison?.doc_a_spans_json || []
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="p-4 bg-indigo-50 rounded-xl border border-indigo-100">
+                          <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                            <p className="text-sm text-indigo-700 font-semibold">
+                              {linkedDocumentComparison?.party_b_label || 'Document B'}
+                            </p>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Badge variant="outline">
+                                Source: {linkedDocumentComparison?.doc_b_source || 'typed'}
+                              </Badge>
+                              <Badge className="bg-red-100 text-red-700 text-xs">
+                                {normalizeComparisonSpans(
+                                  linkedDocumentComparison?.doc_b_spans_json || [],
+                                  String(linkedDocumentComparison?.doc_b_plaintext || '').length
+                                ).length} hidden
+                              </Badge>
+                            </div>
+                          </div>
+                          <div className="p-3 bg-white border border-slate-200 rounded-lg max-h-72 overflow-auto">
+                            {renderReadOnlyComparisonText(
+                              linkedDocumentComparison?.doc_b_plaintext || '',
+                              linkedDocumentComparison?.doc_b_spans_json || []
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ) : responses.length === 0 ? (
                       <p className="text-slate-500 text-center py-8">No responses recorded yet.</p>
                     ) : (
                       <div className="space-y-4">
