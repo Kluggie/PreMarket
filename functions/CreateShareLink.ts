@@ -5,6 +5,11 @@ function logInfo(payload: Record<string, unknown>) {
   console.log(JSON.stringify({ level: 'info', ...payload }));
 }
 
+function safeKeys(source: unknown): string[] {
+  if (!source || typeof source !== 'object') return [];
+  return Object.keys(source as Record<string, unknown>).sort();
+}
+
 function extractProposalId(source: any): string | null {
   if (!source || typeof source !== 'object') return null;
   const data = source.data && typeof source.data === 'object' ? source.data : {};
@@ -143,6 +148,34 @@ Deno.serve(async (req) => {
         correlationId
       }, { status: 404 });
     }
+    const resolvedProposal = resolvedProposals[0];
+    const normalizedUserEmail = typeof user.email === 'string' ? user.email.trim().toLowerCase() : '';
+    const normalizedOwnerEmail = typeof resolvedProposal.party_a_email === 'string'
+      ? resolvedProposal.party_a_email.trim().toLowerCase()
+      : '';
+    const currentUserId = typeof user.id === 'string' ? user.id.trim() : '';
+    const ownerUserId = typeof resolvedProposal.party_a_user_id === 'string'
+      ? resolvedProposal.party_a_user_id.trim()
+      : (typeof resolvedProposal.created_by_user_id === 'string' ? resolvedProposal.created_by_user_id.trim() : '');
+    const isProposalOwner =
+      (currentUserId && ownerUserId && currentUserId === ownerUserId) ||
+      (normalizedUserEmail && normalizedOwnerEmail && normalizedUserEmail === normalizedOwnerEmail);
+
+    if (!isProposalOwner) {
+      logInfo({
+        correlationId,
+        event: 'share_link_owner_check_failed',
+        proposalId: resolvedProposalId,
+        userId: user.id,
+        proposalPartyAUserId: resolvedProposal.party_a_user_id || null
+      });
+      return Response.json({
+        ok: false,
+        errorCode: 'FORBIDDEN',
+        message: 'Only the proposal owner can create a share link',
+        correlationId
+      }, { status: 403 });
+    }
 
     const shareMode = 'interactive';
     const permissions = {
@@ -173,6 +206,8 @@ Deno.serve(async (req) => {
     // Create ShareLink
     const shareLink = await base44.asServiceRole.entities.ShareLink.create({
       proposal_id: resolvedProposalId,
+      proposalId: resolvedProposalId,
+      linked_proposal_id: resolvedProposalId,
       evaluation_item_id: evaluationItemId || null,
       document_comparison_id: documentComparisonId || null,
       recipient_email: recipientEmail,
@@ -184,6 +219,139 @@ Deno.serve(async (req) => {
       created_by_user_id: user.id,
       status: 'active'
     });
+
+    logInfo({
+      correlationId,
+      event: 'share_link_created_raw',
+      shareLinkId: shareLink.id,
+      token,
+      resolvedProposalId,
+      shareLinkKeys: safeKeys(shareLink)
+    });
+
+    const existingContext = shareLink.context && typeof shareLink.context === 'object' ? shareLink.context : {};
+    const existingMetadata = shareLink.metadata && typeof shareLink.metadata === 'object' ? shareLink.metadata : {};
+    const linkagePatches: Array<{ label: string; payload: Record<string, unknown> }> = [
+      {
+        label: 'proposal_id',
+        payload: { proposal_id: resolvedProposalId }
+      },
+      {
+        label: 'proposalId',
+        payload: { proposalId: resolvedProposalId }
+      },
+      {
+        label: 'linked_proposal_id',
+        payload: { linked_proposal_id: resolvedProposalId }
+      },
+      {
+        label: 'linkedProposalId',
+        payload: { linkedProposalId: resolvedProposalId }
+      },
+      {
+        label: 'context',
+        payload: {
+          context: {
+            ...existingContext,
+            proposalId: resolvedProposalId,
+            proposal_id: resolvedProposalId,
+            linkedProposalId: resolvedProposalId,
+            linked_proposal_id: resolvedProposalId
+          }
+        }
+      },
+      {
+        label: 'metadata',
+        payload: {
+          metadata: {
+            ...existingMetadata,
+            proposalId: resolvedProposalId,
+            proposal_id: resolvedProposalId,
+            linkedProposalId: resolvedProposalId,
+            linked_proposal_id: resolvedProposalId
+          }
+        }
+      }
+    ];
+
+    for (const patch of linkagePatches) {
+      try {
+        await base44.asServiceRole.entities.ShareLink.update(shareLink.id, patch.payload);
+        logInfo({
+          correlationId,
+          event: 'share_link_linkage_patch',
+          shareLinkId: shareLink.id,
+          token,
+          resolvedProposalId,
+          patch: patch.label,
+          payloadKeys: safeKeys(patch.payload),
+          ok: true
+        });
+      } catch (error) {
+        logInfo({
+          correlationId,
+          event: 'share_link_linkage_patch',
+          shareLinkId: shareLink.id,
+          token,
+          resolvedProposalId,
+          patch: patch.label,
+          payloadKeys: safeKeys(patch.payload),
+          ok: false,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+
+    try {
+      const refreshedRows = await base44.asServiceRole.entities.ShareLink.filter({ id: shareLink.id }, '-created_date', 1);
+      const refreshedShareLink = refreshedRows?.[0] || null;
+      if (!refreshedShareLink) {
+        logInfo({
+          correlationId,
+          event: 'share_link_linkage_state',
+          shareLinkId: shareLink.id,
+          token,
+          resolvedProposalId,
+          found: false
+        });
+      } else {
+        const refreshedContext = refreshedShareLink.context && typeof refreshedShareLink.context === 'object'
+          ? refreshedShareLink.context
+          : {};
+        const refreshedMetadata = refreshedShareLink.metadata && typeof refreshedShareLink.metadata === 'object'
+          ? refreshedShareLink.metadata
+          : {};
+        logInfo({
+          correlationId,
+          event: 'share_link_linkage_state',
+          shareLinkId: refreshedShareLink.id || shareLink.id,
+          token,
+          resolvedProposalId,
+          shareLinkKeys: safeKeys(refreshedShareLink),
+          proposal_id: refreshedShareLink.proposal_id || null,
+          proposalId: refreshedShareLink.proposalId || null,
+          contextProposalId: refreshedContext.proposalId || null,
+          contextProposalIdSnake: refreshedContext.proposal_id || null,
+          contextLinkedProposalId: refreshedContext.linkedProposalId || null,
+          contextLinkedProposalIdSnake: refreshedContext.linked_proposal_id || null,
+          metadataProposalId: refreshedMetadata.proposalId || null,
+          metadataProposalIdSnake: refreshedMetadata.proposal_id || null,
+          metadataLinkedProposalId: refreshedMetadata.linkedProposalId || null,
+          metadataLinkedProposalIdSnake: refreshedMetadata.linked_proposal_id || null,
+          found: true
+        });
+      }
+    } catch (error) {
+      logInfo({
+        correlationId,
+        event: 'share_link_linkage_state',
+        shareLinkId: shareLink.id,
+        token,
+        resolvedProposalId,
+        found: false,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
 
     // Build share URL from canonical share path (enforces APP_BASE_URL only)
     let shareUrl;

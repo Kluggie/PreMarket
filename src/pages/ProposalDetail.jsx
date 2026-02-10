@@ -56,6 +56,65 @@ const SHARED_ERROR_MESSAGES = {
   PROPOSAL_LINK_MISSING: 'This shared link is not tied to a proposal.'
 };
 
+const NO_SHARED_WORKSPACE_LINK_MESSAGE =
+  'No shared workspace link found. Ask the sender to share again.';
+
+function normalizeEmail(value) {
+  if (typeof value !== 'string') return '';
+  return value.trim().toLowerCase();
+}
+
+function isProposalOwner(proposal, user) {
+  if (!proposal || !user) return false;
+
+  const userId = String(user?.id || '').trim();
+  const ownerUserId = String(proposal?.party_a_user_id || proposal?.created_by_user_id || '').trim();
+  if (userId && ownerUserId && userId === ownerUserId) {
+    return true;
+  }
+
+  const userEmail = normalizeEmail(user?.email);
+  const ownerEmail = normalizeEmail(proposal?.party_a_email);
+  return Boolean(userEmail && ownerEmail && userEmail === ownerEmail);
+}
+
+async function getActiveShareLinkForRecipient(proposalId) {
+  const normalizedProposalId = String(proposalId || '').trim();
+  if (!normalizedProposalId) {
+    return {
+      ok: false,
+      message: 'Proposal ID is required'
+    };
+  }
+
+  try {
+    const result = await base44.functions.invoke('GetActiveShareLinkForRecipient', {
+      proposalId: normalizedProposalId
+    });
+    const data = result?.data;
+    if (data?.ok && data?.token) {
+      return {
+        ok: true,
+        token: data.token
+      };
+    }
+    return {
+      ok: false,
+      message: data?.message || NO_SHARED_WORKSPACE_LINK_MESSAGE
+    };
+  } catch (error) {
+    const message =
+      error?.data?.message ||
+      error?.response?.data?.message ||
+      error?.message ||
+      NO_SHARED_WORKSPACE_LINK_MESSAGE;
+    return {
+      ok: false,
+      message
+    };
+  }
+}
+
 function extractSharedInvokeError(error) {
   const statusCode =
     error?.status ||
@@ -120,12 +179,14 @@ async function invokeSharedResolver(token, options = {}) {
 
 export default function ProposalDetail() {
   const [user, setUser] = useState(null);
+  const [isUserResolved, setIsUserResolved] = useState(false);
   const [activeTab, setActiveTab] = useState('overview');
   const [sendReportModalOpen, setSendReportModalOpen] = useState(false);
   const [recipientEmail, setRecipientEmail] = useState('');
   const [emailMessage, setEmailMessage] = useState('');
   const [recipientEdits, setRecipientEdits] = useState({});
   const [sendBackMessage, setSendBackMessage] = useState('');
+  const [openingSharedWorkspace, setOpeningSharedWorkspace] = useState(false);
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { search } = useLocation();
@@ -137,7 +198,21 @@ export default function ProposalDetail() {
   const isRecipientView = Boolean(sharedToken && sharedRole === 'recipient');
 
   useEffect(() => {
-    base44.auth.me().then(setUser);
+    let active = true;
+    base44.auth.me()
+      .then((me) => {
+        if (active) setUser(me || null);
+      })
+      .catch(() => {
+        if (active) setUser(null);
+      })
+      .finally(() => {
+        if (active) setIsUserResolved(true);
+      });
+
+    return () => {
+      active = false;
+    };
   }, []);
 
   const { data: sharedRecipientData, isLoading: loadingRecipientData, error: sharedRecipientError } = useQuery({
@@ -202,11 +277,12 @@ export default function ProposalDetail() {
     },
     enabled: !!proposalId && !isRecipientView
   });
+  const ownerWorkspaceEnabled = Boolean(!isRecipientView && proposalId && isProposalOwner(proposalEntity, user));
 
   const { data: responsesEntity = [] } = useQuery({
     queryKey: ['proposalResponses', proposalId],
     queryFn: () => base44.entities.ProposalResponse.filter({ proposal_id: proposalId }),
-    enabled: !!proposalId && !isRecipientView
+    enabled: ownerWorkspaceEnabled
   });
 
   const proposal = isRecipientView
@@ -240,7 +316,7 @@ export default function ProposalDetail() {
   const { data: evaluations = [] } = useQuery({
     queryKey: ['evaluations', proposalId],
     queryFn: () => base44.entities.EvaluationRun.filter({ proposal_id: proposalId }, '-created_date'),
-    enabled: !!proposalId && !isRecipientView
+    enabled: ownerWorkspaceEnabled
   });
 
   const { data: evaluationReports = [] } = useQuery({
@@ -345,7 +421,7 @@ export default function ProposalDetail() {
         return new Date(dateB) - new Date(dateA);
       }).slice(0, 5);
     },
-    enabled: !!proposalId && !!proposal && !isRecipientView,
+    enabled: Boolean(ownerWorkspaceEnabled && proposal),
     refetchInterval: (data) => {
       const hasRunning = Array.isArray(data) && data.some(r => ['queued', 'running'].includes(r.status));
       return hasRunning ? 2000 : false;
@@ -355,7 +431,7 @@ export default function ProposalDetail() {
   const { data: sharedReports = [] } = useQuery({
     queryKey: ['sharedReports', proposalId],
     queryFn: () => base44.entities.EvaluationReportShared.filter({ proposal_id: proposalId }),
-    enabled: !!proposalId && !isRecipientView,
+    enabled: ownerWorkspaceEnabled,
     refetchInterval: (data) => {
       const hasRunning = Array.isArray(data) && data.some(r => ['queued', 'running'].includes(r.status));
       return hasRunning ? 2000 : false;
@@ -365,7 +441,7 @@ export default function ProposalDetail() {
   const { data: fitCardReports = [] } = useQuery({
     queryKey: ['fitCardReports', proposalId],
     queryFn: () => base44.entities.FitCardReportShared.filter({ proposal_id: proposalId }),
-    enabled: !!proposalId && !isRecipientView,
+    enabled: ownerWorkspaceEnabled,
     refetchInterval: (data) => {
       const hasRunning = Array.isArray(data) && data.some(r => ['queued', 'running'].includes(r.status));
       return hasRunning ? 2000 : false;
@@ -375,25 +451,25 @@ export default function ProposalDetail() {
   const { data: templates = [] } = useQuery({
     queryKey: ['templates'],
     queryFn: () => base44.entities.Template.list(),
-    enabled: !!proposal?.template_id && !isRecipientView
+    enabled: Boolean(ownerWorkspaceEnabled && proposal?.template_id)
   });
 
   const { data: verifications = [] } = useQuery({
     queryKey: ['verifications', proposalId],
     queryFn: () => base44.entities.VerificationItem.filter({ proposal_id: proposalId }),
-    enabled: !!proposalId && !isRecipientView
+    enabled: ownerWorkspaceEnabled
   });
 
   const { data: comments = [] } = useQuery({
     queryKey: ['comments', proposalId],
     queryFn: () => base44.entities.ProposalComment.filter({ proposal_id: proposalId }, '-created_date'),
-    enabled: !!proposalId && !isRecipientView
+    enabled: ownerWorkspaceEnabled
   });
 
   const { data: attachments = [] } = useQuery({
     queryKey: ['attachments', proposalId],
     queryFn: () => base44.entities.Attachment.filter({ proposal_id: proposalId }),
-    enabled: !!proposalId && !isRecipientView
+    enabled: ownerWorkspaceEnabled
   });
 
   const isPartyA = proposal?.party_a_email === user?.email;
@@ -921,6 +997,26 @@ export default function ProposalDetail() {
     }
   });
 
+  const handleOpenSharedWorkspace = async () => {
+    if (!proposalId) return;
+
+    if (!user) {
+      base44.auth.redirectToLogin(window.location.href);
+      return;
+    }
+
+    setOpeningSharedWorkspace(true);
+    const shareLink = await getActiveShareLinkForRecipient(proposalId);
+    if (shareLink.ok) {
+      setOpeningSharedWorkspace(false);
+      navigate(createPageUrl(`SharedReport?token=${encodeURIComponent(shareLink.token)}`));
+      return;
+    }
+
+    toast.error(shareLink.message || NO_SHARED_WORKSPACE_LINK_MESSAGE);
+    setOpeningSharedWorkspace(false);
+  };
+
   if (isRecipientView && sharedRecipientError) {
     return (
       <div className="min-h-screen bg-slate-50 py-8">
@@ -944,7 +1040,7 @@ export default function ProposalDetail() {
     );
   }
 
-  if (loadingProposal || !proposal) {
+  if (loadingProposal || !proposal || (!isRecipientView && !isUserResolved)) {
     return (
       <div className="min-h-screen bg-slate-50 py-8">
         <div className="max-w-6xl mx-auto px-4">
@@ -952,6 +1048,37 @@ export default function ProposalDetail() {
             <div className="h-8 bg-slate-200 rounded w-48" />
             <div className="h-64 bg-slate-100 rounded-xl" />
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  const isOwnerWorkspace = isProposalOwner(proposal, user);
+  if (!isRecipientView && !isOwnerWorkspace) {
+    return (
+      <div className="min-h-screen bg-slate-50 py-8">
+        <div className="max-w-3xl mx-auto px-4">
+          <Card className="border-0 shadow-sm">
+            <CardContent className="py-10 text-center">
+              <XCircle className="w-10 h-10 text-amber-500 mx-auto mb-4" />
+              <h1 className="text-lg font-semibold text-slate-900 mb-2">Access limited to proposal owner workspace</h1>
+              <p className="text-slate-600 mb-6">
+                This proposal is owned by another account. Open the shared recipient workspace instead.
+              </p>
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <Button
+                  onClick={handleOpenSharedWorkspace}
+                  disabled={openingSharedWorkspace}
+                  className="bg-blue-600 hover:bg-blue-700"
+                >
+                  {openingSharedWorkspace ? 'Opening...' : 'Open Shared Workspace'}
+                </Button>
+                <Button variant="outline" onClick={() => navigate(createPageUrl('Proposals'))}>
+                  Back to Proposals
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
         </div>
       </div>
     );

@@ -69,6 +69,27 @@ const toNumber = (value: unknown, fallback = 0): number => {
   return Number.isFinite(numeric) ? numeric : fallback;
 };
 
+const toObject = (value: unknown): Record<string, unknown> => {
+  if (!value || typeof value !== 'object') return {};
+  return value as Record<string, unknown>;
+};
+
+const pickString = (...values: unknown[]): string | null => {
+  for (const value of values) {
+    const next = asString(value);
+    if (next) return next;
+  }
+  return null;
+};
+
+const pickNumber = (fallback: number, ...values: unknown[]): number => {
+  for (const value of values) {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) return numeric;
+  }
+  return fallback;
+};
+
 const parsePermissionOverrides = (raw: unknown): Partial<PermissionSet> | null => {
   if (!raw) return null;
   if (typeof raw === 'string') {
@@ -128,26 +149,165 @@ const buildPermissions = (shareLink: any): PermissionSet => {
 };
 
 const mapShareLink = (shareLink: any): ShareLinkView => {
-  const maxViews = toNumber(shareLink?.max_uses ?? shareLink?.max_views, DEFAULT_MAX_VIEWS);
-  const viewCount = toNumber(shareLink?.uses ?? shareLink?.view_count, 0);
+  const data = toObject(shareLink?.data);
+  const context = toObject(shareLink?.context);
+  const metadata = toObject(shareLink?.metadata);
+
+  const maxViews = pickNumber(
+    DEFAULT_MAX_VIEWS,
+    shareLink?.max_uses,
+    shareLink?.max_views,
+    shareLink?.maxUses,
+    shareLink?.maxViews,
+    data.max_uses,
+    data.max_views,
+    data.maxUses,
+    data.maxViews,
+    context.max_uses,
+    context.max_views,
+    context.maxUses,
+    context.maxViews,
+    metadata.max_uses,
+    metadata.max_views,
+    metadata.maxUses,
+    metadata.maxViews
+  );
+  const viewCount = pickNumber(
+    0,
+    shareLink?.uses,
+    shareLink?.view_count,
+    shareLink?.viewCount,
+    data.uses,
+    data.view_count,
+    data.viewCount,
+    context.uses,
+    context.view_count,
+    context.viewCount,
+    metadata.uses,
+    metadata.view_count,
+    metadata.viewCount
+  );
   const mode =
     asString(shareLink?.share_mode || shareLink?.mode || shareLink?.access_mode) ||
     (buildPermissions(shareLink).canEdit ? 'interactive' : 'view_only');
 
   return {
     id: asString(shareLink?.id) || '',
-    token: asString(shareLink?.token),
-    proposalId: asString(shareLink?.proposal_id ?? shareLink?.proposalId),
-    evaluationItemId: asString(shareLink?.evaluation_item_id ?? shareLink?.evaluationItemId),
-    documentComparisonId: asString(shareLink?.document_comparison_id ?? shareLink?.documentComparisonId),
-    recipientEmail: normalizeEmail(shareLink?.recipient_email ?? shareLink?.recipientEmail),
-    status: asString(shareLink?.status),
+    token: pickString(
+      shareLink?.token,
+      data.token,
+      context.token,
+      metadata.token
+    ),
+    proposalId: pickString(
+      shareLink?.proposal_id,
+      shareLink?.proposalId,
+      shareLink?.linked_proposal_id,
+      shareLink?.linkedProposalId,
+      data.proposal_id,
+      data.proposalId,
+      data.linked_proposal_id,
+      data.linkedProposalId,
+      context.proposal_id,
+      context.proposalId,
+      context.linked_proposal_id,
+      context.linkedProposalId,
+      metadata.proposal_id,
+      metadata.proposalId,
+      metadata.linked_proposal_id,
+      metadata.linkedProposalId
+    ),
+    evaluationItemId: pickString(
+      shareLink?.evaluation_item_id,
+      shareLink?.evaluationItemId,
+      shareLink?.evaluation_itemId,
+      shareLink?.linked_evaluation_item_id,
+      shareLink?.linkedEvaluationItemId,
+      data.evaluation_item_id,
+      data.evaluationItemId,
+      data.evaluation_itemId,
+      data.linked_evaluation_item_id,
+      data.linkedEvaluationItemId,
+      context.evaluation_item_id,
+      context.evaluationItemId,
+      context.evaluation_itemId,
+      context.linked_evaluation_item_id,
+      context.linkedEvaluationItemId,
+      metadata.evaluation_item_id,
+      metadata.evaluationItemId,
+      metadata.evaluation_itemId,
+      metadata.linked_evaluation_item_id,
+      metadata.linkedEvaluationItemId
+    ),
+    documentComparisonId: pickString(
+      shareLink?.document_comparison_id,
+      shareLink?.documentComparisonId,
+      shareLink?.linked_document_comparison_id,
+      shareLink?.linkedDocumentComparisonId,
+      data.document_comparison_id,
+      data.documentComparisonId,
+      data.linked_document_comparison_id,
+      data.linkedDocumentComparisonId,
+      context.document_comparison_id,
+      context.documentComparisonId,
+      context.linked_document_comparison_id,
+      context.linkedDocumentComparisonId,
+      metadata.document_comparison_id,
+      metadata.documentComparisonId,
+      metadata.linked_document_comparison_id,
+      metadata.linkedDocumentComparisonId
+    ),
+    recipientEmail: normalizeEmail(
+      pickString(
+        shareLink?.recipient_email,
+        shareLink?.recipientEmail,
+        data.recipient_email,
+        data.recipientEmail,
+        context.recipient_email,
+        context.recipientEmail,
+        metadata.recipient_email,
+        metadata.recipientEmail
+      )
+    ),
+    status: pickString(
+      shareLink?.status,
+      data.status,
+      context.status,
+      metadata.status
+    ),
     mode,
-    createdAt: asString(shareLink?.created_date ?? shareLink?.createdAt),
-    expiresAt: asString(shareLink?.expires_at ?? shareLink?.expiresAt),
+    createdAt: pickString(
+      shareLink?.created_date,
+      shareLink?.createdAt,
+      data.created_date,
+      data.createdAt,
+      context.created_date,
+      context.createdAt,
+      metadata.created_date,
+      metadata.createdAt
+    ),
+    expiresAt: pickString(
+      shareLink?.expires_at,
+      shareLink?.expiresAt,
+      data.expires_at,
+      data.expiresAt,
+      context.expires_at,
+      context.expiresAt,
+      metadata.expires_at,
+      metadata.expiresAt
+    ),
     viewCount,
     maxViews,
-    lastUsedAt: asString(shareLink?.last_used_at ?? shareLink?.lastUsedAt)
+    lastUsedAt: pickString(
+      shareLink?.last_used_at,
+      shareLink?.lastUsedAt,
+      data.last_used_at,
+      data.lastUsedAt,
+      context.last_used_at,
+      context.lastUsedAt,
+      metadata.last_used_at,
+      metadata.lastUsedAt
+    )
   };
 };
 

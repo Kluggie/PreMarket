@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '../utils';
 import { base44 } from '@/api/base44Client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -21,8 +21,66 @@ import {
   Plus, Search, Filter, Send, Inbox, FileText, BarChart3,
   ChevronRight, Clock, CheckCircle2, AlertTriangle, Eye, Users, MoreVertical, Trash2, X
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
+
+const NO_SHARED_WORKSPACE_LINK_MESSAGE =
+  'No shared workspace link found. Ask the sender to share again.';
+
+function normalizeEmail(value) {
+  if (typeof value !== 'string') return '';
+  return value.trim().toLowerCase();
+}
+
+function isProposalOwner(proposal, user) {
+  if (!proposal || !user) return false;
+
+  const userId = String(user?.id || '').trim();
+  const ownerUserId = String(proposal?.party_a_user_id || proposal?.created_by_user_id || '').trim();
+  if (userId && ownerUserId && userId === ownerUserId) {
+    return true;
+  }
+
+  const userEmail = normalizeEmail(user?.email);
+  const ownerEmail = normalizeEmail(proposal?.party_a_email);
+  return Boolean(userEmail && ownerEmail && userEmail === ownerEmail);
+}
+
+async function getActiveShareLinkForRecipient(proposalId) {
+  const normalizedProposalId = String(proposalId || '').trim();
+  if (!normalizedProposalId) {
+    return {
+      ok: false,
+      message: 'Proposal ID is required'
+    };
+  }
+
+  try {
+    const result = await base44.functions.invoke('GetActiveShareLinkForRecipient', {
+      proposalId: normalizedProposalId
+    });
+    const data = result?.data;
+    if (data?.ok && data?.token) {
+      return {
+        ok: true,
+        token: data.token
+      };
+    }
+    return {
+      ok: false,
+      message: data?.message || NO_SHARED_WORKSPACE_LINK_MESSAGE
+    };
+  } catch (error) {
+    const message =
+      error?.data?.message ||
+      error?.response?.data?.message ||
+      error?.message ||
+      NO_SHARED_WORKSPACE_LINK_MESSAGE;
+    return {
+      ok: false,
+      message
+    };
+  }
+}
 
 const StatusBadge = ({ status }) => {
   const config = {
@@ -139,20 +197,32 @@ export default function Proposals() {
   });
 
   const ProposalRow = ({ proposal }) => {
-    const isSent = proposal.party_a_email === user?.email;
+    const isSent = isProposalOwner(proposal, user);
     const isDraft = proposal.status === 'draft';
     
-    const handleClick = () => {
+    const handleClick = async () => {
       if (isDraft) {
         // Route based on proposal type
         if (proposal.proposal_type === 'document_comparison' && proposal.document_comparison_id) {
-          window.location.href = createPageUrl(`DocumentComparisonCreate?draft=${proposal.document_comparison_id}&proposalId=${proposal.id}&step=${proposal.draft_step || 1}`);
+          navigate(createPageUrl(`DocumentComparisonCreate?draft=${proposal.document_comparison_id}&proposalId=${proposal.id}&step=${proposal.draft_step || 1}`));
         } else {
-          window.location.href = createPageUrl(`CreateProposal?draft=${proposal.id}`);
+          navigate(createPageUrl(`CreateProposal?draft=${proposal.id}`));
         }
-      } else {
-        window.location.href = createPageUrl(`ProposalDetail?id=${proposal.id}`);
+        return;
       }
+
+      if (!isSent) {
+        const shareLink = await getActiveShareLinkForRecipient(proposal.id);
+        if (shareLink.ok) {
+          navigate(createPageUrl(`SharedReport?token=${encodeURIComponent(shareLink.token)}`));
+          return;
+        }
+
+        toast.error(shareLink.message || NO_SHARED_WORKSPACE_LINK_MESSAGE);
+        return;
+      }
+
+      navigate(createPageUrl(`ProposalDetail?id=${proposal.id}`));
     };
     
     return (

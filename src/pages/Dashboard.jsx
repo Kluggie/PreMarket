@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '../utils';
 import { base44 } from '@/api/base44Client';
 import { useQuery } from '@tanstack/react-query';
@@ -9,10 +9,70 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import ProposalsChart from '../components/dashboard/ProposalsChart';
+import { toast } from 'sonner';
 import {
   Plus, FileText, Inbox, Send, Clock, CheckCircle2, AlertTriangle,
   ArrowRight, Eye, Users, BarChart3, TrendingUp, ChevronRight
 } from 'lucide-react';
+
+const NO_SHARED_WORKSPACE_LINK_MESSAGE =
+  'No shared workspace link found. Ask the sender to share again.';
+
+function normalizeEmail(value) {
+  if (typeof value !== 'string') return '';
+  return value.trim().toLowerCase();
+}
+
+function isProposalOwner(proposal, user) {
+  if (!proposal || !user) return false;
+
+  const userId = String(user?.id || '').trim();
+  const ownerUserId = String(proposal?.party_a_user_id || proposal?.created_by_user_id || '').trim();
+  if (userId && ownerUserId && userId === ownerUserId) {
+    return true;
+  }
+
+  const userEmail = normalizeEmail(user?.email);
+  const ownerEmail = normalizeEmail(proposal?.party_a_email);
+  return Boolean(userEmail && ownerEmail && userEmail === ownerEmail);
+}
+
+async function getActiveShareLinkForRecipient(proposalId) {
+  const normalizedProposalId = String(proposalId || '').trim();
+  if (!normalizedProposalId) {
+    return {
+      ok: false,
+      message: 'Proposal ID is required'
+    };
+  }
+
+  try {
+    const result = await base44.functions.invoke('GetActiveShareLinkForRecipient', {
+      proposalId: normalizedProposalId
+    });
+    const data = result?.data;
+    if (data?.ok && data?.token) {
+      return {
+        ok: true,
+        token: data.token
+      };
+    }
+    return {
+      ok: false,
+      message: data?.message || NO_SHARED_WORKSPACE_LINK_MESSAGE
+    };
+  } catch (error) {
+    const message =
+      error?.data?.message ||
+      error?.response?.data?.message ||
+      error?.message ||
+      NO_SHARED_WORKSPACE_LINK_MESSAGE;
+    return {
+      ok: false,
+      message
+    };
+  }
+}
 
 const StatusBadge = ({ status }) => {
   const config = {
@@ -31,6 +91,7 @@ const StatusBadge = ({ status }) => {
 };
 
 export default function Dashboard() {
+  const navigate = useNavigate();
   const [user, setUser] = useState(null);
   const [activeTab, setActiveTab] = useState('sent');
 
@@ -89,12 +150,37 @@ export default function Dashboard() {
     }
   ];
 
+  const handleOpenProposal = async (proposal, type) => {
+    if (type === 'received' && !isProposalOwner(proposal, user)) {
+      const shareLink = await getActiveShareLinkForRecipient(proposal.id);
+      if (shareLink.ok) {
+        navigate(createPageUrl(`SharedReport?token=${encodeURIComponent(shareLink.token)}`));
+        return;
+      }
+      toast.error(shareLink.message || NO_SHARED_WORKSPACE_LINK_MESSAGE);
+      return;
+    }
+
+    navigate(createPageUrl(`ProposalDetail?id=${proposal.id}`));
+  };
+
   const ProposalCard = ({ proposal, type }) => (
-    <Link to={createPageUrl(`ProposalDetail?id=${proposal.id}`)}>
-      <motion.div
-        whileHover={{ y: -2 }}
-        className="bg-white rounded-xl border border-slate-200 p-5 hover:shadow-md hover:border-blue-200 transition-all cursor-pointer"
-      >
+    <motion.div
+      whileHover={{ y: -2 }}
+      className="bg-white rounded-xl border border-slate-200 p-5 hover:shadow-md hover:border-blue-200 transition-all cursor-pointer"
+      onClick={() => {
+        handleOpenProposal(proposal, type);
+      }}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          handleOpenProposal(proposal, type);
+        }
+      }}
+    >
+      <div>
         <div className="flex items-start justify-between mb-3">
           <div className="flex-1 min-w-0">
             <h3 className="font-semibold text-slate-900 truncate">
@@ -129,8 +215,8 @@ export default function Dashboard() {
           </span>
           <ChevronRight className="w-4 h-4 text-slate-400" />
         </div>
-      </motion.div>
-    </Link>
+      </div>
+    </motion.div>
   );
 
   return (
