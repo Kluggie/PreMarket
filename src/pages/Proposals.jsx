@@ -73,6 +73,52 @@ function buildReviewedTitle(title, reviewedCount) {
   return `${safeTitle} - reviewed`;
 }
 
+function readSharedContextProposalIds(currentUserEmail) {
+  if (typeof window === 'undefined') return [];
+  const normalizedCurrentEmail = normalizeEmail(currentUserEmail);
+  if (!normalizedCurrentEmail) return [];
+
+  const proposalIds = new Set();
+  const addFromEntry = (entry) => {
+    if (!entry || typeof entry !== 'object') return;
+    const entryEmail = normalizeEmail(
+      entry.currentUserEmail ||
+      entry.recipientEmail ||
+      null
+    );
+    if (!entryEmail || entryEmail !== normalizedCurrentEmail) return;
+
+    const rawId = entry.proposalId || entry.proposal_id || null;
+    const proposalId = typeof rawId === 'string' ? rawId.trim() : '';
+    if (proposalId) {
+      proposalIds.add(proposalId);
+    }
+  };
+
+  try {
+    const singleRaw = window.localStorage.getItem('sharedReportContext');
+    if (singleRaw) {
+      addFromEntry(JSON.parse(singleRaw));
+    }
+  } catch {
+    // Ignore malformed local context.
+  }
+
+  try {
+    const historyRaw = window.localStorage.getItem('sharedReportContextHistory');
+    if (historyRaw) {
+      const history = JSON.parse(historyRaw);
+      if (Array.isArray(history)) {
+        history.forEach(addFromEntry);
+      }
+    }
+  } catch {
+    // Ignore malformed local history.
+  }
+
+  return Array.from(proposalIds);
+}
+
 async function getActiveShareLinkForRecipient(proposalId) {
   const normalizedProposalId = String(proposalId || '').trim();
   if (!normalizedProposalId) {
@@ -212,9 +258,35 @@ export default function Proposals() {
   const { data: allUserProposals = [], isLoading: loadingAll } = useQuery({
     queryKey: ['proposals', 'all', user?.email],
     queryFn: async () => {
-      const sent = await base44.entities.Proposal.filter({ party_a_email: user?.email }, '-created_date');
-      const received = await base44.entities.Proposal.filter({ party_b_email: user?.email }, '-created_date');
-      return { sent, received };
+      const sent = await base44.entities.Proposal.filter({ party_a_email: user?.email }, '-created_date').catch(() => []);
+      const received = await base44.entities.Proposal.filter({ party_b_email: user?.email }, '-created_date').catch(() => []);
+      const mergedReceived = dedupeById(received);
+
+      const proposalIdsFromSharedContext = readSharedContextProposalIds(user?.email);
+      if (proposalIdsFromSharedContext.length === 0) {
+        return { sent, received: mergedReceived };
+      }
+
+      const existingReceivedIds = new Set(
+        mergedReceived
+          .map((proposal) => String(proposal?.id || '').trim())
+          .filter(Boolean)
+      );
+
+      const missingIds = proposalIdsFromSharedContext.filter((proposalId) => !existingReceivedIds.has(proposalId));
+      if (missingIds.length === 0) {
+        return { sent, received: mergedReceived };
+      }
+
+      const proposalsFromSharedContext = (
+        await Promise.all(
+          missingIds.map((proposalId) =>
+            base44.entities.Proposal.filter({ id: proposalId }, '-created_date', 1).catch(() => [])
+          )
+        )
+      ).flat();
+
+      return { sent, received: dedupeById([...mergedReceived, ...proposalsFromSharedContext]) };
     },
     enabled: !!user?.email
   });
@@ -279,7 +351,6 @@ export default function Proposals() {
 
   const sentSource = allUserProposals?.sent || [];
   const receivedSource = allUserProposals?.received || [];
-  const currentUserEmail = normalizeEmail(user?.email);
 
   const dedupedSent = dedupeById(sentSource);
   const dedupedReceived = dedupeById(receivedSource);

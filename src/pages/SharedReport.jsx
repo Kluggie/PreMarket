@@ -373,6 +373,8 @@ export default function SharedReport() {
         token,
         proposalId: resolvedProposalId || null,
         role: 'recipient',
+        recipientEmail: data?.shareLink?.recipientEmail || null,
+        currentUserEmail: data?.currentUserEmail || null,
         evaluationItemId: data.evaluationId || resolvedShareData.evaluationItemId || resolvedReportData.evaluationItemId || null,
         documentComparisonId: resolvedShareData.documentComparisonId || resolvedReportData.documentComparisonId || null,
         loadedAt: new Date().toISOString()
@@ -390,6 +392,15 @@ export default function SharedReport() {
       }
 
       localStorage.setItem('sharedReportContext', JSON.stringify(context));
+      try {
+        const historyRaw = localStorage.getItem('sharedReportContextHistory');
+        const parsedHistory = JSON.parse(historyRaw || '[]');
+        const history = Array.isArray(parsedHistory) ? parsedHistory : [];
+        const nextHistory = [context, ...history.filter((item) => item?.token !== context.token)].slice(0, 50);
+        localStorage.setItem('sharedReportContextHistory', JSON.stringify(nextHistory));
+      } catch {
+        // Ignore malformed local storage history.
+      }
       setShareData(resolvedShareData);
       setReportData(resolvedReportData);
       setProposalId(resolvedProposalId);
