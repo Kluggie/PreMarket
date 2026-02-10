@@ -19,9 +19,9 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Progress } from '@/components/ui/progress';
 import { Switch } from '@/components/ui/switch';
 import {
-  ArrowLeft, ArrowRight, FileText, User, Eye, EyeOff, Lock,
-  Building2, Users, TrendingUp, Handshake, Briefcase, CheckCircle2,
-  Send, Sparkles, AlertTriangle, XCircle, Save, Link as LinkIcon, Loader2, X, Check
+  ArrowLeft, ArrowRight, FileText, User, Eye, Lock,
+  Building2, Users, TrendingUp, Handshake, Briefcase,
+  Sparkles, AlertTriangle, XCircle, Save, Link as LinkIcon, Loader2, X, Check
 } from 'lucide-react';
 
 const iconMap = {
@@ -31,6 +31,28 @@ const iconMap = {
   partnership: Handshake,
   consulting: Briefcase,
   custom: FileText
+};
+
+const normalizeVisibilitySetting = (value) => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (['hidden', 'not_shared', 'private', 'confidential', 'partial'].includes(normalized)) {
+    return 'hidden';
+  }
+  return 'full';
+};
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const isRecipientEmailQuestion = (question) => {
+  const id = String(question?.id || '').toLowerCase();
+  const label = String(question?.label || '').toLowerCase();
+  return (
+    id === 'recipient_email' ||
+    id === 'party_b_email' ||
+    id === 'counterparty_email' ||
+    label.includes('recipient email') ||
+    label.includes('counterparty email')
+  );
 };
 
 export default function CreateProposal() {
@@ -173,7 +195,7 @@ export default function CreateProposal() {
             responsesObj[responseKey] = r.value;
           }
         }
-        visibilityObj[responseKey] = r.visibility || 'full';
+        visibilityObj[responseKey] = normalizeVisibilitySetting(r.visibility);
         
         if (subjectParty === 'shared' || subjectParty === 'a') {
           if (!responsesObj[key]) {
@@ -186,7 +208,7 @@ export default function CreateProposal() {
                 responsesObj[key] = r.value;
               }
             }
-            visibilityObj[key] = r.visibility || 'full';
+            visibilityObj[key] = normalizeVisibilitySetting(r.visibility);
           }
         }
       });
@@ -242,7 +264,7 @@ export default function CreateProposal() {
         draft_updated_at: new Date().toISOString(),
         party_a_user_id: user.id,
         party_a_email: user.email,
-        party_b_email: recipientEmail || null,
+        party_b_email: recipientEmail.trim() || null,
         disclosure_mode: responses['disclosure_mode'] || 'open',
         include_profile: responses['_include_profile'] || false,
         include_organisation: responses['_include_organisation'] || false
@@ -284,7 +306,7 @@ export default function CreateProposal() {
         created_by_user_id: user?.id,
         party_a_user_id: user?.id,
         party_a_email: user?.email,
-        party_b_email: recipientEmail || '',
+        party_b_email: recipientEmail.trim() || '',
         status: 'draft',
         last_step: step,
         step_state_json: stepState,
@@ -338,7 +360,9 @@ export default function CreateProposal() {
           }
         }
         
-        const visibility = visibilitySettings[responseKey] || visibilitySettings[questionId] || 'full';
+        const visibility = finalSubjectParty === 'b'
+          ? 'full'
+          : normalizeVisibilitySetting(visibilitySettings[responseKey] || visibilitySettings[questionId] || 'full');
 
         const responseData = {
           proposal_id: proposalId,
@@ -417,6 +441,23 @@ export default function CreateProposal() {
     if (question.applies_to_role === 'recipient') return 'b';
     if (question.applies_to_role === 'both') return 'both';
     return 'a';
+  };
+
+  const getQuestionResponseKey = (question, stepHint = step) => {
+    const roleType = question.role_type || 'party_attribute';
+    if (roleType === 'shared_fact') return question.id;
+    if (stepHint === 3) return `${question.id}__b`;
+    if (stepHint === 2) return question.id;
+
+    const normalized = getNormalizedParty(question);
+    if (normalized === 'b') return `${question.id}__b`;
+    return question.id;
+  };
+
+  const getQuestionResponseValue = (question, stepHint = step) => {
+    const responseKey = getQuestionResponseKey(question, stepHint);
+    if (responses[responseKey] !== undefined) return responses[responseKey];
+    return responses[question.id];
   };
 
   const shouldIncludeQuestion = (question) => {
@@ -533,6 +574,7 @@ export default function CreateProposal() {
   const partyBQuestions = selectedTemplate?.questions?.filter(q => {
     const roleType = q.role_type || 'party_attribute';
     if (roleType === 'shared_fact') return false; // Already shown in Step 2
+    if (isRecipientEmailQuestion(q)) return false; // Recipient email is captured in Step 1 only
     
     const normalized = getNormalizedParty(q);
     return (normalized === 'b' || normalized === 'both') && shouldIncludeQuestion(q);
@@ -579,7 +621,8 @@ export default function CreateProposal() {
     questionsToValidate.forEach(question => {
       const effectiveRequired = getEffectiveRequired(question);
       const isRequired = effectiveRequired || isConditionallyRequired(question);
-      const value = responses[question.id];
+      const stepHint = step === 3 ? 3 : 2;
+      const value = getQuestionResponseValue(question, stepHint);
       
       if (isRequired && isValueEmpty(question, value)) {
         errors[question.id] = 'This field is required';
@@ -592,20 +635,55 @@ export default function CreateProposal() {
 
   const validateAll = () => {
     const errors = {};
-    const allQuestions = [...partyAQuestions, ...partyBQuestions];
-    
-    allQuestions.forEach(question => {
+    partyAQuestions.forEach(question => {
       const effectiveRequired = getEffectiveRequired(question);
       const isRequired = effectiveRequired || isConditionallyRequired(question);
-      const value = responses[question.id];
+      const value = getQuestionResponseValue(question, 2);
       
       if (isRequired && isValueEmpty(question, value)) {
         errors[question.id] = 'This field is required';
       }
     });
+
+    partyBQuestions.forEach(question => {
+      const effectiveRequired = getEffectiveRequired(question);
+      const isRequired = effectiveRequired || isConditionallyRequired(question);
+      const value = getQuestionResponseValue(question, 3);
+
+      if (isRequired && isValueEmpty(question, value)) {
+        errors[question.id] = 'This field is required';
+      }
+    });
+
+    const trimmedRecipientEmail = recipientEmail.trim();
+    if (!trimmedRecipientEmail) {
+      errors._recipient_email = 'Recipient email is required';
+    } else if (!EMAIL_REGEX.test(trimmedRecipientEmail)) {
+      errors._recipient_email = 'Enter a valid email address';
+    }
     
     setValidationErrors(errors);
     return Object.keys(errors).length === 0;
+  };
+
+  const validateStep1RecipientEmail = () => {
+    const trimmedRecipientEmail = recipientEmail.trim();
+    if (!trimmedRecipientEmail) {
+      setValidationErrors((prev) => ({ ...prev, _recipient_email: 'Recipient email is required' }));
+      return false;
+    }
+    if (!EMAIL_REGEX.test(trimmedRecipientEmail)) {
+      setValidationErrors((prev) => ({ ...prev, _recipient_email: 'Enter a valid email address' }));
+      return false;
+    }
+
+    setRecipientEmail(trimmedRecipientEmail);
+    setValidationErrors((prev) => {
+      const next = { ...prev };
+      delete next._recipient_email;
+      return next;
+    });
+    return true;
   };
 
   const handleNext = () => {
@@ -645,7 +723,10 @@ export default function CreateProposal() {
   };
 
   const sendProposalMutation = useMutation({
-    mutationFn: async (guestEmailParam) => {
+    mutationFn: async (input) => {
+      const payload = typeof input === 'string' ? { guestEmailParam: input } : (input || {});
+      const guestEmailParam = payload?.guestEmailParam;
+
       if (!isGuestMode && user) {
         const limitCheck = await base44.functions.invoke('checkProposalLimit');
         if (!limitCheck.data.allowed) {
@@ -662,7 +743,7 @@ export default function CreateProposal() {
         draft_state_json: null,
         party_a_user_id: user?.id || 'guest',
         party_a_email: isGuestMode ? guestEmailParam : user?.email,
-        party_b_email: recipientEmail,
+        party_b_email: recipientEmail.trim(),
         disclosure_mode: responses['disclosure_mode'] || 'open',
         sent_at: new Date().toISOString(),
         include_profile: responses['_include_profile'] || false,
@@ -717,7 +798,9 @@ export default function CreateProposal() {
             }
           }
           
-          const visibility = visibilitySettings[responseKey] || visibilitySettings[questionId] || 'full';
+          const visibility = finalSubjectParty === 'b'
+            ? 'full'
+            : normalizeVisibilitySetting(visibilitySettings[responseKey] || visibilitySettings[questionId] || 'full');
           
           let responseData = {
             proposal_id: proposal.id,
@@ -764,25 +847,57 @@ export default function CreateProposal() {
 
       return proposal;
     },
-    onSuccess: (proposal) => {
+    onSuccess: async (proposal, input) => {
+      const runEvaluation = Boolean(
+        input && typeof input === 'object' && input.runEvaluation === true
+      );
+
+      if (runEvaluation) {
+        try {
+          let functionName = 'EvaluateProposal';
+          if (isFinanceTemplate) {
+            functionName = 'EvaluateProposalShared';
+          } else if (isProfileMatchingTemplate) {
+            functionName = 'EvaluateFitCardShared';
+          }
+
+          const evaluationResult = await base44.functions.invoke(functionName, {
+            proposal_id: proposal.id,
+            trigger: 'user_click'
+          });
+
+          const data = evaluationResult?.data;
+          if (!data || typeof data !== 'object') {
+            throw new Error('Evaluation returned an invalid response.');
+          }
+          if (data.status === 'failed' || data.status === 'error' || data.ok === false) {
+            throw new Error(data.error_message || data.error || data.message || 'Evaluation failed.');
+          }
+        } catch (error) {
+          alert(`Evaluation failed: ${error?.message || 'Unknown error'}`);
+        }
+      }
+
       queryClient.invalidateQueries(['proposals']);
-      navigate(createPageUrl(`ProposalDetail?id=${proposal.id}`));
+      navigate(createPageUrl(`ProposalDetail?id=${proposal.id}${runEvaluation ? '&tab=evaluation' : ''}`));
     }
   });
 
   const handleResponseChange = (questionId, value) => {
     setResponses(prev => ({ ...prev, [questionId]: value }));
-    if (validationErrors[questionId]) {
+    const [baseQuestionId] = String(questionId).split('__');
+    if (validationErrors[questionId] || validationErrors[baseQuestionId]) {
       setValidationErrors(prev => {
         const newErrors = { ...prev };
         delete newErrors[questionId];
+        delete newErrors[baseQuestionId];
         return newErrors;
       });
     }
   };
 
   const handleVisibilityChange = (questionId, visibility) => {
-    setVisibilitySettings(prev => ({ ...prev, [questionId]: visibility }));
+    setVisibilitySettings(prev => ({ ...prev, [questionId]: normalizeVisibilitySetting(visibility) }));
   };
 
   const handleExtractFromUrl = async () => {
@@ -825,10 +940,9 @@ export default function CreateProposal() {
       );
       
       if (question) {
-        handleResponseChange(question.id, field.edited_value);
-        if (question.supports_visibility) {
-          handleVisibilityChange(question.id, 'partial');
-        }
+        const responseKey = getQuestionResponseKey(question, 3);
+        handleResponseChange(responseKey, field.edited_value);
+        handleVisibilityChange(responseKey, 'full');
       }
     });
     
@@ -842,18 +956,13 @@ export default function CreateProposal() {
     const isSharedFact = roleType === 'shared_fact';
     const isCounterpartyObs = roleType === 'counterparty_observation';
     
-    // Build response key based on context
-    let responseKey = question.id;
-    if (!isSharedFact && step === 3) {
-      // Step 3: counterparty info, store with subject_party=b
-      responseKey = `${question.id}__b`;
-    } else if (!isSharedFact && step === 2) {
-      // Step 2: own info, subject_party=a (or use plain key)
-      responseKey = question.id;
-    }
-    
-    const value = responses[responseKey] || responses[question.id] || '';
-    const visibility = visibilitySettings[responseKey] || visibilitySettings[question.id] || question.visibility_default || 'full';
+    const responseKey = getQuestionResponseKey(question, step);
+    const value = getQuestionResponseValue(question, step) || '';
+    const visibility = step === 3
+      ? 'full'
+      : normalizeVisibilitySetting(
+          visibilitySettings[responseKey] || visibilitySettings[question.id] || question.visibility_default || 'full'
+        );
     const hasError = validationErrors[question.id];
     const isConditionalReq = isConditionallyRequired(question);
     const effectiveRequired = getEffectiveRequired(question);
@@ -872,7 +981,7 @@ export default function CreateProposal() {
               <p className="text-sm text-slate-600 mt-1">{question.description}</p>
             )}
           </div>
-          {!isSharedFact && question.supports_visibility && (
+          {step !== 3 && (
             <Select 
               value={visibility}
               onValueChange={(v) => handleVisibilityChange(responseKey, v)}
@@ -882,10 +991,7 @@ export default function CreateProposal() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="full">
-                  <span className="flex items-center gap-1"><Eye className="w-3 h-3" /> Full</span>
-                </SelectItem>
-                <SelectItem value="partial">
-                  <span className="flex items-center gap-1"><EyeOff className="w-3 h-3" /> Partial</span>
+                  <span className="flex items-center gap-1"><Eye className="w-3 h-3" /> Visible</span>
                 </SelectItem>
                 <SelectItem value="hidden">
                   <span className="flex items-center gap-1"><Lock className="w-3 h-3" /> Hidden</span>
@@ -1115,16 +1221,35 @@ export default function CreateProposal() {
                   </div>
 
                   <div className="space-y-2">
-                    <Label>Recipient Email (Optional)</Label>
+                    <Label>
+                      Recipient Email <span className="text-red-500">*</span>
+                    </Label>
                     <Input 
                       type="email"
                       value={recipientEmail}
-                      onChange={(e) => setRecipientEmail(e.target.value)}
+                      onChange={(e) => {
+                        setRecipientEmail(e.target.value);
+                        if (validationErrors._recipient_email) {
+                          setValidationErrors((prev) => {
+                            const next = { ...prev };
+                            delete next._recipient_email;
+                            return next;
+                          });
+                        }
+                      }}
                       placeholder="recipient@example.com"
+                      className={validationErrors._recipient_email ? 'border-red-500' : ''}
                     />
-                    <p className="text-xs text-slate-500">
-                      Optional: You can send this later from the Drafts tab.
-                    </p>
+                    {validationErrors._recipient_email ? (
+                      <p className="text-sm text-red-600 flex items-center gap-1">
+                        <XCircle className="w-4 h-4" />
+                        {validationErrors._recipient_email}
+                      </p>
+                    ) : (
+                      <p className="text-xs text-slate-500">
+                        Required: this is used for the shared workspace and report delivery.
+                      </p>
+                    )}
                   </div>
 
                   {user && (
@@ -1379,8 +1504,15 @@ export default function CreateProposal() {
 
                   <div className="flex justify-end mt-6">
                     <Button 
-                      onClick={() => setStep(2)}
-                      disabled={(isUniversalTemplate && !presetKey) || (isFinanceTemplate && !responses['mode']) || (isProfileMatchingTemplate && !responses['mode'])}
+                      onClick={() => {
+                        if (!validateStep1RecipientEmail()) return;
+                        setStep(2);
+                      }}
+                      disabled={
+                        (isUniversalTemplate && !presetKey) ||
+                        (isFinanceTemplate && !responses['mode']) ||
+                        (isProfileMatchingTemplate && !responses['mode'])
+                      }
                       className="bg-blue-600 hover:bg-blue-700"
                     >
                       Continue
@@ -1683,7 +1815,9 @@ export default function CreateProposal() {
                           <Button 
                             onClick={async () => {
                               if (!validateAll()) {
-                                setStep(2);
+                                const isRecipientEmailInvalid =
+                                  !recipientEmail.trim() || !EMAIL_REGEX.test(recipientEmail.trim());
+                                setStep(isRecipientEmailInvalid ? 1 : 2);
                                 return;
                               }
 
@@ -1698,7 +1832,7 @@ export default function CreateProposal() {
                                   draft_state_json: null,
                                   party_a_user_id: user?.id,
                                   party_a_email: user?.email,
-                                  party_b_email: recipientEmail || null,
+                                  party_b_email: recipientEmail.trim() || null,
                                   include_profile: responses['_include_profile'] || false,
                                   include_organisation: responses['_include_organisation'] || false
                                 };
@@ -1726,7 +1860,7 @@ export default function CreateProposal() {
                                       subject_party: 'a',
                                       claim_type: 'self',
                                       value: typeof value === 'object' && !Array.isArray(value) ? JSON.stringify(value) : String(value),
-                                      visibility: visibilitySettings[responseKey] || 'full'
+                                      visibility: normalizeVisibilitySetting(visibilitySettings[responseKey] || 'full')
                                     });
                                   }).filter(Boolean);
 
@@ -1781,36 +1915,28 @@ export default function CreateProposal() {
                             <ArrowLeft className="w-4 h-4 mr-2" />
                             Back
                           </Button>
-                          {recipientEmail ? (
-                            <Button 
-                              onClick={() => {
-                                if (!validateAll()) {
-                                  setStep(2);
-                                  return;
-                                }
-                                sendProposalMutation.mutate(guestEmail);
-                              }}
-                              disabled={sendProposalMutation.isPending || (isGuestMode && !guestEmail)}
-                              className="bg-blue-600 hover:bg-blue-700"
-                            >
-                              {sendProposalMutation.isPending ? (
-                                'Sending...'
-                              ) : (
-                                <>
-                                  <Send className="w-4 h-4 mr-2" />
-                                  Send Proposal
-                                </>
-                              )}
-                            </Button>
-                          ) : (
-                            <Button 
-                              onClick={() => navigate(createPageUrl('Proposals'))}
-                              variant="outline"
-                            >
-                              <CheckCircle2 className="w-4 h-4 mr-2" />
-                              Go to Drafts
-                            </Button>
-                          )}
+                          <Button 
+                            onClick={() => {
+                              if (!validateAll()) {
+                                const isRecipientEmailInvalid =
+                                  !recipientEmail.trim() || !EMAIL_REGEX.test(recipientEmail.trim());
+                                setStep(isRecipientEmailInvalid ? 1 : 2);
+                                return;
+                              }
+                              sendProposalMutation.mutate({ guestEmailParam: guestEmail, runEvaluation: true });
+                            }}
+                            disabled={sendProposalMutation.isPending || (isGuestMode && !guestEmail)}
+                            className="bg-blue-600 hover:bg-blue-700"
+                          >
+                            {sendProposalMutation.isPending ? (
+                              'Running Evaluation...'
+                            ) : (
+                              <>
+                                <Sparkles className="w-4 h-4 mr-2" />
+                                Run Evaluation
+                              </>
+                            )}
+                          </Button>
                         </div>
                       </>
                     )}
