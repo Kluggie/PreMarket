@@ -19,6 +19,7 @@ const FRIENDLY_ERROR_MESSAGES = {
   TOKEN_EXPIRED: 'This shared link has expired. Request a new link.',
   MAX_VIEWS_REACHED: 'This shared link has reached its maximum number of views.',
   RECIPIENT_MISMATCH: 'This link belongs to a different recipient account.',
+  RECIPIENT_REQUIRED: 'This shared link is invalid. Ask the sender to share the report again.',
   TOKEN_INACTIVE: 'This shared link is inactive.',
   PROPOSAL_NOT_FOUND: 'The linked proposal could not be found.',
   PROPOSAL_LINK_MISSING: 'This shared link is not connected to a proposal.',

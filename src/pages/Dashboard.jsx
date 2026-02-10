@@ -109,8 +109,22 @@ export default function Dashboard() {
     enabled: !!user?.email
   });
 
-  const sentProposals = allUserProposals?.sent?.filter(p => p.status !== 'draft') || [];
-  const receivedProposals = allUserProposals?.received || [];
+  const sentSource = allUserProposals?.sent || [];
+  const receivedSource = allUserProposals?.received || [];
+
+  const uniqueProposalsById = new Map();
+  [...sentSource, ...receivedSource].forEach((proposal) => {
+    const key = String(proposal?.id || '').trim();
+    if (!key || uniqueProposalsById.has(key)) return;
+    uniqueProposalsById.set(key, proposal);
+  });
+  const uniqueProposals = Array.from(uniqueProposalsById.values());
+
+  const ownerProposals = uniqueProposals.filter((proposal) => isProposalOwner(proposal, user));
+  const recipientProposals = uniqueProposals.filter((proposal) => !isProposalOwner(proposal, user));
+
+  const sentProposals = ownerProposals.filter((proposal) => proposal.status !== 'draft');
+  const receivedProposals = recipientProposals.filter((proposal) => proposal.status !== 'draft');
   
   const loadingSent = loadingAll;
   const loadingReceived = loadingAll;

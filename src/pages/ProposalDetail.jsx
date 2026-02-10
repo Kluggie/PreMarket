@@ -51,6 +51,7 @@ const SHARED_ERROR_MESSAGES = {
   TOKEN_EXPIRED: 'This shared link has expired. Ask for a fresh link.',
   MAX_VIEWS_REACHED: 'This shared link has reached its view limit.',
   RECIPIENT_MISMATCH: 'This link belongs to a different recipient account.',
+  RECIPIENT_REQUIRED: 'This shared link is invalid. Ask the sender to share the report again.',
   TOKEN_INACTIVE: 'This shared link is inactive.',
   PROPOSAL_NOT_FOUND: 'The linked proposal could not be found.',
   PROPOSAL_LINK_MISSING: 'This shared link is not tied to a proposal.'
@@ -344,6 +345,64 @@ function buildFallbackResponsesFromStepState(stepState, proposalId) {
   return rows;
 }
 
+function normalizeSnapshotEnteredByParty(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'b' || normalized === 'party_b' || normalized === 'recipient' || normalized === 'counterparty') {
+    return 'b';
+  }
+  return 'a';
+}
+
+function buildFallbackResponsesFromInputSnapshot(inputSnapshot, proposalId) {
+  const snapshotResponses = Array.isArray(inputSnapshot?.responses) ? inputSnapshot.responses : [];
+  if (snapshotResponses.length === 0) return [];
+
+  const rows = [];
+  const seen = new Set();
+
+  snapshotResponses.forEach((item, index) => {
+    const questionId = String(item?.question_id || item?.questionId || '').trim();
+    if (!questionId) return;
+
+    const enteredByParty = normalizeSnapshotEnteredByParty(item?.party || item?.entered_by_party || item?.enteredByParty);
+    const dedupeKey = `${questionId}__${enteredByParty}`;
+    if (seen.has(dedupeKey)) return;
+    seen.add(dedupeKey);
+
+    const valueType = String(item?.value_type || item?.valueType || '').toLowerCase();
+    const parsed = valueType === 'range'
+      ? {
+          value_type: 'range',
+          value: null,
+          range_min: Number.isFinite(Number(item?.range_min ?? item?.rangeMin))
+            ? Number(item?.range_min ?? item?.rangeMin)
+            : null,
+          range_max: Number.isFinite(Number(item?.range_max ?? item?.rangeMax))
+            ? Number(item?.range_max ?? item?.rangeMax)
+            : null
+        }
+      : toFallbackResponseValue(item?.value);
+
+    rows.push({
+      id: `snapshot_${proposalId || 'proposal'}_${index}_${questionId}`,
+      proposal_id: proposalId || null,
+      question_id: questionId,
+      entered_by_party: enteredByParty,
+      author_party: enteredByParty,
+      subject_party: enteredByParty === 'b' ? 'b' : 'a',
+      is_about_counterparty: enteredByParty === 'b',
+      value_type: parsed.value_type,
+      value: parsed.value,
+      range_min: parsed.range_min,
+      range_max: parsed.range_max,
+      visibility: normalizeFallbackVisibility(item?.visibility),
+      created_date: null
+    });
+  });
+
+  return rows;
+}
+
 async function invokeSharedResolver(token, options = {}) {
   const payload = {
     token,
@@ -538,18 +597,47 @@ export default function ProposalDetail() {
     enabled: ownerWorkspaceEnabled
   });
 
+  const { data: fallbackInputSnapshot = null } = useQuery({
+    queryKey: ['fallbackInputSnapshot', proposalId],
+    queryFn: async () => {
+      const [reportsByProposal, reportsByDataProposal] = await Promise.all([
+        base44.entities.EvaluationReport.filter({ proposal_id: proposalId }, '-created_date', 10),
+        base44.entities.EvaluationReport.filter({ 'data.proposal_id': proposalId }, '-created_date', 10)
+      ]);
+      const rows = [...(reportsByProposal || []), ...(reportsByDataProposal || [])];
+      for (const row of rows) {
+        const data = row?.data && typeof row.data === 'object' ? row.data : {};
+        const snapshot = row?.input_snapshot_json || data?.input_snapshot_json || null;
+        if (snapshot && Array.isArray(snapshot?.responses) && snapshot.responses.length > 0) {
+          return snapshot;
+        }
+      }
+      return null;
+    },
+    enabled: ownerWorkspaceEnabled
+  });
+
   const fallbackResponsesEntity = useMemo(() => {
     if (!ownerWorkspaceEnabled || responsesEntity.length > 0) return [];
-    if (!fallbackEvaluationItem) return [];
+    if (fallbackEvaluationItem) {
+      const data = fallbackEvaluationItem?.data && typeof fallbackEvaluationItem.data === 'object'
+        ? fallbackEvaluationItem.data
+        : {};
+      const stepState = fallbackEvaluationItem?.step_state_json || data?.step_state_json || null;
+      if (stepState) {
+        const rows = buildFallbackResponsesFromStepState(stepState, proposalId);
+        if (rows.length > 0) {
+          return rows;
+        }
+      }
+    }
 
-    const data = fallbackEvaluationItem?.data && typeof fallbackEvaluationItem.data === 'object'
-      ? fallbackEvaluationItem.data
-      : {};
-    const stepState = fallbackEvaluationItem?.step_state_json || data?.step_state_json || null;
-    if (!stepState) return [];
+    if (fallbackInputSnapshot) {
+      return buildFallbackResponsesFromInputSnapshot(fallbackInputSnapshot, proposalId);
+    }
 
-    return buildFallbackResponsesFromStepState(stepState, proposalId);
-  }, [ownerWorkspaceEnabled, responsesEntity, fallbackEvaluationItem, proposalId]);
+    return [];
+  }, [ownerWorkspaceEnabled, responsesEntity, fallbackEvaluationItem, fallbackInputSnapshot, proposalId]);
 
   const { data: linkedDocumentComparison = null } = useQuery({
     queryKey: ['linkedDocumentComparison', proposalId, proposalEntity?.document_comparison_id || null],

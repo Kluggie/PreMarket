@@ -64,11 +64,17 @@ function extractRecipientEmail(shareLink: any): string | null {
   if (!shareLink || typeof shareLink !== 'object') return null;
 
   const data = shareLink.data && typeof shareLink.data === 'object' ? shareLink.data : {};
+  const context = shareLink.context && typeof shareLink.context === 'object' ? shareLink.context : {};
+  const metadata = shareLink.metadata && typeof shareLink.metadata === 'object' ? shareLink.metadata : {};
   return normalizeEmail(
     shareLink.recipient_email ||
     shareLink.recipientEmail ||
     data.recipient_email ||
     data.recipientEmail ||
+    context.recipient_email ||
+    context.recipientEmail ||
+    metadata.recipient_email ||
+    metadata.recipientEmail ||
     null
   );
 }
