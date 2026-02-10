@@ -28,10 +28,10 @@ function normalizeValue(input: unknown) {
   return JSON.stringify(input);
 }
 
-function normalizeVisibility(value: unknown): 'full' | 'partial' | 'hidden' {
+function normalizeVisibility(value: unknown): 'full' | 'hidden' {
   const normalized = String(value || '').trim().toLowerCase();
   if (['hidden', 'not_shared', 'private', 'confidential'].includes(normalized)) return 'hidden';
-  if (normalized === 'partial') return 'partial';
+  if (normalized === 'partial') return 'hidden';
   return 'full';
 }
 

@@ -7,7 +7,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -24,7 +23,7 @@ import {
 import DeleteDraftDialog from '../components/proposal/DeleteDraftDialog';
 import { toast } from 'sonner';
 import {
-  ArrowLeft, FileText, BarChart3, Clock, CheckCircle2,
+  ArrowLeft, ArrowRight, FileText, BarChart3, Clock, CheckCircle2,
   AlertTriangle, XCircle, MessageSquare, RefreshCw,
   Send, Sparkles, ChevronRight, Upload, ThumbsUp
 } from 'lucide-react';
@@ -186,7 +185,6 @@ export default function ProposalDetail() {
   const [recipientEmail, setRecipientEmail] = useState('');
   const [emailMessage, setEmailMessage] = useState('');
   const [recipientEdits, setRecipientEdits] = useState({});
-  const [ownerResponseEdits, setOwnerResponseEdits] = useState({});
   const [sendBackMessage, setSendBackMessage] = useState('');
   const [openingSharedWorkspace, setOpeningSharedWorkspace] = useState(false);
   const queryClient = useQueryClient();
@@ -195,10 +193,17 @@ export default function ProposalDetail() {
 
   const params = useMemo(() => new URLSearchParams(search), [search]);
   const proposalId = params.get('id');
+  const requestedTab = params.get('tab');
   const sharedToken = params.get('sharedToken');
   const sharedRole = params.get('role');
   const isRecipientView = Boolean(sharedToken && sharedRole === 'recipient');
   const isRecipientRoutedRequest = Boolean(sharedToken || sharedRole === 'recipient');
+
+  useEffect(() => {
+    if (requestedTab === 'evaluation' || requestedTab === 'overview') {
+      setActiveTab(requestedTab);
+    }
+  }, [requestedTab]);
 
   useEffect(() => {
     let active = true;
@@ -349,37 +354,6 @@ export default function ProposalDetail() {
     });
     setRecipientEdits(nextEdits);
   }, [isRecipientView, partyBEditableSchema]);
-
-  useEffect(() => {
-    if (isRecipientView) return;
-    if (!isProposalOwner(proposal, user)) return;
-
-    const nextEdits = {};
-    responses.forEach((response) => {
-      if (!response?.id) return;
-      if (!isResponseOwnedByCurrentUser(response)) return;
-
-      const visibility = String(response?.visibility || 'full').toLowerCase();
-      const valueType = String(
-        response?.value_type ||
-        ((response?.range_min !== null && response?.range_min !== undefined) || (response?.range_max !== null && response?.range_max !== undefined)
-          ? 'range'
-          : 'text')
-      ).toLowerCase();
-
-      nextEdits[response.id] = {
-        responseId: response.id,
-        questionId: response.question_id,
-        valueType,
-        value: response?.value ?? '',
-        rangeMin: response?.range_min ?? null,
-        rangeMax: response?.range_max ?? null,
-        visibility: visibility === 'hidden' ? 'hidden' : 'full'
-      };
-    });
-
-    setOwnerResponseEdits(nextEdits);
-  }, [isRecipientView, proposal, user, responses, isPartyA, isPartyB]);
 
   const { data: evaluations = [] } = useQuery({
     queryKey: ['evaluations', proposalId],
@@ -578,7 +552,8 @@ export default function ProposalDetail() {
 
   const isResponseHiddenForViewer = (response) => {
     if (isRecipientView && isPartyAResponse(response)) return true;
-    const visibility = String(response?.visibility || '').toLowerCase();
+    const visibilityValue = String(response?.visibility || '').toLowerCase();
+    const visibility = visibilityValue === 'partial' ? 'hidden' : visibilityValue;
     if (visibility !== 'hidden') return false;
     return !isResponseOwnedByCurrentUser(response);
   };
@@ -693,57 +668,6 @@ export default function ProposalDetail() {
     }
     runNewEvaluationMutation.mutate({ trigger: 'user_click' });
   };
-
-  const handleOwnerResponseEditChange = (responseId, patch) => {
-    setOwnerResponseEdits((prev) => ({
-      ...prev,
-      [responseId]: {
-        ...prev[responseId],
-        ...patch
-      }
-    }));
-  };
-
-  const saveOwnerResponsesMutation = useMutation({
-    mutationFn: async ({ rerun = false } = {}) => {
-      const edits = Object.values(ownerResponseEdits).filter((item) => item?.responseId);
-      if (edits.length === 0) {
-        throw new Error('No editable responses were found.');
-      }
-
-      for (const edit of edits) {
-        const valueType = String(edit.valueType || 'text').toLowerCase();
-        const payload = {
-          value_type: valueType,
-          value: edit.value ?? '',
-          range_min: null,
-          range_max: null,
-          visibility: String(edit.visibility || 'full').toLowerCase() === 'hidden' ? 'hidden' : 'full'
-        };
-
-        if (valueType === 'range') {
-          payload.range_min = edit.rangeMin === '' ? null : (edit.rangeMin ?? null);
-          payload.range_max = edit.rangeMax === '' ? null : (edit.rangeMax ?? null);
-        }
-
-        await base44.entities.ProposalResponse.update(edit.responseId, payload);
-      }
-
-      return { rerun };
-    },
-    onSuccess: ({ rerun }) => {
-      queryClient.invalidateQueries(['proposalResponses', proposalId]);
-      queryClient.invalidateQueries(['proposal', proposalId]);
-      toast.success(rerun ? 'Saved updates and started AI evaluation.' : 'Saved your updates.');
-
-      if (rerun) {
-        runNewEvaluationMutation.mutate({ trigger: 'user_click' });
-      }
-    },
-    onError: (error) => {
-      toast.error(error?.message || 'Failed to save your updates.');
-    }
-  });
 
   const sendReportMutation = useMutation({
     mutationFn: async () => {
@@ -1557,9 +1481,18 @@ export default function ProposalDetail() {
                 <FileText className="w-4 h-4 mr-2" />
                 Download Proposal Info PDF
               </Button>
-              {proposalId && hasShareableReport && (
+              {!isRecipientView && isProposalOwner(proposal, user) && proposalId && (
                 <Button
                   variant="outline"
+                  onClick={() => navigate(createPageUrl(`CreateProposal?draft=${proposalId}&step=4`))}
+                >
+                  <ArrowRight className="w-4 h-4 mr-2" />
+                  Edit Proposal
+                </Button>
+              )}
+              {proposalId && hasShareableReport && (
+                <Button
+                  className="bg-blue-600 hover:bg-blue-700"
                   onClick={() => {
                     setRecipientEmail(proposal?.party_b_email || '');
                     setEmailMessage('');
@@ -1570,14 +1503,6 @@ export default function ProposalDetail() {
                   Send AI Report
                 </Button>
               )}
-              <Button 
-                onClick={() => handleRunEvaluationClick()}
-                disabled={runNewEvaluationMutation.isPending || latestReport?.status === 'running' || latestReport?.status === 'queued' || sharedReport?.status === 'running' || fitCardReport?.status === 'running'}
-                className="bg-blue-600 hover:bg-blue-700"
-              >
-                <Sparkles className="w-4 h-4 mr-2" />
-                {(runNewEvaluationMutation.isPending || latestReport?.status === 'running' || latestReport?.status === 'queued' || sharedReport?.status === 'running' || fitCardReport?.status === 'running') ? 'Evaluating...' : (isProfileMatchingTemplate ? 'Run Profile Evaluation' : 'Run AI Evaluation')}
-              </Button>
               {latestSuccessReport && latestSuccessReport.output_report_json && (
                 <Button 
                   variant="outline"
@@ -1672,97 +1597,6 @@ export default function ProposalDetail() {
                   </CardContent>
                 </Card>
 
-                {!isRecipientView && isProposalOwner(proposal, user) && Object.keys(ownerResponseEdits).length > 0 && (
-                  <Card className="border-0 shadow-sm">
-                    <CardHeader>
-                      <CardTitle>Edit Your Details</CardTitle>
-                      <CardDescription>
-                        Update your own responses only. You can optionally keep specific responses confidential from the other party.
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                      {Object.values(ownerResponseEdits).map((edit) => {
-                        const isRange = String(edit?.valueType || '').toLowerCase() === 'range';
-                        const responseLabel = String(edit?.questionId || '').replace(/_/g, ' ');
-                        return (
-                          <div key={edit.responseId} className="border rounded-xl p-4 space-y-3">
-                            <Label className="font-medium text-slate-900 capitalize">
-                              {responseLabel}
-                            </Label>
-                            {isRange ? (
-                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                <Input
-                                  type="number"
-                                  value={edit.rangeMin ?? ''}
-                                  onChange={(event) => handleOwnerResponseEditChange(edit.responseId, {
-                                    valueType: 'range',
-                                    rangeMin: event.target.value === '' ? null : Number(event.target.value)
-                                  })}
-                                  disabled={saveOwnerResponsesMutation.isPending}
-                                  placeholder="Minimum"
-                                />
-                                <Input
-                                  type="number"
-                                  value={edit.rangeMax ?? ''}
-                                  onChange={(event) => handleOwnerResponseEditChange(edit.responseId, {
-                                    valueType: 'range',
-                                    rangeMax: event.target.value === '' ? null : Number(event.target.value)
-                                  })}
-                                  disabled={saveOwnerResponsesMutation.isPending}
-                                  placeholder="Maximum"
-                                />
-                              </div>
-                            ) : (
-                              <Textarea
-                                rows={3}
-                                value={edit.value ?? ''}
-                                onChange={(event) => handleOwnerResponseEditChange(edit.responseId, {
-                                  valueType: 'text',
-                                  value: event.target.value
-                                })}
-                                disabled={saveOwnerResponsesMutation.isPending}
-                              />
-                            )}
-
-                            <div className="flex items-center gap-2">
-                              <Checkbox
-                                id={`owner-visibility-${edit.responseId}`}
-                                checked={String(edit.visibility || 'full').toLowerCase() === 'hidden'}
-                                onCheckedChange={(nextChecked) => handleOwnerResponseEditChange(edit.responseId, {
-                                  visibility: nextChecked === true ? 'hidden' : 'full'
-                                })}
-                                disabled={saveOwnerResponsesMutation.isPending}
-                              />
-                              <Label htmlFor={`owner-visibility-${edit.responseId}`} className="text-sm text-slate-700">
-                                Keep this response confidential
-                              </Label>
-                            </div>
-                          </div>
-                        );
-                      })}
-
-                      <div className="flex flex-wrap gap-2 pt-2">
-                        <Button
-                          onClick={() => saveOwnerResponsesMutation.mutate({ rerun: false })}
-                          disabled={saveOwnerResponsesMutation.isPending || runNewEvaluationMutation.isPending}
-                          className="bg-blue-600 hover:bg-blue-700"
-                        >
-                          {saveOwnerResponsesMutation.isPending ? 'Saving...' : 'Save Updates'}
-                        </Button>
-                        <Button
-                          variant="outline"
-                          onClick={() => saveOwnerResponsesMutation.mutate({ rerun: true })}
-                          disabled={saveOwnerResponsesMutation.isPending || runNewEvaluationMutation.isPending}
-                        >
-                          {saveOwnerResponsesMutation.isPending || runNewEvaluationMutation.isPending
-                            ? 'Saving...'
-                            : 'Save + Re-run AI Evaluation'}
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                )}
-
                 {/* Detailed Responses */}
                 <Card className="border-0 shadow-sm">
                   <CardHeader>
@@ -1796,11 +1630,11 @@ export default function ProposalDetail() {
                                   ? 'bg-slate-100 text-slate-700'
                                   : (response.visibility === 'full'
                                     ? 'bg-green-100 text-green-700'
-                                    : response.visibility === 'partial'
-                                      ? 'bg-amber-100 text-amber-700'
-                                      : 'bg-slate-100 text-slate-700')
+                                    : 'bg-slate-100 text-slate-700')
                               }>
-                                {hiddenForViewer ? 'not_shared' : response.visibility}
+                                {hiddenForViewer
+                                  ? 'not_shared'
+                                  : (String(response.visibility || '').toLowerCase() === 'partial' ? 'hidden' : response.visibility)}
                               </Badge>
                             </div>
                             <div className="bg-slate-50 p-3 rounded-lg">
