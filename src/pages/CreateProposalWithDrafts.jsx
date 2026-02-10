@@ -177,7 +177,20 @@ export default function CreateProposal() {
       setEnabledModules(proposal.enabled_modules || []);
 
       // Load all responses
-      const draftResponses = await base44.entities.ProposalResponse.filter({ proposal_id: proposalId });
+      const responseBuckets = await Promise.all([
+        base44.entities.ProposalResponse.filter({ proposal_id: proposalId }),
+        base44.entities.ProposalResponse.filter({ proposalId: proposalId }),
+        base44.entities.ProposalResponse.filter({ 'data.proposal_id': proposalId }),
+        base44.entities.ProposalResponse.filter({ 'data.proposalId': proposalId })
+      ]);
+      const byId = new Map();
+      responseBuckets.flat().forEach((record, index) => {
+        const key = String(record?.id || `load_response_${index}`);
+        if (!byId.has(key)) {
+          byId.set(key, record);
+        }
+      });
+      const draftResponses = Array.from(byId.values());
       const responsesObj = {};
       const visibilityObj = {};
 
@@ -236,6 +249,112 @@ export default function CreateProposal() {
       
     } catch (error) {
       console.error('Failed to load draft:', error);
+    }
+  };
+
+  const dedupeResponsesById = (records = []) => {
+    const byId = new Map();
+    records.forEach((record, index) => {
+      const key = String(record?.id || `response_${index}`);
+      if (!byId.has(key)) {
+        byId.set(key, record);
+      }
+    });
+    return Array.from(byId.values());
+  };
+
+  const serializeResponseValue = (value) => {
+    if (value === null || value === undefined) return '';
+    if (typeof value === 'object') return JSON.stringify(value);
+    return String(value);
+  };
+
+  const inferResponseShape = (question, explicitSubjectParty) => {
+    let subjectParty = explicitSubjectParty || null;
+    let claimType = 'self';
+
+    if (!subjectParty) {
+      const roleType = question?.role_type || 'party_attribute';
+      if (roleType === 'shared_fact') {
+        subjectParty = 'shared';
+        claimType = 'shared_fact';
+      } else if (question?.is_about_counterparty) {
+        subjectParty = 'b';
+        claimType = 'counterparty_claim';
+      } else {
+        subjectParty = 'a';
+        claimType = 'self';
+      }
+    } else if (subjectParty === 'shared') {
+      claimType = 'shared_fact';
+    } else if (subjectParty === 'b') {
+      claimType = 'counterparty_claim';
+    }
+
+    return { subjectParty, claimType };
+  };
+
+  const fetchExistingResponses = async (proposalId) => {
+    const responseBuckets = await Promise.all([
+      base44.entities.ProposalResponse.filter({ proposal_id: proposalId }),
+      base44.entities.ProposalResponse.filter({ proposalId: proposalId }),
+      base44.entities.ProposalResponse.filter({ 'data.proposal_id': proposalId }),
+      base44.entities.ProposalResponse.filter({ 'data.proposalId': proposalId })
+    ]);
+
+    return dedupeResponsesById(responseBuckets.flat());
+  };
+
+  const upsertProposalResponses = async (proposalId) => {
+    if (!proposalId || !selectedTemplate) return;
+
+    const existingResponses = await fetchExistingResponses(proposalId);
+
+    for (const [responseKey, value] of Object.entries(responses)) {
+      if (responseKey.startsWith('_')) continue;
+
+      const [questionId, explicitSubjectParty] = responseKey.includes('__')
+        ? responseKey.split('__')
+        : [responseKey, null];
+
+      const question = selectedTemplate.questions.find((q) => q.id === questionId);
+      if (!question) continue;
+
+      const { subjectParty, claimType } = inferResponseShape(question, explicitSubjectParty);
+      const visibility = subjectParty === 'b'
+        ? 'full'
+        : normalizeVisibilitySetting(visibilitySettings[responseKey] || visibilitySettings[questionId] || 'full');
+
+      const responseData = {
+        proposal_id: proposalId,
+        question_id: questionId,
+        entered_by_party: 'a',
+        author_party: 'a',
+        subject_party: subjectParty,
+        claim_type: claimType,
+        is_about_counterparty: question?.is_about_counterparty || false,
+        value: serializeResponseValue(value),
+        visibility
+      };
+
+      if (value && typeof value === 'object' && value.type === 'range') {
+        responseData.value_type = 'range';
+        responseData.range_min = value.min;
+        responseData.range_max = value.max;
+      }
+
+      const existing = existingResponses.find((row) =>
+        row.question_id === questionId &&
+        (row.subject_party || (row.is_about_counterparty ? 'b' : 'a')) === subjectParty &&
+        (row.author_party || row.entered_by_party) === 'a'
+      );
+
+      if (existing) {
+        await base44.entities.ProposalResponse.update(existing.id, responseData);
+      } else {
+        const created = await base44.entities.ProposalResponse.create(responseData);
+        existingResponses.push(created);
+      }
     }
   };
 
@@ -318,83 +437,7 @@ export default function CreateProposal() {
       } else {
         await base44.entities.EvaluationItem.create(evalPayload);
       }
-
-      const existingResponses = await base44.entities.ProposalResponse.filter({ proposal_id: proposalId });
-
-      for (const [responseKey, value] of Object.entries(responses)) {
-        if (responseKey.startsWith('_include_')) continue;
-        
-        // Parse key: questionId__subjectParty or just questionId
-        const [questionId, subjectParty] = responseKey.includes('__') 
-          ? responseKey.split('__') 
-          : [responseKey, null];
-        
-        const question = selectedTemplate.questions.find(q => q.id === questionId);
-        if (!question) continue;
-        
-        // Determine subject_party and claim_type
-        let finalSubjectParty = subjectParty;
-        let claimType = 'self';
-        
-        if (!finalSubjectParty) {
-          // Infer from question
-          const roleType = question.role_type || 'party_attribute';
-          if (roleType === 'shared_fact') {
-            finalSubjectParty = 'shared';
-            claimType = 'shared_fact';
-          } else if (question.is_about_counterparty) {
-            finalSubjectParty = 'b';
-            claimType = 'counterparty_claim';
-          } else {
-            finalSubjectParty = 'a';
-            claimType = 'self';
-          }
-        } else {
-          // Explicit subject_party from key
-          if (finalSubjectParty === 'shared') {
-            claimType = 'shared_fact';
-          } else if (finalSubjectParty === 'b') {
-            claimType = 'counterparty_claim';
-          } else {
-            claimType = 'self';
-          }
-        }
-        
-        const visibility = finalSubjectParty === 'b'
-          ? 'full'
-          : normalizeVisibilitySetting(visibilitySettings[responseKey] || visibilitySettings[questionId] || 'full');
-
-        const responseData = {
-          proposal_id: proposalId,
-          question_id: questionId,
-          entered_by_party: 'a',
-          author_party: 'a',
-          subject_party: finalSubjectParty,
-          claim_type: claimType,
-          is_about_counterparty: question?.is_about_counterparty || false,
-          value: typeof value === 'object' && !Array.isArray(value) ? JSON.stringify(value) : Array.isArray(value) ? JSON.stringify(value) : String(value),
-          visibility: visibility
-        };
-
-        if (typeof value === 'object' && value.type === 'range') {
-          responseData.value_type = 'range';
-          responseData.range_min = value.min;
-          responseData.range_max = value.max;
-        }
-
-        // Find existing by question_id + subject_party + author_party
-        const existing = existingResponses.find(r => 
-          r.question_id === questionId && 
-          (r.subject_party || (r.is_about_counterparty ? 'b' : 'a')) === finalSubjectParty &&
-          (r.author_party || r.entered_by_party) === 'a'
-        );
-
-        if (existing) {
-          await base44.entities.ProposalResponse.update(existing.id, responseData);
-        } else {
-          await base44.entities.ProposalResponse.create(responseData);
-        }
-      }
+      await upsertProposalResponses(proposalId);
     } catch (error) {
       console.error('Auto-save failed:', error);
     } finally {
@@ -762,69 +805,9 @@ export default function CreateProposal() {
         proposal = proposals[0];
       } else {
         proposal = await base44.entities.Proposal.create(proposalData);
-
-        const responsePromises = Object.entries(responses).map(([responseKey, value]) => {
-          if (responseKey.startsWith('_include_')) return null;
-          
-          const [questionId, subjectParty] = responseKey.includes('__') 
-            ? responseKey.split('__') 
-            : [responseKey, null];
-          
-          const question = selectedTemplate.questions.find(q => q.id === questionId);
-          if (!question) return null;
-          
-          let finalSubjectParty = subjectParty;
-          let claimType = 'self';
-          
-          if (!finalSubjectParty) {
-            const roleType = question.role_type || 'party_attribute';
-            if (roleType === 'shared_fact') {
-              finalSubjectParty = 'shared';
-              claimType = 'shared_fact';
-            } else if (question.is_about_counterparty) {
-              finalSubjectParty = 'b';
-              claimType = 'counterparty_claim';
-            } else {
-              finalSubjectParty = 'a';
-              claimType = 'self';
-            }
-          } else {
-            if (finalSubjectParty === 'shared') {
-              claimType = 'shared_fact';
-            } else if (finalSubjectParty === 'b') {
-              claimType = 'counterparty_claim';
-            } else {
-              claimType = 'self';
-            }
-          }
-          
-          const visibility = finalSubjectParty === 'b'
-            ? 'full'
-            : normalizeVisibilitySetting(visibilitySettings[responseKey] || visibilitySettings[questionId] || 'full');
-          
-          let responseData = {
-            proposal_id: proposal.id,
-            question_id: questionId,
-            entered_by_party: 'a',
-            author_party: 'a',
-            subject_party: finalSubjectParty,
-            claim_type: claimType,
-            is_about_counterparty: question?.is_about_counterparty || false,
-            value: typeof value === 'object' && !Array.isArray(value) ? JSON.stringify(value) : Array.isArray(value) ? JSON.stringify(value) : String(value),
-            visibility: visibility
-          };
-
-          if (typeof value === 'object' && value.type === 'range') {
-            responseData.value_type = 'range';
-            responseData.range_min = value.min;
-            responseData.range_max = value.max;
-          }
-
-          return base44.entities.ProposalResponse.create(responseData);
-        }).filter(Boolean);
-
-        await Promise.all(responsePromises);
       }
+
+      await upsertProposalResponses(proposal.id);
 
       if (isGuestMode && guestEmailParam) {
         const magicToken = Math.random().toString(36).substring(2) + Date.now().toString(36);
@@ -1844,28 +1827,9 @@ export default function CreateProposal() {
                                   proposal = proposals[0];
                                 } else {
                                   proposal = await base44.entities.Proposal.create(proposalData);
-
-                                  const responsePromises = Object.entries(responses).map(([responseKey, value]) => {
-                                    if (responseKey.startsWith('_include_') || responseKey.startsWith('_profile_') || responseKey.startsWith('_target_')) return null;
-
-                                    const [questionId] = responseKey.includes('__') ? responseKey.split('__') : [responseKey, null];
-                                    const question = selectedTemplate.questions.find(q => q.id === questionId);
-                                    if (!question) return null;
-
-                                    return base44.entities.ProposalResponse.create({
-                                      proposal_id: proposal.id,
-                                      question_id: questionId,
-                                      entered_by_party: 'a',
-                                      author_party: 'a',
-                                      subject_party: 'a',
-                                      claim_type: 'self',
-                                      value: typeof value === 'object' && !Array.isArray(value) ? JSON.stringify(value) : String(value),
-                                      visibility: normalizeVisibilitySetting(visibilitySettings[responseKey] || 'full')
-                                    });
-                                  }).filter(Boolean);
-
-                                  await Promise.all(responsePromises);
                                 }
+
+                                await upsertProposalResponses(proposal.id);
 
                                 // Run evaluation
                                 if (import.meta.env.DEV) {
