@@ -45,6 +45,34 @@ function isProposalOwner(proposal, user) {
   return Boolean(userEmail && ownerEmail && userEmail === ownerEmail);
 }
 
+function dedupeById(records = []) {
+  const byId = new Map();
+  records.forEach((record, index) => {
+    const key = String(record?.id || `row_${index}`).trim();
+    if (!key || byId.has(key)) return;
+    byId.set(key, record);
+  });
+  return Array.from(byId.values());
+}
+
+function parseJsonValue(value) {
+  if (typeof value !== 'string') return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function buildReviewedTitle(title, reviewedCount) {
+  const safeTitle = title || 'Untitled Proposal';
+  if (reviewedCount > 1) {
+    return `${safeTitle} - reviewed (${reviewedCount})`;
+  }
+  return `${safeTitle} - reviewed`;
+}
+
 async function getActiveShareLinkForRecipient(proposalId) {
   const normalizedProposalId = String(proposalId || '').trim();
   if (!normalizedProposalId) {
@@ -53,6 +81,57 @@ async function getActiveShareLinkForRecipient(proposalId) {
       message: 'Proposal ID is required'
     };
   }
+
+  const isLocalhost = () => {
+    if (typeof window === 'undefined') return false;
+    return window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  };
+  const isMissingDeployment = (value) =>
+    String(value || '').toLowerCase().includes('deployment does not exist');
+
+  const resolveFromShareLinks = async () => {
+    const me = await base44.auth.me().catch(() => null);
+    const recipientEmail = normalizeEmail(me?.email);
+    if (!recipientEmail) {
+      return { ok: false, message: NO_SHARED_WORKSPACE_LINK_MESSAGE };
+    }
+
+    const buckets = await Promise.all([
+      base44.entities.ShareLink
+        .filter({ proposal_id: normalizedProposalId, recipient_email: recipientEmail }, '-created_date', 10)
+        .catch(() => []),
+      base44.entities.ShareLink
+        .filter({ proposalId: normalizedProposalId, recipientEmail: recipientEmail }, '-created_date', 10)
+        .catch(() => []),
+      base44.entities.ShareLink
+        .filter({ proposal_id: normalizedProposalId, recipientEmail: recipientEmail }, '-created_date', 10)
+        .catch(() => []),
+      base44.entities.ShareLink
+        .filter({ proposalId: normalizedProposalId, recipient_email: recipientEmail }, '-created_date', 10)
+        .catch(() => [])
+    ]);
+
+    const activeRow = buckets
+      .flat()
+      .find((row) => {
+        const status = String(row?.status || '').trim().toLowerCase();
+        if (status && status !== 'active') return false;
+
+        const expiresAt = row?.expires_at || row?.expiresAt || row?.data?.expires_at || row?.data?.expiresAt;
+        if (expiresAt) {
+          const expiry = new Date(expiresAt).getTime();
+          if (Number.isFinite(expiry) && expiry < Date.now()) return false;
+        }
+        return true;
+      });
+
+    const token = activeRow?.token || activeRow?.data?.token || null;
+    if (!token) {
+      return { ok: false, message: NO_SHARED_WORKSPACE_LINK_MESSAGE };
+    }
+
+    return { ok: true, token: String(token) };
+  };
 
   try {
     const result = await base44.functions.invoke('GetActiveShareLinkForRecipient', {
@@ -65,16 +144,29 @@ async function getActiveShareLinkForRecipient(proposalId) {
         token: data.token
       };
     }
+
+    const responseMessage = typeof data === 'string' ? data : (data?.message || data?.error || '');
+    if (isLocalhost() && isMissingDeployment(responseMessage)) {
+      return resolveFromShareLinks();
+    }
+
     return {
       ok: false,
-      message: data?.message || NO_SHARED_WORKSPACE_LINK_MESSAGE
+      message: responseMessage || NO_SHARED_WORKSPACE_LINK_MESSAGE
     };
   } catch (error) {
-    const message =
+    const message = String(
       error?.data?.message ||
       error?.response?.data?.message ||
+      error?.data ||
+      error?.response?.data ||
       error?.message ||
-      NO_SHARED_WORKSPACE_LINK_MESSAGE;
+      NO_SHARED_WORKSPACE_LINK_MESSAGE
+    );
+    if (isLocalhost() && isMissingDeployment(message)) {
+      return resolveFromShareLinks();
+    }
+
     return {
       ok: false,
       message
@@ -138,26 +230,132 @@ export default function Proposals() {
     enabled: !!user,
   });
 
+  const { data: sendBackMeta = { countsByProposal: {}, latestByProposal: {} } } = useQuery({
+    queryKey: ['proposals', 'sendBackMeta', user?.email],
+    queryFn: async () => {
+      if (!user?.email) {
+        return { countsByProposal: {}, latestByProposal: {} };
+      }
+
+      const currentUserEmail = normalizeEmail(user.email);
+      const rows = await base44.entities.ProposalResponse
+        .filter({ claim_type: 'recipient_counterproposal' }, '-created_date', 250)
+        .catch(() => []);
+
+      const countsByProposal = {};
+      const latestByProposal = {};
+
+      rows.forEach((row) => {
+        const proposalId = String(
+          row?.proposal_id ||
+          row?.proposalId ||
+          row?.data?.proposal_id ||
+          row?.data?.proposalId ||
+          ''
+        ).trim();
+        if (!proposalId) return;
+
+        const payload = parseJsonValue(row?.value);
+        const source = String(payload?.source || '').trim().toLowerCase();
+        if (source && source !== 'shared_report_send_back') return;
+
+        const actorEmail = normalizeEmail(payload?.actorEmail || '');
+        if (actorEmail && actorEmail !== currentUserEmail) return;
+
+        countsByProposal[proposalId] = (countsByProposal[proposalId] || 0) + 1;
+
+        const existing = latestByProposal[proposalId];
+        const nextTime = new Date(row?.created_date || 0).getTime();
+        const existingTime = existing ? new Date(existing?.created_date || 0).getTime() : 0;
+        if (!existing || nextTime > existingTime) {
+          latestByProposal[proposalId] = row;
+        }
+      });
+
+      return { countsByProposal, latestByProposal };
+    },
+    enabled: !!user?.email
+  });
+
   const sentSource = allUserProposals?.sent || [];
   const receivedSource = allUserProposals?.received || [];
+  const currentUserEmail = normalizeEmail(user?.email);
 
-  const uniqueProposalsById = new Map();
-  [...sentSource, ...receivedSource].forEach((proposal) => {
-    const key = String(proposal?.id || '').trim();
-    if (!key || uniqueProposalsById.has(key)) return;
-    uniqueProposalsById.set(key, proposal);
-  });
-  const uniqueProposals = Array.from(uniqueProposalsById.values());
+  const dedupedSent = dedupeById(sentSource);
+  const dedupedReceived = dedupeById(receivedSource);
 
-  const ownerProposals = uniqueProposals.filter((proposal) => isProposalOwner(proposal, user));
-  const recipientProposals = uniqueProposals.filter((proposal) => !isProposalOwner(proposal, user));
+  const receivedProposals = dedupedReceived
+    .filter((proposal) => {
+      const status = String(proposal?.status || '').trim().toLowerCase();
+      if (status === 'draft') return false;
+      return !isProposalOwner(proposal, user);
+    })
+    .map((proposal) => ({
+      ...proposal,
+      _listType: 'received'
+    }));
 
-  const sentProposals = ownerProposals.filter((proposal) => proposal.status !== 'draft');
-  const receivedProposals = recipientProposals.filter((proposal) => proposal.status !== 'draft');
-  const draftProposals = ownerProposals.filter((proposal) => proposal.status === 'draft');
+  const receivedIdSet = new Set(
+    receivedProposals
+      .map((proposal) => String(proposal?.id || '').trim())
+      .filter(Boolean)
+  );
+
+  const ownerSentProposals = dedupedSent
+    .filter((proposal) => {
+      const proposalId = String(proposal?.id || '').trim();
+      const status = String(proposal?.status || '').trim().toLowerCase();
+      if (!proposalId || status === 'draft') return false;
+      if (!isProposalOwner(proposal, user)) return false;
+      if (receivedIdSet.has(proposalId)) return false;
+      return true;
+    })
+    .map((proposal) => ({
+      ...proposal,
+      _listType: 'sent'
+    }));
+
+  const reviewedSentProposals = receivedProposals
+    .map((proposal) => {
+      const proposalId = String(proposal?.id || '').trim();
+      if (!proposalId) return null;
+
+      const reviewedCount = Number(sendBackMeta?.countsByProposal?.[proposalId] || 0);
+      if (reviewedCount <= 0) return null;
+
+      const latestReviewRow = sendBackMeta?.latestByProposal?.[proposalId] || null;
+      return {
+        ...proposal,
+        id: `${proposalId}__reviewed`,
+        sourceProposalId: proposalId,
+        status: 'sent',
+        title: buildReviewedTitle(proposal?.title, reviewedCount),
+        reviewedCount,
+        created_date: latestReviewRow?.created_date || proposal?.updated_date || proposal?.created_date,
+        _listType: 'sent_reviewed',
+        _isReviewedVersion: true
+      };
+    })
+    .filter(Boolean);
+
+  const sentProposals = [...ownerSentProposals, ...reviewedSentProposals].sort(
+    (a, b) => new Date(b.created_date || 0) - new Date(a.created_date || 0)
+  );
+
+  const draftProposals = dedupedSent.filter((proposal) => {
+    const proposalId = String(proposal?.id || '').trim();
+    const status = String(proposal?.status || '').trim().toLowerCase();
+    if (!proposalId || status !== 'draft') return false;
+    if (!isProposalOwner(proposal, user)) return false;
+    if (receivedIdSet.has(proposalId)) return false;
+    return true;
+  }).map((proposal) => ({
+    ...proposal,
+    _listType: 'draft'
+  }));
 
   const allProposals = [...sentProposals, ...receivedProposals, ...draftProposals].sort(
-    (a, b) => new Date(b.created_date) - new Date(a.created_date)
+    (a, b) => new Date(b.created_date || 0) - new Date(a.created_date || 0)
   );
 
   const getFilteredProposals = () => {
@@ -167,7 +365,14 @@ export default function Proposals() {
                    allProposals;
 
     if (statusFilter !== 'all') {
-      proposals = proposals.filter(p => p.status === statusFilter);
+      proposals = proposals.filter((proposal) => {
+        const listType = proposal?._listType || (isProposalOwner(proposal, user) ? 'sent' : 'received');
+        const directionalStatus = listType === 'draft'
+          ? 'draft'
+          : (listType === 'received' ? 'received' : 'sent');
+        const rawStatus = String(proposal?.status || '').trim().toLowerCase();
+        return rawStatus === statusFilter || directionalStatus === statusFilter;
+      });
     }
 
     if (searchQuery) {
@@ -210,8 +415,17 @@ export default function Proposals() {
   });
 
   const ProposalRow = ({ proposal }) => {
-    const isSent = isProposalOwner(proposal, user);
-    const isDraft = proposal.status === 'draft';
+    const listType = proposal?._listType || (isProposalOwner(proposal, user) ? 'sent' : 'received');
+    const isSent = listType === 'sent' || listType === 'sent_reviewed';
+    const isRecipientWorkspaceItem = listType === 'received' || listType === 'sent_reviewed';
+    const isDraft = listType === 'draft';
+    const directionalStatus = isDraft ? 'draft' : (isRecipientWorkspaceItem ? 'received' : 'sent');
+    const rawStatus = String(proposal?.status || '').trim().toLowerCase();
+    const showRawStatus =
+      Boolean(rawStatus) &&
+      rawStatus !== directionalStatus &&
+      !['sent', 'received', 'draft'].includes(rawStatus);
+    const sourceProposalId = proposal?.sourceProposalId || proposal?.id;
     
     const handleClick = async () => {
       if (isDraft) {
@@ -224,10 +438,14 @@ export default function Proposals() {
         return;
       }
 
-      if (!isSent) {
-        const shareLink = await getActiveShareLinkForRecipient(proposal.id);
+      if (isRecipientWorkspaceItem) {
+        const shareLink = await getActiveShareLinkForRecipient(sourceProposalId);
         if (shareLink.ok) {
-          navigate(createPageUrl(`SharedReport?token=${encodeURIComponent(shareLink.token)}`));
+          navigate(
+            createPageUrl(
+              `ProposalDetail?id=${encodeURIComponent(sourceProposalId)}&sharedToken=${encodeURIComponent(shareLink.token)}&role=recipient`
+            )
+          );
           return;
         }
 
@@ -260,13 +478,23 @@ export default function Proposals() {
               <h3 className="font-medium text-slate-900 truncate">
                 {proposal.title || 'Untitled Proposal'}
               </h3>
-              <StatusBadge status={proposal.status} />
+              <StatusBadge status={directionalStatus} />
+              {showRawStatus && (
+                <Badge variant="outline" className="text-xs">
+                  {rawStatus.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase())}
+                </Badge>
+              )}
+              {proposal?._isReviewedVersion && (
+                <Badge className="bg-emerald-100 text-emerald-700">Reviewed</Badge>
+              )}
             </div>
             <div className="flex items-center gap-4 text-sm text-slate-500">
               <span>{proposal.template_name}</span>
               <span>•</span>
               <span>
-                {isSent ? `To: ${proposal.party_b_email || 'Not specified'}` : `From: ${proposal.party_a_email}`}
+                {proposal?._isReviewedVersion
+                  ? `To: ${proposal.party_a_email || 'Original proposer'}`
+                  : (isSent ? `To: ${proposal.party_b_email || 'Not specified'}` : `From: ${proposal.party_a_email}`)}
               </span>
             </div>
           </div>

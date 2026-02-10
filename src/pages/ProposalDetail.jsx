@@ -152,6 +152,57 @@ async function getActiveShareLinkForRecipient(proposalId) {
     };
   }
 
+  const isLocalhost = () => {
+    if (typeof window === 'undefined') return false;
+    return window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  };
+  const isMissingDeployment = (value) =>
+    String(value || '').toLowerCase().includes('deployment does not exist');
+
+  const resolveFromShareLinks = async () => {
+    const me = await base44.auth.me().catch(() => null);
+    const recipientEmail = normalizeEmail(me?.email);
+    if (!recipientEmail) {
+      return { ok: false, message: NO_SHARED_WORKSPACE_LINK_MESSAGE };
+    }
+
+    const buckets = await Promise.all([
+      base44.entities.ShareLink
+        .filter({ proposal_id: normalizedProposalId, recipient_email: recipientEmail }, '-created_date', 10)
+        .catch(() => []),
+      base44.entities.ShareLink
+        .filter({ proposalId: normalizedProposalId, recipientEmail: recipientEmail }, '-created_date', 10)
+        .catch(() => []),
+      base44.entities.ShareLink
+        .filter({ proposal_id: normalizedProposalId, recipientEmail: recipientEmail }, '-created_date', 10)
+        .catch(() => []),
+      base44.entities.ShareLink
+        .filter({ proposalId: normalizedProposalId, recipient_email: recipientEmail }, '-created_date', 10)
+        .catch(() => [])
+    ]);
+
+    const activeRow = buckets
+      .flat()
+      .find((row) => {
+        const status = String(row?.status || '').trim().toLowerCase();
+        if (status && status !== 'active') return false;
+
+        const expiresAt = row?.expires_at || row?.expiresAt || row?.data?.expires_at || row?.data?.expiresAt;
+        if (expiresAt) {
+          const expiry = new Date(expiresAt).getTime();
+          if (Number.isFinite(expiry) && expiry < Date.now()) return false;
+        }
+        return true;
+      });
+
+    const token = activeRow?.token || activeRow?.data?.token || null;
+    if (!token) {
+      return { ok: false, message: NO_SHARED_WORKSPACE_LINK_MESSAGE };
+    }
+
+    return { ok: true, token: String(token) };
+  };
+
   try {
     const result = await base44.functions.invoke('GetActiveShareLinkForRecipient', {
       proposalId: normalizedProposalId
@@ -163,16 +214,29 @@ async function getActiveShareLinkForRecipient(proposalId) {
         token: data.token
       };
     }
+
+    const responseMessage = typeof data === 'string' ? data : (data?.message || data?.error || '');
+    if (isLocalhost() && isMissingDeployment(responseMessage)) {
+      return resolveFromShareLinks();
+    }
+
     return {
       ok: false,
-      message: data?.message || NO_SHARED_WORKSPACE_LINK_MESSAGE
+      message: responseMessage || NO_SHARED_WORKSPACE_LINK_MESSAGE
     };
   } catch (error) {
-    const message =
+    const message = String(
       error?.data?.message ||
       error?.response?.data?.message ||
+      error?.data ||
+      error?.response?.data ||
       error?.message ||
-      NO_SHARED_WORKSPACE_LINK_MESSAGE;
+      NO_SHARED_WORKSPACE_LINK_MESSAGE
+    );
+    if (isLocalhost() && isMissingDeployment(message)) {
+      return resolveFromShareLinks();
+    }
+
     return {
       ok: false,
       message
@@ -442,9 +506,8 @@ export default function ProposalDetail() {
   const proposalId = params.get('id');
   const requestedTab = params.get('tab');
   const sharedToken = params.get('sharedToken');
-  const sharedRole = params.get('role');
-  const isRecipientView = Boolean(sharedToken && sharedRole === 'recipient');
-  const isRecipientRoutedRequest = Boolean(sharedToken || sharedRole === 'recipient');
+  const isRecipientView = Boolean(sharedToken);
+  const isRecipientRoutedRequest = Boolean(sharedToken);
 
   useEffect(() => {
     if (requestedTab === 'evaluation' || requestedTab === 'overview') {
@@ -469,40 +532,6 @@ export default function ProposalDetail() {
       active = false;
     };
   }, []);
-
-  useEffect(() => {
-    if (!isRecipientRoutedRequest) return;
-
-    let cancelled = false;
-
-    const redirectToSharedWorkspace = async () => {
-      if (sharedToken) {
-        navigate(
-          createPageUrl(`SharedReport?token=${encodeURIComponent(sharedToken)}`),
-          { replace: true }
-        );
-        return;
-      }
-
-      if (!proposalId || !isUserResolved) return;
-
-      const shareLink = await getActiveShareLinkForRecipient(proposalId);
-      if (cancelled) return;
-
-      if (shareLink.ok) {
-        navigate(
-          createPageUrl(`SharedReport?token=${encodeURIComponent(shareLink.token)}`),
-          { replace: true }
-        );
-      }
-    };
-
-    redirectToSharedWorkspace();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isRecipientRoutedRequest, sharedToken, proposalId, isUserResolved, navigate]);
 
   const { data: sharedRecipientData, isLoading: loadingRecipientData, error: sharedRecipientError } = useQuery({
     queryKey: ['sharedRecipientData', sharedToken],
@@ -1411,51 +1440,17 @@ export default function ProposalDetail() {
     const shareLink = await getActiveShareLinkForRecipient(proposalId);
     if (shareLink.ok) {
       setOpeningSharedWorkspace(false);
-      navigate(createPageUrl(`SharedReport?token=${encodeURIComponent(shareLink.token)}`));
+      navigate(
+        createPageUrl(
+          `ProposalDetail?id=${encodeURIComponent(proposalId)}&sharedToken=${encodeURIComponent(shareLink.token)}&role=recipient`
+        )
+      );
       return;
     }
 
     toast.error(shareLink.message || NO_SHARED_WORKSPACE_LINK_MESSAGE);
     setOpeningSharedWorkspace(false);
   };
-
-  const handleOpenSharedWorkspaceFromRecipientRoute = async () => {
-    if (sharedToken) {
-      navigate(createPageUrl(`SharedReport?token=${encodeURIComponent(sharedToken)}`));
-      return;
-    }
-    await handleOpenSharedWorkspace();
-  };
-
-  if (isRecipientRoutedRequest) {
-    return (
-      <div className="min-h-screen bg-slate-50 py-8">
-        <div className="max-w-3xl mx-auto px-4">
-          <Card className="border-0 shadow-sm">
-            <CardContent className="py-10 text-center">
-              <XCircle className="w-10 h-10 text-amber-500 mx-auto mb-4" />
-              <h1 className="text-lg font-semibold text-slate-900 mb-2">Recipient access is handled in Shared Workspace</h1>
-              <p className="text-slate-600 mb-6">
-                ProposalDetail is owner-only. Open the shared recipient workspace to continue.
-              </p>
-              <div className="flex flex-wrap items-center justify-center gap-2">
-                <Button
-                  onClick={handleOpenSharedWorkspaceFromRecipientRoute}
-                  disabled={openingSharedWorkspace}
-                  className="bg-blue-600 hover:bg-blue-700"
-                >
-                  {openingSharedWorkspace ? 'Opening...' : 'Open Shared Workspace'}
-                </Button>
-                <Button variant="outline" onClick={() => navigate(createPageUrl('Proposals'))}>
-                  Back to Proposals
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-    );
-  }
 
   if (isRecipientView && sharedRecipientError) {
     return (
@@ -1517,197 +1512,6 @@ export default function ProposalDetail() {
                   Back to Proposals
                 </Button>
               </div>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-    );
-  }
-
-  if (isRecipientView) {
-    const canEditRecipient = Boolean(sharedPermissions?.canEditRecipientSide ?? sharedPermissions?.canEdit);
-    const canReevaluate = Boolean(sharedPermissions?.canReevaluate);
-    const canSendBack = Boolean(sharedPermissions?.canSendBack);
-    const reportJson = sharedRecipientData?.reportData?.report || null;
-    const recipientEditableProposalId =
-      proposal?.id ||
-      proposalId ||
-      sharedRecipientData?.proposalId ||
-      sharedRecipientData?.reportData?.proposalId ||
-      sharedRecipientData?.reportData?.proposal_id ||
-      null;
-
-    return (
-      <div className="min-h-screen bg-slate-50 py-8">
-        <div className="max-w-5xl mx-auto px-4 space-y-6">
-          <div className="flex items-center justify-between gap-3">
-            <Link to={createPageUrl(`SharedReport?token=${encodeURIComponent(sharedToken || '')}`)} className="inline-flex items-center text-slate-600 hover:text-slate-900">
-              <ArrowLeft className="w-4 h-4 mr-2" />
-              Back to Shared Report
-            </Link>
-            <div className="flex items-center gap-2">
-              {recipientEditableProposalId && (
-                <Button
-                  variant="outline"
-                  onClick={() => navigate(
-                    createPageUrl(`CreateProposal?draft=${recipientEditableProposalId}&step=4&role=recipient&sharedToken=${encodeURIComponent(sharedToken || '')}`)
-                  )}
-                >
-                  Edit Proposal
-                </Button>
-              )}
-              {!user && (
-                <Button variant="outline" onClick={() => base44.auth.redirectToLogin(window.location.href)}>
-                  Sign In to Re-evaluate
-                </Button>
-              )}
-            </div>
-          </div>
-
-          <Card className="border-0 shadow-sm">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Sparkles className="w-5 h-5 text-blue-600" />
-                Shared AI Report
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {reportJson ? (
-                <pre className="text-xs bg-slate-950 text-slate-100 p-4 rounded-lg overflow-auto whitespace-pre-wrap">
-                  {JSON.stringify(reportJson, null, 2)}
-                </pre>
-              ) : (
-                <p className="text-slate-600">No report payload was found for this proposal yet.</p>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card className="border-0 shadow-sm">
-            <CardHeader>
-              <CardTitle>Party A Shared Information</CardTitle>
-              <CardDescription>Confidential fields are redacted before they are returned to this view.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {(partyAView?.responses || []).length === 0 && (
-                <p className="text-slate-500 text-sm">No Party A responses are available.</p>
-              )}
-              {(partyAView?.responses || []).map((item) => (
-                <div key={item.id || item.questionId} className="p-3 border rounded-lg">
-                  <div className="flex items-center justify-between gap-2 mb-1">
-                    <p className="font-medium text-slate-900">{item.label || item.questionId}</p>
-                    <Badge variant="outline">{item.redaction || item.visibility || 'shared'}</Badge>
-                  </div>
-                  <p className="text-sm text-slate-600">{item.valueSummary || 'Not shared'}</p>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-
-          <Card className="border-0 shadow-sm">
-            <CardHeader>
-              <CardTitle>Party B Editable Information</CardTitle>
-              <CardDescription>
-                Update only your side of the proposal. These edits are validated server-side against the shared token policy.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {recipientEditableQuestions.length === 0 && (
-                <p className="text-slate-500 text-sm">No editable Party B fields were found.</p>
-              )}
-              {recipientEditableQuestions.map((question) => {
-                const edit = recipientEdits[question.questionId] || {};
-                const isRange = String(edit.valueType || question.valueType || '').toLowerCase() === 'range';
-                return (
-                  <div key={question.questionId} className="border rounded-lg p-3 space-y-2">
-                    <Label className="font-medium text-slate-900">{question.label || question.questionId}</Label>
-                    {question.description && (
-                      <p className="text-xs text-slate-500">{question.description}</p>
-                    )}
-                    {isRange ? (
-                      <div className="grid grid-cols-2 gap-3">
-                        <Input
-                          type="number"
-                          value={edit.rangeMin ?? ''}
-                          onChange={(event) => handleRecipientEditChange(question.questionId, {
-                            valueType: 'range',
-                            rangeMin: event.target.value === '' ? null : Number(event.target.value)
-                          })}
-                          disabled={!canEditRecipient || saveRecipientResponsesMutation.isPending}
-                          placeholder="Minimum"
-                        />
-                        <Input
-                          type="number"
-                          value={edit.rangeMax ?? ''}
-                          onChange={(event) => handleRecipientEditChange(question.questionId, {
-                            valueType: 'range',
-                            rangeMax: event.target.value === '' ? null : Number(event.target.value)
-                          })}
-                          disabled={!canEditRecipient || saveRecipientResponsesMutation.isPending}
-                          placeholder="Maximum"
-                        />
-                      </div>
-                    ) : (
-                      <Textarea
-                        rows={3}
-                        value={edit.value ?? ''}
-                        onChange={(event) => handleRecipientEditChange(question.questionId, {
-                          valueType: 'text',
-                          value: event.target.value
-                        })}
-                        disabled={!canEditRecipient || saveRecipientResponsesMutation.isPending}
-                      />
-                    )}
-                  </div>
-                );
-              })}
-
-              <div className="flex flex-wrap gap-2 pt-2">
-                <Button
-                  onClick={() => saveRecipientResponsesMutation.mutate()}
-                  disabled={!canEditRecipient || saveRecipientResponsesMutation.isPending}
-                  className="bg-blue-600 hover:bg-blue-700"
-                >
-                  {saveRecipientResponsesMutation.isPending ? 'Saving...' : 'Save Party B Updates'}
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => runSharedReevaluationMutation.mutate()}
-                  disabled={!canReevaluate || runSharedReevaluationMutation.isPending || !user}
-                >
-                  <RefreshCw className="w-4 h-4 mr-2" />
-                  {runSharedReevaluationMutation.isPending ? 'Re-evaluating...' : 'Re-evaluate'}
-                </Button>
-              </div>
-              {runSharedReevaluationMutation.data?.reevaluation && (
-                <p className="text-xs text-slate-500">
-                  Re-evaluations used: {runSharedReevaluationMutation.data.reevaluation.used} / {runSharedReevaluationMutation.data.reevaluation.max}
-                </p>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card className="border-0 shadow-sm">
-            <CardHeader>
-              <CardTitle>Send Back Response</CardTitle>
-              <CardDescription>
-                Submit your counterproposal or notes. A proposal-linked audit response record is created on send.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <Textarea
-                rows={4}
-                value={sendBackMessage}
-                onChange={(event) => setSendBackMessage(event.target.value)}
-                placeholder="Add your response or counterproposal..."
-                disabled={!canSendBack || submitSendBackMutation.isPending}
-              />
-              <Button
-                onClick={() => submitSendBackMutation.mutate()}
-                disabled={!canSendBack || submitSendBackMutation.isPending}
-              >
-                <Send className="w-4 h-4 mr-2" />
-                {submitSendBackMutation.isPending ? 'Sending...' : 'Send Back'}
-              </Button>
             </CardContent>
           </Card>
         </div>

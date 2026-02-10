@@ -339,6 +339,28 @@ async function tryGetCurrentUser(base44: any) {
   }
 }
 
+async function tryGetProposalRecipientEmail(base44: any, proposalId: string | null): Promise<string | null> {
+  const normalizedProposalId = asString(proposalId);
+  if (!normalizedProposalId) return null;
+
+  try {
+    const rows = await base44.asServiceRole.entities.Proposal.filter({ id: normalizedProposalId }, '-created_date', 1);
+    const proposal = rows?.[0] || null;
+    if (!proposal || typeof proposal !== 'object') return null;
+
+    const data = toObject((proposal as any)?.data);
+    return normalizeEmail(
+      (proposal as any)?.party_b_email ||
+      (proposal as any)?.partyBEmail ||
+      data.party_b_email ||
+      data.partyBEmail ||
+      null
+    );
+  } catch {
+    return null;
+  }
+}
+
 const shouldTreatAsRecipientQuestion = (question: any): boolean => {
   const normalizedParty = String(
     question?.party ||
@@ -409,7 +431,10 @@ export async function validateShareLinkAccess(
     return errorResult(410, 'MAX_VIEWS_REACHED', 'This share link has reached the maximum number of views', currentUserEmail, false, shareLink);
   }
 
-  const expectedRecipient = normalizeEmail(shareLink.recipientEmail);
+  let expectedRecipient = normalizeEmail(shareLink.recipientEmail);
+  if (!expectedRecipient) {
+    expectedRecipient = await tryGetProposalRecipientEmail(base44, shareLink.proposalId);
+  }
   const matchedRecipient = Boolean(expectedRecipient && currentUserEmail && expectedRecipient === currentUserEmail);
 
   if (!expectedRecipient) {
