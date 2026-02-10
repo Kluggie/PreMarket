@@ -24,6 +24,31 @@ function extractProposalId(source: any): string | null {
   );
 }
 
+function normalizeEmail(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function extractRecipientEmail(source: any): string | null {
+  if (!source || typeof source !== 'object') return null;
+  const data = source.data && typeof source.data === 'object' ? source.data : {};
+  const context = source.context && typeof source.context === 'object' ? source.context : {};
+  const metadata = source.metadata && typeof source.metadata === 'object' ? source.metadata : {};
+
+  return normalizeEmail(
+    source.recipient_email ||
+    source.recipientEmail ||
+    data.recipient_email ||
+    data.recipientEmail ||
+    context.recipient_email ||
+    context.recipientEmail ||
+    metadata.recipient_email ||
+    metadata.recipientEmail ||
+    null
+  );
+}
+
 function buildShareContextQuery(req: Request) {
   const appIdFromHeader = req.headers.get('Base44-App-Id');
   const functionsVersion = req.headers.get('Base44-Functions-Version');
@@ -55,7 +80,8 @@ Deno.serve(async (req) => {
     const { proposalId, evaluationItemId, documentComparisonId, recipientEmail } = body;
     let resolvedProposalId = proposalId || null;
     
-    if (!recipientEmail || !recipientEmail.includes('@')) {
+    const normalizedRecipientEmail = normalizeEmail(recipientEmail);
+    if (!normalizedRecipientEmail || !normalizedRecipientEmail.includes('@')) {
       console.log(`[${correlationId}] Invalid email provided`);
       return Response.json({
         ok: false,
@@ -193,7 +219,7 @@ Deno.serve(async (req) => {
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 14);
 
-    console.log(`[${correlationId}] Creating share link for recipient domain: ${recipientEmail.split('@')[1]}`);
+    console.log(`[${correlationId}] Creating share link for recipient domain: ${normalizedRecipientEmail.split('@')[1]}`);
     logInfo({
       correlationId,
       event: 'share_link_resolved',
@@ -210,7 +236,8 @@ Deno.serve(async (req) => {
       linked_proposal_id: resolvedProposalId,
       evaluation_item_id: evaluationItemId || null,
       document_comparison_id: documentComparisonId || null,
-      recipient_email: recipientEmail,
+      recipient_email: normalizedRecipientEmail,
+      recipientEmail: normalizedRecipientEmail,
       token: token,
       token_hash: token,
       expires_at: expiresAt.toISOString(),
@@ -249,6 +276,14 @@ Deno.serve(async (req) => {
         payload: { linkedProposalId: resolvedProposalId }
       },
       {
+        label: 'recipient_email',
+        payload: { recipient_email: normalizedRecipientEmail }
+      },
+      {
+        label: 'recipientEmail',
+        payload: { recipientEmail: normalizedRecipientEmail }
+      },
+      {
         label: 'context',
         payload: {
           context: {
@@ -256,7 +291,9 @@ Deno.serve(async (req) => {
             proposalId: resolvedProposalId,
             proposal_id: resolvedProposalId,
             linkedProposalId: resolvedProposalId,
-            linked_proposal_id: resolvedProposalId
+            linked_proposal_id: resolvedProposalId,
+            recipientEmail: normalizedRecipientEmail,
+            recipient_email: normalizedRecipientEmail
           }
         }
       },
@@ -268,7 +305,9 @@ Deno.serve(async (req) => {
             proposalId: resolvedProposalId,
             proposal_id: resolvedProposalId,
             linkedProposalId: resolvedProposalId,
-            linked_proposal_id: resolvedProposalId
+            linked_proposal_id: resolvedProposalId,
+            recipientEmail: normalizedRecipientEmail,
+            recipient_email: normalizedRecipientEmail
           }
         }
       }
@@ -338,8 +377,35 @@ Deno.serve(async (req) => {
           metadataProposalIdSnake: refreshedMetadata.proposal_id || null,
           metadataLinkedProposalId: refreshedMetadata.linkedProposalId || null,
           metadataLinkedProposalIdSnake: refreshedMetadata.linked_proposal_id || null,
+          recipient_email: refreshedShareLink.recipient_email || null,
+          recipientEmail: refreshedShareLink.recipientEmail || null,
+          contextRecipientEmail: refreshedContext.recipientEmail || null,
+          contextRecipientEmailSnake: refreshedContext.recipient_email || null,
+          metadataRecipientEmail: refreshedMetadata.recipientEmail || null,
+          metadataRecipientEmailSnake: refreshedMetadata.recipient_email || null,
           found: true
         });
+
+        const persistedRecipient = extractRecipientEmail(refreshedShareLink);
+        if (persistedRecipient !== normalizedRecipientEmail) {
+          try {
+            await base44.asServiceRole.entities.ShareLink.update(shareLink.id, { status: 'inactive' });
+          } catch (deactivateError) {
+            logInfo({
+              correlationId,
+              event: 'share_link_recipient_pin_deactivate_failed',
+              shareLinkId: shareLink.id,
+              error: deactivateError instanceof Error ? deactivateError.message : String(deactivateError)
+            });
+          }
+
+          return Response.json({
+            ok: false,
+            errorCode: 'RECIPIENT_PIN_FAILED',
+            message: 'Failed to persist recipient restriction. Link was not activated.',
+            correlationId
+          }, { status: 500 });
+        }
       }
     } catch (error) {
       logInfo({
@@ -409,6 +475,12 @@ Deno.serve(async (req) => {
     }
     if (Object.prototype.hasOwnProperty.call(shareLink, 'functions_version_used') && shareContextQuery.functions_version) {
       metadataPatch.functions_version_used = shareContextQuery.functions_version;
+    }
+    if (Object.prototype.hasOwnProperty.call(shareLink, 'recipient_email')) {
+      metadataPatch.recipient_email = normalizedRecipientEmail;
+    }
+    if (Object.prototype.hasOwnProperty.call(shareLink, 'recipientEmail')) {
+      metadataPatch.recipientEmail = normalizedRecipientEmail;
     }
 
     await base44.asServiceRole.entities.ShareLink.update(shareLink.id, metadataPatch);
