@@ -220,6 +220,21 @@ function extractFunctionFailure(error, fallbackMessage) {
   };
 }
 
+function dedupeById(records = []) {
+  const byId = new Map();
+  records.forEach((record, index) => {
+    const key = String(record?.id || `row_${index}`);
+    if (!byId.has(key)) {
+      byId.set(key, record);
+    }
+  });
+  return Array.from(byId.values()).sort((a, b) => {
+    const aTime = new Date(a?.created_date || a?.updated_date || 0).getTime();
+    const bTime = new Date(b?.created_date || b?.updated_date || 0).getTime();
+    return bTime - aTime;
+  });
+}
+
 async function invokeSharedResolver(token, options = {}) {
   const payload = {
     token,
@@ -372,7 +387,7 @@ export default function ProposalDetail() {
 
       return data;
     },
-    enabled: Boolean(isRecipientView && sharedToken && !isRecipientRoutedRequest)
+    enabled: Boolean(isRecipientView && sharedToken)
   });
 
   const { data: proposalEntity, isLoading: loadingProposalEntity } = useQuery({
@@ -387,7 +402,16 @@ export default function ProposalDetail() {
 
   const { data: responsesEntity = [] } = useQuery({
     queryKey: ['proposalResponses', proposalId],
-    queryFn: () => base44.entities.ProposalResponse.filter({ proposal_id: proposalId }),
+    queryFn: async () => {
+      const responseBuckets = await Promise.all([
+        base44.entities.ProposalResponse.filter({ proposal_id: proposalId }),
+        base44.entities.ProposalResponse.filter({ proposalId: proposalId }),
+        base44.entities.ProposalResponse.filter({ 'data.proposal_id': proposalId }),
+        base44.entities.ProposalResponse.filter({ 'data.proposalId': proposalId })
+      ]);
+
+      return dedupeById(responseBuckets.flat());
+    },
     enabled: ownerWorkspaceEnabled
   });
 
