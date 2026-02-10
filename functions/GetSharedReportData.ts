@@ -391,6 +391,21 @@ function pickLatestReportCandidate(records: any[], sourceName: string) {
   };
 }
 
+function dedupeById(records: any[]) {
+  const byId = new Map<string, any>();
+  records.forEach((record, index) => {
+    const id = asString(record?.id) || `fallback_${index}`;
+    if (!byId.has(id)) {
+      byId.set(id, record);
+    }
+  });
+  return Array.from(byId.values()).sort((a, b) => {
+    const aTime = new Date(a?.created_date || a?.updated_date || 0).getTime();
+    const bTime = new Date(b?.created_date || b?.updated_date || 0).getTime();
+    return bTime - aTime;
+  });
+}
+
 Deno.serve(async (req) => {
   const correlationId = `shared_resolve_${Date.now()}_${Math.random().toString(36).substring(7)}`;
 
@@ -537,10 +552,25 @@ Deno.serve(async (req) => {
       documentComparison = byProposalInData?.[0] || null;
     }
 
-    const proposalResponses = await base44.asServiceRole.entities.ProposalResponse.filter(
-      { proposal_id: resolvedProposalId },
-      '-created_date'
-    );
+    const responseBuckets = await Promise.all([
+      base44.asServiceRole.entities.ProposalResponse.filter(
+        { proposal_id: resolvedProposalId },
+        '-created_date'
+      ),
+      base44.asServiceRole.entities.ProposalResponse.filter(
+        { proposalId: resolvedProposalId },
+        '-created_date'
+      ),
+      base44.asServiceRole.entities.ProposalResponse.filter(
+        { 'data.proposal_id': resolvedProposalId },
+        '-created_date'
+      ),
+      base44.asServiceRole.entities.ProposalResponse.filter(
+        { 'data.proposalId': resolvedProposalId },
+        '-created_date'
+      )
+    ]);
+    const proposalResponses = dedupeById(responseBuckets.flat());
 
     const templates = await base44.asServiceRole.entities.Template.list();
     const template = templates.find((item: any) => item.id === proposal.template_id) || null;
