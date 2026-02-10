@@ -216,6 +216,40 @@ export default function ProposalDetail() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!isRecipientRoutedRequest) return;
+
+    let cancelled = false;
+
+    const redirectToSharedWorkspace = async () => {
+      if (sharedToken) {
+        navigate(
+          createPageUrl(`SharedReport?token=${encodeURIComponent(sharedToken)}`),
+          { replace: true }
+        );
+        return;
+      }
+
+      if (!proposalId || !isUserResolved) return;
+
+      const shareLink = await getActiveShareLinkForRecipient(proposalId);
+      if (cancelled) return;
+
+      if (shareLink.ok) {
+        navigate(
+          createPageUrl(`SharedReport?token=${encodeURIComponent(shareLink.token)}`),
+          { replace: true }
+        );
+      }
+    };
+
+    redirectToSharedWorkspace();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isRecipientRoutedRequest, sharedToken, proposalId, isUserResolved, navigate]);
+
   const { data: sharedRecipientData, isLoading: loadingRecipientData, error: sharedRecipientError } = useQuery({
     queryKey: ['sharedRecipientData', sharedToken],
     queryFn: async () => {
@@ -267,7 +301,7 @@ export default function ProposalDetail() {
 
       return data;
     },
-    enabled: Boolean(isRecipientView && sharedToken)
+    enabled: Boolean(isRecipientView && sharedToken && !isRecipientRoutedRequest)
   });
 
   const { data: proposalEntity, isLoading: loadingProposalEntity } = useQuery({
