@@ -153,13 +153,15 @@ function toInitialEdit(question) {
   const hasRange =
     question?.currentResponse?.rangeMin !== null && question?.currentResponse?.rangeMin !== undefined ||
     question?.currentResponse?.rangeMax !== null && question?.currentResponse?.rangeMax !== undefined;
+  const currentVisibility = String(question?.currentResponse?.visibility || 'full').toLowerCase();
 
   return {
     questionId: question?.questionId,
     valueType: hasRange ? 'range' : (question?.valueType || 'text'),
     value: question?.currentResponse?.value ?? '',
     rangeMin: question?.currentResponse?.rangeMin ?? null,
-    rangeMax: question?.currentResponse?.rangeMax ?? null
+    rangeMax: question?.currentResponse?.rangeMax ?? null,
+    visibility: currentVisibility === 'hidden' ? 'hidden' : 'full'
   };
 }
 
@@ -385,7 +387,8 @@ export default function SharedReport() {
         valueType: entry.valueType || (entry.rangeMin !== null || entry.rangeMax !== null ? 'range' : 'text'),
         value: entry.value,
         rangeMin: entry.rangeMin,
-        rangeMax: entry.rangeMax
+        rangeMax: entry.rangeMax,
+        visibility: String(entry.visibility || 'full').toLowerCase() === 'hidden' ? 'hidden' : 'full'
       }));
   };
 
@@ -782,6 +785,19 @@ export default function SharedReport() {
                     <p className="text-xs text-slate-500">{question.description}</p>
                   )}
                   {renderEditableField(question)}
+                  <div className="flex items-center gap-2 pt-1">
+                    <Checkbox
+                      id={`recipient-visibility-${question.questionId}`}
+                      checked={String((recipientEdits[question.questionId] || {}).visibility || 'full').toLowerCase() === 'hidden'}
+                      onCheckedChange={(nextChecked) => handleRecipientEditChange(question.questionId, {
+                        visibility: nextChecked === true ? 'hidden' : 'full'
+                      })}
+                      disabled={!canEditRecipient || isSaving}
+                    />
+                    <Label htmlFor={`recipient-visibility-${question.questionId}`} className="text-sm text-slate-700">
+                      Keep this response confidential
+                    </Label>
+                  </div>
                 </div>
               ))}
 
