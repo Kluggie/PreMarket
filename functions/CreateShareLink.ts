@@ -207,6 +207,7 @@ Deno.serve(async (req) => {
     const shareLink = await base44.asServiceRole.entities.ShareLink.create({
       proposal_id: resolvedProposalId,
       proposalId: resolvedProposalId,
+      linked_proposal_id: resolvedProposalId,
       evaluation_item_id: evaluationItemId || null,
       document_comparison_id: documentComparisonId || null,
       recipient_email: recipientEmail,
@@ -240,12 +241,22 @@ Deno.serve(async (req) => {
         payload: { proposalId: resolvedProposalId }
       },
       {
+        label: 'linked_proposal_id',
+        payload: { linked_proposal_id: resolvedProposalId }
+      },
+      {
+        label: 'linkedProposalId',
+        payload: { linkedProposalId: resolvedProposalId }
+      },
+      {
         label: 'context',
         payload: {
           context: {
             ...existingContext,
             proposalId: resolvedProposalId,
-            proposal_id: resolvedProposalId
+            proposal_id: resolvedProposalId,
+            linkedProposalId: resolvedProposalId,
+            linked_proposal_id: resolvedProposalId
           }
         }
       },
@@ -255,7 +266,9 @@ Deno.serve(async (req) => {
           metadata: {
             ...existingMetadata,
             proposalId: resolvedProposalId,
-            proposal_id: resolvedProposalId
+            proposal_id: resolvedProposalId,
+            linkedProposalId: resolvedProposalId,
+            linked_proposal_id: resolvedProposalId
           }
         }
       }
@@ -319,8 +332,12 @@ Deno.serve(async (req) => {
           proposalId: refreshedShareLink.proposalId || null,
           contextProposalId: refreshedContext.proposalId || null,
           contextProposalIdSnake: refreshedContext.proposal_id || null,
+          contextLinkedProposalId: refreshedContext.linkedProposalId || null,
+          contextLinkedProposalIdSnake: refreshedContext.linked_proposal_id || null,
           metadataProposalId: refreshedMetadata.proposalId || null,
           metadataProposalIdSnake: refreshedMetadata.proposal_id || null,
+          metadataLinkedProposalId: refreshedMetadata.linkedProposalId || null,
+          metadataLinkedProposalIdSnake: refreshedMetadata.linked_proposal_id || null,
           found: true
         });
       }
