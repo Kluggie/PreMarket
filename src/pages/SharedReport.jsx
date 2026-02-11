@@ -107,26 +107,27 @@ function extractFunctionFailure(error, fallbackMessage) {
 }
 
 async function invokeSharedResolver(token, options = {}) {
-  const payload = {
-    token,
-    ...(typeof options.consumeView === 'boolean' ? { consumeView: options.consumeView } : {})
-  };
+    const payload = {
+      token,
+      ...(typeof options.consumeView === 'boolean' ? { consumeView: options.consumeView } : {}),
+      ...(options.debug ? { debug: '1' } : {})
+    };
 
-  try {
-    return await base44.functions.invoke('ResolveSharedReport', payload);
-  } catch (error) {
-    const meta = buildErrorMeta(error);
-    const missingResolver =
-      meta.statusCode === 404 &&
-      (!meta.responseBody || (!meta.responseBody.code && !meta.responseBody.reason));
+    try {
+      return await base44.functions.invoke('ResolveSharedReport', payload);
+    } catch (error) {
+      const meta = buildErrorMeta(error);
+      const missingResolver =
+        meta.statusCode === 404 &&
+        (!meta.responseBody || (!meta.responseBody.code && !meta.responseBody.reason));
 
-    if (!missingResolver) {
-      throw error;
+      if (!missingResolver) {
+        throw error;
+      }
+
+      return base44.functions.invoke('GetSharedReportData', payload);
     }
-
-    return base44.functions.invoke('GetSharedReportData', payload);
   }
-}
 
 function toArray(input) {
   return Array.isArray(input) ? input : [];
@@ -239,6 +240,7 @@ export default function SharedReport() {
   const [isReevaluating, setIsReevaluating] = useState(false);
   const [isSendingBack, setIsSendingBack] = useState(false);
   const [reevaluationState, setReevaluationState] = useState(null);
+  const [debugData, setDebugData] = useState(null);
   const resolvedTokenRef = useRef(null);
   const workspaceSectionRef = useRef(null);
   const ensuredSnapshotAccessRef = useRef(new Set());
@@ -251,6 +253,11 @@ export default function SharedReport() {
   const mode = useMemo(() => {
     const params = new URLSearchParams(location.search);
     return params.get('mode');
+  }, [location.search]);
+
+  const debugMode = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    return params.get('debug') === '1';
   }, [location.search]);
 
   const reportTitle = useMemo(() => {
@@ -391,8 +398,12 @@ export default function SharedReport() {
         setError(null);
       }
 
-      const result = await invokeSharedResolver(token, { consumeView });
+      const result = await invokeSharedResolver(token, { consumeView, debug: debugMode });
       const data = result?.data;
+
+      if (debugMode && data?.debug) {
+        setDebugData(data.debug);
+      }
 
       if (!data || typeof data !== 'object' || !data.ok) {
         const reasonCode = data?.code || data?.reason || 'RESOLVE_FAILED';
@@ -1308,6 +1319,20 @@ export default function SharedReport() {
           </TabsContent>
         </Tabs>
       </div>
-    </div>
-  );
-}
+
+      {/* Debug Panel */}
+      {debugMode && debugData && (
+        <div className="mt-8 border-t border-slate-200 pt-6">
+          <details className="bg-slate-50 rounded-lg p-4">
+            <summary className="font-semibold text-slate-700 cursor-pointer">
+              Debug Info (debug=1 mode)
+            </summary>
+            <pre className="mt-3 text-xs bg-white p-4 rounded border border-slate-200 overflow-auto max-h-96" style={{ whiteSpace: 'pre-wrap' }}>
+              {JSON.stringify(debugData, null, 2)}
+            </pre>
+          </details>
+        </div>
+      )}
+      </div>
+      );
+      }
