@@ -468,6 +468,11 @@ Deno.serve(async (req) => {
         documentComparisonId: docComparisonId
       },
       partyAResponses: partyAResponses,
+      partyBEditableSchema: {
+        totalQuestions: partyBQuestions.length,
+        editableQuestionIds: partyBQuestions.map(q => q.questionId),
+        questions: partyBQuestions
+      },
       comparisonView,
       reportData: {
         reportId,
