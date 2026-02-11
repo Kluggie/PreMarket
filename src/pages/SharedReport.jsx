@@ -1318,21 +1318,21 @@ export default function SharedReport() {
             )}
           </TabsContent>
         </Tabs>
-      </div>
 
-      {/* Debug Panel */}
-      {debugMode && debugData && (
-        <div className="mt-8 border-t border-slate-200 pt-6">
-          <details className="bg-slate-50 rounded-lg p-4">
-            <summary className="font-semibold text-slate-700 cursor-pointer">
-              Debug Info (debug=1 mode)
-            </summary>
-            <pre className="mt-3 text-xs bg-white p-4 rounded border border-slate-200 overflow-auto max-h-96" style={{ whiteSpace: 'pre-wrap' }}>
-              {JSON.stringify(debugData, null, 2)}
-            </pre>
-          </details>
-        </div>
-      )}
+        {/* Debug Panel */}
+        {debugMode && debugData && (
+          <div className="mt-8 border-t border-slate-200 pt-6">
+            <details className="bg-slate-50 rounded-lg p-4">
+              <summary className="font-semibold text-slate-700 cursor-pointer">
+                Debug Info (debug=1 mode)
+              </summary>
+              <pre className="mt-3 text-xs bg-white p-4 rounded border border-slate-200 overflow-auto max-h-96" style={{ whiteSpace: 'pre-wrap' }}>
+                {JSON.stringify(debugData, null, 2)}
+              </pre>
+            </details>
+          </div>
+        )}
       </div>
-      );
-      }
+    </div>
+  );
+}
