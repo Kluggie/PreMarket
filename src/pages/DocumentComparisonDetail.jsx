@@ -210,10 +210,18 @@ export default function DocumentComparisonDetail() {
         return;
       }
 
-      if (!result.data.ok) {
-        const errorCode = result.data.errorCode || 'UNKNOWN';
+      if (!result.data.ok || result.data.error) {
+        const errorCode = result.data.errorCode || result.data.error || 'UNKNOWN';
         const errorMsg = result.data.message || 'Failed to send email';
         const corrId = result.data.correlationId || clientCorrelationId;
+        
+        // Special handling for SNAPSHOT_EMPTY
+        if (errorCode === 'SNAPSHOT_EMPTY') {
+          toast.error('SNAPSHOT_EMPTY: No proposal data to share');
+          const debugInfo = `Snapshot ID: ${result.data.snapshotId || 'unknown'}\nParty A fields: ${result.data.aLen || 0}\nParty B fields: ${result.data.bLen || 0}\nPayload path: ${result.data.payloadPathUsed || 'none'}\nSnapshot keys: ${(result.data.snapshotTopKeys || []).join(', ')}`;
+          alert(`SNAPSHOT_EMPTY\n\nThe snapshot contains no proposal data.\n\n${debugInfo}\n\nCorrelation ID: ${corrId}`);
+          return;
+        }
         
         toast.error(`Failed to send: ${errorMsg}`);
         console.error(`[${corrId}] Send email error [${errorCode}]:`, errorMsg);
