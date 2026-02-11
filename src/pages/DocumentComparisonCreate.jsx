@@ -839,9 +839,9 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                       Continue to Input
                       <ArrowRight className="w-4 h-4 ml-2" />
                     </Button>
-                  </div>
-                </CardContent>
-              </Card>
+                    </div>
+                    </div>
+                    </div>
             </motion.div>
           )}
 
