@@ -575,6 +575,7 @@ export default function ProposalDetail() {
   const [sendBackMessage, setSendBackMessage] = useState('');
   const [openingSharedWorkspace, setOpeningSharedWorkspace] = useState(false);
   const recipientVisibilityDebugLoggedRef = useRef(false);
+  const ensureReceivedLoggedRef = useRef(false);
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { search } = useLocation();
@@ -796,6 +797,7 @@ export default function ProposalDetail() {
   useEffect(() => {
     setRecipientEditMode(false);
     recipientVisibilityDebugLoggedRef.current = false;
+    ensureReceivedLoggedRef.current = false;
   }, [sharedToken]);
 
   useEffect(() => {
@@ -1034,20 +1036,29 @@ export default function ProposalDetail() {
     if (!isRecipientView || recipientVisibilityDebugLoggedRef.current) return;
     if (!Array.isArray(responses) || responses.length === 0) return;
 
-    const sample = responses.find((row) => row?.question_id) || responses[0];
-    if (!sample) return;
-
-    const hiddenForViewer = isResponseHiddenForViewer(sample);
-    console.debug('[RecipientVisibilityDebug] computed field visibility', {
-      questionId: sample?.question_id || null,
-      enteredByParty: sample?.entered_by_party || null,
-      visibilityRaw: sample?.visibility || null,
-      visibilityNormalized: normalizeResponseVisibility(sample?.visibility),
-      hiddenForViewer
-    });
+    responses
+      .filter((row) => row?.question_id)
+      .slice(0, 3)
+      .forEach((row) => {
+        const hidden = isResponseHiddenForViewer(row);
+        console.log('[visibility]', {
+          fieldKey: row?.question_id || null,
+          hidden,
+          rawVisibilityValue: row?.visibility ?? null
+        });
+      });
 
     recipientVisibilityDebugLoggedRef.current = true;
   }, [isRecipientView, responses, isResponseHiddenForViewer]);
+
+  useEffect(() => {
+    if (!isRecipientView || ensureReceivedLoggedRef.current) return;
+    if (!user?.id) return;
+    const ensuredProposalId = sharedRecipientData?.proposalId || proposalId || null;
+    if (!ensuredProposalId) return;
+    console.log('[ensureReceived] called', { proposalId: ensuredProposalId });
+    ensureReceivedLoggedRef.current = true;
+  }, [isRecipientView, sharedRecipientData, proposalId, user?.id]);
 
   const getResponseDisplayValue = (response) => {
     if (isResponseHiddenForViewer(response)) return 'Not shared';
@@ -1911,7 +1922,13 @@ export default function ProposalDetail() {
                 <Button
                   variant={recipientEditMode ? 'default' : 'outline'}
                   className={recipientEditMode ? 'bg-blue-600 hover:bg-blue-700' : ''}
-                  onClick={() => setRecipientEditMode((prev) => !prev)}
+                  onClick={() => {
+                    const next = !recipientEditMode;
+                    setRecipientEditMode(next);
+                    if (next) {
+                      console.log('[recipient-edit] enabled', { proposalId, sharedToken });
+                    }
+                  }}
                 >
                   {recipientEditMode ? 'Done Editing' : 'Edit Your Details'}
                 </Button>
