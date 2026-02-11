@@ -898,6 +898,7 @@ Deno.serve(async (req) => {
     const body = req.method === 'GET' ? {} : await req.json().catch(() => ({}));
     const token = asString(body?.token) || asString(new URL(req.url).searchParams.get('token'));
     const consumeView = parseConsumeView(req, body);
+    const debugMode = new URL(req.url).searchParams.get('debug') === '1';
 
     if (!token) {
       return respond({
