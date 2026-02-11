@@ -234,148 +234,101 @@ Deno.serve(async (req) => {
       questionLookup[questionId] = question;
     });
 
-    let allResponses = await getProposalResponses(base44, sourceProposalId);
-    
-    // FALLBACK: If no saved responses, read from EvaluationItem.step_state_json or Proposal.draft_state_json
-    if (allResponses.length === 0) {
-      const evalItems = await base44.asServiceRole.entities.EvaluationItem.filter({ linked_proposal_id: sourceProposalId }, '-created_date', 1).catch(() => []);
-      const evalItem = evalItems?.[0] || null;
-      const stepStateJson = evalItem?.step_state_json || proposal?.draft_state_json || null;
-      
-      if (stepStateJson) {
-        const rawResponses = stepStateJson?.responses || {};
-        const rawVisibility = stepStateJson?.visibilitySettings || {};
-        
-        const draftResponses: any[] = [];
-        for (const [responseKey, rawValue] of Object.entries(rawResponses)) {
-          if (responseKey.startsWith('_')) continue;
-          
-          const [questionId, subjectFromKey] = responseKey.includes('__') 
-            ? responseKey.split('__') 
-            : [responseKey, null];
-          
-          if (!questionId) continue;
-          const question = questionLookup[questionId] || null;
-          
-          // Determine subject party
-          let subjectParty = 'a';
-          const normalizedFromKey = String(subjectFromKey || '').trim().toLowerCase();
-          if (normalizedFromKey === 'b' || normalizedFromKey === 'party_b' || normalizedFromKey === 'recipient') {
-            subjectParty = 'b';
-          } else if (question) {
-            const party = String(question?.party || question?.party_key || question?.subject_party || '').toLowerCase();
-            if (party === 'b' || party === 'party_b' || party === 'recipient' || party === 'counterparty') {
-              subjectParty = 'b';
-            } else if (question?.is_about_counterparty === true) {
-              subjectParty = 'b';
-            }
-          }
-          
-          const visibility = normalizeVisibility(rawVisibility[responseKey] ?? rawVisibility[questionId]);
-          
-          let valueType = 'text';
-          let value: any = rawValue;
-          let rangeMin: number | null = null;
-          let rangeMax: number | null = null;
-          
-          if (rawValue && typeof rawValue === 'object' && !Array.isArray(rawValue)) {
-            const type = String((rawValue as any).type || '').toLowerCase();
-            if (type === 'range') {
-              valueType = 'range';
-              value = null;
-              rangeMin = Number((rawValue as any).min);
-              rangeMax = Number((rawValue as any).max);
-              if (!Number.isFinite(rangeMin)) rangeMin = null;
-              if (!Number.isFinite(rangeMax)) rangeMax = null;
-            }
-          }
-          
-          draftResponses.push({
-            id: `draft_${questionId}`,
-            proposal_id: sourceProposalId,
-            question_id: questionId,
-            entered_by_party: 'a',
-            subject_party: subjectParty,
-            is_about_counterparty: subjectParty === 'b',
-            value_type: valueType,
-            value: value === null || value === undefined ? null : String(value),
-            range_min: rangeMin,
-            range_max: rangeMax,
-            visibility
-          });
-        }
-        
-        allResponses = draftResponses;
-      }
-    }
-    
-    const partyAResponses = allResponses
-      .filter((response) => isPartyAResponse(response))
-      .filter((response) => {
-        const questionId = asString(response?.question_id);
-        const question = questionId ? questionLookup[questionId] : null;
-        return questionOwnerParty(question) !== 'b';
-      })
-      .map((response) => {
-        const questionId = asString(response?.question_id) || '';
-        const question = questionLookup[questionId] || null;
-        const visibility = normalizeVisibility(response?.visibility);
-        const isHidden = isExplicitlyHidden(response);
-        const valueType = String(response?.value_type || '').trim().toLowerCase() === 'range' ? 'range' : 'text';
+    const allResponses = await getProposalResponses(base44, sourceProposalId);
 
-        const rawValue = response?.value ?? null;
-        const rangeMin = response?.range_min ?? null;
-        const rangeMax = response?.range_max ?? null;
-        let value: string | null = rawValue === null || rawValue === undefined ? null : String(rawValue);
-        let valueSummary: string | null = value;
+    // Split responses by party
+    const partyAResponseRows = allResponses.filter((r) => {
+      const enteredBy = String(r?.entered_by_party || 'a').toLowerCase();
+      return enteredBy === 'a' || enteredBy === 'party_a' || enteredBy === 'proposer';
+    });
 
-        // If hidden/confidential, remove actual values
-        if (isHidden) {
-          value = null;
-          valueSummary = 'Not shared';
-          return {
-            sourceResponseId: asString(response?.id),
-            questionId,
-            label: asString(question?.label) || questionId,
-            ownerParty: 'A',
-            enteredByParty: 'a',
-            visibility: 'hidden',
-            valueType,
-            value: null,
-            rangeMin: null,
-            rangeMax: null,
-            valueSummary: 'Not shared'
-          };
-        }
+    const partyBResponseRows = allResponses.filter((r) => {
+      const enteredBy = String(r?.entered_by_party || 'a').toLowerCase();
+      return enteredBy === 'b' || enteredBy === 'party_b' || enteredBy === 'recipient';
+    });
 
-        if (valueType === 'range') {
-          value = null;
-          valueSummary = (rangeMin !== null && rangeMin !== undefined && rangeMax !== null && rangeMax !== undefined)
-            ? `${rangeMin} - ${rangeMax}`
-            : null;
-        }
+    // Build Party A responses with redaction
+    const partyAResponses = partyAResponseRows.map((response) => {
+      const questionId = asString(response?.question_id) || '';
+      const question = questionLookup[questionId] || null;
+      const visibility = normalizeVisibility(response?.visibility);
+      const isHidden = visibility === 'hidden';
+      const valueType = String(response?.value_type || '').trim().toLowerCase() === 'range' ? 'range' : 'text';
 
-        if (visibility === 'partial' && valueSummary) {
-          valueSummary = valueSummary.length > 64 ? `${valueSummary.slice(0, 64)}...` : valueSummary;
-          if (valueType !== 'range') {
-            value = null;
-          }
-        }
+      const rawValue = response?.value ?? null;
+      const rangeMin = response?.range_min ?? null;
+      const rangeMax = response?.range_max ?? null;
 
+      // Apply redaction for hidden fields
+      if (isHidden) {
         return {
           sourceResponseId: asString(response?.id),
           questionId,
           label: asString(question?.label) || questionId,
           ownerParty: 'A',
           enteredByParty: 'a',
-          visibility,
+          visibility: 'hidden',
           valueType,
-          value,
-          rangeMin,
-          rangeMax,
-          valueSummary
+          value: null,
+          rangeMin: null,
+          rangeMax: null,
+          valueSummary: null,
+          redaction: 'hidden'
         };
-      });
+      }
+
+      // Non-hidden: include actual values
+      let valueSummary: string | null = null;
+      if (valueType === 'range') {
+        valueSummary = (rangeMin !== null && rangeMin !== undefined && rangeMax !== null && rangeMax !== undefined)
+          ? `${rangeMin} - ${rangeMax}`
+          : null;
+      } else {
+        valueSummary = rawValue === null || rawValue === undefined ? null : String(rawValue);
+      }
+
+      return {
+        sourceResponseId: asString(response?.id),
+        questionId,
+        label: asString(question?.label) || questionId,
+        ownerParty: 'A',
+        enteredByParty: 'a',
+        visibility,
+        valueType,
+        value: rawValue === null || rawValue === undefined ? null : String(rawValue),
+        rangeMin,
+        rangeMax,
+        valueSummary,
+        redaction: 'none'
+      };
+    });
+
+    // Build Party B editable schema
+    const partyBQuestions = partyBResponseRows.map((response) => {
+      const questionId = asString(response?.question_id) || '';
+      const question = questionLookup[questionId] || null;
+      const valueType = String(response?.value_type || '').trim().toLowerCase() === 'range' ? 'range' : 'text';
+
+      return {
+        questionId,
+        label: asString(question?.label) || questionId,
+        description: asString(question?.description) || null,
+        fieldType: asString(question?.field_type) || 'text',
+        valueType,
+        required: Boolean(question?.required),
+        supportsVisibility: Boolean(question?.supports_visibility),
+        allowedValues: Array.isArray(question?.allowed_values) ? question.allowed_values : [],
+        currentResponse: {
+          id: asString(response?.id) || null,
+          value: response?.value ?? null,
+          rangeMin: response?.range_min ?? null,
+          rangeMax: response?.range_max ?? null,
+          visibility: normalizeVisibility(response?.visibility),
+          enteredByParty: 'b',
+          updatedAt: asString(response?.updated_date || response?.created_date)
+        }
+      };
+    });
 
     let reportPayload: any = null;
     let reportGeneratedAt: string | null = null;
