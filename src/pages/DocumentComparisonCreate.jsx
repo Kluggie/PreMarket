@@ -685,9 +685,9 @@ Verification Status: ${org.verification_status || 'N/A'}`;
 
   return (
     <div className="min-h-screen bg-slate-50 py-8">
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="mb-8">
-          <Link to={createPageUrl('Proposals')} className="inline-flex items-center text-slate-600 hover:text-slate-900 mb-4">
+      <div className="max-w-7xl mx-auto px-12">
+        <div className="mb-6">
+          <Link to={createPageUrl('Proposals')} className="inline-flex items-center text-slate-600 hover:text-slate-900 mb-3">
             <ArrowLeft className="w-4 h-4 mr-2" />
             Back to Proposals
           </Link>
@@ -699,7 +699,7 @@ Verification Status: ${org.verification_status || 'N/A'}`;
           </div>
         </div>
 
-        <div className="mb-8">
+        <div className="mb-6">
           <div className="flex items-center justify-between text-sm mb-3">
             <span className={`font-semibold ${step === 1 ? 'text-blue-600' : step > 1 ? 'text-slate-400' : 'text-slate-500'}`}>
               Step {step} of 4
@@ -847,7 +847,7 @@ Verification Status: ${org.verification_status || 'N/A'}`;
 
           {/* Step 2: Content Input */}
           {step === 2 && (
-            <motion.div key="step2" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-8">
+            <motion.div key="step2" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-6">
               {/* URL Extraction */}
               {(docASource === 'url' || docBSource === 'url') && (
                 <Card className="border-2 border-purple-200 bg-purple-50">
@@ -913,7 +913,7 @@ Verification Status: ${org.verification_status || 'N/A'}`;
               )}
 
               {/* Side-by-Side Document Inputs */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="grid grid-cols-2 gap-10 items-stretch">
                 {/* Document A Input */}
                 <Card className="flex flex-col h-full">
                   <CardHeader className="pb-3">
@@ -1053,7 +1053,7 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                         value={docAText}
                         onChange={(e) => setDocAText(e.target.value)}
                         placeholder="Enter, paste, or load document text..."
-                        className="flex-1 min-h-[400px] font-mono text-sm bg-slate-50/50 resize-none"
+                        className="flex-1 min-h-[600px] font-mono text-sm bg-slate-50/50 resize-none"
                       />
                     </div>
                   </CardContent>
@@ -1198,7 +1198,7 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                         value={docBText}
                         onChange={(e) => setDocBText(e.target.value)}
                         placeholder="Enter, paste, or load document text..."
-                        className="flex-1 min-h-[400px] font-mono text-sm bg-slate-50/50 resize-none"
+                        className="flex-1 min-h-[600px] font-mono text-sm bg-slate-50/50 resize-none"
                       />
                     </div>
                   </CardContent>
@@ -1241,7 +1241,7 @@ Verification Status: ${org.verification_status || 'N/A'}`;
 
           {/* Step 3: Highlighting */}
           {step === 3 && (
-            <motion.div key="step3" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-8">
+            <motion.div key="step3" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-6">
               <Alert className="bg-blue-50 border-blue-200">
                 <Highlighter className="w-4 h-4 text-blue-600" />
                 <AlertDescription className="text-blue-800">
@@ -1273,7 +1273,7 @@ Verification Status: ${org.verification_status || 'N/A'}`;
               </div>
 
               {/* Side-by-Side Highlighting */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="grid grid-cols-2 gap-10 items-stretch">
                 {/* Document A Highlighting */}
                 <Card>
                   <CardHeader className="pb-3">
@@ -1306,7 +1306,7 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                     <div 
                       ref={docAPreviewRef}
                       onScroll={() => handleSyncScroll(docAPreviewRef, docBPreviewRef)}
-                      className="p-4 border border-slate-200 rounded-xl bg-white h-96 overflow-auto"
+                      className="p-4 border border-slate-200 rounded-xl bg-white h-[600px] overflow-auto"
                     >
                       {renderHighlightedText(docAText, docASpans, 'preview-a')}
                     </div>
@@ -1406,7 +1406,7 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                     <div 
                       ref={docBPreviewRef}
                       onScroll={() => handleSyncScroll(docBPreviewRef, docAPreviewRef)}
-                      className="p-4 border border-slate-200 rounded-xl bg-white h-96 overflow-auto"
+                      className="p-4 border border-slate-200 rounded-xl bg-white h-[600px] overflow-auto"
                     >
                       {renderHighlightedText(docBText, docBSpans, 'preview-b')}
                     </div>
