@@ -1042,6 +1042,17 @@ Deno.serve(async (req) => {
         const sourceProposalId = extractSourceProposalIdFromSnapshot(snapshot) || sourceProposalIdFromLink || resolvedProposalId;
         const version = extractSnapshotVersion(snapshot) || extractShareLinkSnapshotVersion(shareLink) || null;
 
+        if (debugMode) {
+          debugInfo.snapshotFetch = {
+            found: true,
+            snapshotRecordId: snapshotId,
+            has_snapshotData: !!snapshot?.snapshotData,
+            has_snapshot_data: !!snapshot?.snapshot_data,
+            snapshotDataTopKeys: snapshot?.snapshotData ? Object.keys(snapshot.snapshotData) : [],
+            snapshot_dataTopKeys: snapshot?.snapshot_data ? Object.keys(snapshot.snapshot_data) : []
+          };
+        }
+
         let sourceProposal = proposal;
         if (sourceProposalId && sourceProposalId !== resolvedProposalId) {
           const sourceProposalRows = await base44.asServiceRole.entities.Proposal.filter({ id: sourceProposalId }, '-created_date', 1);
