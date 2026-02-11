@@ -700,6 +700,10 @@ async function ensureReceivedProposalRecord(
 
   if (existingRecord?.id) {
     await base44.asServiceRole.entities.AuditLog.update(existingRecord.id, payload);
+    console.log('ensureReceived: exists', JSON.stringify({
+      proposalId: normalizedProposalId,
+      recipientUserId
+    }));
     return {
       ensured: true,
       created: false,
@@ -708,6 +712,10 @@ async function ensureReceivedProposalRecord(
   }
 
   const created = await base44.asServiceRole.entities.AuditLog.create(payload);
+  console.log('ensureReceived: created', JSON.stringify({
+    proposalId: normalizedProposalId,
+    recipientUserId
+  }));
   return {
     ensured: true,
     created: true,

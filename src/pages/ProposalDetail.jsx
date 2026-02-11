@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '../utils';
 import { getProposalId } from '@/lib/utils';
@@ -571,8 +571,10 @@ export default function ProposalDetail() {
   const [recipientEmail, setRecipientEmail] = useState('');
   const [emailMessage, setEmailMessage] = useState('');
   const [recipientEdits, setRecipientEdits] = useState({});
+  const [recipientEditMode, setRecipientEditMode] = useState(false);
   const [sendBackMessage, setSendBackMessage] = useState('');
   const [openingSharedWorkspace, setOpeningSharedWorkspace] = useState(false);
+  const recipientVisibilityDebugLoggedRef = useRef(false);
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { search } = useLocation();
@@ -790,6 +792,11 @@ export default function ProposalDetail() {
     });
     setRecipientEdits(nextEdits);
   }, [isRecipientView, partyBEditableSchema]);
+
+  useEffect(() => {
+    setRecipientEditMode(false);
+    recipientVisibilityDebugLoggedRef.current = false;
+  }, [sharedToken]);
 
   useEffect(() => {
     if (!isRecipientView || !sharedToken || !proposalId) return;
@@ -1022,6 +1029,25 @@ export default function ProposalDetail() {
     if (!isVisibilityExplicitlyHidden(response?.visibility)) return false;
     return !isResponseOwnedByCurrentUser(response);
   };
+
+  useEffect(() => {
+    if (!isRecipientView || recipientVisibilityDebugLoggedRef.current) return;
+    if (!Array.isArray(responses) || responses.length === 0) return;
+
+    const sample = responses.find((row) => row?.question_id) || responses[0];
+    if (!sample) return;
+
+    const hiddenForViewer = isResponseHiddenForViewer(sample);
+    console.debug('[RecipientVisibilityDebug] computed field visibility', {
+      questionId: sample?.question_id || null,
+      enteredByParty: sample?.entered_by_party || null,
+      visibilityRaw: sample?.visibility || null,
+      visibilityNormalized: normalizeResponseVisibility(sample?.visibility),
+      hiddenForViewer
+    });
+
+    recipientVisibilityDebugLoggedRef.current = true;
+  }, [isRecipientView, responses, isResponseHiddenForViewer]);
 
   const getResponseDisplayValue = (response) => {
     if (isResponseHiddenForViewer(response)) return 'Not shared';
@@ -1443,7 +1469,7 @@ export default function ProposalDetail() {
     const fieldType = toFieldType(question);
     const valueType = String(edit?.valueType || question?.valueType || '').toLowerCase();
     const options = normalizeAllowedValues(question?.allowedValues);
-    const disabled = !canEditRecipient;
+    const disabled = !canEditRecipient || !recipientEditMode;
 
     if (valueType === 'range') {
       return (
@@ -1583,6 +1609,7 @@ export default function ProposalDetail() {
     },
     onSuccess: () => {
       toast.success('Your Party B updates were saved');
+      setRecipientEditMode(false);
       queryClient.invalidateQueries(['sharedRecipientData', sharedToken]);
     },
     onError: (error) => {
@@ -1880,6 +1907,15 @@ export default function ProposalDetail() {
                   Edit Proposal
                 </Button>
               )}
+              {isRecipientView && canEditRecipient && (
+                <Button
+                  variant={recipientEditMode ? 'default' : 'outline'}
+                  className={recipientEditMode ? 'bg-blue-600 hover:bg-blue-700' : ''}
+                  onClick={() => setRecipientEditMode((prev) => !prev)}
+                >
+                  {recipientEditMode ? 'Done Editing' : 'Edit Your Details'}
+                </Button>
+              )}
               {proposalId && hasShareableReport && (
                 <Button
                   className="bg-blue-600 hover:bg-blue-700"
@@ -2125,7 +2161,7 @@ export default function ProposalDetail() {
                               onCheckedChange={(nextChecked) => handleRecipientEditChange(question.questionId, {
                                 visibility: nextChecked === true ? 'hidden' : 'full'
                               })}
-                              disabled={!canEditRecipient || saveRecipientResponsesMutation.isPending}
+                              disabled={!canEditRecipient || !recipientEditMode || saveRecipientResponsesMutation.isPending}
                             />
                             <Label htmlFor={`recipient-visibility-${question.questionId}`} className="text-sm text-slate-700">
                               Keep this response confidential
@@ -2135,13 +2171,17 @@ export default function ProposalDetail() {
                       ))}
 
                       <div className="flex flex-wrap items-center gap-2 pt-2">
-                        <Button
-                          onClick={() => saveRecipientResponsesMutation.mutate()}
-                          disabled={!canEditRecipient || saveRecipientResponsesMutation.isPending || recipientEditableQuestions.length === 0}
-                          className="bg-blue-600 hover:bg-blue-700"
-                        >
-                          {saveRecipientResponsesMutation.isPending ? 'Saving...' : 'Save Changes'}
-                        </Button>
+                        {recipientEditMode ? (
+                          <Button
+                            onClick={() => saveRecipientResponsesMutation.mutate()}
+                            disabled={!canEditRecipient || saveRecipientResponsesMutation.isPending || recipientEditableQuestions.length === 0}
+                            className="bg-blue-600 hover:bg-blue-700"
+                          >
+                            {saveRecipientResponsesMutation.isPending ? 'Saving...' : 'Save Changes'}
+                          </Button>
+                        ) : (
+                          <Badge variant="outline">Click "Edit Your Details" to modify Party B fields</Badge>
+                        )}
                         <Button
                           variant="outline"
                           onClick={() => runSharedReevaluationMutation.mutate()}
