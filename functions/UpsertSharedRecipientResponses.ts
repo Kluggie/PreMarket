@@ -1,10 +1,4 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.6';
-import { validateShareLinkAccess } from './_utils/sharedLink.ts';
-
-const PARTY_B_KEYS = new Set(['b', 'party_b', 'recipient', 'counterparty']);
-
-const normalizeParty = (value: unknown) => String(value || '').toLowerCase();
-const isPartyBResponse = (response: any) => PARTY_B_KEYS.has(normalizeParty(response?.entered_by_party || response?.author_party));
 
 function asString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -12,278 +6,175 @@ function asString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function statusLabel(statusCode: number): 'ok' | 'not_found' | 'forbidden' | 'expired' | 'auth_required' | 'invalid' {
-  if (statusCode === 404) return 'not_found';
-  if (statusCode === 401) return 'auth_required';
-  if (statusCode === 403) return 'forbidden';
-  if (statusCode === 410) return 'expired';
-  if (statusCode >= 400) return 'invalid';
-  return 'ok';
-}
-
-function normalizeValue(input: unknown) {
-  if (input === null || input === undefined) return '';
-  if (typeof input === 'string') return input;
-  if (typeof input === 'number' || typeof input === 'boolean') return String(input);
-  return JSON.stringify(input);
-}
-
-function normalizeVisibility(value: unknown): 'full' | 'hidden' {
-  const normalized = String(value || '').trim().toLowerCase();
-  if (['hidden', 'not_shared', 'private', 'confidential'].includes(normalized)) return 'hidden';
-  if (normalized === 'partial') return 'hidden';
-  return 'full';
-}
-
-function extractError(error: any) {
-  const statusCode =
-    error?.status ||
-    error?.response?.status ||
-    error?.originalError?.response?.status ||
-    500;
-  const payload =
-    error?.data ||
-    error?.response?.data ||
-    error?.originalError?.response?.data ||
-    null;
-  return { statusCode, payload };
+function normalizeEmail(value: unknown): string | null {
+  const raw = asString(value);
+  return raw ? raw.toLowerCase() : null;
 }
 
 Deno.serve(async (req) => {
-  const correlationId = `shared_upsert_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-
+  const correlationId = `upsert_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me().catch(() => null);
-    const body = await req.json().catch(() => ({}));
-    const token = asString(body?.token) || asString(new URL(req.url).searchParams.get('token'));
-    const responses = Array.isArray(body?.responses) ? body.responses : [];
-
+    
     if (!user) {
       return Response.json({
         ok: false,
-        status: 'auth_required',
-        code: 'AUTH_REQUIRED',
-        reason: 'AUTH_REQUIRED',
-        message: 'Please sign in to continue',
+        errorCode: 'UNAUTHORIZED',
+        message: 'Authentication required',
         correlationId
       }, { status: 401 });
     }
-
+    
+    const body = await req.json().catch(() => ({}));
+    const token = asString(body?.token);
+    const responses = Array.isArray(body?.responses) ? body.responses : [];
+    
     if (!token) {
       return Response.json({
         ok: false,
-        status: 'invalid',
-        code: 'MISSING_TOKEN',
-        reason: 'MISSING_TOKEN',
+        errorCode: 'MISSING_TOKEN',
         message: 'Token is required',
         correlationId
       }, { status: 400 });
     }
-
-    if (responses.length === 0) {
-      return Response.json({
-        ok: false,
-        status: 'invalid',
-        code: 'MISSING_RESPONSES',
-        reason: 'MISSING_RESPONSES',
-        message: 'At least one response payload is required',
-        correlationId
-      }, { status: 400 });
-    }
-
-    const validation = await validateShareLinkAccess(base44, { token, consumeView: false });
-    if (!validation.ok) {
-      return Response.json({
-        ok: false,
-        status: statusLabel(validation.statusCode),
-        code: validation.code,
-        reason: validation.reason,
-        message: validation.message,
-        correlationId
-      }, { status: validation.statusCode });
-    }
-
-    if (!validation.permissions.canEditRecipientSide && !validation.permissions.canEdit) {
-      return Response.json({
-        ok: false,
-        status: 'forbidden',
-        code: 'EDIT_NOT_ALLOWED',
-        reason: 'EDIT_NOT_ALLOWED',
-        message: 'Recipient editing is disabled for this shared link',
-        correlationId
-      }, { status: 403 });
-    }
-
-    const resolved = await base44.asServiceRole.functions.invoke('GetSharedReportData', {
+    
+    // Validate token and get source proposal
+    const shareValidation = await base44.functions.invoke('ResolveSharedReport', {
       token,
       consumeView: false
     });
-
-    const resolvedData = resolved?.data;
-    if (!resolvedData?.ok) {
+    
+    if (!shareValidation?.data?.ok) {
       return Response.json({
         ok: false,
-        status: resolvedData?.status || 'invalid',
-        code: resolvedData?.code || 'RESOLVE_FAILED',
-        reason: resolvedData?.reason || resolvedData?.code || 'RESOLVE_FAILED',
-        message: resolvedData?.message || 'Could not resolve shared report context',
+        errorCode: shareValidation?.data?.code || 'INVALID_TOKEN',
+        message: shareValidation?.data?.message || 'Invalid or expired token',
         correlationId
-      }, { status: resolved?.status || 400 });
+      }, { status: shareValidation?.status || 400 });
     }
-
-    const proposalId = resolvedData?.sourceProposalId || resolvedData?.proposalId;
-    const editableQuestionIds: string[] = Array.isArray(resolvedData?.partyBEditableSchema?.editableQuestionIds)
-      ? resolvedData.partyBEditableSchema.editableQuestionIds
-      : (resolvedData?.partyBEditableSchema?.questions || []).map((question: any) => question.questionId);
-
-    if (!proposalId) {
+    
+    const shareData = shareValidation.data;
+    const sourceProposalId = asString(shareData?.sourceProposalId || shareData?.proposalId);
+    
+    if (!sourceProposalId) {
       return Response.json({
         ok: false,
-        status: 'not_found',
-        code: 'PROPOSAL_NOT_FOUND',
-        reason: 'PROPOSAL_NOT_FOUND',
-        message: 'Shared link is not linked to a proposal',
+        errorCode: 'MISSING_PROPOSAL',
+        message: 'No proposal linked to this share link',
         correlationId
       }, { status: 404 });
     }
-
-    const allowedSet = new Set(editableQuestionIds.map((id: string) => String(id)));
-    const invalidQuestions = responses
-      .map((item: any) => asString(item?.questionId || item?.question_id))
-      .filter((questionId: string | null) => questionId && !allowedSet.has(questionId));
-
-    const disallowedPartyUpdates = responses
-      .filter((item: any) => item && typeof item === 'object')
-      .map((item: any) => ({
-        questionId: asString(item?.questionId || item?.question_id),
-        enteredByParty: asString(item?.entered_by_party || item?.enteredByParty || item?.party || item?.author_party),
-        subjectParty: asString(item?.subject_party || item?.subjectParty)
-      }))
-      .filter((item: any) => {
-        const entered = normalizeParty(item.enteredByParty || '');
-        const subject = normalizeParty(item.subjectParty || '');
-        if (entered && !PARTY_B_KEYS.has(entered)) return true;
-        if (subject && !PARTY_B_KEYS.has(subject)) return true;
-        return false;
-      });
-
-    if (invalidQuestions.length > 0 || disallowedPartyUpdates.length > 0) {
-      invalidQuestions.forEach((fieldKey: string | null) => {
-        if (!fieldKey) return;
-        console.log('[proposal-update] blocked forbidden field', {
-          role: 'recipient',
-          fieldKey
-        });
-      });
-      disallowedPartyUpdates.forEach((blocked: any) => {
-        console.log('[proposal-update] blocked forbidden field', {
-          role: blocked?.enteredByParty || blocked?.subjectParty || 'recipient',
-          fieldKey: blocked?.questionId || null
-        });
-      });
-      console.warn(JSON.stringify({
-        level: 'warn',
-        event: 'shared_field_update_blocked',
-        error: 'FORBIDDEN_FIELD_UPDATE',
-        correlationId,
-        invalidQuestionIds: invalidQuestions,
-        disallowedPartyUpdates
-      }));
+    
+    // Check permissions
+    if (!shareData?.permissions?.canEditRecipientSide && !shareData?.permissions?.canEdit) {
       return Response.json({
         ok: false,
-        error: 'FORBIDDEN_FIELD_UPDATE',
-        status: 'forbidden',
-        code: 'FORBIDDEN_FIELD_UPDATE',
-        reason: 'FORBIDDEN_FIELD_UPDATE',
-        message: 'Recipient can only update Party B-owned editable fields.',
-        invalidQuestionIds: invalidQuestions,
-        blockedUpdates: disallowedPartyUpdates,
+        errorCode: 'EDIT_NOT_ALLOWED',
+        message: 'Editing is not allowed for this link',
         correlationId
       }, { status: 403 });
     }
-
-    const existingResponses = await base44.asServiceRole.entities.ProposalResponse.filter(
-      { proposal_id: proposalId },
-      '-created_date'
-    );
-
-    const updates: Array<{ id: string; questionId: string; operation: 'create' | 'update' }> = [];
-
-    for (const incoming of responses) {
-      const questionId = asString(incoming?.questionId || incoming?.question_id);
+    
+    // For document comparison, create/update special Party B fields
+    const isDocumentComparison = shareData?.reportData?.type === 'document_comparison';
+    
+    if (isDocumentComparison) {
+      // For document comparison, store Party B notes/responses in a special way
+      const partyBNotes = responses.find((r: any) => r.questionId === 'party_b_notes')?.value || '';
+      
+      // Store as a custom ProposalResponse record
+      const existingResponses = await base44.asServiceRole.entities.ProposalResponse.filter({
+        proposal_id: sourceProposalId,
+        question_id: 'party_b_notes',
+        entered_by_party: 'b'
+      }, '-created_date', 1);
+      
+      if (existingResponses.length > 0) {
+        await base44.asServiceRole.entities.ProposalResponse.update(existingResponses[0].id, {
+          value: partyBNotes,
+          updated_date: new Date().toISOString()
+        });
+      } else {
+        await base44.asServiceRole.entities.ProposalResponse.create({
+          proposal_id: sourceProposalId,
+          question_id: 'party_b_notes',
+          entered_by_party: 'b',
+          author_party: 'b',
+          subject_party: 'b',
+          value_type: 'text',
+          value: partyBNotes,
+          visibility: 'full'
+        });
+      }
+      
+      return Response.json({
+        ok: true,
+        message: 'Party B responses saved',
+        updatedCount: 1,
+        correlationId
+      });
+    }
+    
+    // Standard template-based responses
+    let updatedCount = 0;
+    
+    for (const response of responses) {
+      const questionId = asString(response?.questionId);
       if (!questionId) continue;
-
-      const explicitValueType = asString(incoming?.valueType || incoming?.value_type);
-      const hasRange = incoming?.rangeMin !== undefined || incoming?.range_max !== undefined || incoming?.rangeMax !== undefined || incoming?.range_min !== undefined;
-      const valueType = explicitValueType || (hasRange ? 'range' : 'text');
-      const rangeMin = incoming?.rangeMin ?? incoming?.range_min ?? null;
-      const rangeMax = incoming?.rangeMax ?? incoming?.range_max ?? null;
-      const visibility = normalizeVisibility(incoming?.visibility);
-
-      const payload: Record<string, unknown> = {
-        proposal_id: proposalId,
+      
+      const valueType = String(response?.valueType || 'text').toLowerCase();
+      const value = response?.value ?? null;
+      const rangeMin = response?.rangeMin ?? null;
+      const rangeMax = response?.rangeMax ?? null;
+      const visibility = String(response?.visibility || 'full').toLowerCase();
+      
+      // Find existing response
+      const existingResponses = await base44.asServiceRole.entities.ProposalResponse.filter({
+        proposal_id: sourceProposalId,
+        question_id: questionId,
+        entered_by_party: 'b'
+      }, '-created_date', 1);
+      
+      const payload = {
+        proposal_id: sourceProposalId,
         question_id: questionId,
         entered_by_party: 'b',
         author_party: 'b',
         subject_party: 'b',
-        claim_type: 'self',
-        is_about_counterparty: true,
+        value_type: valueType,
+        value,
+        range_min: rangeMin,
+        range_max: rangeMax,
         visibility,
-        value_type: valueType
+        updated_date: new Date().toISOString()
       };
-
-      if (valueType === 'range') {
-        payload.value = normalizeValue(incoming?.value ?? '');
-        payload.range_min = rangeMin;
-        payload.range_max = rangeMax;
+      
+      if (existingResponses.length > 0) {
+        await base44.asServiceRole.entities.ProposalResponse.update(existingResponses[0].id, payload);
       } else {
-        payload.value = normalizeValue(incoming?.value);
-        payload.range_min = null;
-        payload.range_max = null;
+        await base44.asServiceRole.entities.ProposalResponse.create(payload);
       }
-
-      const existing = existingResponses.find(
-        (response: any) => response?.question_id === questionId && isPartyBResponse(response)
-      );
-
-      if (existing?.id) {
-        await base44.asServiceRole.entities.ProposalResponse.update(existing.id, payload);
-        updates.push({ id: existing.id, questionId, operation: 'update' });
-      } else {
-        const created = await base44.asServiceRole.entities.ProposalResponse.create(payload);
-        updates.push({ id: created?.id || '', questionId, operation: 'create' });
-      }
+      
+      updatedCount++;
     }
-
+    
     return Response.json({
       ok: true,
-      status: 'ok',
-      code: 'RESPONSES_UPDATED',
-      reason: 'RESPONSES_UPDATED',
-      message: 'Recipient responses saved',
-      proposalId,
-      updatedCount: updates.length,
-      updates,
+      message: `${updatedCount} Party B response(s) saved`,
+      updatedCount,
       correlationId
     });
+    
   } catch (error) {
-    const { statusCode, payload } = extractError(error);
-    if (payload) {
-      return Response.json({
-        ...payload,
-        correlationId: payload?.correlationId || correlationId
-      }, { status: statusCode || 500 });
-    }
-
     const err = error instanceof Error ? error : new Error(String(error));
+    console.error(`[${correlationId}] UpsertSharedRecipientResponses error:`, error);
     return Response.json({
       ok: false,
-      status: 'invalid',
-      code: 'INTERNAL_ERROR',
-      reason: 'INTERNAL_ERROR',
-      message: err.message || 'Failed to update recipient responses',
+      errorCode: 'INTERNAL_ERROR',
+      message: err.message || 'Failed to save responses',
       correlationId
-    }, { status: statusCode || 500 });
+    }, { status: 500 });
   }
 });

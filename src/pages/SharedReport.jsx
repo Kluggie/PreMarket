@@ -262,8 +262,36 @@ export default function SharedReport() {
   }, [reportData, proposalView]);
 
   const recipientEditableQuestions = useMemo(() => {
-    return toArray(partyBEditableSchema?.questions);
-  }, [partyBEditableSchema]);
+    const questions = toArray(partyBEditableSchema?.questions);
+    
+    // For document comparison, add Party B Notes field
+    if (isDocumentComparison && questions.length === 0) {
+      const existingNotes = toArray(responsesView)
+        .find(r => r?.question_id === 'party_b_notes' && isPartyBResponse(r));
+      
+      return [{
+        questionId: 'party_b_notes',
+        label: 'Your Notes / Response',
+        description: 'Add your notes or response to this document comparison',
+        fieldType: 'textarea',
+        valueType: 'text',
+        required: false,
+        supportsVisibility: false,
+        allowedValues: [],
+        currentResponse: {
+          id: existingNotes?.id || null,
+          value: existingNotes?.value || '',
+          rangeMin: null,
+          rangeMax: null,
+          visibility: 'full',
+          enteredByParty: 'b',
+          updatedAt: existingNotes?.created_date || null
+        }
+      }];
+    }
+    
+    return questions;
+  }, [partyBEditableSchema, isDocumentComparison, responsesView]);
 
   const completeDetailsRows = useMemo(() => {
     const labelByQuestionId = {};
@@ -667,7 +695,12 @@ export default function SharedReport() {
 
       setReevaluationState(data?.reevaluation || null);
       toast.success(data?.message || 'Re-evaluation completed.');
-      await hydrateSharedReport({ consumeView: false, silent: true });
+      
+      // Reload the shared report data to show new evaluation
+      await hydrateSharedReport({ consumeView: false, silent: false });
+      
+      // Switch to evaluation tab to show new report
+      setActiveTab('evaluation');
     } catch (error) {
       const parsed = extractFunctionFailure(error, 'Re-evaluation failed');
       const friendly = FRIENDLY_ERROR_MESSAGES[parsed.reasonCode] || parsed.message;
