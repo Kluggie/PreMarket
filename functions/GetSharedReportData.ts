@@ -1231,7 +1231,6 @@ Deno.serve(async (req) => {
           reason: 'OK',
           message: 'Shared snapshot resolved',
           correlationId,
-          debugDeployMarker: "DEPLOY_MARKER_2026_02_11_1",
           proposalId: sourceProposalId,
           sourceProposalId,
           snapshotId,
@@ -1241,25 +1240,7 @@ Deno.serve(async (req) => {
             ...snapshotMeta,
             fieldCounts: snapshotFieldCounts
           },
-          snapshotDebug: {
-            shareLinkSnapshotId: asString((shareLink as any)?.snapshotId) || extractShareLinkSnapshotId(shareLink),
-            shareLinkSnapshotVersion: extractShareLinkSnapshotVersion(shareLink),
-            snapshotFound: !!snapshot,
-            snapshotRawKeys: Object.keys(snapshot || {}),
-            snapshotDataRawKeys: Object.keys(readSnapshotPayload(snapshot)),
-            snapshotCounts: snapshotFieldCounts,
-            keys: snapshotDebugKeys,
-            partyAResponsesLength: partyAResponses.length,
-            rawPartyALength: rawPartyA.length,
-            hasComparisonView: !!comparisonView
-          },
-          debug: {
-            usedFallback: false,
-            hasSnapshotId: true,
-            sharedFieldCount: partyAResponses.length,
-            snapshotSource: 'ProposalSnapshot',
-            fieldCounts: snapshotFieldCounts
-          },
+          ...(debugMode ? { debug: debugInfo } : {}),
           snapshot: {
             id: snapshotId,
             sourceProposalId,
