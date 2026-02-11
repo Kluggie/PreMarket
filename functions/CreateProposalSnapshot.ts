@@ -303,18 +303,18 @@ Deno.serve(async (req) => {
       allResponses = draftResponses;
     }
     
-    const visiblePartyAResponses = allResponses
+    const partyAResponses = allResponses
       .filter((response) => isPartyAResponse(response))
       .filter((response) => {
         const questionId = asString(response?.question_id);
         const question = questionId ? questionLookup[questionId] : null;
         return questionOwnerParty(question) !== 'b';
       })
-      .filter((response) => !isExplicitlyHidden(response))
       .map((response) => {
         const questionId = asString(response?.question_id) || '';
         const question = questionLookup[questionId] || null;
         const visibility = normalizeVisibility(response?.visibility);
+        const isHidden = isExplicitlyHidden(response);
         const valueType = String(response?.value_type || '').trim().toLowerCase() === 'range' ? 'range' : 'text';
 
         const rawValue = response?.value ?? null;
@@ -322,6 +322,25 @@ Deno.serve(async (req) => {
         const rangeMax = response?.range_max ?? null;
         let value: string | null = rawValue === null || rawValue === undefined ? null : String(rawValue);
         let valueSummary: string | null = value;
+
+        // If hidden/confidential, remove actual values
+        if (isHidden) {
+          value = null;
+          valueSummary = 'Not shared';
+          return {
+            sourceResponseId: asString(response?.id),
+            questionId,
+            label: asString(question?.label) || questionId,
+            ownerParty: 'A',
+            enteredByParty: 'a',
+            visibility: 'hidden',
+            valueType,
+            value: null,
+            rangeMin: null,
+            rangeMax: null,
+            valueSummary: 'Not shared'
+          };
+        }
 
         if (valueType === 'range') {
           value = null;
@@ -463,8 +482,8 @@ Deno.serve(async (req) => {
     }
 
     // Calculate field counts - count documents that have visible text
-    const visibleResponseCount = visiblePartyAResponses.length;
-    const hiddenResponseCount = allResponses.filter((r) => isPartyAResponse(r) && isExplicitlyHidden(r)).length;
+    const visibleResponseCount = partyAResponses.filter(r => r.visibility !== 'hidden').length;
+    const hiddenResponseCount = partyAResponses.filter(r => r.visibility === 'hidden').length;
     
     let comparisonFieldCount = 0;
     let comparisonHiddenCount = 0;
@@ -489,7 +508,7 @@ Deno.serve(async (req) => {
         partyBEmail: normalizeEmail(proposal?.party_b_email),
         documentComparisonId: docComparisonId
       },
-      partyAResponses: visiblePartyAResponses,
+      partyAResponses: partyAResponses,
       comparisonView,
       reportData: {
         reportId,
@@ -527,7 +546,7 @@ Deno.serve(async (req) => {
       hiddenCount: fieldCounts.hidden,
       templateResponses: fieldCounts.templateResponses,
       comparisonFields: fieldCounts.comparisonFields,
-      partyAResponsesLength: visiblePartyAResponses.length,
+      partyAResponsesLength: partyAResponses.length,
       hasDocA: !!comparisonView?.docA?.text,
       hasDocB: !!comparisonView?.docB?.text,
       docALength: comparisonView?.docA?.text?.length || 0,
