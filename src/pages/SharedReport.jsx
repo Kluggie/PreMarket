@@ -5,13 +5,18 @@ import { base44 } from '@/api/base44Client';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from 'sonner';
-import { Loader2, RefreshCw, Send, XCircle } from 'lucide-react';
+import { 
+  Loader2, RefreshCw, Send, XCircle, FileText, BarChart3, 
+  Sparkles, ArrowLeft 
+} from 'lucide-react';
+import { FitCardReportDisplay, SharedFinanceReportDisplay, StandardReportDisplay, DocumentComparisonReportDisplay } from '../components/reports/AIReportDisplay';
 
 const FRIENDLY_ERROR_MESSAGES = {
   AUTH_REQUIRED: 'Please sign in to continue.',
@@ -35,6 +40,22 @@ const SELECT_FIELD_TYPES = new Set(['select', 'enum', 'dropdown', 'radio', 'sing
 const NUMBER_FIELD_TYPES = new Set(['number', 'integer', 'float', 'decimal', 'currency', 'percent']);
 const BOOLEAN_FIELD_TYPES = new Set(['boolean', 'bool', 'checkbox', 'toggle', 'switch']);
 const PARTY_B_KEYS = new Set(['b', 'party_b', 'recipient', 'counterparty']);
+
+const StatusBadge = ({ status }) => {
+  const config = {
+    draft: { color: 'bg-slate-100 text-slate-700', label: 'Draft' },
+    sent: { color: 'bg-blue-100 text-blue-700', label: 'Sent' },
+    received: { color: 'bg-amber-100 text-amber-700', label: 'Received' },
+    under_verification: { color: 'bg-purple-100 text-purple-700', label: 'Under Review' },
+    re_evaluated: { color: 'bg-indigo-100 text-indigo-700', label: 'Re-evaluated' },
+    mutual_interest: { color: 'bg-green-100 text-green-700', label: 'Mutual Interest' },
+    revealed: { color: 'bg-emerald-100 text-emerald-700', label: 'Revealed' },
+    closed: { color: 'bg-slate-100 text-slate-600', label: 'Closed' },
+    withdrawn: { color: 'bg-red-100 text-red-700', label: 'Withdrawn' }
+  };
+  const { color, label } = config[status] || config.draft;
+  return <Badge className={`${color} font-medium`}>{label}</Badge>;
+};
 
 function buildErrorMeta(error) {
   const statusCode =
@@ -194,11 +215,13 @@ function toInitialEdit(question) {
 export default function SharedReport() {
   const navigate = useNavigate();
   const location = useLocation();
+  const [activeTab, setActiveTab] = useState('overview');
   const [isLoadingReport, setIsLoadingReport] = useState(false);
   const [error, setError] = useState(null);
   const [user, setUser] = useState(null);
   const [shareData, setShareData] = useState(null);
   const [reportData, setReportData] = useState(null);
+  const [proposalView, setProposalView] = useState(null);
   const [proposalId, setProposalId] = useState(null);
   const [sourceProposalId, setSourceProposalId] = useState(null);
   const [snapshotId, setSnapshotId] = useState(null);
@@ -210,6 +233,7 @@ export default function SharedReport() {
   const [responsesView, setResponsesView] = useState([]);
   const [comparisonView, setComparisonView] = useState(null);
   const [recipientEdits, setRecipientEdits] = useState({});
+  const [recipientEditMode, setRecipientEditMode] = useState(false);
   const [sendBackMessage, setSendBackMessage] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [isReevaluating, setIsReevaluating] = useState(false);
@@ -221,7 +245,7 @@ export default function SharedReport() {
 
   const token = useMemo(() => {
     const params = new URLSearchParams(location.search);
-    return params.get('token');
+    return params.get('token') || params.get('sharedToken');
   }, [location.search]);
 
   const mode = useMemo(() => {
@@ -230,11 +254,12 @@ export default function SharedReport() {
   }, [location.search]);
 
   const reportTitle = useMemo(() => {
+    if (proposalView?.title) return proposalView.title;
     if (reportData?.title) return reportData.title;
     if (reportData?.type === 'proposal') return 'Shared Proposal Report';
     if (reportData?.type === 'document_comparison') return 'Shared Comparison Report';
     return 'Shared AI Report';
-  }, [reportData]);
+  }, [reportData, proposalView]);
 
   const recipientEditableQuestions = useMemo(() => {
     return toArray(partyBEditableSchema?.questions);
@@ -320,9 +345,9 @@ export default function SharedReport() {
     return [...rows, ...partyBRows];
   }, [responsesView, partyAView, recipientEditableQuestions]);
 
-  const canEditRecipient = Boolean(permissions?.canEditRecipientSide ?? permissions?.canEdit);
-  const canReevaluate = Boolean(permissions?.canReevaluate);
-  const canSendBack = Boolean(permissions?.canSendBack);
+  const canEditRecipient = Boolean(permissions?.canEditRecipientSide ?? permissions?.canEdit) && Boolean(user);
+  const canReevaluate = Boolean(permissions?.canReevaluate) && Boolean(user);
+  const canSendBack = Boolean(permissions?.canSendBack) && Boolean(user);
 
   const hydrateSharedReport = useCallback(async ({ consumeView = true, silent = false } = {}) => {
     if (!token) return false;
@@ -399,6 +424,7 @@ export default function SharedReport() {
         null;
       const resolvedVersion =
         data.version ??
+        data.snapshotVersion ??
         data?.snapshot?.version ??
         resolvedShareData.snapshotVersion ??
         null;
@@ -434,18 +460,10 @@ export default function SharedReport() {
 
       localStorage.setItem('sharedReportContext', JSON.stringify(context));
       window.dispatchEvent(new Event('shared-report-context-updated'));
-      try {
-        const historyRaw = localStorage.getItem('sharedReportContextHistory');
-        const parsedHistory = JSON.parse(historyRaw || '[]');
-        const history = Array.isArray(parsedHistory) ? parsedHistory : [];
-        const nextHistory = [context, ...history.filter((item) => item?.token !== context.token)].slice(0, 50);
-        localStorage.setItem('sharedReportContextHistory', JSON.stringify(nextHistory));
-        window.dispatchEvent(new Event('shared-report-context-updated'));
-      } catch {
-        // Ignore malformed local storage history.
-      }
+
       setShareData(resolvedShareData);
       setReportData(resolvedReportData);
+      setProposalView(resolvedProposalView);
       setProposalId(resolvedProposalId);
       setSourceProposalId(resolvedProposalId || null);
       setSnapshotId(resolvedSnapshotId || null);
@@ -461,10 +479,17 @@ export default function SharedReport() {
       setResponsesView(data.responsesView || data?.recipientView?.responses || []);
       setComparisonView(data.comparisonView || data?.reportData?.comparisonView || null);
       setError(null);
-      console.log('[SharedReport] loaded snapshot', {
+
+      const sharedFieldCount = toArray(data.partyAView?.responses).filter(r => String(r?.redaction || '').toLowerCase() !== 'hidden').length;
+      console.log('[SharedReport] snapshot', {
         snapshotId: resolvedSnapshotId,
-        version: resolvedVersion,
-        sourceProposalId: resolvedProposalId || null
+        snapshotVersion: resolvedVersion,
+        sourceProposalId: resolvedProposalId || null,
+        sharedFieldCount,
+        partyAFields: toArray(data.partyAView?.responses).length,
+        partyBFields: recipientEditableQuestions.length,
+        hiddenA: toArray(data.partyAView?.responses).filter(r => String(r?.redaction || '').toLowerCase() === 'hidden').length,
+        responsesB: toArray(responsesView).filter(isPartyBResponse).length
       });
 
       return true;
@@ -612,6 +637,7 @@ export default function SharedReport() {
       }
 
       toast.success(data?.message || 'Party B changes saved.');
+      setRecipientEditMode(false);
       await hydrateSharedReport({ consumeView: false, silent: true });
     } catch (error) {
       const parsed = extractFunctionFailure(error, 'Failed to save Party B updates');
@@ -702,7 +728,7 @@ export default function SharedReport() {
     const isNumeric = NUMBER_FIELD_TYPES.has(fieldType);
     const isSelect = options.length > 0 || SELECT_FIELD_TYPES.has(fieldType);
     const isTextarea = TEXTAREA_FIELD_TYPES.has(fieldType);
-    const disabled = !canEditRecipient || isSaving;
+    const disabled = !canEditRecipient || !recipientEditMode;
 
     if (isRange) {
       return (
@@ -873,240 +899,373 @@ export default function SharedReport() {
     );
   }
 
+  const templateSlug = reportData?.template_name?.toLowerCase().replace(/\s+/g, '_');
+  const isFinanceTemplate = templateSlug === 'universal_finance_deal_prequal';
+  const isProfileMatchingTemplate = templateSlug === 'universal_profile_matching';
+  const isDocumentComparison = Boolean(reportData?.type === 'document_comparison' || comparisonView);
+
   const reportJson = reportData?.report || null;
+  const partyAEmail = proposalView?.party_a_email || partyAView?.proposal?.party_a_email || 'Identity Protected';
+  const partyBEmail = proposalView?.party_b_email || shareData?.recipientEmail || user?.email || 'Not specified';
 
   return (
     <div className="min-h-screen bg-slate-50 py-8">
-      <div className="max-w-5xl mx-auto px-4 space-y-6">
-        <Card className="border-0 shadow-sm">
-          <CardHeader>
-            <CardTitle>{reportTitle}</CardTitle>
-            <CardDescription>
-              Shared recipient workspace. Party A confidential data remains redacted.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-5">
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="outline">{reportData?.type || 'shared-report'}</Badge>
-              {snapshotVersion !== null && snapshotVersion !== undefined && (
-                <Badge className="bg-blue-100 text-blue-700">Version {snapshotVersion}</Badge>
-              )}
-              <Badge variant="outline">
-                Views: {shareData?.viewCount ?? shareData?.uses ?? 0} / {shareData?.maxViews ?? shareData?.maxUses ?? 25}
-              </Badge>
-              <Badge variant="outline">
-                Expires: {shareData?.expiresAt ? new Date(shareData.expiresAt).toLocaleDateString() : 'N/A'}
-              </Badge>
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+        {/* Header */}
+        <div className="mb-6">
+          <Button 
+            variant="ghost" 
+            onClick={() => navigate(createPageUrl('Dashboard'))}
+            className="mb-4"
+          >
+            <ArrowLeft className="w-4 h-4 mr-2" />
+            Back to Dashboard
+          </Button>
+          
+          <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-3 mb-2">
+                <h1 className="text-2xl font-bold text-slate-900">
+                  {reportTitle}
+                </h1>
+                {proposalView?.status && <StatusBadge status={proposalView.status} />}
+                {snapshotVersion !== null && snapshotVersion !== undefined && (
+                  <Badge className="bg-blue-100 text-blue-700">v{snapshotVersion}</Badge>
+                )}
+              </div>
+              <p className="text-slate-500">
+                {reportData?.template_name || proposalView?.template_name || 'Shared Report'}
+                {proposalView?.created_date && ` • Created ${new Date(proposalView.created_date).toLocaleDateString()}`}
+              </p>
+              <p className="text-sm text-blue-700 mt-1">
+                Shared workspace - confidential data remains protected
+              </p>
             </div>
 
-            <p className="text-sm text-slate-600">
-              {user?.email ? `Signed in as ${user.email}.` : 'Viewing as guest.'}
-            </p>
-
-            <div className="pt-1 space-x-2">
-              <Button
-                onClick={handleOpenWorkspace}
-                className="bg-blue-600 hover:bg-blue-700"
-                disabled={!token}
-              >
-                Open Shared Workspace
-              </Button>
-              {!user && (
-                <Button variant="outline" onClick={handleSignIn}>
-                  Sign In for Editing
+            <div className="flex items-center gap-3">
+              {canEditRecipient && (
+                <Button
+                  variant={recipientEditMode ? 'default' : 'outline'}
+                  className={recipientEditMode ? 'bg-blue-600 hover:bg-blue-700' : ''}
+                  onClick={() => setRecipientEditMode(!recipientEditMode)}
+                >
+                  {recipientEditMode ? 'Done Editing' : 'Edit Your Details'}
                 </Button>
               )}
             </div>
+          </div>
+        </div>
 
-            {!proposalId && (
-              <p className="text-sm text-amber-700">
-                This shared report is not linked to a proposal.
-              </p>
-            )}
-            {sourceProposalId && (
-              <p className="text-xs text-slate-500">
-                Source proposal: {sourceProposalId}{snapshotId ? ` • Snapshot ${snapshotId}` : ''}
-              </p>
-            )}
-            {snapshotData && (
-              <p className="text-xs text-slate-500">
-                Snapshot fields: {Array.isArray(snapshotData?.partyAResponses) ? snapshotData.partyAResponses.length : 0}
-              </p>
-            )}
-          </CardContent>
-        </Card>
-
-        <div ref={workspaceSectionRef} className="space-y-6">
-          <Card className="border-0 shadow-sm">
-            <CardHeader>
-              <CardTitle>AI Report</CardTitle>
-              <CardDescription>Read-only shared report output.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {reportJson ? (
-                <pre className="text-xs bg-slate-950 text-slate-100 p-4 rounded-lg overflow-auto whitespace-pre-wrap">
-                  {JSON.stringify(reportJson, null, 2)}
-                </pre>
-              ) : (
-                <p className="text-slate-600">No report payload is available yet.</p>
+        {/* Tabs */}
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <TabsList className="bg-white border border-slate-200 p-1 mb-6">
+            <TabsTrigger value="overview" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
+              <FileText className="w-4 h-4 mr-2" />
+              Overview
+            </TabsTrigger>
+            <TabsTrigger value="evaluation" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
+              <BarChart3 className="w-4 h-4 mr-2" />
+              {isProfileMatchingTemplate ? 'Profile Evaluation' : 'AI Report'}
+              {reportJson && (
+                <Badge className="ml-2 bg-green-100 text-green-700 text-xs">
+                  Available
+                </Badge>
               )}
-            </CardContent>
-          </Card>
+            </TabsTrigger>
+          </TabsList>
 
-          <Card className="border-0 shadow-sm">
-            <CardHeader>
-              <CardTitle>Party A Shared Information</CardTitle>
-              <CardDescription>Confidential fields are redacted server-side before rendering.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {toArray(partyAView?.responses).length === 0 && (
-                <p className="text-slate-500 text-sm">No Party A responses are available.</p>
-              )}
-              {toArray(partyAView?.responses).map((item) => (
-                <div key={item.id || item.questionId} className="p-3 border rounded-lg">
-                  <div className="flex items-center justify-between gap-2 mb-1">
-                    <p className="font-medium text-slate-900">{item.label || item.questionId}</p>
-                    <Badge variant="outline">{item.redaction || item.visibility || 'shared'}</Badge>
-                  </div>
-                  <p className="text-sm text-slate-600">{item.valueSummary || 'Not shared'}</p>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
+          {/* Overview Tab */}
+          <TabsContent value="overview">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <div className="lg:col-span-2 space-y-6">
+                {/* Parties */}
+                <Card className="border-0 shadow-sm">
+                  <CardHeader>
+                    <CardTitle>Parties</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div className="p-4 bg-blue-50 rounded-xl">
+                        <p className="text-sm text-blue-600 font-medium mb-2">Party A (Proposer)</p>
+                        <p className="font-medium text-slate-900">{partyAEmail}</p>
+                      </div>
+                      <div className="p-4 bg-indigo-50 rounded-xl">
+                        <p className="text-sm text-indigo-600 font-medium mb-2">Party B (Recipient)</p>
+                        <p className="font-medium text-slate-900">{partyBEmail}</p>
+                        {user && <Badge className="mt-2 bg-indigo-100 text-indigo-700">You</Badge>}
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
 
-          <Card className="border-0 shadow-sm">
-            <CardHeader>
-              <CardTitle>Complete Proposal Details</CardTitle>
-              <CardDescription>
-                Snapshot-based shared details. Party A values come from the shared version; Party B values come from your saved responses.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {reportData?.type === 'document_comparison' && comparisonView ? (
-                <div className="space-y-4">
-                  {[comparisonView.docA, comparisonView.docB].filter(Boolean).map((doc, index) => (
-                    <div key={`shared-doc-${index}`} className="p-4 border rounded-lg bg-slate-50 space-y-2">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <p className="font-medium text-slate-900">{doc.label || `Document ${index + 1}`}</p>
-                        <div className="flex items-center gap-2">
-                          <Badge variant="outline">Source: {doc.source || 'typed'}</Badge>
-                          <Badge className="bg-red-100 text-red-700">
-                            {Number(doc.hiddenCount || 0)} removed
-                          </Badge>
+                {/* Complete Proposal Details */}
+                <Card className="border-0 shadow-sm">
+                  <CardHeader>
+                    <CardTitle>Complete Proposal Details</CardTitle>
+                    <CardDescription>
+                      {isDocumentComparison
+                        ? 'Read-only document content with confidential sections removed.'
+                        : 'Snapshot-based shared details. Party A confidential fields are hidden.'}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    {isDocumentComparison && comparisonView ? (
+                      <div className="space-y-4">
+                        {[
+                          { doc: comparisonView.docA, label: comparisonView.docA?.label, color: 'blue' },
+                          { doc: comparisonView.docB, label: comparisonView.docB?.label, color: 'indigo' }
+                        ].filter(item => item.doc).map((item, index) => (
+                          <div key={`doc-${index}`} className={`p-4 bg-${item.color}-50 rounded-xl border border-${item.color}-100`}>
+                            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                              <p className={`text-sm text-${item.color}-700 font-semibold`}>
+                                {item.label || `Document ${index + 1}`}
+                              </p>
+                              <div className="flex items-center gap-2">
+                                <Badge variant="outline">Source: {item.doc.source || 'typed'}</Badge>
+                                <Badge className="bg-red-100 text-red-700 text-xs">
+                                  {Number(item.doc.hiddenCount || 0)} hidden
+                                </Badge>
+                              </div>
+                            </div>
+                            <div className="p-3 bg-white border border-slate-200 rounded-lg max-h-72 overflow-auto">
+                              <pre className="whitespace-pre-wrap font-mono text-sm text-slate-800">
+                                {item.doc.text || 'No text available'}
+                              </pre>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : completeDetailsRows.length === 0 ? (
+                      <div>
+                        <p className="text-slate-500 text-sm mb-2">No shared proposal details are available.</p>
+                        <p className="text-xs text-amber-700">
+                          Snapshot has {toArray(snapshotData?.partyAResponses).length || 0} fields 
+                          ({toArray(partyAView?.responses).filter(r => String(r?.redaction || '').toLowerCase() !== 'hidden').length} visible, 
+                          {toArray(partyAView?.responses).filter(r => String(r?.redaction || '').toLowerCase() === 'hidden').length} hidden)
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        {completeDetailsRows.map((item) => (
+                          <div key={item.key} className="p-4 border border-slate-200 rounded-xl">
+                            <div className="flex items-start justify-between mb-3">
+                              <div>
+                                <p className="font-semibold text-slate-900 capitalize">{item.label}</p>
+                                <Badge variant="outline" className="text-xs mt-1">
+                                  {item.party}
+                                </Badge>
+                              </div>
+                            </div>
+                            <div className="bg-slate-50 p-3 rounded-lg">
+                              <p className="text-slate-700">{item.value}</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                {/* Party B Editable Fields */}
+                <Card className="border-0 shadow-sm">
+                  <CardHeader>
+                    <CardTitle>Your Details (Party B)</CardTitle>
+                    <CardDescription>
+                      You can edit only Party B fields. Party A values remain read-only.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {recipientEditableQuestions.length === 0 && (
+                      <p className="text-slate-500 text-sm">No editable Party B fields were found.</p>
+                    )}
+
+                    {recipientEditableQuestions.map((question) => (
+                      <div key={question.questionId} className="border rounded-lg p-3 space-y-2">
+                        <Label className="font-medium text-slate-900">{question.label || question.questionId}</Label>
+                        {question.description && (
+                          <p className="text-xs text-slate-500">{question.description}</p>
+                        )}
+                        {renderEditableField(question)}
+                        <div className="flex items-center gap-2 pt-1">
+                          <Checkbox
+                            id={`recipient-visibility-${question.questionId}`}
+                            checked={String((recipientEdits[question.questionId] || {}).visibility || 'full').toLowerCase() === 'hidden'}
+                            onCheckedChange={(nextChecked) => handleRecipientEditChange(question.questionId, {
+                              visibility: nextChecked === true ? 'hidden' : 'full'
+                            })}
+                            disabled={!canEditRecipient || !recipientEditMode || isSaving}
+                          />
+                          <Label htmlFor={`recipient-visibility-${question.questionId}`} className="text-sm text-slate-700">
+                            Keep this response confidential
+                          </Label>
                         </div>
                       </div>
-                      <pre className="text-xs bg-white border rounded-md p-3 overflow-auto whitespace-pre-wrap">
-                        {doc.text || 'No shared text available.'}
-                      </pre>
+                    ))}
+
+                    <div className="flex flex-wrap items-center gap-2 pt-2">
+                      {recipientEditMode ? (
+                        <Button
+                          onClick={handleSaveChanges}
+                          disabled={!canEditRecipient || isSaving || recipientEditableQuestions.length === 0}
+                          className="bg-blue-600 hover:bg-blue-700"
+                        >
+                          {isSaving ? 'Saving...' : 'Save Changes'}
+                        </Button>
+                      ) : (
+                        <Badge variant="outline">Click "Edit Your Details" to modify Party B fields</Badge>
+                      )}
+                      <Button
+                        variant="outline"
+                        onClick={handleReevaluate}
+                        disabled={!canReevaluate || isReevaluating}
+                      >
+                        <RefreshCw className="w-4 h-4 mr-2" />
+                        {isReevaluating ? 'Re-evaluating...' : 'Re-evaluate'}
+                      </Button>
                     </div>
-                  ))}
-                </div>
-              ) : completeDetailsRows.length === 0 ? (
-                <p className="text-slate-500 text-sm">No shared proposal details are available.</p>
-              ) : (
-                completeDetailsRows.map((item) => (
-                  <div key={item.key} className="p-3 border rounded-lg">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="font-medium text-slate-900">{item.label}</p>
-                      <Badge variant="outline">{item.party}</Badge>
-                    </div>
-                    <p className="text-sm text-slate-700 mt-1">{item.value}</p>
-                  </div>
-                ))
-              )}
-            </CardContent>
-          </Card>
 
-          <Card className="border-0 shadow-sm">
-            <CardHeader>
-              <CardTitle>Your Details (Party B)</CardTitle>
-              <CardDescription>
-                You can edit only Party B fields defined by the shared token policy. All updates are saved through secure shared endpoints.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {recipientEditableQuestions.length === 0 && (
-                <p className="text-slate-500 text-sm">No editable Party B fields were found.</p>
-              )}
+                    {reevaluationState && (
+                      <p className="text-xs text-slate-500">
+                        Re-evaluations used: {reevaluationState.used} / {reevaluationState.max} (remaining: {reevaluationState.remaining})
+                      </p>
+                    )}
 
-              {recipientEditableQuestions.map((question) => (
-                <div key={question.questionId} className="border rounded-lg p-3 space-y-2">
-                  <Label className="font-medium text-slate-900">{question.label || question.questionId}</Label>
-                  {question.description && (
-                    <p className="text-xs text-slate-500">{question.description}</p>
-                  )}
-                  {renderEditableField(question)}
-                  <div className="flex items-center gap-2 pt-1">
-                    <Checkbox
-                      id={`recipient-visibility-${question.questionId}`}
-                      checked={String((recipientEdits[question.questionId] || {}).visibility || 'full').toLowerCase() === 'hidden'}
-                      onCheckedChange={(nextChecked) => handleRecipientEditChange(question.questionId, {
-                        visibility: nextChecked === true ? 'hidden' : 'full'
-                      })}
-                      disabled={!canEditRecipient || isSaving}
-                    />
-                    <Label htmlFor={`recipient-visibility-${question.questionId}`} className="text-sm text-slate-700">
-                      Keep this response confidential
-                    </Label>
-                  </div>
-                </div>
-              ))}
-
-              <div className="flex flex-wrap items-center gap-2 pt-2">
-                <Button
-                  onClick={handleSaveChanges}
-                  disabled={!canEditRecipient || isSaving || recipientEditableQuestions.length === 0}
-                  className="bg-blue-600 hover:bg-blue-700"
-                >
-                  {isSaving ? 'Saving...' : 'Save Changes'}
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={handleReevaluate}
-                  disabled={!canReevaluate || isReevaluating || !user}
-                >
-                  <RefreshCw className="w-4 h-4 mr-2" />
-                  {isReevaluating ? 'Re-evaluating...' : 'Re-evaluate'}
-                </Button>
+                    {!user && (
+                      <p className="text-xs text-amber-700">Sign in is required for save and re-evaluate actions.</p>
+                    )}
+                  </CardContent>
+                </Card>
               </div>
 
-              {reevaluationState && (
-                <p className="text-xs text-slate-500">
-                  Re-evaluations used: {reevaluationState.used} / {reevaluationState.max} (remaining: {reevaluationState.remaining})
-                </p>
-              )}
+              {/* Sidebar - Quick Actions */}
+              <div className="space-y-6">
+                <Card className="border-0 shadow-sm">
+                  <CardHeader>
+                    <CardTitle>Shared Link Info</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-slate-600">Views</span>
+                      <span className="font-medium">{shareData?.viewCount ?? shareData?.uses ?? 0} / {shareData?.maxViews ?? shareData?.maxUses ?? 25}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-600">Expires</span>
+                      <span className="font-medium">{shareData?.expiresAt ? new Date(shareData.expiresAt).toLocaleDateString() : 'N/A'}</span>
+                    </div>
+                    {snapshotVersion !== null && (
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">Version</span>
+                        <span className="font-medium">v{snapshotVersion}</span>
+                      </div>
+                    )}
+                    {sourceProposalId && (
+                      <div className="text-xs text-slate-500 pt-2 border-t">
+                        Source: {sourceProposalId.slice(0, 8)}...
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
 
-              {!user && (
-                <p className="text-xs text-amber-700">Sign in is required for save/re-evaluate/send-back actions.</p>
-              )}
-            </CardContent>
-          </Card>
+                {!user && (
+                  <Card className="border-0 shadow-sm bg-amber-50">
+                    <CardContent className="py-6 text-center">
+                      <p className="text-sm text-amber-800 mb-3">Sign in to edit and save your responses</p>
+                      <Button onClick={handleSignIn} className="bg-blue-600 hover:bg-blue-700">
+                        Sign In
+                      </Button>
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+            </div>
+          </TabsContent>
 
-          <Card className="border-0 shadow-sm">
-            <CardHeader>
-              <CardTitle>Send Back Response</CardTitle>
-              <CardDescription>
-                Submit your counterproposal or notes back to the sender. This action writes an auditable response record.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <Textarea
-                rows={4}
-                value={sendBackMessage}
-                onChange={(event) => setSendBackMessage(event.target.value)}
-                placeholder="Add your response or counterproposal..."
-                disabled={!canSendBack || isSendingBack}
-              />
-              <Button
-                onClick={handleSendBack}
-                disabled={!canSendBack || isSendingBack || !user}
-              >
-                <Send className="w-4 h-4 mr-2" />
-                {isSendingBack ? 'Sending...' : 'Send Back'}
-              </Button>
-            </CardContent>
-          </Card>
-        </div>
+          {/* AI Report Tab */}
+          <TabsContent value="evaluation">
+            {/* Profile Matching Template (FitCard) */}
+            {isProfileMatchingTemplate && reportJson && (
+              <FitCardReportDisplay report={reportData} />
+            )}
+
+            {/* Finance Template (Shared Report) */}
+            {isFinanceTemplate && reportJson && (
+              <div className="space-y-6">
+                <SharedFinanceReportDisplay report={reportData} />
+                
+                {canReevaluate && (
+                  <Button 
+                    variant="outline"
+                    onClick={handleReevaluate}
+                    disabled={isReevaluating}
+                    className="w-full"
+                  >
+                    <RefreshCw className="w-4 h-4 mr-2" />
+                    Re-run Evaluation
+                  </Button>
+                )}
+              </div>
+            )}
+
+            {/* Document Comparison */}
+            {isDocumentComparison && reportJson && (
+              <DocumentComparisonReportDisplay reportData={reportData} />
+            )}
+
+            {/* Standard Report (Other Templates) */}
+            {!isFinanceTemplate && !isProfileMatchingTemplate && !isDocumentComparison && reportJson && (
+              <div className="space-y-6">
+                <StandardReportDisplay report={reportData} />
+                
+                {canReevaluate && (
+                  <Button 
+                    variant="outline"
+                    onClick={handleReevaluate}
+                    disabled={isReevaluating}
+                    className="w-full"
+                  >
+                    <RefreshCw className="w-4 h-4 mr-2" />
+                    Re-run Evaluation
+                  </Button>
+                )}
+              </div>
+            )}
+
+            {/* Re-evaluating State */}
+            {isReevaluating && (
+              <Card className="border-0 shadow-sm">
+                <CardContent className="py-16 text-center">
+                  <RefreshCw className="w-12 h-12 text-blue-500 mx-auto mb-4 animate-spin" />
+                  <h3 className="text-lg font-semibold text-slate-900 mb-2">Re-evaluating Report</h3>
+                  <p className="text-slate-500">This may take 10-30 seconds...</p>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* No Report Available */}
+            {!reportJson && !isReevaluating && (
+              <Card className="border-0 shadow-sm">
+                <CardContent className="py-16 text-center">
+                  <Sparkles className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+                  <h3 className="text-lg font-semibold text-slate-900 mb-2">No AI report available yet</h3>
+                  <p className="text-slate-500 mb-6">The sender has not generated an AI evaluation for this proposal yet.</p>
+                  {canReevaluate && (
+                    <>
+                      <Button 
+                        onClick={handleReevaluate}
+                        disabled={isReevaluating}
+                        className="bg-blue-600 hover:bg-blue-700"
+                      >
+                        <Sparkles className="w-4 h-4 mr-2" />
+                        Run Evaluation
+                      </Button>
+                      <p className="text-sm text-slate-500 mt-4">This may take 10-30 seconds...</p>
+                    </>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+          </TabsContent>
+        </Tabs>
       </div>
     </div>
   );

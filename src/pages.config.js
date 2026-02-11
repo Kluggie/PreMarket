@@ -54,6 +54,9 @@ import Contact from './pages/Contact';
 import CreateProposal from './pages/CreateProposal';
 import CreateProposalWithDrafts from './pages/CreateProposalWithDrafts';
 import Dashboard from './pages/Dashboard';
+import Directory from './pages/Directory';
+import DirectoryOrgDetail from './pages/DirectoryOrgDetail';
+import DirectoryPersonDetail from './pages/DirectoryPersonDetail';
 import DocumentComparisonCreate from './pages/DocumentComparisonCreate';
 import DocumentComparisonDetail from './pages/DocumentComparisonDetail';
 import Documentation from './pages/Documentation';
@@ -84,6 +87,9 @@ export const PAGES = {
     "CreateProposal": CreateProposal,
     "CreateProposalWithDrafts": CreateProposalWithDrafts,
     "Dashboard": Dashboard,
+    "Directory": Directory,
+    "DirectoryOrgDetail": DirectoryOrgDetail,
+    "DirectoryPersonDetail": DirectoryPersonDetail,
     "DocumentComparisonCreate": DocumentComparisonCreate,
     "DocumentComparisonDetail": DocumentComparisonDetail,
     "Documentation": Documentation,
