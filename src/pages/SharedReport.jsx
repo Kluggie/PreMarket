@@ -580,16 +580,15 @@ export default function SharedReport() {
   }, [mode, shareData, reportData, partyBEditableSchema]);
 
   useEffect(() => {
-    const questions = toArray(partyBEditableSchema?.questions);
     const nextEdits = {};
 
-    questions.forEach((question) => {
+    recipientEditableQuestions.forEach((question) => {
       if (!question?.questionId) return;
       nextEdits[question.questionId] = toInitialEdit(question);
     });
 
     setRecipientEdits(nextEdits);
-  }, [partyBEditableSchema]);
+  }, [recipientEditableQuestions]);
 
   useEffect(() => {
     if (!user?.id || !token || !snapshotId) return;
