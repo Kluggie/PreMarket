@@ -1049,9 +1049,7 @@ Deno.serve(async (req) => {
           : (Array.isArray(snapshotPayload?.partyA)
             ? snapshotPayload.partyA
             : (Array.isArray(snapshotPayload?.responses) ? snapshotPayload.responses : []));
-        const partyAResponses = rawPartyA
-          .map((item: any, index: number) => toSnapshotPartyAResponseView(item, index))
-          .filter((item: any) => normalizeVisibility(item?.visibility) !== 'hidden');
+        const partyAResponses = rawPartyA.map((item: any, index: number) => toSnapshotPartyAResponseView(item, index));
 
         const snapshotProposal = parseObjectField(snapshotPayload?.proposal);
         const proposalView = {
