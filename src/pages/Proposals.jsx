@@ -25,6 +25,7 @@ import { toast } from 'sonner';
 
 const NO_SHARED_WORKSPACE_LINK_MESSAGE =
   'No shared workspace link found. Ask the sender to share again.';
+const RECEIVED_RECORD_ACTION = 'shared_proposal_received';
 
 function normalizeEmail(value) {
   if (typeof value !== 'string') return '';
@@ -73,25 +74,30 @@ function buildReviewedTitle(title, reviewedCount) {
   return `${safeTitle} - reviewed`;
 }
 
-function readSharedContextProposalIds(currentUserEmail) {
+function readSharedContextEntries(currentUserEmail) {
   if (typeof window === 'undefined') return [];
   const normalizedCurrentEmail = normalizeEmail(currentUserEmail);
   if (!normalizedCurrentEmail) return [];
 
-  const proposalIds = new Set();
+  const entriesByProposalId = new Map();
   const addFromEntry = (entry) => {
     if (!entry || typeof entry !== 'object') return;
-    const entryEmail = normalizeEmail(
-      entry.currentUserEmail ||
-      entry.recipientEmail ||
-      null
-    );
-    if (!entryEmail || entryEmail !== normalizedCurrentEmail) return;
+    const currentUserEmail = normalizeEmail(entry.currentUserEmail || null);
+    const recipientEmail = normalizeEmail(entry.recipientEmail || null);
+    const matchesCurrentUser =
+      (currentUserEmail && currentUserEmail === normalizedCurrentEmail) ||
+      (!currentUserEmail && recipientEmail && recipientEmail === normalizedCurrentEmail);
+    if (!matchesCurrentUser) return;
 
     const rawId = entry.proposalId || entry.proposal_id || null;
     const proposalId = typeof rawId === 'string' ? rawId.trim() : '';
-    if (proposalId) {
-      proposalIds.add(proposalId);
+    if (!proposalId) return;
+
+    const existing = entriesByProposalId.get(proposalId);
+    const nextTime = new Date(entry?.loadedAt || 0).getTime();
+    const existingTime = existing ? new Date(existing?.loadedAt || 0).getTime() : 0;
+    if (!existing || nextTime >= existingTime) {
+      entriesByProposalId.set(proposalId, entry);
     }
   };
 
@@ -116,7 +122,53 @@ function readSharedContextProposalIds(currentUserEmail) {
     // Ignore malformed local history.
   }
 
-  return Array.from(proposalIds);
+  return Array.from(entriesByProposalId.values());
+}
+
+function parseObjectValue(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+  if (typeof value === 'string') return parseJsonValue(value) || {};
+  return {};
+}
+
+function readReceivedRecordEntries(rows = []) {
+  const byProposalId = new Map();
+
+  rows.forEach((row) => {
+    const action = String(row?.action || '').trim().toLowerCase();
+    if (action !== RECEIVED_RECORD_ACTION) return;
+
+    const details = parseObjectValue(row?.details);
+    const proposalId = String(
+      row?.entity_id ||
+      row?.proposal_id ||
+      details?.proposalId ||
+      details?.proposal_id ||
+      ''
+    ).trim();
+    if (!proposalId) return;
+
+    const entry = {
+      proposalId,
+      token: details?.token || null,
+      proposalTitle: details?.proposalTitle || null,
+      templateName: details?.templateName || null,
+      partyAEmail: details?.partyAEmail || details?.senderEmail || null,
+      senderEmail: details?.senderEmail || details?.partyAEmail || null,
+      recipientEmail: normalizeEmail(details?.recipientEmail || row?.user_email || null),
+      currentUserEmail: normalizeEmail(row?.user_email || null),
+      loadedAt: details?.openedAt || details?.firstOpenedAt || row?.created_date || null
+    };
+
+    const existing = byProposalId.get(proposalId);
+    const existingTime = existing ? new Date(existing?.loadedAt || 0).getTime() : 0;
+    const nextTime = new Date(entry?.loadedAt || 0).getTime();
+    if (!existing || nextTime >= existingTime) {
+      byProposalId.set(proposalId, entry);
+    }
+  });
+
+  return Array.from(byProposalId.values());
 }
 
 async function getActiveShareLinkForRecipient(proposalId) {
@@ -271,19 +323,52 @@ export default function Proposals() {
     queryFn: async () => {
       const sent = await base44.entities.Proposal.filter({ party_a_email: user?.email }, '-created_date').catch(() => []);
       const received = await base44.entities.Proposal.filter({ party_b_email: user?.email }, '-created_date').catch(() => []);
-      const proposalIdsFromSharedContext = readSharedContextProposalIds(user?.email);
-      const sharedContextProposalIdSet = new Set(proposalIdsFromSharedContext);
+      const receivedRecords = user?.id
+        ? await base44.entities.AuditLog.filter({ user_id: user.id, action: RECEIVED_RECORD_ACTION }, '-created_date', 200).catch(() => [])
+        : [];
+      const sharedContextEntries = readSharedContextEntries(user?.email);
+      const receivedRecordEntries = readReceivedRecordEntries(receivedRecords);
+      const sharedContextByProposalId = new Map(
+        sharedContextEntries
+          .map((entry) => {
+            const proposalId = String(entry?.proposalId || entry?.proposal_id || '').trim();
+            return proposalId ? [proposalId, entry] : null;
+          })
+          .filter(Boolean)
+      );
+      const workspaceContextByProposalId = new Map(
+        receivedRecordEntries
+          .map((entry) => {
+            const proposalId = String(entry?.proposalId || entry?.proposal_id || '').trim();
+            return proposalId ? [proposalId, entry] : null;
+          })
+          .filter(Boolean)
+      );
+
+      sharedContextByProposalId.forEach((entry, proposalId) => {
+        const existing = workspaceContextByProposalId.get(proposalId);
+        const existingTime = existing ? new Date(existing?.loadedAt || 0).getTime() : 0;
+        const nextTime = new Date(entry?.loadedAt || 0).getTime();
+        if (!existing || nextTime >= existingTime) {
+          workspaceContextByProposalId.set(proposalId, { ...existing, ...entry });
+        }
+      });
+
+      const proposalIdsFromWorkspaceContext = Array.from(workspaceContextByProposalId.keys());
+      const workspaceProposalIdSet = new Set(proposalIdsFromWorkspaceContext);
 
       const mergedReceived = dedupeById(received).map((proposal) => {
         const proposalId = String(proposal?.id || '').trim();
-        if (!proposalId || !sharedContextProposalIdSet.has(proposalId)) return proposal;
+        if (!proposalId || !workspaceProposalIdSet.has(proposalId)) return proposal;
+        const contextEntry = workspaceContextByProposalId.get(proposalId) || {};
         return {
           ...proposal,
-          _fromSharedContext: true
+          _fromSharedContext: true,
+          _sharedToken: contextEntry?.token || null
         };
       });
 
-      if (proposalIdsFromSharedContext.length === 0) {
+      if (proposalIdsFromWorkspaceContext.length === 0) {
         return { sent, received: mergedReceived };
       }
 
@@ -293,7 +378,7 @@ export default function Proposals() {
           .filter(Boolean)
       );
 
-      const missingIds = proposalIdsFromSharedContext.filter((proposalId) => !existingReceivedIds.has(proposalId));
+      const missingIds = proposalIdsFromWorkspaceContext.filter((proposalId) => !existingReceivedIds.has(proposalId));
       if (missingIds.length === 0) {
         return { sent, received: mergedReceived };
       }
@@ -306,10 +391,34 @@ export default function Proposals() {
         )
       ).flat().map((proposal) => ({
         ...proposal,
-        _fromSharedContext: true
+        _fromSharedContext: true,
+        _sharedToken: workspaceContextByProposalId.get(String(proposal?.id || '').trim())?.token || null
       }));
 
-      return { sent, received: dedupeById([...mergedReceived, ...proposalsFromSharedContext]) };
+      const fetchedProposalIdSet = new Set(
+        proposalsFromSharedContext
+          .map((proposal) => String(proposal?.id || '').trim())
+          .filter(Boolean)
+      );
+      const syntheticRows = missingIds
+        .filter((proposalId) => !fetchedProposalIdSet.has(proposalId))
+        .map((proposalId) => {
+          const contextEntry = workspaceContextByProposalId.get(proposalId) || {};
+          return {
+            id: proposalId,
+            sourceProposalId: proposalId,
+            title: contextEntry?.proposalTitle || contextEntry?.title || 'Shared Proposal',
+            template_name: contextEntry?.templateName || 'Shared Workspace',
+            party_a_email: contextEntry?.partyAEmail || contextEntry?.senderEmail || 'Shared sender',
+            party_b_email: user?.email || 'Recipient',
+            created_date: contextEntry?.loadedAt || new Date().toISOString(),
+            status: 'received',
+            _fromSharedContext: true,
+            _sharedToken: contextEntry?.token || null
+          };
+        });
+
+      return { sent, received: dedupeById([...mergedReceived, ...proposalsFromSharedContext, ...syntheticRows]) };
     },
     enabled: !!user?.email
   });
@@ -539,6 +648,15 @@ export default function Proposals() {
           navigate(
             createPageUrl(
               `ProposalDetail?id=${encodeURIComponent(sourceProposalId)}&sharedToken=${encodeURIComponent(shareLink.token)}&role=recipient`
+            )
+          );
+          return;
+        }
+
+        if (proposal?._sharedToken) {
+          navigate(
+            createPageUrl(
+              `ProposalDetail?id=${encodeURIComponent(sourceProposalId)}&sharedToken=${encodeURIComponent(proposal._sharedToken)}&role=recipient`
             )
           );
           return;
