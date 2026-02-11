@@ -482,10 +482,15 @@ Deno.serve(async (req) => {
       }
     };
 
+    const visiblePartyACount = partyAResponses.filter(r => r.redaction !== 'hidden').length;
+    const hiddenPartyACount = partyAResponses.filter(r => r.redaction === 'hidden').length;
+    const partyBCount = partyBQuestions.length;
+
     const fieldCounts = {
-      visible: totalVisible,
-      hidden: totalHidden,
-      templateResponses: visibleResponseCount,
+      visible: visiblePartyACount + partyBCount + comparisonFieldCount,
+      hidden: hiddenPartyACount + comparisonHiddenCount,
+      templateResponses: visiblePartyACount,
+      partyBFields: partyBCount,
       comparisonFields: comparisonFieldCount
     };
 
