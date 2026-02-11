@@ -59,6 +59,113 @@ function buildShareContextQuery(req: Request) {
   };
 }
 
+async function ensureProposalResponseRecords(base44: any, proposalId: string, correlationId: string) {
+  const responseBuckets = await Promise.all([
+    base44.asServiceRole.entities.ProposalResponse.filter({ proposal_id: proposalId }).catch(() => []),
+    base44.asServiceRole.entities.ProposalResponse.filter({ proposalId: proposalId }).catch(() => []),
+    base44.asServiceRole.entities.ProposalResponse.filter({ 'data.proposal_id': proposalId }).catch(() => []),
+    base44.asServiceRole.entities.ProposalResponse.filter({ 'data.proposalId': proposalId }).catch(() => [])
+  ]);
+  const existing = responseBuckets.flat();
+  
+  if (existing.length > 0) {
+    console.log(`[${correlationId}] ProposalResponse records exist: ${existing.length}`);
+    return { materialized: false, count: existing.length };
+  }
+
+  const evalItems = await base44.asServiceRole.entities.EvaluationItem.filter({ linked_proposal_id: proposalId }, '-created_date', 1).catch(() => []);
+  const evalItem = evalItems?.[0] || null;
+  const stepStateJson = evalItem?.step_state_json || null;
+  
+  if (!stepStateJson) {
+    console.log(`[${correlationId}] No step_state_json available to materialize responses`);
+    return { materialized: false, count: 0 };
+  }
+
+  const rawResponses = stepStateJson?.responses || {};
+  const rawVisibility = stepStateJson?.visibilitySettings || {};
+  const templates = await base44.asServiceRole.entities.Template.list().catch(() => []);
+  const proposal = await base44.asServiceRole.entities.Proposal.filter({ id: proposalId }, '-created_date', 1).then(p => p?.[0] || null);
+  const template = templates.find((t: any) => t.id === proposal?.template_id) || null;
+  const questionLookup: Record<string, any> = {};
+  if (template?.questions) {
+    template.questions.forEach((q: any) => {
+      if (q?.id) questionLookup[q.id] = q;
+    });
+  }
+
+  const responseRecords: any[] = [];
+  for (const [responseKey, rawValue] of Object.entries(rawResponses)) {
+    if (responseKey.startsWith('_')) continue;
+    
+    const [questionId, subjectFromKey] = responseKey.includes('__') 
+      ? responseKey.split('__') 
+      : [responseKey, null];
+    
+    if (!questionId) continue;
+    const question = questionLookup[questionId] || null;
+    
+    let subjectParty = 'a';
+    const normalizedFromKey = String(subjectFromKey || '').trim().toLowerCase();
+    if (normalizedFromKey === 'b' || normalizedFromKey === 'party_b' || normalizedFromKey === 'recipient') {
+      subjectParty = 'b';
+    } else if (question) {
+      const party = String(question?.party || question?.party_key || question?.subject_party || '').toLowerCase();
+      if (party === 'b' || party === 'party_b' || party === 'recipient' || party === 'counterparty') {
+        subjectParty = 'b';
+      } else if (question?.is_about_counterparty === true) {
+        subjectParty = 'b';
+      }
+    }
+    
+    const visibility = String(rawVisibility[responseKey] ?? rawVisibility[questionId] ?? 'full').toLowerCase();
+    const normalizedVisibility = ['hidden', 'not_shared', 'private', 'confidential'].includes(visibility) ? 'hidden' : 'full';
+    
+    let valueType = 'text';
+    let value: any = rawValue;
+    let rangeMin: number | null = null;
+    let rangeMax: number | null = null;
+    
+    if (rawValue && typeof rawValue === 'object' && !Array.isArray(rawValue)) {
+      const type = String((rawValue as any).type || '').toLowerCase();
+      if (type === 'range') {
+        valueType = 'range';
+        value = null;
+        rangeMin = Number((rawValue as any).min);
+        rangeMax = Number((rawValue as any).max);
+        if (!Number.isFinite(rangeMin)) rangeMin = null;
+        if (!Number.isFinite(rangeMax)) rangeMax = null;
+      }
+    }
+    
+    const responseData = {
+      proposal_id: proposalId,
+      question_id: questionId,
+      entered_by_party: 'a',
+      author_party: 'a',
+      subject_party: subjectParty,
+      is_about_counterparty: subjectParty === 'b',
+      value_type: valueType,
+      value: value === null || value === undefined ? null : String(value),
+      range_min: rangeMin,
+      range_max: rangeMax,
+      visibility: normalizedVisibility
+    };
+    
+    responseRecords.push(responseData);
+  }
+
+  if (responseRecords.length === 0) {
+    console.log(`[${correlationId}] No responses to materialize from step_state_json`);
+    return { materialized: false, count: 0 };
+  }
+
+  const created = await base44.asServiceRole.entities.ProposalResponse.bulkCreate(responseRecords);
+  console.log(`[${correlationId}] Materialized ${created.length} ProposalResponse records from step_state_json`);
+  
+  return { materialized: true, count: created.length };
+}
+
 Deno.serve(async (req) => {
   const correlationId = `sharelink_${Date.now()}_${Math.random().toString(36).substring(7)}`;
   
