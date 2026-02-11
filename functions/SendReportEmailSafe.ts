@@ -1,6 +1,8 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.6';
 import { SHARE_REPORT_PATH, validateShareUrl } from './_utils/shareUrl.ts';
 
+const SEND_SAFE_VERSION = "SEND_SAFE_DEBUG_V1_2026_02_11";
+
 function logInfo(payload: Record<string, unknown>) {
   console.log(JSON.stringify({ level: 'info', ...payload }));
 }
@@ -486,6 +488,17 @@ https://getpremarket.com`;
       const responseData = await emailResponse.json().catch(() => ({}));
       console.log(`[${correlationId}] Email sent successfully. Resend ID: ${responseData.id || 'unknown'}`);
 
+      // Extract shareLinkDebug from CreateShareLink result
+      const shareLinkDebug = {
+        snapshotId: shareLinkResult.data?.snapshotId || shareLinkResult.data?.snapshot_id || null,
+        aLen: shareLinkResult.data?.aLen ?? shareLinkResult.data?.snapshot_a_len ?? null,
+        bLen: shareLinkResult.data?.bLen ?? shareLinkResult.data?.snapshot_b_len ?? null,
+        payloadPathUsed: shareLinkResult.data?.payloadPathUsed ?? shareLinkResult.data?.snapshot_payload_path ?? null,
+        payloadTopKeys: shareLinkResult.data?.payloadTopKeys ?? shareLinkResult.data?.snapshot_payload_keys ?? null
+      };
+
+      console.log(`[${correlationId}] ShareLink debug:`, JSON.stringify(shareLinkDebug));
+
       // Log success
       await logEmailSend(base44, {
         correlationId,
@@ -501,19 +514,14 @@ https://getpremarket.com`;
 
       return Response.json({
         ok: true,
+        sendSafeVersion: SEND_SAFE_VERSION,
         correlationId,
         message: `Report sent to ${resolvedRecipientEmail}`,
         shareUrl,
         token: shareToken,
         debugShareUrlSent: shareUrl,
         debugShareUrlPath: new URL(shareUrl).pathname,
-        shareLinkDebug: {
-          snapshotId: shareLinkResult.data?.snapshotId || shareLinkResult.data?.snapshot_id || null,
-          aLen: shareLinkResult.data?.aLen ?? shareLinkResult.data?.snapshot_a_len ?? null,
-          bLen: shareLinkResult.data?.bLen ?? shareLinkResult.data?.snapshot_b_len ?? null,
-          payloadPathUsed: shareLinkResult.data?.payloadPathUsed ?? shareLinkResult.data?.snapshot_payload_path ?? null,
-          payloadTopKeys: shareLinkResult.data?.payloadTopKeys ?? shareLinkResult.data?.snapshot_payload_keys ?? null
-        }
+        shareLinkDebug
       });
 
     } catch (emailError) {
