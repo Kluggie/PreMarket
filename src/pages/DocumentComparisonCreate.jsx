@@ -1366,8 +1366,8 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                         </div>
                       )}
                     </div>
-                  </CardContent>
-                </Card>
+                  </div>
+                </div>
 
                 {/* Document B Highlighting */}
                 <div className="flex flex-col">
