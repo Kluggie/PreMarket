@@ -261,6 +261,8 @@ export default function SharedReport() {
     return 'Shared AI Report';
   }, [reportData, proposalView]);
 
+  const isDocumentComparison = Boolean(reportData?.type === 'document_comparison' || comparisonView);
+  
   const recipientEditableQuestions = useMemo(() => {
     const questions = toArray(partyBEditableSchema?.questions);
     
@@ -936,7 +938,6 @@ export default function SharedReport() {
   const templateSlug = reportData?.template_name?.toLowerCase().replace(/\s+/g, '_');
   const isFinanceTemplate = templateSlug === 'universal_finance_deal_prequal';
   const isProfileMatchingTemplate = templateSlug === 'universal_profile_matching';
-  const isDocumentComparison = Boolean(reportData?.type === 'document_comparison' || comparisonView);
 
   const reportJson = reportData?.report || null;
   const partyAEmail = proposalView?.party_a_email || partyAView?.proposal?.party_a_email || 'Identity Protected';
