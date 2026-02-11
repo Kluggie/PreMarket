@@ -153,14 +153,39 @@ Deno.serve(async (req) => {
       .map((item: any) => asString(item?.questionId || item?.question_id))
       .filter((questionId: string | null) => questionId && !allowedSet.has(questionId));
 
-    if (invalidQuestions.length > 0) {
+    const disallowedPartyUpdates = responses
+      .filter((item: any) => item && typeof item === 'object')
+      .map((item: any) => ({
+        questionId: asString(item?.questionId || item?.question_id),
+        enteredByParty: asString(item?.entered_by_party || item?.enteredByParty || item?.party || item?.author_party),
+        subjectParty: asString(item?.subject_party || item?.subjectParty)
+      }))
+      .filter((item: any) => {
+        const entered = normalizeParty(item.enteredByParty || '');
+        const subject = normalizeParty(item.subjectParty || '');
+        if (entered && !PARTY_B_KEYS.has(entered)) return true;
+        if (subject && !PARTY_B_KEYS.has(subject)) return true;
+        return false;
+      });
+
+    if (invalidQuestions.length > 0 || disallowedPartyUpdates.length > 0) {
+      console.warn(JSON.stringify({
+        level: 'warn',
+        event: 'shared_field_update_blocked',
+        error: 'FORBIDDEN_FIELD_UPDATE',
+        correlationId,
+        invalidQuestionIds: invalidQuestions,
+        disallowedPartyUpdates
+      }));
       return Response.json({
         ok: false,
+        error: 'FORBIDDEN_FIELD_UPDATE',
         status: 'forbidden',
-        code: 'QUESTION_NOT_EDITABLE',
-        reason: 'QUESTION_NOT_EDITABLE',
-        message: `These questions are not editable by Party B: ${invalidQuestions.join(', ')}`,
+        code: 'FORBIDDEN_FIELD_UPDATE',
+        reason: 'FORBIDDEN_FIELD_UPDATE',
+        message: 'Recipient can only update Party B-owned editable fields.',
         invalidQuestionIds: invalidQuestions,
+        blockedUpdates: disallowedPartyUpdates,
         correlationId
       }, { status: 403 });
     }
