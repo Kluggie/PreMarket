@@ -394,7 +394,15 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Calculate field counts
+    const visibleResponseCount = visiblePartyAResponses.length;
+    const hiddenResponseCount = allResponses.filter((r) => isPartyAResponse(r) && isExplicitlyHidden(r)).length;
+    const comparisonFieldCount = comparisonView ? 2 : 0; // docA + docB
+    const totalVisible = visibleResponseCount + comparisonFieldCount;
+    const totalHidden = hiddenResponseCount + (comparisonView ? (comparisonView.docA.hiddenCount + comparisonView.docB.hiddenCount) : 0);
+
     const snapshotData = {
+      type: comparisonView ? 'document_comparison' : 'template',
       proposal: {
         sourceProposalId,
         title: asString(proposal?.title) || 'Untitled Proposal',
@@ -415,6 +423,13 @@ Deno.serve(async (req) => {
       }
     };
 
+    const fieldCounts = {
+      visible: totalVisible,
+      hidden: totalHidden,
+      templateResponses: visibleResponseCount,
+      comparisonFields: comparisonFieldCount
+    };
+
     const snapshotMeta = {
       title: asString(proposal?.title) || 'Untitled Proposal',
       templateName: asString(proposal?.template_name),
@@ -423,8 +438,19 @@ Deno.serve(async (req) => {
       recipientEmail: recipientEmail || normalizeEmail(proposal?.party_b_email),
       senderEmail: normalizeEmail(proposal?.party_a_email),
       version,
-      createdAt
+      createdAt,
+      fieldCounts
     };
+
+    console.log('[CreateProposalSnapshot]', JSON.stringify({
+      sourceProposalId,
+      type: snapshotData.type,
+      hasDocA: !!comparisonView?.docA?.text,
+      hasDocB: !!comparisonView?.docB?.text,
+      docALength: comparisonView?.docA?.text?.length || 0,
+      docBLength: comparisonView?.docB?.text?.length || 0,
+      fieldCounts
+    }));
 
     const created = await base44.asServiceRole.entities.ProposalSnapshot.create({
       source_proposal_id: sourceProposalId,
@@ -441,6 +467,7 @@ Deno.serve(async (req) => {
       snapshotId: asString(created?.id),
       version,
       sourceProposalId,
+      fieldCounts,
       snapshot: {
         id: asString(created?.id),
         sourceProposalId,

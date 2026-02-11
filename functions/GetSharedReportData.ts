@@ -1139,6 +1139,7 @@ Deno.serve(async (req) => {
           canSendBack: permissions.canSendBack
         };
 
+        const snapshotFieldCounts = parseObjectField(snapshotMeta?.fieldCounts);
         logInfo({
           correlationId,
           event: 'shared_report_snapshot_resolved',
@@ -1148,7 +1149,9 @@ Deno.serve(async (req) => {
           version,
           tokenPrefix: token.slice(0, 8),
           consumedView: validation.consumedView,
-          sharedFieldCount: partyAResponses.length
+          sharedFieldCount: partyAResponses.length,
+          fieldCounts: snapshotFieldCounts,
+          hasComparisonView: !!comparisonView
         });
 
         return respond({

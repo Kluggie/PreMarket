@@ -1023,9 +1023,11 @@ export default function SharedReport() {
                               </p>
                               <div className="flex items-center gap-2">
                                 <Badge variant="outline">Source: {item.doc.source || 'typed'}</Badge>
-                                <Badge className="bg-red-100 text-red-700 text-xs">
-                                  {Number(item.doc.hiddenCount || 0)} hidden
-                                </Badge>
+                                {item.doc.hiddenCount > 0 && (
+                                  <Badge className="bg-red-100 text-red-700 text-xs">
+                                    {Number(item.doc.hiddenCount)} hidden
+                                  </Badge>
+                                )}
                               </div>
                             </div>
                             <div className="p-3 bg-white border border-slate-200 rounded-lg max-h-72 overflow-auto">
@@ -1035,6 +1037,11 @@ export default function SharedReport() {
                             </div>
                           </div>
                         ))}
+                      </div>
+                    ) : isDocumentComparison && !comparisonView ? (
+                      <div className="text-center py-8">
+                        <p className="text-amber-700 font-medium mb-2">⚠️ Snapshot contains no document comparison content</p>
+                        <p className="text-sm text-slate-600">This may indicate a snapshot builder issue. Contact the sender.</p>
                       </div>
                     ) : completeDetailsRows.length === 0 ? (
                       <div>
