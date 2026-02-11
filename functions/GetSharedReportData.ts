@@ -1012,12 +1012,28 @@ Deno.serve(async (req) => {
 
     const sourceProposalIdFromLink = extractShareLinkSourceProposalId(shareLink) || resolvedProposalId;
     const snapshotIdFromLink = asString((shareLink as any)?.snapshotId) || extractShareLinkSnapshotId(shareLink);
+    const snapshotVersionFromLink = extractShareLinkSnapshotVersion(shareLink);
+    let debugInfo: any = null;
+
+    if (debugMode) {
+    debugInfo = {
+      shareLink: {
+        id: shareLink?.id,
+        tokenPrefix: token?.slice(0, 8),
+        snapshotIdResolved: snapshotIdFromLink,
+        snapshotVersionResolved: snapshotVersionFromLink
+      },
+      snapshotFetch: null,
+      parsedSnapshotPayload: null
+    };
+    }
+
     if (snapshotIdFromLink) {
-      const snapshotBuckets = await Promise.all([
-        base44.asServiceRole.entities.ProposalSnapshot.filter({ id: snapshotIdFromLink }, '-created_date', 1).catch(() => []),
-        base44.asServiceRole.entities.ProposalSnapshot.filter({ snapshot_id: snapshotIdFromLink }, '-created_date', 1).catch(() => [])
-      ]);
-      const snapshot = [...(snapshotBuckets[0] || []), ...(snapshotBuckets[1] || [])]?.[0] || null;
+    const snapshotBuckets = await Promise.all([
+      base44.asServiceRole.entities.ProposalSnapshot.filter({ id: snapshotIdFromLink }, '-created_date', 1).catch(() => []),
+      base44.asServiceRole.entities.ProposalSnapshot.filter({ snapshot_id: snapshotIdFromLink }, '-created_date', 1).catch(() => [])
+    ]);
+    const snapshot = [...(snapshotBuckets[0] || []), ...(snapshotBuckets[1] || [])]?.[0] || null;
 
       if (snapshot) {
         const snapshotPayload = readSnapshotPayload(snapshot);
