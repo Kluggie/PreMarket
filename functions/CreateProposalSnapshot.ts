@@ -410,12 +410,10 @@ Deno.serve(async (req) => {
     }
 
     if (comparison) {
-      
-      if (comparison) {
-        const rawDocAText = String(comparison.doc_a_plaintext ?? '');
-        const rawDocBText = String(comparison.doc_b_plaintext ?? '');
-        const rawDocASpans = Array.isArray(comparison.doc_a_spans_json) ? comparison.doc_a_spans_json : [];
-        const rawDocBSpans = Array.isArray(comparison.doc_b_spans_json) ? comparison.doc_b_spans_json : [];
+      const rawDocAText = String(comparison.doc_a_plaintext ?? '');
+      const rawDocBText = String(comparison.doc_b_plaintext ?? '');
+      const rawDocASpans = Array.isArray(comparison.doc_a_spans_json) ? comparison.doc_a_spans_json : [];
+      const rawDocBSpans = Array.isArray(comparison.doc_b_spans_json) ? comparison.doc_b_spans_json : [];
         
         // Remove hidden text
         const removeHidden = (text: string, spans: any[]) => {
