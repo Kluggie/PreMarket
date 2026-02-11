@@ -229,27 +229,26 @@ export function FitCardReportDisplay({ report }) {
             <CardTitle className="text-lg font-bold">Must-Haves Check</CardTitle>
           </CardHeader>
           <CardContent>
-
-          <div className="flex items-center justify-between mb-4">
-            <p className="text-3xl font-bold text-blue-600">
-              {json.must_haves_check.satisfied_count} / {json.must_haves_check.total_count}
-            </p>
-            <Badge variant="outline" className="text-sm">
-              {Math.round((json.must_haves_check.satisfied_count / json.must_haves_check.total_count) * 100)}% satisfied
-            </Badge>
-          </div>
-          {json.must_haves_check.missing_items?.length > 0 && (
-            <div className="space-y-2">
-              <p className="text-sm font-semibold text-slate-600 mb-2">Missing Requirements</p>
-              {json.must_haves_check.missing_items.map((item, idx) => (
-                <div key={idx} className="text-sm p-3 bg-red-50 border border-red-100 rounded-lg">
-                  {item.text}
-                </div>
-              ))}
+            <div className="flex items-center justify-between mb-4">
+              <p className="text-3xl font-bold text-blue-600">
+                {json.must_haves_check.satisfied_count} / {json.must_haves_check.total_count}
+              </p>
+              <Badge variant="outline" className="text-sm">
+                {Math.round((json.must_haves_check.satisfied_count / json.must_haves_check.total_count) * 100)}% satisfied
+              </Badge>
             </div>
-          )}
-        </CardContent>
-      </Card>
+            {json.must_haves_check.missing_items?.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-sm font-semibold text-slate-600 mb-2">Missing Requirements</p>
+                {json.must_haves_check.missing_items.map((item, idx) => (
+                  <div key={idx} className="text-sm p-3 bg-red-50 border border-red-100 rounded-lg">
+                    {item.text}
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
       )}
 
       {/* Top Match Reasons */}
@@ -294,61 +293,96 @@ export function FitCardReportDisplay({ report }) {
         </Card>
       )}
 
-          {report.output_report_json.flags?.length > 0 && (
-            <div className="mb-4">
-              <h4 className="font-semibold mb-2 flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 text-amber-600" />
+      {/* Flags & Concerns */}
+      {sortedFlags.length > 0 && (
+        <Card className="border-0 shadow-sm">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-lg font-bold flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5 text-amber-600" />
                 Flags & Concerns
-              </h4>
-              <div className="space-y-2">
-                {report.output_report_json.flags.map((flag, idx) => (
-                  <div key={idx} className={`p-3 rounded-lg border ${
-                    flag.severity === 'high' ? 'bg-red-50 border-red-200' :
-                    flag.severity === 'med' ? 'bg-amber-50 border-amber-200' :
-                    'bg-blue-50 border-blue-200'
-                  }`}>
-                    <div className="flex items-start gap-2">
-                      <Badge className={
-                        flag.severity === 'high' ? 'bg-red-600' :
-                        flag.severity === 'med' ? 'bg-amber-600' :
-                        'bg-blue-600'
-                      }>
-                        {flag.severity}
-                      </Badge>
-                      <div className="flex-1">
-                        <p className="font-medium text-sm">{flag.title}</p>
-                        <p className="text-sm text-slate-600 mt-1">{flag.detail}</p>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+              </CardTitle>
+              <div className="flex items-center gap-2 text-xs">
+                {flagCounts.high > 0 && <Badge className="bg-red-600">{flagCounts.high} high</Badge>}
+                {flagCounts.med > 0 && <Badge className="bg-amber-600">{flagCounts.med} med</Badge>}
+                {flagCounts.low > 0 && <Badge className="bg-blue-600">{flagCounts.low} low</Badge>}
               </div>
             </div>
-          )}
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {sortedFlags.map((flag, idx) => (
+                <div key={idx} className={`p-4 rounded-lg border ${
+                  flag.severity === 'high' ? 'bg-red-50 border-red-200' :
+                  flag.severity === 'med' ? 'bg-amber-50 border-amber-200' :
+                  'bg-blue-50 border-blue-200'
+                }`}>
+                  <div className="flex items-start gap-3">
+                    <Badge className={`${
+                      flag.severity === 'high' ? 'bg-red-600' :
+                      flag.severity === 'med' ? 'bg-amber-600' :
+                      'bg-blue-600'
+                    } text-white`}>
+                      {flag.severity}
+                    </Badge>
+                    <div className="flex-1">
+                      <p className="font-semibold text-sm">{flag.title}</p>
+                      <p className="text-sm text-slate-600 mt-1">{flag.detail}</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
-          {report.output_report_json.followup_questions?.length > 0 && (
-            <div>
-              <h4 className="font-semibold mb-2 flex items-center gap-2">
-                <MessageSquare className="w-4 h-4 text-blue-600" />
-                Follow-up Questions
-              </h4>
-              <div className="space-y-2">
-                {report.output_report_json.followup_questions.map((q, idx) => (
-                  <div key={idx} className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
-                    <div className="flex items-start gap-2">
-                      <Badge variant="outline" className="text-xs">{q.priority}</Badge>
-                      <div className="flex-1">
-                        <p className="text-sm font-medium">{q.question_text}</p>
-                        <p className="text-xs text-slate-600 mt-1">{q.why_this_matters}</p>
+      {/* Follow-up Questions */}
+      {json.followup_questions?.length > 0 && (
+        <Card className="border-0 shadow-sm">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-lg font-bold flex items-center gap-2">
+              <MessageSquare className="w-5 h-5 text-blue-600" />
+              Follow-up Questions
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              {json.followup_questions.map((q, idx) => (
+                <div key={idx} className="p-4 bg-slate-50 border border-slate-200 rounded-lg">
+                  <div className="flex items-start gap-3">
+                    <Badge variant="outline" className="text-xs mt-0.5">{q.priority}</Badge>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold mb-1">{q.question_text}</p>
+                      <p className="text-xs text-slate-600 mb-3">{q.why_this_matters}</p>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-xs"
+                          onClick={() => handleCopyQuestion(q.question_text, idx)}
+                        >
+                          {copiedQuestion === idx ? (
+                            <>
+                              <Check className="w-3 h-3 mr-1" />
+                              Copied
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-3 h-3 mr-1" />
+                              Copy
+                            </>
+                          )}
+                        </Button>
                       </div>
                     </div>
                   </div>
-                ))}
-              </div>
+                </div>
+              ))}
             </div>
-          )}
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
@@ -377,7 +411,7 @@ export function SharedFinanceReportDisplay({ report }) {
             </div>
             <div className="p-4 bg-white rounded-lg">
               <p className="text-sm text-slate-600">Overall Fit</p>
-              <p className="text-xl font-bold capitalize">{report.output_report_json.summary?.fit_level || 'Unknown'}</p>
+              <p className="text-xl font-bold capitalize">{report.output_report_json.summary?.fit_level || 'Insufficient data'}</p>
             </div>
           </div>
 
@@ -516,7 +550,7 @@ export function StandardReportDisplay({ report }) {
               report.output_report_json.summary?.fit_level === 'medium' ? 'bg-amber-600' :
               'bg-slate-600'
             }>
-              {(report.output_report_json.summary?.fit_level || 'unknown')} fit
+              {(report.output_report_json.summary?.fit_level || 'Insufficient data')} fit
             </Badge>
           </div>
           
