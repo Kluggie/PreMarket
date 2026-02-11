@@ -633,7 +633,7 @@ Verification Status: ${org.verification_status || 'N/A'}`;
     if (!text) return null;
     
     if (spans.length === 0) {
-      return <div id={docId} className="whitespace-pre-wrap font-mono text-sm select-text">{text}</div>;
+      return <div id={docId} className="whitespace-pre-wrap select-text">{text}</div>;
     }
     
     const sortedSpans = [...spans].sort((a, b) => a.start - b.start);
@@ -656,13 +656,13 @@ Verification Status: ${org.verification_status || 'N/A'}`;
     }
     
     return (
-      <div id={docId} className="whitespace-pre-wrap font-mono text-sm select-text">
+      <div id={docId} className="whitespace-pre-wrap select-text">
         {parts.map((part, idx) => (
           <span 
             key={idx}
             className={
               part.highlight === 'confidential' 
-                ? 'bg-red-200 text-red-900 px-0.5 rounded'
+                ? 'bg-red-200 text-red-900 px-1 py-0.5 rounded'
                 : ''
             }
           >
@@ -684,10 +684,10 @@ Verification Status: ${org.verification_status || 'N/A'}`;
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 py-8">
-      <div className="max-w-7xl mx-auto px-12">
-        <div className="mb-6">
-          <Link to={createPageUrl('Proposals')} className="inline-flex items-center text-slate-600 hover:text-slate-900 mb-3">
+    <div className="min-h-screen bg-slate-50 py-6">
+      <div className="max-w-[1400px] mx-auto px-12">
+        <div className="mb-5">
+          <Link to={createPageUrl('Proposals')} className="inline-flex items-center text-slate-600 hover:text-slate-900 mb-2">
             <ArrowLeft className="w-4 h-4 mr-2" />
             Back to Proposals
           </Link>
@@ -699,7 +699,7 @@ Verification Status: ${org.verification_status || 'N/A'}`;
           </div>
         </div>
 
-        <div className="mb-6">
+        <div className="mb-5">
           <div className="flex items-center justify-between text-sm mb-3">
             <span className={`font-semibold ${step === 1 ? 'text-blue-600' : step > 1 ? 'text-slate-400' : 'text-slate-500'}`}>
               Step {step} of 4
@@ -913,21 +913,19 @@ Verification Status: ${org.verification_status || 'N/A'}`;
               )}
 
               {/* Side-by-Side Document Inputs */}
-              <div className="grid grid-cols-2 gap-10 items-stretch">
+              <div className="grid grid-cols-2 gap-16 items-stretch">
                 {/* Document A Input */}
-                <Card className="flex flex-col h-full">
-                  <CardHeader className="pb-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <FileText className="w-5 h-5 text-blue-600" />
-                        <CardTitle className="text-lg">{partyALabel}</CardTitle>
-                      </div>
-                      <Badge variant={docAText ? "default" : "outline"} className="text-xs">
-                        {docAText ? "Ready" : "Empty"}
-                      </Badge>
+                <div className="flex flex-col h-full">
+                  <div className="flex items-center justify-between mb-3 px-1">
+                    <div className="flex items-center gap-2">
+                      <FileText className="w-5 h-5 text-blue-600" />
+                      <h3 className="text-base font-semibold text-slate-900">{partyALabel}</h3>
                     </div>
-                  </CardHeader>
-                  <CardContent className="space-y-4 flex-1 flex flex-col">
+                    <Badge variant={docAText ? "default" : "outline"} className="text-xs">
+                      {docAText ? "Ready" : "Empty"}
+                    </Badge>
+                  </div>
+                  <div className="space-y-4 flex-1 flex flex-col">
                   {docASource === 'uploaded' && (
                     <div className="space-y-3">
                       <div className="space-y-2">
@@ -1047,32 +1045,30 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                     </div>
                   )}
                   
-                    <div className="space-y-2 flex-1 flex flex-col">
-                      <Label>Document Content</Label>
+                    <div className="flex-1 flex flex-col">
                       <Textarea 
                         value={docAText}
                         onChange={(e) => setDocAText(e.target.value)}
                         placeholder="Enter, paste, or load document text..."
-                        className="flex-1 min-h-[600px] font-mono text-sm bg-slate-50/50 resize-none"
+                        className="flex-1 min-h-[700px] w-full px-12 py-10 bg-white border border-slate-200 shadow-sm rounded-lg resize-none text-[15px] leading-7 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-300"
+                        style={{ fontFamily: 'system-ui, -apple-system, sans-serif' }}
                       />
                     </div>
-                  </CardContent>
-                </Card>
+                  </div>
+                </div>
 
                 {/* Document B Input */}
-                <Card className="flex flex-col h-full">
-                  <CardHeader className="pb-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <FileText className="w-5 h-5 text-indigo-600" />
-                        <CardTitle className="text-lg">{partyBLabel}</CardTitle>
-                      </div>
-                      <Badge variant={docBText ? "default" : "outline"} className="text-xs">
-                        {docBText ? "Ready" : "Empty"}
-                      </Badge>
+                <div className="flex flex-col h-full">
+                  <div className="flex items-center justify-between mb-3 px-1">
+                    <div className="flex items-center gap-2">
+                      <FileText className="w-5 h-5 text-indigo-600" />
+                      <h3 className="text-base font-semibold text-slate-900">{partyBLabel}</h3>
                     </div>
-                  </CardHeader>
-                  <CardContent className="space-y-4 flex-1 flex flex-col">
+                    <Badge variant={docBText ? "default" : "outline"} className="text-xs">
+                      {docBText ? "Ready" : "Empty"}
+                    </Badge>
+                  </div>
+                  <div className="space-y-4 flex-1 flex flex-col">
                   {docBSource === 'uploaded' && (
                     <div className="space-y-3">
                       <div className="space-y-2">
@@ -1192,17 +1188,17 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                     </div>
                   )}
                   
-                    <div className="space-y-2 flex-1 flex flex-col">
-                      <Label>Document Content</Label>
+                    <div className="flex-1 flex flex-col">
                       <Textarea 
                         value={docBText}
                         onChange={(e) => setDocBText(e.target.value)}
                         placeholder="Enter, paste, or load document text..."
-                        className="flex-1 min-h-[600px] font-mono text-sm bg-slate-50/50 resize-none"
+                        className="flex-1 min-h-[700px] w-full px-12 py-10 bg-white border border-slate-200 shadow-sm rounded-lg resize-none text-[15px] leading-7 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-300"
+                        style={{ fontFamily: 'system-ui, -apple-system, sans-serif' }}
                       />
                     </div>
-                  </CardContent>
-                </Card>
+                  </div>
+                </div>
               </div>
 
               <div className="flex justify-between pt-4">
@@ -1273,40 +1269,39 @@ Verification Status: ${org.verification_status || 'N/A'}`;
               </div>
 
               {/* Side-by-Side Highlighting */}
-              <div className="grid grid-cols-2 gap-10 items-stretch">
+              <div className="grid grid-cols-2 gap-16 items-stretch">
                 {/* Document A Highlighting */}
-                <Card>
-                  <CardHeader className="pb-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <FileText className="w-5 h-5 text-blue-600" />
-                        <CardTitle className="text-lg">{partyALabel}</CardTitle>
-                      </div>
-                      <div className="flex gap-2">
-                        <Button 
-                          variant="outline" 
-                          size="sm"
-                          onClick={() => addHighlight('a', 'confidential')}
-                        >
-                          <span className="w-3 h-3 bg-red-500 rounded mr-2"></span>
-                          Mark Hidden
-                        </Button>
-                        <Button 
-                          variant="outline" 
-                          size="sm"
-                          onClick={() => exportHighlights('a')}
-                          disabled={docASpans.length === 0}
-                        >
-                          <Download className="w-4 h-4" />
-                        </Button>
-                      </div>
+                <div className="flex flex-col">
+                  <div className="flex items-center justify-between mb-3 px-1">
+                    <div className="flex items-center gap-2">
+                      <FileText className="w-5 h-5 text-blue-600" />
+                      <h3 className="text-base font-semibold text-slate-900">{partyALabel}</h3>
                     </div>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
+                    <div className="flex gap-2">
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        onClick={() => addHighlight('a', 'confidential')}
+                      >
+                        <span className="w-3 h-3 bg-red-500 rounded mr-2"></span>
+                        Mark Hidden
+                      </Button>
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        onClick={() => exportHighlights('a')}
+                        disabled={docASpans.length === 0}
+                      >
+                        <Download className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="space-y-4">
                     <div 
                       ref={docAPreviewRef}
                       onScroll={() => handleSyncScroll(docAPreviewRef, docBPreviewRef)}
-                      className="p-4 border border-slate-200 rounded-xl bg-white h-[600px] overflow-auto"
+                      className="px-12 py-10 border border-slate-200 rounded-lg bg-white shadow-sm h-[700px] overflow-auto text-[15px] leading-7"
+                      style={{ fontFamily: 'system-ui, -apple-system, sans-serif' }}
                     >
                       {renderHighlightedText(docAText, docASpans, 'preview-a')}
                     </div>
@@ -1371,42 +1366,41 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                         </div>
                       )}
                     </div>
-                  </CardContent>
-                </Card>
+                  </div>
+                </div>
 
                 {/* Document B Highlighting */}
-                <Card>
-                  <CardHeader className="pb-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <FileText className="w-5 h-5 text-indigo-600" />
-                        <CardTitle className="text-lg">{partyBLabel}</CardTitle>
-                      </div>
-                      <div className="flex gap-2">
-                        <Button 
-                          variant="outline" 
-                          size="sm"
-                          onClick={() => addHighlight('b', 'confidential')}
-                        >
-                          <span className="w-3 h-3 bg-red-500 rounded mr-2"></span>
-                          Mark Hidden
-                        </Button>
-                        <Button 
-                          variant="outline" 
-                          size="sm"
-                          onClick={() => exportHighlights('b')}
-                          disabled={docBSpans.length === 0}
-                        >
-                          <Download className="w-4 h-4" />
-                        </Button>
-                      </div>
+                <div className="flex flex-col">
+                  <div className="flex items-center justify-between mb-3 px-1">
+                    <div className="flex items-center gap-2">
+                      <FileText className="w-5 h-5 text-indigo-600" />
+                      <h3 className="text-base font-semibold text-slate-900">{partyBLabel}</h3>
                     </div>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
+                    <div className="flex gap-2">
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        onClick={() => addHighlight('b', 'confidential')}
+                      >
+                        <span className="w-3 h-3 bg-red-500 rounded mr-2"></span>
+                        Mark Hidden
+                      </Button>
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        onClick={() => exportHighlights('b')}
+                        disabled={docBSpans.length === 0}
+                      >
+                        <Download className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="space-y-4">
                     <div 
                       ref={docBPreviewRef}
                       onScroll={() => handleSyncScroll(docBPreviewRef, docAPreviewRef)}
-                      className="p-4 border border-slate-200 rounded-xl bg-white h-[600px] overflow-auto"
+                      className="px-12 py-10 border border-slate-200 rounded-lg bg-white shadow-sm h-[700px] overflow-auto text-[15px] leading-7"
+                      style={{ fontFamily: 'system-ui, -apple-system, sans-serif' }}
                     >
                       {renderHighlightedText(docBText, docBSpans, 'preview-b')}
                     </div>
@@ -1471,11 +1465,11 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                         </div>
                       )}
                     </div>
-                  </CardContent>
-                </Card>
+                  </div>
+                </div>
               </div>
 
-              <div className="flex justify-between pt-4">
+              <div className="flex justify-between pt-6">
                 <Button variant="outline" onClick={async () => {
                   await saveDraft(2);
                   setStep(2);
