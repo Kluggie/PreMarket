@@ -169,6 +169,19 @@ Deno.serve(async (req) => {
       });
 
     if (invalidQuestions.length > 0 || disallowedPartyUpdates.length > 0) {
+      invalidQuestions.forEach((fieldKey: string | null) => {
+        if (!fieldKey) return;
+        console.log('[proposal-update] blocked forbidden field', {
+          role: 'recipient',
+          fieldKey
+        });
+      });
+      disallowedPartyUpdates.forEach((blocked: any) => {
+        console.log('[proposal-update] blocked forbidden field', {
+          role: blocked?.enteredByParty || blocked?.subjectParty || 'recipient',
+          fieldKey: blocked?.questionId || null
+        });
+      });
       console.warn(JSON.stringify({
         level: 'warn',
         event: 'shared_field_update_blocked',
