@@ -252,6 +252,10 @@ Deno.serve(async (req) => {
         recipientEmail: resolvedRecipientEmail
       });
     } catch (shareLinkError) {
+      const errorCode = shareLinkError?.response?.data?.errorCode || shareLinkError?.response?.data?.error || 'SHARE_LINK_FAILED';
+      const errorMessage = shareLinkError?.response?.data?.message || shareLinkError.message || 'Share link creation failed';
+      const statusCode = shareLinkError?.response?.status || 500;
+      
       await logEmailSend(base44, {
         correlationId,
         proposalId,
@@ -259,20 +263,25 @@ Deno.serve(async (req) => {
         documentComparisonId,
         recipientDomain,
         ok: false,
-        errorCode: 'SHARE_LINK_FAILED',
-        message: `Share link creation failed: ${shareLinkError.message}`,
+        errorCode,
+        message: errorMessage,
         provider: 'resend'
       });
       
       return Response.json({
         ok: false,
+        error: errorCode,
+        errorCode,
+        message: errorMessage,
         correlationId,
-        errorCode: 'SHARE_LINK_FAILED',
-        message: `Failed to create share link: ${shareLinkError.message}`
-      });
+        ...(shareLinkError?.response?.data || {})
+      }, { status: statusCode });
     }
 
     if (!shareLinkResult.data.ok) {
+      const errorCode = shareLinkResult.data.errorCode || shareLinkResult.data.error || 'SHARE_LINK_FAILED';
+      const statusCode = shareLinkResult.status || 422;
+      
       await logEmailSend(base44, {
         correlationId,
         proposalId,
@@ -280,17 +289,19 @@ Deno.serve(async (req) => {
         documentComparisonId,
         recipientDomain,
         ok: false,
-        errorCode: shareLinkResult.data.errorCode || 'SHARE_LINK_FAILED',
+        errorCode,
         message: shareLinkResult.data.message || 'Share link creation failed',
         provider: 'resend'
       });
       
       return Response.json({
         ok: false,
+        error: errorCode,
+        errorCode,
+        message: shareLinkResult.data.message || 'Failed to create share link',
         correlationId,
-        errorCode: shareLinkResult.data.errorCode || 'SHARE_LINK_FAILED',
-        message: shareLinkResult.data.message || 'Failed to create share link'
-      });
+        ...shareLinkResult.data
+      }, { status: statusCode });
     }
 
     const canonicalShare = assertCanonicalShareUrl(shareLinkResult.data.shareUrl, correlationId);

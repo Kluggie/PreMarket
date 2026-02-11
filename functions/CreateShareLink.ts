@@ -430,24 +430,32 @@ Deno.serve(async (req) => {
       const bLen = payload?.partyBEditableSchema?.questions?.length || 0;
       
       if (aLen === 0 && bLen === 0) {
+        const payloadPathUsed = payload?.partyAResponses ? 'snapshotData'
+          : payload?.partyBEditableSchema ? 'snapshotData'
+          : snapshot?.snapshot_data?.partyAResponses ? 'snapshot_data'
+          : 'none';
+        
         logInfo({
           correlationId,
           event: 'snapshot_empty_validation_failed',
           snapshotId,
           aLen,
           bLen,
-          topKeys: payload ? Object.keys(payload) : []
+          payloadPathUsed,
+          snapshotTopKeys: payload ? Object.keys(payload) : []
         });
         return Response.json({
           ok: false,
+          error: 'SNAPSHOT_EMPTY',
           errorCode: 'SNAPSHOT_EMPTY',
           message: 'Snapshot contains no Party A or Party B inputs',
           snapshotId,
           aLen,
           bLen,
-          topKeys: payload ? Object.keys(payload) : [],
+          payloadPathUsed,
+          snapshotTopKeys: payload ? Object.keys(payload) : [],
           correlationId
-        }, { status: 400 });
+        }, { status: 422 });
       }
     } catch (snapshotError) {
       const errorMessage = snapshotError instanceof Error ? snapshotError.message : String(snapshotError);
