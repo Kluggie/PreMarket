@@ -218,8 +218,9 @@ function isProposalOwner(proposal, user) {
   return Boolean(userEmail && ownerEmail && userEmail === ownerEmail);
 }
 
-async function getActiveShareLinkForRecipient(proposalId) {
+async function getActiveShareLinkForRecipient(proposalId, options = {}) {
   const normalizedProposalId = String(proposalId || '').trim();
+  const explicitRecipientEmail = normalizeEmail(options?.recipientEmail || '');
   if (!normalizedProposalId) {
     return {
       ok: false,
@@ -236,7 +237,7 @@ async function getActiveShareLinkForRecipient(proposalId) {
 
   const resolveFromShareLinks = async () => {
     const me = await base44.auth.me().catch(() => null);
-    const recipientEmail = normalizeEmail(me?.email);
+    const recipientEmail = explicitRecipientEmail || normalizeEmail(me?.email);
     if (!recipientEmail) {
       return { ok: false, message: NO_SHARED_WORKSPACE_LINK_MESSAGE };
     }
@@ -253,12 +254,18 @@ async function getActiveShareLinkForRecipient(proposalId) {
         .catch(() => []),
       base44.entities.ShareLink
         .filter({ proposalId: normalizedProposalId, recipient_email: recipientEmail }, '-created_date', 10)
+        .catch(() => []),
+      base44.entities.ShareLink
+        .filter({ source_proposal_id: normalizedProposalId, recipient_email: recipientEmail }, '-created_date', 10)
+        .catch(() => []),
+      base44.entities.ShareLink
+        .filter({ sourceProposalId: normalizedProposalId, recipientEmail: recipientEmail }, '-created_date', 10)
         .catch(() => [])
     ]);
 
-    const activeRow = buckets
+    const activeRows = buckets
       .flat()
-      .find((row) => {
+      .filter((row) => {
         const status = String(row?.status || '').trim().toLowerCase();
         if (status && status !== 'active') return false;
 
@@ -269,24 +276,45 @@ async function getActiveShareLinkForRecipient(proposalId) {
         }
         return true;
       });
+    activeRows.sort((a, b) => {
+      const versionA = Number(a?.snapshot_version ?? a?.snapshotVersion ?? a?.version ?? a?.data?.snapshot_version ?? 0);
+      const versionB = Number(b?.snapshot_version ?? b?.snapshotVersion ?? b?.version ?? b?.data?.snapshot_version ?? 0);
+      if (Number.isFinite(versionA) && Number.isFinite(versionB) && versionA !== versionB) {
+        return versionB - versionA;
+      }
+      return new Date(b?.created_date || 0).getTime() - new Date(a?.created_date || 0).getTime();
+    });
+    const activeRow = activeRows[0];
 
     const token = activeRow?.token || activeRow?.data?.token || null;
     if (!token) {
       return { ok: false, message: NO_SHARED_WORKSPACE_LINK_MESSAGE };
     }
 
-    return { ok: true, token: String(token) };
+    const snapshotId = activeRow?.snapshot_id || activeRow?.snapshotId || activeRow?.data?.snapshot_id || activeRow?.data?.snapshotId || null;
+    const versionRaw = Number(activeRow?.snapshot_version ?? activeRow?.snapshotVersion ?? activeRow?.version ?? activeRow?.data?.snapshot_version ?? 0);
+    return {
+      ok: true,
+      token: String(token),
+      snapshotId: snapshotId ? String(snapshotId) : null,
+      version: Number.isFinite(versionRaw) && versionRaw > 0 ? Math.floor(versionRaw) : null,
+      sourceProposalId: activeRow?.source_proposal_id || activeRow?.sourceProposalId || normalizedProposalId
+    };
   };
 
   try {
     const result = await base44.functions.invoke('GetActiveShareLinkForRecipient', {
-      proposalId: normalizedProposalId
+      proposalId: normalizedProposalId,
+      ...(explicitRecipientEmail ? { recipientEmail: explicitRecipientEmail } : {})
     });
     const data = result?.data;
     if (data?.ok && data?.token) {
       return {
         ok: true,
-        token: data.token
+        token: data.token,
+        snapshotId: data.snapshotId || null,
+        version: Number.isFinite(Number(data.version)) ? Number(data.version) : null,
+        sourceProposalId: data.sourceProposalId || normalizedProposalId
       };
     }
 
@@ -674,6 +702,21 @@ export default function ProposalDetail() {
     enabled: !!proposalId && !isRecipientRoutedRequest
   });
   const ownerWorkspaceEnabled = Boolean(!isRecipientRoutedRequest && proposalId && isProposalOwner(proposalEntity, user));
+
+  const { data: latestRecipientShareLink = null } = useQuery({
+    queryKey: ['latestRecipientShareLink', proposalId, proposalEntity?.party_b_email || null, user?.id],
+    queryFn: async () => {
+      const result = await getActiveShareLinkForRecipient(proposalId, {
+        recipientEmail: proposalEntity?.party_b_email || ''
+      });
+      return result?.ok ? result : null;
+    },
+    enabled: Boolean(
+      ownerWorkspaceEnabled &&
+      proposalId &&
+      proposalEntity?.party_b_email
+    )
+  });
 
   const { data: responsesEntity = [] } = useQuery({
     queryKey: ['proposalResponses', proposalId],
@@ -1703,7 +1746,7 @@ export default function ProposalDetail() {
       setOpeningSharedWorkspace(false);
       navigate(
         createPageUrl(
-          `ProposalDetail?id=${encodeURIComponent(proposalId)}&sharedToken=${encodeURIComponent(shareLink.token)}&role=recipient`
+          `SharedReport?token=${encodeURIComponent(shareLink.token)}&mode=workspace`
         )
       );
       return;
@@ -1784,6 +1827,9 @@ export default function ProposalDetail() {
                           (isPartyB && !proposal.reveal_requested_by_b);
   const otherPartyRequestedReveal = (isPartyA && proposal.reveal_requested_by_b) || 
                                     (isPartyB && proposal.reveal_requested_by_a);
+  const lastSharedVersion = Number.isFinite(Number(latestRecipientShareLink?.version))
+    ? Number(latestRecipientShareLink.version)
+    : null;
 
   return (
     <div className="min-h-screen bg-slate-50 py-8">
@@ -1806,6 +1852,11 @@ export default function ProposalDetail() {
               <p className="text-slate-500">
                 {proposal.template_name} • Created {new Date(proposal.created_date).toLocaleDateString()}
               </p>
+              {!isRecipientView && isProposalOwner(proposal, user) && lastSharedVersion && (
+                <p className="text-sm text-blue-700 mt-1">
+                  Last shared version: v{lastSharedVersion}
+                </p>
+              )}
             </div>
 
             <div className="flex items-center gap-3">
@@ -1943,7 +1994,7 @@ export default function ProposalDetail() {
                   }}
                 >
                   <Send className="w-4 h-4 mr-2" />
-                  Send AI Report
+                  Share Updated Version
                 </Button>
               )}
               {latestSuccessReport && latestSuccessReport.output_report_json && (

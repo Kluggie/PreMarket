@@ -10,6 +10,9 @@ type ShareLinkView = {
   id: string;
   token: string | null;
   proposalId: string | null;
+  sourceProposalId: string | null;
+  snapshotId: string | null;
+  snapshotVersion: number | null;
   evaluationItemId: string | null;
   documentComparisonId: string | null;
   recipientEmail: string | null;
@@ -190,6 +193,29 @@ const mapShareLink = (shareLink: any): ShareLinkView => {
   const mode =
     asString(shareLink?.share_mode || shareLink?.mode || shareLink?.access_mode) ||
     (buildPermissions(shareLink).canEdit ? 'interactive' : 'view_only');
+  const snapshotVersionCandidates = [
+    shareLink?.snapshot_version,
+    shareLink?.snapshotVersion,
+    shareLink?.version,
+    data.snapshot_version,
+    data.snapshotVersion,
+    data.version,
+    context.snapshot_version,
+    context.snapshotVersion,
+    context.version,
+    metadata.snapshot_version,
+    metadata.snapshotVersion,
+    metadata.version
+  ];
+  let snapshotVersion: number | null = null;
+  for (const candidate of snapshotVersionCandidates) {
+    if (candidate === null || candidate === undefined || candidate === '') continue;
+    const numeric = Number(candidate);
+    if (Number.isFinite(numeric) && numeric > 0) {
+      snapshotVersion = Math.floor(numeric);
+      break;
+    }
+  }
 
   return {
     id: asString(shareLink?.id) || '',
@@ -199,6 +225,27 @@ const mapShareLink = (shareLink: any): ShareLinkView => {
       context.token,
       metadata.token
     ),
+    sourceProposalId: pickString(
+      shareLink?.source_proposal_id,
+      shareLink?.sourceProposalId,
+      data.source_proposal_id,
+      data.sourceProposalId,
+      context.source_proposal_id,
+      context.sourceProposalId,
+      metadata.source_proposal_id,
+      metadata.sourceProposalId
+    ),
+    snapshotId: pickString(
+      shareLink?.snapshot_id,
+      shareLink?.snapshotId,
+      data.snapshot_id,
+      data.snapshotId,
+      context.snapshot_id,
+      context.snapshotId,
+      metadata.snapshot_id,
+      metadata.snapshotId
+    ),
+    snapshotVersion,
     proposalId: pickString(
       shareLink?.proposal_id,
       shareLink?.proposalId,
@@ -216,6 +263,15 @@ const mapShareLink = (shareLink: any): ShareLinkView => {
       metadata.proposalId,
       metadata.linked_proposal_id,
       metadata.linkedProposalId
+    ) || pickString(
+      shareLink?.source_proposal_id,
+      shareLink?.sourceProposalId,
+      data.source_proposal_id,
+      data.sourceProposalId,
+      context.source_proposal_id,
+      context.sourceProposalId,
+      metadata.source_proposal_id,
+      metadata.sourceProposalId
     ),
     evaluationItemId: pickString(
       shareLink?.evaluation_item_id,
@@ -433,7 +489,10 @@ export async function validateShareLinkAccess(
 
   let expectedRecipient = normalizeEmail(shareLink.recipientEmail);
   if (!expectedRecipient) {
-    expectedRecipient = await tryGetProposalRecipientEmail(base44, shareLink.proposalId);
+    expectedRecipient = await tryGetProposalRecipientEmail(
+      base44,
+      shareLink.sourceProposalId || shareLink.proposalId
+    );
   }
   const matchedRecipient = Boolean(expectedRecipient && currentUserEmail && expectedRecipient === currentUserEmail);
 

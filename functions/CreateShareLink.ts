@@ -203,6 +203,54 @@ Deno.serve(async (req) => {
       }, { status: 403 });
     }
 
+    let snapshotId: string | null = null;
+    let snapshotVersion: number | null = null;
+    try {
+      const snapshotResult = await base44.asServiceRole.functions.invoke('CreateProposalSnapshot', {
+        sourceProposalId: resolvedProposalId,
+        recipientEmail: normalizedRecipientEmail,
+        createdByUserId: user.id
+      });
+
+      if (!snapshotResult?.data?.ok || !snapshotResult?.data?.snapshotId) {
+        const errorCode = snapshotResult?.data?.errorCode || 'SNAPSHOT_CREATE_FAILED';
+        const message = snapshotResult?.data?.message || 'Failed to create proposal snapshot';
+        logInfo({
+          correlationId,
+          event: 'snapshot_create_failed',
+          proposalId: resolvedProposalId,
+          recipientEmail: normalizedRecipientEmail,
+          errorCode,
+          message
+        });
+        return Response.json({
+          ok: false,
+          errorCode,
+          message,
+          correlationId
+        }, { status: snapshotResult?.status || 500 });
+      }
+
+      snapshotId = String(snapshotResult.data.snapshotId);
+      const versionCandidate = Number(snapshotResult.data.version);
+      snapshotVersion = Number.isFinite(versionCandidate) ? versionCandidate : null;
+    } catch (snapshotError) {
+      const errorMessage = snapshotError instanceof Error ? snapshotError.message : String(snapshotError);
+      logInfo({
+        correlationId,
+        event: 'snapshot_create_exception',
+        proposalId: resolvedProposalId,
+        recipientEmail: normalizedRecipientEmail,
+        error: errorMessage
+      });
+      return Response.json({
+        ok: false,
+        errorCode: 'SNAPSHOT_CREATE_FAILED',
+        message: errorMessage,
+        correlationId
+      }, { status: 500 });
+    }
+
     const shareMode = 'interactive';
     const permissions = {
       canView: true,
@@ -276,6 +324,30 @@ Deno.serve(async (req) => {
         payload: { linkedProposalId: resolvedProposalId }
       },
       {
+        label: 'source_proposal_id',
+        payload: { source_proposal_id: resolvedProposalId }
+      },
+      {
+        label: 'sourceProposalId',
+        payload: { sourceProposalId: resolvedProposalId }
+      },
+      {
+        label: 'snapshot_id',
+        payload: { snapshot_id: snapshotId }
+      },
+      {
+        label: 'snapshotId',
+        payload: { snapshotId: snapshotId }
+      },
+      {
+        label: 'snapshot_version',
+        payload: { snapshot_version: snapshotVersion }
+      },
+      {
+        label: 'snapshotVersion',
+        payload: { snapshotVersion: snapshotVersion }
+      },
+      {
         label: 'recipient_email',
         payload: { recipient_email: normalizedRecipientEmail }
       },
@@ -292,6 +364,12 @@ Deno.serve(async (req) => {
             proposal_id: resolvedProposalId,
             linkedProposalId: resolvedProposalId,
             linked_proposal_id: resolvedProposalId,
+            sourceProposalId: resolvedProposalId,
+            source_proposal_id: resolvedProposalId,
+            snapshotId,
+            snapshot_id: snapshotId,
+            snapshotVersion: snapshotVersion,
+            snapshot_version: snapshotVersion,
             recipientEmail: normalizedRecipientEmail,
             recipient_email: normalizedRecipientEmail
           }
@@ -306,6 +384,12 @@ Deno.serve(async (req) => {
             proposal_id: resolvedProposalId,
             linkedProposalId: resolvedProposalId,
             linked_proposal_id: resolvedProposalId,
+            sourceProposalId: resolvedProposalId,
+            source_proposal_id: resolvedProposalId,
+            snapshotId,
+            snapshot_id: snapshotId,
+            snapshotVersion: snapshotVersion,
+            snapshot_version: snapshotVersion,
             recipientEmail: normalizedRecipientEmail,
             recipient_email: normalizedRecipientEmail
           }
@@ -377,6 +461,12 @@ Deno.serve(async (req) => {
           metadataProposalIdSnake: refreshedMetadata.proposal_id || null,
           metadataLinkedProposalId: refreshedMetadata.linkedProposalId || null,
           metadataLinkedProposalIdSnake: refreshedMetadata.linked_proposal_id || null,
+          snapshotId: refreshedShareLink.snapshotId || refreshedShareLink.snapshot_id || null,
+          snapshotVersion: refreshedShareLink.snapshotVersion || refreshedShareLink.snapshot_version || null,
+          contextSnapshotId: refreshedContext.snapshotId || refreshedContext.snapshot_id || null,
+          contextSnapshotVersion: refreshedContext.snapshotVersion || refreshedContext.snapshot_version || null,
+          metadataSnapshotId: refreshedMetadata.snapshotId || refreshedMetadata.snapshot_id || null,
+          metadataSnapshotVersion: refreshedMetadata.snapshotVersion || refreshedMetadata.snapshot_version || null,
           recipient_email: refreshedShareLink.recipient_email || null,
           recipientEmail: refreshedShareLink.recipientEmail || null,
           contextRecipientEmail: refreshedContext.recipientEmail || null,
@@ -482,8 +572,43 @@ Deno.serve(async (req) => {
     if (Object.prototype.hasOwnProperty.call(shareLink, 'recipientEmail')) {
       metadataPatch.recipientEmail = normalizedRecipientEmail;
     }
+    if (Object.prototype.hasOwnProperty.call(shareLink, 'snapshot_id')) {
+      metadataPatch.snapshot_id = snapshotId;
+    }
+    if (Object.prototype.hasOwnProperty.call(shareLink, 'snapshotId')) {
+      metadataPatch.snapshotId = snapshotId;
+    }
+    if (Object.prototype.hasOwnProperty.call(shareLink, 'snapshot_version')) {
+      metadataPatch.snapshot_version = snapshotVersion;
+    }
+    if (Object.prototype.hasOwnProperty.call(shareLink, 'snapshotVersion')) {
+      metadataPatch.snapshotVersion = snapshotVersion;
+    }
+    if (Object.prototype.hasOwnProperty.call(shareLink, 'source_proposal_id')) {
+      metadataPatch.source_proposal_id = resolvedProposalId;
+    }
+    if (Object.prototype.hasOwnProperty.call(shareLink, 'sourceProposalId')) {
+      metadataPatch.sourceProposalId = resolvedProposalId;
+    }
 
     await base44.asServiceRole.entities.ShareLink.update(shareLink.id, metadataPatch);
+
+    if (snapshotId) {
+      try {
+        await base44.asServiceRole.entities.ProposalSnapshot.update(snapshotId, {
+          shareLinkId: shareLink.id,
+          share_link_id: shareLink.id
+        });
+      } catch (snapshotPatchError) {
+        logInfo({
+          correlationId,
+          event: 'snapshot_share_link_patch_failed',
+          snapshotId,
+          shareLinkId: shareLink.id,
+          error: snapshotPatchError instanceof Error ? snapshotPatchError.message : String(snapshotPatchError)
+        });
+      }
+    }
 
     logInfo({
       correlationId,
@@ -500,6 +625,8 @@ Deno.serve(async (req) => {
       token,
       proposalId: resolvedProposalId,
       shareLinkId: shareLink.id,
+      snapshotId,
+      version: snapshotVersion,
       expiresAt: expiresAt.toISOString(),
       viewCount: 0,
       maxViews: 25,

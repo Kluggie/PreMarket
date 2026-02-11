@@ -132,7 +132,7 @@ Deno.serve(async (req) => {
       }, { status: resolved?.status || 400 });
     }
 
-    const proposalId = resolvedData?.proposalId;
+    const proposalId = resolvedData?.sourceProposalId || resolvedData?.proposalId;
     const editableQuestionIds: string[] = Array.isArray(resolvedData?.partyBEditableSchema?.editableQuestionIds)
       ? resolvedData.partyBEditableSchema.editableQuestionIds
       : (resolvedData?.partyBEditableSchema?.questions || []).map((question: any) => question.questionId);
