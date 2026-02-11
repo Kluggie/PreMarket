@@ -699,6 +699,63 @@ function dedupeById(records: any[]) {
   });
 }
 
+function extractResponseOwnerUserId(response: any): string | null {
+  if (!response || typeof response !== 'object') return null;
+  const data = parseObjectField(response?.data);
+  return asString(
+    response?.recipient_user_id ||
+    response?.recipientUserId ||
+    response?.owner_user_id ||
+    response?.ownerUserId ||
+    response?.user_id ||
+    response?.userId ||
+    response?.created_by_user_id ||
+    response?.createdByUserId ||
+    data?.recipient_user_id ||
+    data?.recipientUserId ||
+    data?.owner_user_id ||
+    data?.ownerUserId ||
+    data?.user_id ||
+    data?.userId ||
+    data?.created_by_user_id ||
+    data?.createdByUserId ||
+    null
+  );
+}
+
+function extractResponseOwnerEmail(response: any): string | null {
+  if (!response || typeof response !== 'object') return null;
+  const data = parseObjectField(response?.data);
+  return normalizeEmail(
+    response?.recipient_email ||
+    response?.recipientEmail ||
+    response?.user_email ||
+    response?.userEmail ||
+    response?.created_by_email ||
+    response?.createdByEmail ||
+    data?.recipient_email ||
+    data?.recipientEmail ||
+    data?.user_email ||
+    data?.userEmail ||
+    data?.created_by_email ||
+    data?.createdByEmail ||
+    null
+  );
+}
+
+function isResponseForRecipientUser(response: any, userId: string | null, userEmail: string | null): boolean {
+  if (!userId && !userEmail) return true;
+  const ownerUserId = extractResponseOwnerUserId(response);
+  if (ownerUserId && userId) {
+    return ownerUserId === userId;
+  }
+  const ownerEmail = extractResponseOwnerEmail(response);
+  if (ownerEmail && userEmail) {
+    return ownerEmail === userEmail;
+  }
+  return false;
+}
+
 function extractReceivedProposalId(row: any): string | null {
   if (!row || typeof row !== 'object') return null;
   const details = parseObjectField(row?.details);
@@ -911,6 +968,9 @@ Deno.serve(async (req) => {
     }
 
     const validation = await validateShareLinkAccess(base44, { token, consumeView });
+    const currentUser = await base44.auth.me().catch(() => null);
+    const currentUserId = asString(currentUser?.id);
+    const currentUserEmail = normalizeEmail(currentUser?.email) || validation.currentUserEmail || null;
 
     if (!validation.ok) {
       const payload = {
@@ -1038,7 +1098,9 @@ Deno.serve(async (req) => {
           base44.asServiceRole.entities.ProposalResponse.filter({ 'data.proposalId': sourceProposalId }, '-created_date')
         ]);
         const recipientResponsesRaw = dedupeById(recipientResponseBuckets.flat());
-        const recipientResponses = recipientResponsesRaw.filter(isPartyBResponse);
+        const recipientResponses = recipientResponsesRaw
+          .filter(isPartyBResponse)
+          .filter((row: any) => isResponseForRecipientUser(row, currentUserId, currentUserEmail));
 
         const templates = await base44.asServiceRole.entities.Template.list().catch(() => []);
         const template = templates.find((item: any) => item.id === sourceProposal?.template_id) || null;
@@ -1055,16 +1117,16 @@ Deno.serve(async (req) => {
 
         const snapshotProposal = parseObjectField(snapshotPayload?.proposal);
         const proposalView = {
-          id: sourceProposalId,
+          id: asString(snapshotProposal?.id) || sourceProposalId,
           title: asString(snapshotProposal?.title) || asString(snapshotMeta?.title) || sourceProposal?.title || 'Untitled Proposal',
-          template_name: asString(snapshotProposal?.templateName) || sourceProposal?.template_name || null,
-          template_id: asString(snapshotProposal?.templateId) || sourceProposal?.template_id || null,
+          template_name: asString(snapshotProposal?.templateName || snapshotProposal?.template_name) || sourceProposal?.template_name || null,
+          template_id: asString(snapshotProposal?.templateId || snapshotProposal?.template_id) || sourceProposal?.template_id || null,
           status: asString(snapshotProposal?.status) || sourceProposal?.status || null,
-          created_date: asString(snapshotProposal?.createdDate) || sourceProposal?.created_date || null,
-          sent_at: sourceProposal?.sent_at || null,
-          document_comparison_id: sourceProposal?.document_comparison_id || null,
+          created_date: asString(snapshotProposal?.createdDate || snapshotProposal?.created_date) || sourceProposal?.created_date || null,
+          sent_at: asString(snapshotProposal?.sentAt || snapshotProposal?.sent_at) || sourceProposal?.sent_at || null,
+          document_comparison_id: asString(snapshotProposal?.documentComparisonId || snapshotProposal?.document_comparison_id) || sourceProposal?.document_comparison_id || null,
           party_a_email: 'Identity Protected',
-          party_b_email: sourceProposal?.party_b_email || null,
+          party_b_email: asString(snapshotProposal?.partyBEmail || snapshotProposal?.party_b_email) || sourceProposal?.party_b_email || null,
           mutual_reveal: false,
           reveal_requested_by_a: false,
           reveal_requested_by_b: Boolean(sourceProposal?.reveal_requested_by_b),
@@ -1162,6 +1224,7 @@ Deno.serve(async (req) => {
           proposalId: sourceProposalId,
           sourceProposalId,
           snapshotId,
+          snapshotVersion: version,
           version,
           snapshot: {
             id: snapshotId,
@@ -1192,7 +1255,11 @@ Deno.serve(async (req) => {
           },
           viewerRole: 'recipient',
           consumedView: validation.consumedView,
-          currentUserEmail: validation.currentUserEmail
+          currentUserEmail: validation.currentUserEmail,
+          debug: {
+            usedFallback: false,
+            hasSnapshotId: Boolean(snapshotId)
+          }
         });
       }
 
@@ -1204,7 +1271,6 @@ Deno.serve(async (req) => {
       });
     }
 
-    const currentUser = await base44.auth.me().catch(() => null);
     let receivedRecord = {
       ensured: false,
       created: false,
@@ -1445,6 +1511,7 @@ Deno.serve(async (req) => {
       proposalId: resolvedProposalId,
       sourceProposalId: resolvedProposalId,
       snapshotId: normalizedShareLink.snapshotId || null,
+      snapshotVersion: normalizedShareLink.snapshotVersion || null,
       version: normalizedShareLink.snapshotVersion || null,
       snapshot: null,
       snapshotData: null,
@@ -1467,7 +1534,11 @@ Deno.serve(async (req) => {
       },
       viewerRole: 'recipient',
       consumedView: validation.consumedView,
-      currentUserEmail: validation.currentUserEmail
+      currentUserEmail: validation.currentUserEmail,
+      debug: {
+        usedFallback: true,
+        hasSnapshotId: Boolean(snapshotIdFromLink)
+      }
     });
 
   } catch (error) {

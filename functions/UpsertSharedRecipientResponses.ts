@@ -35,6 +35,56 @@ function normalizeVisibility(value: unknown): 'full' | 'hidden' {
   return 'full';
 }
 
+function parseObjectField(value: unknown): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      return {};
+    }
+  }
+
+  return {};
+}
+
+function dedupeById(records: any[]) {
+  const byId = new Map<string, any>();
+  records.forEach((record, index) => {
+    const id = asString(record?.id) || `fallback_${index}`;
+    if (!byId.has(id)) {
+      byId.set(id, record);
+    }
+  });
+  return Array.from(byId.values());
+}
+
+function extractRecipientUserId(response: any): string | null {
+  if (!response || typeof response !== 'object') return null;
+  const data = parseObjectField(response?.data);
+  return asString(
+    response?.recipient_user_id ||
+    response?.recipientUserId ||
+    response?.user_id ||
+    response?.userId ||
+    response?.created_by_user_id ||
+    response?.createdByUserId ||
+    data?.recipient_user_id ||
+    data?.recipientUserId ||
+    data?.user_id ||
+    data?.userId ||
+    data?.created_by_user_id ||
+    data?.createdByUserId ||
+    null
+  );
+}
+
 function extractError(error: any) {
   const statusCode =
     error?.status ||
@@ -203,10 +253,13 @@ Deno.serve(async (req) => {
       }, { status: 403 });
     }
 
-    const existingResponses = await base44.asServiceRole.entities.ProposalResponse.filter(
-      { proposal_id: proposalId },
-      '-created_date'
-    );
+    const existingResponseBuckets = await Promise.all([
+      base44.asServiceRole.entities.ProposalResponse.filter({ proposal_id: proposalId }, '-created_date').catch(() => []),
+      base44.asServiceRole.entities.ProposalResponse.filter({ proposalId: proposalId }, '-created_date').catch(() => []),
+      base44.asServiceRole.entities.ProposalResponse.filter({ 'data.proposal_id': proposalId }, '-created_date').catch(() => []),
+      base44.asServiceRole.entities.ProposalResponse.filter({ 'data.proposalId': proposalId }, '-created_date').catch(() => [])
+    ]);
+    const existingResponses = dedupeById(existingResponseBuckets.flat());
 
     const updates: Array<{ id: string; questionId: string; operation: 'create' | 'update' }> = [];
 
@@ -223,6 +276,7 @@ Deno.serve(async (req) => {
 
       const payload: Record<string, unknown> = {
         proposal_id: proposalId,
+        proposalId: proposalId,
         question_id: questionId,
         entered_by_party: 'b',
         author_party: 'b',
@@ -230,7 +284,13 @@ Deno.serve(async (req) => {
         claim_type: 'self',
         is_about_counterparty: true,
         visibility,
-        value_type: valueType
+        value_type: valueType,
+        recipient_user_id: user.id,
+        recipientUserId: user.id,
+        user_id: user.id,
+        userId: user.id,
+        recipient_email: validation.currentUserEmail || user.email || null,
+        recipientEmail: validation.currentUserEmail || user.email || null
       };
 
       if (valueType === 'range') {
@@ -243,8 +303,24 @@ Deno.serve(async (req) => {
         payload.range_max = null;
       }
 
+      payload.data = {
+        proposalId,
+        proposal_id: proposalId,
+        questionId,
+        question_id: questionId,
+        recipientUserId: user.id,
+        recipient_user_id: user.id,
+        recipientEmail: validation.currentUserEmail || user.email || null,
+        recipient_email: validation.currentUserEmail || user.email || null
+      };
+
       const existing = existingResponses.find(
-        (response: any) => response?.question_id === questionId && isPartyBResponse(response)
+        (response: any) => {
+          if (response?.question_id !== questionId) return false;
+          if (!isPartyBResponse(response)) return false;
+          const responseRecipientUserId = extractRecipientUserId(response);
+          return !responseRecipientUserId || responseRecipientUserId === user.id;
+        }
       );
 
       if (existing?.id) {

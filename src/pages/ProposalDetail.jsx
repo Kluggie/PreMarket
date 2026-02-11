@@ -612,14 +612,23 @@ export default function ProposalDetail() {
   const proposalId = params.get('id');
   const requestedTab = params.get('tab');
   const sharedToken = params.get('sharedToken');
-  const isRecipientView = Boolean(sharedToken);
-  const isRecipientRoutedRequest = Boolean(sharedToken);
+  const shouldRedirectSharedToken = Boolean(sharedToken);
+  const isRecipientView = false;
+  const isRecipientRoutedRequest = false;
 
   useEffect(() => {
     if (requestedTab === 'evaluation' || requestedTab === 'overview') {
       setActiveTab(requestedTab);
     }
   }, [requestedTab]);
+
+  useEffect(() => {
+    if (!sharedToken) return;
+    navigate(
+      createPageUrl(`SharedReport?sharedToken=${encodeURIComponent(sharedToken)}`),
+      { replace: true }
+    );
+  }, [navigate, sharedToken]);
 
   useEffect(() => {
     let active = true;
@@ -690,7 +699,7 @@ export default function ProposalDetail() {
 
       return data;
     },
-    enabled: Boolean(isRecipientView && sharedToken)
+    enabled: Boolean(!shouldRedirectSharedToken && isRecipientView && sharedToken)
   });
 
   const { data: proposalEntity, isLoading: loadingProposalEntity } = useQuery({

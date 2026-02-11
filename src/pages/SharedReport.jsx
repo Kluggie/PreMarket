@@ -221,7 +221,7 @@ export default function SharedReport() {
 
   const token = useMemo(() => {
     const params = new URLSearchParams(location.search);
-    return params.get('token');
+    return params.get('token') || params.get('sharedToken');
   }, [location.search]);
 
   const mode = useMemo(() => {
@@ -461,6 +461,7 @@ export default function SharedReport() {
       setResponsesView(data.responsesView || data?.recipientView?.responses || []);
       setComparisonView(data.comparisonView || data?.reportData?.comparisonView || null);
       setError(null);
+      console.log('[SharedReport] shareLink', resolvedShareData);
       console.log('[SharedReport] loaded snapshot', {
         snapshotId: resolvedSnapshotId,
         version: resolvedVersion,

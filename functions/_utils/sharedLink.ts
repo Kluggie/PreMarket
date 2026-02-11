@@ -77,6 +77,15 @@ const toObject = (value: unknown): Record<string, unknown> => {
   return value as Record<string, unknown>;
 };
 
+const toLinkageObjects = (data: Record<string, unknown>) => {
+  const camel = toObject(data?.snapshotLinkage);
+  const snake = toObject(data?.snapshot_linkage);
+  return {
+    camel,
+    snake
+  };
+};
+
 const pickString = (...values: unknown[]): string | null => {
   for (const value of values) {
     const next = asString(value);
@@ -155,6 +164,9 @@ const mapShareLink = (shareLink: any): ShareLinkView => {
   const data = toObject(shareLink?.data);
   const context = toObject(shareLink?.context);
   const metadata = toObject(shareLink?.metadata);
+  const linkageFromData = toLinkageObjects(data);
+  const linkageFromContext = toLinkageObjects(context);
+  const linkageFromMetadata = toLinkageObjects(metadata);
 
   const maxViews = pickNumber(
     DEFAULT_MAX_VIEWS,
@@ -200,12 +212,30 @@ const mapShareLink = (shareLink: any): ShareLinkView => {
     data.snapshot_version,
     data.snapshotVersion,
     data.version,
+    linkageFromData.camel.snapshot_version,
+    linkageFromData.camel.snapshotVersion,
+    linkageFromData.camel.version,
+    linkageFromData.snake.snapshot_version,
+    linkageFromData.snake.snapshotVersion,
+    linkageFromData.snake.version,
     context.snapshot_version,
     context.snapshotVersion,
     context.version,
+    linkageFromContext.camel.snapshot_version,
+    linkageFromContext.camel.snapshotVersion,
+    linkageFromContext.camel.version,
+    linkageFromContext.snake.snapshot_version,
+    linkageFromContext.snake.snapshotVersion,
+    linkageFromContext.snake.version,
     metadata.snapshot_version,
     metadata.snapshotVersion,
-    metadata.version
+    metadata.version,
+    linkageFromMetadata.camel.snapshot_version,
+    linkageFromMetadata.camel.snapshotVersion,
+    linkageFromMetadata.camel.version,
+    linkageFromMetadata.snake.snapshot_version,
+    linkageFromMetadata.snake.snapshotVersion,
+    linkageFromMetadata.snake.version
   ];
   let snapshotVersion: number | null = null;
   for (const candidate of snapshotVersionCandidates) {
@@ -230,20 +260,44 @@ const mapShareLink = (shareLink: any): ShareLinkView => {
       shareLink?.sourceProposalId,
       data.source_proposal_id,
       data.sourceProposalId,
+      linkageFromData.camel.source_proposal_id,
+      linkageFromData.camel.sourceProposalId,
+      linkageFromData.snake.source_proposal_id,
+      linkageFromData.snake.sourceProposalId,
       context.source_proposal_id,
       context.sourceProposalId,
+      linkageFromContext.camel.source_proposal_id,
+      linkageFromContext.camel.sourceProposalId,
+      linkageFromContext.snake.source_proposal_id,
+      linkageFromContext.snake.sourceProposalId,
       metadata.source_proposal_id,
-      metadata.sourceProposalId
+      metadata.sourceProposalId,
+      linkageFromMetadata.camel.source_proposal_id,
+      linkageFromMetadata.camel.sourceProposalId,
+      linkageFromMetadata.snake.source_proposal_id,
+      linkageFromMetadata.snake.sourceProposalId
     ),
     snapshotId: pickString(
       shareLink?.snapshot_id,
       shareLink?.snapshotId,
       data.snapshot_id,
       data.snapshotId,
+      linkageFromData.camel.snapshot_id,
+      linkageFromData.camel.snapshotId,
+      linkageFromData.snake.snapshot_id,
+      linkageFromData.snake.snapshotId,
       context.snapshot_id,
       context.snapshotId,
+      linkageFromContext.camel.snapshot_id,
+      linkageFromContext.camel.snapshotId,
+      linkageFromContext.snake.snapshot_id,
+      linkageFromContext.snake.snapshotId,
       metadata.snapshot_id,
-      metadata.snapshotId
+      metadata.snapshotId,
+      linkageFromMetadata.camel.snapshot_id,
+      linkageFromMetadata.camel.snapshotId,
+      linkageFromMetadata.snake.snapshot_id,
+      linkageFromMetadata.snake.snapshotId
     ),
     snapshotVersion,
     proposalId: pickString(
@@ -268,10 +322,22 @@ const mapShareLink = (shareLink: any): ShareLinkView => {
       shareLink?.sourceProposalId,
       data.source_proposal_id,
       data.sourceProposalId,
+      linkageFromData.camel.source_proposal_id,
+      linkageFromData.camel.sourceProposalId,
+      linkageFromData.snake.source_proposal_id,
+      linkageFromData.snake.sourceProposalId,
       context.source_proposal_id,
       context.sourceProposalId,
+      linkageFromContext.camel.source_proposal_id,
+      linkageFromContext.camel.sourceProposalId,
+      linkageFromContext.snake.source_proposal_id,
+      linkageFromContext.snake.sourceProposalId,
       metadata.source_proposal_id,
-      metadata.sourceProposalId
+      metadata.sourceProposalId,
+      linkageFromMetadata.camel.source_proposal_id,
+      linkageFromMetadata.camel.sourceProposalId,
+      linkageFromMetadata.snake.source_proposal_id,
+      linkageFromMetadata.snake.sourceProposalId
     ),
     evaluationItemId: pickString(
       shareLink?.evaluation_item_id,
@@ -319,10 +385,22 @@ const mapShareLink = (shareLink: any): ShareLinkView => {
         shareLink?.recipientEmail,
         data.recipient_email,
         data.recipientEmail,
+        linkageFromData.camel.recipient_email,
+        linkageFromData.camel.recipientEmail,
+        linkageFromData.snake.recipient_email,
+        linkageFromData.snake.recipientEmail,
         context.recipient_email,
         context.recipientEmail,
+        linkageFromContext.camel.recipient_email,
+        linkageFromContext.camel.recipientEmail,
+        linkageFromContext.snake.recipient_email,
+        linkageFromContext.snake.recipientEmail,
         metadata.recipient_email,
-        metadata.recipientEmail
+        metadata.recipientEmail,
+        linkageFromMetadata.camel.recipient_email,
+        linkageFromMetadata.camel.recipientEmail,
+        linkageFromMetadata.snake.recipient_email,
+        linkageFromMetadata.snake.recipientEmail
       )
     ),
     status: pickString(

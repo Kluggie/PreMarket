@@ -101,6 +101,9 @@ Deno.serve(async (req) => {
     console.log(`[${correlationId}] ValidateShareLink success`, {
       tokenPrefix: String(token || '').slice(0, 8),
       proposalId: result.shareLink.proposalId,
+      sourceProposalId: result.shareLink.sourceProposalId,
+      snapshotIdPresent: Boolean(result.shareLink.snapshotId),
+      snapshotVersion: result.shareLink.snapshotVersion,
       viewCount: result.shareLink.viewCount,
       consumedView: result.consumedView
     });

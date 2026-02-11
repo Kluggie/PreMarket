@@ -49,6 +49,47 @@ function extractRecipientEmail(source: any): string | null {
   );
 }
 
+function toObject(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+}
+
+function buildShareLinkPersistencePayload(
+  proposalId: string,
+  recipientEmail: string,
+  snapshotId: string | null,
+  snapshotVersion: number | null
+): Record<string, unknown> {
+  return {
+    proposalId,
+    proposal_id: proposalId,
+    linkedProposalId: proposalId,
+    linked_proposal_id: proposalId,
+    sourceProposalId: proposalId,
+    source_proposal_id: proposalId,
+    recipientEmail,
+    recipient_email: recipientEmail,
+    snapshotId,
+    snapshot_id: snapshotId,
+    snapshotVersion,
+    snapshot_version: snapshotVersion,
+    snapshotLinkage: {
+      proposalId,
+      sourceProposalId: proposalId,
+      recipientEmail,
+      snapshotId,
+      snapshotVersion
+    },
+    snapshot_linkage: {
+      proposal_id: proposalId,
+      source_proposal_id: proposalId,
+      recipient_email: recipientEmail,
+      snapshot_id: snapshotId,
+      snapshot_version: snapshotVersion
+    }
+  };
+}
+
 function buildShareContextQuery(req: Request) {
   const appIdFromHeader = req.headers.get('Base44-App-Id');
   const functionsVersion = req.headers.get('Base44-Functions-Version');
@@ -205,6 +246,7 @@ Deno.serve(async (req) => {
 
     let snapshotId: string | null = null;
     let snapshotVersion: number | null = null;
+    let createdSnapshot = false;
     try {
       const snapshotResult = await base44.asServiceRole.functions.invoke('CreateProposalSnapshot', {
         sourceProposalId: resolvedProposalId,
@@ -220,6 +262,9 @@ Deno.serve(async (req) => {
           event: 'snapshot_create_failed',
           proposalId: resolvedProposalId,
           recipientEmail: normalizedRecipientEmail,
+          createdSnapshot: false,
+          snapshotIdPresent: false,
+          version: null,
           errorCode,
           message
         });
@@ -234,6 +279,14 @@ Deno.serve(async (req) => {
       snapshotId = String(snapshotResult.data.snapshotId);
       const versionCandidate = Number(snapshotResult.data.version);
       snapshotVersion = Number.isFinite(versionCandidate) ? versionCandidate : null;
+      createdSnapshot = true;
+      logInfo({
+        correlationId,
+        event: 'share_link_snapshot_created',
+        createdSnapshot,
+        snapshotIdPresent: Boolean(snapshotId),
+        version: snapshotVersion
+      });
     } catch (snapshotError) {
       const errorMessage = snapshotError instanceof Error ? snapshotError.message : String(snapshotError);
       logInfo({
@@ -241,6 +294,9 @@ Deno.serve(async (req) => {
         event: 'snapshot_create_exception',
         proposalId: resolvedProposalId,
         recipientEmail: normalizedRecipientEmail,
+        createdSnapshot: false,
+        snapshotIdPresent: false,
+        version: null,
         error: errorMessage
       });
       return Response.json({
@@ -278,10 +334,23 @@ Deno.serve(async (req) => {
     });
 
     // Create ShareLink
+    const basePersistencePayload = buildShareLinkPersistencePayload(
+      resolvedProposalId,
+      normalizedRecipientEmail,
+      snapshotId,
+      snapshotVersion
+    );
     const shareLink = await base44.asServiceRole.entities.ShareLink.create({
       proposal_id: resolvedProposalId,
       proposalId: resolvedProposalId,
       linked_proposal_id: resolvedProposalId,
+      linkedProposalId: resolvedProposalId,
+      source_proposal_id: resolvedProposalId,
+      sourceProposalId: resolvedProposalId,
+      snapshot_id: snapshotId,
+      snapshotId: snapshotId,
+      snapshot_version: snapshotVersion,
+      snapshotVersion: snapshotVersion,
       evaluation_item_id: evaluationItemId || null,
       document_comparison_id: documentComparisonId || null,
       recipient_email: normalizedRecipientEmail,
@@ -292,20 +361,26 @@ Deno.serve(async (req) => {
       max_uses: 25,
       uses: 0,
       created_by_user_id: user.id,
-      status: 'active'
+      status: 'active',
+      data: {
+        ...basePersistencePayload
+      }
     });
 
     logInfo({
       correlationId,
       event: 'share_link_created_raw',
       shareLinkId: shareLink.id,
-      token,
       resolvedProposalId,
-      shareLinkKeys: safeKeys(shareLink)
+      shareLinkKeys: safeKeys(shareLink),
+      createdSnapshot,
+      snapshotIdPresent: Boolean(snapshotId),
+      version: snapshotVersion
     });
 
     const existingContext = shareLink.context && typeof shareLink.context === 'object' ? shareLink.context : {};
     const existingMetadata = shareLink.metadata && typeof shareLink.metadata === 'object' ? shareLink.metadata : {};
+    const existingData = toObject(shareLink.data);
     const linkagePatches: Array<{ label: string; payload: Record<string, unknown> }> = [
       {
         label: 'proposal_id',
@@ -330,6 +405,15 @@ Deno.serve(async (req) => {
       {
         label: 'sourceProposalId',
         payload: { sourceProposalId: resolvedProposalId }
+      },
+      {
+        label: 'data',
+        payload: {
+          data: {
+            ...existingData,
+            ...basePersistencePayload
+          }
+        }
       },
       {
         label: 'snapshot_id',
@@ -404,7 +488,6 @@ Deno.serve(async (req) => {
           correlationId,
           event: 'share_link_linkage_patch',
           shareLinkId: shareLink.id,
-          token,
           resolvedProposalId,
           patch: patch.label,
           payloadKeys: safeKeys(patch.payload),
@@ -415,7 +498,6 @@ Deno.serve(async (req) => {
           correlationId,
           event: 'share_link_linkage_patch',
           shareLinkId: shareLink.id,
-          token,
           resolvedProposalId,
           patch: patch.label,
           payloadKeys: safeKeys(patch.payload),
@@ -433,7 +515,6 @@ Deno.serve(async (req) => {
           correlationId,
           event: 'share_link_linkage_state',
           shareLinkId: shareLink.id,
-          token,
           resolvedProposalId,
           found: false
         });
@@ -444,11 +525,12 @@ Deno.serve(async (req) => {
         const refreshedMetadata = refreshedShareLink.metadata && typeof refreshedShareLink.metadata === 'object'
           ? refreshedShareLink.metadata
           : {};
+        const refreshedData = toObject(refreshedShareLink.data);
+        const refreshedSnapshotLinkage = toObject(refreshedData.snapshotLinkage || refreshedData.snapshot_linkage);
         logInfo({
           correlationId,
           event: 'share_link_linkage_state',
           shareLinkId: refreshedShareLink.id || shareLink.id,
-          token,
           resolvedProposalId,
           shareLinkKeys: safeKeys(refreshedShareLink),
           proposal_id: refreshedShareLink.proposal_id || null,
@@ -467,6 +549,8 @@ Deno.serve(async (req) => {
           contextSnapshotVersion: refreshedContext.snapshotVersion || refreshedContext.snapshot_version || null,
           metadataSnapshotId: refreshedMetadata.snapshotId || refreshedMetadata.snapshot_id || null,
           metadataSnapshotVersion: refreshedMetadata.snapshotVersion || refreshedMetadata.snapshot_version || null,
+          dataSnapshotId: refreshedData.snapshotId || refreshedData.snapshot_id || refreshedSnapshotLinkage.snapshotId || refreshedSnapshotLinkage.snapshot_id || null,
+          dataSnapshotVersion: refreshedData.snapshotVersion || refreshedData.snapshot_version || refreshedSnapshotLinkage.snapshotVersion || refreshedSnapshotLinkage.snapshot_version || null,
           recipient_email: refreshedShareLink.recipient_email || null,
           recipientEmail: refreshedShareLink.recipientEmail || null,
           contextRecipientEmail: refreshedContext.recipientEmail || null,
@@ -502,7 +586,6 @@ Deno.serve(async (req) => {
         correlationId,
         event: 'share_link_linkage_state',
         shareLinkId: shareLink.id,
-        token,
         resolvedProposalId,
         found: false,
         error: error instanceof Error ? error.message : String(error)
@@ -542,6 +625,10 @@ Deno.serve(async (req) => {
     
     // Store canonical URL context and, when available in schema, explicit sharing policy metadata.
     const metadataPatch: Record<string, unknown> = {
+      base_url_used: `${baseUrl}${SHARE_REPORT_PATH}`
+    };
+    const dataPatchPayload = {
+      ...basePersistencePayload,
       base_url_used: `${baseUrl}${SHARE_REPORT_PATH}`
     };
 
@@ -590,6 +677,12 @@ Deno.serve(async (req) => {
     if (Object.prototype.hasOwnProperty.call(shareLink, 'sourceProposalId')) {
       metadataPatch.sourceProposalId = resolvedProposalId;
     }
+    if (Object.prototype.hasOwnProperty.call(shareLink, 'data')) {
+      metadataPatch.data = {
+        ...toObject(shareLink.data),
+        ...dataPatchPayload
+      };
+    }
 
     await base44.asServiceRole.entities.ShareLink.update(shareLink.id, metadataPatch);
 
@@ -616,7 +709,10 @@ Deno.serve(async (req) => {
       shareLinkId: shareLink.id,
       proposalId: resolvedProposalId,
       evaluationItemId: evaluationItemId || null,
-      documentComparisonId: documentComparisonId || null
+      documentComparisonId: documentComparisonId || null,
+      createdSnapshot,
+      snapshotIdPresent: Boolean(snapshotId),
+      version: snapshotVersion
     });
 
     return Response.json({
@@ -624,8 +720,10 @@ Deno.serve(async (req) => {
       shareUrl,
       token,
       proposalId: resolvedProposalId,
+      sourceProposalId: resolvedProposalId,
       shareLinkId: shareLink.id,
       snapshotId,
+      snapshotVersion,
       version: snapshotVersion,
       expiresAt: expiresAt.toISOString(),
       viewCount: 0,
