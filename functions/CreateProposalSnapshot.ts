@@ -329,6 +329,71 @@ Deno.serve(async (req) => {
     const version = await getNextVersion(base44, sourceProposalId);
     const createdAt = new Date().toISOString();
 
+    // Include document comparison if present
+    let comparisonView: any = null;
+    const docComparisonId = asString(proposal?.document_comparison_id);
+    if (docComparisonId) {
+      const comparisons = await base44.asServiceRole.entities.DocumentComparison.filter(
+        { id: docComparisonId },
+        '-created_date',
+        1
+      ).catch(() => []);
+      const comparison = comparisons?.[0];
+      
+      if (comparison) {
+        const rawDocAText = String(comparison.doc_a_plaintext ?? '');
+        const rawDocBText = String(comparison.doc_b_plaintext ?? '');
+        const rawDocASpans = Array.isArray(comparison.doc_a_spans_json) ? comparison.doc_a_spans_json : [];
+        const rawDocBSpans = Array.isArray(comparison.doc_b_spans_json) ? comparison.doc_b_spans_json : [];
+        
+        // Remove hidden text
+        const removeHidden = (text: string, spans: any[]) => {
+          const normalizedSpans = spans
+            .map((span: any) => {
+              const level = String(span?.level || '').toLowerCase();
+              if (!['hidden', 'confidential'].includes(level)) return null;
+              const start = Number(span?.start);
+              const end = Number(span?.end);
+              if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+              return { start, end };
+            })
+            .filter(Boolean)
+            .sort((a: any, b: any) => a.start - b.start);
+          
+          if (normalizedSpans.length === 0) return { text, hiddenCount: 0 };
+          
+          let output = '';
+          let cursor = 0;
+          for (const span of normalizedSpans) {
+            if (span.start > cursor) output += text.slice(cursor, span.start);
+            cursor = Math.max(cursor, span.end);
+          }
+          if (cursor < text.length) output += text.slice(cursor);
+          return { text: output, hiddenCount: normalizedSpans.length };
+        };
+        
+        const redactedDocA = removeHidden(rawDocAText, rawDocASpans);
+        const redactedDocB = removeHidden(rawDocBText, rawDocBSpans);
+        
+        comparisonView = {
+          id: docComparisonId,
+          title: asString(comparison.title) || null,
+          docA: {
+            label: asString(comparison.party_a_label) || 'Document A',
+            source: asString(comparison.doc_a_source) || 'typed',
+            text: redactedDocA.text,
+            hiddenCount: redactedDocA.hiddenCount
+          },
+          docB: {
+            label: asString(comparison.party_b_label) || 'Document B',
+            source: asString(comparison.doc_b_source) || 'typed',
+            text: redactedDocB.text,
+            hiddenCount: redactedDocB.hiddenCount
+          }
+        };
+      }
+    }
+
     const snapshotData = {
       proposal: {
         sourceProposalId,
@@ -337,9 +402,11 @@ Deno.serve(async (req) => {
         templateName: asString(proposal?.template_name),
         status: asString(proposal?.status),
         createdDate: asString(proposal?.created_date),
-        partyBEmail: normalizeEmail(proposal?.party_b_email)
+        partyBEmail: normalizeEmail(proposal?.party_b_email),
+        documentComparisonId: docComparisonId
       },
       partyAResponses: visiblePartyAResponses,
+      comparisonView,
       reportData: {
         reportId,
         reportSource,

@@ -1,7 +1,4 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.6';
-import { validateShareLinkAccess } from './_utils/sharedLink.ts';
-
-const DEFAULT_MAX_REEVALUATIONS = 3;
 
 function asString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -9,224 +6,137 @@ function asString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function toPositiveInt(value: unknown, fallback: number): number {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return fallback;
-  if (n <= 0) return fallback;
-  return Math.floor(n);
-}
-
-function statusLabel(statusCode: number): 'ok' | 'not_found' | 'forbidden' | 'expired' | 'invalid' {
-  if (statusCode === 404) return 'not_found';
-  if (statusCode === 403) return 'forbidden';
-  if (statusCode === 410) return 'expired';
-  if (statusCode >= 400) return 'invalid';
-  return 'ok';
-}
-
-function normalizeRole(value: unknown) {
-  return String(value || '').toLowerCase();
-}
-
-function extractError(error: any) {
-  const statusCode =
-    error?.status ||
-    error?.response?.status ||
-    error?.originalError?.response?.status ||
-    500;
-  const payload =
-    error?.data ||
-    error?.response?.data ||
-    error?.originalError?.response?.data ||
-    null;
-  return { statusCode, payload };
+function parseObjectField(value: unknown): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      return {};
+    }
+  }
+  return {};
 }
 
 Deno.serve(async (req) => {
-  const correlationId = `shared_reeval_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-
+  const correlationId = `reeval_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me().catch(() => null);
-
-    if (!user) {
-      return Response.json({
-        ok: false,
-        status: 'forbidden',
-        code: 'AUTH_REQUIRED',
-        reason: 'AUTH_REQUIRED',
-        message: 'Sign in is required to run re-evaluation',
-        correlationId
-      }, { status: 401 });
-    }
-
+    
     const body = await req.json().catch(() => ({}));
-    const token = asString(body?.token) || asString(new URL(req.url).searchParams.get('token'));
-
+    const token = asString(body?.token);
+    
     if (!token) {
       return Response.json({
         ok: false,
-        status: 'invalid',
-        code: 'MISSING_TOKEN',
-        reason: 'MISSING_TOKEN',
+        errorCode: 'MISSING_TOKEN',
         message: 'Token is required',
         correlationId
       }, { status: 400 });
     }
-
-    const validation = await validateShareLinkAccess(base44, { token, consumeView: false });
-    if (!validation.ok) {
-      return Response.json({
-        ok: false,
-        status: statusLabel(validation.statusCode),
-        code: validation.code,
-        reason: validation.reason,
-        message: validation.message,
-        correlationId
-      }, { status: validation.statusCode });
-    }
-
-    if (!validation.permissions.canReevaluate) {
-      return Response.json({
-        ok: false,
-        status: 'forbidden',
-        code: 'REEVALUATION_NOT_ALLOWED',
-        reason: 'REEVALUATION_NOT_ALLOWED',
-        message: 'Re-evaluation is disabled for this shared link',
-        correlationId
-      }, { status: 403 });
-    }
-
-    const resolved = await base44.asServiceRole.functions.invoke('GetSharedReportData', {
+    
+    // Validate token and get share data
+    const shareValidation = await base44.functions.invoke('ResolveSharedReport', {
       token,
       consumeView: false
     });
-    const resolvedData = resolved?.data;
-
-    if (!resolvedData?.ok) {
+    
+    if (!shareValidation?.data?.ok) {
       return Response.json({
         ok: false,
-        status: resolvedData?.status || 'invalid',
-        code: resolvedData?.code || 'RESOLVE_FAILED',
-        reason: resolvedData?.reason || resolvedData?.code || 'RESOLVE_FAILED',
-        message: resolvedData?.message || 'Unable to resolve shared report context',
+        errorCode: shareValidation?.data?.code || 'INVALID_TOKEN',
+        message: shareValidation?.data?.message || 'Invalid or expired token',
         correlationId
-      }, { status: resolved?.status || 400 });
+      }, { status: shareValidation?.status || 400 });
     }
-
-    const proposalId = resolvedData?.proposalId;
-    let evaluationItemId = resolvedData?.evaluationId || null;
-
-    if (!evaluationItemId && proposalId) {
-      const items = await base44.asServiceRole.entities.EvaluationItem.filter(
-        { linked_proposal_id: proposalId },
-        '-created_date',
-        1
-      );
-      evaluationItemId = items?.[0]?.id || null;
-    }
-
-    if (!proposalId || !evaluationItemId) {
+    
+    const shareData = shareValidation.data;
+    const sourceProposalId = asString(shareData?.sourceProposalId || shareData?.proposalId);
+    const documentComparisonId = asString(shareData?.reportData?.documentComparisonId);
+    
+    if (!sourceProposalId) {
       return Response.json({
         ok: false,
-        status: 'not_found',
-        code: 'EVALUATION_CONTEXT_NOT_FOUND',
-        reason: 'EVALUATION_CONTEXT_NOT_FOUND',
-        message: 'No evaluation context found for this shared proposal',
+        errorCode: 'MISSING_PROPOSAL',
+        message: 'No proposal linked to this share link',
         correlationId
       }, { status: 404 });
     }
-
-    const configuredLimit = toPositiveInt(
-      body?.maxReevaluations ??
-      resolvedData?.shareLink?.maxReevaluations ??
-      resolvedData?.shareLink?.max_reevaluations,
-      DEFAULT_MAX_REEVALUATIONS
-    );
-
-    const allRuns = await base44.asServiceRole.entities.EvaluationRun.filter(
-      { evaluation_item_id: evaluationItemId },
-      '-created_date'
-    );
-    const recipientRuns = allRuns.filter((run: any) => normalizeRole(run?.initiated_by_role) === 'shared_recipient');
-
-    if (recipientRuns.length >= configuredLimit) {
+    
+    // Check permissions
+    if (!shareData?.permissions?.canReevaluate) {
       return Response.json({
         ok: false,
-        status: 'forbidden',
-        code: 'REEVALUATION_LIMIT_REACHED',
-        reason: 'REEVALUATION_LIMIT_REACHED',
-        message: `Re-evaluation limit reached (${configuredLimit})`,
-        reevaluation: {
-          max: configuredLimit,
-          used: recipientRuns.length,
-          remaining: 0
-        },
+        errorCode: 'REEVALUATION_NOT_ALLOWED',
+        message: 'Re-evaluation is not allowed for this link',
         correlationId
-      }, { status: 429 });
+      }, { status: 403 });
     }
-
-    const runResult = await base44.functions.invoke('RunEvaluation', {
-      evaluationItemId,
-      initiatedByRole: 'shared_recipient'
-    });
-
-    const runData = runResult?.data;
-    if (!runData?.ok) {
+    
+    // Get proposal
+    const proposals = await base44.asServiceRole.entities.Proposal.filter(
+      { id: sourceProposalId },
+      '-created_date',
+      1
+    );
+    const proposal = proposals?.[0];
+    
+    if (!proposal) {
       return Response.json({
         ok: false,
-        status: 'invalid',
-        code: runData?.errorCode || 'REEVALUATION_FAILED',
-        reason: runData?.errorCode || 'REEVALUATION_FAILED',
-        message: runData?.message || runData?.error || 'Re-evaluation failed',
-        detailsSafe: runData?.detailsSafe || null,
-        reevaluation: {
-          max: configuredLimit,
-          used: recipientRuns.length,
-          remaining: Math.max(0, configuredLimit - recipientRuns.length)
-        },
-        correlationId: runData?.correlationId || correlationId
-      }, { status: runResult?.status || 500 });
+        errorCode: 'PROPOSAL_NOT_FOUND',
+        message: 'Proposal not found',
+        correlationId
+      }, { status: 404 });
     }
-
-    const used = recipientRuns.length + 1;
-    const remaining = Math.max(0, configuredLimit - used);
-
+    
+    // Call evaluation based on type
+    let evaluationResult;
+    
+    if (documentComparisonId) {
+      // Document comparison evaluation
+      evaluationResult = await base44.asServiceRole.functions.invoke('EvaluateDocumentComparison', {
+        documentComparisonId,
+        proposalId: sourceProposalId
+      });
+    } else {
+      // Standard proposal evaluation
+      evaluationResult = await base44.asServiceRole.functions.invoke('EvaluateProposal', {
+        proposalId: sourceProposalId
+      });
+    }
+    
+    if (!evaluationResult?.data?.ok) {
+      return Response.json({
+        ok: false,
+        errorCode: 'EVALUATION_FAILED',
+        message: evaluationResult?.data?.message || 'Evaluation failed',
+        correlationId
+      }, { status: evaluationResult?.status || 500 });
+    }
+    
     return Response.json({
       ok: true,
-      status: 'ok',
-      code: 'REEVALUATION_COMPLETED',
-      reason: 'REEVALUATION_COMPLETED',
-      message: 'Re-evaluation completed',
-      proposalId,
-      evaluationItemId,
-      runId: runData?.runId || null,
-      cycleIndex: runData?.cycleIndex ?? null,
-      report: runData?.report || null,
-      reevaluation: {
-        max: configuredLimit,
-        used,
-        remaining
-      },
-      correlationId: runData?.correlationId || correlationId
+      message: 'Re-evaluation completed successfully',
+      reevaluation: evaluationResult.data,
+      correlationId
     });
+    
   } catch (error) {
-    const { statusCode, payload } = extractError(error);
-    if (payload) {
-      return Response.json({
-        ...payload,
-        correlationId: payload?.correlationId || correlationId
-      }, { status: statusCode || 500 });
-    }
-
     const err = error instanceof Error ? error : new Error(String(error));
+    console.error(`[${correlationId}] RunSharedReportReevaluation error:`, error);
     return Response.json({
       ok: false,
-      status: 'invalid',
-      code: 'INTERNAL_ERROR',
-      reason: 'INTERNAL_ERROR',
-      message: err.message || 'Failed to run shared re-evaluation',
+      errorCode: 'INTERNAL_ERROR',
+      message: err.message || 'Re-evaluation failed',
       correlationId
-    }, { status: statusCode || 500 });
+    }, { status: 500 });
   }
 });

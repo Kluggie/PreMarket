@@ -278,6 +278,7 @@ export default function SharedReport() {
 
     const rows = [];
 
+    // Add Party A responses (template-based)
     toArray(partyAView?.responses).forEach((item) => {
       const questionId = item?.questionId || '';
       const redaction = String(item?.redaction || '').toLowerCase();
