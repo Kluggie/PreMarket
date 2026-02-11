@@ -378,13 +378,38 @@ Deno.serve(async (req) => {
     // Include document comparison if present
     let comparisonView: any = null;
     const docComparisonId = asString(proposal?.document_comparison_id);
+    let comparison: any = null;
+
     if (docComparisonId) {
       const comparisons = await base44.asServiceRole.entities.DocumentComparison.filter(
         { id: docComparisonId },
         '-created_date',
         1
       ).catch(() => []);
-      const comparison = comparisons?.[0];
+      comparison = comparisons?.[0] || null;
+    }
+
+    // Fallback: try finding by proposal_id if not found
+    if (!comparison) {
+      const byProposal = await base44.asServiceRole.entities.DocumentComparison.filter(
+        { proposal_id: sourceProposalId },
+        '-created_date',
+        1
+      ).catch(() => []);
+      comparison = byProposal?.[0] || null;
+    }
+
+    // Fallback: try data.proposal_id
+    if (!comparison) {
+      const byDataProposal = await base44.asServiceRole.entities.DocumentComparison.filter(
+        { 'data.proposal_id': sourceProposalId },
+        '-created_date',
+        1
+      ).catch(() => []);
+      comparison = byDataProposal?.[0] || null;
+    }
+
+    if (comparison) {
       
       if (comparison) {
         const rawDocAText = String(comparison.doc_a_plaintext ?? '');
