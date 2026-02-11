@@ -414,6 +414,41 @@ Deno.serve(async (req) => {
       snapshotId = String(snapshotResult.data.snapshotId);
       const versionCandidate = Number(snapshotResult.data.version);
       snapshotVersion = Number.isFinite(versionCandidate) ? versionCandidate : null;
+      
+      // Validate snapshot contains actual inputs (fail fast if empty)
+      const snapRows = await base44.asServiceRole.entities.ProposalSnapshot.filter({ id: snapshotId }, '-created_date', 1);
+      const snapshot = snapRows?.[0] || null;
+      
+      const payload =
+        snapshot?.snapshotData?.partyAResponses ? snapshot.snapshotData
+        : snapshot?.snapshot_data?.partyAResponses ? snapshot.snapshot_data
+        : snapshot?.snapshotData?.snapshotPayload?.partyAResponses ? snapshot.snapshotData.snapshotPayload
+        : snapshot?.snapshot_data?.snapshot_payload?.partyAResponses ? snapshot.snapshot_data.snapshot_payload
+        : null;
+      
+      const aLen = payload?.partyAResponses?.length || 0;
+      const bLen = payload?.partyBEditableSchema?.questions?.length || 0;
+      
+      if (aLen === 0 && bLen === 0) {
+        logInfo({
+          correlationId,
+          event: 'snapshot_empty_validation_failed',
+          snapshotId,
+          aLen,
+          bLen,
+          topKeys: payload ? Object.keys(payload) : []
+        });
+        return Response.json({
+          ok: false,
+          errorCode: 'SNAPSHOT_EMPTY',
+          message: 'Snapshot contains no Party A or Party B inputs',
+          snapshotId,
+          aLen,
+          bLen,
+          topKeys: payload ? Object.keys(payload) : [],
+          correlationId
+        }, { status: 400 });
+      }
     } catch (snapshotError) {
       const errorMessage = snapshotError instanceof Error ? snapshotError.message : String(snapshotError);
       logInfo({
