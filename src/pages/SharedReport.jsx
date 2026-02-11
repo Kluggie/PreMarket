@@ -200,6 +200,10 @@ export default function SharedReport() {
   const [shareData, setShareData] = useState(null);
   const [reportData, setReportData] = useState(null);
   const [proposalId, setProposalId] = useState(null);
+  const [sourceProposalId, setSourceProposalId] = useState(null);
+  const [snapshotId, setSnapshotId] = useState(null);
+  const [snapshotVersion, setSnapshotVersion] = useState(null);
+  const [snapshotData, setSnapshotData] = useState(null);
   const [permissions, setPermissions] = useState({});
   const [partyAView, setPartyAView] = useState({ proposal: null, responses: [] });
   const [partyBEditableSchema, setPartyBEditableSchema] = useState({ totalQuestions: 0, editableQuestionIds: [], questions: [] });
@@ -213,6 +217,7 @@ export default function SharedReport() {
   const [reevaluationState, setReevaluationState] = useState(null);
   const resolvedTokenRef = useRef(null);
   const workspaceSectionRef = useRef(null);
+  const ensuredSnapshotAccessRef = useRef(new Set());
 
   const token = useMemo(() => {
     const params = new URLSearchParams(location.search);
@@ -381,15 +386,29 @@ export default function SharedReport() {
         data?.partyAView?.proposal?.partyAEmail ||
         null;
       const resolvedProposalId =
+        data.sourceProposalId ||
         data.proposalId ||
         resolvedShareData.proposalId ||
         resolvedReportData.proposalId ||
         resolvedReportData.proposal_id ||
         (resolvedReportData.type === 'proposal' ? resolvedReportData.id : null);
+      const resolvedSnapshotId =
+        data.snapshotId ||
+        data?.snapshot?.id ||
+        resolvedShareData.snapshotId ||
+        null;
+      const resolvedVersion =
+        data.version ??
+        data?.snapshot?.version ??
+        resolvedShareData.snapshotVersion ??
+        null;
 
       const context = {
         token,
         proposalId: resolvedProposalId || null,
+        sourceProposalId: resolvedProposalId || null,
+        snapshotId: resolvedSnapshotId,
+        version: resolvedVersion,
         role: 'recipient',
         proposalTitle: contextProposalTitle,
         templateName: contextTemplateName,
@@ -428,18 +447,25 @@ export default function SharedReport() {
       setShareData(resolvedShareData);
       setReportData(resolvedReportData);
       setProposalId(resolvedProposalId);
+      setSourceProposalId(resolvedProposalId || null);
+      setSnapshotId(resolvedSnapshotId || null);
+      setSnapshotVersion(
+        resolvedVersion === null || resolvedVersion === undefined || Number.isNaN(Number(resolvedVersion))
+          ? null
+          : Number(resolvedVersion)
+      );
+      setSnapshotData(data.snapshotData || data?.snapshot?.snapshotData || null);
       setPermissions(data.permissions || {});
       setPartyAView(data.partyAView || { proposal: null, responses: [] });
       setPartyBEditableSchema(data.partyBEditableSchema || { totalQuestions: 0, editableQuestionIds: [], questions: [] });
       setResponsesView(data.responsesView || data?.recipientView?.responses || []);
       setComparisonView(data.comparisonView || data?.reportData?.comparisonView || null);
       setError(null);
-      navigate(
-        createPageUrl(
-          `ProposalDetail?id=${encodeURIComponent(resolvedProposalId)}&sharedToken=${encodeURIComponent(token)}&role=recipient`
-        ),
-        { replace: true }
-      );
+      console.log('[SharedReport] loaded snapshot', {
+        snapshotId: resolvedSnapshotId,
+        version: resolvedVersion,
+        sourceProposalId: resolvedProposalId || null
+      });
 
       return true;
     } catch (invokeError) {
@@ -468,7 +494,7 @@ export default function SharedReport() {
         setIsLoadingReport(false);
       }
     }
-  }, [token, navigate]);
+  }, [token]);
 
   useEffect(() => {
     let active = true;
@@ -508,6 +534,25 @@ export default function SharedReport() {
 
     setRecipientEdits(nextEdits);
   }, [partyBEditableSchema]);
+
+  useEffect(() => {
+    if (!user?.id || !token || !snapshotId) return;
+
+    const dedupeKey = `${user.id}:${snapshotId}`;
+    if (ensuredSnapshotAccessRef.current.has(dedupeKey)) return;
+    ensuredSnapshotAccessRef.current.add(dedupeKey);
+
+    console.log('[ensureSnapshotAccess] called', { snapshotId });
+    base44.functions.invoke('EnsureSnapshotAccess', {
+      snapshotId,
+      token
+    }).catch((error) => {
+      console.error('[ensureSnapshotAccess] failed', {
+        snapshotId,
+        message: error?.message || String(error)
+      });
+    });
+  }, [user?.id, snapshotId, token]);
 
   const handleSignIn = () => {
     const returnPath = `${location.pathname}${location.search}`;
@@ -843,6 +888,9 @@ export default function SharedReport() {
           <CardContent className="space-y-5">
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="outline">{reportData?.type || 'shared-report'}</Badge>
+              {snapshotVersion !== null && snapshotVersion !== undefined && (
+                <Badge className="bg-blue-100 text-blue-700">Version {snapshotVersion}</Badge>
+              )}
               <Badge variant="outline">
                 Views: {shareData?.viewCount ?? shareData?.uses ?? 0} / {shareData?.maxViews ?? shareData?.maxUses ?? 25}
               </Badge>
@@ -873,6 +921,16 @@ export default function SharedReport() {
             {!proposalId && (
               <p className="text-sm text-amber-700">
                 This shared report is not linked to a proposal.
+              </p>
+            )}
+            {sourceProposalId && (
+              <p className="text-xs text-slate-500">
+                Source proposal: {sourceProposalId}{snapshotId ? ` • Snapshot ${snapshotId}` : ''}
+              </p>
+            )}
+            {snapshotData && (
+              <p className="text-xs text-slate-500">
+                Snapshot fields: {Array.isArray(snapshotData?.partyAResponses) ? snapshotData.partyAResponses.length : 0}
               </p>
             )}
           </CardContent>
@@ -920,7 +978,7 @@ export default function SharedReport() {
             <CardHeader>
               <CardTitle>Complete Proposal Details</CardTitle>
               <CardDescription>
-                Read-only shared details. Confidential content is removed for recipients.
+                Snapshot-based shared details. Party A values come from the shared version; Party B values come from your saved responses.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">

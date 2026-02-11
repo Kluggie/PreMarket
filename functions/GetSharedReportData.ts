@@ -105,6 +105,79 @@ function extractShareLinkProposalId(shareLink: any): string | null {
   );
 }
 
+function extractShareLinkSourceProposalId(shareLink: any): string | null {
+  if (!shareLink || typeof shareLink !== 'object') return null;
+
+  const context = shareLink.context && typeof shareLink.context === 'object' ? shareLink.context : {};
+  const data = shareLink.data && typeof shareLink.data === 'object' ? shareLink.data : {};
+  const metadata = shareLink.metadata && typeof shareLink.metadata === 'object' ? shareLink.metadata : {};
+
+  return (
+    asString(shareLink.sourceProposalId) ||
+    asString(shareLink.source_proposal_id) ||
+    asString(context.sourceProposalId) ||
+    asString(context.source_proposal_id) ||
+    asString(data.sourceProposalId) ||
+    asString(data.source_proposal_id) ||
+    asString(metadata.sourceProposalId) ||
+    asString(metadata.source_proposal_id) ||
+    extractShareLinkProposalId(shareLink) ||
+    null
+  );
+}
+
+function extractShareLinkSnapshotId(shareLink: any): string | null {
+  if (!shareLink || typeof shareLink !== 'object') return null;
+
+  const context = shareLink.context && typeof shareLink.context === 'object' ? shareLink.context : {};
+  const data = shareLink.data && typeof shareLink.data === 'object' ? shareLink.data : {};
+  const metadata = shareLink.metadata && typeof shareLink.metadata === 'object' ? shareLink.metadata : {};
+
+  return (
+    asString(shareLink.snapshotId) ||
+    asString(shareLink.snapshot_id) ||
+    asString(context.snapshotId) ||
+    asString(context.snapshot_id) ||
+    asString(data.snapshotId) ||
+    asString(data.snapshot_id) ||
+    asString(metadata.snapshotId) ||
+    asString(metadata.snapshot_id) ||
+    null
+  );
+}
+
+function extractShareLinkSnapshotVersion(shareLink: any): number | null {
+  if (!shareLink || typeof shareLink !== 'object') return null;
+
+  const context = shareLink.context && typeof shareLink.context === 'object' ? shareLink.context : {};
+  const data = shareLink.data && typeof shareLink.data === 'object' ? shareLink.data : {};
+  const metadata = shareLink.metadata && typeof shareLink.metadata === 'object' ? shareLink.metadata : {};
+
+  const candidates = [
+    shareLink.snapshotVersion,
+    shareLink.snapshot_version,
+    shareLink.version,
+    context.snapshotVersion,
+    context.snapshot_version,
+    context.version,
+    data.snapshotVersion,
+    data.snapshot_version,
+    data.version,
+    metadata.snapshotVersion,
+    metadata.snapshot_version,
+    metadata.version
+  ];
+
+  for (const candidate of candidates) {
+    const numeric = Number(candidate);
+    if (Number.isFinite(numeric) && numeric > 0) {
+      return Math.floor(numeric);
+    }
+  }
+
+  return null;
+}
+
 function safeKeyList(source: unknown): string[] {
   if (!source || typeof source !== 'object') return [];
   return Object.keys(source as Record<string, unknown>).sort();
@@ -263,7 +336,7 @@ function buildRecipientResponseView(response: any) {
 
 function normalizeVisibility(value: unknown): 'full' | 'hidden' {
   const normalized = String(value || '').trim().toLowerCase();
-  if (['hidden', 'not_shared', 'private', 'confidential', 'partial'].includes(normalized)) {
+  if (['hidden', 'not_shared', 'private', 'confidential'].includes(normalized)) {
     return 'hidden';
   }
   return 'full';
@@ -723,6 +796,100 @@ async function ensureReceivedProposalRecord(
   };
 }
 
+function readSnapshotPayload(snapshot: any): Record<string, unknown> {
+  const directCamel = parseObjectField(snapshot?.snapshotData);
+  if (Object.keys(directCamel).length > 0) return directCamel;
+  const directSnake = parseObjectField(snapshot?.snapshot_data);
+  if (Object.keys(directSnake).length > 0) return directSnake;
+
+  const data = parseObjectField(snapshot?.data);
+  const fromDataCamel = parseObjectField(data?.snapshotData);
+  if (Object.keys(fromDataCamel).length > 0) return fromDataCamel;
+  const fromDataSnake = parseObjectField(data?.snapshot_data);
+  if (Object.keys(fromDataSnake).length > 0) return fromDataSnake;
+
+  return {};
+}
+
+function readSnapshotMeta(snapshot: any): Record<string, unknown> {
+  const directCamel = parseObjectField(snapshot?.snapshotMeta);
+  if (Object.keys(directCamel).length > 0) return directCamel;
+  const directSnake = parseObjectField(snapshot?.snapshot_meta);
+  if (Object.keys(directSnake).length > 0) return directSnake;
+
+  const data = parseObjectField(snapshot?.data);
+  const fromDataCamel = parseObjectField(data?.snapshotMeta);
+  if (Object.keys(fromDataCamel).length > 0) return fromDataCamel;
+  const fromDataSnake = parseObjectField(data?.snapshot_meta);
+  if (Object.keys(fromDataSnake).length > 0) return fromDataSnake;
+
+  return {};
+}
+
+function extractSourceProposalIdFromSnapshot(snapshot: any): string | null {
+  const snapshotPayload = readSnapshotPayload(snapshot);
+  const snapshotMeta = readSnapshotMeta(snapshot);
+  const payloadProposal = parseObjectField(snapshotPayload?.proposal);
+  return asString(
+    snapshot?.sourceProposalId ||
+    snapshot?.source_proposal_id ||
+    snapshotMeta?.sourceProposalId ||
+    snapshotMeta?.source_proposal_id ||
+    payloadProposal?.sourceProposalId ||
+    payloadProposal?.source_proposal_id ||
+    null
+  );
+}
+
+function extractSnapshotVersion(snapshot: any): number | null {
+  const snapshotMeta = readSnapshotMeta(snapshot);
+  const candidates = [
+    snapshot?.version,
+    snapshot?.snapshot_version,
+    snapshot?.snapshotVersion,
+    snapshotMeta?.version,
+    snapshotMeta?.snapshot_version,
+    snapshotMeta?.snapshotVersion
+  ];
+
+  for (const candidate of candidates) {
+    const numeric = Number(candidate);
+    if (Number.isFinite(numeric) && numeric > 0) {
+      return Math.floor(numeric);
+    }
+  }
+
+  return null;
+}
+
+function toSnapshotPartyAResponseView(rawItem: any, index: number) {
+  const questionId = asString(rawItem?.questionId || rawItem?.question_id || rawItem?.key || `snapshot_field_${index}`) || `snapshot_field_${index}`;
+  const valueType = String(rawItem?.valueType || rawItem?.value_type || '').toLowerCase() === 'range' ? 'range' : 'text';
+  const visibilityRaw = String(rawItem?.visibility || 'full').trim().toLowerCase();
+  const visibility = normalizeVisibility(visibilityRaw) === 'hidden' ? 'hidden' : (visibilityRaw || 'full');
+  const rangeMin = rawItem?.rangeMin ?? rawItem?.range_min ?? null;
+  const rangeMax = rawItem?.rangeMax ?? rawItem?.range_max ?? null;
+  const hasRange = rangeMin !== null && rangeMin !== undefined && rangeMax !== null && rangeMax !== undefined;
+  const value = rawItem?.value ?? null;
+  const fallbackSummary = hasRange ? `${rangeMin} - ${rangeMax}` : (value ?? null);
+  const valueSummary = asString(rawItem?.valueSummary || rawItem?.value_summary || null) || (fallbackSummary === null ? null : String(fallbackSummary));
+
+  return {
+    id: asString(rawItem?.id || rawItem?.sourceResponseId || null) || `snapshot_${questionId}_${index}`,
+    questionId,
+    label: asString(rawItem?.label || rawItem?.title || null) || questionId,
+    valueType,
+    visibility,
+    enteredByParty: asString(rawItem?.enteredByParty || rawItem?.entered_by_party || null) || 'a',
+    value: visibility === 'hidden' ? null : value,
+    rangeMin: visibility === 'hidden' ? null : rangeMin,
+    rangeMax: visibility === 'hidden' ? null : rangeMax,
+    valueSummary: visibility === 'hidden' ? 'Not shared' : valueSummary,
+    redaction: visibility === 'hidden' ? 'hidden' : (visibility === 'partial' ? 'partial' : 'none'),
+    createdAt: asString(rawItem?.createdAt || rawItem?.created_date || null)
+  };
+}
+
 Deno.serve(async (req) => {
   const correlationId = `shared_resolve_${Date.now()}_${Math.random().toString(36).substring(7)}`;
 
@@ -840,6 +1007,201 @@ Deno.serve(async (req) => {
         permissions,
         correlationId
       }, 404);
+    }
+
+    const sourceProposalIdFromLink = extractShareLinkSourceProposalId(shareLink) || resolvedProposalId;
+    const snapshotIdFromLink = asString((shareLink as any)?.snapshotId) || extractShareLinkSnapshotId(shareLink);
+    if (snapshotIdFromLink) {
+      const snapshotBuckets = await Promise.all([
+        base44.asServiceRole.entities.ProposalSnapshot.filter({ id: snapshotIdFromLink }, '-created_date', 1).catch(() => []),
+        base44.asServiceRole.entities.ProposalSnapshot.filter({ snapshot_id: snapshotIdFromLink }, '-created_date', 1).catch(() => [])
+      ]);
+      const snapshot = [...(snapshotBuckets[0] || []), ...(snapshotBuckets[1] || [])]?.[0] || null;
+
+      if (snapshot) {
+        const snapshotPayload = readSnapshotPayload(snapshot);
+        const snapshotMeta = readSnapshotMeta(snapshot);
+        const snapshotId = asString(snapshot?.id) || snapshotIdFromLink;
+        const sourceProposalId = extractSourceProposalIdFromSnapshot(snapshot) || sourceProposalIdFromLink || resolvedProposalId;
+        const version = extractSnapshotVersion(snapshot) || extractShareLinkSnapshotVersion(shareLink) || null;
+
+        let sourceProposal = proposal;
+        if (sourceProposalId && sourceProposalId !== resolvedProposalId) {
+          const sourceProposalRows = await base44.asServiceRole.entities.Proposal.filter({ id: sourceProposalId }, '-created_date', 1);
+          sourceProposal = sourceProposalRows?.[0] || sourceProposal;
+        }
+
+        const recipientResponseBuckets = await Promise.all([
+          base44.asServiceRole.entities.ProposalResponse.filter({ proposal_id: sourceProposalId }, '-created_date'),
+          base44.asServiceRole.entities.ProposalResponse.filter({ proposalId: sourceProposalId }, '-created_date'),
+          base44.asServiceRole.entities.ProposalResponse.filter({ 'data.proposal_id': sourceProposalId }, '-created_date'),
+          base44.asServiceRole.entities.ProposalResponse.filter({ 'data.proposalId': sourceProposalId }, '-created_date')
+        ]);
+        const recipientResponsesRaw = dedupeById(recipientResponseBuckets.flat());
+        const recipientResponses = recipientResponsesRaw.filter(isPartyBResponse);
+
+        const templates = await base44.asServiceRole.entities.Template.list().catch(() => []);
+        const template = templates.find((item: any) => item.id === sourceProposal?.template_id) || null;
+        const questionLookup = toQuestionLookup(template);
+
+        const rawPartyA = Array.isArray(snapshotPayload?.partyAResponses)
+          ? snapshotPayload.partyAResponses
+          : (Array.isArray(snapshotPayload?.partyA)
+            ? snapshotPayload.partyA
+            : (Array.isArray(snapshotPayload?.responses) ? snapshotPayload.responses : []));
+        const partyAResponses = rawPartyA
+          .map((item: any, index: number) => toSnapshotPartyAResponseView(item, index))
+          .filter((item: any) => normalizeVisibility(item?.visibility) !== 'hidden');
+
+        const snapshotProposal = parseObjectField(snapshotPayload?.proposal);
+        const proposalView = {
+          id: sourceProposalId,
+          title: asString(snapshotProposal?.title) || asString(snapshotMeta?.title) || sourceProposal?.title || 'Untitled Proposal',
+          template_name: asString(snapshotProposal?.templateName) || sourceProposal?.template_name || null,
+          template_id: asString(snapshotProposal?.templateId) || sourceProposal?.template_id || null,
+          status: asString(snapshotProposal?.status) || sourceProposal?.status || null,
+          created_date: asString(snapshotProposal?.createdDate) || sourceProposal?.created_date || null,
+          sent_at: sourceProposal?.sent_at || null,
+          document_comparison_id: sourceProposal?.document_comparison_id || null,
+          party_a_email: 'Identity Protected',
+          party_b_email: sourceProposal?.party_b_email || null,
+          mutual_reveal: false,
+          reveal_requested_by_a: false,
+          reveal_requested_by_b: Boolean(sourceProposal?.reveal_requested_by_b),
+          reveal_level_a: null,
+          reveal_level_b: sourceProposal?.reveal_level_b || null
+        };
+
+        const partyAView = {
+          proposal: proposalView,
+          responses: partyAResponses.map((item: any) => {
+            const question = questionLookup?.[item.questionId] || null;
+            return {
+              ...item,
+              label: question?.label || item.label || item.questionId
+            };
+          })
+        };
+
+        const partyBEditableSchema = buildPartyBEditableSchema(template, recipientResponses);
+        const responsesView = recipientResponses.map(buildRecipientResponseView);
+        const comparisonView = parseObjectField(snapshotPayload?.comparisonView || snapshotPayload?.comparison_view);
+
+        const reportSnapshot = parseObjectField(snapshotPayload?.reportData || snapshotPayload?.report_data);
+        const reportData = {
+          type: asString(reportSnapshot?.type) || 'proposal',
+          id: sourceProposalId,
+          proposal_id: sourceProposalId,
+          proposalId: sourceProposalId,
+          sourceProposalId,
+          snapshotId,
+          version,
+          reportId: asString(reportSnapshot?.reportId) || null,
+          reportSource: asString(reportSnapshot?.reportSource) || 'ProposalSnapshot',
+          evaluationItemId: shareLink.evaluationItemId || null,
+          documentComparisonId: shareLink.documentComparisonId || sourceProposal?.document_comparison_id || null,
+          title: proposalView.title || 'Untitled Proposal',
+          template_id: proposalView.template_id || null,
+          template_name: proposalView.template_name || null,
+          status: proposalView.status || null,
+          party_a_email: 'Identity Protected',
+          party_b_email: proposalView.party_b_email || null,
+          created_date: proposalView.created_date || null,
+          generated_at: asString(reportSnapshot?.generatedAt || reportSnapshot?.generated_at) || null,
+          report: reportSnapshot?.report || null,
+          comparisonView: Object.keys(comparisonView).length > 0 ? comparisonView : null
+        };
+
+        const normalizedShareLink = {
+          id: shareLink.id,
+          token: shareLink.token,
+          proposalId: sourceProposalId,
+          sourceProposalId,
+          snapshotId,
+          snapshotVersion: version,
+          evaluationItemId: shareLink.evaluationItemId || null,
+          documentComparisonId: shareLink.documentComparisonId || null,
+          recipientEmail: shareLink.recipientEmail,
+          createdAt: shareLink.createdAt,
+          expiresAt: shareLink.expiresAt,
+          uses: shareLink.viewCount,
+          maxUses: shareLink.maxViews,
+          viewCount: shareLink.viewCount,
+          maxViews: shareLink.maxViews,
+          mode: shareLink.mode,
+          status: shareLink.status,
+          lastUsedAt: shareLink.lastUsedAt
+        };
+
+        const normalizedPermissions = {
+          canView: permissions.canView,
+          canEdit: permissions.canEdit,
+          canEditRecipientSide: permissions.canEditRecipientSide,
+          canReevaluate: permissions.canReevaluate,
+          canSendBack: permissions.canSendBack
+        };
+
+        logInfo({
+          correlationId,
+          event: 'shared_report_snapshot_resolved',
+          shareLinkId: normalizedShareLink.id,
+          sourceProposalId,
+          snapshotId,
+          version,
+          tokenPrefix: token.slice(0, 8),
+          consumedView: validation.consumedView
+        });
+
+        return respond({
+          ok: true,
+          status: 'ok',
+          code: 'OK',
+          reason: 'OK',
+          message: 'Shared snapshot resolved',
+          correlationId,
+          proposalId: sourceProposalId,
+          sourceProposalId,
+          snapshotId,
+          version,
+          snapshot: {
+            id: snapshotId,
+            sourceProposalId,
+            version,
+            createdAt: asString(snapshot?.createdAt || snapshot?.created_at || snapshot?.created_date),
+            recipientEmail: normalizeEmail(snapshot?.recipientEmail || snapshot?.recipient_email || shareLink.recipientEmail),
+            snapshotData: snapshotPayload,
+            snapshotMeta
+          },
+          snapshotData: snapshotPayload,
+          recipientResponses: responsesView,
+          reportId: reportData.reportId,
+          evaluationId: normalizedShareLink.evaluationItemId,
+          templateId: proposalView.template_id || null,
+          shareLink: normalizedShareLink,
+          permissions: normalizedPermissions,
+          reportData,
+          comparisonView: reportData.comparisonView,
+          partyAView,
+          partyBEditableSchema,
+          proposalView,
+          responsesView,
+          recipientView: {
+            role: 'recipient',
+            proposal: proposalView,
+            responses: responsesView
+          },
+          viewerRole: 'recipient',
+          consumedView: validation.consumedView,
+          currentUserEmail: validation.currentUserEmail
+        });
+      }
+
+      logWarn({
+        correlationId,
+        event: 'snapshot_missing_fallback_to_live',
+        snapshotId: snapshotIdFromLink,
+        sourceProposalId: sourceProposalIdFromLink
+      });
     }
 
     const currentUser = await base44.auth.me().catch(() => null);
@@ -1011,6 +1373,9 @@ Deno.serve(async (req) => {
       id: shareLink.id,
       token: shareLink.token,
       proposalId: resolvedProposalId,
+      sourceProposalId: extractShareLinkSourceProposalId(shareLink) || resolvedProposalId,
+      snapshotId: asString((shareLink as any)?.snapshotId) || extractShareLinkSnapshotId(shareLink),
+      snapshotVersion: extractShareLinkSnapshotVersion(shareLink),
       evaluationItemId: shareLink.evaluationItemId || null,
       documentComparisonId: shareLink.documentComparisonId || null,
       recipientEmail: shareLink.recipientEmail,
@@ -1038,6 +1403,9 @@ Deno.serve(async (req) => {
       id: resolvedProposalId,
       proposal_id: resolvedProposalId,
       proposalId: resolvedProposalId,
+      sourceProposalId: resolvedProposalId,
+      snapshotId: normalizedShareLink.snapshotId,
+      version: normalizedShareLink.snapshotVersion,
       reportId,
       reportSource,
       evaluationItemId: normalizedShareLink.evaluationItemId,
@@ -1075,6 +1443,12 @@ Deno.serve(async (req) => {
       correlationId,
       receivedRecord,
       proposalId: resolvedProposalId,
+      sourceProposalId: resolvedProposalId,
+      snapshotId: normalizedShareLink.snapshotId || null,
+      version: normalizedShareLink.snapshotVersion || null,
+      snapshot: null,
+      snapshotData: null,
+      recipientResponses: responsesView,
       reportId,
       evaluationId: normalizedShareLink.evaluationItemId,
       templateId: proposal.template_id || null,
@@ -1091,6 +1465,7 @@ Deno.serve(async (req) => {
         proposal: proposalView,
         responses: responsesView
       },
+      viewerRole: 'recipient',
       consumedView: validation.consumedView,
       currentUserEmail: validation.currentUserEmail
     });

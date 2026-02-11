@@ -171,6 +171,61 @@ function readReceivedRecordEntries(rows = []) {
   return Array.from(byProposalId.values());
 }
 
+function readSnapshotIdFromAccess(row) {
+  const details = parseObjectValue(row?.details);
+  const data = parseObjectValue(row?.data);
+  return String(
+    row?.snapshot_id ||
+    row?.snapshotId ||
+    details?.snapshotId ||
+    details?.snapshot_id ||
+    data?.snapshotId ||
+    data?.snapshot_id ||
+    ''
+  ).trim();
+}
+
+function readSnapshotTokenFromAccess(row) {
+  const details = parseObjectValue(row?.details);
+  const data = parseObjectValue(row?.data);
+  const raw = row?.token || details?.token || data?.token || null;
+  return typeof raw === 'string' && raw.trim().length > 0 ? raw.trim() : null;
+}
+
+function readSnapshotSourceProposalId(snapshot, accessRow) {
+  const snapshotData = parseObjectValue(snapshot?.snapshotData || snapshot?.snapshot_data || snapshot?.data?.snapshotData || snapshot?.data?.snapshot_data);
+  const snapshotMeta = parseObjectValue(snapshot?.snapshotMeta || snapshot?.snapshot_meta || snapshot?.data?.snapshotMeta || snapshot?.data?.snapshot_meta);
+  const proposalMeta = parseObjectValue(snapshotData?.proposal);
+  const accessDetails = parseObjectValue(accessRow?.details);
+  const accessData = parseObjectValue(accessRow?.data);
+  return String(
+    snapshot?.sourceProposalId ||
+    snapshot?.source_proposal_id ||
+    snapshotMeta?.sourceProposalId ||
+    snapshotMeta?.source_proposal_id ||
+    proposalMeta?.sourceProposalId ||
+    accessRow?.sourceProposalId ||
+    accessRow?.source_proposal_id ||
+    accessDetails?.sourceProposalId ||
+    accessData?.sourceProposalId ||
+    ''
+  ).trim();
+}
+
+function readSnapshotVersion(snapshot, accessRow) {
+  const snapshotMeta = parseObjectValue(snapshot?.snapshotMeta || snapshot?.snapshot_meta || snapshot?.data?.snapshotMeta || snapshot?.data?.snapshot_meta);
+  const raw = Number(
+    snapshot?.version ??
+    snapshot?.snapshot_version ??
+    snapshot?.snapshotVersion ??
+    snapshotMeta?.version ??
+    accessRow?.version ??
+    accessRow?.snapshot_version ??
+    0
+  );
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : null;
+}
+
 async function getActiveShareLinkForRecipient(proposalId) {
   const normalizedProposalId = String(proposalId || '').trim();
   if (!normalizedProposalId) {
@@ -209,9 +264,9 @@ async function getActiveShareLinkForRecipient(proposalId) {
         .catch(() => [])
     ]);
 
-    const activeRow = buckets
+    const activeRows = buckets
       .flat()
-      .find((row) => {
+      .filter((row) => {
         const status = String(row?.status || '').trim().toLowerCase();
         if (status && status !== 'active') return false;
 
@@ -222,13 +277,29 @@ async function getActiveShareLinkForRecipient(proposalId) {
         }
         return true;
       });
+    activeRows.sort((a, b) => {
+      const versionA = Number(a?.snapshot_version ?? a?.snapshotVersion ?? a?.version ?? a?.data?.snapshot_version ?? 0);
+      const versionB = Number(b?.snapshot_version ?? b?.snapshotVersion ?? b?.version ?? b?.data?.snapshot_version ?? 0);
+      if (Number.isFinite(versionA) && Number.isFinite(versionB) && versionA !== versionB) {
+        return versionB - versionA;
+      }
+      return new Date(b?.created_date || 0).getTime() - new Date(a?.created_date || 0).getTime();
+    });
+    const activeRow = activeRows[0];
 
     const token = activeRow?.token || activeRow?.data?.token || null;
     if (!token) {
       return { ok: false, message: NO_SHARED_WORKSPACE_LINK_MESSAGE };
     }
 
-    return { ok: true, token: String(token) };
+    const snapshotId = activeRow?.snapshot_id || activeRow?.snapshotId || activeRow?.data?.snapshot_id || activeRow?.data?.snapshotId || null;
+    const versionRaw = Number(activeRow?.snapshot_version ?? activeRow?.snapshotVersion ?? activeRow?.version ?? activeRow?.data?.snapshot_version ?? 0);
+    return {
+      ok: true,
+      token: String(token),
+      snapshotId: snapshotId ? String(snapshotId) : null,
+      version: Number.isFinite(versionRaw) && versionRaw > 0 ? Math.floor(versionRaw) : null
+    };
   };
 
   try {
@@ -239,7 +310,9 @@ async function getActiveShareLinkForRecipient(proposalId) {
     if (data?.ok && data?.token) {
       return {
         ok: true,
-        token: data.token
+        token: data.token,
+        snapshotId: data.snapshotId || null,
+        version: Number.isFinite(Number(data.version)) ? Number(data.version) : null
       };
     }
 
@@ -323,102 +396,91 @@ export default function Proposals() {
     queryFn: async () => {
       const sent = await base44.entities.Proposal.filter({ party_a_email: user?.email }, '-created_date').catch(() => []);
       const received = await base44.entities.Proposal.filter({ party_b_email: user?.email }, '-created_date').catch(() => []);
-      const receivedRecords = user?.id
-        ? await base44.entities.AuditLog.filter({ user_id: user.id, action: RECEIVED_RECORD_ACTION }, '-created_date', 200).catch(() => [])
-        : [];
-      const sharedContextEntries = readSharedContextEntries(user?.email);
-      const receivedRecordEntries = readReceivedRecordEntries(receivedRecords);
-      const sharedContextByProposalId = new Map(
-        sharedContextEntries
-          .map((entry) => {
-            const proposalId = String(entry?.proposalId || entry?.proposal_id || '').trim();
-            return proposalId ? [proposalId, entry] : null;
-          })
-          .filter(Boolean)
-      );
-      const workspaceContextByProposalId = new Map(
-        receivedRecordEntries
-          .map((entry) => {
-            const proposalId = String(entry?.proposalId || entry?.proposal_id || '').trim();
-            return proposalId ? [proposalId, entry] : null;
-          })
-          .filter(Boolean)
-      );
 
-      sharedContextByProposalId.forEach((entry, proposalId) => {
-        const existing = workspaceContextByProposalId.get(proposalId);
-        const existingTime = existing ? new Date(existing?.loadedAt || 0).getTime() : 0;
-        const nextTime = new Date(entry?.loadedAt || 0).getTime();
+      const snapshotAccessRows = user?.id
+        ? (
+            await Promise.all([
+              base44.entities.SnapshotAccess.filter({ user_id: user.id }, '-created_date', 300).catch(() => []),
+              base44.entities.SnapshotAccess.filter({ userId: user.id }, '-created_date', 300).catch(() => [])
+            ])
+          ).flat()
+        : [];
+      const snapshotAccessMap = new Map();
+      snapshotAccessRows.forEach((row) => {
+        const snapshotId = readSnapshotIdFromAccess(row);
+        if (!snapshotId) return;
+        const nextTime = new Date(row?.lastOpenedAt || row?.last_opened_at || row?.created_date || 0).getTime();
+        const existing = snapshotAccessMap.get(snapshotId);
+        const existingTime = existing
+          ? new Date(existing?.lastOpenedAt || existing?.last_opened_at || existing?.created_date || 0).getTime()
+          : 0;
         if (!existing || nextTime >= existingTime) {
-          workspaceContextByProposalId.set(proposalId, { ...existing, ...entry });
+          snapshotAccessMap.set(snapshotId, row);
         }
       });
 
-      const proposalIdsFromWorkspaceContext = Array.from(workspaceContextByProposalId.keys());
-      const workspaceProposalIdSet = new Set(proposalIdsFromWorkspaceContext);
+      const snapshotIds = Array.from(snapshotAccessMap.keys());
+      const snapshotRows = (
+        await Promise.all(
+          snapshotIds.map((snapshotId) =>
+            base44.entities.ProposalSnapshot.filter({ id: snapshotId }, '-created_date', 1).catch(() => [])
+          )
+        )
+      ).flat();
+      const snapshotById = new Map(
+        snapshotRows
+          .map((row) => [String(row?.id || '').trim(), row])
+          .filter(([id]) => Boolean(id))
+      );
 
-      const mergedReceived = dedupeById(received).map((proposal) => {
-        const proposalId = String(proposal?.id || '').trim();
-        if (!proposalId || !workspaceProposalIdSet.has(proposalId)) return proposal;
-        const contextEntry = workspaceContextByProposalId.get(proposalId) || {};
+      const snapshotReceived = snapshotIds.map((snapshotId) => {
+        const accessRow = snapshotAccessMap.get(snapshotId);
+        const snapshot = snapshotById.get(snapshotId) || null;
+        const snapshotData = parseObjectValue(snapshot?.snapshotData || snapshot?.snapshot_data || snapshot?.data?.snapshotData || snapshot?.data?.snapshot_data);
+        const snapshotMeta = parseObjectValue(snapshot?.snapshotMeta || snapshot?.snapshot_meta || snapshot?.data?.snapshotMeta || snapshot?.data?.snapshot_meta);
+        const snapshotProposal = parseObjectValue(snapshotData?.proposal);
+
+        const sourceProposalId = readSnapshotSourceProposalId(snapshot, accessRow) || String(accessRow?.sourceProposalId || accessRow?.source_proposal_id || '').trim();
+        const version = readSnapshotVersion(snapshot, accessRow);
+        const lastOpenedAt = accessRow?.lastOpenedAt || accessRow?.last_opened_at || accessRow?.created_date || null;
+        const createdAt = snapshot?.createdAt || snapshot?.created_at || snapshot?.created_date || lastOpenedAt || new Date().toISOString();
+        const token = readSnapshotTokenFromAccess(accessRow);
+
         return {
-          ...proposal,
-          _fromSharedContext: true,
-          _sharedToken: contextEntry?.token || null
+          id: `snapshot_${snapshotId}`,
+          sourceProposalId: sourceProposalId || null,
+          snapshotId,
+          snapshotVersion: version,
+          title: snapshotMeta?.title || snapshotProposal?.title || 'Shared Proposal Snapshot',
+          template_name: snapshotMeta?.templateName || snapshotProposal?.templateName || 'Shared Snapshot',
+          party_a_email: snapshotMeta?.senderEmail || 'Shared sender',
+          party_b_email: user?.email || 'Recipient',
+          created_date: lastOpenedAt || createdAt,
+          snapshot_created_at: createdAt,
+          status: 'received',
+          _fromSnapshotAccess: true,
+          _sharedToken: token,
+          _lastOpenedAt: lastOpenedAt
         };
       });
 
-      if (proposalIdsFromWorkspaceContext.length === 0) {
-        return { sent, received: mergedReceived };
-      }
+      const sharedContextEntries = readSharedContextEntries(user?.email);
+      const contextFallbackRows = sharedContextEntries
+        .filter((entry) => String(entry?.snapshotId || '').trim().length === 0)
+        .map((entry) => ({
+          id: `context_${entry?.proposalId || entry?.proposal_id || Math.random().toString(36).slice(2, 7)}`,
+          sourceProposalId: entry?.proposalId || entry?.proposal_id || null,
+          title: entry?.proposalTitle || entry?.title || 'Shared Proposal',
+          template_name: entry?.templateName || 'Shared Workspace',
+          party_a_email: entry?.partyAEmail || entry?.senderEmail || 'Shared sender',
+          party_b_email: user?.email || 'Recipient',
+          created_date: entry?.loadedAt || new Date().toISOString(),
+          status: 'received',
+          _fromSharedContext: true,
+          _sharedToken: entry?.token || null
+        }));
 
-      const existingReceivedIds = new Set(
-        mergedReceived
-          .map((proposal) => String(proposal?.id || '').trim())
-          .filter(Boolean)
-      );
-
-      const missingIds = proposalIdsFromWorkspaceContext.filter((proposalId) => !existingReceivedIds.has(proposalId));
-      if (missingIds.length === 0) {
-        return { sent, received: mergedReceived };
-      }
-
-      const proposalsFromSharedContext = (
-        await Promise.all(
-          missingIds.map((proposalId) =>
-            base44.entities.Proposal.filter({ id: proposalId }, '-created_date', 1).catch(() => [])
-          )
-        )
-      ).flat().map((proposal) => ({
-        ...proposal,
-        _fromSharedContext: true,
-        _sharedToken: workspaceContextByProposalId.get(String(proposal?.id || '').trim())?.token || null
-      }));
-
-      const fetchedProposalIdSet = new Set(
-        proposalsFromSharedContext
-          .map((proposal) => String(proposal?.id || '').trim())
-          .filter(Boolean)
-      );
-      const syntheticRows = missingIds
-        .filter((proposalId) => !fetchedProposalIdSet.has(proposalId))
-        .map((proposalId) => {
-          const contextEntry = workspaceContextByProposalId.get(proposalId) || {};
-          return {
-            id: proposalId,
-            sourceProposalId: proposalId,
-            title: contextEntry?.proposalTitle || contextEntry?.title || 'Shared Proposal',
-            template_name: contextEntry?.templateName || 'Shared Workspace',
-            party_a_email: contextEntry?.partyAEmail || contextEntry?.senderEmail || 'Shared sender',
-            party_b_email: user?.email || 'Recipient',
-            created_date: contextEntry?.loadedAt || new Date().toISOString(),
-            status: 'received',
-            _fromSharedContext: true,
-            _sharedToken: contextEntry?.token || null
-          };
-        });
-
-      return { sent, received: dedupeById([...mergedReceived, ...proposalsFromSharedContext, ...syntheticRows]) };
+      return { sent, received: dedupeById([...received, ...snapshotReceived, ...contextFallbackRows]) };
     },
     enabled: !!user?.email
   });
@@ -491,7 +553,7 @@ export default function Proposals() {
     .filter((proposal) => {
       const status = String(proposal?.status || '').trim().toLowerCase();
       if (status === 'draft') return false;
-      if (proposal?._fromSharedContext) return true;
+      if (proposal?._fromSharedContext || proposal?._fromSnapshotAccess) return true;
       return !isProposalOwner(proposal, user);
     })
     .map((proposal) => ({
@@ -643,20 +705,20 @@ export default function Proposals() {
       }
 
       if (isRecipientWorkspaceItem) {
-        const shareLink = await getActiveShareLinkForRecipient(sourceProposalId);
-        if (shareLink.ok) {
+        if (proposal?._sharedToken) {
           navigate(
             createPageUrl(
-              `ProposalDetail?id=${encodeURIComponent(sourceProposalId)}&sharedToken=${encodeURIComponent(shareLink.token)}&role=recipient`
+              `SharedReport?token=${encodeURIComponent(proposal._sharedToken)}&mode=workspace`
             )
           );
           return;
         }
 
-        if (proposal?._sharedToken) {
+        const shareLink = await getActiveShareLinkForRecipient(sourceProposalId);
+        if (shareLink.ok) {
           navigate(
             createPageUrl(
-              `ProposalDetail?id=${encodeURIComponent(sourceProposalId)}&sharedToken=${encodeURIComponent(proposal._sharedToken)}&role=recipient`
+              `SharedReport?token=${encodeURIComponent(shareLink.token)}&mode=workspace`
             )
           );
           return;
@@ -709,6 +771,18 @@ export default function Proposals() {
                   ? `To: ${proposal.party_a_email || 'Original proposer'}`
                   : (isSent ? `To: ${proposal.party_b_email || 'Not specified'}` : `From: ${proposal.party_a_email}`)}
               </span>
+              {proposal?.snapshotVersion && (
+                <>
+                  <span>•</span>
+                  <span>Version {proposal.snapshotVersion}</span>
+                </>
+              )}
+              {proposal?._lastOpenedAt && (
+                <>
+                  <span>•</span>
+                  <span>Opened {new Date(proposal._lastOpenedAt).toLocaleDateString()}</span>
+                </>
+              )}
             </div>
           </div>
 

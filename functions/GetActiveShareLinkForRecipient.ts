@@ -60,6 +60,73 @@ function extractProposalId(shareLink: any): string | null {
   );
 }
 
+function extractSourceProposalId(shareLink: any): string | null {
+  if (!shareLink || typeof shareLink !== 'object') return null;
+
+  const context = shareLink.context && typeof shareLink.context === 'object' ? shareLink.context : {};
+  const data = shareLink.data && typeof shareLink.data === 'object' ? shareLink.data : {};
+  const metadata = shareLink.metadata && typeof shareLink.metadata === 'object' ? shareLink.metadata : {};
+
+  return (
+    asString(shareLink.source_proposal_id) ||
+    asString(shareLink.sourceProposalId) ||
+    asString(context.source_proposal_id) ||
+    asString(context.sourceProposalId) ||
+    asString(data.source_proposal_id) ||
+    asString(data.sourceProposalId) ||
+    asString(metadata.source_proposal_id) ||
+    asString(metadata.sourceProposalId) ||
+    extractProposalId(shareLink) ||
+    null
+  );
+}
+
+function extractSnapshotId(shareLink: any): string | null {
+  if (!shareLink || typeof shareLink !== 'object') return null;
+
+  const context = shareLink.context && typeof shareLink.context === 'object' ? shareLink.context : {};
+  const data = shareLink.data && typeof shareLink.data === 'object' ? shareLink.data : {};
+  const metadata = shareLink.metadata && typeof shareLink.metadata === 'object' ? shareLink.metadata : {};
+
+  return (
+    asString(shareLink.snapshot_id) ||
+    asString(shareLink.snapshotId) ||
+    asString(context.snapshot_id) ||
+    asString(context.snapshotId) ||
+    asString(data.snapshot_id) ||
+    asString(data.snapshotId) ||
+    asString(metadata.snapshot_id) ||
+    asString(metadata.snapshotId) ||
+    null
+  );
+}
+
+function extractSnapshotVersion(shareLink: any): number | null {
+  if (!shareLink || typeof shareLink !== 'object') return null;
+
+  const context = shareLink.context && typeof shareLink.context === 'object' ? shareLink.context : {};
+  const data = shareLink.data && typeof shareLink.data === 'object' ? shareLink.data : {};
+  const metadata = shareLink.metadata && typeof shareLink.metadata === 'object' ? shareLink.metadata : {};
+
+  const version = toNumber(
+    shareLink.snapshot_version ??
+    shareLink.snapshotVersion ??
+    shareLink.version ??
+    context.snapshot_version ??
+    context.snapshotVersion ??
+    context.version ??
+    data.snapshot_version ??
+    data.snapshotVersion ??
+    data.version ??
+    metadata.snapshot_version ??
+    metadata.snapshotVersion ??
+    metadata.version,
+    -1
+  );
+
+  return version >= 0 ? version : null;
+}
+
 function extractRecipientEmail(shareLink: any): string | null {
   if (!shareLink || typeof shareLink !== 'object') return null;
 
@@ -116,24 +183,6 @@ function extractToken(shareLink: any): string | null {
   return asString(shareLink.token || data.token || null);
 }
 
-async function getProposalRecipientEmail(base44: any, proposalId: string): Promise<string | null> {
-  try {
-    const rows = await base44.asServiceRole.entities.Proposal.filter({ id: proposalId }, '-created_date', 1);
-    const proposal = rows?.[0] || null;
-    if (!proposal || typeof proposal !== 'object') return null;
-    const data = proposal.data && typeof proposal.data === 'object' ? proposal.data : {};
-    return normalizeEmail(
-      proposal.party_b_email ||
-      proposal.partyBEmail ||
-      data.party_b_email ||
-      data.partyBEmail ||
-      null
-    );
-  } catch {
-    return null;
-  }
-}
-
 function extractViewCount(shareLink: any): number {
   return toNumber(shareLink?.uses ?? shareLink?.view_count, 0);
 }
@@ -161,6 +210,7 @@ Deno.serve(async (req) => {
 
     const body = req.method === 'GET' ? {} : await req.json().catch(() => ({}));
     const proposalId = asString(body?.proposalId || body?.proposal_id);
+    const requestedRecipientEmail = normalizeEmail(body?.recipientEmail || body?.recipient_email || null);
 
     if (!proposalId) {
       return respond({
@@ -181,11 +231,60 @@ Deno.serve(async (req) => {
       }, 400);
     }
 
-    const [rowsBySnakeEmail, rowsByCamelEmail, rowsBySnakeProposal, rowsByCamelProposal] = await Promise.all([
-      base44.asServiceRole.entities.ShareLink.filter({ recipient_email: currentUserEmail }, '-created_date', 100),
-      base44.asServiceRole.entities.ShareLink.filter({ recipientEmail: currentUserEmail }, '-created_date', 100),
-      base44.asServiceRole.entities.ShareLink.filter({ proposal_id: proposalId }, '-created_date', 100),
-      base44.asServiceRole.entities.ShareLink.filter({ proposalId }, '-created_date', 100)
+    const proposalRows = await base44.asServiceRole.entities.Proposal.filter({ id: proposalId }, '-created_date', 1);
+    const proposal = proposalRows?.[0] || null;
+    if (!proposal) {
+      return respond({
+        ok: false,
+        errorCode: 'PROPOSAL_NOT_FOUND',
+        message: 'Proposal not found',
+        correlationId
+      }, 404);
+    }
+
+    const proposalRecipientEmail = normalizeEmail(
+      proposal?.party_b_email ||
+      proposal?.partyBEmail ||
+      proposal?.data?.party_b_email ||
+      proposal?.data?.partyBEmail ||
+      null
+    );
+    const proposalOwnerEmail = normalizeEmail(proposal?.party_a_email || proposal?.data?.party_a_email || null);
+    const proposalOwnerUserId = asString(proposal?.party_a_user_id || proposal?.created_by_user_id || null);
+    const currentUserId = asString(user?.id);
+    const isOwner =
+      Boolean(currentUserId && proposalOwnerUserId && currentUserId === proposalOwnerUserId) ||
+      Boolean(currentUserEmail && proposalOwnerEmail && currentUserEmail === proposalOwnerEmail);
+
+    const targetRecipientEmail = isOwner
+      ? (requestedRecipientEmail || proposalRecipientEmail)
+      : currentUserEmail;
+
+    if (!targetRecipientEmail) {
+      return respond({
+        ok: false,
+        errorCode: 'RECIPIENT_EMAIL_MISSING',
+        message: 'Recipient email is required to resolve the active shared link',
+        correlationId
+      }, 400);
+    }
+
+    if (!isOwner && proposalRecipientEmail && proposalRecipientEmail !== currentUserEmail) {
+      return respond({
+        ok: false,
+        errorCode: 'FORBIDDEN',
+        message: 'Only the intended recipient can resolve this shared link',
+        correlationId
+      }, 403);
+    }
+
+    const [rowsBySnakeEmail, rowsByCamelEmail, rowsBySnakeProposal, rowsByCamelProposal, rowsBySourceSnake, rowsBySourceCamel] = await Promise.all([
+      base44.asServiceRole.entities.ShareLink.filter({ recipient_email: targetRecipientEmail }, '-created_date', 200),
+      base44.asServiceRole.entities.ShareLink.filter({ recipientEmail: targetRecipientEmail }, '-created_date', 200),
+      base44.asServiceRole.entities.ShareLink.filter({ proposal_id: proposalId }, '-created_date', 200),
+      base44.asServiceRole.entities.ShareLink.filter({ proposalId }, '-created_date', 200),
+      base44.asServiceRole.entities.ShareLink.filter({ source_proposal_id: proposalId }, '-created_date', 200).catch(() => []),
+      base44.asServiceRole.entities.ShareLink.filter({ sourceProposalId: proposalId }, '-created_date', 200).catch(() => [])
     ]);
 
     const allRows: any[] = [];
@@ -194,7 +293,9 @@ Deno.serve(async (req) => {
       ...(rowsBySnakeEmail || []),
       ...(rowsByCamelEmail || []),
       ...(rowsBySnakeProposal || []),
-      ...(rowsByCamelProposal || [])
+      ...(rowsByCamelProposal || []),
+      ...(rowsBySourceSnake || []),
+      ...(rowsBySourceCamel || [])
     ]) {
       const rowId = asString((row as any)?.id);
       if (rowId && seenIds.has(rowId)) continue;
@@ -202,21 +303,24 @@ Deno.serve(async (req) => {
       allRows.push(row);
     }
 
-    const proposalRecipientEmail = await getProposalRecipientEmail(base44, proposalId);
-    const recipientFallbackMatches = proposalRecipientEmail === currentUserEmail;
-
     const matchingProposalRows = allRows.filter((row) => {
-      if (extractProposalId(row) !== proposalId) return false;
+      const sourceProposalId = extractSourceProposalId(row);
+      if (sourceProposalId !== proposalId) return false;
       const rowRecipient = extractRecipientEmail(row);
       if (rowRecipient) {
-        return rowRecipient === currentUserEmail;
+        return rowRecipient === targetRecipientEmail;
       }
-      return recipientFallbackMatches;
+      return proposalRecipientEmail ? proposalRecipientEmail === targetRecipientEmail : true;
     });
 
     const activeRows = matchingProposalRows
       .filter((row) => extractStatus(row) === ACTIVE_STATUS)
       .sort((a, b) => {
+        const versionA = extractSnapshotVersion(a) ?? 0;
+        const versionB = extractSnapshotVersion(b) ?? 0;
+        if (versionA !== versionB) {
+          return versionB - versionA;
+        }
         const dateA = new Date(extractCreatedAt(a) || 0).getTime();
         const dateB = new Date(extractCreatedAt(b) || 0).getTime();
         return dateB - dateA;
@@ -272,12 +376,19 @@ Deno.serve(async (req) => {
       shareUrl = `https://getpremarket.com${SHARE_REPORT_PATH}?token=${encodeURIComponent(token)}`;
     }
 
+    const snapshotId = extractSnapshotId(latestActive);
+    const snapshotVersion = extractSnapshotVersion(latestActive);
+    const sourceProposalId = extractSourceProposalId(latestActive) || proposalId;
+
     return respond({
       ok: true,
-      proposalId,
+      proposalId: sourceProposalId,
+      sourceProposalId,
       token,
       shareUrl,
       shareLinkId: asString((latestActive as any)?.id),
+      snapshotId,
+      version: snapshotVersion,
       expiresAt,
       viewCount,
       maxViews,
