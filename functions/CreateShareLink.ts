@@ -112,26 +112,38 @@ async function ensureProposalResponseRecords(base44: any, proposalId: string, co
     const question = questionLookup[questionId] || null;
     
     // Determine entered_by_party and subject_party
+    const normalizedFromKey = String(subjectFromKey || '').trim().toLowerCase();
+    const hasPartyBSuffix = normalizedFromKey === 'b' || normalizedFromKey === 'party_b' || normalizedFromKey === 'recipient';
+    
+    // Check if this is Party B's own field (not Party A's claim about Party B)
+    const isPartyBOwnField = hasPartyBSuffix && question && (
+      String(question.applies_to_role || '').toLowerCase() === 'recipient' ||
+      String(question.party || '').toLowerCase() === 'b' ||
+      String(question.party || '').toLowerCase() === 'party_b'
+    );
+    
     let enteredByParty = 'a';
     let subjectParty = 'a';
-    const normalizedFromKey = String(subjectFromKey || '').trim().toLowerCase();
+    let normalizedVisibility = 'full';
     
-    // If responseKey has __b suffix, Party A is making a claim about Party B
-    if (normalizedFromKey === 'b' || normalizedFromKey === 'party_b' || normalizedFromKey === 'recipient') {
+    if (isPartyBOwnField) {
+      // Party B's own response (filled by Party A in Step 3 on behalf of recipient)
+      enteredByParty = 'b';
+      subjectParty = 'b';
+      normalizedVisibility = 'full'; // Party B fields are always visible to Party B
+    } else if (hasPartyBSuffix) {
+      // Party A's claim/observation about Party B (is_about_counterparty)
       enteredByParty = 'a';
       subjectParty = 'b';
-    } else if (question) {
-      const party = String(question?.party || question?.party_key || question?.subject_party || '').toLowerCase();
-      if (party === 'b' || party === 'party_b' || party === 'recipient' || party === 'counterparty') {
-        subjectParty = 'b';
-      } else if (question?.is_about_counterparty === true) {
-        subjectParty = 'b';
-      }
+      const visibility = String(rawVisibility[responseKey] ?? rawVisibility[questionId] ?? 'full').toLowerCase();
+      normalizedVisibility = ['hidden', 'not_shared', 'private', 'confidential'].includes(visibility) ? 'hidden' : 'full';
+    } else {
+      // Party A's own field
+      enteredByParty = 'a';
+      subjectParty = 'a';
+      const visibility = String(rawVisibility[responseKey] ?? rawVisibility[questionId] ?? 'full').toLowerCase();
+      normalizedVisibility = ['hidden', 'not_shared', 'private', 'confidential'].includes(visibility) ? 'hidden' : 'full';
     }
-    
-    // Normalize visibility: check both responseKey and questionId
-    const visibilityRaw = String(rawVisibility[responseKey] ?? rawVisibility[questionId] ?? 'full').toLowerCase();
-    const normalizedVisibility = ['hidden', 'not_shared', 'private', 'confidential'].includes(visibilityRaw) ? 'hidden' : 'full';
     
     // Detect range vs text from rawValue structure
     let valueType = 'text';
@@ -157,7 +169,7 @@ async function ensureProposalResponseRecords(base44: any, proposalId: string, co
       entered_by_party: enteredByParty,
       author_party: enteredByParty,
       subject_party: subjectParty,
-      is_about_counterparty: subjectParty === 'b',
+      is_about_counterparty: subjectParty === 'b' && enteredByParty === 'a',
       value_type: valueType,
       value: value === null || value === undefined ? null : String(value),
       range_min: rangeMin,
