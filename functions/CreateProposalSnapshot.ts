@@ -414,7 +414,7 @@ Deno.serve(async (req) => {
       const rawDocBText = String(comparison.doc_b_plaintext ?? '');
       const rawDocASpans = Array.isArray(comparison.doc_a_spans_json) ? comparison.doc_a_spans_json : [];
       const rawDocBSpans = Array.isArray(comparison.doc_b_spans_json) ? comparison.doc_b_spans_json : [];
-        
+
         // Remove hidden text
         const removeHidden = (text: string, spans: any[]) => {
           const normalizedSpans = spans
@@ -428,9 +428,9 @@ Deno.serve(async (req) => {
             })
             .filter(Boolean)
             .sort((a: any, b: any) => a.start - b.start);
-          
+
           if (normalizedSpans.length === 0) return { text, hiddenCount: 0 };
-          
+
           let output = '';
           let cursor = 0;
           for (const span of normalizedSpans) {
@@ -440,12 +440,12 @@ Deno.serve(async (req) => {
           if (cursor < text.length) output += text.slice(cursor);
           return { text: output, hiddenCount: normalizedSpans.length };
         };
-        
+
         const redactedDocA = removeHidden(rawDocAText, rawDocASpans);
         const redactedDocB = removeHidden(rawDocBText, rawDocBSpans);
-        
+
         comparisonView = {
-          id: docComparisonId,
+          id: asString(comparison?.id) || docComparisonId,
           title: asString(comparison.title) || null,
           docA: {
             label: asString(comparison.party_a_label) || 'Document A',
@@ -460,8 +460,7 @@ Deno.serve(async (req) => {
             hiddenCount: redactedDocB.hiddenCount
           }
         };
-      }
-    }
+        }
 
     // Calculate field counts - count documents that have visible text
     const visibleResponseCount = partyAResponses.filter(r => r.visibility !== 'hidden').length;
