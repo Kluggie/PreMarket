@@ -1079,6 +1079,27 @@ Deno.serve(async (req) => {
             : (Array.isArray(snapshotPayload?.responses) ? snapshotPayload.responses : []));
         const partyAResponses = rawPartyA.map((item: any, index: number) => toSnapshotPartyAResponseView(item, index));
 
+        const rawPartyBSchema = snapshotPayload?.partyBEditableSchema;
+        const partyBQuestions = Array.isArray(rawPartyBSchema?.questions) ? rawPartyBSchema.questions : [];
+
+        if (debugMode) {
+          const payloadPath = Array.isArray(snapshotPayload?.partyAResponses) 
+            ? 'snapshotData.partyAResponses'
+            : (Array.isArray(snapshotPayload?.partyA)
+              ? 'snapshotData.partyA'
+              : (Array.isArray(snapshotPayload?.responses) 
+                ? 'snapshotData.responses'
+                : 'none'));
+
+          debugInfo.parsedSnapshotPayload = {
+            payloadPathUsed: payloadPath,
+            partyAResponsesLen: partyAResponses.length,
+            partyBQuestionsLen: partyBQuestions.length,
+            snapshotPayloadTopKeys: Object.keys(snapshotPayload || {}),
+            countsField: snapshotMeta?.fieldCounts || null
+          };
+        }
+
         const snapshotProposal = parseObjectField(snapshotPayload?.proposal);
         const proposalView = {
           id: sourceProposalId,
