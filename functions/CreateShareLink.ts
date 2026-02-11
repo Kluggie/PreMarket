@@ -310,6 +310,16 @@ Deno.serve(async (req) => {
       }, { status: 403 });
     }
 
+    // Ensure ProposalResponse records exist before creating snapshot
+    const materializationResult = await ensureProposalResponseRecords(base44, resolvedProposalId, correlationId);
+    logInfo({
+      correlationId,
+      event: 'proposal_response_materialization',
+      proposalId: resolvedProposalId,
+      materialized: materializationResult.materialized,
+      count: materializationResult.count
+    });
+
     let snapshotId: string | null = null;
     let snapshotVersion: number | null = null;
     try {
