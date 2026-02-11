@@ -840,9 +840,9 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                       <ArrowRight className="w-4 h-4 ml-2" />
                     </Button>
                     </div>
-                    </div>
-                    </div>
-            </motion.div>
+                    </CardContent>
+                    </Card>
+                    </motion.div>
           )}
 
           {/* Step 2: Content Input */}
@@ -922,8 +922,7 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                       <h3 className="text-sm font-semibold text-slate-600">{partyALabel}</h3>
                     </div>
                   </div>
-                  <div className="px-12 py-10 flex-1 flex flex-col">
-                  <div className="space-y-4 flex-1 flex flex-col">
+                  <div className="px-12 py-10 flex-1 flex flex-col space-y-4">
                   {docASource === 'uploaded' && (
                     <div className="space-y-3">
                       <div className="space-y-2">
@@ -1049,8 +1048,8 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                       placeholder="Start typing or paste content..."
                       className="flex-1 min-h-[600px] bg-white border-0 resize-none text-[15px] leading-relaxed text-gray-800 focus:outline-none focus:ring-0 placeholder:text-gray-400 p-0"
                     />
-                  </div>
-                </div>
+                    </div>
+                    </div>
 
                 {/* Document B Input */}
                 <div className="flex flex-col h-full bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden">
@@ -1060,8 +1059,7 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                       <h3 className="text-sm font-semibold text-slate-600">{partyBLabel}</h3>
                     </div>
                   </div>
-                  <div className="px-12 py-10 flex-1 flex flex-col">
-                  <div className="space-y-4 flex-1 flex flex-col">
+                  <div className="px-12 py-10 flex-1 flex flex-col space-y-4">
                   {docBSource === 'uploaded' && (
                     <div className="space-y-3">
                       <div className="space-y-2">
