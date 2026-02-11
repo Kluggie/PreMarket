@@ -28,6 +28,8 @@ import {
   Send, Sparkles, ChevronRight, Upload, ThumbsUp
 } from 'lucide-react';
 import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Checkbox } from '@/components/ui/checkbox';
 
 const StatusBadge = ({ status }) => {
   const config = {
@@ -59,6 +61,79 @@ const SHARED_ERROR_MESSAGES = {
 
 const NO_SHARED_WORKSPACE_LINK_MESSAGE =
   'No shared workspace link found. Ask the sender to share again.';
+
+const TEXTAREA_FIELD_TYPES = new Set(['textarea', 'long_text', 'multiline', 'text_area']);
+const SELECT_FIELD_TYPES = new Set(['select', 'enum', 'dropdown', 'radio', 'single_select']);
+const NUMBER_FIELD_TYPES = new Set(['number', 'integer', 'float', 'decimal', 'currency', 'percent']);
+const BOOLEAN_FIELD_TYPES = new Set(['boolean', 'bool', 'checkbox', 'toggle', 'switch']);
+
+function normalizeAllowedValues(values) {
+  if (!Array.isArray(values)) return [];
+  return values
+    .map((value, index) => {
+      if (value && typeof value === 'object') {
+        const rawValue = value.value ?? value.id ?? value.key ?? value.code ?? value.label ?? value.name;
+        const rawLabel = value.label ?? value.name ?? value.value ?? value.id ?? value.key ?? value.code;
+        return {
+          key: `opt_${index}_${String(rawValue ?? '')}`,
+          value: rawValue === undefined || rawValue === null ? '' : String(rawValue),
+          label: rawLabel === undefined || rawLabel === null ? '' : String(rawLabel)
+        };
+      }
+
+      if (value === undefined || value === null) {
+        return {
+          key: `opt_${index}_empty`,
+          value: '',
+          label: ''
+        };
+      }
+
+      return {
+        key: `opt_${index}_${String(value)}`,
+        value: String(value),
+        label: String(value)
+      };
+    })
+    .filter((item) => item.value.length > 0);
+}
+
+function toBoolean(value) {
+  if (typeof value === 'boolean') return value;
+  const normalized = String(value ?? '').trim().toLowerCase();
+  return ['true', '1', 'yes', 'y'].includes(normalized);
+}
+
+function toFieldType(question) {
+  return String(question?.fieldType || question?.field_type || '').toLowerCase();
+}
+
+function normalizeResponseVisibility(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (['hidden', 'not_shared', 'private', 'confidential', 'partial'].includes(normalized)) {
+    return 'hidden';
+  }
+  return 'full';
+}
+
+function isVisibilityExplicitlyHidden(value) {
+  return normalizeResponseVisibility(value) === 'hidden';
+}
+
+function toInitialRecipientEdit(question) {
+  const hasRange =
+    question?.currentResponse?.rangeMin !== null && question?.currentResponse?.rangeMin !== undefined ||
+    question?.currentResponse?.rangeMax !== null && question?.currentResponse?.rangeMax !== undefined;
+
+  return {
+    questionId: question?.questionId,
+    valueType: hasRange ? 'range' : (question?.valueType || 'text'),
+    value: question?.currentResponse?.value ?? '',
+    rangeMin: question?.currentResponse?.rangeMin ?? null,
+    rangeMax: question?.currentResponse?.rangeMax ?? null,
+    visibility: normalizeResponseVisibility(question?.currentResponse?.visibility)
+  };
+}
 
 function normalizeComparisonSpanLevel(level) {
   const normalized = String(level || '').trim().toLowerCase();
@@ -711,13 +786,7 @@ export default function ProposalDetail() {
     const questions = Array.isArray(partyBEditableSchema?.questions) ? partyBEditableSchema.questions : [];
     questions.forEach((question) => {
       if (!question?.questionId) return;
-      nextEdits[question.questionId] = {
-        questionId: question.questionId,
-        valueType: question?.currentResponse?.rangeMin !== null || question?.currentResponse?.rangeMax !== null ? 'range' : (question?.valueType || 'text'),
-        value: question?.currentResponse?.value ?? '',
-        rangeMin: question?.currentResponse?.rangeMin ?? null,
-        rangeMax: question?.currentResponse?.rangeMax ?? null
-      };
+      nextEdits[question.questionId] = toInitialRecipientEdit(question);
     });
     setRecipientEdits(nextEdits);
   }, [isRecipientView, partyBEditableSchema]);
@@ -730,6 +799,10 @@ export default function ProposalDetail() {
       token: sharedToken,
       proposalId,
       role: 'recipient',
+      proposalTitle: proposal?.title || null,
+      templateName: proposal?.template_name || proposal?.templateName || null,
+      partyAEmail: proposal?.party_a_email || partyAView?.proposal?.party_a_email || null,
+      senderEmail: proposal?.party_a_email || partyAView?.proposal?.party_a_email || null,
       recipientEmail: sharedRecipientData?.shareLink?.recipientEmail || proposal?.party_b_email || null,
       currentUserEmail: normalizeEmail(user?.email) || null,
       loadedAt: new Date().toISOString()
@@ -747,7 +820,7 @@ export default function ProposalDetail() {
     } catch {
       // Ignore malformed local storage history.
     }
-  }, [isRecipientView, sharedToken, proposalId, sharedRecipientData, proposal, user?.email]);
+  }, [isRecipientView, sharedToken, proposalId, sharedRecipientData, proposal, partyAView, user?.email]);
 
   const { data: evaluations = [] } = useQuery({
     queryKey: ['evaluations', proposalId],
@@ -939,22 +1012,14 @@ export default function ProposalDetail() {
   };
 
   const isResponseOwnedByCurrentUser = (response) => {
+    if (isRecipientView) return isPartyBResponse(response);
     if (isPartyA) return isPartyAResponse(response);
     if (isPartyB) return isPartyBResponse(response);
     return false;
   };
 
   const isResponseHiddenForViewer = (response) => {
-    const subjectParty = String(response?.subject_party || response?.subjectParty || '').toLowerCase();
-    const isCounterpartyClaim =
-      subjectParty === 'b' ||
-      subjectParty === 'party_b' ||
-      subjectParty === 'recipient' ||
-      response?.is_about_counterparty === true;
-    if (isRecipientView && isPartyAResponse(response) && !isCounterpartyClaim) return true;
-    const visibilityValue = String(response?.visibility || '').toLowerCase();
-    const visibility = visibilityValue === 'partial' ? 'hidden' : visibilityValue;
-    if (visibility !== 'hidden') return false;
+    if (!isVisibilityExplicitlyHidden(response?.visibility)) return false;
     return !isResponseOwnedByCurrentUser(response);
   };
 
@@ -1343,6 +1408,8 @@ export default function ProposalDetail() {
   const recipientEditableQuestions = useMemo(() => (
     Array.isArray(partyBEditableSchema?.questions) ? partyBEditableSchema.questions : []
   ), [partyBEditableSchema]);
+  const canEditRecipient = Boolean(sharedPermissions?.canEditRecipientSide ?? sharedPermissions?.canEdit) && Boolean(user);
+  const canReevaluate = Boolean(sharedPermissions?.canReevaluate) && Boolean(user);
 
   const handleRecipientEditChange = (questionId, patch) => {
     setRecipientEdits((prev) => ({
@@ -1355,17 +1422,146 @@ export default function ProposalDetail() {
     }));
   };
 
+  const buildRecipientPayload = () => {
+    return Object.values(recipientEdits)
+      .filter((entry) => entry?.questionId)
+      .map((entry) => ({
+        questionId: entry.questionId,
+        valueType: entry.valueType || (entry.rangeMin !== null || entry.rangeMax !== null ? 'range' : 'text'),
+        value: entry.value,
+        rangeMin: entry.rangeMin,
+        rangeMax: entry.rangeMax,
+        visibility: normalizeResponseVisibility(entry.visibility)
+      }));
+  };
+
+  const renderRecipientEditableField = (question) => {
+    const questionId = question?.questionId;
+    if (!questionId) return null;
+
+    const edit = recipientEdits[questionId] || toInitialRecipientEdit(question);
+    const fieldType = toFieldType(question);
+    const valueType = String(edit?.valueType || question?.valueType || '').toLowerCase();
+    const options = normalizeAllowedValues(question?.allowedValues);
+    const disabled = !canEditRecipient;
+
+    if (valueType === 'range') {
+      return (
+        <div className="grid grid-cols-2 gap-3">
+          <Input
+            type="number"
+            value={edit.rangeMin ?? ''}
+            onChange={(event) => handleRecipientEditChange(questionId, {
+              valueType: 'range',
+              rangeMin: event.target.value === '' ? null : Number(event.target.value)
+            })}
+            disabled={disabled}
+            placeholder="Minimum"
+          />
+          <Input
+            type="number"
+            value={edit.rangeMax ?? ''}
+            onChange={(event) => handleRecipientEditChange(questionId, {
+              valueType: 'range',
+              rangeMax: event.target.value === '' ? null : Number(event.target.value)
+            })}
+            disabled={disabled}
+            placeholder="Maximum"
+          />
+        </div>
+      );
+    }
+
+    if (BOOLEAN_FIELD_TYPES.has(fieldType)) {
+      const checked = toBoolean(edit.value);
+      return (
+        <div className="flex items-center gap-3">
+          <Checkbox
+            id={`shared-question-${questionId}`}
+            checked={checked}
+            onCheckedChange={(nextChecked) => handleRecipientEditChange(questionId, {
+              valueType: 'text',
+              value: nextChecked === true
+            })}
+            disabled={disabled}
+          />
+          <Label htmlFor={`shared-question-${questionId}`}>{checked ? 'Yes' : 'No'}</Label>
+        </div>
+      );
+    }
+
+    if (options.length > 0 || SELECT_FIELD_TYPES.has(fieldType)) {
+      const selectedValue = String(edit.value ?? '').trim() || '__unset__';
+      return (
+        <Select
+          value={selectedValue}
+          onValueChange={(nextValue) => handleRecipientEditChange(questionId, {
+            valueType: 'text',
+            value: nextValue === '__unset__' ? '' : nextValue
+          })}
+          disabled={disabled}
+        >
+          <SelectTrigger>
+            <SelectValue placeholder="Select an option" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__unset__">Not specified</SelectItem>
+            {options.map((option) => (
+              <SelectItem key={option.key} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      );
+    }
+
+    if (TEXTAREA_FIELD_TYPES.has(fieldType)) {
+      return (
+        <Textarea
+          rows={4}
+          value={edit.value ?? ''}
+          onChange={(event) => handleRecipientEditChange(questionId, {
+            valueType: 'text',
+            value: event.target.value
+          })}
+          disabled={disabled}
+        />
+      );
+    }
+
+    if (NUMBER_FIELD_TYPES.has(fieldType)) {
+      return (
+        <Input
+          type="number"
+          value={edit.value ?? ''}
+          onChange={(event) => handleRecipientEditChange(questionId, {
+            valueType: 'text',
+            value: event.target.value
+          })}
+          disabled={disabled}
+        />
+      );
+    }
+
+    return (
+      <Input
+        value={edit.value ?? ''}
+        onChange={(event) => handleRecipientEditChange(questionId, {
+          valueType: 'text',
+          value: event.target.value
+        })}
+        disabled={disabled}
+      />
+    );
+  };
+
   const saveRecipientResponsesMutation = useMutation({
     mutationFn: async () => {
-      const payload = Object.values(recipientEdits)
-        .filter((entry) => entry?.questionId)
-        .map((entry) => ({
-          questionId: entry.questionId,
-          valueType: entry.valueType || 'text',
-          value: entry.value,
-          rangeMin: entry.rangeMin,
-          rangeMax: entry.rangeMax
-        }));
+      const payload = buildRecipientPayload();
+      if (payload.length === 0) {
+        throw new Error('No Party B fields are available to update.');
+      }
 
       try {
         const result = await base44.functions.invoke('UpsertSharedRecipientResponses', {
@@ -1880,13 +2076,13 @@ export default function ProposalDetail() {
                               <Badge className={
                                 hiddenForViewer
                                   ? 'bg-slate-100 text-slate-700'
-                                  : (response.visibility === 'full'
+                                  : (normalizeResponseVisibility(response.visibility) === 'full'
                                     ? 'bg-green-100 text-green-700'
                                     : 'bg-slate-100 text-slate-700')
                               }>
                                 {hiddenForViewer
                                   ? 'not_shared'
-                                  : (String(response.visibility || '').toLowerCase() === 'partial' ? 'hidden' : response.visibility)}
+                                  : (normalizeResponseVisibility(response.visibility) === 'hidden' ? 'hidden' : (response.visibility || 'full'))}
                               </Badge>
                             </div>
                             <div className="bg-slate-50 p-3 rounded-lg">
@@ -1901,6 +2097,67 @@ export default function ProposalDetail() {
                     )}
                   </CardContent>
                 </Card>
+
+                {isRecipientView && (
+                  <Card className="border-0 shadow-sm">
+                    <CardHeader>
+                      <CardTitle>Your Details (Party B)</CardTitle>
+                      <CardDescription>
+                        You can edit only Party B fields. Party A values remain read-only.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      {recipientEditableQuestions.length === 0 && (
+                        <p className="text-slate-500 text-sm">No editable Party B fields were found.</p>
+                      )}
+
+                      {recipientEditableQuestions.map((question) => (
+                        <div key={question.questionId} className="border rounded-lg p-3 space-y-2">
+                          <Label className="font-medium text-slate-900">{question.label || question.questionId}</Label>
+                          {question.description && (
+                            <p className="text-xs text-slate-500">{question.description}</p>
+                          )}
+                          {renderRecipientEditableField(question)}
+                          <div className="flex items-center gap-2 pt-1">
+                            <Checkbox
+                              id={`recipient-visibility-${question.questionId}`}
+                              checked={normalizeResponseVisibility((recipientEdits[question.questionId] || {}).visibility) === 'hidden'}
+                              onCheckedChange={(nextChecked) => handleRecipientEditChange(question.questionId, {
+                                visibility: nextChecked === true ? 'hidden' : 'full'
+                              })}
+                              disabled={!canEditRecipient || saveRecipientResponsesMutation.isPending}
+                            />
+                            <Label htmlFor={`recipient-visibility-${question.questionId}`} className="text-sm text-slate-700">
+                              Keep this response confidential
+                            </Label>
+                          </div>
+                        </div>
+                      ))}
+
+                      <div className="flex flex-wrap items-center gap-2 pt-2">
+                        <Button
+                          onClick={() => saveRecipientResponsesMutation.mutate()}
+                          disabled={!canEditRecipient || saveRecipientResponsesMutation.isPending || recipientEditableQuestions.length === 0}
+                          className="bg-blue-600 hover:bg-blue-700"
+                        >
+                          {saveRecipientResponsesMutation.isPending ? 'Saving...' : 'Save Changes'}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          onClick={() => runSharedReevaluationMutation.mutate()}
+                          disabled={!canReevaluate || runSharedReevaluationMutation.isPending}
+                        >
+                          <RefreshCw className="w-4 h-4 mr-2" />
+                          {runSharedReevaluationMutation.isPending ? 'Re-evaluating...' : 'Re-evaluate'}
+                        </Button>
+                      </div>
+
+                      {!user && (
+                        <p className="text-xs text-amber-700">Sign in is required for save and re-evaluate actions.</p>
+                      )}
+                    </CardContent>
+                  </Card>
+                )}
               </div>
 
               {/* Sidebar */}

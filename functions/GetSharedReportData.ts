@@ -3,6 +3,7 @@ import { toQuestionLookup, toRecipientEditableQuestionIds, validateShareLinkAcce
 
 const PARTY_A_KEYS = new Set(['a', 'party_a', 'proposer']);
 const PARTY_B_KEYS = new Set(['b', 'party_b', 'recipient', 'counterparty']);
+const RECEIVED_RECORD_ACTION = 'shared_proposal_received';
 const NO_CACHE_HEADERS = {
   'Cache-Control': 'no-store, no-cache, must-revalidate',
   Pragma: 'no-cache',
@@ -36,6 +37,30 @@ function asString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeEmail(value: unknown): string | null {
+  const raw = asString(value);
+  return raw ? raw.toLowerCase() : null;
+}
+
+function parseObjectField(value: unknown): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      return {};
+    }
+  }
+
+  return {};
 }
 
 function extractProposalId(source: any): string | null {
@@ -220,14 +245,7 @@ function buildPartyAResponseView(response: any, questionLookup: Record<string, a
 }
 
 function buildRecipientResponseView(response: any) {
-  const partyAResponse = isPartyAResponse(response);
-  const subjectParty = String(response?.subject_party || response?.subjectParty || '').toLowerCase();
-  const isCounterpartyClaim =
-    subjectParty === 'b' ||
-    subjectParty === 'party_b' ||
-    subjectParty === 'recipient' ||
-    response?.is_about_counterparty === true;
-  const hidden = (partyAResponse && !isCounterpartyClaim) || String(response?.visibility || '').toLowerCase() === 'hidden';
+  const hidden = normalizeVisibility(response?.visibility) === 'hidden';
 
   return {
     id: response?.id || null,
@@ -608,6 +626,95 @@ function dedupeById(records: any[]) {
   });
 }
 
+function extractReceivedProposalId(row: any): string | null {
+  if (!row || typeof row !== 'object') return null;
+  const details = parseObjectField(row?.details);
+  return asString(
+    row?.entity_id ||
+    row?.proposal_id ||
+    row?.proposalId ||
+    details?.proposal_id ||
+    details?.proposalId ||
+    details?.linked_proposal_id ||
+    details?.linkedProposalId ||
+    null
+  );
+}
+
+async function ensureReceivedProposalRecord(
+  base44: any,
+  {
+    proposalId,
+    proposal,
+    shareLink,
+    currentUser
+  }: {
+    proposalId: string | null;
+    proposal: any;
+    shareLink: any;
+    currentUser: any;
+  }
+) {
+  const normalizedProposalId = asString(proposalId);
+  const recipientUserId = asString(currentUser?.id);
+  const recipientEmail = normalizeEmail(currentUser?.email);
+  if (!normalizedProposalId || !recipientUserId || !recipientEmail) {
+    return {
+      ensured: false,
+      created: false,
+      recordId: null
+    };
+  }
+
+  const existingRows = await base44.asServiceRole.entities.AuditLog
+    .filter({ user_id: recipientUserId, action: RECEIVED_RECORD_ACTION }, '-created_date', 200)
+    .catch(() => []);
+
+  const existingRecord = existingRows.find((row: any) => {
+    return extractReceivedProposalId(row) === normalizedProposalId;
+  }) || null;
+  const existingDetails = parseObjectField(existingRecord?.details);
+  const openedAt = new Date().toISOString();
+
+  const payload = {
+    entity_type: 'Proposal',
+    entity_id: normalizedProposalId,
+    user_id: recipientUserId,
+    user_email: recipientEmail,
+    action: RECEIVED_RECORD_ACTION,
+    details: {
+      proposalId: normalizedProposalId,
+      proposal_id: normalizedProposalId,
+      proposalTitle: asString(proposal?.title) || null,
+      templateName: asString(proposal?.template_name) || null,
+      partyAEmail: normalizeEmail(proposal?.party_a_email),
+      senderEmail: normalizeEmail(proposal?.party_a_email),
+      recipientEmail,
+      token: asString(shareLink?.token),
+      shareLinkId: asString(shareLink?.id),
+      source: 'shared_link_open',
+      openedAt,
+      firstOpenedAt: asString(existingDetails?.firstOpenedAt) || existingRecord?.created_date || openedAt
+    }
+  };
+
+  if (existingRecord?.id) {
+    await base44.asServiceRole.entities.AuditLog.update(existingRecord.id, payload);
+    return {
+      ensured: true,
+      created: false,
+      recordId: existingRecord.id
+    };
+  }
+
+  const created = await base44.asServiceRole.entities.AuditLog.create(payload);
+  return {
+    ensured: true,
+    created: true,
+    recordId: asString(created?.id)
+  };
+}
+
 Deno.serve(async (req) => {
   const correlationId = `shared_resolve_${Date.now()}_${Math.random().toString(36).substring(7)}`;
 
@@ -725,6 +832,31 @@ Deno.serve(async (req) => {
         permissions,
         correlationId
       }, 404);
+    }
+
+    const currentUser = await base44.auth.me().catch(() => null);
+    let receivedRecord = {
+      ensured: false,
+      created: false,
+      recordId: null as string | null
+    };
+    try {
+      receivedRecord = await ensureReceivedProposalRecord(base44, {
+        proposalId: resolvedProposalId,
+        proposal,
+        shareLink,
+        currentUser
+      });
+    } catch (recordError) {
+      const err = recordError instanceof Error ? recordError : new Error(String(recordError));
+      logWarn({
+        correlationId,
+        event: 'shared_received_record_failed',
+        proposalId: resolvedProposalId,
+        shareLinkId: shareLink?.id || null,
+        recipientUserId: asString(currentUser?.id),
+        message: err.message
+      });
     }
 
     if (!documentComparison && proposal?.document_comparison_id) {
@@ -933,6 +1065,7 @@ Deno.serve(async (req) => {
       reason: 'OK',
       message: 'Shared report resolved',
       correlationId,
+      receivedRecord,
       proposalId: resolvedProposalId,
       reportId,
       evaluationId: normalizedShareLink.evaluationItemId,

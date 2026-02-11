@@ -362,6 +362,24 @@ export default function SharedReport() {
 
       const resolvedShareData = data.shareLink || {};
       const resolvedReportData = data.reportData || {};
+      const resolvedProposalView = data?.recipientView?.proposal || data?.proposalView || {};
+      const contextProposalTitle =
+        resolvedProposalView?.title ||
+        resolvedReportData?.title ||
+        resolvedShareData?.proposalTitle ||
+        null;
+      const contextTemplateName =
+        resolvedProposalView?.template_name ||
+        resolvedProposalView?.templateName ||
+        resolvedReportData?.template_name ||
+        resolvedReportData?.templateName ||
+        null;
+      const contextPartyAEmail =
+        resolvedProposalView?.party_a_email ||
+        resolvedProposalView?.partyAEmail ||
+        data?.partyAView?.proposal?.party_a_email ||
+        data?.partyAView?.proposal?.partyAEmail ||
+        null;
       const resolvedProposalId =
         data.proposalId ||
         resolvedShareData.proposalId ||
@@ -373,6 +391,10 @@ export default function SharedReport() {
         token,
         proposalId: resolvedProposalId || null,
         role: 'recipient',
+        proposalTitle: contextProposalTitle,
+        templateName: contextTemplateName,
+        partyAEmail: contextPartyAEmail,
+        senderEmail: contextPartyAEmail,
         recipientEmail: data?.shareLink?.recipientEmail || null,
         currentUserEmail: data?.currentUserEmail || null,
         evaluationItemId: data.evaluationId || resolvedShareData.evaluationItemId || resolvedReportData.evaluationItemId || null,
