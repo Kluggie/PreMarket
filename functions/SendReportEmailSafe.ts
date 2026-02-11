@@ -506,7 +506,14 @@ https://getpremarket.com`;
         shareUrl,
         token: shareToken,
         debugShareUrlSent: shareUrl,
-        debugShareUrlPath: new URL(shareUrl).pathname
+        debugShareUrlPath: new URL(shareUrl).pathname,
+        shareLinkDebug: {
+          snapshotId: shareLinkResult.data?.snapshotId || shareLinkResult.data?.snapshot_id || null,
+          aLen: shareLinkResult.data?.aLen ?? shareLinkResult.data?.snapshot_a_len ?? null,
+          bLen: shareLinkResult.data?.bLen ?? shareLinkResult.data?.snapshot_b_len ?? null,
+          payloadPathUsed: shareLinkResult.data?.payloadPathUsed ?? shareLinkResult.data?.snapshot_payload_path ?? null,
+          payloadTopKeys: shareLinkResult.data?.payloadTopKeys ?? shareLinkResult.data?.snapshot_payload_keys ?? null
+        }
       });
 
     } catch (emailError) {
