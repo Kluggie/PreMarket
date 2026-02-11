@@ -320,6 +320,36 @@ Deno.serve(async (req) => {
       count: materializationResult.count
     });
 
+    // Sanity check: verify ProposalResponse rows exist (debug mode only)
+    const urlParams = new URL(req.url).searchParams;
+    const debugMode = urlParams.get('debug') === '1';
+    let debugCounts = null;
+    
+    if (debugMode) {
+      const verifyResponses = await base44.asServiceRole.entities.ProposalResponse.filter(
+        { proposal_id: resolvedProposalId },
+        '-created_date',
+        50
+      ).catch(() => []);
+      
+      const partyACounts = verifyResponses.filter((r: any) => r.entered_by_party === 'a').length;
+      const partyBCounts = verifyResponses.filter((r: any) => r.entered_by_party === 'b').length;
+      const visibleCounts = verifyResponses.filter((r: any) => 
+        String(r.visibility || 'full').toLowerCase() !== 'hidden'
+      ).length;
+      const hiddenCounts = verifyResponses.filter((r: any) => 
+        String(r.visibility || 'full').toLowerCase() === 'hidden'
+      ).length;
+      
+      debugCounts = {
+        total: verifyResponses.length,
+        byParty: { a: partyACounts, b: partyBCounts },
+        byVisibility: { visible: visibleCounts, hidden: hiddenCounts }
+      };
+      
+      console.log(`[${correlationId}] DEBUG ProposalResponse sanity check:`, JSON.stringify(debugCounts));
+    }
+
     let snapshotId: string | null = null;
     let snapshotVersion: number | null = null;
     try {
