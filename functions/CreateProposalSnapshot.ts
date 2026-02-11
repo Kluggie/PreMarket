@@ -511,15 +511,16 @@ Deno.serve(async (req) => {
       proposalType: snapshotData.type,
       templateId: asString(proposal?.template_id),
       responseCountFound: allResponses.length,
+      partyACount: partyAResponseRows.length,
+      partyBCount: partyBResponseRows.length,
       visibleCount: fieldCounts.visible,
       hiddenCount: fieldCounts.hidden,
-      templateResponses: fieldCounts.templateResponses,
+      partyAVisible: visiblePartyACount,
+      partyAHidden: hiddenPartyACount,
+      partyBFields: partyBCount,
       comparisonFields: fieldCounts.comparisonFields,
-      partyAResponsesLength: partyAResponses.length,
       hasDocA: !!comparisonView?.docA?.text,
       hasDocB: !!comparisonView?.docB?.text,
-      docALength: comparisonView?.docA?.text?.length || 0,
-      docBLength: comparisonView?.docB?.text?.length || 0,
       keys: Object.keys(snapshotData || {})
     }));
 
