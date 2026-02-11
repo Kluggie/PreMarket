@@ -1140,6 +1140,25 @@ Deno.serve(async (req) => {
         };
 
         const snapshotFieldCounts = parseObjectField(snapshotMeta?.fieldCounts);
+        const snapshotDebugKeys = safeKeyList(snapshotPayload);
+        
+        // Debug check: if visible count is 0 but we have responses, something is wrong
+        const hasEmptySnapshotIssue = (snapshotFieldCounts?.visible === 0 || !snapshotFieldCounts?.visible) && 
+                                      (rawPartyA.length > 0 || !!comparisonView);
+        
+        if (hasEmptySnapshotIssue) {
+          console.error('[GetSharedReportData] EMPTY_SNAPSHOT detected', JSON.stringify({
+            snapshotId,
+            snapshotVersion: version,
+            fieldCounts: snapshotFieldCounts,
+            rawPartyALength: rawPartyA.length,
+            partyAResponsesLength: partyAResponses.length,
+            hasComparisonView: !!comparisonView,
+            snapshotPayloadKeys: snapshotDebugKeys,
+            snapshotMetaKeys: safeKeyList(snapshotMeta)
+          }));
+        }
+        
         logInfo({
           correlationId,
           event: 'shared_report_snapshot_resolved',
@@ -1151,7 +1170,9 @@ Deno.serve(async (req) => {
           consumedView: validation.consumedView,
           sharedFieldCount: partyAResponses.length,
           fieldCounts: snapshotFieldCounts,
-          hasComparisonView: !!comparisonView
+          snapshotDebugKeys,
+          hasComparisonView: !!comparisonView,
+          hasEmptySnapshotIssue
         });
 
         return respond({
@@ -1166,11 +1187,22 @@ Deno.serve(async (req) => {
           snapshotId,
           snapshotVersion: version,
           version,
+          snapshotMeta: {
+            ...snapshotMeta,
+            fieldCounts: snapshotFieldCounts
+          },
+          snapshotDebug: {
+            keys: snapshotDebugKeys,
+            partyAResponsesLength: partyAResponses.length,
+            rawPartyALength: rawPartyA.length,
+            hasComparisonView: !!comparisonView
+          },
           debug: {
             usedFallback: false,
             hasSnapshotId: true,
             sharedFieldCount: partyAResponses.length,
-            snapshotSource: 'ProposalSnapshot'
+            snapshotSource: 'ProposalSnapshot',
+            fieldCounts: snapshotFieldCounts
           },
           snapshot: {
             id: snapshotId,

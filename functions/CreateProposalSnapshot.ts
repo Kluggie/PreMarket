@@ -450,16 +450,21 @@ Deno.serve(async (req) => {
       fieldCounts
     };
 
-    console.log('[CreateProposalSnapshot]', JSON.stringify({
+    console.log('[SnapshotBuild]', JSON.stringify({
       sourceProposalId,
-      type: snapshotData.type,
+      proposalType: snapshotData.type,
+      templateId: asString(proposal?.template_id),
+      responseCountFound: allResponses.length,
+      visibleCount: fieldCounts.visible,
+      hiddenCount: fieldCounts.hidden,
+      templateResponses: fieldCounts.templateResponses,
+      comparisonFields: fieldCounts.comparisonFields,
+      partyAResponsesLength: visiblePartyAResponses.length,
       hasDocA: !!comparisonView?.docA?.text,
       hasDocB: !!comparisonView?.docB?.text,
       docALength: comparisonView?.docA?.text?.length || 0,
       docBLength: comparisonView?.docB?.text?.length || 0,
-      docAHidden: comparisonView?.docA?.hiddenCount || 0,
-      docBHidden: comparisonView?.docB?.hiddenCount || 0,
-      fieldCounts
+      keys: Object.keys(snapshotData || {})
     }));
 
     const created = await base44.asServiceRole.entities.ProposalSnapshot.create({

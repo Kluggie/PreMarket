@@ -633,12 +633,14 @@ Deno.serve(async (req) => {
     const verifiedShareLink = verifyRows?.[0] || shareLink;
     const persistedSnapshotId = verifiedShareLink?.snapshot_id || verifiedShareLink?.snapshotId || null;
     
-    console.log(`[${correlationId}] CreateShareLink verification`, JSON.stringify({
+    console.log(`[ShareLinkSave]`, JSON.stringify({
+      correlationId,
       shareLinkId: shareLink.id,
-      snapshotIdSent: snapshotId,
+      snapshotId,
+      snapshotVersion,
       snapshotIdPersisted: persistedSnapshotId,
       hasSnapshotId: !!persistedSnapshotId,
-      snapshotVersion
+      verified: snapshotId === persistedSnapshotId
     }));
 
     return Response.json({
