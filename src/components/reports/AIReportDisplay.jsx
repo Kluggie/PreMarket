@@ -479,27 +479,6 @@ export function SharedFinanceReportDisplay({ report }) {
             </div>
           )}
 
-          {report.output_report_json.followup_questions?.length > 0 && (
-            <div>
-              <h4 className="font-semibold mb-2 flex items-center gap-2">
-                <MessageSquare className="w-4 h-4 text-blue-600" />
-                Follow-up Questions
-              </h4>
-              <div className="space-y-2">
-                {report.output_report_json.followup_questions.map((q, idx) => (
-                  <div key={idx} className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
-                    <div className="flex items-start gap-2">
-                      <Badge variant="outline" className="text-xs">{q.priority}</Badge>
-                      <div className="flex-1">
-                        <p className="text-sm font-medium">{q.question_text}</p>
-                        <p className="text-xs text-slate-600 mt-1">{q.why_this_matters}</p>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
         </CardContent>
       </Card>
     </div>
