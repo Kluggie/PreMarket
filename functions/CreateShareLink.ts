@@ -808,7 +808,8 @@ Deno.serve(async (req) => {
       debug: {
         hasSnapshotId: !!persistedSnapshotId,
         snapshotIdPersisted: persistedSnapshotId,
-        usedFallback: false
+        usedFallback: false,
+        ...(debugCounts ? { proposalResponseCounts: debugCounts } : {})
       },
       correlationId
     });
