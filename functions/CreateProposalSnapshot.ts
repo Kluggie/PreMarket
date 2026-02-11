@@ -375,39 +375,32 @@ Deno.serve(async (req) => {
     const version = await getNextVersion(base44, sourceProposalId);
     const createdAt = new Date().toISOString();
 
-    // Include document comparison if present
+    // Include document comparison - AGGRESSIVE LOOKUP
     let comparisonView: any = null;
     const docComparisonId = asString(proposal?.document_comparison_id);
     let comparison: any = null;
 
-    if (docComparisonId) {
-      const comparisons = await base44.asServiceRole.entities.DocumentComparison.filter(
-        { id: docComparisonId },
-        '-created_date',
-        1
-      ).catch(() => []);
-      comparison = comparisons?.[0] || null;
-    }
+    // Try all possible lookup methods
+    const comparisonBuckets = await Promise.all([
+      docComparisonId ? base44.asServiceRole.entities.DocumentComparison.filter({ id: docComparisonId }, '-created_date', 1).catch(() => []) : [],
+      base44.asServiceRole.entities.DocumentComparison.filter({ proposal_id: sourceProposalId }, '-created_date', 1).catch(() => []),
+      base44.asServiceRole.entities.DocumentComparison.filter({ proposalId: sourceProposalId }, '-created_date', 1).catch(() => []),
+      base44.asServiceRole.entities.DocumentComparison.filter({ 'data.proposal_id': sourceProposalId }, '-created_date', 1).catch(() => []),
+      base44.asServiceRole.entities.DocumentComparison.filter({ 'data.proposalId': sourceProposalId }, '-created_date', 1).catch(() => [])
+    ]);
 
-    // Fallback: try finding by proposal_id if not found
-    if (!comparison) {
-      const byProposal = await base44.asServiceRole.entities.DocumentComparison.filter(
-        { proposal_id: sourceProposalId },
-        '-created_date',
-        1
-      ).catch(() => []);
-      comparison = byProposal?.[0] || null;
-    }
+    comparison = dedupeById(comparisonBuckets.flat())?.[0] || null;
 
-    // Fallback: try data.proposal_id
-    if (!comparison) {
-      const byDataProposal = await base44.asServiceRole.entities.DocumentComparison.filter(
-        { 'data.proposal_id': sourceProposalId },
-        '-created_date',
-        1
-      ).catch(() => []);
-      comparison = byDataProposal?.[0] || null;
-    }
+    console.log('[SnapshotDocComparison]', JSON.stringify({
+      sourceProposalId,
+      docComparisonIdFromProposal: docComparisonId,
+      foundComparison: !!comparison,
+      comparisonId: asString(comparison?.id),
+      hasDocAText: !!comparison?.doc_a_plaintext,
+      hasDocBText: !!comparison?.doc_b_plaintext,
+      docALength: String(comparison?.doc_a_plaintext || '').length,
+      docBLength: String(comparison?.doc_b_plaintext || '').length
+    }));
 
     if (comparison) {
       const rawDocAText = String(comparison.doc_a_plaintext ?? '');
@@ -415,52 +408,66 @@ Deno.serve(async (req) => {
       const rawDocASpans = Array.isArray(comparison.doc_a_spans_json) ? comparison.doc_a_spans_json : [];
       const rawDocBSpans = Array.isArray(comparison.doc_b_spans_json) ? comparison.doc_b_spans_json : [];
 
-        // Remove hidden text
-        const removeHidden = (text: string, spans: any[]) => {
-          const normalizedSpans = spans
-            .map((span: any) => {
-              const level = String(span?.level || '').toLowerCase();
-              if (!['hidden', 'confidential'].includes(level)) return null;
-              const start = Number(span?.start);
-              const end = Number(span?.end);
-              if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
-              return { start, end };
-            })
-            .filter(Boolean)
-            .sort((a: any, b: any) => a.start - b.start);
+      // Remove hidden text
+      const removeHidden = (text: string, spans: any[]) => {
+        const normalizedSpans = spans
+          .map((span: any) => {
+            const level = String(span?.level || '').toLowerCase();
+            if (!['hidden', 'confidential'].includes(level)) return null;
+            const start = Number(span?.start);
+            const end = Number(span?.end);
+            if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+            return { start, end };
+          })
+          .filter(Boolean)
+          .sort((a: any, b: any) => a.start - b.start);
 
-          if (normalizedSpans.length === 0) return { text, hiddenCount: 0 };
+        if (normalizedSpans.length === 0) return { text, hiddenCount: 0 };
 
-          let output = '';
-          let cursor = 0;
-          for (const span of normalizedSpans) {
-            if (span.start > cursor) output += text.slice(cursor, span.start);
-            cursor = Math.max(cursor, span.end);
-          }
-          if (cursor < text.length) output += text.slice(cursor);
-          return { text: output, hiddenCount: normalizedSpans.length };
-        };
-
-        const redactedDocA = removeHidden(rawDocAText, rawDocASpans);
-        const redactedDocB = removeHidden(rawDocBText, rawDocBSpans);
-
-        comparisonView = {
-          id: asString(comparison?.id) || docComparisonId,
-          title: asString(comparison.title) || null,
-          docA: {
-            label: asString(comparison.party_a_label) || 'Document A',
-            source: asString(comparison.doc_a_source) || 'typed',
-            text: redactedDocA.text,
-            hiddenCount: redactedDocA.hiddenCount
-          },
-          docB: {
-            label: asString(comparison.party_b_label) || 'Document B',
-            source: asString(comparison.doc_b_source) || 'typed',
-            text: redactedDocB.text,
-            hiddenCount: redactedDocB.hiddenCount
-          }
-        };
+        let output = '';
+        let cursor = 0;
+        for (const span of normalizedSpans) {
+          if (span.start > cursor) output += text.slice(cursor, span.start);
+          cursor = Math.max(cursor, span.end);
         }
+        if (cursor < text.length) output += text.slice(cursor);
+        return { text: output, hiddenCount: normalizedSpans.length };
+      };
+
+      const redactedDocA = removeHidden(rawDocAText, rawDocASpans);
+      const redactedDocB = removeHidden(rawDocBText, rawDocBSpans);
+
+      comparisonView = {
+        id: asString(comparison?.id) || docComparisonId,
+        title: asString(comparison.title) || null,
+        docA: {
+          label: asString(comparison.party_a_label) || 'Document A',
+          source: asString(comparison.doc_a_source) || 'typed',
+          text: redactedDocA.text,
+          hiddenCount: redactedDocA.hiddenCount
+        },
+        docB: {
+          label: asString(comparison.party_b_label) || 'Document B',
+          source: asString(comparison.doc_b_source) || 'typed',
+          text: redactedDocB.text,
+          hiddenCount: redactedDocB.hiddenCount
+        }
+      };
+
+      console.log('[SnapshotDocComparisonBuilt]', JSON.stringify({
+        comparisonViewId: comparisonView.id,
+        docATextLength: comparisonView.docA.text.length,
+        docBTextLength: comparisonView.docB.text.length,
+        docAHidden: comparisonView.docA.hiddenCount,
+        docBHidden: comparisonView.docB.hiddenCount
+      }));
+    } else {
+      console.warn('[SnapshotDocComparisonMissing]', JSON.stringify({
+        sourceProposalId,
+        proposalDocCompId: docComparisonId,
+        message: 'No document comparison found'
+      }));
+    }
 
     // Calculate field counts - count documents that have visible text
     const visibleResponseCount = partyAResponses.filter(r => r.visibility !== 'hidden').length;
