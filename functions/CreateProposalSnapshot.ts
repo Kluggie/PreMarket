@@ -236,71 +236,77 @@ Deno.serve(async (req) => {
 
     let allResponses = await getProposalResponses(base44, sourceProposalId);
     
-    // FALLBACK: If no saved responses, read from draft_state_json
-    if (allResponses.length === 0 && proposal.draft_state_json) {
-      const draftState = proposal.draft_state_json;
-      const rawResponses = draftState?.responses || {};
-      const rawVisibility = draftState?.visibilitySettings || {};
+    // FALLBACK: If no saved responses, read from EvaluationItem.step_state_json or Proposal.draft_state_json
+    if (allResponses.length === 0) {
+      const evalItems = await base44.asServiceRole.entities.EvaluationItem.filter({ linked_proposal_id: sourceProposalId }, '-created_date', 1).catch(() => []);
+      const evalItem = evalItems?.[0] || null;
+      const stepStateJson = evalItem?.step_state_json || proposal?.draft_state_json || null;
       
-      const draftResponses: any[] = [];
-      for (const [responseKey, rawValue] of Object.entries(rawResponses)) {
-        if (responseKey.startsWith('_')) continue;
+      if (stepStateJson) {
+        const rawResponses = stepStateJson?.responses || {};
+        const rawVisibility = stepStateJson?.visibilitySettings || {};
         
-        const [questionId, subjectFromKey] = responseKey.includes('__') 
-          ? responseKey.split('__') 
-          : [responseKey, null];
-        
-        if (!questionId) continue;
-        const question = questionLookup[questionId] || null;
-        
-        // Determine subject party
-        let subjectParty = 'a';
-        const normalizedFromKey = String(subjectFromKey || '').trim().toLowerCase();
-        if (normalizedFromKey === 'b' || normalizedFromKey === 'party_b' || normalizedFromKey === 'recipient') {
-          subjectParty = 'b';
-        } else if (question) {
-          const party = String(question?.party || question?.party_key || question?.subject_party || '').toLowerCase();
-          if (party === 'b' || party === 'party_b' || party === 'recipient' || party === 'counterparty') {
+        const draftResponses: any[] = [];
+        for (const [responseKey, rawValue] of Object.entries(rawResponses)) {
+          if (responseKey.startsWith('_')) continue;
+          
+          const [questionId, subjectFromKey] = responseKey.includes('__') 
+            ? responseKey.split('__') 
+            : [responseKey, null];
+          
+          if (!questionId) continue;
+          const question = questionLookup[questionId] || null;
+          
+          // Determine subject party
+          let subjectParty = 'a';
+          const normalizedFromKey = String(subjectFromKey || '').trim().toLowerCase();
+          if (normalizedFromKey === 'b' || normalizedFromKey === 'party_b' || normalizedFromKey === 'recipient') {
             subjectParty = 'b';
+          } else if (question) {
+            const party = String(question?.party || question?.party_key || question?.subject_party || '').toLowerCase();
+            if (party === 'b' || party === 'party_b' || party === 'recipient' || party === 'counterparty') {
+              subjectParty = 'b';
+            } else if (question?.is_about_counterparty === true) {
+              subjectParty = 'b';
+            }
           }
+          
+          const visibility = normalizeVisibility(rawVisibility[responseKey] ?? rawVisibility[questionId]);
+          
+          let valueType = 'text';
+          let value: any = rawValue;
+          let rangeMin: number | null = null;
+          let rangeMax: number | null = null;
+          
+          if (rawValue && typeof rawValue === 'object' && !Array.isArray(rawValue)) {
+            const type = String((rawValue as any).type || '').toLowerCase();
+            if (type === 'range') {
+              valueType = 'range';
+              value = null;
+              rangeMin = Number((rawValue as any).min);
+              rangeMax = Number((rawValue as any).max);
+              if (!Number.isFinite(rangeMin)) rangeMin = null;
+              if (!Number.isFinite(rangeMax)) rangeMax = null;
+            }
+          }
+          
+          draftResponses.push({
+            id: `draft_${questionId}`,
+            proposal_id: sourceProposalId,
+            question_id: questionId,
+            entered_by_party: 'a',
+            subject_party: subjectParty,
+            is_about_counterparty: subjectParty === 'b',
+            value_type: valueType,
+            value: value === null || value === undefined ? null : String(value),
+            range_min: rangeMin,
+            range_max: rangeMax,
+            visibility
+          });
         }
         
-        // Only include Party A questions
-        if (subjectParty === 'b') continue;
-        
-        const visibility = normalizeVisibility(rawVisibility[responseKey] ?? rawVisibility[questionId]);
-        
-        let valueType = 'text';
-        let value: any = rawValue;
-        let rangeMin: number | null = null;
-        let rangeMax: number | null = null;
-        
-        if (rawValue && typeof rawValue === 'object' && !Array.isArray(rawValue)) {
-          const type = String((rawValue as any).type || '').toLowerCase();
-          if (type === 'range') {
-            valueType = 'range';
-            value = null;
-            rangeMin = Number((rawValue as any).min);
-            rangeMax = Number((rawValue as any).max);
-            if (!Number.isFinite(rangeMin)) rangeMin = null;
-            if (!Number.isFinite(rangeMax)) rangeMax = null;
-          }
-        }
-        
-        draftResponses.push({
-          id: `draft_${questionId}`,
-          proposal_id: sourceProposalId,
-          question_id: questionId,
-          entered_by_party: 'a',
-          value_type: valueType,
-          value: value === null || value === undefined ? null : String(value),
-          range_min: rangeMin,
-          range_max: rangeMax,
-          visibility
-        });
+        allResponses = draftResponses;
       }
-      
-      allResponses = draftResponses;
     }
     
     const partyAResponses = allResponses
