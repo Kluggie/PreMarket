@@ -394,12 +394,20 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Calculate field counts
+    // Calculate field counts - count documents that have visible text
     const visibleResponseCount = visiblePartyAResponses.length;
     const hiddenResponseCount = allResponses.filter((r) => isPartyAResponse(r) && isExplicitlyHidden(r)).length;
-    const comparisonFieldCount = comparisonView ? 2 : 0; // docA + docB
+    
+    let comparisonFieldCount = 0;
+    let comparisonHiddenCount = 0;
+    if (comparisonView) {
+      if (comparisonView.docA?.text && comparisonView.docA.text.length > 0) comparisonFieldCount++;
+      if (comparisonView.docB?.text && comparisonView.docB.text.length > 0) comparisonFieldCount++;
+      comparisonHiddenCount = (comparisonView.docA?.hiddenCount || 0) + (comparisonView.docB?.hiddenCount || 0);
+    }
+    
     const totalVisible = visibleResponseCount + comparisonFieldCount;
-    const totalHidden = hiddenResponseCount + (comparisonView ? (comparisonView.docA.hiddenCount + comparisonView.docB.hiddenCount) : 0);
+    const totalHidden = hiddenResponseCount + comparisonHiddenCount;
 
     const snapshotData = {
       type: comparisonView ? 'document_comparison' : 'template',
@@ -449,6 +457,8 @@ Deno.serve(async (req) => {
       hasDocB: !!comparisonView?.docB?.text,
       docALength: comparisonView?.docA?.text?.length || 0,
       docBLength: comparisonView?.docB?.text?.length || 0,
+      docAHidden: comparisonView?.docA?.hiddenCount || 0,
+      docBHidden: comparisonView?.docB?.hiddenCount || 0,
       fieldCounts
     }));
 
