@@ -77,7 +77,13 @@ export default function DocumentComparisonCreate() {
   
   const [jsonImportA, setJsonImportA] = useState('');
   const [jsonImportB, setJsonImportB] = useState('');
+  const [showAdvancedA, setShowAdvancedA] = useState(false);
+  const [showAdvancedB, setShowAdvancedB] = useState(false);
+  const [syncScroll, setSyncScroll] = useState(false);
   const [lastSavedState, setLastSavedState] = useState(null);
+  
+  const docAPreviewRef = React.useRef(null);
+  const docBPreviewRef = React.useRef(null);
 
   useEffect(() => {
     base44.auth.me().then(setUser).catch(() => setUser(null));
@@ -669,6 +675,14 @@ Verification Status: ${org.verification_status || 'N/A'}`;
 
   const progress = (step / 4) * 100;
 
+  // Synced scrolling handler
+  const handleSyncScroll = (sourceRef, targetRef) => {
+    if (!syncScroll || !sourceRef.current || !targetRef.current) return;
+    
+    const scrollPercentage = sourceRef.current.scrollTop / (sourceRef.current.scrollHeight - sourceRef.current.clientHeight);
+    targetRef.current.scrollTop = scrollPercentage * (targetRef.current.scrollHeight - targetRef.current.clientHeight);
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 py-8">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -686,11 +700,13 @@ Verification Status: ${org.verification_status || 'N/A'}`;
         </div>
 
         <div className="mb-8">
-          <div className="flex items-center justify-between text-sm text-slate-500 mb-2">
-            <span>Step {step} of 4</span>
-            <span>{Math.round(progress)}% complete</span>
+          <div className="flex items-center justify-between text-sm mb-3">
+            <span className={`font-semibold ${step === 1 ? 'text-blue-600' : step > 1 ? 'text-slate-400' : 'text-slate-500'}`}>
+              Step {step} of 4
+            </span>
+            <span className="text-slate-500">{Math.round(progress)}% complete</span>
           </div>
-          <Progress value={progress} className="h-2" />
+          <Progress value={progress} className="h-3" />
         </div>
 
         <AnimatePresence mode="wait">
@@ -831,7 +847,7 @@ Verification Status: ${org.verification_status || 'N/A'}`;
 
           {/* Step 2: Content Input */}
           {step === 2 && (
-            <motion.div key="step2" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-6">
+            <motion.div key="step2" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-8">
               {/* URL Extraction */}
               {(docASource === 'url' || docBSource === 'url') && (
                 <Card className="border-2 border-purple-200 bg-purple-50">
@@ -896,15 +912,22 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                 </Card>
               )}
 
-              {/* Document A Input */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <FileText className="w-5 h-5 text-blue-600" />
-                    {partyALabel}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
+              {/* Side-by-Side Document Inputs */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Document A Input */}
+                <Card className="flex flex-col h-full">
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <FileText className="w-5 h-5 text-blue-600" />
+                        <CardTitle className="text-lg">{partyALabel}</CardTitle>
+                      </div>
+                      <Badge variant={docAText ? "default" : "outline"} className="text-xs">
+                        {docAText ? "Ready" : "Empty"}
+                      </Badge>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-4 flex-1 flex flex-col">
                   {docASource === 'uploaded' && (
                     <div className="space-y-3">
                       <div className="space-y-2">
@@ -1024,27 +1047,32 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                     </div>
                   )}
                   
-                  <div className="space-y-2">
-                    <Label>Document Content</Label>
-                    <Textarea 
-                      value={docAText}
-                      onChange={(e) => setDocAText(e.target.value)}
-                      placeholder="Enter, paste, or load document text..."
-                      className="min-h-[300px] font-mono text-sm"
-                    />
-                  </div>
-                </CardContent>
-              </Card>
+                    <div className="space-y-2 flex-1 flex flex-col">
+                      <Label>Document Content</Label>
+                      <Textarea 
+                        value={docAText}
+                        onChange={(e) => setDocAText(e.target.value)}
+                        placeholder="Enter, paste, or load document text..."
+                        className="flex-1 min-h-[400px] font-mono text-sm bg-slate-50/50 resize-none"
+                      />
+                    </div>
+                  </CardContent>
+                </Card>
 
-              {/* Document B Input */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <FileText className="w-5 h-5 text-indigo-600" />
-                    {partyBLabel}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
+                {/* Document B Input */}
+                <Card className="flex flex-col h-full">
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <FileText className="w-5 h-5 text-indigo-600" />
+                        <CardTitle className="text-lg">{partyBLabel}</CardTitle>
+                      </div>
+                      <Badge variant={docBText ? "default" : "outline"} className="text-xs">
+                        {docBText ? "Ready" : "Empty"}
+                      </Badge>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-4 flex-1 flex flex-col">
                   {docBSource === 'uploaded' && (
                     <div className="space-y-3">
                       <div className="space-y-2">
@@ -1164,19 +1192,20 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                     </div>
                   )}
                   
-                  <div className="space-y-2">
-                    <Label>Document Content</Label>
-                    <Textarea 
-                      value={docBText}
-                      onChange={(e) => setDocBText(e.target.value)}
-                      placeholder="Enter, paste, or load document text..."
-                      className="min-h-[300px] font-mono text-sm"
-                    />
-                  </div>
-                </CardContent>
-              </Card>
+                    <div className="space-y-2 flex-1 flex flex-col">
+                      <Label>Document Content</Label>
+                      <Textarea 
+                        value={docBText}
+                        onChange={(e) => setDocBText(e.target.value)}
+                        placeholder="Enter, paste, or load document text..."
+                        className="flex-1 min-h-[400px] font-mono text-sm bg-slate-50/50 resize-none"
+                      />
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
 
-              <div className="flex justify-between">
+              <div className="flex justify-between pt-4">
                 <Button variant="outline" onClick={async () => {
                   await saveDraft(1);
                   setStep(1);
@@ -1210,190 +1239,243 @@ Verification Status: ${org.verification_status || 'N/A'}`;
             </motion.div>
           )}
 
-          {/* Step 3: Highlighting (Read-Only) */}
+          {/* Step 3: Highlighting */}
           {step === 3 && (
-            <motion.div key="step3" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-6">
+            <motion.div key="step3" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-8">
               <Alert className="bg-blue-50 border-blue-200">
                 <Highlighter className="w-4 h-4 text-blue-600" />
                 <AlertDescription className="text-blue-800">
-                  <strong>How to highlight:</strong> Select text in the preview below, then click "Mark Hidden" (red).
-                  Highlighted content is hidden; all non-highlighted content remains visible.
+                  <strong>How to highlight:</strong> Select text in the preview below, then click "Mark Hidden".
+                  Highlighted content will be hidden from the shared report.
                 </AlertDescription>
               </Alert>
 
-              {/* Document A Highlighting */}
-              <Card>
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="flex items-center gap-2">
-                      <FileText className="w-5 h-5 text-blue-600" />
-                      {partyALabel}
-                    </CardTitle>
-                    <div className="flex gap-2">
-                      <Button 
-                        variant="outline" 
-                        size="sm"
-                        onClick={() => addHighlight('a', 'confidential')}
-                      >
-                        <span className="w-3 h-3 bg-red-500 rounded mr-2"></span>
-                        Mark Hidden
-                      </Button>
-                      <Button 
-                        variant="outline" 
-                        size="sm"
-                        onClick={() => exportHighlights('a')}
-                        disabled={docASpans.length === 0}
-                      >
-                        <Download className="w-4 h-4 mr-2" />
-                        Export
-                      </Button>
+              {/* Legend and Controls */}
+              <div className="flex items-center justify-between p-4 bg-slate-50 rounded-xl border border-slate-200">
+                <div className="flex items-center gap-6">
+                  <div className="flex items-center gap-2">
+                    <span className="w-4 h-4 bg-red-200 rounded"></span>
+                    <span className="text-sm text-slate-700">Hidden</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="w-4 h-4 bg-white border border-slate-300 rounded"></span>
+                    <span className="text-sm text-slate-700">Visible</span>
+                  </div>
+                </div>
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  onClick={() => setSyncScroll(!syncScroll)}
+                  className={syncScroll ? "bg-blue-50 border-blue-200" : ""}
+                >
+                  {syncScroll ? "✓ Sync Scrolling" : "Sync Scrolling"}
+                </Button>
+              </div>
+
+              {/* Side-by-Side Highlighting */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Document A Highlighting */}
+                <Card>
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <FileText className="w-5 h-5 text-blue-600" />
+                        <CardTitle className="text-lg">{partyALabel}</CardTitle>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          onClick={() => addHighlight('a', 'confidential')}
+                        >
+                          <span className="w-3 h-3 bg-red-500 rounded mr-2"></span>
+                          Mark Hidden
+                        </Button>
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          onClick={() => exportHighlights('a')}
+                          disabled={docASpans.length === 0}
+                        >
+                          <Download className="w-4 h-4" />
+                        </Button>
+                      </div>
                     </div>
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="p-4 border border-slate-200 rounded-xl bg-white max-h-96 overflow-auto">
-                    {renderHighlightedText(docAText, docASpans, 'preview-a')}
-                  </div>
-                  
-                  {docASpans.length > 0 && (
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <Label className="text-sm font-semibold">Applied Highlights ({docASpans.length})</Label>
-                        <div className="flex gap-1">
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div 
+                      ref={docAPreviewRef}
+                      onScroll={() => handleSyncScroll(docAPreviewRef, docBPreviewRef)}
+                      className="p-4 border border-slate-200 rounded-xl bg-white h-96 overflow-auto"
+                    >
+                      {renderHighlightedText(docAText, docASpans, 'preview-a')}
+                    </div>
+                    
+                    {docASpans.length > 0 && (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-sm font-semibold">Applied Highlights</Label>
                           <Badge className="bg-red-100 text-red-700 text-xs">
                             {docASpans.filter(s => s.level === 'confidential').length} hidden
                           </Badge>
                         </div>
-                      </div>
-                      <div className="space-y-2 max-h-32 overflow-y-auto">
-                        {docASpans.map((span, idx) => (
-                          <div key={idx} className="flex items-center justify-between text-sm bg-slate-50 p-2 rounded">
-                            <div className="flex items-center gap-2 flex-1 min-w-0">
-                              <span className="w-3 h-3 rounded flex-shrink-0 bg-red-500"></span>
-                              <span className="text-slate-600 truncate">
-                                {docAText.substring(span.start, Math.min(span.end, span.start + 50))}
-                                {span.end - span.start > 50 ? '...' : ''}
-                              </span>
+                        <div className="space-y-2 max-h-32 overflow-y-auto">
+                          {docASpans.map((span, idx) => (
+                            <div key={idx} className="flex items-center justify-between text-sm bg-slate-50 p-2 rounded">
+                              <div className="flex items-center gap-2 flex-1 min-w-0">
+                                <span className="w-3 h-3 rounded flex-shrink-0 bg-red-500"></span>
+                                <span className="text-slate-600 truncate">
+                                  {docAText.substring(span.start, Math.min(span.end, span.start + 50))}
+                                  {span.end - span.start > 50 ? '...' : ''}
+                                </span>
+                              </div>
+                              <Button variant="ghost" size="sm" onClick={() => removeHighlight('a', idx)}>
+                                <X className="w-4 h-4" />
+                              </Button>
                             </div>
-                            <Button variant="ghost" size="sm" onClick={() => removeHighlight('a', idx)}>
-                              <X className="w-4 h-4" />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* Advanced Section - Collapsed by Default */}
+                    <div className="border-t border-slate-200 pt-3">
+                      <Button 
+                        variant="ghost" 
+                        size="sm"
+                        onClick={() => setShowAdvancedA(!showAdvancedA)}
+                        className="w-full justify-between text-xs text-slate-600 hover:text-slate-900"
+                      >
+                        <span>Advanced: Import JSON</span>
+                        <span className="text-lg">{showAdvancedA ? '−' : '+'}</span>
+                      </Button>
+                      {showAdvancedA && (
+                        <div className="mt-3 space-y-2">
+                          <div className="flex gap-2">
+                            <Textarea 
+                              value={jsonImportA}
+                              onChange={(e) => setJsonImportA(e.target.value)}
+                              placeholder='[{"start":0,"end":10,"level":"confidential"}]'
+                              className="text-xs font-mono"
+                              rows={3}
+                            />
+                            <Button 
+                              onClick={() => importHighlights('a', jsonImportA)}
+                              disabled={!jsonImportA}
+                              variant="outline"
+                              size="sm"
+                            >
+                              Import
                             </Button>
                           </div>
-                        ))}
+                        </div>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* Document B Highlighting */}
+                <Card>
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <FileText className="w-5 h-5 text-indigo-600" />
+                        <CardTitle className="text-lg">{partyBLabel}</CardTitle>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          onClick={() => addHighlight('b', 'confidential')}
+                        >
+                          <span className="w-3 h-3 bg-red-500 rounded mr-2"></span>
+                          Mark Hidden
+                        </Button>
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          onClick={() => exportHighlights('b')}
+                          disabled={docBSpans.length === 0}
+                        >
+                          <Download className="w-4 h-4" />
+                        </Button>
                       </div>
                     </div>
-                  )}
-                  
-                  <div className="space-y-2">
-                    <Label className="text-xs font-semibold">Import Highlights JSON</Label>
-                    <div className="flex gap-2">
-                      <Textarea 
-                        value={jsonImportA}
-                        onChange={(e) => setJsonImportA(e.target.value)}
-                        placeholder='[{"start":0,"end":10,"level":"confidential"}]'
-                        className="text-xs font-mono"
-                        rows={2}
-                      />
-                      <Button 
-                        onClick={() => importHighlights('a', jsonImportA)}
-                        disabled={!jsonImportA}
-                        variant="outline"
-                        size="sm"
-                      >
-                        Import
-                      </Button>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div 
+                      ref={docBPreviewRef}
+                      onScroll={() => handleSyncScroll(docBPreviewRef, docAPreviewRef)}
+                      className="p-4 border border-slate-200 rounded-xl bg-white h-96 overflow-auto"
+                    >
+                      {renderHighlightedText(docBText, docBSpans, 'preview-b')}
                     </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Document B Highlighting */}
-              <Card>
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="flex items-center gap-2">
-                      <FileText className="w-5 h-5 text-indigo-600" />
-                      {partyBLabel}
-                    </CardTitle>
-                    <div className="flex gap-2">
-                      <Button 
-                        variant="outline" 
-                        size="sm"
-                        onClick={() => addHighlight('b', 'confidential')}
-                      >
-                        <span className="w-3 h-3 bg-red-500 rounded mr-2"></span>
-                        Mark Hidden
-                      </Button>
-                      <Button 
-                        variant="outline" 
-                        size="sm"
-                        onClick={() => exportHighlights('b')}
-                        disabled={docBSpans.length === 0}
-                      >
-                        <Download className="w-4 h-4 mr-2" />
-                        Export
-                      </Button>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="p-4 border border-slate-200 rounded-xl bg-white max-h-96 overflow-auto">
-                    {renderHighlightedText(docBText, docBSpans, 'preview-b')}
-                  </div>
-                  
-                  {docBSpans.length > 0 && (
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <Label className="text-sm font-semibold">Applied Highlights ({docBSpans.length})</Label>
-                        <div className="flex gap-1">
+                    
+                    {docBSpans.length > 0 && (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-sm font-semibold">Applied Highlights</Label>
                           <Badge className="bg-red-100 text-red-700 text-xs">
                             {docBSpans.filter(s => s.level === 'confidential').length} hidden
                           </Badge>
                         </div>
-                      </div>
-                      <div className="space-y-2 max-h-32 overflow-y-auto">
-                        {docBSpans.map((span, idx) => (
-                          <div key={idx} className="flex items-center justify-between text-sm bg-slate-50 p-2 rounded">
-                            <div className="flex items-center gap-2 flex-1 min-w-0">
-                              <span className="w-3 h-3 rounded flex-shrink-0 bg-red-500"></span>
-                              <span className="text-slate-600 truncate">
-                                {docBText.substring(span.start, Math.min(span.end, span.start + 50))}
-                                {span.end - span.start > 50 ? '...' : ''}
-                              </span>
+                        <div className="space-y-2 max-h-32 overflow-y-auto">
+                          {docBSpans.map((span, idx) => (
+                            <div key={idx} className="flex items-center justify-between text-sm bg-slate-50 p-2 rounded">
+                              <div className="flex items-center gap-2 flex-1 min-w-0">
+                                <span className="w-3 h-3 rounded flex-shrink-0 bg-red-500"></span>
+                                <span className="text-slate-600 truncate">
+                                  {docBText.substring(span.start, Math.min(span.end, span.start + 50))}
+                                  {span.end - span.start > 50 ? '...' : ''}
+                                </span>
+                              </div>
+                              <Button variant="ghost" size="sm" onClick={() => removeHighlight('b', idx)}>
+                                <X className="w-4 h-4" />
+                              </Button>
                             </div>
-                            <Button variant="ghost" size="sm" onClick={() => removeHighlight('b', idx)}>
-                              <X className="w-4 h-4" />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* Advanced Section - Collapsed by Default */}
+                    <div className="border-t border-slate-200 pt-3">
+                      <Button 
+                        variant="ghost" 
+                        size="sm"
+                        onClick={() => setShowAdvancedB(!showAdvancedB)}
+                        className="w-full justify-between text-xs text-slate-600 hover:text-slate-900"
+                      >
+                        <span>Advanced: Import JSON</span>
+                        <span className="text-lg">{showAdvancedB ? '−' : '+'}</span>
+                      </Button>
+                      {showAdvancedB && (
+                        <div className="mt-3 space-y-2">
+                          <div className="flex gap-2">
+                            <Textarea 
+                              value={jsonImportB}
+                              onChange={(e) => setJsonImportB(e.target.value)}
+                              placeholder='[{"start":0,"end":10,"level":"confidential"}]'
+                              className="text-xs font-mono"
+                              rows={3}
+                            />
+                            <Button 
+                              onClick={() => importHighlights('b', jsonImportB)}
+                              disabled={!jsonImportB}
+                              variant="outline"
+                              size="sm"
+                            >
+                              Import
                             </Button>
                           </div>
-                        ))}
-                      </div>
+                        </div>
+                      )}
                     </div>
-                  )}
-                  
-                  <div className="space-y-2">
-                    <Label className="text-xs font-semibold">Import Highlights JSON</Label>
-                    <div className="flex gap-2">
-                      <Textarea 
-                        value={jsonImportB}
-                        onChange={(e) => setJsonImportB(e.target.value)}
-                        placeholder='[{"start":0,"end":10,"level":"confidential"}]'
-                        className="text-xs font-mono"
-                        rows={2}
-                      />
-                      <Button 
-                        onClick={() => importHighlights('b', jsonImportB)}
-                        disabled={!jsonImportB}
-                        variant="outline"
-                        size="sm"
-                      >
-                        Import
-                      </Button>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+                  </CardContent>
+                </Card>
+              </div>
 
-              <div className="flex justify-between">
+              <div className="flex justify-between pt-4">
                 <Button variant="outline" onClick={async () => {
                   await saveDraft(2);
                   setStep(2);
