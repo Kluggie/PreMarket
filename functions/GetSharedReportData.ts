@@ -1274,13 +1274,31 @@ Deno.serve(async (req) => {
         });
       }
 
+      if (debugMode) {
+        debugInfo.snapshotFetch = {
+          found: false,
+          snapshotRecordId: null,
+          has_snapshotData: false,
+          has_snapshot_data: false,
+          snapshotDataTopKeys: [],
+          snapshot_dataTopKeys: []
+        };
+        debugInfo.parsedSnapshotPayload = {
+          payloadPathUsed: 'fallback_live',
+          partyAResponsesLen: 0,
+          partyBQuestionsLen: 0,
+          snapshotPayloadTopKeys: [],
+          countsField: null
+        };
+      }
+
       logWarn({
         correlationId,
         event: 'snapshot_missing_fallback_to_live',
         snapshotId: snapshotIdFromLink,
         sourceProposalId: sourceProposalIdFromLink
       });
-    }
+      }
 
     const currentUser = await base44.auth.me().catch(() => null);
     let receivedRecord = {
