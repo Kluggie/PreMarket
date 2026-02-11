@@ -1,5 +1,4 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.6';
-import { validateShareLinkAccess } from './_utils/sharedLink.ts';
 
 function asString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -7,67 +6,53 @@ function asString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function normalizeEmail(value: unknown): string | null {
+  const raw = asString(value);
+  return raw ? raw.toLowerCase() : null;
+}
+
 function toObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   return value as Record<string, unknown>;
 }
 
-function firstValidString(...values: unknown[]): string | null {
-  for (const value of values) {
-    const normalized = asString(value);
-    if (normalized) return normalized;
-  }
-  return null;
+function parseDetailsField(value: unknown): Record<string, unknown> {
+  return toObject(value);
 }
 
-function readSnapshotId(row: any): string | null {
+function extractSnapshotIdFromAccess(row: any): string | null {
   if (!row || typeof row !== 'object') return null;
-  const data = toObject(row?.data);
-  const details = toObject(row?.details);
-  return firstValidString(
-    row?.snapshot_id,
-    row?.snapshotId,
-    data?.snapshot_id,
-    data?.snapshotId,
-    details?.snapshot_id,
-    details?.snapshotId
+  const details = parseDetailsField(row?.details);
+  return asString(
+    row?.snapshot_id ||
+    row?.snapshotId ||
+    details?.snapshot_id ||
+    details?.snapshotId ||
+    null
   );
 }
 
-function readToken(row: any): string | null {
-  if (!row || typeof row !== 'object') return null;
-  const data = toObject(row?.data);
-  const details = toObject(row?.details);
-  return firstValidString(row?.token, data?.token, details?.token);
-}
-
 Deno.serve(async (req) => {
-  const correlationId = `snapshot_access_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const correlationId = `access_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me().catch(() => null);
 
-    if (!user?.id) {
+    if (!user) {
       return Response.json({
-        ok: true,
-        ensured: false,
-        skipped: true,
-        reason: 'AUTH_REQUIRED',
+        ok: false,
+        errorCode: 'UNAUTHORIZED',
+        message: 'Authentication required',
         correlationId
-      });
+      }, { status: 401 });
     }
 
     const body = req.method === 'GET' ? {} : await req.json().catch(() => ({}));
-    const token = asString(body?.token) || asString(new URL(req.url).searchParams.get('token'));
-    let snapshotId = asString(body?.snapshotId || body?.snapshot_id || new URL(req.url).searchParams.get('snapshotId'));
-
-    if (!snapshotId && token) {
-      const validation = await validateShareLinkAccess(base44, { token, consumeView: false });
-      if (validation.ok) {
-        snapshotId = asString(validation.shareLink.snapshotId);
-      }
-    }
+    const snapshotId = asString(body?.snapshotId || body?.snapshot_id);
+    const token = asString(body?.token);
+    const userId = asString(user?.id);
+    const userEmail = normalizeEmail(user?.email);
 
     if (!snapshotId) {
       return Response.json({
@@ -78,102 +63,85 @@ Deno.serve(async (req) => {
       }, { status: 400 });
     }
 
-    const snapshotRows = await Promise.all([
-      base44.asServiceRole.entities.ProposalSnapshot.filter({ id: snapshotId }, '-created_date', 1).catch(() => []),
-      base44.asServiceRole.entities.ProposalSnapshot.filter({ snapshot_id: snapshotId }, '-created_date', 1).catch(() => [])
-    ]);
-    const snapshot = [...snapshotRows[0], ...snapshotRows[1]]?.[0] || null;
-
-    if (!snapshot) {
+    if (!userId || !userEmail) {
       return Response.json({
         ok: false,
-        errorCode: 'SNAPSHOT_NOT_FOUND',
-        message: 'Snapshot not found',
+        errorCode: 'USER_DATA_MISSING',
+        message: 'User ID and email are required',
         correlationId
-      }, { status: 404 });
+      }, { status: 400 });
     }
 
-    const snapshotData = toObject(snapshot?.snapshotData || snapshot?.snapshot_data || snapshot?.data?.snapshotData || snapshot?.data?.snapshot_data);
-    const snapshotMeta = toObject(snapshot?.snapshotMeta || snapshot?.snapshot_meta || snapshot?.data?.snapshotMeta || snapshot?.data?.snapshot_meta);
+    // Check if access record already exists
+    const existingRows = await base44.asServiceRole.entities.SnapshotAccess
+      .filter({ user_id: userId }, '-created_date', 200)
+      .catch(() => []);
 
-    const sourceProposalId = firstValidString(
-      snapshot?.sourceProposalId,
-      snapshot?.source_proposal_id,
-      snapshotData?.proposal?.sourceProposalId,
-      snapshotMeta?.sourceProposalId
-    );
-    const version = Number(
-      snapshot?.version ??
-      snapshot?.snapshot_version ??
-      snapshot?.snapshotVersion ??
-      snapshotMeta?.version ??
-      1
-    );
-
-    const existingRows = await Promise.all([
-      base44.asServiceRole.entities.SnapshotAccess.filter({ user_id: user.id, snapshot_id: snapshotId }, '-created_date', 10).catch(() => []),
-      base44.asServiceRole.entities.SnapshotAccess.filter({ userId: user.id, snapshotId }, '-created_date', 10).catch(() => []),
-      base44.asServiceRole.entities.SnapshotAccess.filter({ user_id: user.id, snapshotId }, '-created_date', 10).catch(() => []),
-      base44.asServiceRole.entities.SnapshotAccess.filter({ userId: user.id, snapshot_id: snapshotId }, '-created_date', 10).catch(() => [])
-    ]);
-    const existing = existingRows.flat().find((row: any) => readSnapshotId(row) === snapshotId) || null;
+    const existingRecord = existingRows.find((row: any) => {
+      return extractSnapshotIdFromAccess(row) === snapshotId;
+    }) || null;
 
     const now = new Date().toISOString();
-    const firstOpenedAt = firstValidString(
-      existing?.firstOpenedAt,
-      existing?.first_opened_at,
-      existing?.created_date,
-      now
-    ) || now;
 
-    const payload = {
-      snapshotId,
-      snapshot_id: snapshotId,
-      userId: user.id,
-      user_id: user.id,
-      sourceProposalId,
-      source_proposal_id: sourceProposalId,
-      version: Number.isFinite(version) ? version : 1,
-      firstOpenedAt,
-      first_opened_at: firstOpenedAt,
-      lastOpenedAt: now,
-      last_opened_at: now,
-      token: token || readToken(existing)
-    };
+    if (existingRecord?.id) {
+      // Update last accessed time and increment count
+      const currentCount = Number(existingRecord?.access_count || 0);
+      await base44.asServiceRole.entities.SnapshotAccess.update(existingRecord.id, {
+        last_opened_at: now,
+        lastOpenedAt: now,
+        access_count: currentCount + 1,
+        accessCount: currentCount + 1
+      });
 
-    if (existing?.id) {
-      await base44.asServiceRole.entities.SnapshotAccess.update(existing.id, payload);
-      console.log('[ensureSnapshotAccess] exists', JSON.stringify({ snapshotId, userId: user.id }));
+      console.log('[EnsureSnapshotAccess] updated', JSON.stringify({
+        snapshotId,
+        userId,
+        accessId: existingRecord.id
+      }));
+
       return Response.json({
         ok: true,
-        ensured: true,
         created: false,
+        accessId: existingRecord.id,
         snapshotId,
-        sourceProposalId,
-        version: Number.isFinite(version) ? version : 1,
-        recordId: asString(existing.id),
-        lastOpenedAt: now,
+        userId,
         correlationId
       });
     }
 
-    const created = await base44.asServiceRole.entities.SnapshotAccess.create(payload);
-    console.log('[ensureSnapshotAccess] created', JSON.stringify({ snapshotId, userId: user.id }));
+    // Create new access record
+    const created = await base44.asServiceRole.entities.SnapshotAccess.create({
+      snapshot_id: snapshotId,
+      snapshotId: snapshotId,
+      user_id: userId,
+      userId: userId,
+      user_email: userEmail,
+      userEmail: userEmail,
+      first_opened_at: now,
+      firstOpenedAt: now,
+      last_opened_at: now,
+      lastOpenedAt: now,
+      access_count: 1,
+      accessCount: 1
+    });
+
+    console.log('[EnsureSnapshotAccess] created', JSON.stringify({
+      snapshotId,
+      userId,
+      accessId: created?.id
+    }));
 
     return Response.json({
       ok: true,
-      ensured: true,
       created: true,
+      accessId: asString(created?.id),
       snapshotId,
-      sourceProposalId,
-      version: Number.isFinite(version) ? version : 1,
-      recordId: asString(created?.id),
-      firstOpenedAt,
-      lastOpenedAt: now,
+      userId,
       correlationId
     });
   } catch (error) {
     const err = error instanceof Error ? error : new Error(String(error));
+    console.error(`[${correlationId}] EnsureSnapshotAccess error:`, error);
     return Response.json({
       ok: false,
       errorCode: 'INTERNAL_ERROR',

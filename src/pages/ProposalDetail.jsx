@@ -611,9 +611,17 @@ export default function ProposalDetail() {
   const params = useMemo(() => new URLSearchParams(search), [search]);
   const proposalId = params.get('id');
   const requestedTab = params.get('tab');
-  const sharedToken = params.get('sharedToken');
+  const sharedToken = params.get('sharedToken') || params.get('token');
   const isRecipientView = Boolean(sharedToken);
   const isRecipientRoutedRequest = Boolean(sharedToken);
+
+  // Redirect sharedToken to SharedReport page
+  useEffect(() => {
+    if (sharedToken && typeof window !== 'undefined') {
+      const redirectUrl = createPageUrl(`SharedReport?token=${encodeURIComponent(sharedToken)}&mode=workspace`);
+      navigate(redirectUrl, { replace: true });
+    }
+  }, [sharedToken, navigate]);
 
   useEffect(() => {
     if (requestedTab === 'evaluation' || requestedTab === 'overview') {
