@@ -1149,7 +1149,8 @@ Deno.serve(async (req) => {
           snapshotId,
           version,
           tokenPrefix: token.slice(0, 8),
-          consumedView: validation.consumedView
+          consumedView: validation.consumedView,
+          sharedFieldCount: partyAResponses.length
         });
 
         return respond({
@@ -1162,7 +1163,14 @@ Deno.serve(async (req) => {
           proposalId: sourceProposalId,
           sourceProposalId,
           snapshotId,
+          snapshotVersion: version,
           version,
+          debug: {
+            usedFallback: false,
+            hasSnapshotId: true,
+            sharedFieldCount: partyAResponses.length,
+            snapshotSource: 'ProposalSnapshot'
+          },
           snapshot: {
             id: snapshotId,
             sourceProposalId,
@@ -1431,7 +1439,9 @@ Deno.serve(async (req) => {
       reportSource,
       hasReportPayload: Boolean(reportPayload),
       tokenPrefix: token.slice(0, 8),
-      consumedView: validation.consumedView
+      consumedView: validation.consumedView,
+      usedFallback: true,
+      hasSnapshotId: !!normalizedShareLink.snapshotId
     });
 
     return respond({
@@ -1445,7 +1455,13 @@ Deno.serve(async (req) => {
       proposalId: resolvedProposalId,
       sourceProposalId: resolvedProposalId,
       snapshotId: normalizedShareLink.snapshotId || null,
+      snapshotVersion: normalizedShareLink.snapshotVersion || null,
       version: normalizedShareLink.snapshotVersion || null,
+      debug: {
+        usedFallback: true,
+        hasSnapshotId: !!normalizedShareLink.snapshotId,
+        fallbackReason: snapshotIdFromLink ? 'snapshot_not_found' : 'no_snapshot_id_in_link'
+      },
       snapshot: null,
       snapshotData: null,
       recipientResponses: responsesView,
