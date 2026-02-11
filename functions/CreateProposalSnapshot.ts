@@ -537,12 +537,15 @@ Deno.serve(async (req) => {
 
     const created = await base44.asServiceRole.entities.ProposalSnapshot.create({
       source_proposal_id: sourceProposalId,
+      sourceProposalId: sourceProposalId,
       version,
       created_by_user_id: createdByUserId || asString(user?.id),
       recipient_email: recipientEmail || normalizeEmail(proposal?.party_b_email),
       share_link_id: null,
       snapshot_data: snapshotData,
-      snapshot_meta: snapshotMeta
+      snapshotData: snapshotData,
+      snapshot_meta: snapshotMeta,
+      snapshotMeta: snapshotMeta
     });
 
     return Response.json({
