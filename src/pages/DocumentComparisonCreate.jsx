@@ -1469,7 +1469,7 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                 </div>
               </div>
 
-              <div className="flex justify-between pt-4">
+              <div className="flex justify-between pt-6">
                 <Button variant="outline" onClick={async () => {
                   await saveDraft(2);
                   setStep(2);
