@@ -1182,6 +1182,7 @@ Deno.serve(async (req) => {
           reason: 'OK',
           message: 'Shared snapshot resolved',
           correlationId,
+          debugDeployMarker: "DEPLOY_MARKER_2026_02_11_1",
           proposalId: sourceProposalId,
           sourceProposalId,
           snapshotId,
@@ -1192,6 +1193,12 @@ Deno.serve(async (req) => {
             fieldCounts: snapshotFieldCounts
           },
           snapshotDebug: {
+            shareLinkSnapshotId: asString((shareLink as any)?.snapshotId) || extractShareLinkSnapshotId(shareLink),
+            shareLinkSnapshotVersion: extractShareLinkSnapshotVersion(shareLink),
+            snapshotFound: !!snapshot,
+            snapshotRawKeys: Object.keys(snapshot || {}),
+            snapshotDataRawKeys: Object.keys(readSnapshotPayload(snapshot)),
+            snapshotCounts: snapshotFieldCounts,
             keys: snapshotDebugKeys,
             partyAResponsesLength: partyAResponses.length,
             rawPartyALength: rawPartyA.length,
@@ -1484,6 +1491,7 @@ Deno.serve(async (req) => {
       reason: 'OK',
       message: 'Shared report resolved',
       correlationId,
+      debugDeployMarker: "DEPLOY_MARKER_2026_02_11_1",
       receivedRecord,
       proposalId: resolvedProposalId,
       sourceProposalId: resolvedProposalId,
@@ -1493,7 +1501,9 @@ Deno.serve(async (req) => {
       debug: {
         usedFallback: true,
         hasSnapshotId: !!normalizedShareLink.snapshotId,
-        fallbackReason: snapshotIdFromLink ? 'snapshot_not_found' : 'no_snapshot_id_in_link'
+        fallbackReason: snapshotIdFromLink ? 'snapshot_not_found' : 'no_snapshot_id_in_link',
+        shareLinkSnapshotId: asString((shareLink as any)?.snapshotId) || extractShareLinkSnapshotId(shareLink),
+        shareLinkSnapshotVersion: extractShareLinkSnapshotVersion(shareLink)
       },
       snapshot: null,
       snapshotData: null,
