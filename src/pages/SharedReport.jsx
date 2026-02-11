@@ -11,7 +11,11 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from 'sonner';
-import { Loader2, RefreshCw, Send, XCircle } from 'lucide-react';
+import { 
+  Loader2, RefreshCw, Send, XCircle, CheckCircle2, AlertTriangle, 
+  MessageSquare, Sparkles, Clock 
+} from 'lucide-react';
+import { Progress } from '@/components/ui/progress';
 
 const FRIENDLY_ERROR_MESSAGES = {
   AUTH_REQUIRED: 'Please sign in to continue.',
@@ -461,10 +465,11 @@ export default function SharedReport() {
       setResponsesView(data.responsesView || data?.recipientView?.responses || []);
       setComparisonView(data.comparisonView || data?.reportData?.comparisonView || null);
       setError(null);
-      console.log('[SharedReport] loaded snapshot', {
+      console.log('[SharedReport] snapshot', {
         snapshotId: resolvedSnapshotId,
-        version: resolvedVersion,
-        sourceProposalId: resolvedProposalId || null
+        snapshotVersion: resolvedVersion,
+        sourceProposalId: resolvedProposalId || null,
+        sharedFieldCount: toArray(data.partyAView?.responses).filter(r => String(r?.redaction || '').toLowerCase() !== 'hidden').length
       });
 
       return true;
@@ -903,20 +908,11 @@ export default function SharedReport() {
               {user?.email ? `Signed in as ${user.email}.` : 'Viewing as guest.'}
             </p>
 
-            <div className="pt-1 space-x-2">
-              <Button
-                onClick={handleOpenWorkspace}
-                className="bg-blue-600 hover:bg-blue-700"
-                disabled={!token}
-              >
-                Open Shared Workspace
+            {!user && (
+              <Button variant="outline" onClick={handleSignIn}>
+                Sign In to Edit & Respond
               </Button>
-              {!user && (
-                <Button variant="outline" onClick={handleSignIn}>
-                  Sign In for Editing
-                </Button>
-              )}
-            </div>
+            )}
 
             {!proposalId && (
               <p className="text-sm text-amber-700">
@@ -928,25 +924,172 @@ export default function SharedReport() {
                 Source proposal: {sourceProposalId}{snapshotId ? ` • Snapshot ${snapshotId}` : ''}
               </p>
             )}
-            {snapshotData && (
-              <p className="text-xs text-slate-500">
-                Snapshot fields: {Array.isArray(snapshotData?.partyAResponses) ? snapshotData.partyAResponses.length : 0}
-              </p>
-            )}
           </CardContent>
         </Card>
 
         <div ref={workspaceSectionRef} className="space-y-6">
+          {/* AI Report - Formatted */}
           <Card className="border-0 shadow-sm">
             <CardHeader>
-              <CardTitle>AI Report</CardTitle>
-              <CardDescription>Read-only shared report output.</CardDescription>
+              <CardTitle className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-blue-600" />
+                AI Report
+              </CardTitle>
+              <CardDescription>Shared evaluation report visible to both parties.</CardDescription>
             </CardHeader>
             <CardContent>
               {reportJson ? (
-                <pre className="text-xs bg-slate-950 text-slate-100 p-4 rounded-lg overflow-auto whitespace-pre-wrap">
-                  {JSON.stringify(reportJson, null, 2)}
-                </pre>
+                <div className="space-y-6">
+                  {/* Quality Assessment */}
+                  {reportJson.quality && (
+                    <div>
+                      <h4 className="font-semibold mb-3">Quality Assessment</h4>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <p className="text-sm text-slate-500">Party A Completeness</p>
+                          <p className="text-2xl font-bold">{Math.round((reportJson.quality.completeness_a || 0) * 100)}%</p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-slate-500">Party B Completeness</p>
+                          <p className="text-2xl font-bold">{Math.round((reportJson.quality?.completeness_b || 0) * 100)}%</p>
+                        </div>
+                        <div className="col-span-2">
+                          <p className="text-sm text-slate-500 mb-2">Overall Confidence</p>
+                          <Progress value={(reportJson.quality.confidence_overall || 0) * 100} className="h-3" />
+                          {reportJson.quality.confidence_reasoning && (
+                            <p className="text-xs text-slate-500 mt-1">
+                              {toArray(reportJson.quality.confidence_reasoning).join(' • ')}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Summary */}
+                  {reportJson.summary && (
+                    <div>
+                      <h4 className="font-semibold mb-3">Executive Summary</h4>
+                      <div className="space-y-4">
+                        {reportJson.summary.fit_level && (
+                          <Badge className={
+                            reportJson.summary.fit_level === 'high' ? 'bg-green-600' :
+                            reportJson.summary.fit_level === 'medium' ? 'bg-amber-600' :
+                            'bg-slate-600'
+                          }>
+                            {reportJson.summary.fit_level} fit
+                          </Badge>
+                        )}
+
+                        {toArray(reportJson.summary.top_fit_reasons).length > 0 && (
+                          <div>
+                            <p className="font-medium mb-2 flex items-center gap-2">
+                              <CheckCircle2 className="w-4 h-4 text-green-600" />
+                              Top Match Reasons
+                            </p>
+                            <div className="space-y-2">
+                              {reportJson.summary.top_fit_reasons.map((reason, idx) => (
+                                <div key={idx} className="p-3 bg-green-50 border border-green-100 rounded-lg">
+                                  <p className="text-sm text-slate-800">{reason.text}</p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {toArray(reportJson.summary.top_blockers).length > 0 && (
+                          <div>
+                            <p className="font-medium mb-2 flex items-center gap-2">
+                              <XCircle className="w-4 h-4 text-red-600" />
+                              Top Blockers
+                            </p>
+                            <div className="space-y-2">
+                              {reportJson.summary.top_blockers.map((blocker, idx) => (
+                                <div key={idx} className="p-3 bg-red-50 border border-red-100 rounded-lg">
+                                  <p className="text-sm text-slate-800">{blocker.text}</p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {toArray(reportJson.summary.next_actions).length > 0 && (
+                          <div>
+                            <p className="font-medium mb-2">Next Actions</p>
+                            <ul className="space-y-1">
+                              {reportJson.summary.next_actions.map((action, idx) => (
+                                <li key={idx} className="text-sm text-slate-600 flex items-start gap-2">
+                                  <span>•</span> {action}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Flags */}
+                  {toArray(reportJson.flags).length > 0 && (
+                    <div>
+                      <h4 className="font-semibold mb-3 flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4 text-amber-600" />
+                        Flags & Concerns
+                      </h4>
+                      <div className="space-y-2">
+                        {reportJson.flags.map((flag, idx) => (
+                          <div key={idx} className={`p-3 rounded-lg border ${
+                            flag.severity === 'high' ? 'bg-red-50 border-red-200' :
+                            flag.severity === 'med' ? 'bg-amber-50 border-amber-200' :
+                            'bg-blue-50 border-blue-200'
+                          }`}>
+                            <div className="flex items-start gap-2">
+                              <Badge className={
+                                flag.severity === 'high' ? 'bg-red-600' :
+                                flag.severity === 'med' ? 'bg-amber-600' :
+                                'bg-blue-600'
+                              }>
+                                {flag.severity}
+                              </Badge>
+                              <div className="flex-1">
+                                <p className="font-medium text-sm">{flag.title}</p>
+                                <p className="text-sm text-slate-600 mt-1">{flag.detail}</p>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Follow-up Questions */}
+                  {toArray(reportJson.followup_questions).length > 0 && (
+                    <div>
+                      <h4 className="font-semibold mb-3 flex items-center gap-2">
+                        <MessageSquare className="w-4 h-4 text-blue-600" />
+                        Follow-up Questions
+                      </h4>
+                      <div className="space-y-2">
+                        {reportJson.followup_questions.map((q, idx) => (
+                          <div key={idx} className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
+                            <div className="flex items-start gap-2">
+                              <Badge variant="outline" className="text-xs">
+                                {q.priority}
+                              </Badge>
+                              <div className="flex-1">
+                                <p className="text-sm font-medium">{q.question_text}</p>
+                                <p className="text-xs text-slate-600 mt-1">{q.why_this_matters}</p>
+                                {q.to_party && (
+                                  <Badge variant="outline" className="text-xs mt-2">To: Party {q.to_party.toUpperCase()}</Badge>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
               ) : (
                 <p className="text-slate-600">No report payload is available yet.</p>
               )}
@@ -956,21 +1099,30 @@ export default function SharedReport() {
           <Card className="border-0 shadow-sm">
             <CardHeader>
               <CardTitle>Party A Shared Information</CardTitle>
-              <CardDescription>Confidential fields are redacted server-side before rendering.</CardDescription>
+              <CardDescription>Information shared by the proposer. Confidential fields are not shown.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              {toArray(partyAView?.responses).length === 0 && (
+              {toArray(partyAView?.responses).filter(item => {
+                const redaction = String(item?.redaction || '').toLowerCase();
+                return redaction !== 'hidden';
+              }).length === 0 ? (
                 <p className="text-slate-500 text-sm">No Party A responses are available.</p>
+              ) : (
+                toArray(partyAView?.responses)
+                  .filter(item => {
+                    const redaction = String(item?.redaction || '').toLowerCase();
+                    return redaction !== 'hidden';
+                  })
+                  .map((item) => (
+                    <div key={item.id || item.questionId} className="p-3 border rounded-lg bg-blue-50 border-blue-100">
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <p className="font-medium text-slate-900">{item.label || item.questionId}</p>
+                        <Badge className="bg-blue-100 text-blue-700">Party A</Badge>
+                      </div>
+                      <p className="text-sm text-slate-700">{item.valueSummary || item.value || 'Not provided'}</p>
+                    </div>
+                  ))
               )}
-              {toArray(partyAView?.responses).map((item) => (
-                <div key={item.id || item.questionId} className="p-3 border rounded-lg">
-                  <div className="flex items-center justify-between gap-2 mb-1">
-                    <p className="font-medium text-slate-900">{item.label || item.questionId}</p>
-                    <Badge variant="outline">{item.redaction || item.visibility || 'shared'}</Badge>
-                  </div>
-                  <p className="text-sm text-slate-600">{item.valueSummary || 'Not shared'}</p>
-                </div>
-              ))}
             </CardContent>
           </Card>
 
@@ -978,7 +1130,9 @@ export default function SharedReport() {
             <CardHeader>
               <CardTitle>Complete Proposal Details</CardTitle>
               <CardDescription>
-                Snapshot-based shared details. Party A values come from the shared version; Party B values come from your saved responses.
+                {reportData?.type === 'document_comparison' 
+                  ? 'Read-only document content with redactions applied.'
+                  : 'All shared information from both parties. Confidential fields are not shown.'}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -990,9 +1144,11 @@ export default function SharedReport() {
                         <p className="font-medium text-slate-900">{doc.label || `Document ${index + 1}`}</p>
                         <div className="flex items-center gap-2">
                           <Badge variant="outline">Source: {doc.source || 'typed'}</Badge>
-                          <Badge className="bg-red-100 text-red-700">
-                            {Number(doc.hiddenCount || 0)} removed
-                          </Badge>
+                          {Number(doc.hiddenCount || 0) > 0 && (
+                            <Badge className="bg-red-100 text-red-700">
+                              {Number(doc.hiddenCount)} hidden
+                            </Badge>
+                          )}
                         </div>
                       </div>
                       <pre className="text-xs bg-white border rounded-md p-3 overflow-auto whitespace-pre-wrap">
@@ -1002,12 +1158,17 @@ export default function SharedReport() {
                   ))}
                 </div>
               ) : completeDetailsRows.length === 0 ? (
-                <p className="text-slate-500 text-sm">No shared proposal details are available.</p>
+                <div>
+                  <p className="text-slate-500 text-sm mb-2">No shared proposal details are available.</p>
+                  {snapshotData && Array.isArray(snapshotData?.partyAResponses) && snapshotData.partyAResponses.length === 0 && (
+                    <p className="text-xs text-amber-700">Snapshot has 0 shared fields (check Party A visibility flags).</p>
+                  )}
+                </div>
               ) : (
                 completeDetailsRows.map((item) => (
                   <div key={item.key} className="p-3 border rounded-lg">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="font-medium text-slate-900">{item.label}</p>
+                      <p className="font-medium text-slate-900 capitalize">{item.label}</p>
                       <Badge variant="outline">{item.party}</Badge>
                     </div>
                     <p className="text-sm text-slate-700 mt-1">{item.value}</p>
@@ -1055,7 +1216,7 @@ export default function SharedReport() {
               <div className="flex flex-wrap items-center gap-2 pt-2">
                 <Button
                   onClick={handleSaveChanges}
-                  disabled={!canEditRecipient || isSaving || recipientEditableQuestions.length === 0}
+                  disabled={!canEditRecipient || isSaving || recipientEditableQuestions.length === 0 || !user}
                   className="bg-blue-600 hover:bg-blue-700"
                 >
                   {isSaving ? 'Saving...' : 'Save Changes'}
@@ -1063,9 +1224,9 @@ export default function SharedReport() {
                 <Button
                   variant="outline"
                   onClick={handleReevaluate}
-                  disabled={!canReevaluate || isReevaluating || !user}
+                  disabled={!canReevaluate || isReevaluating || !user || !token}
                 >
-                  <RefreshCw className="w-4 h-4 mr-2" />
+                  <RefreshCw className={`w-4 h-4 mr-2 ${isReevaluating ? 'animate-spin' : ''}`} />
                   {isReevaluating ? 'Re-evaluating...' : 'Re-evaluate'}
                 </Button>
               </div>
