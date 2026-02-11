@@ -66,7 +66,13 @@ async function ensureProposalResponseRecords(base44: any, proposalId: string, co
     base44.asServiceRole.entities.ProposalResponse.filter({ 'data.proposal_id': proposalId }).catch(() => []),
     base44.asServiceRole.entities.ProposalResponse.filter({ 'data.proposalId': proposalId }).catch(() => [])
   ]);
-  const existing = responseBuckets.flat();
+  
+  const byId = new Map();
+  responseBuckets.flat().forEach((r: any) => {
+    const id = r?.id || `record_${Math.random()}`;
+    if (!byId.has(id)) byId.set(id, r);
+  });
+  const existing = Array.from(byId.values());
   
   if (existing.length > 0) {
     console.log(`[${correlationId}] ProposalResponse records exist: ${existing.length}`);
@@ -105,9 +111,14 @@ async function ensureProposalResponseRecords(base44: any, proposalId: string, co
     if (!questionId) continue;
     const question = questionLookup[questionId] || null;
     
+    // Determine entered_by_party and subject_party
+    let enteredByParty = 'a';
     let subjectParty = 'a';
     const normalizedFromKey = String(subjectFromKey || '').trim().toLowerCase();
+    
+    // If responseKey has __b suffix, Party A is making a claim about Party B
     if (normalizedFromKey === 'b' || normalizedFromKey === 'party_b' || normalizedFromKey === 'recipient') {
+      enteredByParty = 'a';
       subjectParty = 'b';
     } else if (question) {
       const party = String(question?.party || question?.party_key || question?.subject_party || '').toLowerCase();
@@ -118,9 +129,11 @@ async function ensureProposalResponseRecords(base44: any, proposalId: string, co
       }
     }
     
-    const visibility = String(rawVisibility[responseKey] ?? rawVisibility[questionId] ?? 'full').toLowerCase();
-    const normalizedVisibility = ['hidden', 'not_shared', 'private', 'confidential'].includes(visibility) ? 'hidden' : 'full';
+    // Normalize visibility: check both responseKey and questionId
+    const visibilityRaw = String(rawVisibility[responseKey] ?? rawVisibility[questionId] ?? 'full').toLowerCase();
+    const normalizedVisibility = ['hidden', 'not_shared', 'private', 'confidential'].includes(visibilityRaw) ? 'hidden' : 'full';
     
+    // Detect range vs text from rawValue structure
     let valueType = 'text';
     let value: any = rawValue;
     let rangeMin: number | null = null;
@@ -141,8 +154,8 @@ async function ensureProposalResponseRecords(base44: any, proposalId: string, co
     const responseData = {
       proposal_id: proposalId,
       question_id: questionId,
-      entered_by_party: 'a',
-      author_party: 'a',
+      entered_by_party: enteredByParty,
+      author_party: enteredByParty,
       subject_party: subjectParty,
       is_about_counterparty: subjectParty === 'b',
       value_type: valueType,
@@ -161,7 +174,15 @@ async function ensureProposalResponseRecords(base44: any, proposalId: string, co
   }
 
   const created = await base44.asServiceRole.entities.ProposalResponse.bulkCreate(responseRecords);
-  console.log(`[${correlationId}] Materialized ${created.length} ProposalResponse records from step_state_json`);
+  console.log(`[${correlationId}] Materialized ${created.length} ProposalResponse records from step_state_json`, JSON.stringify({
+    sampleKeys: responseRecords.slice(0, 3).map((r: any) => ({
+      question_id: r.question_id,
+      entered_by_party: r.entered_by_party,
+      subject_party: r.subject_party,
+      value_type: r.value_type,
+      visibility: r.visibility
+    }))
+  }));
   
   return { materialized: true, count: created.length };
 }
