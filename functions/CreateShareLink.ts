@@ -277,11 +277,17 @@ Deno.serve(async (req) => {
       resolvedProposalId
     });
 
-    // Create ShareLink
+    // Create ShareLink with snapshot data
     const shareLink = await base44.asServiceRole.entities.ShareLink.create({
       proposal_id: resolvedProposalId,
       proposalId: resolvedProposalId,
+      source_proposal_id: resolvedProposalId,
+      sourceProposalId: resolvedProposalId,
       linked_proposal_id: resolvedProposalId,
+      snapshot_id: snapshotId,
+      snapshotId: snapshotId,
+      snapshot_version: snapshotVersion,
+      snapshotVersion: snapshotVersion,
       evaluation_item_id: evaluationItemId || null,
       document_comparison_id: documentComparisonId || null,
       recipient_email: normalizedRecipientEmail,
@@ -301,6 +307,9 @@ Deno.serve(async (req) => {
       shareLinkId: shareLink.id,
       token,
       resolvedProposalId,
+      snapshotId,
+      snapshotVersion,
+      hasSnapshotId: !!shareLink.snapshot_id || !!shareLink.snapshotId,
       shareLinkKeys: safeKeys(shareLink)
     });
 
@@ -619,11 +628,25 @@ Deno.serve(async (req) => {
       documentComparisonId: documentComparisonId || null
     });
 
+    // Read back to verify snapshotId persisted
+    const verifyRows = await base44.asServiceRole.entities.ShareLink.filter({ id: shareLink.id }, '-created_date', 1);
+    const verifiedShareLink = verifyRows?.[0] || shareLink;
+    const persistedSnapshotId = verifiedShareLink?.snapshot_id || verifiedShareLink?.snapshotId || null;
+    
+    console.log(`[${correlationId}] CreateShareLink verification`, JSON.stringify({
+      shareLinkId: shareLink.id,
+      snapshotIdSent: snapshotId,
+      snapshotIdPersisted: persistedSnapshotId,
+      hasSnapshotId: !!persistedSnapshotId,
+      snapshotVersion
+    }));
+
     return Response.json({
       ok: true,
       shareUrl,
       token,
       proposalId: resolvedProposalId,
+      sourceProposalId: resolvedProposalId,
       shareLinkId: shareLink.id,
       snapshotId,
       version: snapshotVersion,
@@ -633,6 +656,11 @@ Deno.serve(async (req) => {
       mode: shareMode,
       permissions,
       appContext: shareContextQuery,
+      debug: {
+        hasSnapshotId: !!persistedSnapshotId,
+        snapshotIdPersisted: persistedSnapshotId,
+        usedFallback: false
+      },
       correlationId
     });
 
