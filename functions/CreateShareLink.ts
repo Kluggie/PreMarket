@@ -207,6 +207,11 @@ Deno.serve(async (req) => {
     let snapshotVersion: number | null = null;
     let snapshotALen = 0;
     let snapshotBLen = 0;
+    let hasComparisonView = false;
+    let hasDocA = false;
+    let hasDocB = false;
+    let docALength = 0;
+    let docBLength = 0;
     try {
       const snapshotResult = await base44.asServiceRole.functions.invoke('CreateProposalSnapshot', {
         sourceProposalId: resolvedProposalId,
@@ -240,6 +245,13 @@ Deno.serve(async (req) => {
       const bLenCandidate = Number(snapshotResult.data.bLen);
       snapshotALen = Number.isFinite(aLenCandidate) ? Math.max(0, Math.floor(aLenCandidate)) : 0;
       snapshotBLen = Number.isFinite(bLenCandidate) ? Math.max(0, Math.floor(bLenCandidate)) : 0;
+      hasComparisonView = Boolean(snapshotResult.data.hasComparisonView);
+      hasDocA = Boolean(snapshotResult.data.hasDocA);
+      hasDocB = Boolean(snapshotResult.data.hasDocB);
+      const docALengthCandidate = Number(snapshotResult.data.docALength);
+      const docBLengthCandidate = Number(snapshotResult.data.docBLength);
+      docALength = Number.isFinite(docALengthCandidate) ? Math.max(0, Math.floor(docALengthCandidate)) : 0;
+      docBLength = Number.isFinite(docBLengthCandidate) ? Math.max(0, Math.floor(docBLengthCandidate)) : 0;
     } catch (snapshotError) {
       const errorMessage = snapshotError instanceof Error ? snapshotError.message : String(snapshotError);
       logInfo({
@@ -678,6 +690,11 @@ Deno.serve(async (req) => {
       aLen: snapshotALen,
       bLen: snapshotBLen,
       version: snapshotVersion,
+      hasComparisonView,
+      hasDocA,
+      hasDocB,
+      docALength,
+      docBLength,
       expiresAt: expiresAt.toISOString(),
       viewCount: 0,
       maxViews: 25,

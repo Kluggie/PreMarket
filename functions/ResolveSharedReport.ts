@@ -27,6 +27,12 @@ function toConsumeView(req: Request, body: any): boolean {
   return raw !== 'false';
 }
 
+function toDebugMode(req: Request, body: any): boolean {
+  if (body?.debug === '1' || body?.debug === 1 || body?.debug === true) return true;
+  const raw = new URL(req.url).searchParams.get('debug');
+  return raw === '1';
+}
+
 function extractError(error: any) {
   const statusCode =
     error?.status ||
@@ -52,6 +58,7 @@ Deno.serve(async (req) => {
 
     const token = toToken(req, body);
     const consumeView = toConsumeView(req, body);
+    const debugMode = toDebugMode(req, body);
 
     if (!token) {
       return respond({
@@ -67,12 +74,21 @@ Deno.serve(async (req) => {
     try {
       const upstream = await base44.asServiceRole.functions.invoke('GetSharedReportData', {
         token,
-        consumeView
+        consumeView,
+        ...(debugMode ? { debug: '1' } : {})
       });
+      const upstreamData = upstream?.data || {};
+      const upstreamDebug = upstreamData?.debug && typeof upstreamData.debug === 'object' ? upstreamData.debug : null;
       return respond({
-        ...upstream.data,
+        ...upstreamData,
+        ...(debugMode ? {
+          debug: {
+            ...(upstreamDebug || {}),
+            endpointUsed: 'ResolveSharedReport'
+          }
+        } : {}),
         endpoint: 'ResolveSharedReport',
-        correlationId: upstream.data?.correlationId || correlationId
+        correlationId: upstreamData?.correlationId || correlationId
       }, upstream.status || 200);
     } catch (upstreamError) {
       const { statusCode, payload } = extractError(upstreamError);

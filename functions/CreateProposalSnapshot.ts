@@ -306,7 +306,7 @@ Deno.serve(async (req) => {
         }
       }));
 
-    const snapshotPayload = {
+    const snapshotPayload: any = {
       partyAResponses,
       partyBEditableSchema: {
         totalQuestions: partyBQuestions.length,
@@ -424,6 +424,10 @@ Deno.serve(async (req) => {
       }
     }
 
+    if (comparisonView) {
+      snapshotPayload.comparisonView = comparisonView;
+    }
+
     // Calculate field counts - count documents that have visible text
     const visibleResponseCount = partyAResponses.filter((response) => response.redaction === 'none').length;
     const hiddenResponseCount = partyAResponses.filter((response) => response.redaction === 'hidden').length;
@@ -498,7 +502,12 @@ Deno.serve(async (req) => {
       snapshotId: asString(created?.id),
       version,
       aLen: partyAResponses.length,
-      bLen: partyBQuestions.length
+      bLen: partyBQuestions.length,
+      hasComparisonView: !!comparisonView,
+      hasDocA: Boolean(comparisonView?.docA?.text),
+      hasDocB: Boolean(comparisonView?.docB?.text),
+      docALength: comparisonView?.docA?.text?.length || 0,
+      docBLength: comparisonView?.docB?.text?.length || 0
     });
   } catch (error) {
     const err = error instanceof Error ? error : new Error(String(error));
