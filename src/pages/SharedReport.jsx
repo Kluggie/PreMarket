@@ -998,7 +998,12 @@ export default function SharedReport() {
         resolvedDocumentComparisonId,
         docATextLength: comparisonDocALength,
         docBTextLength: comparisonDocBLength,
-        topLevelKeys: debugData?.topLevelKeys || []
+        docAPathUsed: debugData?.docAPathUsed || null,
+        docBPathUsed: debugData?.docBPathUsed || null,
+        docASpansPathUsed: debugData?.docASpansPathUsed || null,
+        docBSpansPathUsed: debugData?.docBSpansPathUsed || null,
+        topLevelKeys: debugData?.topLevelKeys || [],
+        dataKeys: debugData?.dataKeys || []
       }
     : null;
 
