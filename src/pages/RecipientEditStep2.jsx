@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
+import { Input } from '@/components/ui/input';
 import { ArrowLeft, ArrowRight, FileText, Loader2, Save } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -99,7 +100,9 @@ export default function RecipientEditStep2() {
     setSaving(true);
     try {
       const nowIso = new Date().toISOString();
+      const safeTitle = String(title || '').trim() || 'Recipient Draft';
       await base44.entities.DocumentComparison.update(comparison.id, {
+        title: safeTitle,
         doc_b_plaintext: docBText,
         status: 'draft',
         draft_step: 2,
@@ -107,13 +110,17 @@ export default function RecipientEditStep2() {
       });
 
       await base44.entities.Proposal.update(proposal.id, {
+        title: safeTitle,
         status: 'draft',
         draft_step: 2,
         draft_updated_at: nowIso,
-        ...(user?.id ? { party_b_user_id: user.id } : {}),
-        ...(user?.email ? { party_b_email: user.email } : {})
+        ...(user?.id ? { created_by_user_id: user.id } : {}),
+        ...(user?.id ? { party_a_user_id: user.id } : {}),
+        ...(user?.email ? { party_a_email: user.email } : {})
       });
 
+      setProposal((prev) => (prev ? { ...prev, title: safeTitle } : prev));
+      setComparison((prev) => (prev ? { ...prev, title: safeTitle } : prev));
       toast.success('Draft saved');
       return true;
     } catch (error) {
@@ -212,6 +219,15 @@ export default function RecipientEditStep2() {
             </CardDescription>
           </CardHeader>
           <CardContent>
+            <div className="mb-6">
+              <label className="block text-sm font-semibold text-slate-600 mb-2">Draft Title</label>
+              <Input
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
+                placeholder="Enter draft title"
+                className="max-w-2xl"
+              />
+            </div>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-10 items-stretch">
               <div className="flex flex-col h-full space-y-3">
                 <div className="flex items-center gap-2">
