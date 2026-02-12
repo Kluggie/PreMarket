@@ -11,6 +11,7 @@ import Directory from '@/pages/Directory';
 import DirectoryPersonDetail from '@/pages/DirectoryPersonDetail';
 import DirectoryOrgDetail from '@/pages/DirectoryOrgDetail';
 import RecipientEditStep2 from '@/pages/RecipientEditStep2';
+import RecipientEditStep3 from '@/pages/RecipientEditStep3';
 
 const { Pages, Layout, mainPage } = pagesConfig;
 const mainPageKey = mainPage ?? Object.keys(Pages)[0];
@@ -66,6 +67,14 @@ const PublicRoutes = () => {
         element={
           <LayoutWrapper currentPageName="ProposalDetail">
             <RecipientEditStep2 />
+          </LayoutWrapper>
+        }
+      />
+      <Route
+        path="/proposals/:proposalId/recipient-edit/highlighting"
+        element={
+          <LayoutWrapper currentPageName="ProposalDetail">
+            <RecipientEditStep3 />
           </LayoutWrapper>
         }
       />

@@ -26,6 +26,7 @@ export default function RecipientEditStep2() {
   const [partyBLabel, setPartyBLabel] = useState('Document B');
   const [docAText, setDocAText] = useState('');
   const [docBText, setDocBText] = useState('');
+  const [continuing, setContinuing] = useState(false);
 
   const sharedToken = useMemo(() => {
     const params = new URLSearchParams(location.search);
@@ -114,11 +115,29 @@ export default function RecipientEditStep2() {
       });
 
       toast.success('Draft saved');
+      return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       toast.error(`Failed to save draft: ${message}`);
+      return false;
     } finally {
       setSaving(false);
+    }
+  };
+
+  const step3Url = sharedToken
+    ? createPageUrl(`proposals/${encodeURIComponent(proposal?.id || proposalId || '')}/recipient-edit/highlighting?sharedToken=${encodeURIComponent(sharedToken)}`)
+    : createPageUrl(`proposals/${encodeURIComponent(proposal?.id || proposalId || '')}/recipient-edit/highlighting`);
+
+  const handleContinueToStep3 = async () => {
+    if (!proposal?.id || !comparison?.id || continuing) return;
+    setContinuing(true);
+    try {
+      const ok = await handleSaveDraft();
+      if (!ok) return;
+      navigate(step3Url);
+    } finally {
+      setContinuing(false);
     }
   };
 
@@ -230,7 +249,11 @@ export default function RecipientEditStep2() {
             {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
             Save Draft
           </Button>
-          <Button disabled title="Step 3 is coming next">
+          <Button
+            onClick={handleContinueToStep3}
+            disabled={continuing || saving || !proposal?.id || !comparison?.id}
+          >
+            {continuing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
             Continue to Highlighting
             <ArrowRight className="w-4 h-4 ml-2" />
           </Button>
