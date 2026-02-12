@@ -1843,28 +1843,61 @@ export default function ProposalDetail() {
     <div className="min-h-screen bg-slate-50 py-8">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Header */}
-        <div className="mb-6">
-          <Link to={createPageUrl('Proposals')} className="inline-flex items-center text-slate-600 hover:text-slate-900 mb-4">
+        <div className="mb-8">
+          <Link to={createPageUrl('Proposals')} className="inline-flex items-center text-slate-600 hover:text-slate-900 mb-5">
             <ArrowLeft className="w-4 h-4 mr-2" />
             Back to Proposals
           </Link>
           
-          <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-3 mb-2">
-                <h1 className="text-2xl font-bold text-slate-900">
-                  {proposal.title || 'Untitled Proposal'}
-                </h1>
-                <StatusBadge status={proposal.status} />
+          <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4 mb-4">
+            <div className="flex-1">
+              <h1 className="text-3xl font-bold text-slate-900 mb-3">
+                {proposal.title || 'Untitled Proposal'}
+              </h1>
+              
+              {/* Metadata Bar */}
+              <div className="border-t border-b border-slate-200 py-3">
+                <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs uppercase tracking-wide text-slate-500 font-medium">Status</span>
+                    <StatusBadge status={proposal.status} />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs uppercase tracking-wide text-slate-500 font-medium">Created</span>
+                    <span className="text-sm text-slate-700">{new Date(proposal.created_date).toLocaleDateString()}</span>
+                  </div>
+                  {isDocumentComparisonProposal && linkedDocumentComparison && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs uppercase tracking-wide text-slate-500 font-medium">Hidden Spans</span>
+                      <Badge variant="outline" className="text-xs">
+                        {normalizeComparisonSpans(
+                          linkedDocumentComparison?.doc_a_spans_json || [],
+                          String(linkedDocumentComparison?.doc_a_plaintext || '').length
+                        ).length + normalizeComparisonSpans(
+                          linkedDocumentComparison?.doc_b_spans_json || [],
+                          String(linkedDocumentComparison?.doc_b_plaintext || '').length
+                        ).length}
+                      </Badge>
+                    </div>
+                  )}
+                  {proposal.updated_date && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs uppercase tracking-wide text-slate-500 font-medium">Last Updated</span>
+                      <span className="text-sm text-slate-700">{new Date(proposal.updated_date).toLocaleDateString()}</span>
+                    </div>
+                  )}
+                  {!isRecipientView && isProposalOwner(proposal, user) && lastSharedVersion && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs uppercase tracking-wide text-slate-500 font-medium">Shared Version</span>
+                      <Badge variant="outline" className="text-xs">v{lastSharedVersion}</Badge>
+                    </div>
+                  )}
+                </div>
               </div>
-              <p className="text-slate-500">
-                {proposal.template_name} • Created {new Date(proposal.created_date).toLocaleDateString()}
+              
+              <p className="text-sm text-slate-600 mt-3">
+                {proposal.template_name}
               </p>
-              {!isRecipientView && isProposalOwner(proposal, user) && lastSharedVersion && (
-                <p className="text-sm text-blue-700 mt-1">
-                  Last shared version: v{lastSharedVersion}
-                </p>
-              )}
             </div>
 
             <div className="flex items-center gap-3">
@@ -2020,7 +2053,7 @@ export default function ProposalDetail() {
 
         {/* Score Card */}
         {latestEvaluation && (
-          <Card className="border-0 shadow-sm mb-6 bg-gradient-to-r from-blue-600 to-indigo-600 text-white">
+          <Card className="border border-blue-200 shadow-sm mb-6 bg-gradient-to-r from-blue-600 to-indigo-600 text-white">
             <CardContent className="p-6">
               <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
                 <div className="flex items-center gap-6">
@@ -2075,35 +2108,35 @@ export default function ProposalDetail() {
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <div className="lg:col-span-2 space-y-6">
                 {/* Parties */}
-                <Card className="border-0 shadow-sm">
-                  <CardHeader>
-                    <CardTitle>Parties</CardTitle>
+                <Card className="border border-slate-200 shadow-sm bg-white">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-lg font-semibold">Parties</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <div className="p-4 bg-blue-50 rounded-xl">
-                        <p className="text-sm text-blue-600 font-medium mb-2">Party A (Proposer)</p>
-                        <p className="font-medium text-slate-900">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="p-4 bg-white border border-slate-200 rounded-lg">
+                        <p className="text-xs uppercase tracking-wide text-slate-500 font-medium mb-2">Party A (Proposer)</p>
+                        <p className="font-semibold text-slate-900">
                           {partyAIdentity}
                         </p>
-                        {!isRecipientView && isPartyA && <Badge className="mt-2 bg-blue-100 text-blue-700">You</Badge>}
+                        {!isRecipientView && isPartyA && <Badge variant="outline" className="mt-2 text-xs">You</Badge>}
                       </div>
-                      <div className="p-4 bg-indigo-50 rounded-xl">
-                        <p className="text-sm text-indigo-600 font-medium mb-2">Party B (Recipient)</p>
-                        <p className="font-medium text-slate-900">
+                      <div className="p-4 bg-white border border-slate-200 rounded-lg">
+                        <p className="text-xs uppercase tracking-wide text-slate-500 font-medium mb-2">Party B (Recipient)</p>
+                        <p className="font-semibold text-slate-900">
                           {partyBIdentity}
                         </p>
-                        {isPartyB && <Badge className="mt-2 bg-indigo-100 text-indigo-700">You</Badge>}
+                        {isPartyB && <Badge variant="outline" className="mt-2 text-xs">You</Badge>}
                       </div>
                     </div>
                   </CardContent>
                 </Card>
 
                 {/* Detailed Responses */}
-                <Card className="border-0 shadow-sm">
-                  <CardHeader>
-                    <CardTitle>Complete Proposal Details</CardTitle>
-                    <CardDescription>
+                <Card className="border border-slate-200 shadow-sm bg-white">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-lg font-semibold">Complete Proposal Details</CardTitle>
+                    <CardDescription className="text-sm">
                       {isDocumentComparisonProposal
                         ? 'Read-only document content with hidden highlights.'
                         : (isRecipientView
@@ -2113,21 +2146,21 @@ export default function ProposalDetail() {
                   </CardHeader>
                   <CardContent>
                     {isDocumentComparisonProposal ? (
-                      <div className="space-y-4">
-                        <p className="text-xs text-slate-500">
-                          Read-only preview. Hidden spans are highlighted in red.
-                        </p>
-
-                        <div className="p-4 bg-blue-50 rounded-xl border border-blue-100">
-                          <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-                            <p className="text-sm text-blue-700 font-semibold">
-                              {linkedDocumentComparison?.party_a_label || 'Document A'}
-                            </p>
+                      <div className="space-y-6">
+                        {/* Document A */}
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                              <FileText className="w-4 h-4 text-slate-400" />
+                              <h3 className="text-sm font-semibold text-slate-600">
+                                {linkedDocumentComparison?.party_a_label || 'Document A'}
+                              </h3>
+                            </div>
                             <div className="flex flex-wrap items-center gap-2">
-                              <Badge variant="outline">
-                                Source: {linkedDocumentComparison?.doc_a_source || 'typed'}
+                              <Badge variant="outline" className="text-xs">
+                                {linkedDocumentComparison?.doc_a_source || 'typed'}
                               </Badge>
-                              <Badge className="bg-red-100 text-red-700 text-xs">
+                              <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200 text-xs">
                                 {normalizeComparisonSpans(
                                   linkedDocumentComparison?.doc_a_spans_json || [],
                                   String(linkedDocumentComparison?.doc_a_plaintext || '').length
@@ -2135,24 +2168,30 @@ export default function ProposalDetail() {
                               </Badge>
                             </div>
                           </div>
-                          <div className="p-3 bg-white border border-slate-200 rounded-lg max-h-72 overflow-auto">
-                            {renderReadOnlyComparisonText(
-                              linkedDocumentComparison?.doc_a_plaintext || '',
-                              linkedDocumentComparison?.doc_a_spans_json || []
-                            )}
+                          <div className="bg-white border border-slate-200 rounded-md shadow-sm p-12 max-h-96 overflow-auto">
+                            <div className="text-[15px] leading-relaxed text-gray-800">
+                              {renderReadOnlyComparisonText(
+                                linkedDocumentComparison?.doc_a_plaintext || '',
+                                linkedDocumentComparison?.doc_a_spans_json || []
+                              )}
+                            </div>
                           </div>
                         </div>
 
-                        <div className="p-4 bg-indigo-50 rounded-xl border border-indigo-100">
-                          <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-                            <p className="text-sm text-indigo-700 font-semibold">
-                              {linkedDocumentComparison?.party_b_label || 'Document B'}
-                            </p>
+                        {/* Document B */}
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                              <FileText className="w-4 h-4 text-slate-400" />
+                              <h3 className="text-sm font-semibold text-slate-600">
+                                {linkedDocumentComparison?.party_b_label || 'Document B'}
+                              </h3>
+                            </div>
                             <div className="flex flex-wrap items-center gap-2">
-                              <Badge variant="outline">
-                                Source: {linkedDocumentComparison?.doc_b_source || 'typed'}
+                              <Badge variant="outline" className="text-xs">
+                                {linkedDocumentComparison?.doc_b_source || 'typed'}
                               </Badge>
-                              <Badge className="bg-red-100 text-red-700 text-xs">
+                              <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200 text-xs">
                                 {normalizeComparisonSpans(
                                   linkedDocumentComparison?.doc_b_spans_json || [],
                                   String(linkedDocumentComparison?.doc_b_plaintext || '').length
@@ -2160,45 +2199,47 @@ export default function ProposalDetail() {
                               </Badge>
                             </div>
                           </div>
-                          <div className="p-3 bg-white border border-slate-200 rounded-lg max-h-72 overflow-auto">
-                            {renderReadOnlyComparisonText(
-                              linkedDocumentComparison?.doc_b_plaintext || '',
-                              linkedDocumentComparison?.doc_b_spans_json || []
-                            )}
+                          <div className="bg-white border border-slate-200 rounded-md shadow-sm p-12 max-h-96 overflow-auto">
+                            <div className="text-[15px] leading-relaxed text-gray-800">
+                              {renderReadOnlyComparisonText(
+                                linkedDocumentComparison?.doc_b_plaintext || '',
+                                linkedDocumentComparison?.doc_b_spans_json || []
+                              )}
+                            </div>
                           </div>
                         </div>
                       </div>
                     ) : responses.length === 0 ? (
                       <p className="text-slate-500 text-center py-8">No responses recorded yet.</p>
                     ) : (
-                      <div className="space-y-4">
+                      <div className="space-y-3">
                         {responses.map(response => {
                           const hiddenForViewer = isResponseHiddenForViewer(response);
                           return (
-                          <div key={response.id} className="p-4 border border-slate-200 rounded-xl">
-                            <div className="flex items-start justify-between mb-3">
+                          <div key={response.id} className="p-4 border border-slate-200 rounded-lg bg-white">
+                            <div className="flex items-start justify-between mb-2">
                               <div>
-                                <p className="font-semibold text-slate-900 capitalize mb-1">
+                                <p className="font-semibold text-slate-900 capitalize text-sm">
                                   {response.question_id.replace(/_/g, ' ')}
                                 </p>
-                                <Badge variant="outline" className="text-xs">
+                                <Badge variant="outline" className="text-xs mt-1">
                                   Party {response.entered_by_party?.toUpperCase() || 'A'}
                                 </Badge>
                               </div>
-                              <Badge className={
+                              <Badge variant="outline" className={`text-xs ${
                                 hiddenForViewer
-                                  ? 'bg-slate-100 text-slate-700'
+                                  ? ''
                                   : (normalizeResponseVisibility(response.visibility) === 'full'
-                                    ? 'bg-green-100 text-green-700'
-                                    : 'bg-slate-100 text-slate-700')
-                              }>
+                                    ? 'bg-green-50 text-green-700 border-green-200'
+                                    : '')
+                              }`}>
                                 {hiddenForViewer
                                   ? 'not_shared'
                                   : (normalizeResponseVisibility(response.visibility) === 'hidden' ? 'hidden' : (response.visibility || 'full'))}
                               </Badge>
                             </div>
-                            <div className="bg-slate-50 p-3 rounded-lg">
-                              <p className="text-slate-700">
+                            <div className="bg-slate-50 p-3 rounded border border-slate-100">
+                              <p className="text-sm text-slate-700">
                                 {getResponseDisplayValue(response)}
                               </p>
                             </div>
@@ -2211,10 +2252,10 @@ export default function ProposalDetail() {
                 </Card>
 
                 {isRecipientView && (
-                  <Card className="border-0 shadow-sm">
-                    <CardHeader>
-                      <CardTitle>Your Details (Party B)</CardTitle>
-                      <CardDescription>
+                  <Card className="border border-slate-200 shadow-sm bg-white">
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-lg font-semibold">Your Details (Party B)</CardTitle>
+                      <CardDescription className="text-sm">
                         You can edit only Party B fields. Party A values remain read-only.
                       </CardDescription>
                     </CardHeader>
@@ -2279,11 +2320,11 @@ export default function ProposalDetail() {
               {/* Sidebar */}
               <div className="space-y-6">
                 {/* Quick Actions */}
-                <Card className="border-0 shadow-sm">
-                  <CardHeader>
-                    <CardTitle>Quick Actions</CardTitle>
+                <Card className="border border-slate-200 shadow-sm bg-white">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base font-semibold">Quick Actions</CardTitle>
                   </CardHeader>
-                  <CardContent className="space-y-3">
+                  <CardContent className="space-y-2">
                     {isPartyB && proposal.status === 'received' && (
                       <Button 
                         className="w-full bg-green-600 hover:bg-green-700"
@@ -2305,12 +2346,12 @@ export default function ProposalDetail() {
                 </Card>
 
                 {/* Activity Timeline */}
-                <Card className="border-0 shadow-sm">
-                  <CardHeader>
-                    <CardTitle>Activity Timeline</CardTitle>
+                <Card className="border border-slate-200 shadow-sm bg-white">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base font-semibold">Activity Timeline</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="space-y-4">
+                    <div className="space-y-3">
                       <div className="flex items-start gap-4">
                         <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center">
                           <FileText className="w-4 h-4 text-blue-600" />
@@ -2378,14 +2419,14 @@ export default function ProposalDetail() {
             {/* FitCard Report for Profile Matching Template */}
             {isProfileMatchingTemplate && fitCardReport?.status === 'succeeded' && fitCardReport.output_report_json && (
               <div className="space-y-6">
-                <Card className="border-0 shadow-sm bg-gradient-to-br from-purple-50 to-indigo-50">
-                  <CardHeader>
+                <Card className="border border-purple-200 shadow-sm bg-white">
+                  <CardHeader className="pb-3">
                     <div className="flex items-center justify-between">
-                      <CardTitle className="flex items-center gap-2">
+                      <CardTitle className="text-lg font-semibold flex items-center gap-2">
                         <Sparkles className="w-5 h-5 text-purple-600" />
                         Profile Evaluation Report
                       </CardTitle>
-                      <Badge variant="outline">Shared with both parties</Badge>
+                      <Badge variant="outline" className="text-xs">Shared with both parties</Badge>
                     </div>
                   </CardHeader>
                   <CardContent>
@@ -2519,7 +2560,7 @@ export default function ProposalDetail() {
             )}
 
             {isProfileMatchingTemplate && fitCardReport?.status === 'running' && (
-              <Card className="border-0 shadow-sm">
+              <Card className="border border-slate-200 shadow-sm bg-white">
                 <CardContent className="py-16 text-center">
                   <RefreshCw className="w-12 h-12 text-purple-500 mx-auto mb-4 animate-spin" />
                   <h3 className="text-lg font-semibold text-slate-900 mb-2">Generating Profile Evaluation</h3>
@@ -2529,7 +2570,7 @@ export default function ProposalDetail() {
             )}
 
             {isProfileMatchingTemplate && fitCardReport?.status === 'failed' && (
-              <Card className="border-0 shadow-sm">
+              <Card className="border border-slate-200 shadow-sm bg-white">
                 <CardContent className="py-16 text-center">
                   <XCircle className="w-12 h-12 text-red-300 mx-auto mb-4" />
                   <h3 className="text-lg font-semibold text-slate-900 mb-2">Evaluation Failed</h3>
@@ -2547,7 +2588,7 @@ export default function ProposalDetail() {
             )}
 
             {isProfileMatchingTemplate && !fitCardReport && (
-              <Card className="border-0 shadow-sm">
+              <Card className="border border-slate-200 shadow-sm bg-white">
                 <CardContent className="py-16 text-center">
                   <Sparkles className="w-12 h-12 text-slate-300 mx-auto mb-4" />
                   <h3 className="text-lg font-semibold text-slate-900 mb-2">No profile evaluation yet</h3>
@@ -2567,14 +2608,14 @@ export default function ProposalDetail() {
             {/* Shared Report for Finance Template */}
             {isFinanceTemplate && sharedReport?.status === 'succeeded' && sharedReport.output_report_json && (
               <div className="space-y-6">
-                <Card className="border-0 shadow-sm bg-gradient-to-br from-emerald-50 to-blue-50">
-                  <CardHeader>
+                <Card className="border border-emerald-200 shadow-sm bg-white">
+                  <CardHeader className="pb-3">
                     <div className="flex items-center justify-between">
-                      <CardTitle className="flex items-center gap-2">
+                      <CardTitle className="text-lg font-semibold flex items-center gap-2">
                         <Sparkles className="w-5 h-5 text-emerald-600" />
                         Shared Evaluation Report
                       </CardTitle>
-                      <Badge variant="outline">
+                      <Badge variant="outline" className="text-xs">
                         Both parties see this report
                       </Badge>
                     </div>
@@ -2694,7 +2735,7 @@ export default function ProposalDetail() {
             )}
 
             {isFinanceTemplate && sharedReport?.status === 'running' && (
-              <Card className="border-0 shadow-sm">
+              <Card className="border border-slate-200 shadow-sm bg-white">
                 <CardContent className="py-16 text-center">
                   <RefreshCw className="w-12 h-12 text-blue-500 mx-auto mb-4 animate-spin" />
                   <h3 className="text-lg font-semibold text-slate-900 mb-2">Generating shared evaluation</h3>
@@ -2704,7 +2745,7 @@ export default function ProposalDetail() {
             )}
 
             {isFinanceTemplate && sharedReport?.status === 'failed' && (
-              <Card className="border-0 shadow-sm">
+              <Card className="border border-slate-200 shadow-sm bg-white">
                 <CardContent className="py-16 text-center">
                   <XCircle className="w-12 h-12 text-red-300 mx-auto mb-4" />
                   <h3 className="text-lg font-semibold text-slate-900 mb-2">Evaluation Failed</h3>
@@ -2722,7 +2763,7 @@ export default function ProposalDetail() {
             )}
 
             {isFinanceTemplate && !sharedReport && (
-              <Card className="border-0 shadow-sm">
+              <Card className="border border-slate-200 shadow-sm bg-white">
                 <CardContent className="py-16 text-center">
                   <Sparkles className="w-12 h-12 text-slate-300 mx-auto mb-4" />
                   <h3 className="text-lg font-semibold text-slate-900 mb-2">No evaluation yet</h3>
@@ -2744,9 +2785,9 @@ export default function ProposalDetail() {
 
             {/* Standard Reports (Non-Finance Templates) */}
             {!isFinanceTemplate && evaluationReports.length > 0 && (
-              <Card className="border-0 shadow-sm mb-6">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
+              <Card className="border border-slate-200 shadow-sm mb-6 bg-white">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-lg font-semibold flex items-center gap-2">
                     <Clock className="w-5 h-5" />
                     Evaluation History ({evaluationReports.length})
                   </CardTitle>
@@ -2789,7 +2830,7 @@ export default function ProposalDetail() {
             )}
 
             {!isFinanceTemplate && !latestReport && (
-              <Card className="border-0 shadow-sm">
+              <Card className="border border-slate-200 shadow-sm bg-white">
                 <CardContent className="py-16 text-center">
                   <Sparkles className="w-12 h-12 text-slate-300 mx-auto mb-4" />
                   <h3 className="text-lg font-semibold text-slate-900 mb-2">No evaluation yet</h3>
@@ -2810,7 +2851,7 @@ export default function ProposalDetail() {
             )}
 
             {!isFinanceTemplate && latestReport && (latestReport.status === 'queued' || latestReport.status === 'running') && (
-              <Card className="border-0 shadow-sm">
+              <Card className="border border-slate-200 shadow-sm bg-white">
                 <CardContent className="py-16 text-center">
                   <RefreshCw className="w-12 h-12 text-blue-500 mx-auto mb-4 animate-spin" />
                   <h3 className="text-lg font-semibold text-slate-900 mb-2">Evaluation in progress</h3>
@@ -2823,9 +2864,9 @@ export default function ProposalDetail() {
             {!isFinanceTemplate && latestReport && latestReport.status === 'succeeded' && latestReport.output_report_json && (
               <div className="space-y-6">
                 {/* Quality Metrics */}
-                <Card className="border-0 shadow-sm">
-                  <CardHeader>
-                    <CardTitle>Quality Assessment</CardTitle>
+                <Card className="border border-slate-200 shadow-sm bg-white">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-lg font-semibold">Quality Assessment</CardTitle>
                   </CardHeader>
                   <CardContent>
                     <div className="grid grid-cols-2 gap-4">
@@ -2849,9 +2890,9 @@ export default function ProposalDetail() {
                 </Card>
 
                 {/* Summary */}
-                <Card className="border-0 shadow-sm">
-                  <CardHeader>
-                    <CardTitle>Executive Summary</CardTitle>
+                <Card className="border border-slate-200 shadow-sm bg-white">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-lg font-semibold">Executive Summary</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div className="flex items-center gap-4">
@@ -2910,9 +2951,9 @@ export default function ProposalDetail() {
 
                 {/* Flags */}
                 {latestReport.output_report_json.flags?.length > 0 && (
-                  <Card className="border-0 shadow-sm">
-                    <CardHeader>
-                      <CardTitle>Flags & Risks</CardTitle>
+                  <Card className="border border-slate-200 shadow-sm bg-white">
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-lg font-semibold">Flags & Risks</CardTitle>
                     </CardHeader>
                     <CardContent>
                       <div className="space-y-3">
@@ -2944,9 +2985,9 @@ export default function ProposalDetail() {
 
                 {/* Follow-up Questions */}
                 {latestReport.output_report_json.followup_questions?.length > 0 && (
-                  <Card className="border-0 shadow-sm">
-                    <CardHeader>
-                      <CardTitle>Recommended Follow-up Questions</CardTitle>
+                  <Card className="border border-slate-200 shadow-sm bg-white">
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-lg font-semibold">Recommended Follow-up Questions</CardTitle>
                     </CardHeader>
                     <CardContent>
                       <div className="space-y-3">
@@ -2977,7 +3018,7 @@ export default function ProposalDetail() {
 
             {/* Failed Evaluation Display */}
             {!isFinanceTemplate && latestReport && latestReport.status === 'failed' && (
-              <Card className="border-0 shadow-sm">
+              <Card className="border border-slate-200 shadow-sm bg-white">
                 <CardContent className="py-16 text-center">
                   <XCircle className="w-12 h-12 text-red-300 mx-auto mb-4" />
                   <h3 className="text-lg font-semibold text-slate-900 mb-2">Evaluation Failed</h3>
