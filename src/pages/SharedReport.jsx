@@ -144,6 +144,40 @@ async function invokeSharedResolver(token, options = {}) {
     }
   }
 
+async function invokeSharedReportData(token, options = {}) {
+    const payload = {
+      token,
+      ...(typeof options.consumeView === 'boolean' ? { consumeView: options.consumeView } : {}),
+      ...(options.debug ? { debug: '1' } : {})
+    };
+
+    const result = await base44.functions.invoke('GetSharedReportData', payload);
+    return {
+      ...result,
+      data: {
+        ...(result?.data || {}),
+        _clientEndpointUsed: 'GetSharedReportData'
+      }
+    };
+  }
+
+function extractComparisonView(payload) {
+  return (
+    payload?.comparisonView ||
+    payload?.reportData?.comparisonView ||
+    payload?.snapshotData?.comparisonView ||
+    payload?.snapshot?.snapshotData?.comparisonView ||
+    null
+  );
+}
+
+function hasComparisonText(payload) {
+  const view = extractComparisonView(payload);
+  const docALength = String(view?.docA?.text || '').trim().length;
+  const docBLength = String(view?.docB?.text || '').trim().length;
+  return docALength > 0 || docBLength > 0;
+}
+
 function toArray(input) {
   return Array.isArray(input) ? input : [];
 }
@@ -257,6 +291,7 @@ export default function SharedReport() {
   const [reevaluationState, setReevaluationState] = useState(null);
   const [debugData, setDebugData] = useState(null);
   const resolvedTokenRef = useRef(null);
+  const comparisonFallbackAttemptedRef = useRef(new Set());
   const workspaceSectionRef = useRef(null);
   const ensuredSnapshotAccessRef = useRef(new Set());
 
@@ -418,21 +453,7 @@ export default function SharedReport() {
       }
 
       const result = await invokeSharedResolver(token, { consumeView, debug: debugMode });
-      const data = result?.data;
-
-      if (debugMode) {
-        const resolvedDocumentComparisonId =
-          data?.comparisonView?.id ||
-          data?.reportData?.documentComparisonId ||
-          data?.shareLink?.documentComparisonId ||
-          data?.proposalView?.document_comparison_id ||
-          null;
-        setDebugData({
-          endpointUsed: data?._clientEndpointUsed || data?.endpoint || 'unknown',
-          resolvedDocumentComparisonId,
-          ...(data?.debug || {})
-        });
-      }
+      let data = result?.data;
 
       if (!data || typeof data !== 'object' || !data.ok) {
         const reasonCode = data?.code || data?.reason || 'RESOLVE_FAILED';
@@ -459,6 +480,79 @@ export default function SharedReport() {
 
         setError(errorMeta);
         return false;
+      }
+
+      const resolvedDocumentComparisonId =
+        data?.reportData?.documentComparisonId ||
+        data?.shareLink?.documentComparisonId ||
+        data?.proposalView?.document_comparison_id ||
+        data?.debug?.resolvedDocumentComparisonId ||
+        null;
+      const isDocumentComparisonShare = Boolean(
+        data?.reportData?.type === 'document_comparison' ||
+        resolvedDocumentComparisonId
+      );
+      const hasPrimaryComparison = hasComparisonText(data);
+      const fallbackKey = `${token}:${String(consumeView)}`;
+      let fallbackAttempted = false;
+      let fallbackUsed = false;
+
+      if (
+        isDocumentComparisonShare &&
+        !hasPrimaryComparison &&
+        !comparisonFallbackAttemptedRef.current.has(fallbackKey)
+      ) {
+        fallbackAttempted = true;
+        comparisonFallbackAttemptedRef.current.add(fallbackKey);
+
+        try {
+          const fallbackResult = await invokeSharedReportData(token, { consumeView, debug: debugMode });
+          const fallbackData = fallbackResult?.data;
+          if (fallbackData && typeof fallbackData === 'object' && fallbackData.ok && hasComparisonText(fallbackData)) {
+            data = {
+              ...fallbackData,
+              _clientEndpointUsed: 'ResolveSharedReport+GetSharedReportData',
+              debug: {
+                ...(fallbackData?.debug || {}),
+                fallbackUsed: true,
+                fallbackFrom: 'ResolveSharedReport',
+                fallbackEndpoint: 'GetSharedReportData'
+              }
+            };
+            fallbackUsed = true;
+          }
+        } catch (fallbackError) {
+          if (debugMode) {
+            const fallbackMeta = buildErrorMeta(fallbackError);
+            console.error('[SharedReport] GetSharedReportData fallback failed', {
+              apiCall: {
+                functionName: 'GetSharedReportData',
+                method: 'POST',
+                payload: { token, consumeView }
+              },
+              statusCode: fallbackMeta.statusCode,
+              reasonCode: fallbackMeta.reasonCode,
+              responseBody: fallbackMeta.responseBody
+            });
+          }
+        }
+      }
+
+      if (debugMode) {
+        const debugResolvedDocumentComparisonId =
+          data?.comparisonView?.id ||
+          data?.reportData?.documentComparisonId ||
+          data?.shareLink?.documentComparisonId ||
+          data?.proposalView?.document_comparison_id ||
+          resolvedDocumentComparisonId ||
+          null;
+        setDebugData({
+          endpointUsed: data?._clientEndpointUsed || data?.endpoint || 'unknown',
+          resolvedDocumentComparisonId: debugResolvedDocumentComparisonId,
+          fallbackAttempted,
+          fallbackUsed,
+          ...(data?.debug || {})
+        });
       }
 
       const resolvedShareData = data.shareLink || {};
@@ -548,7 +642,7 @@ export default function SharedReport() {
       setPartyAView(data.partyAView || { proposal: null, responses: [] });
       setPartyBEditableSchema(data.partyBEditableSchema || { totalQuestions: 0, editableQuestionIds: [], questions: [] });
       setResponsesView(data.responsesView || data?.recipientView?.responses || []);
-      setComparisonView(data.comparisonView || data?.reportData?.comparisonView || null);
+      setComparisonView(extractComparisonView(data));
       setError(null);
 
       const sharedFieldCount = toArray(data.partyAView?.responses).filter(r => String(r?.redaction || '').toLowerCase() !== 'hidden').length;
@@ -590,7 +684,7 @@ export default function SharedReport() {
         setIsLoadingReport(false);
       }
     }
-  }, [token]);
+  }, [token, debugMode]);
 
   useEffect(() => {
     let active = true;
