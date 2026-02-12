@@ -114,7 +114,14 @@ async function invokeSharedResolver(token, options = {}) {
     };
 
     try {
-      return await base44.functions.invoke('ResolveSharedReport', payload);
+      const result = await base44.functions.invoke('ResolveSharedReport', payload);
+      return {
+        ...result,
+        data: {
+          ...(result?.data || {}),
+          _clientEndpointUsed: 'ResolveSharedReport'
+        }
+      };
     } catch (error) {
       const meta = buildErrorMeta(error);
       const missingResolver =
@@ -125,7 +132,14 @@ async function invokeSharedResolver(token, options = {}) {
         throw error;
       }
 
-      return base44.functions.invoke('GetSharedReportData', payload);
+      const fallback = await base44.functions.invoke('GetSharedReportData', payload);
+      return {
+        ...fallback,
+        data: {
+          ...(fallback?.data || {}),
+          _clientEndpointUsed: 'GetSharedReportData'
+        }
+      };
     }
   }
 
@@ -401,8 +415,18 @@ export default function SharedReport() {
       const result = await invokeSharedResolver(token, { consumeView, debug: debugMode });
       const data = result?.data;
 
-      if (debugMode && data?.debug) {
-        setDebugData(data.debug);
+      if (debugMode) {
+        const resolvedDocumentComparisonId =
+          data?.comparisonView?.id ||
+          data?.reportData?.documentComparisonId ||
+          data?.shareLink?.documentComparisonId ||
+          data?.proposalView?.document_comparison_id ||
+          null;
+        setDebugData({
+          endpointUsed: data?._clientEndpointUsed || data?.endpoint || 'unknown',
+          resolvedDocumentComparisonId,
+          ...(data?.debug || {})
+        });
       }
 
       if (!data || typeof data !== 'object' || !data.ok) {

@@ -1035,6 +1035,153 @@ Deno.serve(async (req) => {
     }
 
     const sourceProposalIdFromLink = extractShareLinkSourceProposalId(shareLink) || resolvedProposalId;
+    const resolvedDocumentComparisonId =
+      asString(shareLink.documentComparisonId) ||
+      asString((shareLink as any)?.document_comparison_id) ||
+      asString(proposal?.document_comparison_id) ||
+      asString((proposal as any)?.documentComparisonId) ||
+      asString(documentComparison?.id);
+
+    if (!documentComparison && resolvedDocumentComparisonId) {
+      const comparisonRows = await base44.asServiceRole.entities.DocumentComparison
+        .filter({ id: resolvedDocumentComparisonId }, '-created_date', 1)
+        .catch(() => []);
+      documentComparison = comparisonRows?.[0] || null;
+    }
+
+    if (!documentComparison && resolvedProposalId) {
+      const comparisonByProposal = await base44.asServiceRole.entities.DocumentComparison
+        .filter({ proposal_id: resolvedProposalId }, '-created_date', 1)
+        .catch(() => []);
+      documentComparison = comparisonByProposal?.[0] || null;
+
+      if (!documentComparison) {
+        const comparisonByDataProposal = await base44.asServiceRole.entities.DocumentComparison
+          .filter({ 'data.proposal_id': resolvedProposalId }, '-created_date', 1)
+          .catch(() => []);
+        documentComparison = comparisonByDataProposal?.[0] || null;
+      }
+    }
+
+    const isDocumentComparisonMode = Boolean(
+      resolvedDocumentComparisonId ||
+      documentComparison ||
+      String(proposal?.proposal_type || '').toLowerCase() === 'document_comparison' ||
+      proposal?.document_comparison_id
+    );
+
+    if (isDocumentComparisonMode) {
+      const proposalView = buildRecipientProposalView(proposal);
+      const comparisonView = buildComparisonView(documentComparison);
+      const comparisonData = objectData(documentComparison);
+      const comparisonReport =
+        documentComparison?.evaluation_report_json ||
+        comparisonData?.evaluation_report_json ||
+        null;
+      const comparisonGeneratedAt = asString(documentComparison?.generated_at) || asString(comparisonData?.generated_at) || null;
+      const docALength = comparisonView?.docA?.text?.length || 0;
+      const docBLength = comparisonView?.docB?.text?.length || 0;
+      const responsesView: any[] = [];
+      const partyAView = {
+        proposal: proposalView,
+        responses: []
+      };
+      const partyBEditableSchema = {
+        totalQuestions: 0,
+        editableQuestionIds: [],
+        questions: []
+      };
+      const normalizedShareLink = {
+        id: shareLink.id,
+        token: shareLink.token,
+        proposalId: resolvedProposalId,
+        sourceProposalId: resolvedProposalId,
+        snapshotId: null,
+        snapshotVersion: null,
+        evaluationItemId: shareLink.evaluationItemId || null,
+        documentComparisonId: asString(documentComparison?.id) || resolvedDocumentComparisonId || null,
+        recipientEmail: shareLink.recipientEmail,
+        createdAt: shareLink.createdAt,
+        expiresAt: shareLink.expiresAt,
+        uses: shareLink.viewCount,
+        maxUses: shareLink.maxViews,
+        viewCount: shareLink.viewCount,
+        maxViews: shareLink.maxViews,
+        mode: shareLink.mode,
+        status: shareLink.status,
+        lastUsedAt: shareLink.lastUsedAt
+      };
+      const normalizedPermissions = {
+        canView: permissions.canView,
+        canEdit: permissions.canEdit,
+        canEditRecipientSide: permissions.canEditRecipientSide,
+        canReevaluate: permissions.canReevaluate,
+        canSendBack: permissions.canSendBack
+      };
+      const reportData = {
+        type: 'document_comparison',
+        id: resolvedProposalId,
+        proposal_id: resolvedProposalId,
+        proposalId: resolvedProposalId,
+        sourceProposalId: resolvedProposalId,
+        snapshotId: null,
+        version: null,
+        reportId: null,
+        reportSource: 'DocumentComparison',
+        evaluationItemId: shareLink.evaluationItemId || null,
+        documentComparisonId: normalizedShareLink.documentComparisonId,
+        title: proposalView?.title || 'Untitled Proposal',
+        template_id: proposalView?.template_id || null,
+        template_name: proposalView?.template_name || null,
+        status: proposalView?.status || null,
+        party_a_email: 'Identity Protected',
+        party_b_email: proposalView?.party_b_email || null,
+        created_date: proposalView?.created_date || null,
+        generated_at: comparisonGeneratedAt,
+        report: comparisonReport,
+        comparisonView
+      };
+
+      return respond({
+        ok: true,
+        status: 'ok',
+        code: 'OK',
+        reason: 'OK',
+        message: 'Shared document comparison resolved',
+        correlationId,
+        proposalId: resolvedProposalId,
+        sourceProposalId: resolvedProposalId,
+        snapshotId: null,
+        snapshotVersion: null,
+        version: null,
+        shareLink: normalizedShareLink,
+        permissions: normalizedPermissions,
+        reportData,
+        comparisonView,
+        proposalView,
+        responsesView,
+        recipientResponses: responsesView,
+        partyAView,
+        partyBEditableSchema,
+        recipientView: {
+          role: 'recipient',
+          proposal: proposalView,
+          responses: responsesView
+        },
+        viewerRole: 'recipient',
+        consumedView: validation.consumedView,
+        currentUserEmail: validation.currentUserEmail,
+        debug: {
+          endpointUsed: 'GetSharedReportData',
+          resolvedDocumentComparisonId: normalizedShareLink.documentComparisonId,
+          documentComparisonFound: Boolean(documentComparison),
+          docATextLength: docALength,
+          docBTextLength: docBLength,
+          documentComparisonKeys: safeKeyList(documentComparison)
+        }
+      });
+    }
+
     const snapshotIdFromLink =
       asString((shareLink as any)?.snapshot_id) ||
       asString((shareLink as any)?.snapshotId) ||
@@ -1216,7 +1363,6 @@ Deno.serve(async (req) => {
       reason: 'OK',
       message: 'Shared snapshot resolved',
       correlationId,
-      debugDeployMarker: "DEPLOY_MARKER_2026_02_11_1",
       proposalId: sourceProposalId,
       sourceProposalId,
       snapshotId,
@@ -1242,11 +1388,21 @@ Deno.serve(async (req) => {
         hasComparisonView: Boolean(comparisonView)
       },
       debug: {
+        endpointUsed: 'GetSharedReportData',
         usedFallback: false,
         hasSnapshotId: true,
         sharedFieldCount: partyAResponses.length,
         snapshotSource: 'ProposalSnapshot',
-        fieldCounts: snapshotFieldCounts
+        fieldCounts: snapshotFieldCounts,
+        resolvedDocumentComparisonId:
+          asString((comparisonView as any)?.id) ||
+          asString(shareLink.documentComparisonId) ||
+          asString((sourceProposal as any)?.document_comparison_id) ||
+          null,
+        documentComparisonFound: Boolean(comparisonView),
+        docATextLength: comparisonView?.docA?.text?.length || 0,
+        docBTextLength: comparisonView?.docB?.text?.length || 0,
+        documentComparisonKeys: []
       },
       snapshot: {
         id: snapshotId,
