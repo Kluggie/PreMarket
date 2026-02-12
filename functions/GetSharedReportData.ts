@@ -10,6 +10,21 @@ const NO_CACHE_HEADERS = {
   Pragma: 'no-cache',
   Expires: '0'
 };
+const DIAGNOSTICS_FLAG = 'EVAL_TEXT_DIAGNOSTICS';
+const DIAGNOSTICS_KEY_NAME = 'DIAG_HASH_KEY';
+
+function readEnv(name: string): string | null {
+  try {
+    return Deno.env.get(name) || null;
+  } catch {
+    return null;
+  }
+}
+
+const TEXT_DIAGNOSTICS_ENABLED = readEnv(DIAGNOSTICS_FLAG) === '1';
+const TEXT_DIAGNOSTICS_KEY = readEnv(DIAGNOSTICS_KEY_NAME);
+const TEXT_ENCODER = new TextEncoder();
+let cachedDiagnosticsCryptoKey: Promise<CryptoKey | null> | null = null;
 
 function respond(payload: Record<string, unknown>, status = 200) {
   return Response.json(payload, {
@@ -24,6 +39,40 @@ function logInfo(payload: Record<string, unknown>) {
 
 function logWarn(payload: Record<string, unknown>) {
   console.warn(JSON.stringify({ level: 'warn', ...payload }));
+}
+
+function toShortHex(buffer: ArrayBuffer, bytes = 6): string {
+  const arr = new Uint8Array(buffer).slice(0, bytes);
+  return Array.from(arr).map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function getDiagnosticsCryptoKey(): Promise<CryptoKey | null> {
+  if (!TEXT_DIAGNOSTICS_ENABLED || !TEXT_DIAGNOSTICS_KEY) return null;
+  if (!cachedDiagnosticsCryptoKey) {
+    cachedDiagnosticsCryptoKey = crypto.subtle
+      .importKey(
+        'raw',
+        TEXT_ENCODER.encode(TEXT_DIAGNOSTICS_KEY),
+        { name: 'HMAC', hash: 'SHA-256' },
+        false,
+        ['sign']
+      )
+      .then((key) => key)
+      .catch(() => null);
+  }
+  return cachedDiagnosticsCryptoKey;
+}
+
+async function hmacFingerprint(value: string): Promise<string | null> {
+  if (!TEXT_DIAGNOSTICS_ENABLED) return null;
+  const key = await getDiagnosticsCryptoKey();
+  if (!key) return null;
+  try {
+    const signature = await crypto.subtle.sign('HMAC', key, TEXT_ENCODER.encode(value));
+    return toShortHex(signature, 6);
+  } catch {
+    return null;
+  }
 }
 
 const normalizeParty = (party: unknown) => String(party || 'a').toLowerCase();
@@ -609,6 +658,62 @@ function removeHiddenComparisonText(text: string, spans: unknown) {
     text: output,
     hiddenCount: normalizedSpans.length
   };
+}
+
+async function buildTextRedactionDiagnostics(text: string, spans: unknown) {
+  const normalizedSpans = normalizeComparisonSpans(spans, text.length);
+  const redacted = removeHiddenComparisonText(text, spans);
+  const fullTextLen = text.length;
+  const redactedTextLen = redacted.text.length;
+
+  return {
+    fullTextLen,
+    redactedTextLen,
+    hiddenCharCount: Math.max(0, fullTextLen - redactedTextLen),
+    hiddenSpanCount: normalizedSpans.length,
+    fullFingerprint: await hmacFingerprint(text),
+    redactedFingerprint: await hmacFingerprint(redacted.text)
+  };
+}
+
+async function logSharedReportTextDiagnostics(params: {
+  correlationId: string;
+  shareLinkId: string | null;
+  proposalId: string | null;
+  documentComparisonId: string | null;
+  comparisonView: any;
+}) {
+  if (!TEXT_DIAGNOSTICS_ENABLED) return;
+
+  if (!TEXT_DIAGNOSTICS_KEY) {
+    logWarn({
+      event: 'text_diagnostics_missing_key',
+      source: 'GetSharedReportData',
+      correlationId: params.correlationId,
+      envFlag: DIAGNOSTICS_FLAG,
+      keyName: DIAGNOSTICS_KEY_NAME
+    });
+    return;
+  }
+
+  const docAText = String(params.comparisonView?.docA?.text || '');
+  const docBText = String(params.comparisonView?.docB?.text || '');
+  const docASpans = params.comparisonView?.docA?.spans;
+  const docBSpans = params.comparisonView?.docB?.spans;
+
+  const docA = await buildTextRedactionDiagnostics(docAText, docASpans);
+  const docB = await buildTextRedactionDiagnostics(docBText, docBSpans);
+
+  logInfo({
+    event: 'shared_report_text_diagnostics',
+    source: 'GetSharedReportData',
+    correlationId: params.correlationId,
+    shareLinkId: params.shareLinkId,
+    proposalId: params.proposalId,
+    documentComparisonId: params.documentComparisonId,
+    docA,
+    docB
+  });
 }
 
 function toComparisonText(value: unknown): string | null {
@@ -1357,6 +1462,14 @@ Deno.serve(async (req) => {
         report: comparisonReport,
         comparisonView
       };
+
+      await logSharedReportTextDiagnostics({
+        correlationId,
+        shareLinkId: asString(normalizedShareLink.id),
+        proposalId: asString(resolvedProposalId),
+        documentComparisonId: asString(normalizedShareLink.documentComparisonId),
+        comparisonView
+      });
 
       return respond({
         ok: true,

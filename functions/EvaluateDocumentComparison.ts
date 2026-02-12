@@ -1,6 +1,214 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.6';
 
 const UI_REPORT_FIELD = 'output_report_json';
+const DIAGNOSTICS_FLAG = 'EVAL_TEXT_DIAGNOSTICS';
+const DIAGNOSTICS_KEY_NAME = 'DIAG_HASH_KEY';
+
+function readEnv(name: string): string | null {
+  try {
+    return Deno.env.get(name) || null;
+  } catch {
+    return null;
+  }
+}
+
+const TEXT_DIAGNOSTICS_ENABLED = readEnv(DIAGNOSTICS_FLAG) === '1';
+const TEXT_DIAGNOSTICS_KEY = readEnv(DIAGNOSTICS_KEY_NAME);
+const TEXT_ENCODER = new TextEncoder();
+let cachedDiagnosticsCryptoKey: Promise<CryptoKey | null> | null = null;
+
+function toShortHex(buffer: ArrayBuffer, bytes = 6): string {
+  const arr = new Uint8Array(buffer).slice(0, bytes);
+  return Array.from(arr).map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function getDiagnosticsCryptoKey(): Promise<CryptoKey | null> {
+  if (!TEXT_DIAGNOSTICS_ENABLED || !TEXT_DIAGNOSTICS_KEY) return null;
+  if (!cachedDiagnosticsCryptoKey) {
+    cachedDiagnosticsCryptoKey = crypto.subtle
+      .importKey(
+        'raw',
+        TEXT_ENCODER.encode(TEXT_DIAGNOSTICS_KEY),
+        { name: 'HMAC', hash: 'SHA-256' },
+        false,
+        ['sign']
+      )
+      .then((key) => key)
+      .catch(() => null);
+  }
+  return cachedDiagnosticsCryptoKey;
+}
+
+async function hmacFingerprint(value: string): Promise<string | null> {
+  if (!TEXT_DIAGNOSTICS_ENABLED) return null;
+  const key = await getDiagnosticsCryptoKey();
+  if (!key) return null;
+  try {
+    const signature = await crypto.subtle.sign('HMAC', key, TEXT_ENCODER.encode(value));
+    return toShortHex(signature, 6);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeDiagComparisonLevel(level: unknown): 'hidden' | null {
+  const normalized = String(level || '').trim().toLowerCase();
+  if (normalized === 'hidden' || normalized === 'confidential' || normalized === 'partial') return 'hidden';
+  return null;
+}
+
+function normalizeDiagComparisonSpans(
+  spans: unknown,
+  textLength: number
+): Array<{ start: number; end: number; level: 'hidden' }> {
+  if (!Array.isArray(spans)) return [];
+
+  return spans
+    .map((span: any) => {
+      const rawStart = Number(span?.start);
+      const rawEnd = Number(span?.end);
+      const level = normalizeDiagComparisonLevel(span?.level);
+      if (!Number.isFinite(rawStart) || !Number.isFinite(rawEnd) || !level) return null;
+
+      const start = Math.max(0, Math.min(rawStart, textLength));
+      const end = Math.max(0, Math.min(rawEnd, textLength));
+      if (end <= start) return null;
+
+      return { start, end, level };
+    })
+    .filter((span): span is { start: number; end: number; level: 'hidden' } => Boolean(span))
+    .sort((a, b) => a.start - b.start);
+}
+
+function removeHiddenComparisonTextForDiagnostics(text: string, spans: unknown) {
+  const normalizedSpans = normalizeDiagComparisonSpans(spans, text.length);
+  if (normalizedSpans.length === 0) {
+    return {
+      text,
+      hiddenSpanCount: 0
+    };
+  }
+
+  let output = '';
+  let cursor = 0;
+
+  for (const span of normalizedSpans) {
+    if (span.start > cursor) {
+      output += text.slice(cursor, span.start);
+    }
+    cursor = Math.max(cursor, span.end);
+  }
+
+  if (cursor < text.length) {
+    output += text.slice(cursor);
+  }
+
+  return {
+    text: output,
+    hiddenSpanCount: normalizedSpans.length
+  };
+}
+
+async function buildEvaluationDocDiagnostics(params: {
+  fullText: string;
+  spans: unknown;
+  evaluationText: string;
+}) {
+  const fullText = String(params.fullText || '');
+  const evaluationText = String(params.evaluationText || '');
+  const redacted = removeHiddenComparisonTextForDiagnostics(fullText, params.spans);
+  const redactedText = redacted.text;
+
+  return {
+    fullTextLen: fullText.length,
+    redactedTextLen: redactedText.length,
+    evaluationTextLen: evaluationText.length,
+    hiddenCharCount: Math.max(0, fullText.length - redactedText.length),
+    hiddenSpanCount: redacted.hiddenSpanCount,
+    fullFingerprint: await hmacFingerprint(fullText),
+    redactedFingerprint: await hmacFingerprint(redactedText),
+    evaluationFingerprint: await hmacFingerprint(evaluationText)
+  };
+}
+
+async function logEvaluationTextDiagnostics(params: {
+  correlationId: string;
+  comparisonId: string;
+  proposalId: string | null;
+  vertexInputText: string;
+  docAFullText: string;
+  docASpans: unknown;
+  docBFullText: string;
+  docBSpans: unknown;
+}) {
+  if (!TEXT_DIAGNOSTICS_ENABLED) return;
+
+  if (!TEXT_DIAGNOSTICS_KEY) {
+    console.warn(JSON.stringify({
+      level: 'warn',
+      event: 'text_diagnostics_missing_key',
+      source: 'EvaluateDocumentComparison',
+      correlationId: params.correlationId,
+      comparisonId: params.comparisonId,
+      envFlag: DIAGNOSTICS_FLAG,
+      keyName: DIAGNOSTICS_KEY_NAME
+    }));
+    return;
+  }
+
+  const docA = await buildEvaluationDocDiagnostics({
+    fullText: params.docAFullText,
+    spans: params.docASpans,
+    evaluationText: params.docAFullText
+  });
+  const docB = await buildEvaluationDocDiagnostics({
+    fullText: params.docBFullText,
+    spans: params.docBSpans,
+    evaluationText: params.docBFullText
+  });
+  const vertexInputText = String(params.vertexInputText || '');
+  const vertexInput = {
+    textLen: vertexInputText.length,
+    fingerprint: await hmacFingerprint(vertexInputText)
+  };
+
+  console.log(JSON.stringify({
+    level: 'info',
+    event: 'evaluation_text_diagnostics',
+    source: 'EvaluateDocumentComparison',
+    correlationId: params.correlationId,
+    comparisonId: params.comparisonId,
+    proposalId: params.proposalId,
+    docA,
+    docB,
+    vertexInput
+  }));
+
+  const maybeWarnForDoc = (docLabel: 'docA' | 'docB', doc: any) => {
+    const hasHidden = Number(doc?.hiddenSpanCount || 0) > 0;
+    const sameLength = Number(doc?.evaluationTextLen || 0) === Number(doc?.redactedTextLen || -1);
+    const fpA = typeof doc?.evaluationFingerprint === 'string' ? doc.evaluationFingerprint : null;
+    const fpB = typeof doc?.redactedFingerprint === 'string' ? doc.redactedFingerprint : null;
+    const sameFingerprint = Boolean(fpA && fpB && fpA === fpB);
+    if (hasHidden && sameLength && sameFingerprint) {
+      console.warn(JSON.stringify({
+        level: 'warn',
+        event: 'evaluation_using_redacted_text',
+        source: 'EvaluateDocumentComparison',
+        correlationId: params.correlationId,
+        comparisonId: params.comparisonId,
+        proposalId: params.proposalId,
+        doc: docLabel,
+        hiddenSpanCount: doc.hiddenSpanCount,
+        evaluationTextLen: doc.evaluationTextLen,
+        redactedTextLen: doc.redactedTextLen
+      }));
+    }
+  };
+
+  maybeWarnForDoc('docA', docA);
+  maybeWarnForDoc('docB', docB);
+}
 
 Deno.serve(async (req) => {
   let comparison_id;
@@ -495,13 +703,25 @@ Return JSON only with this structure:
       status: 'submitted'
     });
 
+    const vertexInputText = systemPrompt + '\n\n' + userContent;
+    await logEvaluationTextDiagnostics({
+      correlationId,
+      comparisonId: comparison_id,
+      proposalId: linkedProposalId,
+      vertexInputText,
+      docAFullText: comparison.doc_a_plaintext,
+      docASpans,
+      docBFullText: comparison.doc_b_plaintext,
+      docBSpans
+    });
+
     // Call GenerateContent via service role (uses Vertex OAuth)
     console.log('[EvaluateDocumentComparison] Calling GenerateContent with correlationId:', correlationId);
     
     let result;
     try {
       result = await base44.asServiceRole.functions.invoke('GenerateContent', {
-        text: systemPrompt + '\n\n' + userContent,
+        text: vertexInputText,
         temperature: 0.2,
         maxOutputTokens: 2000,
         thinkingBudget: 0
