@@ -285,6 +285,34 @@ Deno.serve(async (req) => {
       }, { status: 422 });
     }
 
+    if (!hasComparisonView || !hasDocA || !hasDocB || docALength === 0 || docBLength === 0) {
+      logInfo({
+        correlationId,
+        event: 'snapshot_comparison_missing',
+        proposalId: resolvedProposalId,
+        snapshotId,
+        hasComparisonView,
+        hasDocA,
+        hasDocB,
+        docALength,
+        docBLength
+      });
+      return Response.json({
+        ok: false,
+        errorCode: 'SNAPSHOT_COMPARISON_EMPTY',
+        message: 'Snapshot is missing document comparison content',
+        snapshotId,
+        hasComparisonView,
+        hasDocA,
+        hasDocB,
+        aLen: snapshotALen,
+        bLen: snapshotBLen,
+        docALength,
+        docBLength,
+        correlationId
+      }, { status: 422 });
+    }
+
     const shareMode = 'interactive';
     const permissions = {
       canView: true,
