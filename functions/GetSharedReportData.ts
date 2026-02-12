@@ -134,14 +134,14 @@ function extractShareLinkSnapshotId(shareLink: any): string | null {
   const metadata = shareLink.metadata && typeof shareLink.metadata === 'object' ? shareLink.metadata : {};
 
   return (
-    asString(shareLink.snapshotId) ||
     asString(shareLink.snapshot_id) ||
-    asString(context.snapshotId) ||
+    asString(shareLink.snapshotId) ||
     asString(context.snapshot_id) ||
-    asString(data.snapshotId) ||
+    asString(context.snapshotId) ||
     asString(data.snapshot_id) ||
-    asString(metadata.snapshotId) ||
+    asString(data.snapshotId) ||
     asString(metadata.snapshot_id) ||
+    asString(metadata.snapshotId) ||
     null
   );
 }
@@ -802,12 +802,6 @@ function readSnapshotPayload(snapshot: any): Record<string, unknown> {
   const directSnake = parseObjectField(snapshot?.snapshot_data);
   if (Object.keys(directSnake).length > 0) return directSnake;
 
-  const data = parseObjectField(snapshot?.data);
-  const fromDataCamel = parseObjectField(data?.snapshotData);
-  if (Object.keys(fromDataCamel).length > 0) return fromDataCamel;
-  const fromDataSnake = parseObjectField(data?.snapshot_data);
-  if (Object.keys(fromDataSnake).length > 0) return fromDataSnake;
-
   return {};
 }
 
@@ -863,30 +857,34 @@ function extractSnapshotVersion(snapshot: any): number | null {
 }
 
 function toSnapshotPartyAResponseView(rawItem: any, index: number) {
-  const questionId = asString(rawItem?.questionId || rawItem?.question_id || rawItem?.key || `snapshot_field_${index}`) || `snapshot_field_${index}`;
-  const valueType = String(rawItem?.valueType || rawItem?.value_type || '').toLowerCase() === 'range' ? 'range' : 'text';
-  const visibilityRaw = String(rawItem?.visibility || 'full').trim().toLowerCase();
-  const visibility = normalizeVisibility(visibilityRaw) === 'hidden' ? 'hidden' : (visibilityRaw || 'full');
-  const rangeMin = rawItem?.rangeMin ?? rawItem?.range_min ?? null;
-  const rangeMax = rawItem?.rangeMax ?? rawItem?.range_max ?? null;
-  const hasRange = rangeMin !== null && rangeMin !== undefined && rangeMax !== null && rangeMax !== undefined;
-  const value = rawItem?.value ?? null;
-  const fallbackSummary = hasRange ? `${rangeMin} - ${rangeMax}` : (value ?? null);
-  const valueSummary = asString(rawItem?.valueSummary || rawItem?.value_summary || null) || (fallbackSummary === null ? null : String(fallbackSummary));
+  const questionId = asString(rawItem?.questionId || rawItem?.question_id || rawItem?.key || `snapshot_field_${index + 1}`) || `snapshot_field_${index + 1}`;
+  const label = asString(rawItem?.label || rawItem?.title || null) || questionId;
+  const redaction = String(rawItem?.redaction || '').trim().toLowerCase() === 'hidden' ? 'hidden' : 'none';
+  const rawValueSummary = rawItem?.valueSummary ?? rawItem?.value_summary ?? '';
+  const valueSummary = redaction === 'hidden' ? '' : String(rawValueSummary ?? '');
+  return {
+    questionId,
+    label,
+    valueSummary,
+    redaction
+  };
+}
+
+function toSnapshotPartyBEditableQuestionView(rawItem: any, index: number) {
+  const questionId = asString(rawItem?.questionId || rawItem?.question_id || rawItem?.key || `snapshot_b_field_${index + 1}`) || `snapshot_b_field_${index + 1}`;
+  const label = asString(rawItem?.label || rawItem?.title || null) || questionId;
+  const currentResponseSource = rawItem?.currentResponse && typeof rawItem.currentResponse === 'object'
+    ? rawItem.currentResponse
+    : (rawItem?.current_response && typeof rawItem.current_response === 'object' ? rawItem.current_response : {});
 
   return {
-    id: asString(rawItem?.id || rawItem?.sourceResponseId || null) || `snapshot_${questionId}_${index}`,
     questionId,
-    label: asString(rawItem?.label || rawItem?.title || null) || questionId,
-    valueType,
-    visibility,
-    enteredByParty: asString(rawItem?.enteredByParty || rawItem?.entered_by_party || null) || 'a',
-    value: visibility === 'hidden' ? null : value,
-    rangeMin: visibility === 'hidden' ? null : rangeMin,
-    rangeMax: visibility === 'hidden' ? null : rangeMax,
-    valueSummary: visibility === 'hidden' ? 'Not shared' : valueSummary,
-    redaction: visibility === 'hidden' ? 'hidden' : (visibility === 'partial' ? 'partial' : 'none'),
-    createdAt: asString(rawItem?.createdAt || rawItem?.created_date || null)
+    label,
+    currentResponse: {
+      value: currentResponseSource?.value ?? rawItem?.value ?? null,
+      rangeMin: currentResponseSource?.rangeMin ?? currentResponseSource?.range_min ?? rawItem?.rangeMin ?? rawItem?.range_min ?? null,
+      rangeMax: currentResponseSource?.rangeMax ?? currentResponseSource?.range_max ?? rawItem?.rangeMax ?? rawItem?.range_max ?? null
+    }
   };
 }
 
@@ -898,7 +896,6 @@ Deno.serve(async (req) => {
     const body = req.method === 'GET' ? {} : await req.json().catch(() => ({}));
     const token = asString(body?.token) || asString(new URL(req.url).searchParams.get('token'));
     const consumeView = parseConsumeView(req, body);
-    const debugMode = new URL(req.url).searchParams.get('debug') === '1';
 
     if (!token) {
       return respond({
@@ -1011,467 +1008,131 @@ Deno.serve(async (req) => {
     }
 
     const sourceProposalIdFromLink = extractShareLinkSourceProposalId(shareLink) || resolvedProposalId;
-    const snapshotIdFromLink = asString((shareLink as any)?.snapshotId) || extractShareLinkSnapshotId(shareLink);
-    const snapshotVersionFromLink = extractShareLinkSnapshotVersion(shareLink);
-    let debugInfo: any = null;
+    const snapshotIdFromLink =
+      asString((shareLink as any)?.snapshot_id) ||
+      asString((shareLink as any)?.snapshotId) ||
+      extractShareLinkSnapshotId(shareLink);
 
-    if (debugMode) {
-    debugInfo = {
-      shareLink: {
-        id: shareLink?.id,
-        tokenPrefix: token?.slice(0, 8),
-        snapshotIdResolved: snapshotIdFromLink,
-        snapshotVersionResolved: snapshotVersionFromLink
-      },
-      snapshotFetch: null,
-      parsedSnapshotPayload: null
+    if (!snapshotIdFromLink) {
+      return respond({
+        ok: false,
+        error: 'SNAPSHOT_PAYLOAD_EMPTY',
+        snapshotId: snapshotIdFromLink
+      });
+    }
+
+    const snapshotByIdRows = await base44.asServiceRole.entities.ProposalSnapshot
+      .filter({ id: snapshotIdFromLink }, '-created_date', 1)
+      .catch(() => []);
+    let snapshot = snapshotByIdRows?.[0] || null;
+
+    if (!snapshot) {
+      const snapshotBySnapshotIdRows = await base44.asServiceRole.entities.ProposalSnapshot
+        .filter({ snapshot_id: snapshotIdFromLink }, '-created_date', 1)
+        .catch(() => []);
+      snapshot = snapshotBySnapshotIdRows?.[0] || null;
+    }
+
+    const snapshotPayload =
+      snapshot?.snapshotData && typeof snapshot.snapshotData === 'object' ? snapshot.snapshotData :
+      snapshot?.snapshot_data && typeof snapshot.snapshot_data === 'object' ? snapshot.snapshot_data :
+      null;
+
+    const rawPartyA = Array.isArray(snapshotPayload?.partyAResponses) ? snapshotPayload.partyAResponses : [];
+    const rawPartyBSchema = snapshotPayload?.partyBEditableSchema && typeof snapshotPayload.partyBEditableSchema === 'object'
+      ? snapshotPayload.partyBEditableSchema
+      : {};
+    const rawPartyBQuestions = Array.isArray((rawPartyBSchema as any)?.questions) ? (rawPartyBSchema as any).questions : [];
+
+    const partyAResponses = rawPartyA.map((item: any, index: number) => toSnapshotPartyAResponseView(item, index));
+    const partyBQuestions = rawPartyBQuestions.map((item: any, index: number) => toSnapshotPartyBEditableQuestionView(item, index));
+    const partyBEditableSchema = {
+      totalQuestions: partyBQuestions.length,
+      questions: partyBQuestions
     };
+
+    if (!snapshotPayload || (partyAResponses.length === 0 && partyBQuestions.length === 0)) {
+      return respond({
+        ok: false,
+        error: 'SNAPSHOT_PAYLOAD_EMPTY',
+        snapshotId: snapshotIdFromLink
+      });
     }
 
-    if (snapshotIdFromLink) {
-    const snapshotBuckets = await Promise.all([
-      base44.asServiceRole.entities.ProposalSnapshot.filter({ id: snapshotIdFromLink }, '-created_date', 1).catch(() => []),
-      base44.asServiceRole.entities.ProposalSnapshot.filter({ snapshot_id: snapshotIdFromLink }, '-created_date', 1).catch(() => [])
-    ]);
-    const snapshot = [...(snapshotBuckets[0] || []), ...(snapshotBuckets[1] || [])]?.[0] || null;
+    const snapshotMeta = readSnapshotMeta(snapshot);
+    const snapshotId = asString(snapshot?.id) || snapshotIdFromLink;
+    const sourceProposalId = extractSourceProposalIdFromSnapshot(snapshot) || sourceProposalIdFromLink || resolvedProposalId;
+    const version = extractSnapshotVersion(snapshot) || extractShareLinkSnapshotVersion(shareLink) || null;
 
-      if (snapshot) {
-        const snapshotPayload = readSnapshotPayload(snapshot);
-        const snapshotMeta = readSnapshotMeta(snapshot);
-        const snapshotId = asString(snapshot?.id) || snapshotIdFromLink;
-        const sourceProposalId = extractSourceProposalIdFromSnapshot(snapshot) || sourceProposalIdFromLink || resolvedProposalId;
-        const version = extractSnapshotVersion(snapshot) || extractShareLinkSnapshotVersion(shareLink) || null;
+    let sourceProposal = proposal;
+    if (sourceProposalId && sourceProposalId !== resolvedProposalId) {
+      const sourceProposalRows = await base44.asServiceRole.entities.Proposal.filter({ id: sourceProposalId }, '-created_date', 1);
+      sourceProposal = sourceProposalRows?.[0] || sourceProposal;
+    }
 
-        if (debugMode) {
-          debugInfo.snapshotFetch = {
-            found: true,
-            snapshotRecordId: snapshotId,
-            has_snapshotData: !!snapshot?.snapshotData,
-            has_snapshot_data: !!snapshot?.snapshot_data,
-            snapshotDataTopKeys: snapshot?.snapshotData ? Object.keys(snapshot.snapshotData) : [],
-            snapshot_dataTopKeys: snapshot?.snapshot_data ? Object.keys(snapshot.snapshot_data) : []
-          };
-        }
-
-        let sourceProposal = proposal;
-        if (sourceProposalId && sourceProposalId !== resolvedProposalId) {
-          const sourceProposalRows = await base44.asServiceRole.entities.Proposal.filter({ id: sourceProposalId }, '-created_date', 1);
-          sourceProposal = sourceProposalRows?.[0] || sourceProposal;
-        }
-
-        const recipientResponseBuckets = await Promise.all([
-          base44.asServiceRole.entities.ProposalResponse.filter({ proposal_id: sourceProposalId }, '-created_date'),
-          base44.asServiceRole.entities.ProposalResponse.filter({ proposalId: sourceProposalId }, '-created_date'),
-          base44.asServiceRole.entities.ProposalResponse.filter({ 'data.proposal_id': sourceProposalId }, '-created_date'),
-          base44.asServiceRole.entities.ProposalResponse.filter({ 'data.proposalId': sourceProposalId }, '-created_date')
-        ]);
-        const recipientResponsesRaw = dedupeById(recipientResponseBuckets.flat());
-        const recipientResponses = recipientResponsesRaw.filter(isPartyBResponse);
-
-        const templates = await base44.asServiceRole.entities.Template.list().catch(() => []);
-        const template = templates.find((item: any) => item.id === sourceProposal?.template_id) || null;
-        const questionLookup = toQuestionLookup(template);
-
-        const rawPartyA = Array.isArray(snapshotPayload?.partyAResponses)
-          ? snapshotPayload.partyAResponses
-          : (Array.isArray(snapshotPayload?.partyA)
-            ? snapshotPayload.partyA
-            : (Array.isArray(snapshotPayload?.responses) ? snapshotPayload.responses : []));
-        const partyAResponses = rawPartyA.map((item: any, index: number) => toSnapshotPartyAResponseView(item, index));
-
-        const rawPartyBSchema = snapshotPayload?.partyBEditableSchema;
-        const partyBQuestions = Array.isArray(rawPartyBSchema?.questions) ? rawPartyBSchema.questions : [];
-
-        if (debugMode) {
-          const payloadPath = Array.isArray(snapshotPayload?.partyAResponses) 
-            ? 'snapshotData.partyAResponses'
-            : (Array.isArray(snapshotPayload?.partyA)
-              ? 'snapshotData.partyA'
-              : (Array.isArray(snapshotPayload?.responses) 
-                ? 'snapshotData.responses'
-                : 'none'));
-
-          debugInfo.parsedSnapshotPayload = {
-            payloadPathUsed: payloadPath,
-            partyAResponsesLen: partyAResponses.length,
-            partyBQuestionsLen: partyBQuestions.length,
-            snapshotPayloadTopKeys: Object.keys(snapshotPayload || {}),
-            countsField: snapshotMeta?.fieldCounts || null
-          };
-        }
-
-        const snapshotProposal = parseObjectField(snapshotPayload?.proposal);
-        const proposalView = {
-          id: sourceProposalId,
-          title: asString(snapshotProposal?.title) || asString(snapshotMeta?.title) || sourceProposal?.title || 'Untitled Proposal',
-          template_name: asString(snapshotProposal?.templateName) || sourceProposal?.template_name || null,
-          template_id: asString(snapshotProposal?.templateId) || sourceProposal?.template_id || null,
-          status: asString(snapshotProposal?.status) || sourceProposal?.status || null,
-          created_date: asString(snapshotProposal?.createdDate) || sourceProposal?.created_date || null,
-          sent_at: sourceProposal?.sent_at || null,
-          document_comparison_id: sourceProposal?.document_comparison_id || null,
-          party_a_email: 'Identity Protected',
-          party_b_email: sourceProposal?.party_b_email || null,
-          mutual_reveal: false,
-          reveal_requested_by_a: false,
-          reveal_requested_by_b: Boolean(sourceProposal?.reveal_requested_by_b),
-          reveal_level_a: null,
-          reveal_level_b: sourceProposal?.reveal_level_b || null
-        };
-
-        const partyAView = {
-          proposal: proposalView,
-          responses: partyAResponses.map((item: any) => {
-            const question = questionLookup?.[item.questionId] || null;
-            return {
-              ...item,
-              label: question?.label || item.label || item.questionId
-            };
-          })
-        };
-
-        const partyBEditableSchema = buildPartyBEditableSchema(template, recipientResponses);
-        const responsesView = recipientResponses.map(buildRecipientResponseView);
-        const comparisonView = parseObjectField(snapshotPayload?.comparisonView || snapshotPayload?.comparison_view);
-
-        const reportSnapshot = parseObjectField(snapshotPayload?.reportData || snapshotPayload?.report_data);
-        const reportData = {
-          type: asString(reportSnapshot?.type) || 'proposal',
-          id: sourceProposalId,
-          proposal_id: sourceProposalId,
-          proposalId: sourceProposalId,
-          sourceProposalId,
-          snapshotId,
-          version,
-          reportId: asString(reportSnapshot?.reportId) || null,
-          reportSource: asString(reportSnapshot?.reportSource) || 'ProposalSnapshot',
-          evaluationItemId: shareLink.evaluationItemId || null,
-          documentComparisonId: shareLink.documentComparisonId || sourceProposal?.document_comparison_id || null,
-          title: proposalView.title || 'Untitled Proposal',
-          template_id: proposalView.template_id || null,
-          template_name: proposalView.template_name || null,
-          status: proposalView.status || null,
-          party_a_email: 'Identity Protected',
-          party_b_email: proposalView.party_b_email || null,
-          created_date: proposalView.created_date || null,
-          generated_at: asString(reportSnapshot?.generatedAt || reportSnapshot?.generated_at) || null,
-          report: reportSnapshot?.report || null,
-          comparisonView: Object.keys(comparisonView).length > 0 ? comparisonView : null
-        };
-
-        const normalizedShareLink = {
-          id: shareLink.id,
-          token: shareLink.token,
-          proposalId: sourceProposalId,
-          sourceProposalId,
-          snapshotId,
-          snapshotVersion: version,
-          evaluationItemId: shareLink.evaluationItemId || null,
-          documentComparisonId: shareLink.documentComparisonId || null,
-          recipientEmail: shareLink.recipientEmail,
-          createdAt: shareLink.createdAt,
-          expiresAt: shareLink.expiresAt,
-          uses: shareLink.viewCount,
-          maxUses: shareLink.maxViews,
-          viewCount: shareLink.viewCount,
-          maxViews: shareLink.maxViews,
-          mode: shareLink.mode,
-          status: shareLink.status,
-          lastUsedAt: shareLink.lastUsedAt
-        };
-
-        const normalizedPermissions = {
-          canView: permissions.canView,
-          canEdit: permissions.canEdit,
-          canEditRecipientSide: permissions.canEditRecipientSide,
-          canReevaluate: permissions.canReevaluate,
-          canSendBack: permissions.canSendBack
-        };
-
-        const snapshotFieldCounts = parseObjectField(snapshotMeta?.fieldCounts);
-        const snapshotDebugKeys = safeKeyList(snapshotPayload);
-        
-        // Debug check: if visible count is 0 but we have responses, something is wrong
-        const hasEmptySnapshotIssue = (snapshotFieldCounts?.visible === 0 || !snapshotFieldCounts?.visible) && 
-                                      (rawPartyA.length > 0 || !!comparisonView);
-        
-        if (hasEmptySnapshotIssue) {
-          console.error('[GetSharedReportData] EMPTY_SNAPSHOT detected', JSON.stringify({
-            snapshotId,
-            snapshotVersion: version,
-            fieldCounts: snapshotFieldCounts,
-            rawPartyALength: rawPartyA.length,
-            partyAResponsesLength: partyAResponses.length,
-            hasComparisonView: !!comparisonView,
-            snapshotPayloadKeys: snapshotDebugKeys,
-            snapshotMetaKeys: safeKeyList(snapshotMeta)
-          }));
-        }
-        
-        logInfo({
-          correlationId,
-          event: 'shared_report_snapshot_resolved',
-          shareLinkId: normalizedShareLink.id,
-          sourceProposalId,
-          snapshotId,
-          version,
-          tokenPrefix: token.slice(0, 8),
-          consumedView: validation.consumedView,
-          sharedFieldCount: partyAResponses.length,
-          fieldCounts: snapshotFieldCounts,
-          snapshotDebugKeys,
-          hasComparisonView: !!comparisonView,
-          hasEmptySnapshotIssue
-        });
-
-        return respond({
-          ok: true,
-          status: 'ok',
-          code: 'OK',
-          reason: 'OK',
-          message: 'Shared snapshot resolved',
-          correlationId,
-          proposalId: sourceProposalId,
-          sourceProposalId,
-          snapshotId,
-          snapshotVersion: version,
-          version,
-          snapshotMeta: {
-            ...snapshotMeta,
-            fieldCounts: snapshotFieldCounts
-          },
-          ...(debugMode ? { debug: debugInfo } : {}),
-          snapshot: {
-            id: snapshotId,
-            sourceProposalId,
-            version,
-            createdAt: asString(snapshot?.createdAt || snapshot?.created_at || snapshot?.created_date),
-            recipientEmail: normalizeEmail(snapshot?.recipientEmail || snapshot?.recipient_email || shareLink.recipientEmail),
-            snapshotData: snapshotPayload,
-            snapshotMeta
-          },
-          snapshotData: snapshotPayload,
-          recipientResponses: responsesView,
-          reportId: reportData.reportId,
-          evaluationId: normalizedShareLink.evaluationItemId,
-          templateId: proposalView.template_id || null,
-          shareLink: normalizedShareLink,
-          permissions: normalizedPermissions,
-          reportData,
-          comparisonView: reportData.comparisonView,
-          partyAView,
-          partyBEditableSchema,
-          proposalView,
-          responsesView,
-          recipientView: {
-            role: 'recipient',
-            proposal: proposalView,
-            responses: responsesView
-          },
-          viewerRole: 'recipient',
-          consumedView: validation.consumedView,
-          currentUserEmail: validation.currentUserEmail
-        });
-      }
-
-      if (debugMode) {
-        debugInfo.snapshotFetch = {
-          found: false,
-          snapshotRecordId: null,
-          has_snapshotData: false,
-          has_snapshot_data: false,
-          snapshotDataTopKeys: [],
-          snapshot_dataTopKeys: []
-        };
-        debugInfo.parsedSnapshotPayload = {
-          payloadPathUsed: 'fallback_live',
-          partyAResponsesLen: 0,
-          partyBQuestionsLen: 0,
-          snapshotPayloadTopKeys: [],
-          countsField: null
-        };
-      }
-
-      logWarn({
-        correlationId,
-        event: 'snapshot_missing_fallback_to_live',
-        snapshotId: snapshotIdFromLink,
-        sourceProposalId: sourceProposalIdFromLink
-      });
-      }
-
-    const currentUser = await base44.auth.me().catch(() => null);
-    let receivedRecord = {
-      ensured: false,
-      created: false,
-      recordId: null as string | null
+    const proposalView = {
+      id: sourceProposalId,
+      title: sourceProposal?.title || 'Untitled Proposal',
+      template_name: sourceProposal?.template_name || null,
+      template_id: sourceProposal?.template_id || null,
+      status: sourceProposal?.status || null,
+      created_date: sourceProposal?.created_date || null,
+      sent_at: sourceProposal?.sent_at || null,
+      document_comparison_id: sourceProposal?.document_comparison_id || null,
+      party_a_email: 'Identity Protected',
+      party_b_email: sourceProposal?.party_b_email || null,
+      mutual_reveal: false,
+      reveal_requested_by_a: false,
+      reveal_requested_by_b: Boolean(sourceProposal?.reveal_requested_by_b),
+      reveal_level_a: null,
+      reveal_level_b: sourceProposal?.reveal_level_b || null
     };
-    try {
-      receivedRecord = await ensureReceivedProposalRecord(base44, {
-        proposalId: resolvedProposalId,
-        proposal,
-        shareLink,
-        currentUser
-      });
-    } catch (recordError) {
-      const err = recordError instanceof Error ? recordError : new Error(String(recordError));
-      logWarn({
-        correlationId,
-        event: 'shared_received_record_failed',
-        proposalId: resolvedProposalId,
-        shareLinkId: shareLink?.id || null,
-        recipientUserId: asString(currentUser?.id),
-        message: err.message
-      });
-    }
 
-    if (!documentComparison && proposal?.document_comparison_id) {
-      const linkedComparisons = await base44.asServiceRole.entities.DocumentComparison.filter(
-        { id: proposal.document_comparison_id },
-        '-created_date',
-        1
-      );
-      documentComparison = linkedComparisons?.[0] || null;
-    }
-
-    if (!documentComparison) {
-      const byProposal = await base44.asServiceRole.entities.DocumentComparison.filter(
-        { proposal_id: resolvedProposalId },
-        '-created_date',
-        1
-      );
-      documentComparison = byProposal?.[0] || null;
-    }
-
-    if (!documentComparison) {
-      const byProposalInData = await base44.asServiceRole.entities.DocumentComparison.filter(
-        { 'data.proposal_id': resolvedProposalId },
-        '-created_date',
-        1
-      );
-      documentComparison = byProposalInData?.[0] || null;
-    }
-
-    if (!evaluationItem) {
-      const itemBuckets = await Promise.all([
-        base44.asServiceRole.entities.EvaluationItem.filter({ linked_proposal_id: resolvedProposalId }, '-created_date', 1),
-        base44.asServiceRole.entities.EvaluationItem.filter({ linkedProposalId: resolvedProposalId }, '-created_date', 1),
-        base44.asServiceRole.entities.EvaluationItem.filter({ 'data.linked_proposal_id': resolvedProposalId }, '-created_date', 1),
-        base44.asServiceRole.entities.EvaluationItem.filter({ 'data.linkedProposalId': resolvedProposalId }, '-created_date', 1)
-      ]);
-      evaluationItem = itemBuckets.flat()?.[0] || null;
-    }
-
-    const responseBuckets = await Promise.all([
-      base44.asServiceRole.entities.ProposalResponse.filter(
-        { proposal_id: resolvedProposalId },
-        '-created_date'
-      ),
-      base44.asServiceRole.entities.ProposalResponse.filter(
-        { proposalId: resolvedProposalId },
-        '-created_date'
-      ),
-      base44.asServiceRole.entities.ProposalResponse.filter(
-        { 'data.proposal_id': resolvedProposalId },
-        '-created_date'
-      ),
-      base44.asServiceRole.entities.ProposalResponse.filter(
-        { 'data.proposalId': resolvedProposalId },
-        '-created_date'
-      )
-    ]);
-    let proposalResponses = dedupeById(responseBuckets.flat());
-
-    const templates = await base44.asServiceRole.entities.Template.list();
-    const template = templates.find((item: any) => item.id === proposal.template_id) || null;
-    const questionLookup = toQuestionLookup(template);
-    if (proposalResponses.length === 0 && evaluationItem) {
-      const evalData = objectData(evaluationItem);
-      const fallbackStepState = evaluationItem.step_state_json || evalData.step_state_json || null;
-      if (fallbackStepState) {
-        proposalResponses = buildFallbackResponsesFromStepState(fallbackStepState, questionLookup, resolvedProposalId);
-      }
-    }
-
-    let reportPayload: any = null;
-    let reportGeneratedAt: string | null = null;
-    let reportId: string | null = null;
-    let reportSource = 'none';
-    let reportInputSnapshot: any = null;
-
-    const sharedReports = await base44.asServiceRole.entities.EvaluationReportShared.filter(
-      { proposal_id: resolvedProposalId },
-      '-created_date',
-      1
-    );
-    const sharedCandidate = pickLatestReportCandidate(sharedReports, 'EvaluationReportShared.proposal_id');
-    reportPayload = sharedCandidate.payload;
-    reportGeneratedAt = sharedCandidate.generatedAt;
-    reportId = sharedCandidate.id;
-    reportSource = sharedCandidate.payload ? sharedCandidate.source : reportSource;
-    reportInputSnapshot = sharedCandidate.inputSnapshot || reportInputSnapshot;
-
-    if (!reportPayload) {
-      const reportsByProposal = await base44.asServiceRole.entities.EvaluationReport.filter(
-        { proposal_id: resolvedProposalId },
-        '-created_date',
-        1
-      );
-      const candidate = pickLatestReportCandidate(reportsByProposal, 'EvaluationReport.proposal_id');
-      reportPayload = candidate.payload;
-      reportGeneratedAt = candidate.generatedAt || reportGeneratedAt;
-      reportId = candidate.id || reportId;
-      reportSource = candidate.payload ? candidate.source : reportSource;
-      reportInputSnapshot = candidate.inputSnapshot || reportInputSnapshot;
-    }
-
-    if (!reportPayload) {
-      const reportsByDataProposal = await base44.asServiceRole.entities.EvaluationReport.filter(
-        { 'data.proposal_id': resolvedProposalId },
-        '-created_date',
-        1
-      );
-      const candidate = pickLatestReportCandidate(reportsByDataProposal, 'EvaluationReport.data.proposal_id');
-      reportPayload = candidate.payload;
-      reportGeneratedAt = candidate.generatedAt || reportGeneratedAt;
-      reportId = candidate.id || reportId;
-      reportSource = candidate.payload ? candidate.source : reportSource;
-      reportInputSnapshot = candidate.inputSnapshot || reportInputSnapshot;
-    }
-
-    if (!reportPayload && documentComparison) {
-      reportPayload = extractReportPayload(documentComparison);
-      reportGeneratedAt = extractGeneratedAt(documentComparison) || reportGeneratedAt;
-      reportId = asString(documentComparison?.id) || reportId;
-      reportSource = reportPayload ? 'DocumentComparison' : reportSource;
-    }
-
-    if (proposalResponses.length === 0 && reportInputSnapshot) {
-      proposalResponses = buildFallbackResponsesFromInputSnapshot(
-        reportInputSnapshot,
-        questionLookup,
-        resolvedProposalId
-      );
-    }
-
-    const proposalView = buildRecipientProposalView(proposal);
-    const responsesView = proposalResponses.map(buildRecipientResponseView);
     const partyAView = {
       proposal: proposalView,
-      responses: proposalResponses
-        .filter(isPartyAResponse)
-        .map((response: any) => buildPartyAResponseView(response, questionLookup))
+      responses: partyAResponses
     };
-    const partyBEditableSchema = buildPartyBEditableSchema(template, proposalResponses);
-    const comparisonView = buildComparisonView(documentComparison);
+
+    const recipientResponseBuckets = await Promise.all([
+      base44.asServiceRole.entities.ProposalResponse.filter({ proposal_id: sourceProposalId }, '-created_date').catch(() => []),
+      base44.asServiceRole.entities.ProposalResponse.filter({ proposalId: sourceProposalId }, '-created_date').catch(() => []),
+      base44.asServiceRole.entities.ProposalResponse.filter({ 'data.proposal_id': sourceProposalId }, '-created_date').catch(() => []),
+      base44.asServiceRole.entities.ProposalResponse.filter({ 'data.proposalId': sourceProposalId }, '-created_date').catch(() => [])
+    ]);
+    const recipientResponses = dedupeById(recipientResponseBuckets.flat()).filter(isPartyBResponse);
+    const responsesView = recipientResponses.map((response: any) => buildRecipientResponseView(response));
+
+    const reportData = {
+      type: 'proposal',
+      id: sourceProposalId,
+      proposal_id: sourceProposalId,
+      proposalId: sourceProposalId,
+      sourceProposalId,
+      snapshotId,
+      version,
+      reportId: null,
+      reportSource: 'ProposalSnapshot',
+      evaluationItemId: shareLink.evaluationItemId || null,
+      documentComparisonId: shareLink.documentComparisonId || sourceProposal?.document_comparison_id || null,
+      title: proposalView.title || 'Untitled Proposal',
+      template_id: proposalView.template_id || null,
+      template_name: proposalView.template_name || null,
+      status: proposalView.status || null,
+      party_a_email: 'Identity Protected',
+      party_b_email: proposalView.party_b_email || null,
+      created_date: proposalView.created_date || null,
+      generated_at: null,
+      report: null,
+      comparisonView: null
+    };
 
     const normalizedShareLink = {
       id: shareLink.id,
       token: shareLink.token,
-      proposalId: resolvedProposalId,
-      sourceProposalId: extractShareLinkSourceProposalId(shareLink) || resolvedProposalId,
-      snapshotId: asString((shareLink as any)?.snapshotId) || extractShareLinkSnapshotId(shareLink),
-      snapshotVersion: extractShareLinkSnapshotVersion(shareLink),
+      proposalId: sourceProposalId,
+      sourceProposalId,
+      snapshotId,
+      snapshotVersion: version,
       evaluationItemId: shareLink.evaluationItemId || null,
       documentComparisonId: shareLink.documentComparisonId || null,
       recipientEmail: shareLink.recipientEmail,
@@ -1494,42 +1155,23 @@ Deno.serve(async (req) => {
       canSendBack: permissions.canSendBack
     };
 
-    const reportData = {
-      type: documentComparison ? 'document_comparison' : (evaluationItem?.type || 'proposal'),
-      id: resolvedProposalId,
-      proposal_id: resolvedProposalId,
-      proposalId: resolvedProposalId,
-      sourceProposalId: resolvedProposalId,
-      snapshotId: normalizedShareLink.snapshotId,
-      version: normalizedShareLink.snapshotVersion,
-      reportId,
-      reportSource,
-      evaluationItemId: normalizedShareLink.evaluationItemId,
-      documentComparisonId: normalizedShareLink.documentComparisonId || proposal.document_comparison_id || null,
-      title: proposal.title || documentComparison?.title || evaluationItem?.title || 'Untitled Proposal',
-      template_id: proposal.template_id || null,
-      template_name: proposal.template_name || null,
-      status: proposal.status || documentComparison?.status || evaluationItem?.status || null,
-      party_a_email: 'Identity Protected',
-      party_b_email: proposal.party_b_email || evaluationItem?.party_b_email || null,
-      created_date: proposal.created_date || documentComparison?.created_date || evaluationItem?.created_date || null,
-      generated_at: reportGeneratedAt,
-      report: reportPayload,
-      comparisonView
-    };
+    const snapshotFieldCounts = parseObjectField(snapshotMeta?.fieldCounts);
+    const snapshotDebugKeys = safeKeyList(snapshotPayload);
 
     logInfo({
       correlationId,
-      event: 'shared_report_resolved',
+      event: 'shared_report_snapshot_resolved',
       shareLinkId: normalizedShareLink.id,
-      resolvedProposalId,
-      reportId,
-      reportSource,
-      hasReportPayload: Boolean(reportPayload),
+      sourceProposalId,
+      snapshotId,
+      version,
       tokenPrefix: token.slice(0, 8),
       consumedView: validation.consumedView,
-      usedFallback: true,
-      hasSnapshotId: !!normalizedShareLink.snapshotId
+      sharedFieldCount: partyAResponses.length,
+      fieldCounts: snapshotFieldCounts,
+      snapshotDebugKeys,
+      hasComparisonView: false,
+      hasEmptySnapshotIssue: false
     });
 
     return respond({
@@ -1537,25 +1179,58 @@ Deno.serve(async (req) => {
       status: 'ok',
       code: 'OK',
       reason: 'OK',
-      message: 'Shared report resolved',
+      message: 'Shared snapshot resolved',
       correlationId,
-      receivedRecord,
-      proposalId: resolvedProposalId,
-      sourceProposalId: resolvedProposalId,
-      snapshotId: normalizedShareLink.snapshotId || null,
-      snapshotVersion: normalizedShareLink.snapshotVersion || null,
-      version: normalizedShareLink.snapshotVersion || null,
-      ...(debugMode ? { debug: debugInfo } : {}),
-      snapshot: null,
-      snapshotData: null,
+      debugDeployMarker: "DEPLOY_MARKER_2026_02_11_1",
+      proposalId: sourceProposalId,
+      sourceProposalId,
+      snapshotId,
+      snapshotVersion: version,
+      version,
+      snapshotMeta: {
+        ...snapshotMeta,
+        fieldCounts: snapshotFieldCounts
+      },
+      snapshotDebug: {
+        shareLinkSnapshotId:
+          asString((shareLink as any)?.snapshot_id) ||
+          asString((shareLink as any)?.snapshotId) ||
+          extractShareLinkSnapshotId(shareLink),
+        shareLinkSnapshotVersion: extractShareLinkSnapshotVersion(shareLink),
+        snapshotFound: !!snapshot,
+        snapshotRawKeys: Object.keys(snapshot || {}),
+        snapshotDataRawKeys: Object.keys(snapshotPayload || {}),
+        snapshotCounts: snapshotFieldCounts,
+        keys: snapshotDebugKeys,
+        partyAResponsesLength: partyAResponses.length,
+        rawPartyALength: rawPartyA.length,
+        hasComparisonView: false
+      },
+      debug: {
+        usedFallback: false,
+        hasSnapshotId: true,
+        sharedFieldCount: partyAResponses.length,
+        snapshotSource: 'ProposalSnapshot',
+        fieldCounts: snapshotFieldCounts
+      },
+      snapshot: {
+        id: snapshotId,
+        sourceProposalId,
+        version,
+        createdAt: asString(snapshot?.createdAt || snapshot?.created_at || snapshot?.created_date),
+        recipientEmail: normalizeEmail(snapshot?.recipientEmail || snapshot?.recipient_email || shareLink.recipientEmail),
+        snapshotData: snapshotPayload,
+        snapshotMeta
+      },
+      snapshotData: snapshotPayload,
       recipientResponses: responsesView,
-      reportId,
+      reportId: reportData.reportId,
       evaluationId: normalizedShareLink.evaluationItemId,
-      templateId: proposal.template_id || null,
+      templateId: proposalView.template_id || null,
       shareLink: normalizedShareLink,
       permissions: normalizedPermissions,
       reportData,
-      comparisonView,
+      comparisonView: null,
       partyAView,
       partyBEditableSchema,
       proposalView,

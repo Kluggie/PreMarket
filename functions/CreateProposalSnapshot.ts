@@ -1,6 +1,7 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.6';
 
 const PARTY_A_KEYS = new Set(['a', 'party_a', 'proposer']);
+const PARTY_B_KEYS = new Set(['b', 'party_b', 'recipient']);
 
 function asString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -27,12 +28,26 @@ function normalizeParty(value: unknown): string {
   return String(value || '').trim().toLowerCase();
 }
 
-function isPartyAResponse(response: any): boolean {
-  return PARTY_A_KEYS.has(normalizeParty(response?.entered_by_party || response?.author_party || 'a'));
+function normalizeEnteredByParty(value: unknown): 'a' | 'b' {
+  const normalized = normalizeParty(value);
+  if (PARTY_B_KEYS.has(normalized)) return 'b';
+  if (PARTY_A_KEYS.has(normalized)) return 'a';
+  return 'a';
 }
 
-function normalizeVisibility(value: unknown): string {
-  return String(value || 'full').trim().toLowerCase() || 'full';
+function isPartyAResponse(response: any): boolean {
+  return normalizeEnteredByParty(response?.entered_by_party || response?.author_party) === 'a';
+}
+
+function normalizeVisibility(value: unknown): 'full' | 'hidden' {
+  const normalized = String(value || 'full').trim().toLowerCase();
+  if (normalized === 'hidden' || normalized === 'confidential') return 'hidden';
+  return 'full';
+}
+
+function normalizeValueType(value: unknown): 'text' | 'range' {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized === 'range' ? 'range' : 'text';
 }
 
 function isExplicitlyHidden(response: any): boolean {
@@ -235,100 +250,69 @@ Deno.serve(async (req) => {
     });
 
     const allResponses = await getProposalResponses(base44, sourceProposalId);
-
-    // Split responses by party
-    const partyAResponseRows = allResponses.filter((r) => {
-      const enteredBy = String(r?.entered_by_party || 'a').toLowerCase();
-      return enteredBy === 'a' || enteredBy === 'party_a' || enteredBy === 'proposer';
-    });
-
-    const partyBResponseRows = allResponses.filter((r) => {
-      const enteredBy = String(r?.entered_by_party || 'a').toLowerCase();
-      return enteredBy === 'b' || enteredBy === 'party_b' || enteredBy === 'recipient';
-    });
-
-    // Build Party A responses with redaction
-    const partyAResponses = partyAResponseRows.map((response) => {
-      const questionId = asString(response?.question_id) || '';
+    const normalizedResponses = allResponses.map((response: any, index: number) => {
+      const questionId = asString(response?.question_id || response?.questionId) || `snapshot_field_${index + 1}`;
       const question = questionLookup[questionId] || null;
-      const visibility = normalizeVisibility(response?.visibility);
-      const isHidden = visibility === 'hidden';
-      const valueType = String(response?.value_type || '').trim().toLowerCase() === 'range' ? 'range' : 'text';
-
-      const rawValue = response?.value ?? null;
-      const rangeMin = response?.range_min ?? null;
-      const rangeMax = response?.range_max ?? null;
-
-      // Apply redaction for hidden fields
-      if (isHidden) {
-        return {
-          sourceResponseId: asString(response?.id),
-          questionId,
-          label: asString(question?.label) || questionId,
-          ownerParty: 'A',
-          enteredByParty: 'a',
-          visibility: 'hidden',
-          valueType,
-          value: null,
-          rangeMin: null,
-          rangeMax: null,
-          valueSummary: null,
-          redaction: 'hidden'
-        };
-      }
-
-      // Non-hidden: include actual values
-      let valueSummary: string | null = null;
-      if (valueType === 'range') {
-        valueSummary = (rangeMin !== null && rangeMin !== undefined && rangeMax !== null && rangeMax !== undefined)
-          ? `${rangeMin} - ${rangeMax}`
-          : null;
-      } else {
-        valueSummary = rawValue === null || rawValue === undefined ? null : String(rawValue);
-      }
 
       return {
-        sourceResponseId: asString(response?.id),
         questionId,
         label: asString(question?.label) || questionId,
-        ownerParty: 'A',
-        enteredByParty: 'a',
-        visibility,
-        valueType,
-        value: rawValue === null || rawValue === undefined ? null : String(rawValue),
-        rangeMin,
-        rangeMax,
-        valueSummary,
-        redaction: 'none'
+        enteredByParty: normalizeEnteredByParty(response?.entered_by_party || response?.author_party),
+        ownerParty: questionOwnerParty(question),
+        visibility: normalizeVisibility(response?.visibility),
+        valueType: normalizeValueType(response?.value_type),
+        value: response?.value ?? null,
+        rangeMin: response?.range_min ?? response?.rangeMin ?? null,
+        rangeMax: response?.range_max ?? response?.rangeMax ?? null
       };
     });
 
-    // Build Party B editable schema
-    const partyBQuestions = partyBResponseRows.map((response) => {
-      const questionId = asString(response?.question_id) || '';
-      const question = questionLookup[questionId] || null;
-      const valueType = String(response?.value_type || '').trim().toLowerCase() === 'range' ? 'range' : 'text';
-
-      return {
-        questionId,
-        label: asString(question?.label) || questionId,
-        description: asString(question?.description) || null,
-        fieldType: asString(question?.field_type) || 'text',
-        valueType,
-        required: Boolean(question?.required),
-        supportsVisibility: Boolean(question?.supports_visibility),
-        allowedValues: Array.isArray(question?.allowed_values) ? question.allowed_values : [],
-        currentResponse: {
-          id: asString(response?.id) || null,
-          value: response?.value ?? null,
-          rangeMin: response?.range_min ?? null,
-          rangeMax: response?.range_max ?? null,
-          visibility: normalizeVisibility(response?.visibility),
-          enteredByParty: 'b',
-          updatedAt: asString(response?.updated_date || response?.created_date)
+    const partyAResponses = normalizedResponses
+      .filter((response) => response.enteredByParty === 'a')
+      .filter((response) => response.ownerParty !== 'b')
+      .map((response) => {
+        if (response.visibility === 'hidden') {
+          return {
+            questionId: response.questionId,
+            label: response.label,
+            valueSummary: '',
+            redaction: 'hidden' as const
+          };
         }
-      };
-    });
+
+        const hasRangeBounds = response.rangeMin !== null && response.rangeMin !== undefined
+          && response.rangeMax !== null && response.rangeMax !== undefined;
+        const valueSummary = response.valueType === 'range'
+          ? (hasRangeBounds ? `${response.rangeMin} - ${response.rangeMax}` : '')
+          : (response.value === null || response.value === undefined ? '' : String(response.value));
+
+        return {
+          questionId: response.questionId,
+          label: response.label,
+          valueSummary,
+          redaction: 'none' as const
+        };
+      });
+
+    const partyBQuestions = normalizedResponses
+      .filter((response) => response.enteredByParty === 'b')
+      .map((response) => ({
+        questionId: response.questionId,
+        label: response.label,
+        currentResponse: {
+          value: response.valueType === 'range' ? null : response.value,
+          rangeMin: response.rangeMin ?? null,
+          rangeMax: response.rangeMax ?? null
+        }
+      }));
+
+    const snapshotPayload = {
+      partyAResponses,
+      partyBEditableSchema: {
+        totalQuestions: partyBQuestions.length,
+        questions: partyBQuestions
+      }
+    };
 
     let reportPayload: any = null;
     let reportGeneratedAt: string | null = null;
@@ -375,103 +359,74 @@ Deno.serve(async (req) => {
     const version = await getNextVersion(base44, sourceProposalId);
     const createdAt = new Date().toISOString();
 
-    // Include document comparison - AGGRESSIVE LOOKUP
+    // Include document comparison if present
     let comparisonView: any = null;
     const docComparisonId = asString(proposal?.document_comparison_id);
-    let comparison: any = null;
-
-    // Try all possible lookup methods
-    const comparisonBuckets = await Promise.all([
-      docComparisonId ? base44.asServiceRole.entities.DocumentComparison.filter({ id: docComparisonId }, '-created_date', 1).catch(() => []) : [],
-      base44.asServiceRole.entities.DocumentComparison.filter({ proposal_id: sourceProposalId }, '-created_date', 1).catch(() => []),
-      base44.asServiceRole.entities.DocumentComparison.filter({ proposalId: sourceProposalId }, '-created_date', 1).catch(() => []),
-      base44.asServiceRole.entities.DocumentComparison.filter({ 'data.proposal_id': sourceProposalId }, '-created_date', 1).catch(() => []),
-      base44.asServiceRole.entities.DocumentComparison.filter({ 'data.proposalId': sourceProposalId }, '-created_date', 1).catch(() => [])
-    ]);
-
-    comparison = dedupeById(comparisonBuckets.flat())?.[0] || null;
-
-    console.log('[SnapshotDocComparison]', JSON.stringify({
-      sourceProposalId,
-      docComparisonIdFromProposal: docComparisonId,
-      foundComparison: !!comparison,
-      comparisonId: asString(comparison?.id),
-      hasDocAText: !!comparison?.doc_a_plaintext,
-      hasDocBText: !!comparison?.doc_b_plaintext,
-      docALength: String(comparison?.doc_a_plaintext || '').length,
-      docBLength: String(comparison?.doc_b_plaintext || '').length
-    }));
-
-    if (comparison) {
-      const rawDocAText = String(comparison.doc_a_plaintext ?? '');
-      const rawDocBText = String(comparison.doc_b_plaintext ?? '');
-      const rawDocASpans = Array.isArray(comparison.doc_a_spans_json) ? comparison.doc_a_spans_json : [];
-      const rawDocBSpans = Array.isArray(comparison.doc_b_spans_json) ? comparison.doc_b_spans_json : [];
-
-      // Remove hidden text
-      const removeHidden = (text: string, spans: any[]) => {
-        const normalizedSpans = spans
-          .map((span: any) => {
-            const level = String(span?.level || '').toLowerCase();
-            if (!['hidden', 'confidential'].includes(level)) return null;
-            const start = Number(span?.start);
-            const end = Number(span?.end);
-            if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
-            return { start, end };
-          })
-          .filter(Boolean)
-          .sort((a: any, b: any) => a.start - b.start);
-
-        if (normalizedSpans.length === 0) return { text, hiddenCount: 0 };
-
-        let output = '';
-        let cursor = 0;
-        for (const span of normalizedSpans) {
-          if (span.start > cursor) output += text.slice(cursor, span.start);
-          cursor = Math.max(cursor, span.end);
-        }
-        if (cursor < text.length) output += text.slice(cursor);
-        return { text: output, hiddenCount: normalizedSpans.length };
-      };
-
-      const redactedDocA = removeHidden(rawDocAText, rawDocASpans);
-      const redactedDocB = removeHidden(rawDocBText, rawDocBSpans);
-
-      comparisonView = {
-        id: asString(comparison?.id) || docComparisonId,
-        title: asString(comparison.title) || null,
-        docA: {
-          label: asString(comparison.party_a_label) || 'Document A',
-          source: asString(comparison.doc_a_source) || 'typed',
-          text: redactedDocA.text,
-          hiddenCount: redactedDocA.hiddenCount
-        },
-        docB: {
-          label: asString(comparison.party_b_label) || 'Document B',
-          source: asString(comparison.doc_b_source) || 'typed',
-          text: redactedDocB.text,
-          hiddenCount: redactedDocB.hiddenCount
-        }
-      };
-
-      console.log('[SnapshotDocComparisonBuilt]', JSON.stringify({
-        comparisonViewId: comparisonView.id,
-        docATextLength: comparisonView.docA.text.length,
-        docBTextLength: comparisonView.docB.text.length,
-        docAHidden: comparisonView.docA.hiddenCount,
-        docBHidden: comparisonView.docB.hiddenCount
-      }));
-    } else {
-      console.warn('[SnapshotDocComparisonMissing]', JSON.stringify({
-        sourceProposalId,
-        proposalDocCompId: docComparisonId,
-        message: 'No document comparison found'
-      }));
+    if (docComparisonId) {
+      const comparisons = await base44.asServiceRole.entities.DocumentComparison.filter(
+        { id: docComparisonId },
+        '-created_date',
+        1
+      ).catch(() => []);
+      const comparison = comparisons?.[0];
+      
+      if (comparison) {
+        const rawDocAText = String(comparison.doc_a_plaintext ?? '');
+        const rawDocBText = String(comparison.doc_b_plaintext ?? '');
+        const rawDocASpans = Array.isArray(comparison.doc_a_spans_json) ? comparison.doc_a_spans_json : [];
+        const rawDocBSpans = Array.isArray(comparison.doc_b_spans_json) ? comparison.doc_b_spans_json : [];
+        
+        // Remove hidden text
+        const removeHidden = (text: string, spans: any[]) => {
+          const normalizedSpans = spans
+            .map((span: any) => {
+              const level = String(span?.level || '').toLowerCase();
+              if (!['hidden', 'confidential'].includes(level)) return null;
+              const start = Number(span?.start);
+              const end = Number(span?.end);
+              if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+              return { start, end };
+            })
+            .filter(Boolean)
+            .sort((a: any, b: any) => a.start - b.start);
+          
+          if (normalizedSpans.length === 0) return { text, hiddenCount: 0 };
+          
+          let output = '';
+          let cursor = 0;
+          for (const span of normalizedSpans) {
+            if (span.start > cursor) output += text.slice(cursor, span.start);
+            cursor = Math.max(cursor, span.end);
+          }
+          if (cursor < text.length) output += text.slice(cursor);
+          return { text: output, hiddenCount: normalizedSpans.length };
+        };
+        
+        const redactedDocA = removeHidden(rawDocAText, rawDocASpans);
+        const redactedDocB = removeHidden(rawDocBText, rawDocBSpans);
+        
+        comparisonView = {
+          id: docComparisonId,
+          title: asString(comparison.title) || null,
+          docA: {
+            label: asString(comparison.party_a_label) || 'Document A',
+            source: asString(comparison.doc_a_source) || 'typed',
+            text: redactedDocA.text,
+            hiddenCount: redactedDocA.hiddenCount
+          },
+          docB: {
+            label: asString(comparison.party_b_label) || 'Document B',
+            source: asString(comparison.doc_b_source) || 'typed',
+            text: redactedDocB.text,
+            hiddenCount: redactedDocB.hiddenCount
+          }
+        };
+      }
     }
 
     // Calculate field counts - count documents that have visible text
-    const visibleResponseCount = partyAResponses.filter(r => r.visibility !== 'hidden').length;
-    const hiddenResponseCount = partyAResponses.filter(r => r.visibility === 'hidden').length;
+    const visibleResponseCount = partyAResponses.filter((response) => response.redaction === 'none').length;
+    const hiddenResponseCount = partyAResponses.filter((response) => response.redaction === 'hidden').length;
     
     let comparisonFieldCount = 0;
     let comparisonHiddenCount = 0;
@@ -484,42 +439,12 @@ Deno.serve(async (req) => {
     const totalVisible = visibleResponseCount + comparisonFieldCount;
     const totalHidden = hiddenResponseCount + comparisonHiddenCount;
 
-    const snapshotData = {
-      type: comparisonView ? 'document_comparison' : 'template',
-      proposal: {
-        sourceProposalId,
-        title: asString(proposal?.title) || 'Untitled Proposal',
-        templateId: asString(proposal?.template_id),
-        templateName: asString(proposal?.template_name),
-        status: asString(proposal?.status),
-        createdDate: asString(proposal?.created_date),
-        partyBEmail: normalizeEmail(proposal?.party_b_email),
-        documentComparisonId: docComparisonId
-      },
-      partyAResponses: partyAResponses,
-      partyBEditableSchema: {
-        totalQuestions: partyBQuestions.length,
-        editableQuestionIds: partyBQuestions.map(q => q.questionId),
-        questions: partyBQuestions
-      },
-      comparisonView,
-      reportData: {
-        reportId,
-        reportSource,
-        generatedAt: reportGeneratedAt,
-        report: reportPayload
-      }
-    };
-
-    const visiblePartyACount = partyAResponses.filter(r => r.redaction !== 'hidden').length;
-    const hiddenPartyACount = partyAResponses.filter(r => r.redaction === 'hidden').length;
-    const partyBCount = partyBQuestions.length;
+    const snapshotData = snapshotPayload;
 
     const fieldCounts = {
-      visible: visiblePartyACount + partyBCount + comparisonFieldCount,
-      hidden: hiddenPartyACount + comparisonHiddenCount,
-      templateResponses: visiblePartyACount,
-      partyBFields: partyBCount,
+      visible: totalVisible,
+      hidden: totalHidden,
+      templateResponses: visibleResponseCount,
       comparisonFields: comparisonFieldCount
     };
 
@@ -534,54 +459,46 @@ Deno.serve(async (req) => {
       createdAt,
       fieldCounts
     };
+    const snapshotMetaWithCounts = {
+      ...snapshotMeta,
+      fieldCounts
+    };
 
     console.log('[SnapshotBuild]', JSON.stringify({
       sourceProposalId,
-      proposalType: snapshotData.type,
+      proposalType: 'canonical',
       templateId: asString(proposal?.template_id),
       responseCountFound: allResponses.length,
-      partyACount: partyAResponseRows.length,
-      partyBCount: partyBResponseRows.length,
       visibleCount: fieldCounts.visible,
       hiddenCount: fieldCounts.hidden,
-      partyAVisible: visiblePartyACount,
-      partyAHidden: hiddenPartyACount,
-      partyBFields: partyBCount,
+      templateResponses: fieldCounts.templateResponses,
       comparisonFields: fieldCounts.comparisonFields,
+      partyAResponsesLength: partyAResponses.length,
+      partyBQuestionsLength: partyBQuestions.length,
       hasDocA: !!comparisonView?.docA?.text,
       hasDocB: !!comparisonView?.docB?.text,
+      docALength: comparisonView?.docA?.text?.length || 0,
+      docBLength: comparisonView?.docB?.text?.length || 0,
       keys: Object.keys(snapshotData || {})
     }));
 
     const created = await base44.asServiceRole.entities.ProposalSnapshot.create({
       source_proposal_id: sourceProposalId,
-      sourceProposalId: sourceProposalId,
       version,
       created_by_user_id: createdByUserId || asString(user?.id),
       recipient_email: recipientEmail || normalizeEmail(proposal?.party_b_email),
       share_link_id: null,
-      snapshot_data: snapshotData,
       snapshotData: snapshotData,
-      snapshot_meta: snapshotMeta,
-      snapshotMeta: snapshotMeta
+      snapshot_data: snapshotData,
+      snapshot_meta: snapshotMetaWithCounts
     });
 
     return Response.json({
       ok: true,
       snapshotId: asString(created?.id),
       version,
-      sourceProposalId,
-      fieldCounts,
-      snapshot: {
-        id: asString(created?.id),
-        sourceProposalId,
-        version,
-        createdAt,
-        recipientEmail: recipientEmail || normalizeEmail(proposal?.party_b_email),
-        snapshotData,
-        snapshotMeta
-      },
-      correlationId
+      aLen: partyAResponses.length,
+      bLen: partyBQuestions.length
     });
   } catch (error) {
     const err = error instanceof Error ? error : new Error(String(error));

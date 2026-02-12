@@ -59,146 +59,6 @@ function buildShareContextQuery(req: Request) {
   };
 }
 
-async function ensureProposalResponseRecords(base44: any, proposalId: string, correlationId: string) {
-  const responseBuckets = await Promise.all([
-    base44.asServiceRole.entities.ProposalResponse.filter({ proposal_id: proposalId }).catch(() => []),
-    base44.asServiceRole.entities.ProposalResponse.filter({ proposalId: proposalId }).catch(() => []),
-    base44.asServiceRole.entities.ProposalResponse.filter({ 'data.proposal_id': proposalId }).catch(() => []),
-    base44.asServiceRole.entities.ProposalResponse.filter({ 'data.proposalId': proposalId }).catch(() => [])
-  ]);
-  
-  const byId = new Map();
-  responseBuckets.flat().forEach((r: any) => {
-    const id = r?.id || `record_${Math.random()}`;
-    if (!byId.has(id)) byId.set(id, r);
-  });
-  const existing = Array.from(byId.values());
-  
-  if (existing.length > 0) {
-    console.log(`[${correlationId}] ProposalResponse records exist: ${existing.length}`);
-    return { materialized: false, count: existing.length };
-  }
-
-  const evalItems = await base44.asServiceRole.entities.EvaluationItem.filter({ linked_proposal_id: proposalId }, '-created_date', 1).catch(() => []);
-  const evalItem = evalItems?.[0] || null;
-  const stepStateJson = evalItem?.step_state_json || null;
-  
-  if (!stepStateJson) {
-    console.log(`[${correlationId}] No step_state_json available to materialize responses`);
-    return { materialized: false, count: 0 };
-  }
-
-  const rawResponses = stepStateJson?.responses || {};
-  const rawVisibility = stepStateJson?.visibilitySettings || {};
-  const templates = await base44.asServiceRole.entities.Template.list().catch(() => []);
-  const proposal = await base44.asServiceRole.entities.Proposal.filter({ id: proposalId }, '-created_date', 1).then(p => p?.[0] || null);
-  const template = templates.find((t: any) => t.id === proposal?.template_id) || null;
-  const questionLookup: Record<string, any> = {};
-  if (template?.questions) {
-    template.questions.forEach((q: any) => {
-      if (q?.id) questionLookup[q.id] = q;
-    });
-  }
-
-  const responseRecords: any[] = [];
-  for (const [responseKey, rawValue] of Object.entries(rawResponses)) {
-    if (responseKey.startsWith('_')) continue;
-    
-    const [questionId, subjectFromKey] = responseKey.includes('__') 
-      ? responseKey.split('__') 
-      : [responseKey, null];
-    
-    if (!questionId) continue;
-    const question = questionLookup[questionId] || null;
-    
-    // Determine entered_by_party and subject_party
-    const normalizedFromKey = String(subjectFromKey || '').trim().toLowerCase();
-    const hasPartyBSuffix = normalizedFromKey === 'b' || normalizedFromKey === 'party_b' || normalizedFromKey === 'recipient';
-    
-    // Check if this is Party B's own field (not Party A's claim about Party B)
-    const isPartyBOwnField = hasPartyBSuffix && question && (
-      String(question.applies_to_role || '').toLowerCase() === 'recipient' ||
-      String(question.party || '').toLowerCase() === 'b' ||
-      String(question.party || '').toLowerCase() === 'party_b'
-    );
-    
-    let enteredByParty = 'a';
-    let subjectParty = 'a';
-    let normalizedVisibility = 'full';
-    
-    if (isPartyBOwnField) {
-      // Party B's own response (filled by Party A in Step 3 on behalf of recipient)
-      enteredByParty = 'b';
-      subjectParty = 'b';
-      normalizedVisibility = 'full'; // Party B fields are always visible to Party B
-    } else if (hasPartyBSuffix) {
-      // Party A's claim/observation about Party B (is_about_counterparty)
-      enteredByParty = 'a';
-      subjectParty = 'b';
-      const visibility = String(rawVisibility[responseKey] ?? rawVisibility[questionId] ?? 'full').toLowerCase();
-      normalizedVisibility = ['hidden', 'not_shared', 'private', 'confidential'].includes(visibility) ? 'hidden' : 'full';
-    } else {
-      // Party A's own field
-      enteredByParty = 'a';
-      subjectParty = 'a';
-      const visibility = String(rawVisibility[responseKey] ?? rawVisibility[questionId] ?? 'full').toLowerCase();
-      normalizedVisibility = ['hidden', 'not_shared', 'private', 'confidential'].includes(visibility) ? 'hidden' : 'full';
-    }
-    
-    // Detect range vs text from rawValue structure
-    let valueType = 'text';
-    let value: any = rawValue;
-    let rangeMin: number | null = null;
-    let rangeMax: number | null = null;
-    
-    if (rawValue && typeof rawValue === 'object' && !Array.isArray(rawValue)) {
-      const type = String((rawValue as any).type || '').toLowerCase();
-      if (type === 'range') {
-        valueType = 'range';
-        value = null;
-        rangeMin = Number((rawValue as any).min);
-        rangeMax = Number((rawValue as any).max);
-        if (!Number.isFinite(rangeMin)) rangeMin = null;
-        if (!Number.isFinite(rangeMax)) rangeMax = null;
-      }
-    }
-    
-    const responseData = {
-      proposal_id: proposalId,
-      question_id: questionId,
-      entered_by_party: enteredByParty,
-      author_party: enteredByParty,
-      subject_party: subjectParty,
-      is_about_counterparty: subjectParty === 'b' && enteredByParty === 'a',
-      value_type: valueType,
-      value: value === null || value === undefined ? null : String(value),
-      range_min: rangeMin,
-      range_max: rangeMax,
-      visibility: normalizedVisibility
-    };
-    
-    responseRecords.push(responseData);
-  }
-
-  if (responseRecords.length === 0) {
-    console.log(`[${correlationId}] No responses to materialize from step_state_json`);
-    return { materialized: false, count: 0 };
-  }
-
-  const created = await base44.asServiceRole.entities.ProposalResponse.bulkCreate(responseRecords);
-  console.log(`[${correlationId}] Materialized ${created.length} ProposalResponse records from step_state_json`, JSON.stringify({
-    sampleKeys: responseRecords.slice(0, 3).map((r: any) => ({
-      question_id: r.question_id,
-      entered_by_party: r.entered_by_party,
-      subject_party: r.subject_party,
-      value_type: r.value_type,
-      visibility: r.visibility
-    }))
-  }));
-  
-  return { materialized: true, count: created.length };
-}
-
 Deno.serve(async (req) => {
   const correlationId = `sharelink_${Date.now()}_${Math.random().toString(36).substring(7)}`;
   
@@ -343,48 +203,10 @@ Deno.serve(async (req) => {
       }, { status: 403 });
     }
 
-    // Ensure ProposalResponse records exist before creating snapshot
-    const materializationResult = await ensureProposalResponseRecords(base44, resolvedProposalId, correlationId);
-    logInfo({
-      correlationId,
-      event: 'proposal_response_materialization',
-      proposalId: resolvedProposalId,
-      materialized: materializationResult.materialized,
-      count: materializationResult.count
-    });
-
-    // Sanity check: verify ProposalResponse rows exist (debug mode only)
-    const urlParams = new URL(req.url).searchParams;
-    const debugMode = urlParams.get('debug') === '1';
-    let debugCounts = null;
-    
-    if (debugMode) {
-      const verifyResponses = await base44.asServiceRole.entities.ProposalResponse.filter(
-        { proposal_id: resolvedProposalId },
-        '-created_date',
-        50
-      ).catch(() => []);
-      
-      const partyACounts = verifyResponses.filter((r: any) => r.entered_by_party === 'a').length;
-      const partyBCounts = verifyResponses.filter((r: any) => r.entered_by_party === 'b').length;
-      const visibleCounts = verifyResponses.filter((r: any) => 
-        String(r.visibility || 'full').toLowerCase() !== 'hidden'
-      ).length;
-      const hiddenCounts = verifyResponses.filter((r: any) => 
-        String(r.visibility || 'full').toLowerCase() === 'hidden'
-      ).length;
-      
-      debugCounts = {
-        total: verifyResponses.length,
-        byParty: { a: partyACounts, b: partyBCounts },
-        byVisibility: { visible: visibleCounts, hidden: hiddenCounts }
-      };
-      
-      console.log(`[${correlationId}] DEBUG ProposalResponse sanity check:`, JSON.stringify(debugCounts));
-    }
-
     let snapshotId: string | null = null;
     let snapshotVersion: number | null = null;
+    let snapshotALen = 0;
+    let snapshotBLen = 0;
     try {
       const snapshotResult = await base44.asServiceRole.functions.invoke('CreateProposalSnapshot', {
         sourceProposalId: resolvedProposalId,
@@ -414,49 +236,10 @@ Deno.serve(async (req) => {
       snapshotId = String(snapshotResult.data.snapshotId);
       const versionCandidate = Number(snapshotResult.data.version);
       snapshotVersion = Number.isFinite(versionCandidate) ? versionCandidate : null;
-      
-      // Validate snapshot contains actual inputs (fail fast if empty)
-      const snapRows = await base44.asServiceRole.entities.ProposalSnapshot.filter({ id: snapshotId }, '-created_date', 1);
-      const snapshot = snapRows?.[0] || null;
-      
-      const payload =
-        snapshot?.snapshotData?.partyAResponses ? snapshot.snapshotData
-        : snapshot?.snapshot_data?.partyAResponses ? snapshot.snapshot_data
-        : snapshot?.snapshotData?.snapshotPayload?.partyAResponses ? snapshot.snapshotData.snapshotPayload
-        : snapshot?.snapshot_data?.snapshot_payload?.partyAResponses ? snapshot.snapshot_data.snapshot_payload
-        : null;
-      
-      const aLen = payload?.partyAResponses?.length || 0;
-      const bLen = payload?.partyBEditableSchema?.questions?.length || 0;
-      
-      if (aLen === 0 && bLen === 0) {
-        const payloadPathUsed = payload?.partyAResponses ? 'snapshotData'
-          : payload?.partyBEditableSchema ? 'snapshotData'
-          : snapshot?.snapshot_data?.partyAResponses ? 'snapshot_data'
-          : 'none';
-        
-        logInfo({
-          correlationId,
-          event: 'snapshot_empty_validation_failed',
-          snapshotId,
-          aLen,
-          bLen,
-          payloadPathUsed,
-          snapshotTopKeys: payload ? Object.keys(payload) : []
-        });
-        return Response.json({
-          ok: false,
-          error: 'SNAPSHOT_EMPTY',
-          errorCode: 'SNAPSHOT_EMPTY',
-          message: 'Snapshot contains no Party A or Party B inputs',
-          snapshotId,
-          aLen,
-          bLen,
-          payloadPathUsed,
-          snapshotTopKeys: payload ? Object.keys(payload) : [],
-          correlationId
-        }, { status: 422 });
-      }
+      const aLenCandidate = Number(snapshotResult.data.aLen);
+      const bLenCandidate = Number(snapshotResult.data.bLen);
+      snapshotALen = Number.isFinite(aLenCandidate) ? Math.max(0, Math.floor(aLenCandidate)) : 0;
+      snapshotBLen = Number.isFinite(bLenCandidate) ? Math.max(0, Math.floor(bLenCandidate)) : 0;
     } catch (snapshotError) {
       const errorMessage = snapshotError instanceof Error ? snapshotError.message : String(snapshotError);
       logInfo({
@@ -472,6 +255,22 @@ Deno.serve(async (req) => {
         message: errorMessage,
         correlationId
       }, { status: 500 });
+    }
+
+    if (snapshotALen === 0 && snapshotBLen === 0) {
+      logInfo({
+        correlationId,
+        event: 'snapshot_payload_empty',
+        proposalId: resolvedProposalId,
+        snapshotId
+      });
+      return Response.json({
+        ok: false,
+        errorCode: 'SNAPSHOT_PAYLOAD_EMPTY',
+        message: 'Snapshot payload is empty',
+        snapshotId,
+        correlationId
+      }, { status: 422 });
     }
 
     const shareMode = 'interactive';
@@ -532,6 +331,8 @@ Deno.serve(async (req) => {
       resolvedProposalId,
       snapshotId,
       snapshotVersion,
+      aLen: snapshotALen,
+      bLen: snapshotBLen,
       hasSnapshotId: !!shareLink.snapshot_id || !!shareLink.snapshotId,
       shareLinkKeys: safeKeys(shareLink)
     });
@@ -874,6 +675,8 @@ Deno.serve(async (req) => {
       sourceProposalId: resolvedProposalId,
       shareLinkId: shareLink.id,
       snapshotId,
+      aLen: snapshotALen,
+      bLen: snapshotBLen,
       version: snapshotVersion,
       expiresAt: expiresAt.toISOString(),
       viewCount: 0,
@@ -884,8 +687,7 @@ Deno.serve(async (req) => {
       debug: {
         hasSnapshotId: !!persistedSnapshotId,
         snapshotIdPersisted: persistedSnapshotId,
-        usedFallback: false,
-        ...(debugCounts ? { proposalResponseCounts: debugCounts } : {})
+        usedFallback: false
       },
       correlationId
     });
