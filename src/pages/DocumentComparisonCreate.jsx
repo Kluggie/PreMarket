@@ -913,16 +913,14 @@ Verification Status: ${org.verification_status || 'N/A'}`;
               )}
 
               {/* Side-by-Side Document Inputs */}
-              <div className="grid grid-cols-2 gap-16 items-stretch">
+              <div className="grid grid-cols-2 gap-16 items-stretch bg-gray-50 -mx-12 px-12 py-10">
                 {/* Document A Input */}
-                <div className="flex flex-col h-full bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden">
-                  <div className="px-6 py-3 border-b border-gray-200">
-                    <div className="flex items-center gap-2">
-                      <FileText className="w-4 h-4 text-slate-400" />
-                      <h3 className="text-sm font-semibold text-slate-600">{partyALabel}</h3>
-                    </div>
+                <div className="flex flex-col h-full space-y-3">
+                  <div className="flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-slate-400" />
+                    <h3 className="text-sm font-semibold text-slate-600">{partyALabel}</h3>
                   </div>
-                  <div className="px-12 py-10 flex-1 flex flex-col space-y-4">
+                  <div className="flex-1 flex flex-col space-y-4">
                   {docASource === 'uploaded' && (
                     <div className="space-y-3">
                       <div className="space-y-2">
@@ -1046,20 +1044,18 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                       value={docAText}
                       onChange={(e) => setDocAText(e.target.value)}
                       placeholder="Start typing or paste content..."
-                      className="flex-1 min-h-[600px] bg-white border-0 resize-none text-[15px] leading-relaxed text-gray-800 focus:outline-none focus:ring-0 placeholder:text-gray-400 p-0"
+                      className="flex-1 min-h-[600px] w-full bg-white border border-gray-200 rounded-md shadow-sm resize-none text-[15px] leading-relaxed text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-300 placeholder:text-gray-400 px-12 py-10"
                     />
                     </div>
                     </div>
 
                 {/* Document B Input */}
-                <div className="flex flex-col h-full bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden">
-                  <div className="px-6 py-3 border-b border-gray-200">
-                    <div className="flex items-center gap-2">
-                      <FileText className="w-4 h-4 text-slate-400" />
-                      <h3 className="text-sm font-semibold text-slate-600">{partyBLabel}</h3>
-                    </div>
+                <div className="flex flex-col h-full space-y-3">
+                  <div className="flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-slate-400" />
+                    <h3 className="text-sm font-semibold text-slate-600">{partyBLabel}</h3>
                   </div>
-                  <div className="px-12 py-10 flex-1 flex flex-col space-y-4">
+                  <div className="flex-1 flex flex-col space-y-4">
                   {docBSource === 'uploaded' && (
                     <div className="space-y-3">
                       <div className="space-y-2">
@@ -1183,11 +1179,11 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                       value={docBText}
                       onChange={(e) => setDocBText(e.target.value)}
                       placeholder="Start typing or paste content..."
-                      className="flex-1 min-h-[600px] bg-white border-0 resize-none text-[15px] leading-relaxed text-gray-800 focus:outline-none focus:ring-0 placeholder:text-gray-400 p-0"
+                      className="flex-1 min-h-[600px] w-full bg-white border border-gray-200 rounded-md shadow-sm resize-none text-[15px] leading-relaxed text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-300 placeholder:text-gray-400 px-12 py-10"
                     />
                     </div>
                     </div>
-              </div>
+                    </div>
 
               <div className="flex justify-between pt-4">
                 <Button variant="outline" onClick={async () => {
@@ -1257,10 +1253,10 @@ Verification Status: ${org.verification_status || 'N/A'}`;
               </div>
 
               {/* Side-by-Side Highlighting */}
-              <div className="grid grid-cols-2 gap-16 items-stretch">
+              <div className="grid grid-cols-2 gap-16 items-stretch bg-gray-50 -mx-12 px-12 py-10">
                 {/* Document A Highlighting */}
-                <div className="flex flex-col bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden">
-                  <div className="px-6 py-3 border-b border-gray-200 flex items-center justify-between">
+                <div className="flex flex-col space-y-3">
+                  <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <FileText className="w-4 h-4 text-slate-400" />
                       <h3 className="text-sm font-semibold text-slate-600">{partyALabel}</h3>
@@ -1284,7 +1280,7 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                       </Button>
                     </div>
                     </div>
-                    <div className="px-12 py-10 flex-1 flex flex-col space-y-4">
+                    <div className="flex-1 flex flex-col space-y-4 bg-white border border-gray-200 rounded-md shadow-sm p-12">
                     <div 
                       ref={docAPreviewRef}
                       onScroll={() => handleSyncScroll(docAPreviewRef, docBPreviewRef)}
@@ -1322,43 +1318,41 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                     </div>
 
                     {/* Advanced Section - Collapsed by Default */}
-                    <div className="px-6 py-3 border-t border-gray-200 bg-slate-50">
                     <Button 
-                      variant="ghost" 
-                      size="sm"
-                      onClick={() => setShowAdvancedA(!showAdvancedA)}
-                      className="w-full justify-between text-xs text-slate-600 hover:text-slate-900"
+                    variant="ghost" 
+                    size="sm"
+                    onClick={() => setShowAdvancedA(!showAdvancedA)}
+                    className="w-full justify-between text-xs text-slate-600 hover:text-slate-900 mt-3"
                     >
-                      <span>Advanced: Import JSON</span>
-                      <span className="text-lg">{showAdvancedA ? '−' : '+'}</span>
+                    <span>Advanced: Import JSON</span>
+                    <span className="text-lg">{showAdvancedA ? '−' : '+'}</span>
                     </Button>
                     {showAdvancedA && (
-                      <div className="mt-2 space-y-2">
-                        <div className="flex gap-2">
-                          <Textarea 
-                            value={jsonImportA}
-                            onChange={(e) => setJsonImportA(e.target.value)}
-                            placeholder='[{"start":0,"end":10,"level":"confidential"}]'
-                            className="text-xs font-mono"
-                            rows={2}
-                          />
-                          <Button 
-                            onClick={() => importHighlights('a', jsonImportA)}
-                            disabled={!jsonImportA}
-                            variant="outline"
-                            size="sm"
-                          >
-                            Import
-                          </Button>
-                        </div>
+                    <div className="mt-2 space-y-2">
+                      <div className="flex gap-2">
+                        <Textarea 
+                          value={jsonImportA}
+                          onChange={(e) => setJsonImportA(e.target.value)}
+                          placeholder='[{"start":0,"end":10,"level":"confidential"}]'
+                          className="text-xs font-mono"
+                          rows={2}
+                        />
+                        <Button 
+                          onClick={() => importHighlights('a', jsonImportA)}
+                          disabled={!jsonImportA}
+                          variant="outline"
+                          size="sm"
+                        >
+                          Import
+                        </Button>
                       </div>
-                    )}
                     </div>
+                    )}
                     </div>
 
                 {/* Document B Highlighting */}
-                <div className="flex flex-col bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden">
-                  <div className="px-6 py-3 border-b border-gray-200 flex items-center justify-between">
+                <div className="flex flex-col space-y-3">
+                  <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <FileText className="w-4 h-4 text-slate-400" />
                       <h3 className="text-sm font-semibold text-slate-600">{partyBLabel}</h3>
@@ -1382,7 +1376,7 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                       </Button>
                     </div>
                     </div>
-                    <div className="px-12 py-10 flex-1 flex flex-col space-y-4">
+                    <div className="flex-1 flex flex-col space-y-4 bg-white border border-gray-200 rounded-md shadow-sm p-12">
                     <div 
                       ref={docBPreviewRef}
                       onScroll={() => handleSyncScroll(docBPreviewRef, docAPreviewRef)}
@@ -1420,38 +1414,36 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                     </div>
 
                     {/* Advanced Section - Collapsed by Default */}
-                    <div className="px-6 py-3 border-t border-gray-200 bg-slate-50">
                     <Button 
-                      variant="ghost" 
-                      size="sm"
-                      onClick={() => setShowAdvancedB(!showAdvancedB)}
-                      className="w-full justify-between text-xs text-slate-600 hover:text-slate-900"
+                    variant="ghost" 
+                    size="sm"
+                    onClick={() => setShowAdvancedB(!showAdvancedB)}
+                    className="w-full justify-between text-xs text-slate-600 hover:text-slate-900 mt-3"
                     >
-                      <span>Advanced: Import JSON</span>
-                      <span className="text-lg">{showAdvancedB ? '−' : '+'}</span>
+                    <span>Advanced: Import JSON</span>
+                    <span className="text-lg">{showAdvancedB ? '−' : '+'}</span>
                     </Button>
                     {showAdvancedB && (
-                      <div className="mt-2 space-y-2">
-                        <div className="flex gap-2">
-                          <Textarea 
-                            value={jsonImportB}
-                            onChange={(e) => setJsonImportB(e.target.value)}
-                            placeholder='[{"start":0,"end":10,"level":"confidential"}]'
-                            className="text-xs font-mono"
-                            rows={2}
-                          />
-                          <Button 
-                            onClick={() => importHighlights('b', jsonImportB)}
-                            disabled={!jsonImportB}
-                            variant="outline"
-                            size="sm"
-                          >
-                            Import
-                          </Button>
-                        </div>
+                    <div className="mt-2 space-y-2">
+                      <div className="flex gap-2">
+                        <Textarea 
+                          value={jsonImportB}
+                          onChange={(e) => setJsonImportB(e.target.value)}
+                          placeholder='[{"start":0,"end":10,"level":"confidential"}]'
+                          className="text-xs font-mono"
+                          rows={2}
+                        />
+                        <Button 
+                          onClick={() => importHighlights('b', jsonImportB)}
+                          disabled={!jsonImportB}
+                          variant="outline"
+                          size="sm"
+                        >
+                          Import
+                        </Button>
                       </div>
-                    )}
                     </div>
+                    )}
                     </div>
               </div>
 
