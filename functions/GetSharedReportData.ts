@@ -4,6 +4,7 @@ import { toQuestionLookup, toRecipientEditableQuestionIds, validateShareLinkAcce
 const PARTY_A_KEYS = new Set(['a', 'party_a', 'proposer']);
 const PARTY_B_KEYS = new Set(['b', 'party_b', 'recipient', 'counterparty']);
 const RECEIVED_RECORD_ACTION = 'shared_proposal_received';
+const DEBUG_DEPLOY_MARKER = 'DEPLOY_MARKER_SHARED_COMPARISON_VIA_RESOLVE_2026_02_12';
 const NO_CACHE_HEADERS = {
   'Cache-Control': 'no-store, no-cache, must-revalidate',
   Pragma: 'no-cache',
@@ -615,16 +616,8 @@ function buildComparisonView(documentComparison: any) {
 
   const data = objectData(documentComparison);
 
-  const rawDocAText = String(
-    documentComparison.doc_a_plaintext ??
-    data.doc_a_plaintext ??
-    ''
-  );
-  const rawDocBText = String(
-    documentComparison.doc_b_plaintext ??
-    data.doc_b_plaintext ??
-    ''
-  );
+  const rawDocAText = String(documentComparison.doc_a_plaintext ?? data.doc_a_plaintext ?? '');
+  const rawDocBText = String(documentComparison.doc_b_plaintext ?? data.doc_b_plaintext ?? '');
   const rawDocASpans = Array.isArray(documentComparison.doc_a_spans_json)
     ? documentComparison.doc_a_spans_json
     : (Array.isArray(data.doc_a_spans_json) ? data.doc_a_spans_json : []);
@@ -632,8 +625,8 @@ function buildComparisonView(documentComparison: any) {
     ? documentComparison.doc_b_spans_json
     : (Array.isArray(data.doc_b_spans_json) ? data.doc_b_spans_json : []);
 
-  const redactedDocA = removeHiddenComparisonText(rawDocAText, rawDocASpans);
-  const redactedDocB = removeHiddenComparisonText(rawDocBText, rawDocBSpans);
+  const hiddenDocACount = normalizeComparisonSpans(rawDocASpans, rawDocAText.length).length;
+  const hiddenDocBCount = normalizeComparisonSpans(rawDocBSpans, rawDocBText.length).length;
 
   return {
     id: asString(documentComparison.id),
@@ -641,14 +634,16 @@ function buildComparisonView(documentComparison: any) {
     docA: {
       label: asString(documentComparison.party_a_label) || asString(data.party_a_label) || 'Document A',
       source: asString(documentComparison.doc_a_source) || asString(data.doc_a_source) || 'typed',
-      text: redactedDocA.text,
-      hiddenCount: redactedDocA.hiddenCount
+      text: rawDocAText,
+      spans: rawDocASpans,
+      hiddenCount: hiddenDocACount
     },
     docB: {
       label: asString(documentComparison.party_b_label) || asString(data.party_b_label) || 'Document B',
       source: asString(documentComparison.doc_b_source) || asString(data.doc_b_source) || 'typed',
-      text: redactedDocB.text,
-      hiddenCount: redactedDocB.hiddenCount
+      text: rawDocBText,
+      spans: rawDocBSpans,
+      hiddenCount: hiddenDocBCount
     }
   };
 }
@@ -930,12 +925,14 @@ function toSnapshotComparisonView(rawComparisonView: any) {
       label: asString(docARaw?.label || null) || 'Document A',
       source: asString(docARaw?.source || null) || 'typed',
       text: docAText,
+      spans: Array.isArray(docARaw?.spans) ? docARaw.spans : [],
       hiddenCount: Number.isFinite(Number(docARaw?.hiddenCount)) ? Math.max(0, Math.floor(Number(docARaw.hiddenCount))) : 0
     },
     docB: {
       label: asString(docBRaw?.label || null) || 'Document B',
       source: asString(docBRaw?.source || null) || 'typed',
       text: docBText,
+      spans: Array.isArray(docBRaw?.spans) ? docBRaw.spans : [],
       hiddenCount: Number.isFinite(Number(docBRaw?.hiddenCount)) ? Math.max(0, Math.floor(Number(docBRaw.hiddenCount))) : 0
     }
   };
@@ -1245,6 +1242,7 @@ Deno.serve(async (req) => {
         ...(debugMode ? {
           debug: {
             endpointUsed: 'GetSharedReportData',
+            deployMarker: DEBUG_DEPLOY_MARKER,
             isDocumentComparisonMode,
             resolvedDocumentComparisonId: normalizedShareLink.documentComparisonId,
             docComparisonFound: Boolean(documentComparison),
@@ -1464,6 +1462,7 @@ Deno.serve(async (req) => {
       ...(debugMode ? {
         debug: {
           endpointUsed: 'GetSharedReportData',
+          deployMarker: DEBUG_DEPLOY_MARKER,
           isDocumentComparisonMode: false,
           resolvedDocumentComparisonId:
             asString((comparisonView as any)?.id) ||
