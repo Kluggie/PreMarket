@@ -2,6 +2,7 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.6';
 import { validateShareLinkAccess } from './_utils/sharedLink.ts';
 
 const ENDPOINT = 'GetSharedComparisonDetails';
+const BACKEND_DEPLOY_MARKER = 'DEPLOY_MARKER_GET_SHARED_COMPARISON_DETAILS_2026_02_12';
 const NO_CACHE_HEADERS = {
   'Cache-Control': 'no-store, no-cache, must-revalidate',
   Pragma: 'no-cache',
@@ -55,9 +56,10 @@ Deno.serve(async (req) => {
       return respond({
         ok: false,
         endpoint: ENDPOINT,
+        deployMarker: BACKEND_DEPLOY_MARKER,
         error: 'MISSING_TOKEN',
         message: 'Token is required',
-        ...(debugMode ? { debug: { endpointUsed: ENDPOINT } } : {}),
+        ...(debugMode ? { debug: { endpointUsed: ENDPOINT, deployMarker: BACKEND_DEPLOY_MARKER } } : {}),
         correlationId
       }, 400);
     }
@@ -68,11 +70,13 @@ Deno.serve(async (req) => {
       return respond({
         ok: false,
         endpoint: ENDPOINT,
+        deployMarker: BACKEND_DEPLOY_MARKER,
         error: validation.code || 'ACCESS_DENIED',
         message: validation.message || 'Access denied',
         ...(debugMode ? {
           debug: {
             endpointUsed: ENDPOINT,
+            deployMarker: BACKEND_DEPLOY_MARKER,
             resolvedShareLinkId: validation.shareLink?.id || null,
             resolvedDocumentComparisonId: validation.shareLink?.documentComparisonId || null,
             shareLinkFound: Boolean(validation.shareLink?.id),
@@ -93,10 +97,12 @@ Deno.serve(async (req) => {
       return respond({
         ok: false,
         endpoint: ENDPOINT,
+        deployMarker: BACKEND_DEPLOY_MARKER,
         error: 'DOCUMENT_COMPARISON_NOT_FOUND',
         ...(debugMode ? {
           debug: {
             endpointUsed: ENDPOINT,
+            deployMarker: BACKEND_DEPLOY_MARKER,
             resolvedShareLinkId: resolvedShareLink.id,
             resolvedDocumentComparisonId: null,
             shareLinkFound: true,
@@ -119,10 +125,12 @@ Deno.serve(async (req) => {
       return respond({
         ok: false,
         endpoint: ENDPOINT,
+        deployMarker: BACKEND_DEPLOY_MARKER,
         error: 'DOCUMENT_COMPARISON_NOT_FOUND',
         ...(debugMode ? {
           debug: {
             endpointUsed: ENDPOINT,
+            deployMarker: BACKEND_DEPLOY_MARKER,
             resolvedShareLinkId: resolvedShareLink.id,
             resolvedDocumentComparisonId,
             shareLinkFound: true,
@@ -144,6 +152,7 @@ Deno.serve(async (req) => {
     return respond({
       ok: true,
       endpoint: ENDPOINT,
+      deployMarker: BACKEND_DEPLOY_MARKER,
       shareLink: {
         id: resolvedShareLink.id,
         proposalId: resolvedShareLink.proposalId,
@@ -167,6 +176,7 @@ Deno.serve(async (req) => {
       ...(debugMode ? {
         debug: {
           endpointUsed: ENDPOINT,
+          deployMarker: BACKEND_DEPLOY_MARKER,
           resolvedShareLinkId: resolvedShareLink.id,
           resolvedDocumentComparisonId,
           shareLinkFound: true,
@@ -183,6 +193,7 @@ Deno.serve(async (req) => {
     return respond({
       ok: false,
       endpoint: ENDPOINT,
+      deployMarker: BACKEND_DEPLOY_MARKER,
       error: 'INTERNAL_ERROR',
       message: err.message || 'Failed to load shared comparison details',
       correlationId

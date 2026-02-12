@@ -40,6 +40,7 @@ const SELECT_FIELD_TYPES = new Set(['select', 'enum', 'dropdown', 'radio', 'sing
 const NUMBER_FIELD_TYPES = new Set(['number', 'integer', 'float', 'decimal', 'currency', 'percent']);
 const BOOLEAN_FIELD_TYPES = new Set(['boolean', 'bool', 'checkbox', 'toggle', 'switch']);
 const PARTY_B_KEYS = new Set(['b', 'party_b', 'recipient', 'counterparty']);
+const DEPLOY_MARKER_DETAILS_TAB = 'DEPLOY_MARKER_DETAILS_TAB_2026_02_12';
 
 const StatusBadge = ({ status }) => {
   const config = {
@@ -144,13 +145,10 @@ async function invokeSharedResolver(token, options = {}) {
   }
 
 async function invokeSharedComparisonDetails(token, options = {}) {
-  const payload = {
+  return base44.functions.invoke('GetSharedComparisonDetails', {
     token,
-    ...(typeof options.consumeView === 'boolean' ? { consumeView: options.consumeView } : {}),
-    ...(options.debug ? { debug: '1' } : {})
-  };
-
-  return base44.functions.invoke('GetSharedComparisonDetails', payload);
+    debug: options.debug === true
+  });
 }
 
 function toArray(input) {
@@ -287,6 +285,10 @@ export default function SharedReport() {
     const params = new URLSearchParams(location.search);
     return params.get('debug') === '1';
   }, [location.search]);
+
+  useEffect(() => {
+    console.log(`[SharedReport] ${DEPLOY_MARKER_DETAILS_TAB}`);
+  }, []);
 
   const reportTitle = useMemo(() => {
     if (proposalView?.title) return proposalView.title;
@@ -610,7 +612,6 @@ export default function SharedReport() {
       setComparisonDetailsError(null);
 
       const result = await invokeSharedComparisonDetails(token, {
-        consumeView: false,
         debug: debugMode
       });
       const data = result?.data || null;
@@ -674,12 +675,11 @@ export default function SharedReport() {
   }, [token]);
 
   useEffect(() => {
-    if (activeTab !== 'details') return;
     if (!token) return;
     if (isLoadingComparisonDetails) return;
     if (comparisonDetailsTokenRef.current === token && comparisonDetailsData?.ok) return;
     hydrateSharedComparisonDetails({ force: true });
-  }, [activeTab, token, isLoadingComparisonDetails, comparisonDetailsData, hydrateSharedComparisonDetails]);
+  }, [token, isLoadingComparisonDetails, comparisonDetailsData, hydrateSharedComparisonDetails]);
 
   useEffect(() => {
     if (mode !== 'workspace') return;
@@ -1076,6 +1076,11 @@ export default function SharedReport() {
   return (
     <div className="min-h-screen bg-slate-50 py-8">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="fixed top-20 right-4 z-50">
+          <Badge className="bg-red-600 text-white text-xs font-bold shadow-lg">
+            {DEPLOY_MARKER_DETAILS_TAB}
+          </Badge>
+        </div>
         {/* Header */}
         <div className="mb-6">
           <Button 
@@ -1425,6 +1430,10 @@ export default function SharedReport() {
                     </summary>
                     <pre className="mt-3 text-xs bg-white p-4 rounded border border-slate-200 overflow-auto max-h-96" style={{ whiteSpace: 'pre-wrap' }}>
                       {JSON.stringify(comparisonDebugPanel, null, 2)}
+                    </pre>
+                    <p className="text-xs text-slate-500 mt-3 mb-2">Raw GetSharedComparisonDetails response</p>
+                    <pre className="text-xs bg-white p-4 rounded border border-slate-200 overflow-auto max-h-96" style={{ whiteSpace: 'pre-wrap' }}>
+                      {JSON.stringify(comparisonDetailsData || comparisonDetailsError || {}, null, 2)}
                     </pre>
                   </details>
                 )}
