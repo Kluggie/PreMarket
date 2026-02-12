@@ -362,15 +362,36 @@ Deno.serve(async (req) => {
     // Include document comparison if present
     let comparisonView: any = null;
     const docComparisonId = asString(proposal?.document_comparison_id);
+
+    let comparison: any = null;
     if (docComparisonId) {
       const comparisons = await base44.asServiceRole.entities.DocumentComparison.filter(
         { id: docComparisonId },
         '-created_date',
         1
       ).catch(() => []);
-      const comparison = comparisons?.[0];
-      
-      if (comparison) {
+      comparison = comparisons?.[0] || null;
+    }
+
+    if (!comparison) {
+      const byProposal = await base44.asServiceRole.entities.DocumentComparison.filter(
+        { proposal_id: sourceProposalId },
+        '-created_date',
+        1
+      ).catch(() => []);
+      comparison = byProposal?.[0] || null;
+    }
+
+    if (!comparison) {
+      const byDataProposal = await base44.asServiceRole.entities.DocumentComparison.filter(
+        { 'data.proposal_id': sourceProposalId },
+        '-created_date',
+        1
+      ).catch(() => []);
+      comparison = byDataProposal?.[0] || null;
+    }
+
+    if (comparison) {
         const rawDocAText = String(comparison.doc_a_plaintext ?? '');
         const rawDocBText = String(comparison.doc_b_plaintext ?? '');
         const rawDocASpans = Array.isArray(comparison.doc_a_spans_json) ? comparison.doc_a_spans_json : [];
@@ -406,7 +427,7 @@ Deno.serve(async (req) => {
         const redactedDocB = removeHidden(rawDocBText, rawDocBSpans);
         
         comparisonView = {
-          id: docComparisonId,
+          id: asString(comparison?.id) || docComparisonId || null,
           title: asString(comparison.title) || null,
           docA: {
             label: asString(comparison.party_a_label) || 'Document A',

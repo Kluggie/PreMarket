@@ -1089,6 +1089,11 @@ Deno.serve(async (req) => {
       }
     }
 
+    const snapshotIdFromLink =
+      asString((shareLink as any)?.snapshot_id) ||
+      asString((shareLink as any)?.snapshotId) ||
+      extractShareLinkSnapshotId(shareLink);
+
     const isDocumentComparisonMode = Boolean(
       resolvedDocumentComparisonId ||
       documentComparison ||
@@ -1097,8 +1102,31 @@ Deno.serve(async (req) => {
     );
 
     if (isDocumentComparisonMode) {
+      let snapshot: any = null;
+      if (snapshotIdFromLink) {
+        const snapshotByIdRows = await base44.asServiceRole.entities.ProposalSnapshot
+          .filter({ id: snapshotIdFromLink }, '-created_date', 1)
+          .catch(() => []);
+        snapshot = snapshotByIdRows?.[0] || null;
+
+        if (!snapshot) {
+          const snapshotBySnapshotIdRows = await base44.asServiceRole.entities.ProposalSnapshot
+            .filter({ snapshot_id: snapshotIdFromLink }, '-created_date', 1)
+            .catch(() => []);
+          snapshot = snapshotBySnapshotIdRows?.[0] || null;
+        }
+      }
+
+      const snapshotPayload = readSnapshotPayload(snapshot);
+      const snapshotComparisonView = toSnapshotComparisonView((snapshotPayload as any)?.comparisonView);
+      const rawPartyA = Array.isArray(snapshotPayload?.partyAResponses) ? snapshotPayload.partyAResponses : [];
+      const rawPartyBSchema = snapshotPayload?.partyBEditableSchema && typeof snapshotPayload.partyBEditableSchema === 'object'
+        ? snapshotPayload.partyBEditableSchema
+        : {};
+      const rawPartyBQuestions = Array.isArray((rawPartyBSchema as any)?.questions) ? (rawPartyBSchema as any).questions : [];
+
       const proposalView = buildRecipientProposalView(proposal);
-      const comparisonView = buildComparisonView(documentComparison);
+      const comparisonView = buildComparisonView(documentComparison) || snapshotComparisonView;
       const comparisonData = objectData(documentComparison);
       const comparisonReport =
         documentComparison?.evaluation_report_json ||
@@ -1107,23 +1135,40 @@ Deno.serve(async (req) => {
       const comparisonGeneratedAt = asString(documentComparison?.generated_at) || asString(comparisonData?.generated_at) || null;
       const docALength = comparisonView?.docA?.text?.length || 0;
       const docBLength = comparisonView?.docB?.text?.length || 0;
-      const responsesView: any[] = [];
+      const partyAResponses = rawPartyA.map((item: any, index: number) => toSnapshotPartyAResponseView(item, index));
+      const partyBQuestions = rawPartyBQuestions.map((item: any, index: number) => toSnapshotPartyBEditableQuestionView(item, index));
+      const responsesView = partyBQuestions.map((question: any, index: number) => ({
+        id: null,
+        proposal_id: resolvedProposalId,
+        question_id: question?.questionId || `snapshot_b_field_${index + 1}`,
+        value_type:
+          question?.currentResponse?.rangeMin !== null && question?.currentResponse?.rangeMin !== undefined ||
+          question?.currentResponse?.rangeMax !== null && question?.currentResponse?.rangeMax !== undefined
+            ? 'range'
+            : 'text',
+        entered_by_party: 'b',
+        visibility: 'full',
+        value: question?.currentResponse?.value ?? null,
+        range_min: question?.currentResponse?.rangeMin ?? null,
+        range_max: question?.currentResponse?.rangeMax ?? null,
+        created_date: null
+      }));
       const partyAView = {
         proposal: proposalView,
-        responses: []
+        responses: partyAResponses
       };
       const partyBEditableSchema = {
-        totalQuestions: 0,
-        editableQuestionIds: [],
-        questions: []
+        totalQuestions: partyBQuestions.length,
+        editableQuestionIds: partyBQuestions.map((question: any) => question?.questionId).filter(Boolean),
+        questions: partyBQuestions
       };
       const normalizedShareLink = {
         id: shareLink.id,
         token: shareLink.token,
         proposalId: resolvedProposalId,
         sourceProposalId: resolvedProposalId,
-        snapshotId: null,
-        snapshotVersion: null,
+        snapshotId: asString(snapshot?.id) || snapshotIdFromLink || null,
+        snapshotVersion: extractSnapshotVersion(snapshot) || extractShareLinkSnapshotVersion(shareLink) || null,
         evaluationItemId: shareLink.evaluationItemId || null,
         documentComparisonId: asString(documentComparison?.id) || resolvedDocumentComparisonId || null,
         recipientEmail: shareLink.recipientEmail,
@@ -1150,8 +1195,8 @@ Deno.serve(async (req) => {
         proposal_id: resolvedProposalId,
         proposalId: resolvedProposalId,
         sourceProposalId: resolvedProposalId,
-        snapshotId: null,
-        version: null,
+        snapshotId: normalizedShareLink.snapshotId,
+        version: normalizedShareLink.snapshotVersion,
         reportId: null,
         reportSource: 'DocumentComparison',
         evaluationItemId: shareLink.evaluationItemId || null,
@@ -1177,9 +1222,9 @@ Deno.serve(async (req) => {
         correlationId,
         proposalId: resolvedProposalId,
         sourceProposalId: resolvedProposalId,
-        snapshotId: null,
-        snapshotVersion: null,
-        version: null,
+        snapshotId: normalizedShareLink.snapshotId,
+        snapshotVersion: normalizedShareLink.snapshotVersion,
+        version: normalizedShareLink.snapshotVersion,
         shareLink: normalizedShareLink,
         permissions: normalizedPermissions,
         reportData,
@@ -1203,6 +1248,9 @@ Deno.serve(async (req) => {
             isDocumentComparisonMode,
             resolvedDocumentComparisonId: normalizedShareLink.documentComparisonId,
             docComparisonFound: Boolean(documentComparison),
+            snapshotFound: Boolean(snapshot),
+            snapshotPartyACount: partyAResponses.length,
+            snapshotPartyBCount: partyBQuestions.length,
             docALength,
             docBLength,
             comparisonViewTopLevelPresent: Boolean(comparisonView),
@@ -1212,11 +1260,6 @@ Deno.serve(async (req) => {
         } : {})
       });
     }
-
-    const snapshotIdFromLink =
-      asString((shareLink as any)?.snapshot_id) ||
-      asString((shareLink as any)?.snapshotId) ||
-      extractShareLinkSnapshotId(shareLink);
 
     if (!snapshotIdFromLink) {
       return respond({
