@@ -178,6 +178,216 @@ function hasComparisonText(payload) {
   return docALength > 0 || docBLength > 0;
 }
 
+function parseObjectField(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value;
+  }
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+function toComparisonText(value) {
+  if (typeof value === 'string') return value;
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const nested = value.text;
+    if (typeof nested === 'string') return nested;
+  }
+  return null;
+}
+
+function parseComparisonSpans(value) {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== 'string') return null;
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function pickComparisonText(candidates) {
+  for (const candidate of candidates) {
+    const text = toComparisonText(candidate.value);
+    if (typeof text === 'string' && text.trim().length > 0) {
+      return { text, pathUsed: candidate.path };
+    }
+  }
+  return { text: '', pathUsed: null };
+}
+
+function pickComparisonSpans(candidates) {
+  let fallback = null;
+  let fallbackPath = null;
+
+  for (const candidate of candidates) {
+    const spans = parseComparisonSpans(candidate.value);
+    if (!spans) continue;
+    if (fallback === null) {
+      fallback = spans;
+      fallbackPath = candidate.path;
+    }
+    if (spans.length > 0) {
+      return { spans, pathUsed: candidate.path };
+    }
+  }
+
+  return { spans: fallback || [], pathUsed: fallbackPath };
+}
+
+function extractComparisonViewFromRecord(documentComparison) {
+  if (!documentComparison || typeof documentComparison !== 'object') {
+    return {
+      comparisonView: null,
+      topLevelKeys: [],
+      dataKeys: []
+    };
+  }
+
+  const data = parseObjectField(documentComparison?.data);
+  const inputsJson = parseObjectField(documentComparison?.inputs_json);
+  const inputs = parseObjectField(documentComparison?.inputs);
+  const dataInputsJson = parseObjectField(data?.inputs_json);
+  const dataInputs = parseObjectField(data?.inputs);
+
+  const docA = pickComparisonText([
+    { path: 'doc_a_plaintext', value: documentComparison?.doc_a_plaintext },
+    { path: 'docA_plaintext', value: documentComparison?.docA_plaintext },
+    { path: 'doc_a_text', value: documentComparison?.doc_a_text },
+    { path: 'docA_text', value: documentComparison?.docA_text },
+    { path: 'doc_a.text', value: documentComparison?.doc_a },
+    { path: 'docA.text', value: documentComparison?.docA },
+    { path: 'doc_a_content', value: documentComparison?.doc_a_content },
+    { path: 'docA_content', value: documentComparison?.docA_content },
+    { path: 'data.doc_a_plaintext', value: data?.doc_a_plaintext },
+    { path: 'data.docA_plaintext', value: data?.docA_plaintext },
+    { path: 'data.doc_a_text', value: data?.doc_a_text },
+    { path: 'data.docA_text', value: data?.docA_text },
+    { path: 'data.doc_a.text', value: data?.doc_a },
+    { path: 'data.docA.text', value: data?.docA },
+    { path: 'inputs_json.doc_a_plaintext', value: inputsJson?.doc_a_plaintext },
+    { path: 'inputs_json.docA_plaintext', value: inputsJson?.docA_plaintext },
+    { path: 'inputs_json.doc_a.text', value: inputsJson?.doc_a },
+    { path: 'inputs_json.docA.text', value: inputsJson?.docA },
+    { path: 'inputs.doc_a.text', value: inputs?.doc_a },
+    { path: 'inputs.docA.text', value: inputs?.docA },
+    { path: 'data.inputs_json.doc_a_plaintext', value: dataInputsJson?.doc_a_plaintext },
+    { path: 'data.inputs_json.docA_plaintext', value: dataInputsJson?.docA_plaintext },
+    { path: 'data.inputs_json.doc_a.text', value: dataInputsJson?.doc_a },
+    { path: 'data.inputs_json.docA.text', value: dataInputsJson?.docA },
+    { path: 'data.inputs.doc_a.text', value: dataInputs?.doc_a },
+    { path: 'data.inputs.docA.text', value: dataInputs?.docA }
+  ]);
+  const docB = pickComparisonText([
+    { path: 'doc_b_plaintext', value: documentComparison?.doc_b_plaintext },
+    { path: 'docB_plaintext', value: documentComparison?.docB_plaintext },
+    { path: 'doc_b_text', value: documentComparison?.doc_b_text },
+    { path: 'docB_text', value: documentComparison?.docB_text },
+    { path: 'doc_b.text', value: documentComparison?.doc_b },
+    { path: 'docB.text', value: documentComparison?.docB },
+    { path: 'doc_b_content', value: documentComparison?.doc_b_content },
+    { path: 'docB_content', value: documentComparison?.docB_content },
+    { path: 'data.doc_b_plaintext', value: data?.doc_b_plaintext },
+    { path: 'data.docB_plaintext', value: data?.docB_plaintext },
+    { path: 'data.doc_b_text', value: data?.doc_b_text },
+    { path: 'data.docB_text', value: data?.docB_text },
+    { path: 'data.doc_b.text', value: data?.doc_b },
+    { path: 'data.docB.text', value: data?.docB },
+    { path: 'inputs_json.doc_b_plaintext', value: inputsJson?.doc_b_plaintext },
+    { path: 'inputs_json.docB_plaintext', value: inputsJson?.docB_plaintext },
+    { path: 'inputs_json.doc_b.text', value: inputsJson?.doc_b },
+    { path: 'inputs_json.docB.text', value: inputsJson?.docB },
+    { path: 'inputs.doc_b.text', value: inputs?.doc_b },
+    { path: 'inputs.docB.text', value: inputs?.docB },
+    { path: 'data.inputs_json.doc_b_plaintext', value: dataInputsJson?.doc_b_plaintext },
+    { path: 'data.inputs_json.docB_plaintext', value: dataInputsJson?.docB_plaintext },
+    { path: 'data.inputs_json.doc_b.text', value: dataInputsJson?.doc_b },
+    { path: 'data.inputs_json.docB.text', value: dataInputsJson?.docB },
+    { path: 'data.inputs.doc_b.text', value: dataInputs?.doc_b },
+    { path: 'data.inputs.docB.text', value: dataInputs?.docB }
+  ]);
+  const spansA = pickComparisonSpans([
+    { path: 'doc_a_spans_json', value: documentComparison?.doc_a_spans_json },
+    { path: 'docA_spans_json', value: documentComparison?.docA_spans_json },
+    { path: 'doc_a_spans', value: documentComparison?.doc_a_spans },
+    { path: 'docA_spans', value: documentComparison?.docA_spans },
+    { path: 'doc_a.spans', value: parseObjectField(documentComparison?.doc_a)?.spans },
+    { path: 'docA.spans', value: parseObjectField(documentComparison?.docA)?.spans },
+    { path: 'data.doc_a_spans_json', value: data?.doc_a_spans_json },
+    { path: 'data.docA_spans_json', value: data?.docA_spans_json },
+    { path: 'data.doc_a_spans', value: data?.doc_a_spans },
+    { path: 'data.docA_spans', value: data?.docA_spans },
+    { path: 'data.doc_a.spans', value: parseObjectField(data?.doc_a)?.spans },
+    { path: 'data.docA.spans', value: parseObjectField(data?.docA)?.spans }
+  ]);
+  const spansB = pickComparisonSpans([
+    { path: 'doc_b_spans_json', value: documentComparison?.doc_b_spans_json },
+    { path: 'docB_spans_json', value: documentComparison?.docB_spans_json },
+    { path: 'doc_b_spans', value: documentComparison?.doc_b_spans },
+    { path: 'docB_spans', value: documentComparison?.docB_spans },
+    { path: 'doc_b.spans', value: parseObjectField(documentComparison?.doc_b)?.spans },
+    { path: 'docB.spans', value: parseObjectField(documentComparison?.docB)?.spans },
+    { path: 'data.doc_b_spans_json', value: data?.doc_b_spans_json },
+    { path: 'data.docB_spans_json', value: data?.docB_spans_json },
+    { path: 'data.doc_b_spans', value: data?.doc_b_spans },
+    { path: 'data.docB_spans', value: data?.docB_spans },
+    { path: 'data.doc_b.spans', value: parseObjectField(data?.doc_b)?.spans },
+    { path: 'data.docB.spans', value: parseObjectField(data?.docB)?.spans }
+  ]);
+
+  return {
+    comparisonView: {
+      id: documentComparison?.id || null,
+      docAPathUsed: docA.pathUsed,
+      docBPathUsed: docB.pathUsed,
+      docASpansPathUsed: spansA.pathUsed,
+      docBSpansPathUsed: spansB.pathUsed,
+      docA: {
+        text: docA.text,
+        spans: spansA.spans,
+        source: 'typed'
+      },
+      docB: {
+        text: docB.text,
+        spans: spansB.spans,
+        source: 'typed'
+      }
+    },
+    topLevelKeys: Object.keys(documentComparison || {}),
+    dataKeys: Object.keys(data || {})
+  };
+}
+
+async function loadComparisonFromEntity({ documentComparisonId, proposalId }) {
+  let comparison = null;
+
+  if (documentComparisonId) {
+    const byId = await base44.entities.DocumentComparison.filter({ id: documentComparisonId }, '-created_date', 1);
+    comparison = byId?.[0] || null;
+  }
+
+  if (!comparison && proposalId) {
+    const byProposal = await base44.entities.DocumentComparison.filter({ proposal_id: proposalId }, '-created_date', 1);
+    comparison = byProposal?.[0] || null;
+  }
+
+  if (!comparison && proposalId) {
+    const byDataProposal = await base44.entities.DocumentComparison.filter({ 'data.proposal_id': proposalId }, '-created_date', 1);
+    comparison = byDataProposal?.[0] || null;
+  }
+
+  return extractComparisonViewFromRecord(comparison);
+}
+
 function toArray(input) {
   return Array.isArray(input) ? input : [];
 }
@@ -292,6 +502,7 @@ export default function SharedReport() {
   const [debugData, setDebugData] = useState(null);
   const resolvedTokenRef = useRef(null);
   const comparisonFallbackAttemptedRef = useRef(new Set());
+  const comparisonEntityFallbackAttemptedRef = useRef(new Set());
   const workspaceSectionRef = useRef(null);
   const ensuredSnapshotAccessRef = useRef(new Set());
 
@@ -488,6 +699,13 @@ export default function SharedReport() {
         data?.proposalView?.document_comparison_id ||
         data?.debug?.resolvedDocumentComparisonId ||
         null;
+      const resolvedProposalIdForFallback =
+        data?.sourceProposalId ||
+        data?.proposalId ||
+        data?.shareLink?.proposalId ||
+        data?.reportData?.proposalId ||
+        data?.reportData?.proposal_id ||
+        null;
       const isDocumentComparisonShare = Boolean(
         data?.reportData?.type === 'document_comparison' ||
         resolvedDocumentComparisonId
@@ -496,6 +714,10 @@ export default function SharedReport() {
       const fallbackKey = `${token}:${String(consumeView)}`;
       let fallbackAttempted = false;
       let fallbackUsed = false;
+      let entityFallbackAttempted = false;
+      let entityFallbackUsed = false;
+      let entityFallbackFound = false;
+      let entityFallbackError = null;
 
       if (
         isDocumentComparisonShare &&
@@ -538,6 +760,72 @@ export default function SharedReport() {
         }
       }
 
+      if (isDocumentComparisonShare && !hasComparisonText(data)) {
+        const entityFallbackKey = `${token}:${String(consumeView)}:entity`;
+        if (!comparisonEntityFallbackAttemptedRef.current.has(entityFallbackKey)) {
+          entityFallbackAttempted = true;
+          comparisonEntityFallbackAttemptedRef.current.add(entityFallbackKey);
+
+          try {
+            const entityResult = await loadComparisonFromEntity({
+              documentComparisonId: resolvedDocumentComparisonId,
+              proposalId: resolvedProposalIdForFallback
+            });
+
+            const entityComparisonView = entityResult?.comparisonView || null;
+            entityFallbackFound = Boolean(entityComparisonView?.id);
+
+            const entityDocALength = String(entityComparisonView?.docA?.text || '').trim().length;
+            const entityDocBLength = String(entityComparisonView?.docB?.text || '').trim().length;
+            if (entityDocALength > 0 || entityDocBLength > 0) {
+              const prevReportData = data?.reportData && typeof data.reportData === 'object' ? data.reportData : {};
+              data = {
+                ...data,
+                comparisonView: entityComparisonView,
+                reportData: {
+                  ...prevReportData,
+                  comparisonView: entityComparisonView,
+                  documentComparisonId:
+                    prevReportData?.documentComparisonId ||
+                    entityComparisonView?.id ||
+                    resolvedDocumentComparisonId ||
+                    null
+                },
+                _clientEndpointUsed: `${data?._clientEndpointUsed || 'ResolveSharedReport'}+EntityDocumentComparison`,
+                debug: {
+                  ...(data?.debug || {}),
+                  docAPathUsed: entityComparisonView?.docAPathUsed || null,
+                  docBPathUsed: entityComparisonView?.docBPathUsed || null,
+                  docASpansPathUsed: entityComparisonView?.docASpansPathUsed || null,
+                  docBSpansPathUsed: entityComparisonView?.docBSpansPathUsed || null,
+                  topLevelKeys: entityResult?.topLevelKeys || [],
+                  dataKeys: entityResult?.dataKeys || [],
+                  entityFallbackUsed: true,
+                  entityFallbackSource: 'DocumentComparison'
+                }
+              };
+              entityFallbackUsed = true;
+            }
+          } catch (entityError) {
+            const entityMeta = buildErrorMeta(entityError);
+            entityFallbackError = entityMeta.message;
+            if (debugMode) {
+              console.error('[SharedReport] Entity DocumentComparison fallback failed', {
+                apiCall: {
+                  entity: 'DocumentComparison',
+                  strategy: 'id/proposal_id/data.proposal_id',
+                  documentComparisonId: resolvedDocumentComparisonId,
+                  proposalId: resolvedProposalIdForFallback
+                },
+                statusCode: entityMeta.statusCode,
+                reasonCode: entityMeta.reasonCode,
+                responseBody: entityMeta.responseBody
+              });
+            }
+          }
+        }
+      }
+
       if (debugMode) {
         const debugResolvedDocumentComparisonId =
           data?.comparisonView?.id ||
@@ -551,6 +839,10 @@ export default function SharedReport() {
           resolvedDocumentComparisonId: debugResolvedDocumentComparisonId,
           fallbackAttempted,
           fallbackUsed,
+          entityFallbackAttempted,
+          entityFallbackUsed,
+          entityFallbackFound,
+          entityFallbackError,
           ...(data?.debug || {})
         });
       }
