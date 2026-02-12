@@ -10,6 +10,7 @@ import UserNotRegisteredError from '@/components/UserNotRegisteredError';
 import Directory from '@/pages/Directory';
 import DirectoryPersonDetail from '@/pages/DirectoryPersonDetail';
 import DirectoryOrgDetail from '@/pages/DirectoryOrgDetail';
+import RecipientEditStep2 from '@/pages/RecipientEditStep2';
 
 const { Pages, Layout, mainPage } = pagesConfig;
 const mainPageKey = mainPage ?? Object.keys(Pages)[0];
@@ -60,6 +61,14 @@ const PublicRoutes = () => {
         }
       />
       <Route path="/shared-report" element={<SharedReportAliasRedirect />} />
+      <Route
+        path="/proposals/:proposalId/recipient-edit"
+        element={
+          <LayoutWrapper currentPageName="ProposalDetail">
+            <RecipientEditStep2 />
+          </LayoutWrapper>
+        }
+      />
       <Route path="/" element={
         <LayoutWrapper currentPageName={mainPageKey}>
           <MainPage />

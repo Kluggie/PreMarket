@@ -574,6 +574,7 @@ export default function SharedReport() {
   const [isSaving, setIsSaving] = useState(false);
   const [isReevaluating, setIsReevaluating] = useState(false);
   const [isSendingBack, setIsSendingBack] = useState(false);
+  const [isOpeningRecipientEditDraft, setIsOpeningRecipientEditDraft] = useState(false);
   const [reevaluationState, setReevaluationState] = useState(null);
   const [debugData, setDebugData] = useState(null);
   const resolvedTokenRef = useRef(null);
@@ -1121,6 +1122,45 @@ export default function SharedReport() {
     navigate(createPageUrl(`SharedReport?token=${encodeURIComponent(token)}&mode=workspace`));
   };
 
+  const handleOpenRecipientEditDraft = async () => {
+    if (!canEditRecipient || isOpeningRecipientEditDraft) return;
+    const targetSourceProposalId = sourceProposalId || proposalId;
+    if (!targetSourceProposalId) {
+      toast.error('Unable to open editor: missing source proposal.');
+      return;
+    }
+
+    setIsOpeningRecipientEditDraft(true);
+    try {
+      const result = await base44.functions.invoke('CreateRecipientEditDraft', {
+        sourceProposalId: targetSourceProposalId,
+        token
+      });
+      const payload = result?.data && typeof result.data === 'object' ? result.data : {};
+      const newDraftProposalId = payload?.newDraftProposalId || payload?.proposalId || null;
+
+      if (!payload?.ok || !newDraftProposalId) {
+        throw new Error(payload?.message || 'Failed to create recipient draft');
+      }
+
+      const recipientEditUrl = token
+        ? createPageUrl(`proposals/${encodeURIComponent(newDraftProposalId)}/recipient-edit?sharedToken=${encodeURIComponent(token)}`)
+        : createPageUrl(`proposals/${encodeURIComponent(newDraftProposalId)}/recipient-edit`);
+      navigate(recipientEditUrl);
+    } catch (error) {
+      const meta = extractFunctionFailure(error, 'Failed to open recipient edit workspace');
+      toast.error(meta.message);
+      console.error('[SharedReport] CreateRecipientEditDraft failed', {
+        sourceProposalId: targetSourceProposalId,
+        reasonCode: meta.reasonCode,
+        statusCode: meta.statusCode,
+        message: meta.message
+      });
+    } finally {
+      setIsOpeningRecipientEditDraft(false);
+    }
+  };
+
   const handleRecipientEditChange = (questionId, patch) => {
     setRecipientEdits((prev) => ({
       ...prev,
@@ -1512,11 +1552,18 @@ export default function SharedReport() {
             <div className="flex items-center gap-3">
               {canEditRecipient && (
                 <Button
-                  variant={recipientEditMode ? 'default' : 'outline'}
-                  className={recipientEditMode ? 'bg-blue-600 hover:bg-blue-700' : ''}
-                  onClick={() => setRecipientEditMode(!recipientEditMode)}
+                  variant="outline"
+                  onClick={handleOpenRecipientEditDraft}
+                  disabled={isOpeningRecipientEditDraft}
                 >
-                  {recipientEditMode ? 'Done Editing' : 'Edit Your Details'}
+                  {isOpeningRecipientEditDraft ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Opening...
+                    </>
+                  ) : (
+                    'Edit Your Details'
+                  )}
                 </Button>
               )}
             </div>
@@ -1690,7 +1737,7 @@ export default function SharedReport() {
                           {isSaving ? 'Saving...' : 'Save Changes'}
                         </Button>
                       ) : (
-                        <Badge variant="outline">Click "Edit Your Details" to modify Party B fields</Badge>
+                        <Badge variant="outline">Use "Edit Your Details" to open your draft editing workspace</Badge>
                       )}
                       <Button
                         variant="outline"
