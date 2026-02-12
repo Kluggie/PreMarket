@@ -611,19 +611,107 @@ function removeHiddenComparisonText(text: string, spans: unknown) {
   };
 }
 
+function toComparisonText(value: unknown): string | null {
+  if (typeof value === 'string') return value;
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const nested = (value as Record<string, unknown>).text;
+    if (typeof nested === 'string') return nested;
+  }
+  return null;
+}
+
+function pickComparisonText(candidates: unknown[]): string {
+  for (const candidate of candidates) {
+    const text = toComparisonText(candidate);
+    if (typeof text === 'string' && text.trim().length > 0) return text;
+  }
+  return '';
+}
+
+function parseComparisonSpans(value: unknown): any[] | null {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== 'string') return null;
+
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function pickComparisonSpans(candidates: unknown[]): any[] {
+  let fallback: any[] | null = null;
+  for (const candidate of candidates) {
+    const spans = parseComparisonSpans(candidate);
+    if (!spans) continue;
+    if (fallback === null) fallback = spans;
+    if (spans.length > 0) return spans;
+  }
+  return fallback || [];
+}
+
 function buildComparisonView(documentComparison: any) {
   if (!documentComparison || typeof documentComparison !== 'object') return null;
 
   const data = objectData(documentComparison);
 
-  const rawDocAText = String(documentComparison.doc_a_plaintext ?? data.doc_a_plaintext ?? '');
-  const rawDocBText = String(documentComparison.doc_b_plaintext ?? data.doc_b_plaintext ?? '');
-  const rawDocASpans = Array.isArray(documentComparison.doc_a_spans_json)
-    ? documentComparison.doc_a_spans_json
-    : (Array.isArray(data.doc_a_spans_json) ? data.doc_a_spans_json : []);
-  const rawDocBSpans = Array.isArray(documentComparison.doc_b_spans_json)
-    ? documentComparison.doc_b_spans_json
-    : (Array.isArray(data.doc_b_spans_json) ? data.doc_b_spans_json : []);
+  const rawDocAText = pickComparisonText([
+    documentComparison.doc_a_plaintext,
+    documentComparison.docA_plaintext,
+    documentComparison.doc_a_text,
+    documentComparison.docA_text,
+    documentComparison.doc_a,
+    documentComparison.docA,
+    documentComparison.doc_a_content,
+    documentComparison.docA_content,
+    data.doc_a_plaintext,
+    data.docA_plaintext,
+    data.doc_a_text,
+    data.docA_text,
+    data.doc_a,
+    data.docA,
+    data.doc_a_content,
+    data.docA_content
+  ]);
+  const rawDocBText = pickComparisonText([
+    documentComparison.doc_b_plaintext,
+    documentComparison.docB_plaintext,
+    documentComparison.doc_b_text,
+    documentComparison.docB_text,
+    documentComparison.doc_b,
+    documentComparison.docB,
+    documentComparison.doc_b_content,
+    documentComparison.docB_content,
+    data.doc_b_plaintext,
+    data.docB_plaintext,
+    data.doc_b_text,
+    data.docB_text,
+    data.doc_b,
+    data.docB,
+    data.doc_b_content,
+    data.docB_content
+  ]);
+  const rawDocASpans = pickComparisonSpans([
+    documentComparison.doc_a_spans_json,
+    documentComparison.docA_spans_json,
+    documentComparison.doc_a_spans,
+    documentComparison.docA_spans,
+    data.doc_a_spans_json,
+    data.docA_spans_json,
+    data.doc_a_spans,
+    data.docA_spans
+  ]);
+  const rawDocBSpans = pickComparisonSpans([
+    documentComparison.doc_b_spans_json,
+    documentComparison.docB_spans_json,
+    documentComparison.doc_b_spans,
+    documentComparison.docB_spans,
+    data.doc_b_spans_json,
+    data.docB_spans_json,
+    data.doc_b_spans,
+    data.docB_spans
+  ]);
 
   const hiddenDocACount = normalizeComparisonSpans(rawDocASpans, rawDocAText.length).length;
   const hiddenDocBCount = normalizeComparisonSpans(rawDocBSpans, rawDocBText.length).length;

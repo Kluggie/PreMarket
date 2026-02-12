@@ -144,14 +144,6 @@ async function invokeSharedResolver(token, options = {}) {
     }
   }
 
-async function invokeSharedComparisonDetails(token, options = {}) {
-  return base44.functions.invoke('GetSharedComparisonDetails', {
-    token,
-    ...(typeof options.consumeView === 'boolean' ? { consumeView: options.consumeView } : {}),
-    ...(typeof options.debug === 'boolean' ? { debug: options.debug } : {})
-  });
-}
-
 function toArray(input) {
   return Array.isArray(input) ? input : [];
 }
@@ -256,9 +248,6 @@ export default function SharedReport() {
   const [partyBEditableSchema, setPartyBEditableSchema] = useState({ totalQuestions: 0, editableQuestionIds: [], questions: [] });
   const [responsesView, setResponsesView] = useState([]);
   const [comparisonView, setComparisonView] = useState(null);
-  const [comparisonDetailsData, setComparisonDetailsData] = useState(null);
-  const [comparisonDetailsError, setComparisonDetailsError] = useState(null);
-  const [isLoadingComparisonDetails, setIsLoadingComparisonDetails] = useState(false);
   const [recipientEdits, setRecipientEdits] = useState({});
   const [recipientEditMode, setRecipientEditMode] = useState(false);
   const [sendBackMessage, setSendBackMessage] = useState('');
@@ -268,7 +257,6 @@ export default function SharedReport() {
   const [reevaluationState, setReevaluationState] = useState(null);
   const [debugData, setDebugData] = useState(null);
   const resolvedTokenRef = useRef(null);
-  const resolvedComparisonDetailsTokenRef = useRef(null);
   const workspaceSectionRef = useRef(null);
   const ensuredSnapshotAccessRef = useRef(new Set());
 
@@ -604,51 +592,6 @@ export default function SharedReport() {
     }
   }, [token]);
 
-  const hydrateSharedComparisonDetails = useCallback(async ({ force = false } = {}) => {
-    if (!token) return false;
-    if (!force && resolvedComparisonDetailsTokenRef.current === token) return false;
-
-    resolvedComparisonDetailsTokenRef.current = token;
-
-    try {
-      setIsLoadingComparisonDetails(true);
-      setComparisonDetailsError(null);
-
-      const result = await invokeSharedComparisonDetails(token, {
-        consumeView: false,
-        debug: debugMode
-      });
-      const data = result?.data || null;
-
-      setComparisonDetailsData(data);
-
-      if (!data?.ok) {
-        setComparisonDetailsError({
-          message: data?.message || 'Failed to load shared comparison details.',
-          reasonCode: data?.errorCode || data?.error || data?.code || 'REQUEST_FAILED',
-          statusCode: result?.status || null,
-          debug: data?.debug || null
-        });
-        return false;
-      }
-
-      setComparisonDetailsError(null);
-      return true;
-    } catch (error) {
-      const parsed = extractFunctionFailure(error, 'Failed to load shared comparison details.');
-      setComparisonDetailsData(null);
-      setComparisonDetailsError({
-        message: parsed.message,
-        reasonCode: parsed.reasonCode,
-        statusCode: parsed.statusCode,
-        debug: null
-      });
-      return false;
-    } finally {
-      setIsLoadingComparisonDetails(false);
-    }
-  }, [token, debugMode]);
-
   useEffect(() => {
     let active = true;
     base44.auth.me()
@@ -670,21 +613,6 @@ export default function SharedReport() {
     resolvedTokenRef.current = token;
     hydrateSharedReport({ consumeView: true, silent: false });
   }, [token, hydrateSharedReport]);
-
-  useEffect(() => {
-    resolvedComparisonDetailsTokenRef.current = null;
-    setComparisonDetailsData(null);
-    setComparisonDetailsError(null);
-    setIsLoadingComparisonDetails(false);
-  }, [token]);
-
-  useEffect(() => {
-    if (activeTab !== 'details') return;
-    if (!token) return;
-    if (isLoadingComparisonDetails) return;
-    if (resolvedComparisonDetailsTokenRef.current === token) return;
-    hydrateSharedComparisonDetails();
-  }, [activeTab, token, isLoadingComparisonDetails, hydrateSharedComparisonDetails]);
 
   useEffect(() => {
     if (mode !== 'workspace') return;
@@ -1053,30 +981,24 @@ export default function SharedReport() {
   const reportJson = reportData?.report || null;
   const partyAEmail = proposalView?.party_a_email || partyAView?.proposal?.party_a_email || 'Identity Protected';
   const partyBEmail = proposalView?.party_b_email || shareData?.recipientEmail || user?.email || 'Not specified';
-  const comparisonDocA = comparisonDetailsData?.comparison?.docA || null;
-  const comparisonDocB = comparisonDetailsData?.comparison?.docB || null;
+  const comparisonDocA = comparisonView?.docA || reportData?.comparisonView?.docA || null;
+  const comparisonDocB = comparisonView?.docB || reportData?.comparisonView?.docB || null;
   const resolvedDocumentComparisonId =
-    comparisonDetailsData?.debug?.documentComparisonId ||
-    comparisonDetailsData?.shareLink?.documentComparisonId ||
-    shareData?.documentComparisonId ||
     reportData?.documentComparisonId ||
+    shareData?.documentComparisonId ||
+    proposalView?.document_comparison_id ||
+    debugData?.resolvedDocumentComparisonId ||
     null;
-  const comparisonDocALength = comparisonDetailsData?.debug?.docALength ?? String(comparisonDocA?.text || '').trim().length;
-  const comparisonDocBLength = comparisonDetailsData?.debug?.docBLength ?? String(comparisonDocB?.text || '').trim().length;
+  const comparisonDocALength = String(comparisonDocA?.text || '').trim().length;
+  const comparisonDocBLength = String(comparisonDocB?.text || '').trim().length;
   const comparisonDebugPanel = debugMode
     ? {
-        endpointUsed: comparisonDetailsData?.endpoint || 'GetSharedComparisonDetails',
-        deployMarker: comparisonDetailsData?.deployMarker || null,
+        endpointUsed: debugData?.endpointUsed || 'ResolveSharedReport',
+        deployMarker: debugData?.deployMarker || null,
         resolvedDocumentComparisonId,
-        found: comparisonDetailsData?.debug?.found ?? false,
-        triedKeysA: comparisonDetailsData?.debug?.triedKeysA || [],
-        triedKeysB: comparisonDetailsData?.debug?.triedKeysB || [],
-        chosenKeyA: comparisonDetailsData?.debug?.chosenKeyA || null,
-        chosenKeyB: comparisonDetailsData?.debug?.chosenKeyB || null,
         docATextLength: comparisonDocALength,
         docBTextLength: comparisonDocBLength,
-        topLevelKeys: comparisonDetailsData?.debug?.topLevelKeys || [],
-        dataKeys: comparisonDetailsData?.debug?.dataKeys || []
+        topLevelKeys: debugData?.topLevelKeys || []
       }
     : null;
 
@@ -1374,18 +1296,11 @@ export default function SharedReport() {
               <CardHeader>
                 <CardTitle>Complete Proposal Details</CardTitle>
                 <CardDescription>
-                  Document comparison details resolved from GetSharedComparisonDetails.
+                  Document comparison details resolved from the shared report response.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                {isLoadingComparisonDetails && !comparisonDetailsData && (
-                  <div className="flex items-center gap-2 text-slate-600">
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Loading shared comparison details...
-                  </div>
-                )}
-
-                {comparisonDetailsData?.ok && comparisonDetailsData?.comparison ? (
+                {comparisonView ? (
                   <div className="space-y-4">
                     {[
                       { label: 'Document A', doc: comparisonDocA },
@@ -1410,22 +1325,11 @@ export default function SharedReport() {
                 ) : (
                   <div className="border border-amber-200 bg-amber-50 rounded-lg p-4">
                     <p className="text-sm font-medium text-amber-800 mb-1">
-                      {comparisonDetailsError?.message || 'No document comparison data in shared comparison response.'}
+                      No document comparison data in shared report response.
                     </p>
                     <p className="text-xs text-amber-700">
                       documentComparisonId: {resolvedDocumentComparisonId || 'missing'} | docA length: {comparisonDocALength} | docB length: {comparisonDocBLength}
                     </p>
-                    {comparisonDetailsError?.reasonCode && (
-                      <p className="text-xs text-amber-700 mt-1">reason: {comparisonDetailsError.reasonCode}</p>
-                    )}
-                    <Button
-                      variant="outline"
-                      className="mt-3"
-                      onClick={() => hydrateSharedComparisonDetails({ force: true })}
-                      disabled={isLoadingComparisonDetails || !token}
-                    >
-                      Retry
-                    </Button>
                   </div>
                 )}
 
@@ -1437,9 +1341,13 @@ export default function SharedReport() {
                     <pre className="mt-3 text-xs bg-white p-4 rounded border border-slate-200 overflow-auto max-h-96" style={{ whiteSpace: 'pre-wrap' }}>
                       {JSON.stringify(comparisonDebugPanel, null, 2)}
                     </pre>
-                    <p className="text-xs text-slate-500 mt-3 mb-2">Raw comparison payload from GetSharedComparisonDetails</p>
+                    <p className="text-xs text-slate-500 mt-3 mb-2">Raw comparison payload from ResolveSharedReport/GetSharedReportData</p>
                     <pre className="text-xs bg-white p-4 rounded border border-slate-200 overflow-auto max-h-96" style={{ whiteSpace: 'pre-wrap' }}>
-                      {JSON.stringify(comparisonDetailsData || comparisonDetailsError || null, null, 2)}
+                      {JSON.stringify({
+                        comparisonView,
+                        reportDataComparisonView: reportData?.comparisonView || null,
+                        backendDebug: debugData || null
+                      }, null, 2)}
                     </pre>
                   </details>
                 )}
