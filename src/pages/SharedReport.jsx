@@ -178,6 +178,82 @@ function hasComparisonText(payload) {
   return docALength > 0 || docBLength > 0;
 }
 
+function normalizeComparisonSpanLevel(level) {
+  const normalized = String(level || '').trim().toLowerCase();
+  if (normalized === 'confidential' || normalized === 'hidden' || normalized === 'partial') return 'hidden';
+  return null;
+}
+
+function normalizeComparisonSpans(spans, textLength) {
+  if (!Array.isArray(spans)) return [];
+
+  return spans
+    .map((span) => {
+      const rawStart = Number(span?.start);
+      const rawEnd = Number(span?.end);
+      const level = normalizeComparisonSpanLevel(span?.level);
+      if (!Number.isFinite(rawStart) || !Number.isFinite(rawEnd) || !level) return null;
+
+      const start = Math.max(0, Math.min(rawStart, textLength));
+      const end = Math.max(0, Math.min(rawEnd, textLength));
+      if (end <= start) return null;
+
+      return { start, end, level };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.start - b.start);
+}
+
+function removeHiddenComparisonText(text, spans) {
+  const normalizedSpans = normalizeComparisonSpans(spans, text.length);
+  if (normalizedSpans.length === 0) {
+    return {
+      text,
+      hiddenCount: 0
+    };
+  }
+
+  let output = '';
+  let cursor = 0;
+  normalizedSpans.forEach((span) => {
+    if (span.start > cursor) {
+      output += text.slice(cursor, span.start);
+    }
+    cursor = Math.max(cursor, span.end);
+  });
+
+  if (cursor < text.length) {
+    output += text.slice(cursor);
+  }
+
+  return {
+    text: output,
+    hiddenCount: normalizedSpans.length
+  };
+}
+
+function sanitizeComparisonDoc(doc) {
+  if (!doc || typeof doc !== 'object') return doc;
+  const text = String(doc?.text || '');
+  const spans = parseComparisonSpans(doc?.spans) || [];
+  const redacted = removeHiddenComparisonText(text, spans);
+  return {
+    ...doc,
+    text: redacted.text,
+    hiddenCount: redacted.hiddenCount,
+    spans
+  };
+}
+
+function sanitizeComparisonView(view) {
+  if (!view || typeof view !== 'object') return null;
+  return {
+    ...view,
+    docA: sanitizeComparisonDoc(view?.docA),
+    docB: sanitizeComparisonDoc(view?.docB)
+  };
+}
+
 function parseObjectField(value) {
   if (value && typeof value === 'object' && !Array.isArray(value)) {
     return value;
@@ -345,7 +421,7 @@ function extractComparisonViewFromRecord(documentComparison) {
   ]);
 
   return {
-    comparisonView: {
+    comparisonView: sanitizeComparisonView({
       id: documentComparison?.id || null,
       docAPathUsed: docA.pathUsed,
       docBPathUsed: docB.pathUsed,
@@ -361,7 +437,7 @@ function extractComparisonViewFromRecord(documentComparison) {
         spans: spansB.spans,
         source: 'typed'
       }
-    },
+    }),
     topLevelKeys: Object.keys(documentComparison || {}),
     dataKeys: Object.keys(data || {})
   };
@@ -934,7 +1010,7 @@ export default function SharedReport() {
       setPartyAView(data.partyAView || { proposal: null, responses: [] });
       setPartyBEditableSchema(data.partyBEditableSchema || { totalQuestions: 0, editableQuestionIds: [], questions: [] });
       setResponsesView(data.responsesView || data?.recipientView?.responses || []);
-      setComparisonView(extractComparisonView(data));
+      setComparisonView(sanitizeComparisonView(extractComparisonView(data)));
       setError(null);
 
       const sharedFieldCount = toArray(data.partyAView?.responses).filter(r => String(r?.redaction || '').toLowerCase() !== 'hidden').length;
@@ -1367,8 +1443,9 @@ export default function SharedReport() {
   const reportJson = reportData?.report || null;
   const partyAEmail = proposalView?.party_a_email || partyAView?.proposal?.party_a_email || 'Identity Protected';
   const partyBEmail = proposalView?.party_b_email || shareData?.recipientEmail || user?.email || 'Not specified';
-  const comparisonDocA = comparisonView?.docA || reportData?.comparisonView?.docA || null;
-  const comparisonDocB = comparisonView?.docB || reportData?.comparisonView?.docB || null;
+  const effectiveComparisonView = sanitizeComparisonView(comparisonView || reportData?.comparisonView || null);
+  const comparisonDocA = effectiveComparisonView?.docA || null;
+  const comparisonDocB = effectiveComparisonView?.docB || null;
   const resolvedDocumentComparisonId =
     reportData?.documentComparisonId ||
     shareData?.documentComparisonId ||
@@ -1503,11 +1580,11 @@ export default function SharedReport() {
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
-                    {isDocumentComparison && comparisonView ? (
+                    {isDocumentComparison && effectiveComparisonView ? (
                       <div className="space-y-4">
                         {[
-                          { doc: comparisonView.docA, label: comparisonView.docA?.label, color: 'blue' },
-                          { doc: comparisonView.docB, label: comparisonView.docB?.label, color: 'indigo' }
+                          { doc: effectiveComparisonView.docA, label: effectiveComparisonView.docA?.label, color: 'blue' },
+                          { doc: effectiveComparisonView.docB, label: effectiveComparisonView.docB?.label, color: 'indigo' }
                         ].filter(item => item.doc).map((item, index) => (
                           <div key={`doc-${index}`} className={`p-4 bg-${item.color}-50 rounded-xl border border-${item.color}-100`}>
                             <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
@@ -1531,7 +1608,7 @@ export default function SharedReport() {
                           </div>
                         ))}
                       </div>
-                    ) : isDocumentComparison && !comparisonView ? (
+                    ) : isDocumentComparison && !effectiveComparisonView ? (
                       <div className="text-center py-8">
                         <p className="text-amber-700 font-medium mb-2">⚠️ Snapshot contains no document comparison content</p>
                         <p className="text-sm text-slate-600">This may indicate a snapshot builder issue. Contact the sender.</p>
@@ -1691,7 +1768,7 @@ export default function SharedReport() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                {comparisonView ? (
+                {effectiveComparisonView ? (
                   <div className="space-y-4">
                     {[
                       { label: 'Document A', doc: comparisonDocA },
@@ -1735,7 +1812,7 @@ export default function SharedReport() {
                     <p className="text-xs text-slate-500 mt-3 mb-2">Raw comparison payload from ResolveSharedReport/GetSharedReportData</p>
                     <pre className="text-xs bg-white p-4 rounded border border-slate-200 overflow-auto max-h-96" style={{ whiteSpace: 'pre-wrap' }}>
                       {JSON.stringify({
-                        comparisonView,
+                        comparisonView: effectiveComparisonView,
                         reportDataComparisonView: reportData?.comparisonView || null,
                         backendDebug: debugData || null
                       }, null, 2)}
