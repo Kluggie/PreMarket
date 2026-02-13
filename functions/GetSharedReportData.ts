@@ -610,25 +610,39 @@ function normalizeComparisonLevel(level: unknown): 'hidden' | null {
   return null;
 }
 
+const COMPARISON_SPAN_START_KEYS = ['start', 'startOffset', 'start_offset', 'start_index', 'from'] as const;
+const COMPARISON_SPAN_END_KEYS = ['end', 'endOffset', 'end_offset', 'end_index', 'to'] as const;
+
+function readComparisonSpanBoundary(span: any, keys: readonly string[]): number | null {
+  if (!span || typeof span !== 'object') return null;
+
+  for (const key of keys) {
+    const numeric = Number((span as Record<string, unknown>)[key]);
+    if (Number.isFinite(numeric)) return numeric;
+  }
+
+  return null;
+}
+
 function normalizeComparisonSpans(spans: unknown, textLength: number): Array<{ start: number; end: number; level: 'hidden' }> {
   if (!Array.isArray(spans)) return [];
 
   const normalized = spans
     .map((span: any) => {
-      const rawStart = Number(span?.start);
-      const rawEnd = Number(span?.end);
+      const rawStart = readComparisonSpanBoundary(span, COMPARISON_SPAN_START_KEYS);
+      const rawEnd = readComparisonSpanBoundary(span, COMPARISON_SPAN_END_KEYS);
       const level = normalizeComparisonLevel(span?.level);
 
-      if (!Number.isFinite(rawStart) || !Number.isFinite(rawEnd) || !level) return null;
+      if (rawStart === null || rawEnd === null || !level) return null;
 
-      const start = Math.max(0, Math.min(rawStart, textLength));
-      const end = Math.max(0, Math.min(rawEnd, textLength));
+      const start = Math.max(0, Math.min(Math.floor(rawStart), textLength));
+      const end = Math.max(0, Math.min(Math.floor(rawEnd), textLength));
       if (end <= start) return null;
 
       return { start, end, level };
     })
     .filter((span): span is { start: number; end: number; level: 'hidden' } => Boolean(span))
-    .sort((a, b) => a.start - b.start);
+    .sort((a, b) => (a.start === b.start ? b.end - a.end : a.start - b.start));
 
   const merged: Array<{ start: number; end: number; level: 'hidden' }> = [];
   for (const span of normalized) {
@@ -761,11 +775,19 @@ function pickComparisonText(candidates: Array<{ path: string; value: unknown }>)
 
 function parseComparisonSpans(value: unknown): any[] | null {
   if (Array.isArray(value)) return value;
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const nested = (value as Record<string, unknown>).spans;
+    return Array.isArray(nested) ? nested : [];
+  }
   if (typeof value !== 'string') return null;
 
   try {
     const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed : [];
+    if (Array.isArray(parsed)) return parsed;
+    if (parsed && typeof parsed === 'object' && Array.isArray((parsed as Record<string, unknown>).spans)) {
+      return (parsed as Record<string, unknown>).spans as any[];
+    }
+    return [];
   } catch {
     return [];
   }
@@ -1188,6 +1210,10 @@ function toSnapshotComparisonView(rawComparisonView: any) {
 
   const docAText = String(docARaw?.text ?? '');
   const docBText = String(docBRaw?.text ?? '');
+  const docASpans = Array.isArray(docARaw?.spans) ? docARaw.spans : [];
+  const docBSpans = Array.isArray(docBRaw?.spans) ? docBRaw.spans : [];
+  const normalizedDocASpans = normalizeComparisonSpans(docASpans, docAText.length);
+  const normalizedDocBSpans = normalizeComparisonSpans(docBSpans, docBText.length);
 
   return {
     id: asString(rawComparisonView?.id || null),
@@ -1196,15 +1222,19 @@ function toSnapshotComparisonView(rawComparisonView: any) {
       label: asString(docARaw?.label || null) || 'Document A',
       source: asString(docARaw?.source || null) || 'typed',
       text: docAText,
-      spans: Array.isArray(docARaw?.spans) ? docARaw.spans : [],
-      hiddenCount: Number.isFinite(Number(docARaw?.hiddenCount)) ? Math.max(0, Math.floor(Number(docARaw.hiddenCount))) : 0
+      spans: docASpans,
+      hiddenCount: normalizedDocASpans.length > 0
+        ? normalizedDocASpans.length
+        : (Number.isFinite(Number(docARaw?.hiddenCount)) ? Math.max(0, Math.floor(Number(docARaw.hiddenCount))) : 0)
     },
     docB: {
       label: asString(docBRaw?.label || null) || 'Document B',
       source: asString(docBRaw?.source || null) || 'typed',
       text: docBText,
-      spans: Array.isArray(docBRaw?.spans) ? docBRaw.spans : [],
-      hiddenCount: Number.isFinite(Number(docBRaw?.hiddenCount)) ? Math.max(0, Math.floor(Number(docBRaw.hiddenCount))) : 0
+      spans: docBSpans,
+      hiddenCount: normalizedDocBSpans.length > 0
+        ? normalizedDocBSpans.length
+        : (Number.isFinite(Number(docBRaw?.hiddenCount)) ? Math.max(0, Math.floor(Number(docBRaw.hiddenCount))) : 0)
     }
   };
 }
