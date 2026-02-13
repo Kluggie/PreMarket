@@ -18,7 +18,7 @@ const normalizeHighlightLevel = (level) => {
 
 const normalizeHighlights = (spans, textLength) => {
   if (!Array.isArray(spans)) return [];
-  return spans
+  const normalized = spans
     .map((span) => {
       const rawStart = Number(span?.start);
       const rawEnd = Number(span?.end);
@@ -33,6 +33,24 @@ const normalizeHighlights = (spans, textLength) => {
     })
     .filter(Boolean)
     .sort((a, b) => a.start - b.start);
+
+  const merged = [];
+  normalized.forEach((span) => {
+    const last = merged[merged.length - 1];
+    if (!last) {
+      merged.push({ ...span });
+      return;
+    }
+
+    if (span.start <= last.end) {
+      last.end = Math.max(last.end, span.end);
+      return;
+    }
+
+    merged.push({ ...span });
+  });
+
+  return merged;
 };
 
 function renderHighlightedText(text, spans, docId) {
@@ -185,26 +203,35 @@ export default function RecipientEditStep3() {
     target.scrollTop = ratio * targetRange;
   };
 
-  const getSelectionForDocB = () => {
+  const resolveSelectionOffsets = (containerId, fullText) => {
     const selection = window.getSelection();
     if (!selection || selection.rangeCount === 0) return null;
-
-    const selectedText = selection.toString();
-    if (!selectedText || !selectedText.trim()) return null;
-
     const range = selection.getRangeAt(0);
-    const container = document.getElementById('recipient-preview-b');
+    if (range.collapsed) return null;
+
+    const container = document.getElementById(containerId);
     if (!container || !container.contains(range.commonAncestorContainer)) return null;
 
-    const fullText = docBText;
-    const start = fullText.indexOf(selectedText);
-    if (start === -1) return null;
+    const preRange = range.cloneRange();
+    preRange.selectNodeContents(container);
+    preRange.setEnd(range.startContainer, range.startOffset);
+
+    const selectedText = range.toString();
+    if (!selectedText || selectedText.length === 0) return null;
+
+    const start = preRange.toString().length;
+    const end = start + selectedText.length;
+    const boundedStart = Math.max(0, Math.min(start, fullText.length));
+    const boundedEnd = Math.max(0, Math.min(end, fullText.length));
+    if (boundedEnd <= boundedStart) return null;
 
     return {
-      start,
-      end: start + selectedText.length
+      start: boundedStart,
+      end: boundedEnd
     };
   };
+
+  const getSelectionForDocB = () => resolveSelectionOffsets('recipient-preview-b', docBText);
 
   const addDocBHighlight = () => {
     const selection = getSelectionForDocB();

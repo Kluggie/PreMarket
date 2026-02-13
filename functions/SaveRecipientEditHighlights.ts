@@ -34,14 +34,22 @@ function normalizeHighlights(spans: unknown, textLength: number) {
     .filter((span): span is { start: number; end: number; level: 'confidential' } => Boolean(span))
     .sort((a, b) => a.start - b.start);
 
-  const deduped: Array<{ start: number; end: number; level: 'confidential' }> = [];
+  const merged: Array<{ start: number; end: number; level: 'confidential' }> = [];
   for (const span of normalized) {
-    const prev = deduped[deduped.length - 1];
-    if (!prev || prev.start !== span.start || prev.end !== span.end || prev.level !== span.level) {
-      deduped.push(span);
+    const prev = merged[merged.length - 1];
+    if (!prev) {
+      merged.push({ ...span });
+      continue;
     }
+
+    if (span.start <= prev.end) {
+      prev.end = Math.max(prev.end, span.end);
+      continue;
+    }
+
+    merged.push({ ...span });
   }
-  return deduped;
+  return merged;
 }
 
 function proposalBelongsToRecipient(proposal: any, user: any): boolean {

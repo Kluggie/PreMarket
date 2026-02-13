@@ -401,26 +401,47 @@ Deno.serve(async (req) => {
         const removeHidden = (text: string, spans: any[]) => {
           const normalizedSpans = spans
             .map((span: any) => {
-              const level = String(span?.level || '').toLowerCase();
-              if (!['hidden', 'confidential'].includes(level)) return null;
-              const start = Number(span?.start);
-              const end = Number(span?.end);
-              if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+              const level = String(span?.level || '').trim().toLowerCase();
+              if (!['hidden', 'confidential', 'partial'].includes(level)) return null;
+
+              const rawStart = Number(span?.start);
+              const rawEnd = Number(span?.end);
+              if (!Number.isFinite(rawStart) || !Number.isFinite(rawEnd)) return null;
+
+              const start = Math.max(0, Math.min(Math.floor(rawStart), text.length));
+              const end = Math.max(0, Math.min(Math.floor(rawEnd), text.length));
+              if (end <= start) return null;
+
               return { start, end };
             })
-            .filter(Boolean)
-            .sort((a: any, b: any) => a.start - b.start);
-          
+            .filter((span): span is { start: number; end: number } => Boolean(span))
+            .sort((a, b) => a.start - b.start);
+
           if (normalizedSpans.length === 0) return { text, hiddenCount: 0 };
-          
+
+          const merged: Array<{ start: number; end: number }> = [];
+          for (const span of normalizedSpans) {
+            const prev = merged[merged.length - 1];
+            if (!prev) {
+              merged.push({ ...span });
+              continue;
+            }
+            if (span.start <= prev.end) {
+              prev.end = Math.max(prev.end, span.end);
+              continue;
+            }
+            merged.push({ ...span });
+          }
+
           let output = '';
           let cursor = 0;
-          for (const span of normalizedSpans) {
+          for (const span of merged) {
             if (span.start > cursor) output += text.slice(cursor, span.start);
             cursor = Math.max(cursor, span.end);
           }
           if (cursor < text.length) output += text.slice(cursor);
-          return { text: output, hiddenCount: normalizedSpans.length };
+
+          return { text: output, hiddenCount: merged.length };
         };
         
         const redactedDocA = removeHidden(rawDocAText, rawDocASpans);
@@ -443,7 +464,6 @@ Deno.serve(async (req) => {
           }
         };
       }
-    }
 
     if (comparisonView) {
       snapshotPayload.comparisonView = comparisonView;
