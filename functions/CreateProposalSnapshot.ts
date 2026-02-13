@@ -394,28 +394,101 @@ Deno.serve(async (req) => {
     if (comparison) {
         const rawDocAText = String(comparison.doc_a_plaintext ?? '');
         const rawDocBText = String(comparison.doc_b_plaintext ?? '');
-        const rawDocASpans = Array.isArray(comparison.doc_a_spans_json) ? comparison.doc_a_spans_json : [];
-        const rawDocBSpans = Array.isArray(comparison.doc_b_spans_json) ? comparison.doc_b_spans_json : [];
+        const comparisonData = toObject(comparison?.data);
+
+        const parseSpans = (value: unknown): any[] => {
+          if (Array.isArray(value)) return value;
+          if (value && typeof value === 'object' && !Array.isArray(value)) {
+            const nested = (value as Record<string, unknown>).spans;
+            return Array.isArray(nested) ? nested : [];
+          }
+          if (typeof value !== 'string') return [];
+          try {
+            const parsed = JSON.parse(value);
+            if (Array.isArray(parsed)) return parsed;
+            if (parsed && typeof parsed === 'object' && Array.isArray((parsed as Record<string, unknown>).spans)) {
+              return (parsed as Record<string, unknown>).spans as any[];
+            }
+            return [];
+          } catch {
+            return [];
+          }
+        };
+
+        const pickSpans = (candidates: unknown[]): any[] => {
+          let fallback: any[] | null = null;
+          for (const candidate of candidates) {
+            const parsed = parseSpans(candidate);
+            if (fallback === null) fallback = parsed;
+            if (parsed.length > 0) return parsed;
+          }
+          return fallback || [];
+        };
+
+        const rawDocASpans = pickSpans([
+          comparison.doc_a_spans_json,
+          comparison.docA_spans_json,
+          comparison.doc_a_spans,
+          comparison.docA_spans,
+          toObject(comparison.doc_a).spans,
+          toObject(comparison.docA).spans,
+          comparisonData.doc_a_spans_json,
+          comparisonData.docA_spans_json,
+          comparisonData.doc_a_spans,
+          comparisonData.docA_spans,
+          toObject(comparisonData.doc_a).spans,
+          toObject(comparisonData.docA).spans
+        ]);
+        const rawDocBSpans = pickSpans([
+          comparison.doc_b_spans_json,
+          comparison.docB_spans_json,
+          comparison.doc_b_spans,
+          comparison.docB_spans,
+          toObject(comparison.doc_b).spans,
+          toObject(comparison.docB).spans,
+          comparisonData.doc_b_spans_json,
+          comparisonData.docB_spans_json,
+          comparisonData.doc_b_spans,
+          comparisonData.docB_spans,
+          toObject(comparisonData.doc_b).spans,
+          toObject(comparisonData.docB).spans
+        ]);
+
+        const readSpanBoundary = (span: any, keys: string[]): number | null => {
+          if (!span || typeof span !== 'object') return null;
+          for (const key of keys) {
+            const numeric = Number((span as Record<string, unknown>)[key]);
+            if (Number.isFinite(numeric)) return numeric;
+          }
+          return null;
+        };
         
         // Remove hidden text
         const removeHidden = (text: string, spans: any[]) => {
+          let malformedCount = 0;
           const normalizedSpans = spans
             .map((span: any) => {
               const level = String(span?.level || '').trim().toLowerCase();
               if (!['hidden', 'confidential', 'partial'].includes(level)) return null;
 
-              const rawStart = Number(span?.start);
-              const rawEnd = Number(span?.end);
-              if (!Number.isFinite(rawStart) || !Number.isFinite(rawEnd)) return null;
+              const rawStart = readSpanBoundary(span, ['start', 'startOffset', 'start_offset', 'start_index', 'from']);
+              const rawEnd = readSpanBoundary(span, ['end', 'endOffset', 'end_offset', 'end_index', 'to']);
+              if (rawStart === null || rawEnd === null) {
+                malformedCount += 1;
+                return null;
+              }
 
               const start = Math.max(0, Math.min(Math.floor(rawStart), text.length));
               const end = Math.max(0, Math.min(Math.floor(rawEnd), text.length));
-              if (end <= start) return null;
+              if (end <= start) {
+                malformedCount += 1;
+                return null;
+              }
 
               return { start, end };
             })
             .filter((span): span is { start: number; end: number } => Boolean(span))
-            .sort((a, b) => a.start - b.start);
+            .sort((a, b) => (a.start === b.start ? b.end - a.end : a.start - b.start));
 
           if (normalizedSpans.length === 0) return { text, hiddenCount: 0 };
 
@@ -440,6 +513,14 @@ Deno.serve(async (req) => {
             cursor = Math.max(cursor, span.end);
           }
           if (cursor < text.length) output += text.slice(cursor);
+
+          if (malformedCount > 0) {
+            console.warn('[CreateProposalSnapshot] Dropped malformed hidden spans', JSON.stringify({
+              sourceProposalId,
+              comparisonId: asString(comparison?.id),
+              malformedCount
+            }));
+          }
 
           return { text: output, hiddenCount: merged.length };
         };

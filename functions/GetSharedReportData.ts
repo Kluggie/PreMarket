@@ -610,25 +610,47 @@ function normalizeComparisonLevel(level: unknown): 'hidden' | null {
   return null;
 }
 
+const COMPARISON_SPAN_START_KEYS = ['start', 'startOffset', 'start_offset', 'start_index', 'from'] as const;
+const COMPARISON_SPAN_END_KEYS = ['end', 'endOffset', 'end_offset', 'end_index', 'to'] as const;
+
+function readComparisonSpanBoundary(span: any, keys: readonly string[]): number | null {
+  if (!span || typeof span !== 'object') return null;
+
+  for (const key of keys) {
+    const numeric = Number((span as Record<string, unknown>)[key]);
+    if (Number.isFinite(numeric)) return numeric;
+  }
+
+  return null;
+}
+
 function normalizeComparisonSpans(spans: unknown, textLength: number): Array<{ start: number; end: number; level: 'hidden' }> {
   if (!Array.isArray(spans)) return [];
 
+  let malformedCount = 0;
   const normalized = spans
     .map((span: any) => {
-      const rawStart = Number(span?.start);
-      const rawEnd = Number(span?.end);
+      const rawStart = readComparisonSpanBoundary(span, COMPARISON_SPAN_START_KEYS);
+      const rawEnd = readComparisonSpanBoundary(span, COMPARISON_SPAN_END_KEYS);
       const level = normalizeComparisonLevel(span?.level);
 
-      if (!Number.isFinite(rawStart) || !Number.isFinite(rawEnd) || !level) return null;
+      if (!level) return null;
+      if (rawStart === null || rawEnd === null) {
+        malformedCount += 1;
+        return null;
+      }
 
-      const start = Math.max(0, Math.min(rawStart, textLength));
-      const end = Math.max(0, Math.min(rawEnd, textLength));
-      if (end <= start) return null;
+      const start = Math.max(0, Math.min(Math.floor(rawStart), textLength));
+      const end = Math.max(0, Math.min(Math.floor(rawEnd), textLength));
+      if (end <= start) {
+        malformedCount += 1;
+        return null;
+      }
 
       return { start, end, level };
     })
     .filter((span): span is { start: number; end: number; level: 'hidden' } => Boolean(span))
-    .sort((a, b) => a.start - b.start);
+    .sort((a, b) => (a.start === b.start ? b.end - a.end : a.start - b.start));
 
   const merged: Array<{ start: number; end: number; level: 'hidden' }> = [];
   for (const span of normalized) {
@@ -644,6 +666,13 @@ function normalizeComparisonSpans(spans: unknown, textLength: number): Array<{ s
     }
 
     merged.push({ ...span });
+  }
+
+  if (malformedCount > 0) {
+    logWarn({
+      event: 'shared_report_invalid_spans_dropped',
+      malformedCount
+    });
   }
 
   return merged;
@@ -761,11 +790,19 @@ function pickComparisonText(candidates: Array<{ path: string; value: unknown }>)
 
 function parseComparisonSpans(value: unknown): any[] | null {
   if (Array.isArray(value)) return value;
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const nestedSpans = (value as Record<string, unknown>).spans;
+    return Array.isArray(nestedSpans) ? nestedSpans : [];
+  }
   if (typeof value !== 'string') return null;
 
   try {
     const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed : [];
+    if (Array.isArray(parsed)) return parsed;
+    if (parsed && typeof parsed === 'object' && Array.isArray((parsed as Record<string, unknown>).spans)) {
+      return (parsed as Record<string, unknown>).spans as any[];
+    }
+    return [];
   } catch {
     return [];
   }

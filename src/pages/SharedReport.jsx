@@ -184,24 +184,38 @@ function normalizeComparisonSpanLevel(level) {
   return null;
 }
 
+const COMPARISON_SPAN_START_KEYS = ['start', 'startOffset', 'start_offset', 'start_index', 'from'];
+const COMPARISON_SPAN_END_KEYS = ['end', 'endOffset', 'end_offset', 'end_index', 'to'];
+
+function readComparisonSpanBoundary(span, keys) {
+  if (!span || typeof span !== 'object') return null;
+
+  for (const key of keys) {
+    const numeric = Number(span?.[key]);
+    if (Number.isFinite(numeric)) return numeric;
+  }
+
+  return null;
+}
+
 function normalizeComparisonSpans(spans, textLength) {
   if (!Array.isArray(spans)) return [];
 
   const normalized = spans
     .map((span) => {
-      const rawStart = Number(span?.start);
-      const rawEnd = Number(span?.end);
+      const rawStart = readComparisonSpanBoundary(span, COMPARISON_SPAN_START_KEYS);
+      const rawEnd = readComparisonSpanBoundary(span, COMPARISON_SPAN_END_KEYS);
       const level = normalizeComparisonSpanLevel(span?.level);
       if (!Number.isFinite(rawStart) || !Number.isFinite(rawEnd) || !level) return null;
 
-      const start = Math.max(0, Math.min(rawStart, textLength));
-      const end = Math.max(0, Math.min(rawEnd, textLength));
+      const start = Math.max(0, Math.min(Math.floor(rawStart), textLength));
+      const end = Math.max(0, Math.min(Math.floor(rawEnd), textLength));
       if (end <= start) return null;
 
       return { start, end, level };
     })
     .filter(Boolean)
-    .sort((a, b) => a.start - b.start);
+    .sort((a, b) => (a.start === b.start ? b.end - a.end : a.start - b.start));
 
   const merged = [];
   normalized.forEach((span) => {
@@ -298,10 +312,17 @@ function toComparisonText(value) {
 
 function parseComparisonSpans(value) {
   if (Array.isArray(value)) return value;
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return Array.isArray(value?.spans) ? value.spans : [];
+  }
   if (typeof value !== 'string') return null;
   try {
     const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed : [];
+    if (Array.isArray(parsed)) return parsed;
+    if (parsed && typeof parsed === 'object' && Array.isArray(parsed?.spans)) {
+      return parsed.spans;
+    }
+    return [];
   } catch {
     return [];
   }

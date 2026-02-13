@@ -25,13 +25,26 @@ function normalizeHighlightLevel(level: unknown): 'confidential' | null {
   return null;
 }
 
+const SPAN_START_KEYS = ['start', 'startOffset', 'start_offset', 'start_index', 'from'] as const;
+const SPAN_END_KEYS = ['end', 'endOffset', 'end_offset', 'end_index', 'to'] as const;
+
+function readSpanBoundary(span: any, keys: readonly string[]): number | null {
+  if (!span || typeof span !== 'object') return null;
+
+  for (const key of keys) {
+    const numeric = Number((span as Record<string, unknown>)[key]);
+    if (Number.isFinite(numeric)) return numeric;
+  }
+  return null;
+}
+
 function normalizeHighlights(spans: unknown, textLength = Number.POSITIVE_INFINITY): any[] {
   const normalized = toArray(spans)
     .map((span: any) => {
-      const rawStart = Number(span?.start);
-      const rawEnd = Number(span?.end);
-      const level = normalizeHighlightLevel(span?.level);
-      if (!Number.isFinite(rawStart) || !Number.isFinite(rawEnd) || !level) return null;
+      const rawStart = readSpanBoundary(span, SPAN_START_KEYS);
+      const rawEnd = readSpanBoundary(span, SPAN_END_KEYS);
+      const level = normalizeHighlightLevel(span?.level ?? span?.type);
+      if (rawStart === null || rawEnd === null || !level) return null;
 
       const start = Math.max(0, Math.floor(rawStart));
       const end = Math.floor(rawEnd);
