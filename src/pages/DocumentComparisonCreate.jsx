@@ -43,12 +43,40 @@ const normalizeHighlights = (spans) => {
     .sort((a, b) => a.start - b.start);
 };
 
+const normalizeEmail = (value) => {
+  if (typeof value !== 'string') return '';
+  return value.trim().toLowerCase();
+};
+
+const resolvePartySide = (proposal, user) => {
+  if (!proposal || !user) return 'a';
+
+  const userId = String(user?.id || '').trim();
+  const userEmail = normalizeEmail(user?.email);
+
+  const partyAUserId = String(proposal?.party_a_user_id || proposal?.created_by_user_id || '').trim();
+  const partyAEmail = normalizeEmail(proposal?.party_a_email);
+  if ((userId && partyAUserId && userId === partyAUserId) || (userEmail && partyAEmail && userEmail === partyAEmail)) {
+    return 'a';
+  }
+
+  const partyBUserId = String(proposal?.party_b_user_id || '').trim();
+  const partyBEmail = normalizeEmail(proposal?.party_b_email);
+  if ((userId && partyBUserId && userId === partyBUserId) || (userEmail && partyBEmail && userEmail === partyBEmail)) {
+    return 'b';
+  }
+
+  return 'a';
+};
+
 export default function DocumentComparisonCreate() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [user, setUser] = useState(null);
   const [step, setStep] = useState(1);
   const [comparisonId, setComparisonId] = useState(null);
+  const [linkedProposalId, setLinkedProposalId] = useState(null);
+  const [editableHighlightSide, setEditableHighlightSide] = useState('a');
   
   const [title, setTitle] = useState('');
   const [partyALabel, setPartyALabel] = useState('Document A');
@@ -175,6 +203,18 @@ export default function DocumentComparisonCreate() {
       setDocBSource(comparison.doc_b_source || 'typed');
       setDocAFiles(comparison.doc_a_files || []);
       setDocBFiles(comparison.doc_b_files || []);
+
+      const linkedProposalRows = await base44.entities.Proposal
+        .filter({ document_comparison_id: id }, '-created_date', 1)
+        .catch(() => []);
+      const linkedProposal = linkedProposalRows?.[0] || null;
+      if (linkedProposal?.id) {
+        setLinkedProposalId(linkedProposal.id);
+        setEditableHighlightSide(resolvePartySide(linkedProposal, user));
+      } else {
+        setLinkedProposalId(null);
+        setEditableHighlightSide('a');
+      }
       
       const resumeStep = comparison.draft_step || 1;
       setTimeout(() => setStep(resumeStep), 50);
@@ -218,6 +258,8 @@ export default function DocumentComparisonCreate() {
       }
       
       setComparisonId(proposal.document_comparison_id);
+      setLinkedProposalId(proposal.id);
+      setEditableHighlightSide(resolvePartySide(proposal, user));
       loadDraft(proposal.document_comparison_id);
       
       // Jump to saved step
@@ -233,60 +275,43 @@ export default function DocumentComparisonCreate() {
 
   const saveDraft = async (stepToSave, isAutosave = false) => {
     if (!user) return null;
-    
-    const comparisonData = {
+
+    const payload = {
+      comparisonId,
+      proposalId: linkedProposalId || null,
+      stepToSave,
       title: title || 'Untitled Comparison',
-      created_by_user_id: user.id,
-      party_a_label: partyALabel,
-      party_b_label: partyBLabel,
-      doc_a_plaintext: docAText,
-      doc_b_plaintext: docBText,
-      doc_a_spans_json: docASpans,
-      doc_b_spans_json: docBSpans,
-      doc_a_source: docASource,
-      doc_b_source: docBSource,
-      doc_a_files: docAFiles,
-      doc_b_files: docBFiles,
-      status: 'draft',
-      draft_step: stepToSave,
-      draft_updated_at: new Date().toISOString()
+      partyALabel,
+      partyBLabel,
+      docAText,
+      docBText,
+      docASource,
+      docBSource,
+      docAFiles,
+      docBFiles
     };
+
+    if (editableHighlightSide === 'a') {
+      payload.docASpans = docASpans;
+    } else {
+      payload.docBSpans = docBSpans;
+    }
     
     try {
-      let savedComparisonId = comparisonId;
-      
-      if (comparisonId) {
-        // Update existing comparison
-        await base44.entities.DocumentComparison.update(comparisonId, comparisonData);
-      } else {
-        // Create new comparison
-        const comparison = await base44.entities.DocumentComparison.create(comparisonData);
-        savedComparisonId = comparison.id;
-        setComparisonId(comparison.id);
+      const result = await base44.functions.invoke('SaveDocumentComparisonDraft', payload);
+      const responsePayload = result?.data && typeof result.data === 'object' ? result.data : {};
+      if (!responsePayload?.ok || !responsePayload?.comparisonId) {
+        throw new Error(responsePayload?.message || 'Failed to save draft');
       }
-      
-      // Create or update Proposal entry for this comparison
-      const proposals = await base44.entities.Proposal.filter({ 
-        document_comparison_id: savedComparisonId 
-      });
-      
-      const proposalData = {
-        title: title || 'Untitled Comparison',
-        proposal_type: 'document_comparison',
-        document_comparison_id: savedComparisonId,
-        party_a_user_id: user.id,
-        party_a_email: user.email,
-        status: 'draft',
-        draft_step: stepToSave,
-        draft_updated_at: new Date().toISOString()
-      };
-      
-      if (proposals.length > 0) {
-        // Update existing proposal
-        await base44.entities.Proposal.update(proposals[0].id, proposalData);
-      } else {
-        // Create new proposal
-        await base44.entities.Proposal.create(proposalData);
+
+      const savedComparisonId = responsePayload.comparisonId;
+      setComparisonId(savedComparisonId);
+
+      if (responsePayload?.proposalId) {
+        setLinkedProposalId(responsePayload.proposalId);
+      }
+      if (responsePayload?.editableHighlightSide === 'a' || responsePayload?.editableHighlightSide === 'b') {
+        setEditableHighlightSide(responsePayload.editableHighlightSide);
       }
       
       if (!isAutosave) {
@@ -573,6 +598,15 @@ Verification Status: ${org.verification_status || 'N/A'}`;
   };
 
   const addHighlight = (doc, level) => {
+    if (doc === 'a' && editableHighlightSide !== 'a') {
+      toast.error('Only Party A can mark Document A as confidential.');
+      return;
+    }
+    if (doc === 'b' && editableHighlightSide !== 'b') {
+      toast.error('Only Party B can mark Document B as confidential.');
+      return;
+    }
+
     const selection = handleTextSelection(doc);
     if (!selection) {
       alert('Please select text to highlight');
@@ -598,6 +632,9 @@ Verification Status: ${org.verification_status || 'N/A'}`;
   };
 
   const removeHighlight = (doc, index) => {
+    if (doc === 'a' && editableHighlightSide !== 'a') return;
+    if (doc === 'b' && editableHighlightSide !== 'b') return;
+
     if (doc === 'a') {
       setDocASpans(docASpans.filter((_, i) => i !== index));
     } else {
@@ -606,6 +643,9 @@ Verification Status: ${org.verification_status || 'N/A'}`;
   };
 
   const exportHighlights = (doc) => {
+    if (doc === 'a' && editableHighlightSide !== 'a') return;
+    if (doc === 'b' && editableHighlightSide !== 'b') return;
+
     const spans = doc === 'a' ? docASpans : docBSpans;
     const json = JSON.stringify(spans, null, 2);
     navigator.clipboard.writeText(json);
@@ -613,6 +653,15 @@ Verification Status: ${org.verification_status || 'N/A'}`;
   };
 
   const importHighlights = (doc, jsonStr) => {
+    if (doc === 'a' && editableHighlightSide !== 'a') {
+      toast.error('Only Party A can import Document A highlights.');
+      return;
+    }
+    if (doc === 'b' && editableHighlightSide !== 'b') {
+      toast.error('Only Party B can import Document B highlights.');
+      return;
+    }
+
     try {
       const spans = normalizeHighlights(JSON.parse(jsonStr));
       if (!Array.isArray(spans)) throw new Error('Invalid format - must be array');
@@ -629,11 +678,11 @@ Verification Status: ${org.verification_status || 'N/A'}`;
     }
   };
 
-  const renderHighlightedText = (text, spans, docId) => {
+  const renderHighlightedText = (text, spans, docId, allowSelection = true) => {
     if (!text) return null;
     
     if (spans.length === 0) {
-      return <div id={docId} className="whitespace-pre-wrap select-text">{text}</div>;
+      return <div id={docId} className={`whitespace-pre-wrap ${allowSelection ? 'select-text' : 'select-none'}`}>{text}</div>;
     }
     
     const sortedSpans = [...spans].sort((a, b) => a.start - b.start);
@@ -656,7 +705,7 @@ Verification Status: ${org.verification_status || 'N/A'}`;
     }
     
     return (
-      <div id={docId} className="whitespace-pre-wrap select-text">
+      <div id={docId} className={`whitespace-pre-wrap ${allowSelection ? 'select-text' : 'select-none'}`}>
         {parts.map((part, idx) => (
           <span 
             key={idx}
@@ -674,6 +723,8 @@ Verification Status: ${org.verification_status || 'N/A'}`;
   };
 
   const progress = (step / 4) * 100;
+  const canEditDocAHighlights = editableHighlightSide === 'a';
+  const canEditDocBHighlights = editableHighlightSide === 'b';
 
   // Synced scrolling handler
   const handleSyncScroll = (sourceRef, targetRef) => {
@@ -1225,8 +1276,9 @@ Verification Status: ${org.verification_status || 'N/A'}`;
               <Alert className="bg-blue-50 border-blue-200">
                 <Highlighter className="w-4 h-4 text-blue-600" />
                 <AlertDescription className="text-blue-800">
-                  <strong>How to highlight:</strong> Select text in the preview below, then click "Mark Hidden".
-                  Highlighted content will be hidden from the shared report.
+                  <strong>How to highlight:</strong> You can only mark your own document as hidden.
+                  {canEditDocAHighlights ? ` ${partyALabel} is editable for confidentiality.` : ` ${partyALabel} is locked.`}
+                  {canEditDocBHighlights ? ` ${partyBLabel} is editable for confidentiality.` : ` ${partyBLabel} is locked.`}
                 </AlertDescription>
               </Alert>
 
@@ -1260,12 +1312,19 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                     <div className="flex items-center gap-2">
                       <FileText className="w-4 h-4 text-slate-400" />
                       <h3 className="text-sm font-semibold text-slate-600">{partyALabel}</h3>
+                      {!canEditDocAHighlights && (
+                        <Badge variant="outline" title="Only Party A can mark this document confidential">
+                          Locked
+                        </Badge>
+                      )}
                     </div>
                     <div className="flex gap-2">
                       <Button 
                         variant="outline" 
                         size="sm"
                         onClick={() => addHighlight('a', 'confidential')}
+                        disabled={!canEditDocAHighlights}
+                        title={!canEditDocAHighlights ? 'Only Party A can mark this document confidential' : undefined}
                       >
                         <span className="w-3 h-3 bg-red-500 rounded mr-2"></span>
                         Mark Hidden
@@ -1274,7 +1333,7 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                         variant="outline" 
                         size="sm"
                         onClick={() => exportHighlights('a')}
-                        disabled={docASpans.length === 0}
+                        disabled={!canEditDocAHighlights || docASpans.length === 0}
                       >
                         <Download className="w-4 h-4" />
                       </Button>
@@ -1286,7 +1345,7 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                       onScroll={() => handleSyncScroll(docAPreviewRef, docBPreviewRef)}
                       className="flex-1 overflow-auto text-[15px] leading-relaxed text-gray-800"
                     >
-                      {renderHighlightedText(docAText, docASpans, 'preview-a')}
+                      {renderHighlightedText(docAText, docASpans, 'preview-a', canEditDocAHighlights)}
                     </div>
                     
                     {docASpans.length > 0 && (
@@ -1307,7 +1366,13 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                                   {span.end - span.start > 50 ? '...' : ''}
                                 </span>
                               </div>
-                              <Button variant="ghost" size="sm" onClick={() => removeHighlight('a', idx)}>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => removeHighlight('a', idx)}
+                                disabled={!canEditDocAHighlights}
+                                title={!canEditDocAHighlights ? 'Only Party A can remove Document A highlights' : undefined}
+                              >
                                 <X className="w-4 h-4" />
                               </Button>
                             </div>
@@ -1318,14 +1383,16 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                     </div>
 
                     {/* Advanced Section - Collapsed by Default */}
+                    {canEditDocAHighlights && (
+                    <>
                     <Button 
-                    variant="ghost" 
-                    size="sm"
-                    onClick={() => setShowAdvancedA(!showAdvancedA)}
-                    className="w-full justify-between text-xs text-slate-600 hover:text-slate-900 mt-3"
+                      variant="ghost" 
+                      size="sm"
+                      onClick={() => setShowAdvancedA(!showAdvancedA)}
+                      className="w-full justify-between text-xs text-slate-600 hover:text-slate-900 mt-3"
                     >
-                    <span>Advanced: Import JSON</span>
-                    <span className="text-lg">{showAdvancedA ? '−' : '+'}</span>
+                      <span>Advanced: Import JSON</span>
+                      <span className="text-lg">{showAdvancedA ? '−' : '+'}</span>
                     </Button>
                     {showAdvancedA && (
                     <div className="mt-2 space-y-2">
@@ -1348,6 +1415,8 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                       </div>
                     </div>
                     )}
+                    </>
+                    )}
                     </div>
 
                 {/* Document B Highlighting */}
@@ -1356,12 +1425,19 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                     <div className="flex items-center gap-2">
                       <FileText className="w-4 h-4 text-slate-400" />
                       <h3 className="text-sm font-semibold text-slate-600">{partyBLabel}</h3>
+                      {!canEditDocBHighlights && (
+                        <Badge variant="outline" title="Only Party B can mark this document confidential">
+                          Locked
+                        </Badge>
+                      )}
                     </div>
                     <div className="flex gap-2">
                       <Button 
                         variant="outline" 
                         size="sm"
                         onClick={() => addHighlight('b', 'confidential')}
+                        disabled={!canEditDocBHighlights}
+                        title={!canEditDocBHighlights ? 'Only Party B can mark this document confidential' : undefined}
                       >
                         <span className="w-3 h-3 bg-red-500 rounded mr-2"></span>
                         Mark Hidden
@@ -1370,7 +1446,7 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                         variant="outline" 
                         size="sm"
                         onClick={() => exportHighlights('b')}
-                        disabled={docBSpans.length === 0}
+                        disabled={!canEditDocBHighlights || docBSpans.length === 0}
                       >
                         <Download className="w-4 h-4" />
                       </Button>
@@ -1382,7 +1458,7 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                       onScroll={() => handleSyncScroll(docBPreviewRef, docAPreviewRef)}
                       className="flex-1 overflow-auto text-[15px] leading-relaxed text-gray-800"
                     >
-                      {renderHighlightedText(docBText, docBSpans, 'preview-b')}
+                      {renderHighlightedText(docBText, docBSpans, 'preview-b', canEditDocBHighlights)}
                     </div>
                     
                     {docBSpans.length > 0 && (
@@ -1403,7 +1479,13 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                                   {span.end - span.start > 50 ? '...' : ''}
                                 </span>
                               </div>
-                              <Button variant="ghost" size="sm" onClick={() => removeHighlight('b', idx)}>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => removeHighlight('b', idx)}
+                                disabled={!canEditDocBHighlights}
+                                title={!canEditDocBHighlights ? 'Only Party B can remove Document B highlights' : undefined}
+                              >
                                 <X className="w-4 h-4" />
                               </Button>
                             </div>
@@ -1414,14 +1496,16 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                     </div>
 
                     {/* Advanced Section - Collapsed by Default */}
+                    {canEditDocBHighlights && (
+                    <>
                     <Button 
-                    variant="ghost" 
-                    size="sm"
-                    onClick={() => setShowAdvancedB(!showAdvancedB)}
-                    className="w-full justify-between text-xs text-slate-600 hover:text-slate-900 mt-3"
+                      variant="ghost" 
+                      size="sm"
+                      onClick={() => setShowAdvancedB(!showAdvancedB)}
+                      className="w-full justify-between text-xs text-slate-600 hover:text-slate-900 mt-3"
                     >
-                    <span>Advanced: Import JSON</span>
-                    <span className="text-lg">{showAdvancedB ? '−' : '+'}</span>
+                      <span>Advanced: Import JSON</span>
+                      <span className="text-lg">{showAdvancedB ? '−' : '+'}</span>
                     </Button>
                     {showAdvancedB && (
                     <div className="mt-2 space-y-2">
@@ -1443,6 +1527,8 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                         </Button>
                       </div>
                     </div>
+                    )}
+                    </>
                     )}
                     </div>
               </div>
