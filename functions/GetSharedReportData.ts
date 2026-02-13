@@ -613,7 +613,7 @@ function normalizeComparisonLevel(level: unknown): 'hidden' | null {
 function normalizeComparisonSpans(spans: unknown, textLength: number): Array<{ start: number; end: number; level: 'hidden' }> {
   if (!Array.isArray(spans)) return [];
 
-  const normalized = spans
+  return spans
     .map((span: any) => {
       const rawStart = Number(span?.start);
       const rawEnd = Number(span?.end);
@@ -629,24 +629,6 @@ function normalizeComparisonSpans(spans: unknown, textLength: number): Array<{ s
     })
     .filter((span): span is { start: number; end: number; level: 'hidden' } => Boolean(span))
     .sort((a, b) => a.start - b.start);
-
-  const merged: Array<{ start: number; end: number; level: 'hidden' }> = [];
-  for (const span of normalized) {
-    const prev = merged[merged.length - 1];
-    if (!prev) {
-      merged.push({ ...span });
-      continue;
-    }
-
-    if (span.start <= prev.end) {
-      prev.end = Math.max(prev.end, span.end);
-      continue;
-    }
-
-    merged.push({ ...span });
-  }
-
-  return merged;
 }
 
 function removeHiddenComparisonText(text: string, spans: unknown) {
