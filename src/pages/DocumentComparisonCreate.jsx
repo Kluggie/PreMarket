@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { createPageUrl } from '../utils';
+import { createPageUrl, getSelectionOffsets } from '../utils';
 import { base44 } from '@/api/base44Client';
 import { useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -133,9 +133,13 @@ export default function DocumentComparisonCreate() {
   const [showAdvancedB, setShowAdvancedB] = useState(false);
   const [syncScroll, setSyncScroll] = useState(false);
   const [lastSavedState, setLastSavedState] = useState(null);
+  const [lastHighlightPreview, setLastHighlightPreview] = useState(null);
   
   const docAPreviewRef = React.useRef(null);
   const docBPreviewRef = React.useRef(null);
+  const docAContentRef = React.useRef(null);
+  const docBContentRef = React.useRef(null);
+  const highlightPreviewTimeoutRef = React.useRef(null);
 
   useEffect(() => {
     base44.auth.me().then(setUser).catch(() => setUser(null));
@@ -204,6 +208,14 @@ export default function DocumentComparisonCreate() {
     
     return () => clearTimeout(timer);
   }, [title, partyALabel, partyBLabel, docASource, docBSource, docAText, docBText, docASpans, docBSpans, docAFiles, docBFiles, step, user, comparisonId, lastSavedState]);
+
+  useEffect(() => {
+    return () => {
+      if (highlightPreviewTimeoutRef.current) {
+        clearTimeout(highlightPreviewTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const loadDraft = async (id) => {
     try {
@@ -595,40 +607,55 @@ Verification Status: ${org.verification_status || 'N/A'}`;
     }
   };
 
-  const resolveSelectionOffsets = (containerId, fullText) => {
+  const findFirstMismatchIndex = (left, right) => {
+    const max = Math.min(left.length, right.length);
+    for (let idx = 0; idx < max; idx += 1) {
+      if (left[idx] !== right[idx]) return idx;
+    }
+    return left.length === right.length ? -1 : max;
+  };
+
+  const resolveSelectionOffsets = (containerEl, fullText, docKey) => {
     const selection = window.getSelection();
     if (!selection || selection.rangeCount === 0) return null;
     const range = selection.getRangeAt(0);
     if (range.collapsed) return null;
 
-    const container = document.getElementById(containerId);
-    if (!container || !container.contains(range.commonAncestorContainer)) return null;
+    if (!containerEl || !containerEl.contains(range.commonAncestorContainer)) return null;
 
-    const preRange = range.cloneRange();
-    preRange.selectNodeContents(container);
-    preRange.setEnd(range.startContainer, range.startOffset);
+    const renderedText = containerEl.textContent ?? '';
+    if (renderedText !== fullText) {
+      const mismatchIndex = findFirstMismatchIndex(renderedText, fullText);
+      if (import.meta.env?.DEV) {
+        console.error('[DocumentComparisonCreate] Offset mismatch guard triggered', {
+          docKey,
+          renderedLength: renderedText.length,
+          sourceLength: fullText.length,
+          mismatchIndex
+        });
+      }
+      toast.error('Cannot mark hidden: rendered text differs from source text (offset mismatch).');
+      return null;
+    }
 
-    const selectedText = range.toString();
-    if (!selectedText || selectedText.length === 0) return null;
+    const offsets = getSelectionOffsets(containerEl, range);
+    if (!offsets) return null;
 
-    const start = preRange.toString().length;
-    const end = start + selectedText.length;
-    const boundedStart = Math.max(0, Math.min(start, fullText.length));
-    const boundedEnd = Math.max(0, Math.min(end, fullText.length));
+    const boundedStart = Math.max(0, Math.min(offsets.start, fullText.length));
+    const boundedEnd = Math.max(0, Math.min(offsets.end, fullText.length));
     if (boundedEnd <= boundedStart) return null;
 
     return {
       start: boundedStart,
-      end: boundedEnd,
-      text: selectedText
+      end: boundedEnd
     };
   };
 
   const handleTextSelection = (doc) => {
     if (doc === 'a') {
-      return resolveSelectionOffsets('preview-a', docAText);
+      return resolveSelectionOffsets(docAContentRef.current, docAText, 'a');
     }
-    return resolveSelectionOffsets('preview-b', docBText);
+    return resolveSelectionOffsets(docBContentRef.current, docBText, 'b');
   };
 
   const addHighlight = (doc, level) => {
@@ -661,6 +688,21 @@ Verification Status: ${org.verification_status || 'N/A'}`;
     } else {
       setDocBSpans(normalizeHighlights([...docBSpans, newSpan], docBText.length));
     }
+
+    const sourceText = doc === 'a' ? docAText : docBText;
+    const selectedSlice = sourceText.slice(selection.start, selection.end);
+    setLastHighlightPreview({
+      doc,
+      selectedSlice,
+      start: selection.start,
+      end: selection.end
+    });
+    if (highlightPreviewTimeoutRef.current) {
+      clearTimeout(highlightPreviewTimeoutRef.current);
+    }
+    highlightPreviewTimeoutRef.current = setTimeout(() => {
+      setLastHighlightPreview((current) => (current?.doc === doc ? null : current));
+    }, 2000);
     
     window.getSelection().removeAllRanges();
   };
@@ -714,11 +756,11 @@ Verification Status: ${org.verification_status || 'N/A'}`;
     }
   };
 
-  const renderHighlightedText = (text, spans, docId, allowSelection = true) => {
+  const renderHighlightedText = (text, spans, docId, contentRef, allowSelection = true) => {
     if (!text) return null;
     
     if (spans.length === 0) {
-      return <div id={docId} className={`whitespace-pre-wrap ${allowSelection ? 'select-text' : 'select-none'}`}>{text}</div>;
+      return <div ref={contentRef} id={docId} className={`whitespace-pre-wrap ${allowSelection ? 'select-text' : 'select-none'}`}>{text}</div>;
     }
     
     const sortedSpans = [...spans].sort((a, b) => a.start - b.start);
@@ -741,7 +783,7 @@ Verification Status: ${org.verification_status || 'N/A'}`;
     }
     
     return (
-      <div id={docId} className={`whitespace-pre-wrap ${allowSelection ? 'select-text' : 'select-none'}`}>
+      <div ref={contentRef} id={docId} className={`whitespace-pre-wrap ${allowSelection ? 'select-text' : 'select-none'}`}>
         {parts.map((part, idx) => (
           <span 
             key={idx}
@@ -1375,13 +1417,18 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                       </Button>
                     </div>
                     </div>
+                    {lastHighlightPreview?.doc === 'a' && (
+                      <p className="text-xs text-slate-600 mt-1">
+                        Will hide: "{lastHighlightPreview.selectedSlice}" (start={lastHighlightPreview.start}, end={lastHighlightPreview.end})
+                      </p>
+                    )}
                     <div className="flex-1 flex flex-col space-y-4 bg-white border border-gray-200 rounded-md shadow-sm p-12">
                     <div 
                       ref={docAPreviewRef}
                       onScroll={() => handleSyncScroll(docAPreviewRef, docBPreviewRef)}
                       className="flex-1 overflow-auto text-[15px] leading-relaxed text-gray-800"
                     >
-                      {renderHighlightedText(docAText, docASpans, 'preview-a', canEditDocAHighlights)}
+                      {renderHighlightedText(docAText, docASpans, 'preview-a', docAContentRef, canEditDocAHighlights)}
                     </div>
                     
                     {docASpans.length > 0 && (
@@ -1488,13 +1535,18 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                       </Button>
                     </div>
                     </div>
+                    {lastHighlightPreview?.doc === 'b' && (
+                      <p className="text-xs text-slate-600 mt-1">
+                        Will hide: "{lastHighlightPreview.selectedSlice}" (start={lastHighlightPreview.start}, end={lastHighlightPreview.end})
+                      </p>
+                    )}
                     <div className="flex-1 flex flex-col space-y-4 bg-white border border-gray-200 rounded-md shadow-sm p-12">
                     <div 
                       ref={docBPreviewRef}
                       onScroll={() => handleSyncScroll(docBPreviewRef, docAPreviewRef)}
                       className="flex-1 overflow-auto text-[15px] leading-relaxed text-gray-800"
                     >
-                      {renderHighlightedText(docBText, docBSpans, 'preview-b', canEditDocBHighlights)}
+                      {renderHighlightedText(docBText, docBSpans, 'preview-b', docBContentRef, canEditDocBHighlights)}
                     </div>
                     
                     {docBSpans.length > 0 && (

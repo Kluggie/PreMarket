@@ -35,13 +35,13 @@ function normalizeHighlights(spans: unknown, textLength = Number.POSITIVE_INFINI
 
       const start = Math.max(0, Math.floor(rawStart));
       const end = Math.floor(rawEnd);
+      const boundedStart = Number.isFinite(textLength) ? Math.min(start, textLength) : start;
       const boundedEnd = Number.isFinite(textLength) ? Math.min(end, textLength) : end;
-      if (boundedEnd <= start) return null;
-
-      return { start, end: boundedEnd, level };
+      if (boundedEnd <= boundedStart) return null;
+      return { start: boundedStart, end: boundedEnd, level };
     })
     .filter((span): span is { start: number; end: number; level: 'confidential' } => Boolean(span))
-    .sort((a, b) => a.start - b.start);
+    .sort((a, b) => (a.start === b.start ? b.end - a.end : a.start - b.start));
 
   const merged: Array<{ start: number; end: number; level: 'confidential' }> = [];
   normalized.forEach((span) => {
