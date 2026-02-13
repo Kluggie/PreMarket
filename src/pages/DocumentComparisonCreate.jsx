@@ -27,20 +27,44 @@ const normalizeHighlightLevel = (level) => {
   return null;
 };
 
-const normalizeHighlights = (spans) => {
+const normalizeHighlights = (spans, textLength = Number.POSITIVE_INFINITY) => {
   if (!Array.isArray(spans)) return [];
-  return spans
+  const normalized = spans
     .map((span) => {
-      const start = Number(span?.start);
-      const end = Number(span?.end);
+      const rawStart = Number(span?.start);
+      const rawEnd = Number(span?.end);
       const level = normalizeHighlightLevel(span?.level);
-      if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start || !level) {
+      if (!Number.isFinite(rawStart) || !Number.isFinite(rawEnd) || !level) {
         return null;
       }
-      return { start, end, level };
+
+      const start = Math.max(0, Math.floor(rawStart));
+      const end = Math.floor(rawEnd);
+      const boundedEnd = Number.isFinite(textLength) ? Math.min(end, textLength) : end;
+      if (boundedEnd <= start) {
+        return null;
+      }
+
+      return { start, end: boundedEnd, level };
     })
     .filter(Boolean)
     .sort((a, b) => a.start - b.start);
+
+  const merged = [];
+  normalized.forEach((span) => {
+    const last = merged[merged.length - 1];
+    if (!last) {
+      merged.push({ ...span });
+      return;
+    }
+    if (span.start <= last.end) {
+      last.end = Math.max(last.end, span.end);
+      return;
+    }
+    merged.push({ ...span });
+  });
+
+  return merged;
 };
 
 const normalizeEmail = (value) => {
@@ -197,8 +221,8 @@ export default function DocumentComparisonCreate() {
       setPartyBLabel(comparison.party_b_label || 'Document B');
       setDocAText(comparison.doc_a_plaintext || '');
       setDocBText(comparison.doc_b_plaintext || '');
-      setDocASpans(normalizeHighlights(comparison.doc_a_spans_json || []));
-      setDocBSpans(normalizeHighlights(comparison.doc_b_spans_json || []));
+      setDocASpans(normalizeHighlights(comparison.doc_a_spans_json || [], String(comparison.doc_a_plaintext || '').length));
+      setDocBSpans(normalizeHighlights(comparison.doc_b_spans_json || [], String(comparison.doc_b_plaintext || '').length));
       setDocASource(comparison.doc_a_source || 'typed');
       setDocBSource(comparison.doc_b_source || 'typed');
       setDocAFiles(comparison.doc_a_files || []);
@@ -571,30 +595,40 @@ Verification Status: ${org.verification_status || 'N/A'}`;
     }
   };
 
-  const handleTextSelection = (doc) => {
+  const resolveSelectionOffsets = (containerId, fullText) => {
     const selection = window.getSelection();
     if (!selection || selection.rangeCount === 0) return null;
-    
-    const selectedText = selection.toString();
-    if (!selectedText) return null;
-    
     const range = selection.getRangeAt(0);
-    const container = doc === 'a' 
-      ? document.getElementById('preview-a')
-      : document.getElementById('preview-b');
-    
+    if (range.collapsed) return null;
+
+    const container = document.getElementById(containerId);
     if (!container || !container.contains(range.commonAncestorContainer)) return null;
-    
-    const fullText = doc === 'a' ? docAText : docBText;
-    const start = fullText.indexOf(selectedText);
-    
-    if (start === -1) return null;
-    
+
+    const preRange = range.cloneRange();
+    preRange.selectNodeContents(container);
+    preRange.setEnd(range.startContainer, range.startOffset);
+
+    const selectedText = range.toString();
+    if (!selectedText || selectedText.length === 0) return null;
+
+    const start = preRange.toString().length;
+    const end = start + selectedText.length;
+    const boundedStart = Math.max(0, Math.min(start, fullText.length));
+    const boundedEnd = Math.max(0, Math.min(end, fullText.length));
+    if (boundedEnd <= boundedStart) return null;
+
     return {
-      start,
-      end: start + selectedText.length,
+      start: boundedStart,
+      end: boundedEnd,
       text: selectedText
     };
+  };
+
+  const handleTextSelection = (doc) => {
+    if (doc === 'a') {
+      return resolveSelectionOffsets('preview-a', docAText);
+    }
+    return resolveSelectionOffsets('preview-b', docBText);
   };
 
   const addHighlight = (doc, level) => {
@@ -623,9 +657,9 @@ Verification Status: ${org.verification_status || 'N/A'}`;
     };
     
     if (doc === 'a') {
-      setDocASpans([...docASpans, newSpan].sort((a, b) => a.start - b.start));
+      setDocASpans(normalizeHighlights([...docASpans, newSpan], docAText.length));
     } else {
-      setDocBSpans([...docBSpans, newSpan].sort((a, b) => a.start - b.start));
+      setDocBSpans(normalizeHighlights([...docBSpans, newSpan], docBText.length));
     }
     
     window.getSelection().removeAllRanges();
@@ -663,7 +697,9 @@ Verification Status: ${org.verification_status || 'N/A'}`;
     }
 
     try {
-      const spans = normalizeHighlights(JSON.parse(jsonStr));
+      const parsed = JSON.parse(jsonStr);
+      const textLength = doc === 'a' ? docAText.length : docBText.length;
+      const spans = normalizeHighlights(parsed, textLength);
       if (!Array.isArray(spans)) throw new Error('Invalid format - must be array');
       
       if (doc === 'a') {

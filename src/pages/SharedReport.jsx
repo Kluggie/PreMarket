@@ -187,7 +187,7 @@ function normalizeComparisonSpanLevel(level) {
 function normalizeComparisonSpans(spans, textLength) {
   if (!Array.isArray(spans)) return [];
 
-  return spans
+  const normalized = spans
     .map((span) => {
       const rawStart = Number(span?.start);
       const rawEnd = Number(span?.end);
@@ -202,6 +202,22 @@ function normalizeComparisonSpans(spans, textLength) {
     })
     .filter(Boolean)
     .sort((a, b) => a.start - b.start);
+
+  const merged = [];
+  normalized.forEach((span) => {
+    const last = merged[merged.length - 1];
+    if (!last) {
+      merged.push({ ...span });
+      return;
+    }
+    if (span.start <= last.end) {
+      last.end = Math.max(last.end, span.end);
+      return;
+    }
+    merged.push({ ...span });
+  });
+
+  return merged;
 }
 
 function removeHiddenComparisonText(text, spans) {

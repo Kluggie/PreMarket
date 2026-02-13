@@ -25,17 +25,39 @@ function normalizeHighlightLevel(level: unknown): 'confidential' | null {
   return null;
 }
 
-function normalizeHighlights(spans: unknown): any[] {
-  return toArray(spans)
+function normalizeHighlights(spans: unknown, textLength = Number.POSITIVE_INFINITY): any[] {
+  const normalized = toArray(spans)
     .map((span: any) => {
-      const start = Number(span?.start);
-      const end = Number(span?.end);
+      const rawStart = Number(span?.start);
+      const rawEnd = Number(span?.end);
       const level = normalizeHighlightLevel(span?.level);
-      if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start || !level) return null;
-      return { start: Math.floor(start), end: Math.floor(end), level };
+      if (!Number.isFinite(rawStart) || !Number.isFinite(rawEnd) || !level) return null;
+
+      const start = Math.max(0, Math.floor(rawStart));
+      const end = Math.floor(rawEnd);
+      const boundedEnd = Number.isFinite(textLength) ? Math.min(end, textLength) : end;
+      if (boundedEnd <= start) return null;
+
+      return { start, end: boundedEnd, level };
     })
     .filter((span): span is { start: number; end: number; level: 'confidential' } => Boolean(span))
     .sort((a, b) => a.start - b.start);
+
+  const merged: Array<{ start: number; end: number; level: 'confidential' }> = [];
+  normalized.forEach((span) => {
+    const last = merged[merged.length - 1];
+    if (!last) {
+      merged.push({ ...span });
+      return;
+    }
+    if (span.start <= last.end) {
+      last.end = Math.max(last.end, span.end);
+      return;
+    }
+    merged.push({ ...span });
+  });
+
+  return merged;
 }
 
 function parseStep(value: unknown, fallback = 1): number {
@@ -176,6 +198,8 @@ Deno.serve(async (req) => {
       : (typeof body?.doc_b_plaintext === 'string' ? body.doc_b_plaintext : String(existingComparison?.doc_b_plaintext || ''));
     const docAFiles = toArray(body?.docAFiles ?? body?.doc_a_files ?? existingComparison?.doc_a_files);
     const docBFiles = toArray(body?.docBFiles ?? body?.doc_b_files ?? existingComparison?.doc_b_files);
+    const docATextLength = String(docAText || '').length;
+    const docBTextLength = String(docBText || '').length;
 
     const comparisonPayload: Record<string, unknown> = {
       title,
@@ -194,13 +218,13 @@ Deno.serve(async (req) => {
     };
 
     if (hasDocASpanUpdate) {
-      comparisonPayload.doc_a_spans_json = normalizeHighlights(body?.docASpans ?? body?.doc_a_spans_json);
+      comparisonPayload.doc_a_spans_json = normalizeHighlights(body?.docASpans ?? body?.doc_a_spans_json, docATextLength);
     } else if (!existingComparison) {
       comparisonPayload.doc_a_spans_json = [];
     }
 
     if (hasDocBSpanUpdate) {
-      comparisonPayload.doc_b_spans_json = normalizeHighlights(body?.docBSpans ?? body?.doc_b_spans_json);
+      comparisonPayload.doc_b_spans_json = normalizeHighlights(body?.docBSpans ?? body?.doc_b_spans_json, docBTextLength);
     } else if (!existingComparison) {
       comparisonPayload.doc_b_spans_json = [];
     }
