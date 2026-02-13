@@ -107,7 +107,7 @@ export default function Landing() {
             >
               <span className="inline-flex items-center gap-2 px-4 py-2 bg-blue-50 border border-blue-100 rounded-full text-sm text-blue-700 font-medium mb-8">
                 <Shield className="w-4 h-4" />
-                Privacy-Preserving Pre-Qualification
+                Privacy Preserving Pre-Qualification
               </span>
             </motion.div>
 
