@@ -437,7 +437,7 @@ function extractComparisonViewFromRecord(documentComparison) {
   ]);
 
   return {
-    comparisonView: sanitizeComparisonView({
+    comparisonView: {
       id: documentComparison?.id || null,
       docAPathUsed: docA.pathUsed,
       docBPathUsed: docB.pathUsed,
@@ -453,7 +453,7 @@ function extractComparisonViewFromRecord(documentComparison) {
         spans: spansB.spans,
         source: 'typed'
       }
-    }),
+    },
     topLevelKeys: Object.keys(documentComparison || {}),
     dataKeys: Object.keys(data || {})
   };
@@ -1027,7 +1027,7 @@ export default function SharedReport() {
       setPartyAView(data.partyAView || { proposal: null, responses: [] });
       setPartyBEditableSchema(data.partyBEditableSchema || { totalQuestions: 0, editableQuestionIds: [], questions: [] });
       setResponsesView(data.responsesView || data?.recipientView?.responses || []);
-      setComparisonView(sanitizeComparisonView(extractComparisonView(data)));
+      setComparisonView(extractComparisonView(data));
       setError(null);
 
       const sharedFieldCount = toArray(data.partyAView?.responses).filter(r => String(r?.redaction || '').toLowerCase() !== 'hidden').length;
