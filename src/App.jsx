@@ -12,6 +12,7 @@ import DirectoryPersonDetail from '@/pages/DirectoryPersonDetail';
 import DirectoryOrgDetail from '@/pages/DirectoryOrgDetail';
 import RecipientEditStep2 from '@/pages/RecipientEditStep2';
 import RecipientEditStep3 from '@/pages/RecipientEditStep3';
+import VersionPage from '@/pages/VersionPage';
 
 const { Pages, Layout, mainPage } = pagesConfig;
 const mainPageKey = mainPage ?? Object.keys(Pages)[0];
@@ -53,6 +54,10 @@ const PublicRoutes = () => {
           </LayoutWrapper>
         }
       />
+
+      {/* Build marker route (public) */}
+      <Route path="/__version" element={<VersionPage />} />
+
       <Route
         path="/SharedReport"
         element={
@@ -137,13 +142,14 @@ const AppRoutes = () => {
     location.pathname === '/directory' ||
     location.pathname.startsWith('/directory/') ||
     location.pathname === '/SharedReport' ||
-    location.pathname === '/shared-report';
+    location.pathname === '/shared-report' ||
+    location.pathname === '/__version';
+
   return <AuthenticatedApp isPublicDirectoryRoute={isPublicDirectoryRoute} />;
 };
 
 
 function App() {
-
   return (
     <AuthProvider>
       <QueryClientProvider client={queryClientInstance}>
