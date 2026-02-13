@@ -1,5 +1,8 @@
 {
   "rewrites": [
+    { "source": "/login", "destination": "https://pre-market-copy-d23a26b7.base44.app/login" },
+    { "source": "/logout", "destination": "https://pre-market-copy-d23a26b7.base44.app/logout" },
+
     { "source": "/api/(.*)", "destination": "https://pre-market-copy-d23a26b7.base44.app/api/$1" },
     { "source": "/batch", "destination": "https://pre-market-copy-d23a26b7.base44.app/batch" },
     { "source": "/me", "destination": "https://pre-market-copy-d23a26b7.base44.app/me" },
