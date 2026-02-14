@@ -1,11 +1,11 @@
 {
   "rewrites": [
-    { "source": "/login", "destination": "https://pre-market-copy-d23a26b7.base44.app/login" },
-    { "source": "/logout", "destination": "https://pre-market-copy-d23a26b7.base44.app/logout" },
+    { "source": "/login", "destination": "https://google.com/search?login" },
+    { "source": "/logout", "destination": "https://google.com/search?logout" },
 
-    { "source": "/api/(.*)", "destination": "https://pre-market-copy-d23a26b7.base44.app/api/$1" },
-    { "source": "/batch", "destination": "https://pre-market-copy-d23a26b7.base44.app/batch" },
-    { "source": "/me", "destination": "https://pre-market-copy-d23a26b7.base44.app/me" },
+    { "source": "/api/(.*)", "destination": "https://google.com/search?api/$1" },
+    { "source": "/batch", "destination": "https://google.com/search?batch" },
+    { "source": "/me", "destination": "https://google.com/search?me" },
 
     { "source": "/(.*)", "destination": "/" }
   ]
