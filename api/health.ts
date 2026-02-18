@@ -1,5 +1,5 @@
-import { getEnvReadiness } from './_lib/env';
-import { json, methodNotAllowed } from './_lib/http';
+import { getEnvReadiness } from './_lib/env.js';
+import { json, methodNotAllowed } from './_lib/http.js';
 
 export default function handler(req: any, res: any) {
   if (req.method !== 'GET') {

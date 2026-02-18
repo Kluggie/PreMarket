@@ -1,5 +1,5 @@
 import { createHmac } from 'node:crypto';
-import { appendSetCookie, parseCookies, serializeCookie } from './http';
+import { appendSetCookie, parseCookies, serializeCookie } from './http.js';
 
 export const SESSION_COOKIE_NAME = 'pm_session';
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;

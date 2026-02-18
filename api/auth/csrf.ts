@@ -1,6 +1,6 @@
-import { enforceCanonicalRedirect, getSessionConfig, respondIfSessionEnvMissing, shouldUseSecureCookies } from '../_lib/env';
-import { json, methodNotAllowed } from '../_lib/http';
-import { mintCsrfToken, setCsrfCookie } from '../_lib/csrf';
+import { enforceCanonicalRedirect, getSessionConfig, respondIfSessionEnvMissing, shouldUseSecureCookies } from '../_lib/env.js';
+import { json, methodNotAllowed } from '../_lib/http.js';
+import { mintCsrfToken, setCsrfCookie } from '../_lib/csrf.js';
 
 export default function handler(req: any, res: any) {
   if (req.method !== 'GET') {

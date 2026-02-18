@@ -4,10 +4,10 @@ import {
   respondIfEnvMissing,
   shouldUseSecureCookies,
   toCanonicalAppUrl,
-} from '../../_lib/env';
-import { json, methodNotAllowed, readJsonBody } from '../../_lib/http';
-import { createSessionToken, setSessionCookie } from '../../_lib/session';
-import { validateCsrf } from '../../_lib/csrf';
+} from '../../_lib/env.js';
+import { json, methodNotAllowed, readJsonBody } from '../../_lib/http.js';
+import { createSessionToken, setSessionCookie } from '../../_lib/session.js';
+import { validateCsrf } from '../../_lib/csrf.js';
 
 type GoogleTokenInfo = {
   aud?: string;

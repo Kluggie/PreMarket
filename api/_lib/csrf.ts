@@ -1,5 +1,5 @@
 import { createHmac, randomBytes } from 'node:crypto';
-import { appendSetCookie, constantTimeEquals, parseCookies, serializeCookie } from './http';
+import { appendSetCookie, constantTimeEquals, parseCookies, serializeCookie } from './http.js';
 
 export const CSRF_COOKIE_NAME = 'pm_csrf';
 const CSRF_MAX_AGE_SECONDS = 60 * 15;

@@ -1,6 +1,6 @@
-import { enforceCanonicalRedirect, getSessionConfig, respondIfSessionEnvMissing } from '../_lib/env';
-import { json, methodNotAllowed } from '../_lib/http';
-import { getSessionFromRequest } from '../_lib/session';
+import { enforceCanonicalRedirect, getSessionConfig, respondIfSessionEnvMissing } from '../_lib/env.js';
+import { json, methodNotAllowed } from '../_lib/http.js';
+import { getSessionFromRequest } from '../_lib/session.js';
 
 export default function handler(req: any, res: any) {
   if (req.method !== 'GET') {

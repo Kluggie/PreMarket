@@ -1,4 +1,4 @@
-import { getRequestHost, json } from './http';
+import { getRequestHost, json } from './http.js';
 
 export type RuntimeConfig = {
   appBaseUrl: string;
