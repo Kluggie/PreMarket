@@ -132,7 +132,7 @@ const appLogsApi = {
   },
 };
 
-export const base44 = {
+export const legacyClient = {
   auth: authClient,
   entities: entityProxy,
   functions: functionsApi,

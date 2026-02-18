@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { authClient } from '@/api/authClient';
 import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '../utils';
-import { base44 } from '@/api/base44Client';
+import { legacyClient } from '@/api/legacyClient';
 import { useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
@@ -124,13 +124,13 @@ export default function DocumentComparisonCreate() {
     // Load organizations for user
     const loadOrgs = async () => {
       try {
-        const memberships = await base44.entities.Membership.filter({ 
+        const memberships = await legacyClient.entities.Membership.filter({ 
           user_id: user.id, 
           status: 'active' 
         });
         const orgIds = memberships.map(m => m.organization_id);
         if (orgIds.length > 0) {
-          const orgs = await base44.entities.Organization.filter({ 
+          const orgs = await legacyClient.entities.Organization.filter({ 
             id: { $in: orgIds } 
           });
           setOrganizations(orgs);
@@ -184,7 +184,7 @@ export default function DocumentComparisonCreate() {
 
   const loadDraft = async (id) => {
     try {
-      const comparisons = await base44.entities.DocumentComparison.filter({ id });
+      const comparisons = await legacyClient.entities.DocumentComparison.filter({ id });
       const comparison = comparisons[0];
       
       if (!comparison) {
@@ -205,7 +205,7 @@ export default function DocumentComparisonCreate() {
       setDocAFiles(comparison.doc_a_files || []);
       setDocBFiles(comparison.doc_b_files || []);
 
-      const linkedProposalRows = await base44.entities.Proposal
+      const linkedProposalRows = await legacyClient.entities.Proposal
         .filter({ document_comparison_id: id }, '-created_date', 1)
         .catch(() => []);
       const linkedProposal = linkedProposalRows?.[0] || null;
@@ -243,7 +243,7 @@ export default function DocumentComparisonCreate() {
 
   const loadDraftViaProposal = async (proposalId) => {
     try {
-      const proposals = await base44.entities.Proposal.filter({ id: proposalId });
+      const proposals = await legacyClient.entities.Proposal.filter({ id: proposalId });
       const proposal = proposals[0];
       
       if (!proposal) {
@@ -299,7 +299,7 @@ export default function DocumentComparisonCreate() {
     }
     
     try {
-      const result = await base44.functions.invoke('SaveDocumentComparisonDraft', payload);
+      const result = await legacyClient.functions.invoke('SaveDocumentComparisonDraft', payload);
       const responsePayload = result?.data && typeof result.data === 'object' ? result.data : {};
       if (!responsePayload?.ok || !responsePayload?.comparisonId) {
         throw new Error(responsePayload?.message || 'Failed to save draft');
@@ -332,7 +332,7 @@ export default function DocumentComparisonCreate() {
   const loadProfileAsDocument = async (doc) => {
     setLoadingProfile(doc);
     try {
-      const profiles = await base44.entities.UserProfile.filter({ user_id: user.id });
+      const profiles = await legacyClient.entities.UserProfile.filter({ user_id: user.id });
       const profile = profiles[0];
       
       if (!profile) {
@@ -369,7 +369,7 @@ Verification Status: ${profile.verification_status || 'N/A'}`;
   const loadOrganizationAsDocument = async (doc, orgId) => {
     setLoadingProfile(doc);
     try {
-      const orgs = await base44.entities.Organization.filter({ id: orgId });
+      const orgs = await legacyClient.entities.Organization.filter({ id: orgId });
       const org = orgs[0];
       
       if (!org) {
@@ -412,7 +412,7 @@ Verification Status: ${org.verification_status || 'N/A'}`;
       
       // Upload all files first
       for (const file of files) {
-        const uploadResult = await base44.integrations.Core.UploadFile({ file });
+        const uploadResult = await legacyClient.integrations.Core.UploadFile({ file });
         
         if (!uploadResult.file_url) {
           alert(`Failed to upload ${file.name}`);
@@ -434,7 +434,7 @@ Verification Status: ${org.verification_status || 'N/A'}`;
       }
       
       // Extract text from uploaded files
-      const extractResult = await base44.functions.invoke('ExtractTextFromUploads', {
+      const extractResult = await legacyClient.functions.invoke('ExtractTextFromUploads', {
         files: fileRefs
       });
       
@@ -491,7 +491,7 @@ Verification Status: ${org.verification_status || 'N/A'}`;
     if (newFiles.length > 0) {
       setExtractingFiles(doc);
       try {
-        const extractResult = await base44.functions.invoke('ExtractTextFromUploads', {
+        const extractResult = await legacyClient.functions.invoke('ExtractTextFromUploads', {
           files: newFiles
         });
         
@@ -527,7 +527,7 @@ Verification Status: ${org.verification_status || 'N/A'}`;
     setExtractionError(null);
     
     try {
-      const result = await base44.functions.invoke('ExtractFromUrls', {
+      const result = await legacyClient.functions.invoke('ExtractFromUrls', {
         urlA: docAUrl || null,
         urlB: docBUrl || null
       });
@@ -1630,18 +1630,18 @@ Verification Status: ${org.verification_status || 'N/A'}`;
                             }
 
                             // Update Proposal status to submitted
-                            const proposals = await base44.entities.Proposal.filter({ 
+                            const proposals = await legacyClient.entities.Proposal.filter({ 
                               document_comparison_id: id 
                             });
                             const linkedProposalId = proposals?.[0]?.id || null;
                             if (proposals.length > 0) {
-                              await base44.entities.Proposal.update(proposals[0].id, {
+                              await legacyClient.entities.Proposal.update(proposals[0].id, {
                                 status: 'submitted',
                                 draft_step: null
                               });
                             }
 
-                            const result = await base44.functions.invoke('EvaluateDocumentComparison', {
+                            const result = await legacyClient.functions.invoke('EvaluateDocumentComparison', {
                               comparison_id: id,
                               trigger: 'user_click'
                             });

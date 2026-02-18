@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { authClient } from '@/api/authClient';
-import { base44 } from '@/api/base44Client';
+import { legacyClient } from '@/api/legacyClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
@@ -28,7 +28,7 @@ export default function Settings() {
   const loadEmailConfig = async () => {
     setLoadingConfig(true);
     try {
-      const result = await base44.functions.invoke('EmailConfigStatus', {});
+      const result = await legacyClient.functions.invoke('EmailConfigStatus', {});
       setEmailConfig(result.data);
     } catch (error) {
       console.error('Failed to load email config:', error);
@@ -40,7 +40,7 @@ export default function Settings() {
   const { data: profile } = useQuery({
     queryKey: ['userProfile', user?.email],
     queryFn: async () => {
-      const profiles = await base44.entities.UserProfile.filter({ user_email: user?.email });
+      const profiles = await legacyClient.entities.UserProfile.filter({ user_email: user?.email });
       return profiles[0] || null;
     },
     enabled: !!user?.email
@@ -62,11 +62,11 @@ export default function Settings() {
   const saveNotificationsMutation = useMutation({
     mutationFn: async (settings) => {
       if (profile) {
-        await base44.entities.UserProfile.update(profile.id, {
+        await legacyClient.entities.UserProfile.update(profile.id, {
           notification_settings: settings
         });
       } else {
-        await base44.entities.UserProfile.create({
+        await legacyClient.entities.UserProfile.create({
           user_id: user.id,
           user_email: user.email,
           notification_settings: settings

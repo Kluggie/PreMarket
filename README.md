@@ -1,48 +1,61 @@
-# PreMarket (Vite + React Router)
+# PreMarket (Vite + React Router on Vercel)
 
-Phase 1 of the Base44 -> Vercel migration introduces Google Identity Services login, server-verified sessions, CSRF protection, and Vercel API routes.
+This repository now runs with:
+- GIS login + server-verified cookie sessions (Phase 1)
+- Neon Postgres + Drizzle for core durable state (Phase 2)
 
-## Runtime
-- Frontend: Vite + React Router (SPA)
-- Backend: Vercel Node serverless routes in `api/`
-- Primary local source of truth: `vercel dev` on `http://localhost:3000`
+## Stack Decision (Phase 2)
+- **Chosen stack**: Neon Postgres + Drizzle ORM
+- **Why**: Neon HTTP driver is serverless-friendly on Vercel and avoids connection exhaustion from per-invocation TCP clients.
 
-## Environment Variables
+## Required Environment Variables
 
-### Required (all environments)
+Set in **Development**, **Preview**, and **Production**:
 - `APP_BASE_URL`
 - `SESSION_SECRET`
-- `GOOGLE_CLIENT_ID` (or `VITE_GOOGLE_CLIENT_ID`)
+- `GOOGLE_CLIENT_ID`
 - `VITE_GOOGLE_CLIENT_ID`
+- `DATABASE_URL`
 
-### Recommended values
+Recommended values:
 - Production: `APP_BASE_URL=https://www.getpremarket.com`
 - Local (`vercel dev`): `APP_BASE_URL=http://localhost:3000`
 
-`SESSION_SECRET` must be set in Vercel for Production, Preview, and Development, and in local `.env.local` for `vercel dev`.
+## Local Setup
 
-## Local Development
-
-1. Install dependencies:
+1. Install deps:
 ```bash
 npm install
 ```
 
-2. Set env vars in `.env.local`.
+2. Configure `.env.local` with required env vars.
 
-3. Run serverless + SPA together (primary):
+3. Run migrations:
+```bash
+npm run db:migrate
+```
+
+4. Start app locally (primary runtime):
 ```bash
 vercel dev
 ```
 
-Optional: run Vite on `:5173` for frontend-only iteration. `/api/*` is proxied to `http://localhost:3000` by `vite.config.js`.
+Optional frontend-only loop:
+```bash
+npm run dev
+```
+(`vite` proxies `/api/*` to `http://localhost:3000`.)
 
-## Auth/API Endpoints
+## Useful Commands
 
-- `GET /api/auth/csrf`
-- `POST /api/auth/google/verify`
-- `GET /api/auth/me`
-- `POST /api/auth/logout`
-- `GET /api/health`
+```bash
+npm run db:migrate
+npm run db:smoke
+npm run test:api
+npm run guard:no-base44
+```
 
-See `docs/auth-migration.md` for flow and verification details.
+## Docs
+- Auth migration: `docs/auth-migration.md`
+- Data migration + schema + backfill: `docs/data-migration.md`
+- Env setup details: `docs/env.md`

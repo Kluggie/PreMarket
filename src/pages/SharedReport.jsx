@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { authClient } from '@/api/authClient';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '../utils';
-import { base44 } from '@/api/base44Client';
+import { legacyClient } from '@/api/legacyClient';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -116,7 +116,7 @@ async function invokeSharedResolver(token, options = {}) {
     };
 
     try {
-      const result = await base44.functions.invoke('ResolveSharedReport', payload);
+      const result = await legacyClient.functions.invoke('ResolveSharedReport', payload);
       return {
         ...result,
         data: {
@@ -134,7 +134,7 @@ async function invokeSharedResolver(token, options = {}) {
         throw error;
       }
 
-      const fallback = await base44.functions.invoke('GetSharedReportData', payload);
+      const fallback = await legacyClient.functions.invoke('GetSharedReportData', payload);
       return {
         ...fallback,
         data: {
@@ -152,7 +152,7 @@ async function invokeSharedReportData(token, options = {}) {
       ...(options.debug ? { debug: '1' } : {})
     };
 
-    const result = await base44.functions.invoke('GetSharedReportData', payload);
+    const result = await legacyClient.functions.invoke('GetSharedReportData', payload);
     return {
       ...result,
       data: {
@@ -448,17 +448,17 @@ async function loadComparisonFromEntity({ documentComparisonId, proposalId }) {
   let comparison = null;
 
   if (documentComparisonId) {
-    const byId = await base44.entities.DocumentComparison.filter({ id: documentComparisonId }, '-created_date', 1);
+    const byId = await legacyClient.entities.DocumentComparison.filter({ id: documentComparisonId }, '-created_date', 1);
     comparison = byId?.[0] || null;
   }
 
   if (!comparison && proposalId) {
-    const byProposal = await base44.entities.DocumentComparison.filter({ proposal_id: proposalId }, '-created_date', 1);
+    const byProposal = await legacyClient.entities.DocumentComparison.filter({ proposal_id: proposalId }, '-created_date', 1);
     comparison = byProposal?.[0] || null;
   }
 
   if (!comparison && proposalId) {
-    const byDataProposal = await base44.entities.DocumentComparison.filter({ 'data.proposal_id': proposalId }, '-created_date', 1);
+    const byDataProposal = await legacyClient.entities.DocumentComparison.filter({ 'data.proposal_id': proposalId }, '-created_date', 1);
     comparison = byDataProposal?.[0] || null;
   }
 
@@ -1102,7 +1102,7 @@ export default function SharedReport() {
     ensuredSnapshotAccessRef.current.add(dedupeKey);
 
     console.log('[ensureSnapshotAccess] called', { snapshotId });
-    base44.functions.invoke('EnsureSnapshotAccess', {
+    legacyClient.functions.invoke('EnsureSnapshotAccess', {
       snapshotId,
       token
     }).catch((error) => {
@@ -1133,7 +1133,7 @@ export default function SharedReport() {
 
     setIsOpeningRecipientEditDraft(true);
     try {
-      const result = await base44.functions.invoke('CreateRecipientEditDraft', {
+      const result = await legacyClient.functions.invoke('CreateRecipientEditDraft', {
         sourceProposalId: targetSourceProposalId,
         token
       });
@@ -1197,7 +1197,7 @@ export default function SharedReport() {
     setIsSaving(true);
 
     try {
-      const result = await base44.functions.invoke('UpsertSharedRecipientResponses', {
+      const result = await legacyClient.functions.invoke('UpsertSharedRecipientResponses', {
         token,
         responses: payload
       });
@@ -1226,7 +1226,7 @@ export default function SharedReport() {
     setIsReevaluating(true);
 
     try {
-      const result = await base44.functions.invoke('RunSharedReportReevaluation', {
+      const result = await legacyClient.functions.invoke('RunSharedReportReevaluation', {
         token
       });
 
@@ -1266,7 +1266,7 @@ export default function SharedReport() {
     setIsSendingBack(true);
 
     try {
-      const result = await base44.functions.invoke('SubmitSharedReportResponse', {
+      const result = await legacyClient.functions.invoke('SubmitSharedReportResponse', {
         token,
         message,
         counterproposal: {

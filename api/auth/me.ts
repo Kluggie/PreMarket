@@ -1,40 +1,20 @@
-import { enforceCanonicalRedirect, getSessionConfig, respondIfSessionEnvMissing } from '../_lib/env.js';
-import { json, methodNotAllowed } from '../_lib/http.js';
-import { getSessionFromRequest } from '../_lib/session.js';
+import { ok } from '../_lib/api-response.js';
+import { requireUser } from '../_lib/auth.js';
+import { ensureMethod, withApiRoute } from '../_lib/route.js';
 
-export default function handler(req: any, res: any) {
-  if (req.method !== 'GET') {
-    methodNotAllowed(res, ['GET']);
-    return;
-  }
+export default async function handler(req: any, res: any) {
+  await withApiRoute(req, res, '/api/auth/me', async (context) => {
+    ensureMethod(req, ['GET']);
 
-  if (respondIfSessionEnvMissing(res)) {
-    return;
-  }
+    const auth = await requireUser(req, res);
+    if (!auth.ok) {
+      return;
+    }
+    context.userId = auth.user.id;
 
-  const config = getSessionConfig();
-
-  if (enforceCanonicalRedirect(req, res, config.appBaseUrl)) {
-    return;
-  }
-
-  const session = getSessionFromRequest(req, config.sessionSecret);
-
-  if (!session) {
-    json(res, 401, { authenticated: false });
-    return;
-  }
-
-  json(res, 200, {
-    authenticated: true,
-    user: {
-      id: session.sub,
-      sub: session.sub,
-      email: session.email,
-      name: session.name,
-      full_name: session.name,
-      picture: session.picture,
-      hd: session.hd,
-    },
+    ok(res, 200, {
+      authenticated: true,
+      user: auth.user,
+    });
   });
 }

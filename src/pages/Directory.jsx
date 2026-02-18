@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { base44 } from '@/api/base44Client';
+import { legacyClient } from '@/api/legacyClient';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -71,7 +71,7 @@ export default function Directory() {
   const { data, isLoading, error } = useQuery({
     queryKey: ['publicDirectorySearch', mode, debouncedQuery, filters, page, PAGE_SIZE],
     queryFn: async () => {
-      const response = await base44.functions.invoke('PublicDirectorySearch', {
+      const response = await legacyClient.functions.invoke('PublicDirectorySearch', {
         mode,
         q: debouncedQuery,
         filters,

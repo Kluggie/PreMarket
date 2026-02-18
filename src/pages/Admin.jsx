@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { authClient } from '@/api/authClient';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '../utils';
-import { base44 } from '@/api/base44Client';
+import { legacyClient } from '@/api/legacyClient';
 import { useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
@@ -34,36 +34,36 @@ export default function Admin() {
 
   const { data: allUsers = [] } = useQuery({
     queryKey: ['admin', 'users'],
-    queryFn: () => base44.entities.User.list('-created_date', 100)
+    queryFn: () => legacyClient.entities.User.list('-created_date', 100)
   });
 
   const { data: organizations = [] } = useQuery({
     queryKey: ['admin', 'organizations'],
-    queryFn: () => base44.entities.Organization.list('-created_date', 100)
+    queryFn: () => legacyClient.entities.Organization.list('-created_date', 100)
   });
 
   const { data: templates = [] } = useQuery({
     queryKey: ['admin', 'templates'],
-    queryFn: () => base44.entities.Template.list('-created_date', 100)
+    queryFn: () => legacyClient.entities.Template.list('-created_date', 100)
   });
 
   const { data: proposals = [] } = useQuery({
     queryKey: ['admin', 'proposals'],
-    queryFn: () => base44.entities.Proposal.list('-created_date', 100)
+    queryFn: () => legacyClient.entities.Proposal.list('-created_date', 100)
   });
 
   const { data: auditLogs = [] } = useQuery({
     queryKey: ['admin', 'audit'],
-    queryFn: () => base44.entities.AuditLog.list('-created_date', 50)
+    queryFn: () => legacyClient.entities.AuditLog.list('-created_date', 50)
   });
 
   const { data: contactRequests = [] } = useQuery({
     queryKey: ['admin', 'contacts'],
-    queryFn: () => base44.entities.ContactRequest.list('-created_date', 100)
+    queryFn: () => legacyClient.entities.ContactRequest.list('-created_date', 100)
   });
 
   const updateTemplateMutation = useMutation({
-    mutationFn: ({ id, status }) => base44.entities.Template.update(id, { status }),
+    mutationFn: ({ id, status }) => legacyClient.entities.Template.update(id, { status }),
     onSuccess: () => {
       queryClient.invalidateQueries(['admin', 'templates']);
     }

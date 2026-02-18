@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { authClient } from '@/api/authClient';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { createPageUrl } from '../utils';
-import { base44 } from '@/api/base44Client';
+import { legacyClient } from '@/api/legacyClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
@@ -107,7 +107,7 @@ export default function CreateProposal() {
   const { data: templates = [], isLoading } = useQuery({
     queryKey: ['templates'],
     queryFn: async () => {
-      const all = await base44.entities.Template.list();
+      const all = await legacyClient.entities.Template.list();
       const visible = all.filter(t => t.status === 'published' || t.status === 'active');
       
       const byKey = visible.reduce((acc, t) => {
@@ -167,7 +167,7 @@ export default function CreateProposal() {
   const loadDraft = async (proposalId, options = {}) => {
     const { isEdit = false } = options;
     try {
-      const proposals = await base44.entities.Proposal.filter({ id: proposalId });
+      const proposals = await legacyClient.entities.Proposal.filter({ id: proposalId });
       const proposal = proposals[0];
       if (!proposal) {
         console.error('Draft not found');
@@ -195,10 +195,10 @@ export default function CreateProposal() {
 
       // Load all responses
       const responseBuckets = await Promise.all([
-        base44.entities.ProposalResponse.filter({ proposal_id: proposalId }),
-        base44.entities.ProposalResponse.filter({ proposalId: proposalId }),
-        base44.entities.ProposalResponse.filter({ 'data.proposal_id': proposalId }),
-        base44.entities.ProposalResponse.filter({ 'data.proposalId': proposalId })
+        legacyClient.entities.ProposalResponse.filter({ proposal_id: proposalId }),
+        legacyClient.entities.ProposalResponse.filter({ proposalId: proposalId }),
+        legacyClient.entities.ProposalResponse.filter({ 'data.proposal_id': proposalId }),
+        legacyClient.entities.ProposalResponse.filter({ 'data.proposalId': proposalId })
       ]);
       const byId = new Map();
       responseBuckets.flat().forEach((record, index) => {
@@ -313,10 +313,10 @@ export default function CreateProposal() {
 
   const fetchExistingResponses = async (proposalId) => {
     const responseBuckets = await Promise.all([
-      base44.entities.ProposalResponse.filter({ proposal_id: proposalId }),
-      base44.entities.ProposalResponse.filter({ proposalId: proposalId }),
-      base44.entities.ProposalResponse.filter({ 'data.proposal_id': proposalId }),
-      base44.entities.ProposalResponse.filter({ 'data.proposalId': proposalId })
+      legacyClient.entities.ProposalResponse.filter({ proposal_id: proposalId }),
+      legacyClient.entities.ProposalResponse.filter({ proposalId: proposalId }),
+      legacyClient.entities.ProposalResponse.filter({ 'data.proposal_id': proposalId }),
+      legacyClient.entities.ProposalResponse.filter({ 'data.proposalId': proposalId })
     ]);
 
     return dedupeResponsesById(responseBuckets.flat());
@@ -367,9 +367,9 @@ export default function CreateProposal() {
       );
 
       if (existing) {
-        await base44.entities.ProposalResponse.update(existing.id, responseData);
+        await legacyClient.entities.ProposalResponse.update(existing.id, responseData);
       } else {
-        const created = await base44.entities.ProposalResponse.create(responseData);
+        const created = await legacyClient.entities.ProposalResponse.create(responseData);
         existingResponses.push(created);
       }
     }
@@ -414,16 +414,16 @@ export default function CreateProposal() {
       let proposalId = draftProposalId;
 
       if (!proposalId) {
-        const proposal = await base44.entities.Proposal.create(proposalData);
+        const proposal = await legacyClient.entities.Proposal.create(proposalData);
         proposalId = proposal.id;
         setDraftProposalId(proposalId);
         queryClient.invalidateQueries(['proposals']);
       } else {
-        await base44.entities.Proposal.update(proposalId, proposalData);
+        await legacyClient.entities.Proposal.update(proposalId, proposalData);
       }
 
       // Create or update EvaluationItem
-      const evalItems = await base44.entities.EvaluationItem.filter({ 
+      const evalItems = await legacyClient.entities.EvaluationItem.filter({ 
         linked_proposal_id: proposalId 
       });
       
@@ -450,9 +450,9 @@ export default function CreateProposal() {
       };
 
       if (evalItems.length > 0) {
-        await base44.entities.EvaluationItem.update(evalItems[0].id, evalPayload);
+        await legacyClient.entities.EvaluationItem.update(evalItems[0].id, evalPayload);
       } else {
-        await base44.entities.EvaluationItem.create(evalPayload);
+        await legacyClient.entities.EvaluationItem.create(evalPayload);
       }
       await upsertProposalResponses(proposalId);
     } catch (error) {
@@ -758,7 +758,7 @@ export default function CreateProposal() {
     
     // Update draft step and completed steps immediately
     if (draftProposalId && user && !isGuestMode) {
-      base44.entities.Proposal.update(draftProposalId, { 
+      legacyClient.entities.Proposal.update(draftProposalId, { 
         draft_step: nextStep,
         draft_updated_at: new Date().toISOString()
       }).catch(err => {
@@ -773,7 +773,7 @@ export default function CreateProposal() {
     
     // Update draft step when going back
     if (draftProposalId && user && !isGuestMode) {
-      base44.entities.Proposal.update(draftProposalId, { 
+      legacyClient.entities.Proposal.update(draftProposalId, { 
         draft_step: targetStep,
         draft_updated_at: new Date().toISOString()
       }).catch(err => {
@@ -788,7 +788,7 @@ export default function CreateProposal() {
       const guestEmailParam = payload?.guestEmailParam;
 
       if (!isGuestMode && user) {
-        const limitCheck = await base44.functions.invoke('checkProposalLimit');
+        const limitCheck = await legacyClient.functions.invoke('checkProposalLimit');
         if (!limitCheck.data.allowed) {
           throw new Error(`You've reached your monthly proposal limit (${limitCheck.data.limit} proposals). Upgrade to Professional for unlimited proposals.`);
         }
@@ -817,11 +817,11 @@ export default function CreateProposal() {
 
       let proposal;
       if (draftProposalId) {
-        await base44.entities.Proposal.update(draftProposalId, proposalData);
-        const proposals = await base44.entities.Proposal.filter({ id: draftProposalId });
+        await legacyClient.entities.Proposal.update(draftProposalId, proposalData);
+        const proposals = await legacyClient.entities.Proposal.filter({ id: draftProposalId });
         proposal = proposals[0];
       } else {
-        proposal = await base44.entities.Proposal.create(proposalData);
+        proposal = await legacyClient.entities.Proposal.create(proposalData);
       }
 
       await upsertProposalResponses(proposal.id);
@@ -831,14 +831,14 @@ export default function CreateProposal() {
         const expiresAt = new Date();
         expiresAt.setDate(expiresAt.getDate() + 30);
 
-        await base44.entities.GuestProposal.create({
+        await legacyClient.entities.GuestProposal.create({
           guest_email: guestEmailParam,
           magic_token: magicToken,
           proposal_id: proposal.id,
           expires_at: expiresAt.toISOString()
         });
 
-        await base44.integrations.Core.SendEmail({
+        await legacyClient.integrations.Core.SendEmail({
           to: guestEmailParam,
           subject: 'Your PreMarket Proposal Link',
           body: `Hi there!\n\nYour proposal has been sent on PreMarket.\n\nAccess your proposal: ${window.location.origin}${createPageUrl(`ProposalDetail?id=${proposal.id}&token=${magicToken}`)}\n\nThis link will expire in 30 days.\n\nBest regards,\nThe PreMarket Team`
@@ -861,7 +861,7 @@ export default function CreateProposal() {
             functionName = 'EvaluateFitCardShared';
           }
 
-          const evaluationResult = await base44.functions.invoke(functionName, {
+          const evaluationResult = await legacyClient.functions.invoke(functionName, {
             proposal_id: proposal.id,
             trigger: 'user_click'
           });
@@ -905,7 +905,7 @@ export default function CreateProposal() {
     
     setExtracting(true);
     try {
-      const result = await base44.functions.invoke('ExtractRequirementsFromUrl', {
+      const result = await legacyClient.functions.invoke('ExtractRequirementsFromUrl', {
         url: extractUrl,
         mode: responses['mode'],
         maxPages: 6
@@ -1433,7 +1433,7 @@ export default function CreateProposal() {
                                  const promises = [];
                                  if (responses['_profile_url']) {
                                    promises.push(
-                                     base44.functions.invoke('ExtractProfileFromUrl', {
+                                     legacyClient.functions.invoke('ExtractProfileFromUrl', {
                                        url: responses['_profile_url'],
                                        mode: responses['mode']
                                      })
@@ -1441,7 +1441,7 @@ export default function CreateProposal() {
                                  }
                                  if (responses['_target_url']) {
                                    promises.push(
-                                     base44.functions.invoke('ExtractJobRequirementsFromUrl', {
+                                     legacyClient.functions.invoke('ExtractJobRequirementsFromUrl', {
                                        url: responses['_target_url'],
                                        mode: responses['mode']
                                      })
@@ -1839,11 +1839,11 @@ export default function CreateProposal() {
 
                                 let proposal;
                                 if (draftProposalId) {
-                                  await base44.entities.Proposal.update(draftProposalId, proposalData);
-                                  const proposals = await base44.entities.Proposal.filter({ id: draftProposalId });
+                                  await legacyClient.entities.Proposal.update(draftProposalId, proposalData);
+                                  const proposals = await legacyClient.entities.Proposal.filter({ id: draftProposalId });
                                   proposal = proposals[0];
                                 } else {
-                                  proposal = await base44.entities.Proposal.create(proposalData);
+                                  proposal = await legacyClient.entities.Proposal.create(proposalData);
                                 }
 
                                 await upsertProposalResponses(proposal.id);
@@ -1852,7 +1852,7 @@ export default function CreateProposal() {
                                 if (import.meta.env.DEV) {
                                   console.debug('[EvaluationGuard] User clicked Run Profile Evaluation', { proposalId: proposal.id });
                                 }
-                                const result = await base44.functions.invoke('EvaluateFitCardShared', {
+                                const result = await legacyClient.functions.invoke('EvaluateFitCardShared', {
                                   proposal_id: proposal.id,
                                   trigger: 'user_click'
                                 });

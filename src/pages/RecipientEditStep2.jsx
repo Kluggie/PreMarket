@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { authClient } from '@/api/authClient';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { createPageUrl } from '../utils';
-import { base44 } from '@/api/base44Client';
+import { legacyClient } from '@/api/legacyClient';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -51,7 +51,7 @@ export default function RecipientEditStep2() {
       setLoading(true);
       setLoadError(null);
       try {
-        const proposalRows = await base44.entities.Proposal.filter({ id: proposalId }, '-created_date', 1);
+        const proposalRows = await legacyClient.entities.Proposal.filter({ id: proposalId }, '-created_date', 1);
         const draftProposal = proposalRows?.[0] || null;
         if (!draftProposal) {
           throw new Error('Draft proposal not found');
@@ -65,7 +65,7 @@ export default function RecipientEditStep2() {
           throw new Error('Draft proposal is missing document comparison id');
         }
 
-        const comparisonRows = await base44.entities.DocumentComparison.filter({ id: comparisonId }, '-created_date', 1);
+        const comparisonRows = await legacyClient.entities.DocumentComparison.filter({ id: comparisonId }, '-created_date', 1);
         const draftComparison = comparisonRows?.[0] || null;
         if (!draftComparison) {
           throw new Error('Draft comparison not found');
@@ -102,7 +102,7 @@ export default function RecipientEditStep2() {
     try {
       const nowIso = new Date().toISOString();
       const safeTitle = String(title || '').trim() || 'Recipient Draft';
-      await base44.entities.DocumentComparison.update(comparison.id, {
+      await legacyClient.entities.DocumentComparison.update(comparison.id, {
         title: safeTitle,
         doc_b_plaintext: docBText,
         status: 'draft',
@@ -110,7 +110,7 @@ export default function RecipientEditStep2() {
         draft_updated_at: nowIso
       });
 
-      await base44.entities.Proposal.update(proposal.id, {
+      await legacyClient.entities.Proposal.update(proposal.id, {
         title: safeTitle,
         status: 'draft',
         draft_step: 2,

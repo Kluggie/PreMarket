@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '../utils';
-import { base44 } from '@/api/base44Client';
+import { legacyClient } from '@/api/legacyClient';
 import { useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
@@ -54,7 +54,7 @@ export default function Templates() {
   const { data: templates = [], isLoading } = useQuery({
     queryKey: ['templates'],
     queryFn: async () => {
-      const all = await base44.entities.Template.list('-created_date');
+      const all = await legacyClient.entities.Template.list('-created_date');
       // Show published and active templates, exclude hidden/archived/coming_soon
       return all.filter(t => t.status === 'published' || t.status === 'active');
     }
@@ -65,7 +65,7 @@ export default function Templates() {
     try {
       const template = templates.find(t => t.id === templateId);
       if (template) {
-        await base44.entities.Template.update(templateId, {
+        await legacyClient.entities.Template.update(templateId, {
           view_count: (template.view_count || 0) + 1
         });
       }
@@ -77,7 +77,7 @@ export default function Templates() {
   const handleCustomTemplateRequest = async (e) => {
     e.preventDefault();
     try {
-      await base44.entities.ContactRequest.create({
+      await legacyClient.entities.ContactRequest.create({
         ...customFormData,
         reason: 'request',
         message: `Custom Template Request: ${customFormData.message}`,

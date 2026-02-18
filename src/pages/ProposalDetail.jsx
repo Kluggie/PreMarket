@@ -3,7 +3,7 @@ import { authClient } from '@/api/authClient';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '../utils';
 import { getProposalId } from '@/lib/utils';
-import { base44 } from '@/api/base44Client';
+import { legacyClient } from '@/api/legacyClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -244,22 +244,22 @@ async function getActiveShareLinkForRecipient(proposalId, options = {}) {
     }
 
     const buckets = await Promise.all([
-      base44.entities.ShareLink
+      legacyClient.entities.ShareLink
         .filter({ proposal_id: normalizedProposalId, recipient_email: recipientEmail }, '-created_date', 10)
         .catch(() => []),
-      base44.entities.ShareLink
+      legacyClient.entities.ShareLink
         .filter({ proposalId: normalizedProposalId, recipientEmail: recipientEmail }, '-created_date', 10)
         .catch(() => []),
-      base44.entities.ShareLink
+      legacyClient.entities.ShareLink
         .filter({ proposal_id: normalizedProposalId, recipientEmail: recipientEmail }, '-created_date', 10)
         .catch(() => []),
-      base44.entities.ShareLink
+      legacyClient.entities.ShareLink
         .filter({ proposalId: normalizedProposalId, recipient_email: recipientEmail }, '-created_date', 10)
         .catch(() => []),
-      base44.entities.ShareLink
+      legacyClient.entities.ShareLink
         .filter({ source_proposal_id: normalizedProposalId, recipient_email: recipientEmail }, '-created_date', 10)
         .catch(() => []),
-      base44.entities.ShareLink
+      legacyClient.entities.ShareLink
         .filter({ sourceProposalId: normalizedProposalId, recipientEmail: recipientEmail }, '-created_date', 10)
         .catch(() => [])
     ]);
@@ -304,7 +304,7 @@ async function getActiveShareLinkForRecipient(proposalId, options = {}) {
   };
 
   try {
-    const result = await base44.functions.invoke('GetActiveShareLinkForRecipient', {
+    const result = await legacyClient.functions.invoke('GetActiveShareLinkForRecipient', {
       proposalId: normalizedProposalId,
       ...(explicitRecipientEmail ? { recipientEmail: explicitRecipientEmail } : {})
     });
@@ -577,7 +577,7 @@ async function invokeSharedResolver(token, options = {}) {
     ...(typeof options.consumeView === 'boolean' ? { consumeView: options.consumeView } : {})
   };
   try {
-    return await base44.functions.invoke('ResolveSharedReport', payload);
+    return await legacyClient.functions.invoke('ResolveSharedReport', payload);
   } catch (error) {
     const parsed = extractSharedInvokeError(error);
     const missingResolver =
@@ -588,7 +588,7 @@ async function invokeSharedResolver(token, options = {}) {
       throw error;
     }
 
-    return base44.functions.invoke('GetSharedReportData', payload);
+    return legacyClient.functions.invoke('GetSharedReportData', payload);
   }
 }
 
@@ -705,7 +705,7 @@ export default function ProposalDetail() {
   const { data: proposalEntity, isLoading: loadingProposalEntity } = useQuery({
     queryKey: ['proposal', proposalId],
     queryFn: async () => {
-      const proposals = await base44.entities.Proposal.filter({ id: proposalId });
+      const proposals = await legacyClient.entities.Proposal.filter({ id: proposalId });
       return proposals[0];
     },
     enabled: !!proposalId && !isRecipientRoutedRequest
@@ -731,10 +731,10 @@ export default function ProposalDetail() {
     queryKey: ['proposalResponses', proposalId],
     queryFn: async () => {
       const responseBuckets = await Promise.all([
-        base44.entities.ProposalResponse.filter({ proposal_id: proposalId }),
-        base44.entities.ProposalResponse.filter({ proposalId: proposalId }),
-        base44.entities.ProposalResponse.filter({ 'data.proposal_id': proposalId }),
-        base44.entities.ProposalResponse.filter({ 'data.proposalId': proposalId })
+        legacyClient.entities.ProposalResponse.filter({ proposal_id: proposalId }),
+        legacyClient.entities.ProposalResponse.filter({ proposalId: proposalId }),
+        legacyClient.entities.ProposalResponse.filter({ 'data.proposal_id': proposalId }),
+        legacyClient.entities.ProposalResponse.filter({ 'data.proposalId': proposalId })
       ]);
 
       return dedupeById(responseBuckets.flat());
@@ -746,10 +746,10 @@ export default function ProposalDetail() {
     queryKey: ['fallbackEvaluationItem', proposalId],
     queryFn: async () => {
       const itemBuckets = await Promise.all([
-        base44.entities.EvaluationItem.filter({ linked_proposal_id: proposalId }, '-created_date', 1),
-        base44.entities.EvaluationItem.filter({ linkedProposalId: proposalId }, '-created_date', 1),
-        base44.entities.EvaluationItem.filter({ 'data.linked_proposal_id': proposalId }, '-created_date', 1),
-        base44.entities.EvaluationItem.filter({ 'data.linkedProposalId': proposalId }, '-created_date', 1)
+        legacyClient.entities.EvaluationItem.filter({ linked_proposal_id: proposalId }, '-created_date', 1),
+        legacyClient.entities.EvaluationItem.filter({ linkedProposalId: proposalId }, '-created_date', 1),
+        legacyClient.entities.EvaluationItem.filter({ 'data.linked_proposal_id': proposalId }, '-created_date', 1),
+        legacyClient.entities.EvaluationItem.filter({ 'data.linkedProposalId': proposalId }, '-created_date', 1)
       ]);
       return itemBuckets.flat()?.[0] || null;
     },
@@ -760,8 +760,8 @@ export default function ProposalDetail() {
     queryKey: ['fallbackInputSnapshot', proposalId],
     queryFn: async () => {
       const [reportsByProposal, reportsByDataProposal] = await Promise.all([
-        base44.entities.EvaluationReport.filter({ proposal_id: proposalId }, '-created_date', 10),
-        base44.entities.EvaluationReport.filter({ 'data.proposal_id': proposalId }, '-created_date', 10)
+        legacyClient.entities.EvaluationReport.filter({ proposal_id: proposalId }, '-created_date', 10),
+        legacyClient.entities.EvaluationReport.filter({ 'data.proposal_id': proposalId }, '-created_date', 10)
       ]);
       const rows = [...(reportsByProposal || []), ...(reportsByDataProposal || [])];
       for (const row of rows) {
@@ -807,14 +807,14 @@ export default function ProposalDetail() {
       }
 
       if (proposalEntity?.document_comparison_id) {
-        const byId = await base44.entities.DocumentComparison.filter({ id: proposalEntity.document_comparison_id }, '-created_date', 1);
+        const byId = await legacyClient.entities.DocumentComparison.filter({ id: proposalEntity.document_comparison_id }, '-created_date', 1);
         if (byId?.[0]) return byId[0];
       }
 
-      const byProposal = await base44.entities.DocumentComparison.filter({ proposal_id: proposalId }, '-created_date', 1);
+      const byProposal = await legacyClient.entities.DocumentComparison.filter({ proposal_id: proposalId }, '-created_date', 1);
       if (byProposal?.[0]) return byProposal[0];
 
-      const byProposalInData = await base44.entities.DocumentComparison.filter({ 'data.proposal_id': proposalId }, '-created_date', 1);
+      const byProposalInData = await legacyClient.entities.DocumentComparison.filter({ 'data.proposal_id': proposalId }, '-created_date', 1);
       return byProposalInData?.[0] || null;
     },
     enabled: Boolean(ownerWorkspaceEnabled && proposalId && proposalEntity)
@@ -885,7 +885,7 @@ export default function ProposalDetail() {
 
   const { data: evaluations = [] } = useQuery({
     queryKey: ['evaluations', proposalId],
-    queryFn: () => base44.entities.EvaluationRun.filter({ proposal_id: proposalId }, '-created_date'),
+    queryFn: () => legacyClient.entities.EvaluationRun.filter({ proposal_id: proposalId }, '-created_date'),
     enabled: ownerWorkspaceEnabled
   });
 
@@ -906,20 +906,20 @@ export default function ProposalDetail() {
       };
 
       let source = 'none';
-      let reports = await base44.entities.EvaluationReport.filter({ proposal_id: proposalId });
+      let reports = await legacyClient.entities.EvaluationReport.filter({ proposal_id: proposalId });
       let normalizedReports = reports.map(normalizeReport);
       if (normalizedReports.length > 0) source = 'EvaluationReport.proposal_id';
 
       if (normalizedReports.length === 0) {
-        const dataPathReports = await base44.entities.EvaluationReport.filter({ 'data.proposal_id': proposalId });
+        const dataPathReports = await legacyClient.entities.EvaluationReport.filter({ 'data.proposal_id': proposalId });
         normalizedReports = dataPathReports.map(normalizeReport);
         if (normalizedReports.length > 0) source = 'EvaluationReport.data.proposal_id';
       }
 
       if (normalizedReports.length === 0) {
-        let comparisons = await base44.entities.DocumentComparison.filter({ proposal_id: proposalId }, '-created_date');
+        let comparisons = await legacyClient.entities.DocumentComparison.filter({ proposal_id: proposalId }, '-created_date');
         if (!comparisons || comparisons.length === 0) {
-          comparisons = await base44.entities.DocumentComparison.filter({ 'data.proposal_id': proposalId }, '-created_date');
+          comparisons = await legacyClient.entities.DocumentComparison.filter({ 'data.proposal_id': proposalId }, '-created_date');
         }
         const comparisonWithReport = comparisons.find(c =>
           c.evaluation_report_json ||
@@ -951,7 +951,7 @@ export default function ProposalDetail() {
       }
 
       if (normalizedReports.length === 0 && proposal?.document_comparison_id) {
-        const byId = await base44.entities.DocumentComparison.filter({ id: proposal.document_comparison_id });
+        const byId = await legacyClient.entities.DocumentComparison.filter({ id: proposal.document_comparison_id });
         const comparisonById = byId?.[0];
         if (comparisonById) {
           const data = comparisonById?.data && typeof comparisonById.data === 'object' ? comparisonById.data : {};
@@ -1000,7 +1000,7 @@ export default function ProposalDetail() {
 
   const { data: sharedReports = [] } = useQuery({
     queryKey: ['sharedReports', proposalId],
-    queryFn: () => base44.entities.EvaluationReportShared.filter({ proposal_id: proposalId }),
+    queryFn: () => legacyClient.entities.EvaluationReportShared.filter({ proposal_id: proposalId }),
     enabled: ownerWorkspaceEnabled,
     refetchInterval: (data) => {
       const hasRunning = Array.isArray(data) && data.some(r => ['queued', 'running'].includes(r.status));
@@ -1010,7 +1010,7 @@ export default function ProposalDetail() {
 
   const { data: fitCardReports = [] } = useQuery({
     queryKey: ['fitCardReports', proposalId],
-    queryFn: () => base44.entities.FitCardReportShared.filter({ proposal_id: proposalId }),
+    queryFn: () => legacyClient.entities.FitCardReportShared.filter({ proposal_id: proposalId }),
     enabled: ownerWorkspaceEnabled,
     refetchInterval: (data) => {
       const hasRunning = Array.isArray(data) && data.some(r => ['queued', 'running'].includes(r.status));
@@ -1020,25 +1020,25 @@ export default function ProposalDetail() {
 
   const { data: templates = [] } = useQuery({
     queryKey: ['templates'],
-    queryFn: () => base44.entities.Template.list(),
+    queryFn: () => legacyClient.entities.Template.list(),
     enabled: Boolean(ownerWorkspaceEnabled && proposal?.template_id)
   });
 
   const { data: verifications = [] } = useQuery({
     queryKey: ['verifications', proposalId],
-    queryFn: () => base44.entities.VerificationItem.filter({ proposal_id: proposalId }),
+    queryFn: () => legacyClient.entities.VerificationItem.filter({ proposal_id: proposalId }),
     enabled: ownerWorkspaceEnabled
   });
 
   const { data: comments = [] } = useQuery({
     queryKey: ['comments', proposalId],
-    queryFn: () => base44.entities.ProposalComment.filter({ proposal_id: proposalId }, '-created_date'),
+    queryFn: () => legacyClient.entities.ProposalComment.filter({ proposal_id: proposalId }, '-created_date'),
     enabled: ownerWorkspaceEnabled
   });
 
   const { data: attachments = [] } = useQuery({
     queryKey: ['attachments', proposalId],
-    queryFn: () => base44.entities.Attachment.filter({ proposal_id: proposalId }),
+    queryFn: () => legacyClient.entities.Attachment.filter({ proposal_id: proposalId }),
     enabled: ownerWorkspaceEnabled
   });
 
@@ -1139,9 +1139,9 @@ export default function ProposalDetail() {
       try {
         // Prefer resolving a linked DocumentComparison by proposal id rather than relying solely on proposal shape.
         try {
-          let comparisons = await base44.entities.DocumentComparison.filter({ proposal_id: resolvedProposalId }, '-created_date');
+          let comparisons = await legacyClient.entities.DocumentComparison.filter({ proposal_id: resolvedProposalId }, '-created_date');
           if ((!comparisons || comparisons.length === 0) && resolvedProposalId) {
-            comparisons = await base44.entities.DocumentComparison.filter({ 'data.proposal_id': resolvedProposalId }, '-created_date');
+            comparisons = await legacyClient.entities.DocumentComparison.filter({ 'data.proposal_id': resolvedProposalId }, '-created_date');
           }
           if (comparisons && comparisons.length > 0) {
             comparisonId = comparisons[0].id || comparisonId;
@@ -1173,7 +1173,7 @@ export default function ProposalDetail() {
           console.debug('Invoking evaluation', { functionName, proposalId: resolvedProposalId, comparisonId, payload });
         }
 
-        const response = await base44.functions.invoke(functionName, payload);
+        const response = await legacyClient.functions.invoke(functionName, payload);
 
         // Check if response is valid JSON
         if (!response.data || typeof response.data !== 'object') {
@@ -1239,7 +1239,7 @@ export default function ProposalDetail() {
         null;
 
       if (!evaluationItemId && proposalId) {
-        const linkedItems = await base44.entities.EvaluationItem.filter(
+        const linkedItems = await legacyClient.entities.EvaluationItem.filter(
           { linked_proposal_id: proposalId },
           '-created_date',
           1
@@ -1247,7 +1247,7 @@ export default function ProposalDetail() {
         evaluationItemId = linkedItems?.[0]?.id || null;
       }
 
-      const sendResult = await base44.functions.invoke('SendReportEmailSafe', {
+      const sendResult = await legacyClient.functions.invoke('SendReportEmailSafe', {
         proposalId,
         evaluationItemId,
         documentComparisonId: proposal?.document_comparison_id || null,
@@ -1262,7 +1262,7 @@ export default function ProposalDetail() {
         const baseMessage = sendResult?.data?.message || 'Failed to send report email.';
 
         if (['MISSING_EMAIL_PROVIDER_KEY', 'EMAIL_CONFIG_MISSING', 'EMAIL_CONFIG_INVALID'].includes(errorCode)) {
-          const statusResult = await base44.functions.invoke('EmailConfigStatus', {}).catch(() => null);
+          const statusResult = await legacyClient.functions.invoke('EmailConfigStatus', {}).catch(() => null);
           const config = statusResult?.data;
           const configDetail = config
             ? `Email config: RESEND_API_KEY ${config.hasResendKey ? 'set' : 'missing'}, RESEND_FROM_EMAIL ${config.hasFromEmail ? 'set' : 'missing'}.`
@@ -1302,7 +1302,7 @@ export default function ProposalDetail() {
           ? latestSuccessReport.id
           : null;
 
-      const pdfResult = await base44.functions.invoke('DownloadReportPDF', {
+      const pdfResult = await legacyClient.functions.invoke('DownloadReportPDF', {
         proposalId,
         evaluationReportId: latestEvaluationReportId,
         evaluationItemId: latestEvaluationItemId,
@@ -1346,7 +1346,7 @@ export default function ProposalDetail() {
   const runEvaluationMutation = useMutation({
     mutationFn: async () => {
       // Create evaluation run
-      const evalRun = await base44.entities.EvaluationRun.create({
+      const evalRun = await legacyClient.entities.EvaluationRun.create({
         proposal_id: proposalId,
         run_by_party: isPartyA ? 'a' : 'b',
         run_by_user_id: user.id,
@@ -1371,7 +1371,7 @@ export default function ProposalDetail() {
         7. Summary
       `;
 
-      const result = await base44.integrations.Core.InvokeLLM({
+      const result = await legacyClient.integrations.Core.InvokeLLM({
         prompt,
         response_json_schema: {
           type: 'object',
@@ -1420,13 +1420,13 @@ export default function ProposalDetail() {
       });
 
       // Update evaluation with results
-      await base44.entities.EvaluationRun.update(evalRun.id, {
+      await legacyClient.entities.EvaluationRun.update(evalRun.id, {
         ...result,
         status: 'completed'
       });
 
       // Update proposal with latest score
-      await base44.entities.Proposal.update(proposalId, {
+      await legacyClient.entities.Proposal.update(proposalId, {
         latest_score: result.overall_score,
         latest_evaluation_id: evalRun.id,
         status: proposal.status === 'received' ? 'under_verification' : proposal.status
@@ -1444,21 +1444,21 @@ export default function ProposalDetail() {
   const requestRevealMutation = useMutation({
     mutationFn: async () => {
       const updateField = isPartyA ? 'reveal_requested_by_a' : 'reveal_requested_by_b';
-      await base44.entities.Proposal.update(proposalId, {
+      await legacyClient.entities.Proposal.update(proposalId, {
         [updateField]: true
       });
 
       // Check if mutual reveal is complete
       const otherPartyRequested = isPartyA ? proposal.reveal_requested_by_b : proposal.reveal_requested_by_a;
       if (otherPartyRequested) {
-        await base44.entities.Proposal.update(proposalId, {
+        await legacyClient.entities.Proposal.update(proposalId, {
           mutual_reveal: true,
           status: 'revealed',
           reveal_level_a: 3,
           reveal_level_b: 3
         });
 
-        await base44.entities.RevealEvent.create({
+        await legacyClient.entities.RevealEvent.create({
           proposal_id: proposalId,
           user_id: user.id,
           party: isPartyA ? 'a' : 'b',
@@ -1467,7 +1467,7 @@ export default function ProposalDetail() {
           to_level: 3
         });
       } else {
-        await base44.entities.RevealEvent.create({
+        await legacyClient.entities.RevealEvent.create({
           proposal_id: proposalId,
           user_id: user.id,
           party: isPartyA ? 'a' : 'b',
@@ -1485,7 +1485,7 @@ export default function ProposalDetail() {
   // Express Interest
   const expressInterestMutation = useMutation({
     mutationFn: async () => {
-      await base44.entities.Proposal.update(proposalId, {
+      await legacyClient.entities.Proposal.update(proposalId, {
         status: 'mutual_interest'
       });
     },
@@ -1653,7 +1653,7 @@ export default function ProposalDetail() {
       }
 
       try {
-        const result = await base44.functions.invoke('UpsertSharedRecipientResponses', {
+        const result = await legacyClient.functions.invoke('UpsertSharedRecipientResponses', {
           token: sharedToken,
           responses: payload
         });
@@ -1683,7 +1683,7 @@ export default function ProposalDetail() {
   const runSharedReevaluationMutation = useMutation({
     mutationFn: async () => {
       try {
-        const result = await base44.functions.invoke('RunSharedReportReevaluation', {
+        const result = await legacyClient.functions.invoke('RunSharedReportReevaluation', {
           token: sharedToken
         });
         const data = result?.data;
@@ -1714,7 +1714,7 @@ export default function ProposalDetail() {
       }
 
       try {
-        const result = await base44.functions.invoke('SubmitSharedReportResponse', {
+        const result = await legacyClient.functions.invoke('SubmitSharedReportResponse', {
           token: sharedToken,
           message
         });
@@ -1906,17 +1906,17 @@ export default function ProposalDetail() {
                 <DeleteDraftDialog 
                   onConfirm={async () => {
                     try {
-                      const responses = await base44.entities.ProposalResponse.filter({ proposal_id: proposalId });
-                      const reports = await base44.entities.EvaluationReport.filter({ proposal_id: proposalId });
-                      const attachments = await base44.entities.Attachment.filter({ proposal_id: proposalId });
+                      const responses = await legacyClient.entities.ProposalResponse.filter({ proposal_id: proposalId });
+                      const reports = await legacyClient.entities.EvaluationReport.filter({ proposal_id: proposalId });
+                      const attachments = await legacyClient.entities.Attachment.filter({ proposal_id: proposalId });
                       
                       await Promise.all([
-                        ...responses.map(r => base44.entities.ProposalResponse.delete(r.id)),
-                        ...reports.map(r => base44.entities.EvaluationReport.delete(r.id)),
-                        ...attachments.map(a => base44.entities.Attachment.delete(a.id))
+                        ...responses.map(r => legacyClient.entities.ProposalResponse.delete(r.id)),
+                        ...reports.map(r => legacyClient.entities.EvaluationReport.delete(r.id)),
+                        ...attachments.map(a => legacyClient.entities.Attachment.delete(a.id))
                       ]);
                       
-                      await base44.entities.Proposal.delete(proposalId);
+                      await legacyClient.entities.Proposal.delete(proposalId);
                       navigate(createPageUrl('Proposals'));
                     } catch (error) {
                       console.error('Delete failed:', error);

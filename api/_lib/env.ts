@@ -24,6 +24,7 @@ export function getEnvReadiness() {
     APP_BASE_URL: Boolean(process.env.APP_BASE_URL),
     SESSION_SECRET: Boolean(process.env.SESSION_SECRET),
     GOOGLE_CLIENT_ID: Boolean(getGoogleClientId()),
+    DATABASE_URL: Boolean(process.env.DATABASE_URL),
   };
 }
 
@@ -132,7 +133,12 @@ export function enforceCanonicalRedirect(req: any, res: any, appBaseUrl: string)
 export function respondIfEnvMissing(res: any) {
   const readiness = getEnvReadiness();
 
-  if (readiness.APP_BASE_URL && readiness.SESSION_SECRET && readiness.GOOGLE_CLIENT_ID) {
+  if (
+    readiness.APP_BASE_URL &&
+    readiness.SESSION_SECRET &&
+    readiness.GOOGLE_CLIENT_ID &&
+    readiness.DATABASE_URL
+  ) {
     return false;
   }
 

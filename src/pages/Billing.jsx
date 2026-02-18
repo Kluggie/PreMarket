@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { authClient } from '@/api/authClient';
-import { base44 } from '@/api/base44Client';
+import { legacyClient } from '@/api/legacyClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -24,7 +24,7 @@ export default function Billing() {
     queryKey: ['user', user?.id],
     queryFn: async () => {
       if (!user?.id) return null;
-      const users = await base44.entities.User.filter({ id: user.id });
+      const users = await legacyClient.entities.User.filter({ id: user.id });
       return users[0] || user;
     },
     enabled: !!user?.id
@@ -42,7 +42,7 @@ export default function Billing() {
 
   const cancelMutation = useMutation({
     mutationFn: async () => {
-      const response = await base44.functions.invoke('cancelSubscription');
+      const response = await legacyClient.functions.invoke('cancelSubscription');
       return response.data;
     },
     onSuccess: () => {
@@ -54,7 +54,7 @@ export default function Billing() {
   const handleUpgrade = async () => {
     setIsUpgrading(true);
     try {
-      const response = await base44.functions.invoke('createCheckoutSession');
+      const response = await legacyClient.functions.invoke('createCheckoutSession');
       if (response.data.url) {
         window.location.href = response.data.url;
       }

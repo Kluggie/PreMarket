@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { base44 } from '@/api/base44Client';
+import { legacyClient } from '@/api/legacyClient';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -15,7 +15,7 @@ export default function VerificationView({ proposal, responses, userParty }) {
 
   const verifyMutation = useMutation({
     mutationFn: async ({ responseId, status, note }) => {
-      return await base44.entities.VerificationItem.create({
+      return await legacyClient.entities.VerificationItem.create({
         proposal_id: proposal.id,
         question_id: responseId,
         verified_by_user_id: userParty === 'a' ? proposal.party_a_user_id : proposal.party_b_user_id,

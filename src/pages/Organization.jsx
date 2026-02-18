@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { authClient } from '@/api/authClient';
-import { base44 } from '@/api/base44Client';
+import { legacyClient } from '@/api/legacyClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
@@ -28,7 +28,7 @@ export default function Organization() {
 
   const { data: memberships = [], isLoading: loadingMemberships } = useQuery({
     queryKey: ['memberships', user?.email],
-    queryFn: () => base44.entities.Membership.filter({ user_email: user?.email }),
+    queryFn: () => legacyClient.entities.Membership.filter({ user_email: user?.email }),
     enabled: !!user?.email
   });
 
@@ -37,7 +37,7 @@ export default function Organization() {
     queryFn: async () => {
       if (memberships.length === 0) return [];
       const orgIds = memberships.map(m => m.organization_id);
-      const orgs = await base44.entities.Organization.list();
+      const orgs = await legacyClient.entities.Organization.list();
       return orgs.filter(o => orgIds.includes(o.id));
     },
     enabled: memberships.length > 0
@@ -61,8 +61,8 @@ export default function Organization() {
 
   const createOrgMutation = useMutation({
     mutationFn: async (data) => {
-      const org = await base44.entities.Organization.create(data);
-      await base44.entities.Membership.create({
+      const org = await legacyClient.entities.Organization.create(data);
+      await legacyClient.entities.Membership.create({
         user_id: user.id,
         user_email: user.email,
         organization_id: org.id,
@@ -92,7 +92,7 @@ export default function Organization() {
 
   const updateOrgMutation = useMutation({
     mutationFn: async ({ orgId, data }) => {
-      await base44.entities.Organization.update(orgId, data);
+      await legacyClient.entities.Organization.update(orgId, data);
     },
     onSuccess: () => {
       queryClient.invalidateQueries(['organizations']);

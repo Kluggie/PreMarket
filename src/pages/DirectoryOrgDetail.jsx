@@ -1,7 +1,7 @@
 import React from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { base44 } from '@/api/base44Client';
+import { legacyClient } from '@/api/legacyClient';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -12,7 +12,7 @@ export default function DirectoryOrgDetail() {
   const { data, isLoading, error } = useQuery({
     queryKey: ['publicDirectoryOrg', id],
     queryFn: async () => {
-      const response = await base44.functions.invoke('PublicDirectoryGetDetail', { kind: 'org', id });
+      const response = await legacyClient.functions.invoke('PublicDirectoryGetDetail', { kind: 'org', id });
       return response?.data;
     },
     enabled: !!id,

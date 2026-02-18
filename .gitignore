@@ -35,3 +35,4 @@ csrf.json
 # local curl test artifacts
 cookies.txt
 csrf.json
+.vercel

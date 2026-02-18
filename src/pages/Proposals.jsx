@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { authClient } from '@/api/authClient';
 import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '../utils';
-import { base44 } from '@/api/base44Client';
+import { legacyClient } from '@/api/legacyClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
@@ -251,16 +251,16 @@ async function getActiveShareLinkForRecipient(proposalId) {
     }
 
     const buckets = await Promise.all([
-      base44.entities.ShareLink
+      legacyClient.entities.ShareLink
         .filter({ proposal_id: normalizedProposalId, recipient_email: recipientEmail }, '-created_date', 10)
         .catch(() => []),
-      base44.entities.ShareLink
+      legacyClient.entities.ShareLink
         .filter({ proposalId: normalizedProposalId, recipientEmail: recipientEmail }, '-created_date', 10)
         .catch(() => []),
-      base44.entities.ShareLink
+      legacyClient.entities.ShareLink
         .filter({ proposal_id: normalizedProposalId, recipientEmail: recipientEmail }, '-created_date', 10)
         .catch(() => []),
-      base44.entities.ShareLink
+      legacyClient.entities.ShareLink
         .filter({ proposalId: normalizedProposalId, recipient_email: recipientEmail }, '-created_date', 10)
         .catch(() => [])
     ]);
@@ -304,7 +304,7 @@ async function getActiveShareLinkForRecipient(proposalId) {
   };
 
   try {
-    const result = await base44.functions.invoke('GetActiveShareLinkForRecipient', {
+    const result = await legacyClient.functions.invoke('GetActiveShareLinkForRecipient', {
       proposalId: normalizedProposalId
     });
     const data = result?.data;
@@ -395,14 +395,14 @@ export default function Proposals() {
   const { data: allUserProposals = [], isLoading: loadingAll } = useQuery({
     queryKey: ['proposals', 'all', user?.email],
     queryFn: async () => {
-      const sent = await base44.entities.Proposal.filter({ party_a_email: user?.email }, '-created_date').catch(() => []);
-      const received = await base44.entities.Proposal.filter({ party_b_email: user?.email }, '-created_date').catch(() => []);
+      const sent = await legacyClient.entities.Proposal.filter({ party_a_email: user?.email }, '-created_date').catch(() => []);
+      const received = await legacyClient.entities.Proposal.filter({ party_b_email: user?.email }, '-created_date').catch(() => []);
 
       const snapshotAccessRows = user?.id
         ? (
             await Promise.all([
-              base44.entities.SnapshotAccess.filter({ user_id: user.id }, '-created_date', 300).catch(() => []),
-              base44.entities.SnapshotAccess.filter({ userId: user.id }, '-created_date', 300).catch(() => [])
+              legacyClient.entities.SnapshotAccess.filter({ user_id: user.id }, '-created_date', 300).catch(() => []),
+              legacyClient.entities.SnapshotAccess.filter({ userId: user.id }, '-created_date', 300).catch(() => [])
             ])
           ).flat()
         : [];
@@ -424,7 +424,7 @@ export default function Proposals() {
       const snapshotRows = (
         await Promise.all(
           snapshotIds.map((snapshotId) =>
-            base44.entities.ProposalSnapshot.filter({ id: snapshotId }, '-created_date', 1).catch(() => [])
+            legacyClient.entities.ProposalSnapshot.filter({ id: snapshotId }, '-created_date', 1).catch(() => [])
           )
         )
       ).flat();
@@ -490,7 +490,7 @@ export default function Proposals() {
     queryKey: ['documentComparisons'],
     queryFn: async () => {
       if (!user) return [];
-      return await base44.entities.DocumentComparison.filter({ 
+      return await legacyClient.entities.DocumentComparison.filter({ 
         created_by_user_id: user.id 
       }, '-updated_date');
     },
@@ -505,7 +505,7 @@ export default function Proposals() {
       }
 
       const currentUserEmail = normalizeEmail(user.email);
-      const rows = await base44.entities.ProposalResponse
+      const rows = await legacyClient.entities.ProposalResponse
         .filter({ claim_type: 'recipient_counterproposal' }, '-created_date', 250)
         .catch(() => []);
 
@@ -660,17 +660,17 @@ export default function Proposals() {
 
   const deleteDraftMutation = useMutation({
     mutationFn: async (proposalId) => {
-      const responses = await base44.entities.ProposalResponse.filter({ proposal_id: proposalId });
-      const reports = await base44.entities.EvaluationReport.filter({ proposal_id: proposalId });
-      const attachments = await base44.entities.Attachment.filter({ proposal_id: proposalId });
+      const responses = await legacyClient.entities.ProposalResponse.filter({ proposal_id: proposalId });
+      const reports = await legacyClient.entities.EvaluationReport.filter({ proposal_id: proposalId });
+      const attachments = await legacyClient.entities.Attachment.filter({ proposal_id: proposalId });
       
       await Promise.all([
-        ...responses.map(r => base44.entities.ProposalResponse.delete(r.id)),
-        ...reports.map(r => base44.entities.EvaluationReport.delete(r.id)),
-        ...attachments.map(a => base44.entities.Attachment.delete(a.id))
+        ...responses.map(r => legacyClient.entities.ProposalResponse.delete(r.id)),
+        ...reports.map(r => legacyClient.entities.EvaluationReport.delete(r.id)),
+        ...attachments.map(a => legacyClient.entities.Attachment.delete(a.id))
       ]);
       
-      await base44.entities.Proposal.delete(proposalId);
+      await legacyClient.entities.Proposal.delete(proposalId);
     },
     onSuccess: () => {
       queryClient.invalidateQueries(['proposals']);

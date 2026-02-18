@@ -1,7 +1,7 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '../utils';
-import { base44 } from '@/api/base44Client';
+import { legacyClient } from '@/api/legacyClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -19,14 +19,14 @@ export default function NotificationDropdown({ user }) {
 
   const { data: notifications = [] } = useQuery({
     queryKey: ['notifications', user?.email],
-    queryFn: () => base44.entities.Notification.filter({ user_email: user?.email }, '-created_date', 10),
+    queryFn: () => legacyClient.entities.Notification.filter({ user_email: user?.email }, '-created_date', 10),
     enabled: !!user?.email,
     refetchInterval: 30000 // Refresh every 30 seconds
   });
 
   const markAsReadMutation = useMutation({
     mutationFn: (notificationId) => 
-      base44.entities.Notification.update(notificationId, { read: true }),
+      legacyClient.entities.Notification.update(notificationId, { read: true }),
     onSuccess: () => {
       queryClient.invalidateQueries(['notifications']);
     }
@@ -37,7 +37,7 @@ export default function NotificationDropdown({ user }) {
       const unreadNotifications = notifications.filter(n => !n.read);
       await Promise.all(
         unreadNotifications.map(n => 
-          base44.entities.Notification.update(n.id, { read: true })
+          legacyClient.entities.Notification.update(n.id, { read: true })
         )
       );
     },

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { authClient } from '@/api/authClient';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '../utils';
-import { base44 } from '@/api/base44Client';
+import { legacyClient } from '@/api/legacyClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -28,7 +28,7 @@ export default function Verification() {
   const { data: profile } = useQuery({
     queryKey: ['userProfile', user?.email],
     queryFn: async () => {
-      const profiles = await base44.entities.UserProfile.filter({ user_email: user?.email });
+      const profiles = await legacyClient.entities.UserProfile.filter({ user_email: user?.email });
       return profiles[0] || null;
     },
     enabled: !!user?.email
@@ -38,13 +38,13 @@ export default function Verification() {
     mutationFn: async () => {
       // Send verification email and mark as verified (simplified for demo)
       if (profile) {
-        await base44.entities.UserProfile.update(profile.id, {
+        await legacyClient.entities.UserProfile.update(profile.id, {
           email_verified: true,
           verification_status: 'verified'
         });
       } else {
         // Create profile if doesn't exist
-        await base44.entities.UserProfile.create({
+        await legacyClient.entities.UserProfile.create({
           user_id: user.id,
           user_email: user.email,
           email_verified: true,
@@ -59,9 +59,9 @@ export default function Verification() {
 
   const uploadDocumentMutation = useMutation({
     mutationFn: async (file) => {
-      const { file_url } = await base44.integrations.Core.UploadFile({ file });
+      const { file_url } = await legacyClient.integrations.Core.UploadFile({ file });
       if (profile) {
-        await base44.entities.UserProfile.update(profile.id, {
+        await legacyClient.entities.UserProfile.update(profile.id, {
           document_verified: true
         });
       }

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { createPageUrl } from '../utils';
-import { base44 } from '@/api/base44Client';
+import { legacyClient } from '@/api/legacyClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -48,7 +48,7 @@ export default function TemplateBuilder() {
     queryKey: ['template', templateId],
     queryFn: async () => {
       if (!templateId) return null;
-      const templates = await base44.entities.Template.list();
+      const templates = await legacyClient.entities.Template.list();
       return templates.find(t => t.id === templateId);
     },
     enabled: !!templateId
@@ -63,9 +63,9 @@ export default function TemplateBuilder() {
   const saveTemplateMutation = useMutation({
     mutationFn: async (data) => {
       if (templateId) {
-        return await base44.entities.Template.update(templateId, data);
+        return await legacyClient.entities.Template.update(templateId, data);
       }
-      return await base44.entities.Template.create(data);
+      return await legacyClient.entities.Template.create(data);
     },
     onSuccess: () => {
       queryClient.invalidateQueries(['template']);
@@ -392,7 +392,7 @@ export default function TemplateBuilder() {
                       return;
                     }
                     try {
-                      const result = await base44.functions.invoke('fixUniversalTemplateModules', {});
+                      const result = await legacyClient.functions.invoke('fixUniversalTemplateModules', {});
                       console.log('Auto-tag result:', result);
                       
                       // Invalidate all template queries

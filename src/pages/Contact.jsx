@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { base44 } from '@/api/base44Client';
+import { legacyClient } from '@/api/legacyClient';
 import { useMutation } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -22,7 +22,7 @@ export default function Contact() {
 
   const submitMutation = useMutation({
     mutationFn: async (data) => {
-      return base44.entities.ContactRequest.create({
+      return legacyClient.entities.ContactRequest.create({
         ...data,
         type: 'general',
         status: 'new'

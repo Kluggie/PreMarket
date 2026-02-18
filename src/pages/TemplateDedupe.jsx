@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { base44 } from '@/api/base44Client';
+import { legacyClient } from '@/api/legacyClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -22,7 +22,7 @@ export default function TemplateDedupe() {
 
   const { data: templates = [], isLoading } = useQuery({
     queryKey: ['all-templates'],
-    queryFn: () => base44.entities.Template.list()
+    queryFn: () => legacyClient.entities.Template.list()
   });
 
   // Backfill template_key
@@ -32,7 +32,7 @@ export default function TemplateDedupe() {
         .filter(t => !t.template_key || t.template_key === null)
         .map(t => {
           const templateKey = t.slug || t.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-          return base44.entities.Template.update(t.id, { template_key: templateKey });
+          return legacyClient.entities.Template.update(t.id, { template_key: templateKey });
         });
       
       await Promise.all(updates);
@@ -88,7 +88,7 @@ export default function TemplateDedupe() {
         duplicates.forEach(dup => {
           if (dup.status !== 'archived') {
             archivePromises.push(
-              base44.entities.Template.update(dup.id, { status: 'archived' })
+              legacyClient.entities.Template.update(dup.id, { status: 'archived' })
             );
             archivedCount++;
           }
@@ -108,7 +108,7 @@ export default function TemplateDedupe() {
   const archiveBrokenMutation = useMutation({
     mutationFn: async (templateIds) => {
       const promises = templateIds.map(id =>
-        base44.entities.Template.update(id, { status: 'archived' })
+        legacyClient.entities.Template.update(id, { status: 'archived' })
       );
       await Promise.all(promises);
     },

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { authClient } from '@/api/authClient';
-import { base44 } from '@/api/base44Client';
+import { legacyClient } from '@/api/legacyClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
@@ -30,7 +30,7 @@ export default function Profile() {
   const { data: profile, isLoading } = useQuery({
     queryKey: ['userProfile', user?.email],
     queryFn: async () => {
-      const profiles = await base44.entities.UserProfile.filter({ user_email: user?.email });
+      const profiles = await legacyClient.entities.UserProfile.filter({ user_email: user?.email });
       return profiles[0] || null;
     },
     enabled: !!user?.email
@@ -80,7 +80,7 @@ export default function Profile() {
     mutationFn: async (data) => {
       // Track consent changes in audit log
       if (profile && profile.social_links_ai_consent !== data.social_links_ai_consent) {
-        await base44.entities.AuditLog.create({
+        await legacyClient.entities.AuditLog.create({
           entity_type: 'UserProfile',
           entity_id: profile.id,
           user_id: user.id,
@@ -96,9 +96,9 @@ export default function Profile() {
       }
 
       if (profile) {
-        return base44.entities.UserProfile.update(profile.id, data);
+        return legacyClient.entities.UserProfile.update(profile.id, data);
       } else {
-        return base44.entities.UserProfile.create({
+        return legacyClient.entities.UserProfile.create({
           ...data,
           user_id: user.id,
           user_email: user.email

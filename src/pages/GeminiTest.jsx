@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { authClient } from '@/api/authClient';
-import { base44 } from '@/api/base44Client';
+import { legacyClient } from '@/api/legacyClient';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -36,7 +36,7 @@ export default function GeminiTest() {
         setResult(null);
         
         try {
-            const { data } = await base44.functions.invoke('GenerateContent', {
+            const { data } = await legacyClient.functions.invoke('GenerateContent', {
                 text: 'Reply with exactly: OK'
             });
             setResult(data);

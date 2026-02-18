@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { authClient } from '@/api/authClient';
 import { createPageUrl } from '../utils';
-import { base44 } from '@/api/base44Client';
+import { legacyClient } from '@/api/legacyClient';
 import { useMutation } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
@@ -34,7 +34,7 @@ export default function Pricing() {
 
   const submitSalesMutation = useMutation({
     mutationFn: async (data) => {
-      return base44.entities.ContactRequest.create({
+      return legacyClient.entities.ContactRequest.create({
         ...data,
         type: 'sales',
         reason: 'sales',

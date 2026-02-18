@@ -13,7 +13,7 @@ Phase 1 removes Base44 auth and replaces it with:
 3. GIS returns an ID token to the browser.
 4. Client posts token to `POST /api/auth/google/verify` with CSRF token.
 5. Server verifies token with Google, sets `pm_session`, and returns user JSON.
-6. Client checks session via `GET /api/auth/me`.
+6. Client checks session via `GET /api/auth/me` (this now upserts the user row in Postgres).
 7. Logout clears cookies via `POST /api/auth/logout`.
 
 ## CSRF Pattern
@@ -68,5 +68,5 @@ For GIS ID-token flow, no OAuth redirect URI is required for login.
 1. `GET /api/auth/csrf` returns `{ csrfToken }` and sets `pm_csrf`.
 2. `POST /api/auth/google/verify` without CSRF returns `403`.
 3. `POST /api/auth/google/verify` with valid CSRF + Google token returns `200` and sets `pm_session`.
-4. `GET /api/auth/me` returns `200` after login and `401` after logout.
+4. `GET /api/auth/me` returns `200` after login and `401` after logout, and upserts `users` in DB.
 5. `GET /api/health` reports env readiness without leaking values.

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { authClient } from '@/api/authClient';
 import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '../utils';
-import { base44 } from '@/api/base44Client';
+import { legacyClient } from '@/api/legacyClient';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -38,7 +38,7 @@ export default function ReportViewer() {
         setUser(userData);
 
         // Resolve token
-        const tokenResult = await base44.functions.invoke('ResolveAccessToken', { token });
+        const tokenResult = await legacyClient.functions.invoke('ResolveAccessToken', { token });
         
         if (!tokenResult.data.ok) {
           setError(tokenResult.data.message || tokenResult.data.error);
@@ -57,10 +57,10 @@ export default function ReportViewer() {
         }
 
         // Consume token (increment usage)
-        await base44.functions.invoke('ConsumeAccessToken', { token });
+        await legacyClient.functions.invoke('ConsumeAccessToken', { token });
 
         // Load evaluation item
-        const items = await base44.asServiceRole.entities.EvaluationItem.filter({ 
+        const items = await legacyClient.asServiceRole.entities.EvaluationItem.filter({ 
           id: resolvedToken.evaluationItemId 
         });
         const item = items[0];
@@ -75,7 +75,7 @@ export default function ReportViewer() {
 
         // Load active run if exists
         if (item.active_run_id) {
-          const runs = await base44.asServiceRole.entities.EvaluationRun.filter({ 
+          const runs = await legacyClient.asServiceRole.entities.EvaluationRun.filter({ 
             id: item.active_run_id 
           });
           setEvaluationRun(runs[0]);
@@ -392,7 +392,7 @@ export default function ReportViewer() {
                         }
                         
                         try {
-                          const result = await base44.functions.invoke('SendEvaluationReportEmail', {
+                          const result = await legacyClient.functions.invoke('SendEvaluationReportEmail', {
                             evaluationItemId: evaluationItem.id,
                             toEmail: sendBackEmail,
                             role: 'party_a'

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { createPageUrl } from '../utils';
-import { base44 } from '@/api/base44Client';
+import { legacyClient } from '@/api/legacyClient';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -118,7 +118,7 @@ export default function RecipientEditStep3() {
       setLoading(true);
       setLoadError(null);
       try {
-        const proposalRows = await base44.entities.Proposal.filter({ id: proposalId }, '-created_date', 1);
+        const proposalRows = await legacyClient.entities.Proposal.filter({ id: proposalId }, '-created_date', 1);
         const draftProposal = proposalRows?.[0] || null;
         if (!draftProposal) {
           throw new Error('Draft proposal not found');
@@ -132,7 +132,7 @@ export default function RecipientEditStep3() {
           throw new Error('Draft proposal is missing document comparison id');
         }
 
-        const comparisonRows = await base44.entities.DocumentComparison.filter({ id: comparisonId }, '-created_date', 1);
+        const comparisonRows = await legacyClient.entities.DocumentComparison.filter({ id: comparisonId }, '-created_date', 1);
         const draftComparison = comparisonRows?.[0] || null;
         if (!draftComparison) {
           throw new Error('Draft comparison not found');
@@ -229,7 +229,7 @@ export default function RecipientEditStep3() {
     if (!proposal?.id || !comparison?.id) return;
     setSaving(true);
     try {
-      const result = await base44.functions.invoke('SaveRecipientEditHighlights', {
+      const result = await legacyClient.functions.invoke('SaveRecipientEditHighlights', {
         proposalId: proposal.id,
         docBSpans
       });

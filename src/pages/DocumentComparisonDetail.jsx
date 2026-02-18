@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { authClient } from '@/api/authClient';
 import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '../utils';
-import { base44 } from '@/api/base44Client';
+import { legacyClient } from '@/api/legacyClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
@@ -107,7 +107,7 @@ export default function DocumentComparisonDetail() {
       if (!comparisonId) {
         throw new Error('No comparison ID provided');
       }
-      const comparisons = await base44.entities.DocumentComparison.filter({ id: comparisonId });
+      const comparisons = await legacyClient.entities.DocumentComparison.filter({ id: comparisonId });
       if (!comparisons[0]) {
         throw new Error('Comparison not found');
       }
@@ -123,12 +123,12 @@ export default function DocumentComparisonDetail() {
   const { data: evaluationRuns = [] } = useQuery({
     queryKey: ['evaluationRuns', comparisonId],
     queryFn: async () => {
-      const items = await base44.entities.EvaluationItem.filter({ 
+      const items = await legacyClient.entities.EvaluationItem.filter({ 
         linked_document_comparison_id: comparisonId 
       });
       if (items.length === 0) return [];
       
-      return await base44.entities.EvaluationRun.filter({ 
+      return await legacyClient.entities.EvaluationRun.filter({ 
         evaluation_item_id: items[0].id 
       }, '-created_date');
     },
@@ -151,7 +151,7 @@ export default function DocumentComparisonDetail() {
       const clientCorrelationId = `client_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       
       try {
-        const result = await base44.functions.invoke('EvaluateDocumentComparison', {
+        const result = await legacyClient.functions.invoke('EvaluateDocumentComparison', {
           comparison_id: comparisonId,
           trigger
         });
@@ -197,7 +197,7 @@ export default function DocumentComparisonDetail() {
     const clientCorrelationId = `client_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     
     try {
-      const result = await base44.functions.invoke('SendReportEmailSafe', {
+      const result = await legacyClient.functions.invoke('SendReportEmailSafe', {
         documentComparisonId: comparisonId,
         recipientEmail: recipientEmail
       });
@@ -247,7 +247,7 @@ export default function DocumentComparisonDetail() {
 
   const handleDownloadPDF = async () => {
     try {
-      const result = await base44.functions.invoke('DownloadComparisonPDF', {
+      const result = await legacyClient.functions.invoke('DownloadComparisonPDF', {
         comparisonId
       });
       
@@ -269,7 +269,7 @@ export default function DocumentComparisonDetail() {
 
   const handleDownloadJSON = async () => {
     try {
-      const result = await base44.functions.invoke('DownloadComparisonJSON', {
+      const result = await legacyClient.functions.invoke('DownloadComparisonJSON', {
         comparisonId
       });
       
@@ -291,7 +291,7 @@ export default function DocumentComparisonDetail() {
 
   const handleDownloadInputs = async () => {
     try {
-      const result = await base44.functions.invoke('DownloadComparisonInputs', {
+      const result = await legacyClient.functions.invoke('DownloadComparisonInputs', {
         comparisonId
       });
       
