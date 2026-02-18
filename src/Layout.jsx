@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { authClient } from '@/api/authClient';
+import { Link } from 'react-router-dom';
 import { createPageUrl } from './utils';
-import { base44 } from '@/api/base44Client';
 import { 
   Menu, X, ChevronDown, User, LogOut, Settings, Building2, 
   FileText, LayoutDashboard, Shield, Globe
@@ -15,17 +15,17 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import NotificationDropdown from './components/NotificationDropdown';
+import GoogleSignInButton from '@/components/auth/GoogleSignInButton';
 
 export default function Layout({ children, currentPageName }) {
   const [user, setUser] = useState(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
-  const navigate = useNavigate();
 
   useEffect(() => {
     const loadUser = async () => {
       try {
-        const userData = await base44.auth.me();
+        const userData = await authClient.me();
         setUser(userData);
       } catch (e) {
         setUser(null);
@@ -43,10 +43,12 @@ export default function Layout({ children, currentPageName }) {
   const isLandingPage = currentPageName === 'Landing';
   const isAuthPage = ['Login', 'Signup'].includes(currentPageName);
 
-  const handleLogout = () => {
-    window.location.href = '/';
-    localStorage.clear();
-    sessionStorage.clear();
+  const handleLogout = async () => {
+    try {
+      await authClient.logout('/');
+    } catch {
+      window.location.assign('/');
+    }
   };
 
   const navLinks = user ? [
@@ -192,16 +194,12 @@ export default function Layout({ children, currentPageName }) {
                 </>
               ) : (
                 <>
-                  <Button 
-                    variant="ghost" 
-                    onClick={() => base44.auth.redirectToLogin(createPageUrl('Dashboard'))}
-                    className="text-slate-600 hover:text-slate-900 hidden sm:inline-flex"
-                  >
-                    Sign In
-                  </Button>
-                  <Button 
-                    onClick={() => base44.auth.redirectToLogin(createPageUrl('Dashboard'))}
-                    className="bg-blue-600 hover:bg-blue-700 text-white"
+                  <div className="hidden sm:block">
+                    <GoogleSignInButton returnTo={createPageUrl('Dashboard')} width={210} />
+                  </div>
+                  <Button
+                    onClick={() => authClient.redirectToLogin(createPageUrl('Dashboard'))}
+                    className="bg-blue-600 hover:bg-blue-700 text-white sm:hidden"
                   >
                     {isLandingPage ? 'Get Started' : 'Sign In'}
                   </Button>

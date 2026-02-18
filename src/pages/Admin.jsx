@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { authClient } from '@/api/authClient';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '../utils';
 import { base44 } from '@/api/base44Client';
@@ -28,7 +29,7 @@ export default function Admin() {
   const queryClient = useQueryClient();
 
   useEffect(() => {
-    base44.auth.me().then(setUser);
+    authClient.me().then(setUser);
   }, []);
 
   const { data: allUsers = [] } = useQuery({

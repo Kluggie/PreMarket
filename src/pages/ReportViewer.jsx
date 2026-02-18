@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { authClient } from '@/api/authClient';
 import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '../utils';
 import { base44 } from '@/api/base44Client';
@@ -33,7 +34,7 @@ export default function ReportViewer() {
     const init = async () => {
       try {
         // Check if user is logged in
-        const userData = await base44.auth.me().catch(() => null);
+        const userData = await authClient.me().catch(() => null);
         setUser(userData);
 
         // Resolve token
@@ -121,7 +122,7 @@ export default function ReportViewer() {
               <Button 
                 className="w-full"
                 onClick={() => {
-                  base44.auth.logout();
+                  authClient.logout();
                   window.location.reload();
                 }}
               >
@@ -186,7 +187,7 @@ export default function ReportViewer() {
             <div className="space-y-2">
               <Button 
                 className="w-full bg-blue-600 hover:bg-blue-700"
-                onClick={() => base44.auth.redirectToLogin(`/r/${token}`)}
+                onClick={() => authClient.redirectToLogin(`/r/${token}`)}
               >
                 <LogIn className="w-4 h-4 mr-2" />
                 Log In ({tokenData?.email})
@@ -194,7 +195,7 @@ export default function ReportViewer() {
               <Button 
                 variant="outline"
                 className="w-full"
-                onClick={() => base44.auth.redirectToLogin(`/r/${token}`)}
+                onClick={() => authClient.redirectToLogin(`/r/${token}`)}
               >
                 <UserPlus className="w-4 h-4 mr-2" />
                 Create Account

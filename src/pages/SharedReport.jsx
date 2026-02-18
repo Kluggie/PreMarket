@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { authClient } from '@/api/authClient';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '../utils';
 import { base44 } from '@/api/base44Client';
@@ -1057,7 +1058,7 @@ export default function SharedReport() {
 
   useEffect(() => {
     let active = true;
-    base44.auth.me()
+    authClient.me()
       .then((me) => {
         if (active) setUser(me || null);
       })
@@ -1114,7 +1115,7 @@ export default function SharedReport() {
 
   const handleSignIn = () => {
     const returnPath = `${location.pathname}${location.search}`;
-    base44.auth.redirectToLogin(returnPath);
+    authClient.redirectToLogin(returnPath);
   };
 
   const handleOpenWorkspace = () => {

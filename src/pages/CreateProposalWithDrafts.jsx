@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { authClient } from '@/api/authClient';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { createPageUrl } from '../utils';
 import { base44 } from '@/api/base44Client';
@@ -127,7 +128,7 @@ export default function CreateProposal() {
   });
 
   useEffect(() => {
-    base44.auth.me().then(setUser).catch(() => setUser(null));
+    authClient.me().then(setUser).catch(() => setUser(null));
   }, []);
 
   useEffect(() => {

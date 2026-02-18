@@ -1,9 +1,8 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
+import { authClient } from '@/api/authClient';
 import { createPageUrl } from '../../utils';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { base44 } from '@/api/base44Client';
 import { Sparkles, ArrowRight, User } from 'lucide-react';
 
 export default function GuestProposalBanner({ onCreateAccount }) {
@@ -23,7 +22,7 @@ export default function GuestProposalBanner({ onCreateAccount }) {
             </div>
           </div>
           <Button 
-            onClick={() => base44.auth.redirectToLogin(createPageUrl('Dashboard'))}
+            onClick={() => authClient.redirectToLogin(createPageUrl('Dashboard'))}
             className="bg-white text-blue-600 hover:bg-blue-50 whitespace-nowrap"
           >
             <User className="w-4 h-4 mr-2" />

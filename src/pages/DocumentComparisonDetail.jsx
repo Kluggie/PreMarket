@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { authClient } from '@/api/authClient';
 import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '../utils';
 import { base44 } from '@/api/base44Client';
@@ -97,7 +98,7 @@ export default function DocumentComparisonDetail() {
   const comparisonId = params.get('id');
 
   useEffect(() => {
-    base44.auth.me().then(setUser).catch(() => setUser(null));
+    authClient.me().then(setUser).catch(() => setUser(null));
   }, []);
 
   const { data: comparison, isLoading, error } = useQuery({

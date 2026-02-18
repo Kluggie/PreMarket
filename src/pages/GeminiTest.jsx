@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { authClient } from '@/api/authClient';
 import { base44 } from '@/api/base44Client';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -14,7 +15,7 @@ export default function GeminiTest() {
     useEffect(() => {
         const loadUser = async () => {
             try {
-                const userData = await base44.auth.me();
+                const userData = await authClient.me();
                 setUser(userData);
             } catch (e) {
                 setUser(null);

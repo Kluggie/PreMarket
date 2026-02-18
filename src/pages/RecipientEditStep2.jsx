@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { authClient } from '@/api/authClient';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { createPageUrl } from '../utils';
 import { base44 } from '@/api/base44Client';
@@ -35,7 +36,7 @@ export default function RecipientEditStep2() {
   }, [location.search]);
 
   useEffect(() => {
-    base44.auth.me().then((me) => setUser(me || null)).catch(() => setUser(null));
+    authClient.me().then((me) => setUser(me || null)).catch(() => setUser(null));
   }, []);
 
   useEffect(() => {

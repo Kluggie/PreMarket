@@ -126,6 +126,17 @@ const AuthenticatedApp = ({ isPublicDirectoryRoute }) => {
       navigateToLogin();
       return null;
     }
+
+    return (
+      <div className="fixed inset-0 flex items-center justify-center bg-slate-50 p-6">
+        <div className="max-w-md text-center">
+          <h1 className="text-xl font-semibold text-slate-900">Authentication is unavailable</h1>
+          <p className="mt-2 text-sm text-slate-600">
+            {authError.message || 'Server auth configuration is not ready.'}
+          </p>
+        </div>
+      </div>
+    );
   }
 
   return <PublicRoutes />;

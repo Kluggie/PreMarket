@@ -1,4 +1,5 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
+import { authClient } from '@/api/authClient';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '../utils';
 import { getProposalId } from '@/lib/utils';
@@ -236,7 +237,7 @@ async function getActiveShareLinkForRecipient(proposalId, options = {}) {
     String(value || '').toLowerCase().includes('deployment does not exist');
 
   const resolveFromShareLinks = async () => {
-    const me = await base44.auth.me().catch(() => null);
+    const me = await authClient.me().catch(() => null);
     const recipientEmail = explicitRecipientEmail || normalizeEmail(me?.email);
     if (!recipientEmail) {
       return { ok: false, message: NO_SHARED_WORKSPACE_LINK_MESSAGE };
@@ -631,7 +632,7 @@ export default function ProposalDetail() {
 
   useEffect(() => {
     let active = true;
-    base44.auth.me()
+    authClient.me()
       .then((me) => {
         if (active) setUser(me || null);
       })
@@ -1744,7 +1745,7 @@ export default function ProposalDetail() {
     if (!proposalId) return;
 
     if (!user) {
-      base44.auth.redirectToLogin(window.location.href);
+      authClient.redirectToLogin(window.location.href);
       return;
     }
 

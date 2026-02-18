@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { authClient } from '@/api/authClient';
 import { base44 } from '@/api/base44Client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
@@ -21,7 +22,7 @@ export default function Settings() {
   const queryClient = useQueryClient();
 
   useEffect(() => {
-    base44.auth.me().then(setUser);
+    authClient.me().then(setUser);
   }, []);
 
   const loadEmailConfig = async () => {
@@ -85,7 +86,7 @@ export default function Settings() {
 
   const handleSignOutEverywhere = async () => {
     if (confirm('Are you sure you want to sign out of all devices?')) {
-      await base44.auth.logout();
+      await authClient.logout();
       window.location.href = createPageUrl('Landing');
     }
   };

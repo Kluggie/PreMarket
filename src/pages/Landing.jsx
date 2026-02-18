@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
+import { authClient } from '@/api/authClient';
 import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '../utils';
-import { base44 } from '@/api/base44Client';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import {
@@ -22,7 +22,7 @@ export default function Landing() {
 
   const handleStartFree = async () => {
     // Check if user is authenticated
-    const isAuth = await base44.auth.isAuthenticated();
+    const isAuth = await authClient.isAuthenticated();
     if (isAuth) {
       // Redirect authenticated users directly to Templates
       navigate(createPageUrl('Templates'));
@@ -39,7 +39,7 @@ export default function Landing() {
 
   const handleSignIn = () => {
     setShowCTAModal(false);
-    base44.auth.redirectToLogin(createPageUrl('CreateProposal'));
+    authClient.redirectToLogin(createPageUrl('CreateProposal'));
   };
 
   const features = [

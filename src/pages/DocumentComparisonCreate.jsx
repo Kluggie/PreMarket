@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { authClient } from '@/api/authClient';
 import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '../utils';
 import { base44 } from '@/api/base44Client';
@@ -114,7 +115,7 @@ export default function DocumentComparisonCreate() {
   const docBPreviewRef = React.useRef(null);
 
   useEffect(() => {
-    base44.auth.me().then(setUser).catch(() => setUser(null));
+    authClient.me().then(setUser).catch(() => setUser(null));
   }, []);
 
   useEffect(() => {

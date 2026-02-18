@@ -1,40 +1,48 @@
-**Welcome to your Base44 project** 
+# PreMarket (Vite + React Router)
 
-**About**
+Phase 1 of the Base44 -> Vercel migration introduces Google Identity Services login, server-verified sessions, CSRF protection, and Vercel API routes.
 
-View and Edit  your app on [Base44.com](http://Base44.com) 
+## Runtime
+- Frontend: Vite + React Router (SPA)
+- Backend: Vercel Node serverless routes in `api/`
+- Primary local source of truth: `vercel dev` on `http://localhost:3000`
 
-This project contains everything you need to run your app locally.
+## Environment Variables
 
-**Edit the code in your local development environment**
+### Required (all environments)
+- `APP_BASE_URL`
+- `SESSION_SECRET`
+- `GOOGLE_CLIENT_ID` (or `VITE_GOOGLE_CLIENT_ID`)
+- `VITE_GOOGLE_CLIENT_ID`
 
-Any change pushed to the repo will also be reflected in the Base44 Builder.
+### Recommended values
+- Production: `APP_BASE_URL=https://www.getpremarket.com`
+- Local (`vercel dev`): `APP_BASE_URL=http://localhost:3000`
 
-**Prerequisites:** 
+`SESSION_SECRET` must be set in Vercel for Production, Preview, and Development, and in local `.env.local` for `vercel dev`.
 
-1. Clone the repository using the project's Git URL 
-2. Navigate to the project directory
-3. Install dependencies: `npm install`
-4. Create an `.env.local` file and set the right environment variables
+## Local Development
 
+1. Install dependencies:
+```bash
+npm install
 ```
-VITE_BASE44_APP_ID=your_app_id
-VITE_BASE44_APP_BASE_URL=your_backend_url
 
-e.g.
-VITE_BASE44_APP_ID=cbef744a8545c389ef439ea6
-VITE_BASE44_APP_BASE_URL=https://my-to-do-list-81bfaad7.base44.app
+2. Set env vars in `.env.local`.
+
+3. Run serverless + SPA together (primary):
+```bash
+vercel dev
 ```
 
-Run the app: `npm run dev`
+Optional: run Vite on `:5173` for frontend-only iteration. `/api/*` is proxied to `http://localhost:3000` by `vite.config.js`.
 
-**Publish your changes**
+## Auth/API Endpoints
 
-Open [Base44.com](http://Base44.com) and click on Publish.
+- `GET /api/auth/csrf`
+- `POST /api/auth/google/verify`
+- `GET /api/auth/me`
+- `POST /api/auth/logout`
+- `GET /api/health`
 
-**Docs & Support**
-
-Documentation: [https://docs.base44.com/Integrations/Using-GitHub](https://docs.base44.com/Integrations/Using-GitHub)
-
-Support: [https://app.base44.com/support](https://app.base44.com/support)
-
+See `docs/auth-migration.md` for flow and verification details.

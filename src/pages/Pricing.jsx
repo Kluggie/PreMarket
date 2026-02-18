@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { authClient } from '@/api/authClient';
 import { createPageUrl } from '../utils';
 import { base44 } from '@/api/base44Client';
 import { useMutation } from '@tanstack/react-query';
@@ -123,19 +123,19 @@ export default function Pricing() {
     if (plan.name === 'Enterprise') {
       setShowContactSales(true);
     } else if (plan.name === 'Starter') {
-      base44.auth.redirectToLogin(createPageUrl('Dashboard'));
+      authClient.redirectToLogin(createPageUrl('Dashboard'));
     } else if (plan.name === 'Professional') {
       // Check if user is logged in
       try {
-        const user = await base44.auth.me();
+        const user = await authClient.me();
         if (user) {
           // Redirect to billing page
           window.location.href = createPageUrl('Billing');
         } else {
-          base44.auth.redirectToLogin(createPageUrl('Billing'));
+          authClient.redirectToLogin(createPageUrl('Billing'));
         }
       } catch {
-        base44.auth.redirectToLogin(createPageUrl('Billing'));
+        authClient.redirectToLogin(createPageUrl('Billing'));
       }
     }
   };

@@ -1,0 +1,163 @@
+import { getRequestHost, json } from './http';
+
+export type RuntimeConfig = {
+  appBaseUrl: string;
+  sessionSecret: string;
+  googleClientId: string;
+};
+
+export type SessionConfig = {
+  appBaseUrl: string;
+  sessionSecret: string;
+};
+
+export function getGoogleClientId() {
+  return (
+    process.env.GOOGLE_CLIENT_ID ||
+    process.env.VITE_GOOGLE_CLIENT_ID ||
+    ''
+  ).trim();
+}
+
+export function getEnvReadiness() {
+  return {
+    APP_BASE_URL: Boolean(process.env.APP_BASE_URL),
+    SESSION_SECRET: Boolean(process.env.SESSION_SECRET),
+    GOOGLE_CLIENT_ID: Boolean(getGoogleClientId()),
+  };
+}
+
+export function getRuntimeConfig(): RuntimeConfig {
+  const appBaseUrl = (process.env.APP_BASE_URL || '').trim();
+  const sessionSecret = (process.env.SESSION_SECRET || '').trim();
+  const googleClientId = getGoogleClientId();
+
+  const missing: string[] = [];
+
+  if (!appBaseUrl) {
+    missing.push('APP_BASE_URL');
+  }
+
+  if (!sessionSecret) {
+    missing.push('SESSION_SECRET');
+  }
+
+  if (!googleClientId) {
+    missing.push('GOOGLE_CLIENT_ID');
+  }
+
+  if (missing.length > 0) {
+    throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
+  }
+
+  return {
+    appBaseUrl,
+    sessionSecret,
+    googleClientId,
+  };
+}
+
+export function getSessionConfig(): SessionConfig {
+  const appBaseUrl = (process.env.APP_BASE_URL || '').trim();
+  const sessionSecret = (process.env.SESSION_SECRET || '').trim();
+  const missing: string[] = [];
+
+  if (!appBaseUrl) {
+    missing.push('APP_BASE_URL');
+  }
+
+  if (!sessionSecret) {
+    missing.push('SESSION_SECRET');
+  }
+
+  if (missing.length > 0) {
+    throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
+  }
+
+  return {
+    appBaseUrl,
+    sessionSecret,
+  };
+}
+
+export function isProductionDeployment() {
+  return process.env.VERCEL_ENV === 'production';
+}
+
+export function shouldUseSecureCookies(appBaseUrl: string) {
+  try {
+    const parsed = new URL(appBaseUrl);
+    return parsed.protocol === 'https:';
+  } catch {
+    return process.env.NODE_ENV === 'production';
+  }
+}
+
+export function toCanonicalAppUrl(appBaseUrl: string, returnTo?: unknown) {
+  const canonical = new URL(appBaseUrl);
+
+  if (!returnTo || typeof returnTo !== 'string') {
+    return canonical.toString();
+  }
+
+  try {
+    const parsed = new URL(returnTo, canonical);
+    const path = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+    return new URL(path, canonical).toString();
+  } catch {
+    return canonical.toString();
+  }
+}
+
+export function enforceCanonicalRedirect(req: any, res: any, appBaseUrl: string) {
+  if (!isProductionDeployment()) {
+    return false;
+  }
+
+  const canonical = new URL(appBaseUrl);
+  const requestHost = getRequestHost(req);
+
+  if (!requestHost || requestHost === canonical.host.toLowerCase()) {
+    return false;
+  }
+
+  const target = new URL(req.url || '/', canonical.origin);
+  res.statusCode = 307;
+  res.setHeader('Location', target.toString());
+  res.setHeader('Cache-Control', 'no-store');
+  res.end();
+  return true;
+}
+
+export function respondIfEnvMissing(res: any) {
+  const readiness = getEnvReadiness();
+
+  if (readiness.APP_BASE_URL && readiness.SESSION_SECRET && readiness.GOOGLE_CLIENT_ID) {
+    return false;
+  }
+
+  json(res, 500, {
+    error: 'server_not_configured',
+    env: readiness,
+  });
+
+  return true;
+}
+
+export function respondIfSessionEnvMissing(res: any) {
+  const readiness = getEnvReadiness();
+
+  if (readiness.APP_BASE_URL && readiness.SESSION_SECRET) {
+    return false;
+  }
+
+  json(res, 500, {
+    error: 'server_not_configured',
+    env: {
+      APP_BASE_URL: readiness.APP_BASE_URL,
+      SESSION_SECRET: readiness.SESSION_SECRET,
+    },
+  });
+
+  return true;
+}
