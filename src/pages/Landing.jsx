@@ -12,8 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { 
-  Shield, ArrowRight, CheckCircle2, Lock, Eye, FileText, 
-  Users, Zap, BarChart3, RefreshCw, ChevronRight
+  Shield, ArrowRight, CheckCircle2, Lock, Eye, FileText, BarChart3, RefreshCw
 } from 'lucide-react';
 
 export default function Landing() {

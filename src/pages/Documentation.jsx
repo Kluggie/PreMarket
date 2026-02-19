@@ -4,8 +4,8 @@ import { createPageUrl } from '../utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { 
-  BookOpen, FileText, Users, Shield, BarChart3, 
-  Lock, Eye, ArrowRight, CheckCircle2
+  BookOpen, Users, Shield, BarChart3, 
+  Lock, ArrowRight
 } from 'lucide-react';
 
 export default function Documentation() {

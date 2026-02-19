@@ -1,9 +1,8 @@
 import React, { useEffect } from 'react';
-import { Link } from 'react-router-dom';
 import { createPageUrl } from '../utils';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Shield, Eye, Lock, Users, BarChart3, ArrowRight } from 'lucide-react';
+import { Shield, Eye, Lock, BarChart3, ArrowRight } from 'lucide-react';
 
 export default function About() {
   useEffect(() => {
