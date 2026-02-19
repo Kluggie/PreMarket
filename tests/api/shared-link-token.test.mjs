@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import proposalsHandler from '../../api/proposals/index.ts';
-import sharedLinksCreateHandler from '../../api/shared-links/index.ts';
-import sharedLinkReadHandler from '../../api/shared-links/[token].ts';
+import proposalsHandler from '../../server/routes/proposals/index.ts';
+import sharedLinksCreateHandler from '../../server/routes/shared-links/index.ts';
+import sharedLinkReadHandler from '../../server/routes/shared-links/[token].ts';
 import { ensureTestEnv, makeSessionCookie } from '../helpers/auth.mjs';
 import { ensureMigrated, hasDatabaseUrl, resetTables } from '../helpers/db.mjs';
 import { createMockReq, createMockRes } from '../helpers/httpMock.mjs';
@@ -64,7 +64,7 @@ if (!hasDatabaseUrl()) {
       },
     });
     const readShareRes = createMockRes();
-    await sharedLinkReadHandler(readShareReq, readShareRes);
+    await sharedLinkReadHandler(readShareReq, readShareRes, createdShare.token);
 
     assert.equal(readShareRes.statusCode, 200);
     const readPayload = readShareRes.jsonBody();

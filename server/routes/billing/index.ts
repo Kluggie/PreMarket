@@ -1,9 +1,9 @@
 import { eq } from 'drizzle-orm';
-import { ok } from '../_lib/api-response.js';
-import { requireUser } from '../_lib/auth.js';
-import { getDb, schema } from '../_lib/db/client.js';
-import { readJsonBody } from '../_lib/http.js';
-import { ensureMethod, withApiRoute } from '../_lib/route.js';
+import { ok } from '../../_lib/api-response.js';
+import { requireUser } from '../../_lib/auth.js';
+import { getDb, schema } from '../../_lib/db/client.js';
+import { readJsonBody } from '../../_lib/http.js';
+import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 
 function mapBilling(row) {
   return {

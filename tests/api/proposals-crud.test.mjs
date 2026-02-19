@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import proposalsHandler from '../../api/proposals/index.ts';
-import proposalDetailHandler from '../../api/proposals/[id].ts';
+import proposalsHandler from '../../server/routes/proposals/index.ts';
+import proposalDetailHandler from '../../server/routes/proposals/[id].ts';
 import { ensureTestEnv, makeSessionCookie } from '../helpers/auth.mjs';
 import { ensureMigrated, hasDatabaseUrl, resetTables } from '../helpers/db.mjs';
 import { createMockReq, createMockRes } from '../helpers/httpMock.mjs';
@@ -62,7 +62,7 @@ if (!hasDatabaseUrl()) {
       query: { id: proposalId },
     });
     const getRes = createMockRes();
-    await proposalDetailHandler(getReq, getRes);
+    await proposalDetailHandler(getReq, getRes, proposalId);
 
     assert.equal(getRes.statusCode, 200);
     const getPayload = getRes.jsonBody();
@@ -76,7 +76,7 @@ if (!hasDatabaseUrl()) {
       body: { title: 'Owner Proposal Updated', status: 'sent' },
     });
     const updateRes = createMockRes();
-    await proposalDetailHandler(updateReq, updateRes);
+    await proposalDetailHandler(updateReq, updateRes, proposalId);
 
     assert.equal(updateRes.statusCode, 200);
     const updatePayload = updateRes.jsonBody();
@@ -95,7 +95,7 @@ if (!hasDatabaseUrl()) {
       query: { id: proposalId },
     });
     const nonOwnerRes = createMockRes();
-    await proposalDetailHandler(nonOwnerReq, nonOwnerRes);
+    await proposalDetailHandler(nonOwnerReq, nonOwnerRes, proposalId);
 
     assert.equal(nonOwnerRes.statusCode, 404);
 
@@ -106,7 +106,7 @@ if (!hasDatabaseUrl()) {
       query: { id: proposalId },
     });
     const deleteRes = createMockRes();
-    await proposalDetailHandler(deleteReq, deleteRes);
+    await proposalDetailHandler(deleteReq, deleteRes, proposalId);
 
     assert.equal(deleteRes.statusCode, 200);
     assert.equal(deleteRes.jsonBody().deleted, true);

@@ -1,12 +1,16 @@
 import { eq } from 'drizzle-orm';
-import { ok } from '../_lib/api-response.js';
-import { assertProposalOwnership, requireUser } from '../_lib/auth.js';
-import { getDb, schema } from '../_lib/db/client.js';
-import { ApiError } from '../_lib/errors.js';
-import { readJsonBody } from '../_lib/http.js';
-import { ensureMethod, withApiRoute } from '../_lib/route.js';
+import { ok } from '../../_lib/api-response.js';
+import { assertProposalOwnership, requireUser } from '../../_lib/auth.js';
+import { getDb, schema } from '../../_lib/db/client.js';
+import { ApiError } from '../../_lib/errors.js';
+import { readJsonBody } from '../../_lib/http.js';
+import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 
-function getProposalId(req: any) {
+function getProposalId(req: any, proposalIdParam?: string) {
+  if (proposalIdParam && proposalIdParam.trim().length > 0) {
+    return proposalIdParam.trim();
+  }
+
   const rawId = Array.isArray(req.query?.id) ? req.query.id[0] : req.query?.id;
   return String(rawId || '').trim();
 }
@@ -27,11 +31,11 @@ function mapProposalRow(proposal, ownerEmail) {
   };
 }
 
-export default async function handler(req: any, res: any) {
+export default async function handler(req: any, res: any, proposalIdParam?: string) {
   await withApiRoute(req, res, '/api/proposals/[id]', async (context) => {
     ensureMethod(req, ['GET', 'PATCH', 'DELETE']);
 
-    const proposalId = getProposalId(req);
+    const proposalId = getProposalId(req, proposalIdParam);
     if (!proposalId) {
       throw new ApiError(400, 'invalid_input', 'Proposal id is required');
     }

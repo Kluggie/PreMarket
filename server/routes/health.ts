@@ -1,7 +1,7 @@
 import { sql } from 'drizzle-orm';
-import { getDb, hasDatabaseUrl } from './_lib/db/client.js';
-import { getEnvReadiness } from './_lib/env.js';
-import { json, methodNotAllowed } from './_lib/http.js';
+import { getDb, hasDatabaseUrl } from '../_lib/db/client.js';
+import { getEnvReadiness } from '../_lib/env.js';
+import { json, methodNotAllowed } from '../_lib/http.js';
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'GET') {

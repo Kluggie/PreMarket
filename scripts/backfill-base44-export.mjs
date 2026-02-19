@@ -3,7 +3,7 @@ import path from 'node:path';
 import dotenv from 'dotenv';
 import { neon } from '@neondatabase/serverless';
 import { drizzle } from 'drizzle-orm/neon-http';
-import { schema } from '../api/_lib/db/client.js';
+import { schema } from '../server/_lib/db/client.js';
 
 dotenv.config({ path: '.env.local' });
 dotenv.config();

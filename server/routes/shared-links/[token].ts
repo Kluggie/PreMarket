@@ -1,10 +1,14 @@
 import { and, eq, sql } from 'drizzle-orm';
-import { fail, ok } from '../_lib/api-response.js';
-import { getDb, schema } from '../_lib/db/client.js';
-import { ApiError } from '../_lib/errors.js';
-import { ensureMethod, withApiRoute } from '../_lib/route.js';
+import { ok } from '../../_lib/api-response.js';
+import { getDb, schema } from '../../_lib/db/client.js';
+import { ApiError } from '../../_lib/errors.js';
+import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 
-function getToken(req: any) {
+function getToken(req: any, tokenParam?: string) {
+  if (tokenParam && tokenParam.trim().length > 0) {
+    return tokenParam.trim();
+  }
+
   const rawToken = Array.isArray(req.query?.token) ? req.query.token[0] : req.query?.token;
   return String(rawToken || '').trim();
 }
@@ -43,11 +47,11 @@ function mapLink(row, proposal) {
   };
 }
 
-export default async function handler(req: any, res: any) {
+export default async function handler(req: any, res: any, tokenParam?: string) {
   await withApiRoute(req, res, '/api/shared-links/[token]', async (context) => {
     ensureMethod(req, ['GET']);
 
-    const token = getToken(req);
+    const token = getToken(req, tokenParam);
     if (!token) {
       throw new ApiError(400, 'invalid_input', 'Token is required');
     }

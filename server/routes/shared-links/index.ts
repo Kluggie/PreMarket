@@ -1,11 +1,11 @@
 import { and, desc, eq } from 'drizzle-orm';
-import { fail, ok } from '../_lib/api-response.js';
-import { assertProposalOwnership, requireUser } from '../_lib/auth.js';
-import { getDb, schema } from '../_lib/db/client.js';
-import { ApiError } from '../_lib/errors.js';
-import { readJsonBody } from '../_lib/http.js';
-import { newId, newToken } from '../_lib/ids.js';
-import { ensureMethod, withApiRoute } from '../_lib/route.js';
+import { ok } from '../../_lib/api-response.js';
+import { assertProposalOwnership, requireUser } from '../../_lib/auth.js';
+import { getDb, schema } from '../../_lib/db/client.js';
+import { ApiError } from '../../_lib/errors.js';
+import { readJsonBody } from '../../_lib/http.js';
+import { newId, newToken } from '../../_lib/ids.js';
+import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 
 function mapLink(row, proposal) {
   return {

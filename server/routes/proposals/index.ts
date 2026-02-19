@@ -1,11 +1,11 @@
 import { and, desc, eq, sql } from 'drizzle-orm';
-import { ok } from '../_lib/api-response.js';
-import { requireUser } from '../_lib/auth.js';
-import { getDb, schema } from '../_lib/db/client.js';
-import { ApiError } from '../_lib/errors.js';
-import { readJsonBody } from '../_lib/http.js';
-import { newId } from '../_lib/ids.js';
-import { ensureMethod, withApiRoute } from '../_lib/route.js';
+import { ok } from '../../_lib/api-response.js';
+import { requireUser } from '../../_lib/auth.js';
+import { getDb, schema } from '../../_lib/db/client.js';
+import { ApiError } from '../../_lib/errors.js';
+import { readJsonBody } from '../../_lib/http.js';
+import { newId } from '../../_lib/ids.js';
+import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 
 function mapProposalRow(proposal, ownerEmail) {
   return {
