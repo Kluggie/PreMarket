@@ -36,3 +36,4 @@ csrf.json
 cookies.txt
 csrf.json
 .vercel
+vercel.local.json
