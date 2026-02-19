@@ -1,7 +1,7 @@
 # Auth Migration (Phase 1)
 
 ## Scope
-Phase 1 removes Base44 auth and replaces it with:
+Phase 1 removes legacy platform auth and replaces it with:
 - Google Identity Services (GIS) client login
 - Server-side Google ID token verification
 - Signed HTTP-only cookie sessions (`pm_session`)

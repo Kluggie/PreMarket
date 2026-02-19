@@ -1,13 +1,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const ROOTS = ['src', 'api'];
+const ROOTS = ['src', 'api', 'server'];
 const FILE_EXTENSIONS = new Set(['.js', '.jsx', '.ts', '.tsx', '.json']);
 const FORBIDDEN_PATTERNS = [
   { label: 'legacyClient', regex: /\blegacyClient\b/ },
   { label: '/api/entities/', regex: /\/api\/entities\// },
-  { label: '@base44', regex: /@base44/i },
-  { label: 'base44', regex: /\bbase44\b/i },
+  { label: 'legacy_vendor_namespace', regex: /@b[a]se44/i },
+  { label: 'legacy_vendor_text', regex: /\bb[a]se44\b/i },
+  { label: 'legacy_vendor_request_factory', regex: /createClientFromReq[u]est\(/ },
+  { label: 'legacy_vendor_entity_create', regex: /createEntit[y]\(/ },
+  { label: 'legacy_vendor_npm_ref', regex: /npm:@b[a]se44/i },
 ];
 
 function walk(directory, files = []) {
@@ -51,11 +54,11 @@ for (const root of ROOTS) {
 }
 
 if (matches.length > 0) {
-  console.error('Forbidden legacy references detected in src/ or api/:');
+  console.error('Forbidden legacy references detected in src/, api/, or server/:');
   matches.forEach((match) => {
     console.error(`- ${match}`);
   });
   process.exit(1);
 }
 
-console.log('No forbidden legacy references found in src/ and api/.');
+console.log('No forbidden legacy references found in src/, api/, and server/.');

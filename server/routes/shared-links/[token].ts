@@ -1,6 +1,7 @@
 import { and, eq, sql } from 'drizzle-orm';
 import { ok } from '../../_lib/api-response.js';
 import { getDb, schema } from '../../_lib/db/client.js';
+import { toCanonicalAppUrl } from '../../_lib/env.js';
 import { ApiError } from '../../_lib/errors.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 
@@ -21,10 +22,22 @@ function isExpired(expiresAt) {
   return new Date(expiresAt).getTime() < Date.now();
 }
 
+function buildSharedReportUrl(token: string) {
+  const appBaseUrl = String(process.env.APP_BASE_URL || '').trim();
+  const returnPath = `/SharedReport?token=${encodeURIComponent(String(token || ''))}`;
+
+  if (!appBaseUrl) {
+    return returnPath;
+  }
+
+  return toCanonicalAppUrl(appBaseUrl, returnPath);
+}
+
 function mapLink(row, proposal) {
   return {
     id: row.id,
     token: row.token,
+    url: buildSharedReportUrl(row.token),
     proposalId: row.proposalId,
     status: row.status,
     recipientEmail: row.recipientEmail,

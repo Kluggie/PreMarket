@@ -24,7 +24,7 @@ export default function handler(req: any, res: any) {
   }
 
   const csrfToken = mintCsrfToken(sessionConfig.sessionSecret);
-  const secure = shouldUseSecureCookies(sessionConfig.appBaseUrl);
+  const secure = shouldUseSecureCookies(req, sessionConfig.appBaseUrl);
   setCsrfCookie(res, csrfToken, secure);
 
   json(res, 200, { csrfToken });

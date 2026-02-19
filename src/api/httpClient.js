@@ -1,7 +1,5 @@
 function parseJsonSafely(response) {
-  return response
-    .json()
-    .catch(() => ({}));
+  return response.json().catch(() => ({}));
 }
 
 function toError(response, body) {
@@ -15,13 +13,21 @@ function toError(response, body) {
 }
 
 export async function request(path, options = {}) {
+  const headers = new Headers(options.headers || undefined);
+
+  // Only set JSON content-type if caller didn't provide and body isn't FormData
+  const isFormData =
+    typeof FormData !== 'undefined' && options.body instanceof FormData;
+  const method = String(options.method || 'GET').toUpperCase();
+
+  if (!headers.has('Content-Type') && !isFormData && method !== 'GET' && options.body != null) {
+    headers.set('Content-Type', 'application/json');
+  }
+
   const response = await fetch(path, {
-    credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options.headers || {}),
-    },
     ...options,
+    credentials: 'include',
+    headers,
   });
 
   const body = await parseJsonSafely(response);

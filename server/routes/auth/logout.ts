@@ -25,7 +25,7 @@ export default function handler(req: any, res: any) {
     return;
   }
 
-  const secure = shouldUseSecureCookies(config.appBaseUrl);
+  const secure = shouldUseSecureCookies(req, config.appBaseUrl);
   clearSessionCookie(res, secure);
   clearCsrfCookie(res, secure);
 

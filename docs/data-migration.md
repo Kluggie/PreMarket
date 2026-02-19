@@ -1,7 +1,7 @@
 # Data Migration (Phase 2)
 
 ## Scope
-Phase 2 migrates core durable state from Base44 Entities to Neon Postgres + Drizzle for these flows:
+Phase 2 migrates core durable state from legacy entities to Neon Postgres + Drizzle for these flows:
 
 - Auth user upsert on `GET /api/auth/me`
 - Proposals: create/list/view/update/delete
@@ -71,8 +71,8 @@ Route wiring updated in `src/pages.config.js`.
 ## Backfill Strategy
 
 ### Idempotent Backfill Script
-- Script: `scripts/backfill-base44-export.mjs`
-- Input: JSON export (`data/base44-export.json` by default)
+- Script: `scripts/backfill-legacy-export.mjs`
+- Input: JSON export (`data/legacy-export.json` by default)
 - Behavior: upsert into `users`, `proposals`, `shared_links`, `billing_references`
 - Safe to re-run due conflict upserts.
 
@@ -98,5 +98,5 @@ Optional import hooks can be added later via admin-only scripts using the same u
 npm run db:migrate
 npm run db:smoke
 npm run test:api
-npm run guard:no-base44
+npm run guard:no-legacy
 ```

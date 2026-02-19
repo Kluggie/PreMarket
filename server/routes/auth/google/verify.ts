@@ -106,7 +106,7 @@ export default async function handler(req: any, res: any) {
   try {
     const googleUser = await verifyGoogleIdToken(idToken, config.googleClientId);
     const sessionToken = createSessionToken(googleUser, config.sessionSecret);
-    const secure = shouldUseSecureCookies(config.appBaseUrl);
+    const secure = shouldUseSecureCookies(req, config.appBaseUrl);
     const redirectTo = toCanonicalAppUrl(config.appBaseUrl, body.returnTo);
 
     setSessionCookie(res, sessionToken, secure);

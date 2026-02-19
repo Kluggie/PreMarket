@@ -52,7 +52,7 @@ npm run dev
 npm run db:migrate
 npm run db:smoke
 npm run test:api
-npm run guard:no-base44
+npm run guard:no-legacy
 ```
 
 ## Docs

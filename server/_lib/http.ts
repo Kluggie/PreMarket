@@ -15,9 +15,88 @@ export function methodNotAllowed(res: any, allowed: string[]) {
   res.end(JSON.stringify({ error: 'method_not_allowed' }));
 }
 
+function toBufferChunk(chunk: unknown) {
+  if (Buffer.isBuffer(chunk)) {
+    return chunk;
+  }
+
+  if (typeof chunk === 'string') {
+    return Buffer.from(chunk);
+  }
+
+  if (chunk instanceof Uint8Array) {
+    return Buffer.from(chunk);
+  }
+
+  return Buffer.from(String(chunk || ''));
+}
+
+export async function readRawBody(req: any): Promise<Buffer> {
+  if (Buffer.isBuffer(req?.rawBody)) {
+    return req.rawBody;
+  }
+
+  if (req?.rawBody instanceof Uint8Array) {
+    return Buffer.from(req.rawBody);
+  }
+
+  if (typeof req?.rawBody === 'string') {
+    return Buffer.from(req.rawBody, 'utf8');
+  }
+
+  if (Buffer.isBuffer(req?.body)) {
+    return req.body;
+  }
+
+  if (req?.body instanceof Uint8Array) {
+    return Buffer.from(req.body);
+  }
+
+  if (typeof req?.body === 'string') {
+    return Buffer.from(req.body, 'utf8');
+  }
+
+  if (req && typeof req.on === 'function') {
+    const streamed = await new Promise<Buffer>((resolve, reject) => {
+      const chunks: Buffer[] = [];
+
+      req.on('data', (chunk: unknown) => {
+        chunks.push(toBufferChunk(chunk));
+      });
+
+      req.on('end', () => {
+        resolve(Buffer.concat(chunks));
+      });
+
+      req.on('error', (error: unknown) => {
+        reject(error);
+      });
+    });
+
+    if (streamed.length > 0) {
+      return streamed;
+    }
+  }
+
+  if (req?.body && typeof req.body === 'object' && !req.body.on) {
+    return Buffer.from(JSON.stringify(req.body), 'utf8');
+  }
+
+  return Buffer.alloc(0);
+}
+
 export async function readJsonBody(req: any): Promise<Record<string, unknown>> {
   if (!req?.body) {
-    return {};
+    const raw = await readRawBody(req);
+    if (!raw.length) {
+      return {};
+    }
+
+    try {
+      return JSON.parse(raw.toString('utf8') || '{}');
+    } catch {
+      return {};
+    }
   }
 
   if (typeof req.body === 'string') {

@@ -1,4 +1,4 @@
-import { getRequestHost, json } from './http.js';
+import { getRequestHost, getRequestProtocol, json } from './http.js';
 
 export type RuntimeConfig = {
   appBaseUrl: string;
@@ -85,7 +85,26 @@ export function isProductionDeployment() {
   return process.env.VERCEL_ENV === 'production';
 }
 
-export function shouldUseSecureCookies(appBaseUrl: string) {
+function isLocalhostHost(host: string) {
+  const normalized = String(host || '').trim().toLowerCase();
+  const hostname = normalized.startsWith('[')
+    ? normalized.slice(1, normalized.indexOf(']'))
+    : normalized.split(':')[0];
+
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+}
+
+export function shouldUseSecureCookies(req: any, appBaseUrl: string) {
+  const requestHost = getRequestHost(req);
+  if (isLocalhostHost(requestHost)) {
+    return false;
+  }
+
+  const requestProtocol = getRequestProtocol(req);
+  if (requestProtocol === 'http') {
+    return false;
+  }
+
   try {
     const parsed = new URL(appBaseUrl);
     return parsed.protocol === 'https:';

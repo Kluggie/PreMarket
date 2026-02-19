@@ -1,13 +1,16 @@
 import { fail } from '../server/_lib/api-response.js';
 import healthHandler from '../server/routes/health.js';
+import stripeWebhookHandler from '../server/routes/stripeWebhook.js';
 import authMeHandler from '../server/routes/auth/me.js';
 import authLogoutHandler from '../server/routes/auth/logout.js';
 import authCsrfHandler from '../server/routes/auth/csrf.js';
 import authGoogleVerifyHandler from '../server/routes/auth/google/verify.js';
+import emailSendHandler from '../server/routes/email/send.js';
 import proposalsHandler from '../server/routes/proposals/index.js';
 import proposalsIdHandler from '../server/routes/proposals/[id].js';
 import sharedLinksHandler from '../server/routes/shared-links/index.js';
 import sharedLinksTokenHandler from '../server/routes/shared-links/[token].js';
+import vertexSmokeHandler from '../server/routes/vertex/smoke.js';
 import billingHandler from '../server/routes/billing/index.js';
 import notificationsHandler from '../server/routes/notifications/index.js';
 import notificationsIdHandler from '../server/routes/notifications/[id].js';
@@ -64,6 +67,10 @@ export default async function handler(req: any, res: any) {
     return healthHandler(req, res);
   }
 
+  if (pathname === '/api/stripeWebhook' && method === 'POST') {
+    return stripeWebhookHandler(req, res);
+  }
+
   if (pathname === '/api/auth/me' && method === 'GET') {
     return authMeHandler(req, res);
   }
@@ -78,6 +85,14 @@ export default async function handler(req: any, res: any) {
 
   if (pathname === '/api/auth/google/verify' && method === 'POST') {
     return authGoogleVerifyHandler(req, res);
+  }
+
+  if (pathname === '/api/email/send' && method === 'POST') {
+    return emailSendHandler(req, res);
+  }
+
+  if (pathname === '/api/vertex/smoke' && method === 'POST') {
+    return vertexSmokeHandler(req, res);
   }
 
   if (pathname === '/api/proposals' && (method === 'GET' || method === 'POST')) {

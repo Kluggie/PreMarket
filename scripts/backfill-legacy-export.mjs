@@ -28,7 +28,7 @@ function toDate(value) {
 async function run() {
   const argvPath = process.argv[2];
   const cwd = process.cwd();
-  const defaultPath = path.resolve(cwd, 'data/base44-export.json');
+  const defaultPath = path.resolve(cwd, 'data/legacy-export.json');
   const inputPath = argvPath ? path.resolve(cwd, argvPath) : defaultPath;
 
   const raw = await fs.readFile(inputPath, 'utf8');

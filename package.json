@@ -1,5 +1,5 @@
 {
-  "name": "base44-app",
+  "name": "premarket-app",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -14,8 +14,9 @@
     "db:generate": "drizzle-kit generate --name phase2_update",
     "db:migrate": "node scripts/db-migrate.mjs",
     "db:smoke": "node scripts/db-smoke.mjs",
-    "backfill:base44": "node scripts/backfill-base44-export.mjs",
-    "test:api": "tsx --test --test-concurrency=1 tests/api/*.test.mjs",
+    "backfill:legacy": "node scripts/backfill-legacy-export.mjs",
+    "test:api": "node scripts/test-api-local-smoke.mjs",
+    "test:api:integration": "tsx --test --test-concurrency=1 tests/api/*.test.mjs",
     "guard:no-legacy": "node scripts/guard-no-legacy.mjs",
     "guard:no-base44": "node scripts/guard-no-base44.mjs",
     "check:no-legacy": "npm run guard:no-legacy",
