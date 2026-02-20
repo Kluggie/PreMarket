@@ -77,8 +77,35 @@ export const templates = pgTable(
   },
   (table) => ({
     templatesUserIdx: index('templates_user_idx').on(table.userId, table.createdAt),
+    templatesUserSlugUnique: uniqueIndex('templates_user_slug_unique').on(table.userId, table.slug),
+    templatesSlugIdx: index('templates_slug_idx').on(table.slug),
     templatesStatusIdx: index('templates_status_idx').on(table.status),
     templatesCategoryIdx: index('templates_category_idx').on(table.category),
+  }),
+);
+
+export const contactRequests = pgTable(
+  'contact_requests',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    email: text('email').notNull(),
+    reason: text('reason').notNull().default('request'),
+    type: text('type').notNull().default('general'),
+    status: text('status').notNull().default('new'),
+    message: text('message').notNull(),
+    emailAttempted: boolean('email_attempted').notNull().default(false),
+    emailSent: boolean('email_sent').notNull().default(false),
+    metadata: jsonb('metadata').notNull().default(sql`'{}'::jsonb`),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    contactRequestsUserIdx: index('contact_requests_user_idx').on(table.userId, table.createdAt),
+    contactRequestsStatusIdx: index('contact_requests_status_idx').on(table.status, table.createdAt),
   }),
 );
 

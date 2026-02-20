@@ -51,7 +51,7 @@ import About from './pages/About';
 import Admin from './pages/Admin';
 import Billing from './pages/db/BillingDb';
 import Contact from './pages/Contact';
-import CreateProposal from './pages/db/CreateProposalDb';
+import CreateProposal from './pages/CreateProposal';
 import CreateProposalWithDrafts from './pages/CreateProposalWithDrafts';
 import Dashboard from './pages/Dashboard';
 import Directory from './pages/Directory';

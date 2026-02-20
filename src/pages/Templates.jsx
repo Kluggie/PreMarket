@@ -1,8 +1,8 @@
-import React, { useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import React, { useState } from 'react';
+import { Link } from 'react-router-dom';
+import { createPageUrl } from '../utils';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
-import { createPageUrl } from '@/utils';
 import { templatesClient } from '@/api/templatesClient';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -21,8 +21,18 @@ import {
   Database,
   Shield,
   Zap,
-  Loader2,
+  Settings,
 } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
 
 const iconMap = {
   m_and_a: Building2,
@@ -41,52 +51,48 @@ function normalizeStatus(value) {
 }
 
 export default function Templates() {
-  const navigate = useNavigate();
-  const [activeTemplateId, setActiveTemplateId] = useState(null);
+  const [showCustomRequest, setShowCustomRequest] = useState(false);
+  const [customFormData, setCustomFormData] = useState({ name: '', email: '', message: '' });
+  const [submitted, setSubmitted] = useState(false);
 
-  const { data: templates = [], isLoading } = useQuery({
+  const { data: templates = [] } = useQuery({
     queryKey: ['templates'],
     queryFn: () => templatesClient.list(),
   });
 
-  const useTemplateMutation = useMutation({
-    mutationFn: async (template) => {
-      const idempotencyKey = `use_template:${template.id}:${Date.now()}`;
-      return templatesClient.useTemplate(template.id, { idempotencyKey });
-    },
-    onSuccess: ({ proposal }) => {
-      if (proposal?.id) {
-        navigate(createPageUrl(`ProposalDetail?id=${encodeURIComponent(proposal.id)}`));
-      } else {
-        navigate(createPageUrl('Proposals'));
-      }
-    },
-    onSettled: () => {
-      setActiveTemplateId(null);
+  const customTemplateMutation = useMutation({
+    mutationFn: (payload) => templatesClient.submitCustomRequest(payload),
+    onSuccess: () => {
+      setSubmitted(true);
+      setTimeout(() => {
+        setShowCustomRequest(false);
+        setSubmitted(false);
+        setCustomFormData({ name: '', email: '', message: '' });
+      }, 1500);
     },
   });
 
-  const displayTemplates = useMemo(() => {
-    return templates
-      .filter((template) => {
-        const status = normalizeStatus(template.status);
-        return status === 'active' || status === 'published' || status === 'coming_soon';
-      })
-      .sort((a, b) => {
-        const left = Number(a.sort_order || 0);
-        const right = Number(b.sort_order || 0);
-        if (left !== right) return left - right;
-        return String(a.name || '').localeCompare(String(b.name || ''));
-      });
-  }, [templates]);
-
-  const handleUseTemplate = (template) => {
-    if (!template?.id || useTemplateMutation.isPending) {
-      return;
+  const incrementViewCount = async (templateId) => {
+    try {
+      await templatesClient.recordView(templateId);
+    } catch {
+      // Silently fail - non-critical parity behavior.
     }
-    setActiveTemplateId(template.id);
-    useTemplateMutation.mutate(template);
   };
+
+  const handleCustomTemplateRequest = async (event) => {
+    event.preventDefault();
+    await customTemplateMutation.mutateAsync({
+      name: customFormData.name,
+      email: customFormData.email,
+      message: `Custom Template Request: ${customFormData.message}`,
+    });
+  };
+
+  const displayTemplates = templates.filter((template) => {
+    const status = normalizeStatus(template.status);
+    return status === 'published' || status === 'active';
+  });
 
   return (
     <div className="min-h-screen bg-slate-50 py-8">
@@ -121,15 +127,7 @@ export default function Templates() {
         <div>
           <h2 className="text-xl font-semibold text-slate-900 mb-4">Proposal Templates</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {isLoading ? (
-              <div className="col-span-full">
-                <Card className="border-0 shadow-sm text-center py-16">
-                  <CardContent>
-                    <p className="text-slate-600">Loading templates...</p>
-                  </CardContent>
-                </Card>
-              </div>
-            ) : displayTemplates.length === 0 ? (
+            {displayTemplates.length === 0 ? (
               <div className="col-span-full">
                 <Card className="border-0 shadow-sm text-center py-16">
                   <CardContent>
@@ -138,8 +136,11 @@ export default function Templates() {
                     <p className="text-slate-600 mb-6">
                       Create your first template to structure pre-qualification proposals.
                     </p>
-                    <Link to={createPageUrl('TemplateBuilder')}>
-                      <Button className="bg-blue-600 hover:bg-blue-700">Create Your First Template</Button>
+                    <Link to={createPageUrl('Admin')}>
+                      <Button className="bg-blue-600 hover:bg-blue-700">
+                        <Settings className="w-4 h-4 mr-2" />
+                        Create Your First Template
+                      </Button>
                     </Link>
                   </CardContent>
                 </Card>
@@ -148,14 +149,13 @@ export default function Templates() {
               displayTemplates.map((template, index) => {
                 const Icon = iconMap[template.category] || FileText;
                 const isComingSoon = normalizeStatus(template.status) === 'coming_soon';
-                const isSubmitting = useTemplateMutation.isPending && activeTemplateId === template.id;
 
                 return (
                   <motion.div
                     key={template.id}
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: index * 0.05 }}
+                    transition={{ delay: index * 0.1 }}
                   >
                     <Card
                       className={`h-full border-0 shadow-sm hover:shadow-lg transition-all duration-300 flex flex-col ${
@@ -185,9 +185,7 @@ export default function Templates() {
                         </div>
 
                         <h3 className="text-lg font-semibold text-slate-900 mb-2">{template.name}</h3>
-                        <p className="text-slate-600 text-sm mb-4 line-clamp-3 flex-1">
-                          {template.description || 'No description available.'}
-                        </p>
+                        <p className="text-slate-600 text-sm mb-4 line-clamp-3 flex-1">{template.description}</p>
 
                         <div className="flex items-center gap-3 mb-4 text-xs text-slate-500">
                           <span className="px-2 py-1 bg-slate-100 rounded">
@@ -206,23 +204,15 @@ export default function Templates() {
                               Coming Soon
                             </Button>
                           ) : (
-                            <Button
-                              onClick={() => handleUseTemplate(template)}
-                              className="w-full bg-slate-900 hover:bg-slate-800"
-                              disabled={isSubmitting}
-                            >
-                              {isSubmitting ? (
-                                <>
-                                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                  Creating Draft...
-                                </>
-                              ) : (
-                                <>
-                                  Use Template
-                                  <ArrowRight className="w-4 h-4 ml-2" />
-                                </>
-                              )}
-                            </Button>
+                            <Link to={createPageUrl(`CreateProposal?template=${encodeURIComponent(template.id)}`)}>
+                              <Button
+                                onClick={() => incrementViewCount(template.id)}
+                                className="w-full bg-slate-900 hover:bg-slate-800"
+                              >
+                                Use Template
+                                <ArrowRight className="w-4 h-4 ml-2" />
+                              </Button>
+                            </Link>
                           )}
                         </div>
                       </CardContent>
@@ -233,6 +223,95 @@ export default function Templates() {
             )}
           </div>
         </div>
+
+        <div className="mt-12 text-center">
+          <Card className="border-dashed border-2 border-slate-200 bg-white/50">
+            <CardContent className="py-12">
+              <FileText className="w-12 h-12 text-slate-400 mx-auto mb-4" />
+              <h3 className="text-lg font-semibold text-slate-900 mb-2">Need a Custom Template?</h3>
+              <p className="text-slate-600 mb-6 max-w-md mx-auto">
+                Contact us to create industry-specific templates tailored to your pre-qualification needs.
+              </p>
+              <Button variant="outline" onClick={() => setShowCustomRequest(true)}>
+                Request Custom Template
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+
+        <Dialog open={showCustomRequest} onOpenChange={setShowCustomRequest}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Request Custom Template</DialogTitle>
+              <DialogDescription>
+                Tell us about your pre-qualification needs and we'll create a template for you.
+              </DialogDescription>
+            </DialogHeader>
+
+            {submitted ? (
+              <div className="py-8 text-center">
+                <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-4">
+                  <CheckCircle2 className="w-8 h-8 text-green-600" />
+                </div>
+                <h3 className="text-lg font-semibold text-slate-900 mb-2">Request Sent!</h3>
+                <p className="text-slate-600">We'll contact you within 24 hours.</p>
+              </div>
+            ) : (
+              <form onSubmit={handleCustomTemplateRequest} className="space-y-4 py-4">
+                <div className="space-y-2">
+                  <Label htmlFor="custom-name">Name *</Label>
+                  <Input
+                    id="custom-name"
+                    required
+                    value={customFormData.name}
+                    onChange={(event) =>
+                      setCustomFormData((prev) => ({
+                        ...prev,
+                        name: event.target.value,
+                      }))
+                    }
+                    placeholder="Your name"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="custom-email">Email *</Label>
+                  <Input
+                    id="custom-email"
+                    type="email"
+                    required
+                    value={customFormData.email}
+                    onChange={(event) =>
+                      setCustomFormData((prev) => ({
+                        ...prev,
+                        email: event.target.value,
+                      }))
+                    }
+                    placeholder="you@example.com"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="custom-message">Template Requirements *</Label>
+                  <Textarea
+                    id="custom-message"
+                    required
+                    value={customFormData.message}
+                    onChange={(event) =>
+                      setCustomFormData((prev) => ({
+                        ...prev,
+                        message: event.target.value,
+                      }))
+                    }
+                    placeholder="Describe your use case and what fields/criteria you need..."
+                    className="min-h-[100px]"
+                  />
+                </div>
+                <Button type="submit" className="w-full bg-blue-600 hover:bg-blue-700" disabled={customTemplateMutation.isPending}>
+                  {customTemplateMutation.isPending ? 'Submitting...' : 'Submit Request'}
+                </Button>
+              </form>
+            )}
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );

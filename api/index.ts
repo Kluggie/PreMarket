@@ -8,6 +8,7 @@ import authGoogleVerifyHandler from '../server/routes/auth/google/verify.js';
 import emailSendHandler from '../server/routes/email/send.js';
 import proposalsHandler from '../server/routes/proposals/index.js';
 import proposalsIdHandler from '../server/routes/proposals/[id].js';
+import proposalResponsesHandler from '../server/routes/proposals/[id]/responses.js';
 import sharedLinksHandler from '../server/routes/shared-links/index.js';
 import sharedLinksTokenHandler from '../server/routes/shared-links/[token].js';
 import vertexSmokeHandler from '../server/routes/vertex/smoke.js';
@@ -18,8 +19,10 @@ import appLogsHandler from '../server/routes/app-logs/index.js';
 import verificationItemsHandler from '../server/routes/verification-items/index.js';
 import dashboardSummaryHandler from '../server/routes/dashboard/summary.js';
 import dashboardActivityHandler from '../server/routes/dashboard/activity.js';
+import contactRequestsHandler from '../server/routes/contact-requests/index.js';
 import templatesHandler from '../server/routes/templates/index.js';
 import templatesUseHandler from '../server/routes/templates/[id]/use.js';
+import templatesViewHandler from '../server/routes/templates/[id]/view.js';
 
 type VercelRequest = {
   method?: string;
@@ -121,10 +124,26 @@ export default async function handler(req: any, res: any) {
     return templatesHandler(req, res);
   }
 
+  if (pathname === '/api/contact-requests' && method === 'POST') {
+    return contactRequestsHandler(req, res);
+  }
+
+  const proposalResponsesMatch = pathname.match(/^\/api\/proposals\/([^/]+)\/responses$/);
+  if (proposalResponsesMatch && ['GET', 'PUT'].includes(method)) {
+    const id = decodeURIComponent(proposalResponsesMatch[1]);
+    return proposalResponsesHandler(req, res, id);
+  }
+
   const templatesUseMatch = pathname.match(/^\/api\/templates\/([^/]+)\/use$/);
   if (templatesUseMatch && method === 'POST') {
     const id = decodeURIComponent(templatesUseMatch[1]);
     return templatesUseHandler(req, res, id);
+  }
+
+  const templatesViewMatch = pathname.match(/^\/api\/templates\/([^/]+)\/view$/);
+  if (templatesViewMatch && method === 'POST') {
+    const id = decodeURIComponent(templatesViewMatch[1]);
+    return templatesViewHandler(req, res, id);
   }
 
   if (pathname === '/api/shared-links' && (method === 'GET' || method === 'POST')) {

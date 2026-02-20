@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, or, sql } from 'drizzle-orm';
 import { ok } from '../../../_lib/api-response.js';
 import { requireUser } from '../../../_lib/auth.js';
 import { getDb, schema } from '../../../_lib/db/client.js';
@@ -48,10 +48,10 @@ function buildFallbackQuestions(templateDefinition) {
     const questions = Array.isArray(section?.questions) ? section.questions : [];
 
     return questions.map((question) => ({
-      id: `${templateDefinition.id}:${sectionKey || 'section'}:${String(question.key || 'question')}`,
+      id: String(question.key || '').trim() || `${templateDefinition.id}:${sectionKey || 'section'}`,
       sectionId: sectionKey,
       valueType: question.valueType || 'text',
-      visibilityDefault: 'full',
+      visibilityDefault: question.visibilityDefault || 'full',
     }));
   });
 }
@@ -90,7 +90,16 @@ export default async function handler(req: any, res: any, templateIdParam?: stri
     }
 
     const effectiveTemplateId = template?.id || fallbackTemplate.id;
+    const templateMetadata =
+      template && template.metadata && typeof template.metadata === 'object' ? template.metadata : {};
+
+    const metadataTemplateKey =
+      typeof templateMetadata?.template_key === 'string' && templateMetadata.template_key.trim().length > 0
+        ? templateMetadata.template_key.trim()
+        : null;
+
     const effectiveTemplateSlug = template?.slug || fallbackTemplate.slug;
+    const effectiveTemplateKey = metadataTemplateKey || fallbackTemplate.templateKey || effectiveTemplateSlug;
     const effectiveTemplateCategory = template?.category || fallbackTemplate.category;
     const effectiveTemplateName = template?.name || fallbackTemplate.name;
     const effectiveTemplateDescription = template?.description || fallbackTemplate.description || null;
@@ -125,6 +134,7 @@ export default async function handler(req: any, res: any, templateIdParam?: stri
     const proposalId = newId('proposal');
     const proposalPayload = {
       template_slug: effectiveTemplateSlug,
+      template_key: effectiveTemplateKey,
       template_category: effectiveTemplateCategory,
       template_use_idempotency_key: idempotencyKey,
     };
@@ -155,7 +165,7 @@ export default async function handler(req: any, res: any, templateIdParam?: stri
           .select()
           .from(schema.templateQuestions)
           .where(eq(schema.templateQuestions.templateId, template.id))
-          .orderBy(schema.templateQuestions.sortOrder)
+          .orderBy(asc(schema.templateQuestions.sortOrder), asc(schema.templateQuestions.createdAt))
       : buildFallbackQuestions(fallbackTemplate);
 
     if (templateQuestions.length > 0) {
@@ -164,7 +174,7 @@ export default async function handler(req: any, res: any, templateIdParam?: stri
           id: newId('response'),
           proposalId: createdProposal.id,
           userId: auth.user.id,
-          questionId: question.id,
+          questionId: question.questionKey || question.id,
           sectionId: question.sectionId || null,
           value: null,
           valueType: question.valueType || 'text',

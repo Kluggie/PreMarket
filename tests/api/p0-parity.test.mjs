@@ -3,9 +3,12 @@ import test from 'node:test';
 import { sql } from 'drizzle-orm';
 import dashboardSummaryHandler from '../../server/routes/dashboard/summary.ts';
 import dashboardActivityHandler from '../../server/routes/dashboard/activity.ts';
+import contactRequestsHandler from '../../server/routes/contact-requests/index.ts';
 import proposalsHandler from '../../server/routes/proposals/index.ts';
 import templatesHandler from '../../server/routes/templates/index.ts';
 import templateUseHandler from '../../server/routes/templates/[id]/use.ts';
+import templateViewHandler from '../../server/routes/templates/[id]/view.ts';
+import proposalResponsesHandler from '../../server/routes/proposals/[id]/responses.ts';
 import { ensureTestEnv, makeSessionCookie } from '../helpers/auth.mjs';
 import { ensureMigrated, getDb, hasDatabaseUrl, resetTables } from '../helpers/db.mjs';
 import { createMockReq, createMockRes } from '../helpers/httpMock.mjs';
@@ -224,7 +227,31 @@ if (!hasDatabaseUrl()) {
     const listPayload = listRes.jsonBody();
     assert.equal(listPayload.ok, true);
     assert.equal(Array.isArray(listPayload.templates), true);
-    assert.equal(listPayload.templates.length > 0, true);
+    assert.equal(listPayload.templates.length >= 3, true);
+
+    const names = new Set(listPayload.templates.map((template) => template.name));
+    assert.equal(names.has('Universal Enterprise Onboarding'), true);
+    assert.equal(names.has('Universal Finance Deal Pre-Qual'), true);
+    assert.equal(names.has('Universal Profile Matching'), true);
+    assert.equal(names.has('M&A Pre-Qualification'), false);
+    assert.equal(names.has('Talent Acquisition Pre-Qualification'), false);
+
+    const enterpriseTemplate = listPayload.templates.find(
+      (template) => template.slug === 'universal_enterprise_onboarding',
+    );
+    assert.equal(Boolean(enterpriseTemplate), true);
+
+    const viewReq = createMockReq({
+      method: 'POST',
+      url: `/api/templates/${enterpriseTemplate.id}/view`,
+      headers: { cookie: ownerCookie },
+      query: { id: enterpriseTemplate.id },
+      body: {},
+    });
+    const viewRes = createMockRes();
+    await templateViewHandler(viewReq, viewRes, enterpriseTemplate.id);
+    assert.equal(viewRes.statusCode, 200);
+    assert.equal(viewRes.jsonBody().template.view_count >= 1, true);
 
     const [template] = listPayload.templates;
     assert.equal(Boolean(template?.id), true);
@@ -297,5 +324,84 @@ if (!hasDatabaseUrl()) {
 
     assert.equal(Number(snapshotRows.rows?.[0]?.count || 0) >= 1, true);
     assert.equal(Number(responseRows.rows?.[0]?.count || 0) >= 1, true);
+
+    const saveResponsesReq = createMockReq({
+      method: 'PUT',
+      url: `/api/proposals/${proposalId}/responses`,
+      headers: { cookie: ownerCookie },
+      query: { id: proposalId },
+      body: {
+        responses: [
+          {
+            question_id: 'mode',
+            value: 'Investor Fit',
+            value_type: 'text',
+            entered_by_party: 'a',
+            visibility: 'full',
+          },
+          {
+            question_id: 'target_sector_counterparty',
+            value: 'Fintech',
+            value_type: 'text',
+            entered_by_party: 'b',
+            visibility: 'full',
+          },
+        ],
+      },
+    });
+    const saveResponsesRes = createMockRes();
+    await proposalResponsesHandler(saveResponsesReq, saveResponsesRes, proposalId);
+    assert.equal(saveResponsesRes.statusCode, 200);
+    assert.equal(saveResponsesRes.jsonBody().responses.length, 2);
+
+    const getResponsesReq = createMockReq({
+      method: 'GET',
+      url: `/api/proposals/${proposalId}/responses`,
+      headers: { cookie: ownerCookie },
+      query: { id: proposalId },
+    });
+    const getResponsesRes = createMockRes();
+    await proposalResponsesHandler(getResponsesReq, getResponsesRes, proposalId);
+    assert.equal(getResponsesRes.statusCode, 200);
+    const getResponsesPayload = getResponsesRes.jsonBody();
+    assert.equal(getResponsesPayload.responses.some((row) => row.question_id === 'mode'), true);
+    assert.equal(
+      getResponsesPayload.responses.some(
+        (row) => row.question_id === 'target_sector_counterparty' && row.entered_by_party === 'b',
+      ),
+      true,
+    );
+  });
+
+  test('custom template request persists even when email integration is unavailable', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = getCookie('p0_contact_owner', 'owner@example.com');
+
+    const req = createMockReq({
+      method: 'POST',
+      url: '/api/contact-requests',
+      headers: { cookie: ownerCookie },
+      body: {
+        name: 'Owner Person',
+        email: 'owner@example.com',
+        message: 'Please build a custom template for procurement onboarding.',
+      },
+    });
+    const res = createMockRes();
+    await contactRequestsHandler(req, res);
+
+    assert.equal(res.statusCode, 201);
+    const payload = res.jsonBody();
+    assert.equal(payload.ok, true);
+    assert.equal(Boolean(payload.request?.id), true);
+    assert.equal(['db', 'email'].includes(payload.delivery), true);
+
+    const db = getDb();
+    const rows = await db.execute(
+      sql`select count(*)::int as count from contact_requests where user_id = 'p0_contact_owner'`,
+    );
+    assert.equal(Number(rows.rows?.[0]?.count || 0), 1);
   });
 }

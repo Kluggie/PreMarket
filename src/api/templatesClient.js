@@ -25,4 +25,24 @@ export const templatesClient = {
       idempotent: Boolean(response.idempotent),
     };
   },
+
+  async recordView(templateId) {
+    const response = await request(`/api/templates/${encodeURIComponent(String(templateId || ''))}/view`, {
+      method: 'POST',
+    });
+
+    return response.template || null;
+  },
+
+  async submitCustomRequest(input = {}) {
+    const response = await request('/api/contact-requests', {
+      method: 'POST',
+      body: JSON.stringify(input || {}),
+    });
+
+    return {
+      request: response.request || null,
+      delivery: response.delivery || 'db',
+    };
+  },
 };

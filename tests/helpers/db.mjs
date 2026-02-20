@@ -51,6 +51,7 @@ export async function resetTables() {
   const db = getDb();
   await db.execute(
     sql`truncate table
+      contact_requests,
       snapshot_access,
       proposal_snapshots,
       proposal_responses,

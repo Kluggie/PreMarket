@@ -74,4 +74,20 @@ export const proposalsClient = {
       method: 'DELETE',
     });
   },
+
+  async getResponses(id) {
+    const response = await request(`/api/proposals/${encodeURIComponent(String(id || ''))}/responses`);
+    return response.responses || [];
+  },
+
+  async saveResponses(id, responses = []) {
+    const response = await request(`/api/proposals/${encodeURIComponent(String(id || ''))}/responses`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        responses: Array.isArray(responses) ? responses : [],
+      }),
+    });
+
+    return response.responses || [];
+  },
 };
