@@ -17,16 +17,16 @@ export default async function handler(req: any, res: any) {
   await withApiRoute(req, res, '/api/email/send', async (context) => {
     ensureMethod(req, ['POST']);
 
+    const resend = getResendConfig();
+    if (!resend.ready) {
+      throw new ApiError(501, 'not_configured', 'Email integration is not configured');
+    }
+
     const auth = await requireUser(req, res);
     if (!auth.ok) {
       return;
     }
     context.userId = auth.user.id;
-
-    const resend = getResendConfig();
-    if (!resend.ready) {
-      throw new ApiError(500, 'server_not_configured', 'Email integration is not configured');
-    }
 
     const body = await readJsonBody(req);
     const to = asText(body.to || body.recipientEmail || body.recipient_email);

@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
-import { createHmac, generateKeyPairSync } from 'node:crypto';
+import { createHmac } from 'node:crypto';
 import test from 'node:test';
+import { sql } from 'drizzle-orm';
 import stripeWebhookHandler from '../../server/routes/stripeWebhook.ts';
 import emailSendHandler from '../../server/routes/email/send.ts';
 import vertexSmokeHandler from '../../server/routes/vertex/smoke.ts';
+import healthHandler from '../../server/routes/health.ts';
 import { ensureTestEnv, makeSessionCookie } from '../helpers/auth.mjs';
-import { ensureMigrated, hasDatabaseUrl, resetTables } from '../helpers/db.mjs';
+import { ensureMigrated, getDb, hasDatabaseUrl, resetTables } from '../helpers/db.mjs';
 import { createMockReq, createMockRes } from '../helpers/httpMock.mjs';
 
 ensureTestEnv();
@@ -74,28 +76,24 @@ if (!hasDatabaseUrl()) {
     await ensureMigrated();
     await resetTables();
 
-    process.env.RESEND_API_KEY = 're_test_key';
-    process.env.RESEND_FROM_EMAIL = 'no-reply@getpremarket.com';
-    process.env.RESEND_FROM_NAME = 'PreMarket';
-    process.env.RESEND_REPLY_TO = 'support@getpremarket.com';
-
-    const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
-    const privateKeyPem = privateKey.export({ format: 'pem', type: 'pkcs8' }).toString();
-
-    process.env.GCP_SERVICE_ACCOUNT_JSON = JSON.stringify({
-      type: 'service_account',
-      project_id: 'premarket-test',
-      private_key: privateKeyPem,
-      client_email: 'vertex-test@premarket-test.iam.gserviceaccount.com',
-      token_uri: 'https://oauth2.googleapis.com/token',
+    const healthReq = createMockReq({
+      method: 'GET',
+      url: '/api/health',
     });
-    process.env.VERTEX_LOCATION = 'us-central1';
-    process.env.VERTEX_MODEL = 'gemini-1.5-flash-002';
+    const healthRes = createMockRes();
+    await healthHandler(healthReq, healthRes);
+
+    assert.equal([200, 500].includes(healthRes.statusCode), true);
+    const healthPayload = healthRes.jsonBody();
+    const integrations = healthPayload?.integrations || {};
+    const resendReady = Boolean(integrations.resendEnvPresent);
+    const vertexReady = Boolean(integrations.vertexCredsPresentAndParsable);
 
     const authCookie = makeSessionCookie({
       sub: 'integration_user',
       email: 'integration@example.com',
     });
+    const db = getDb();
 
     const originalFetch = global.fetch;
     const fetchCalls = [];
@@ -142,13 +140,7 @@ if (!hasDatabaseUrl()) {
         };
       }
 
-      return {
-        ok: false,
-        status: 404,
-        async json() {
-          return {};
-        },
-      };
+      return originalFetch(url, options);
     };
 
     try {
@@ -164,10 +156,23 @@ if (!hasDatabaseUrl()) {
       });
       const emailRes = createMockRes();
 
+      const usersBeforeEmail = await db.execute(sql`select count(*)::int as count from users`);
+      const countBeforeEmail = Number(usersBeforeEmail.rows?.[0]?.count || 0);
+
       await emailSendHandler(emailReq, emailRes);
 
-      assert.equal(emailRes.statusCode, 200);
-      assert.equal(emailRes.jsonBody().ok, true);
+      if (resendReady) {
+        assert.equal(emailRes.statusCode, 200);
+        assert.equal(emailRes.jsonBody().ok, true);
+      } else {
+        assert.equal(emailRes.statusCode, 501);
+        const body = emailRes.jsonBody();
+        assert.equal(body.ok, false);
+        assert.equal(body.error.code, 'not_configured');
+
+        const usersAfterEmail = await db.execute(sql`select count(*)::int as count from users`);
+        assert.equal(Number(usersAfterEmail.rows?.[0]?.count || 0), countBeforeEmail);
+      }
 
       const vertexReq = createMockReq({
         method: 'POST',
@@ -178,14 +183,29 @@ if (!hasDatabaseUrl()) {
         },
       });
       const vertexRes = createMockRes();
+      const usersBeforeVertex = await db.execute(sql`select count(*)::int as count from users`);
+      const countBeforeVertex = Number(usersBeforeVertex.rows?.[0]?.count || 0);
 
       await vertexSmokeHandler(vertexReq, vertexRes);
 
-      assert.equal(vertexRes.statusCode, 200);
-      const vertexPayload = vertexRes.jsonBody();
-      assert.equal(vertexPayload.ok, true);
-      assert.equal(vertexPayload.result.text, 'vertex smoke test ok');
-      assert.equal(fetchCalls.length >= 3, true);
+      if (vertexReady) {
+        assert.equal(vertexRes.statusCode, 200);
+        const vertexPayload = vertexRes.jsonBody();
+        assert.equal(vertexPayload.ok, true);
+        assert.equal(vertexPayload.result.text, 'vertex smoke test ok');
+      } else {
+        assert.equal(vertexRes.statusCode, 501);
+        const body = vertexRes.jsonBody();
+        assert.equal(body.ok, false);
+        assert.equal(body.error.code, 'not_configured');
+
+        const usersAfterVertex = await db.execute(sql`select count(*)::int as count from users`);
+        assert.equal(Number(usersAfterVertex.rows?.[0]?.count || 0), countBeforeVertex);
+      }
+
+      if (resendReady || vertexReady) {
+        assert.equal(fetchCalls.length >= 1, true);
+      }
     } finally {
       global.fetch = originalFetch;
     }

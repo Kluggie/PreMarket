@@ -49,5 +49,18 @@ export async function ensureMigrated() {
 
 export async function resetTables() {
   const db = getDb();
-  await db.execute(sql`truncate table shared_links, proposals, billing_references, users restart identity cascade`);
+  await db.execute(
+    sql`truncate table
+      snapshot_access,
+      proposal_snapshots,
+      proposal_responses,
+      template_questions,
+      template_sections,
+      templates,
+      shared_links,
+      proposals,
+      billing_references,
+      users
+      restart identity cascade`,
+  );
 }

@@ -88,16 +88,16 @@ export default async function handler(req: any, res: any) {
   await withApiRoute(req, res, '/api/vertex/smoke', async (context) => {
     ensureMethod(req, ['POST']);
 
+    const vertex = getVertexConfig();
+    if (!vertex.ready || !vertex.credentials) {
+      throw new ApiError(501, 'not_configured', 'Vertex AI integration is not configured');
+    }
+
     const auth = await requireUser(req, res);
     if (!auth.ok) {
       return;
     }
     context.userId = auth.user.id;
-
-    const vertex = getVertexConfig();
-    if (!vertex.ready || !vertex.credentials) {
-      throw new ApiError(500, 'server_not_configured', 'Vertex AI integration is not configured');
-    }
 
     const body = await readJsonBody(req);
     const prompt = typeof body.prompt === 'string' && body.prompt.trim().length > 0

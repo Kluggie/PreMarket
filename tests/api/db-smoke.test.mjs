@@ -24,5 +24,11 @@ if (!hasDatabaseUrl()) {
     assert.equal(tableNames.has('proposals'), true);
     assert.equal(tableNames.has('shared_links'), true);
     assert.equal(tableNames.has('billing_references'), true);
+    assert.equal(tableNames.has('templates'), true);
+    assert.equal(tableNames.has('template_sections'), true);
+    assert.equal(tableNames.has('template_questions'), true);
+    assert.equal(tableNames.has('proposal_responses'), true);
+    assert.equal(tableNames.has('proposal_snapshots'), true);
+    assert.equal(tableNames.has('snapshot_access'), true);
   });
 }

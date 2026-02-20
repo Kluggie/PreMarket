@@ -37,6 +37,7 @@ export const proposals = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     title: text('title').notNull(),
     status: text('status').notNull().default('draft'),
+    templateId: text('template_id'),
     templateName: text('template_name'),
     partyAEmail: text('party_a_email'),
     partyBEmail: text('party_b_email'),
@@ -48,6 +49,193 @@ export const proposals = pgTable(
   (table) => ({
     proposalsUserCreatedIdx: index('proposals_user_created_idx').on(table.userId, table.createdAt),
     proposalsStatusIdx: index('proposals_status_idx').on(table.status),
+    proposalsPartyAEmailIdx: index('proposals_party_a_email_idx').on(table.partyAEmail, table.createdAt),
+    proposalsPartyBEmailIdx: index('proposals_party_b_email_idx').on(table.partyBEmail, table.createdAt),
+  }),
+);
+
+export const templates = pgTable(
+  'templates',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    description: text('description'),
+    slug: text('slug'),
+    category: text('category').notNull().default('custom'),
+    status: text('status').notNull().default('active'),
+    partyALabel: text('party_a_label').notNull().default('Party A'),
+    partyBLabel: text('party_b_label').notNull().default('Party B'),
+    isTool: boolean('is_tool').notNull().default(false),
+    viewCount: integer('view_count').notNull().default(0),
+    sortOrder: integer('sort_order').notNull().default(0),
+    metadata: jsonb('metadata').notNull().default(sql`'{}'::jsonb`),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    templatesUserIdx: index('templates_user_idx').on(table.userId, table.createdAt),
+    templatesStatusIdx: index('templates_status_idx').on(table.status),
+    templatesCategoryIdx: index('templates_category_idx').on(table.category),
+  }),
+);
+
+export const templateSections = pgTable(
+  'template_sections',
+  {
+    id: text('id').primaryKey(),
+    templateId: text('template_id')
+      .notNull()
+      .references(() => templates.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    sectionKey: text('section_key'),
+    title: text('title').notNull(),
+    description: text('description'),
+    sortOrder: integer('sort_order').notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    templateSectionsTemplateIdx: index('template_sections_template_idx').on(
+      table.templateId,
+      table.sortOrder,
+    ),
+    templateSectionsUserIdx: index('template_sections_user_idx').on(table.userId, table.createdAt),
+  }),
+);
+
+export const templateQuestions = pgTable(
+  'template_questions',
+  {
+    id: text('id').primaryKey(),
+    templateId: text('template_id')
+      .notNull()
+      .references(() => templates.id, { onDelete: 'cascade' }),
+    sectionId: text('section_id').references(() => templateSections.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    questionKey: text('question_key').notNull(),
+    label: text('label').notNull(),
+    description: text('description'),
+    fieldType: text('field_type').notNull().default('text'),
+    valueType: text('value_type').notNull().default('text'),
+    required: boolean('required').notNull().default(false),
+    visibilityDefault: text('visibility_default').notNull().default('full'),
+    sortOrder: integer('sort_order').notNull().default(0),
+    options: jsonb('options').notNull().default(sql`'[]'::jsonb`),
+    metadata: jsonb('metadata').notNull().default(sql`'{}'::jsonb`),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    templateQuestionsTemplateIdx: index('template_questions_template_idx').on(
+      table.templateId,
+      table.sortOrder,
+    ),
+    templateQuestionsSectionIdx: index('template_questions_section_idx').on(
+      table.sectionId,
+      table.sortOrder,
+    ),
+    templateQuestionsUserIdx: index('template_questions_user_idx').on(table.userId, table.createdAt),
+    templateQuestionsTemplateKeyUnique: uniqueIndex('template_questions_template_key_unique').on(
+      table.templateId,
+      table.questionKey,
+    ),
+  }),
+);
+
+export const proposalResponses = pgTable(
+  'proposal_responses',
+  {
+    id: text('id').primaryKey(),
+    proposalId: text('proposal_id')
+      .notNull()
+      .references(() => proposals.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    questionId: text('question_id').notNull(),
+    sectionId: text('section_id'),
+    value: text('value'),
+    valueType: text('value_type').notNull().default('text'),
+    rangeMin: text('range_min'),
+    rangeMax: text('range_max'),
+    visibility: text('visibility').notNull().default('full'),
+    claimType: text('claim_type'),
+    enteredByParty: text('entered_by_party'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    proposalResponsesProposalIdx: index('proposal_responses_proposal_idx').on(
+      table.proposalId,
+      table.createdAt,
+    ),
+    proposalResponsesUserIdx: index('proposal_responses_user_idx').on(table.userId, table.createdAt),
+    proposalResponsesClaimTypeIdx: index('proposal_responses_claim_type_idx').on(
+      table.claimType,
+      table.createdAt,
+    ),
+  }),
+);
+
+export const proposalSnapshots = pgTable(
+  'proposal_snapshots',
+  {
+    id: text('id').primaryKey(),
+    sourceProposalId: text('source_proposal_id')
+      .notNull()
+      .references(() => proposals.id, { onDelete: 'cascade' }),
+    proposalId: text('proposal_id').references(() => proposals.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    snapshotVersion: integer('snapshot_version').notNull().default(1),
+    status: text('status').notNull().default('active'),
+    snapshotData: jsonb('snapshot_data').notNull().default(sql`'{}'::jsonb`),
+    snapshotMeta: jsonb('snapshot_meta').notNull().default(sql`'{}'::jsonb`),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    proposalSnapshotsSourceProposalIdx: index('proposal_snapshots_source_proposal_idx').on(
+      table.sourceProposalId,
+      table.createdAt,
+    ),
+    proposalSnapshotsUserIdx: index('proposal_snapshots_user_idx').on(table.userId, table.createdAt),
+  }),
+);
+
+export const snapshotAccess = pgTable(
+  'snapshot_access',
+  {
+    id: text('id').primaryKey(),
+    snapshotId: text('snapshot_id')
+      .notNull()
+      .references(() => proposalSnapshots.id, { onDelete: 'cascade' }),
+    proposalId: text('proposal_id')
+      .notNull()
+      .references(() => proposals.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    token: text('token').notNull(),
+    status: text('status').notNull().default('active'),
+    lastOpenedAt: timestamp('last_opened_at', { withTimezone: true }),
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
+    metadata: jsonb('metadata').notNull().default(sql`'{}'::jsonb`),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    snapshotAccessTokenUnique: uniqueIndex('snapshot_access_token_unique').on(table.token),
+    snapshotAccessProposalIdx: index('snapshot_access_proposal_idx').on(table.proposalId, table.createdAt),
+    snapshotAccessUserIdx: index('snapshot_access_user_idx').on(table.userId, table.createdAt),
   }),
 );
 

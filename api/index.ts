@@ -16,6 +16,10 @@ import notificationsHandler from '../server/routes/notifications/index.js';
 import notificationsIdHandler from '../server/routes/notifications/[id].js';
 import appLogsHandler from '../server/routes/app-logs/index.js';
 import verificationItemsHandler from '../server/routes/verification-items/index.js';
+import dashboardSummaryHandler from '../server/routes/dashboard/summary.js';
+import dashboardActivityHandler from '../server/routes/dashboard/activity.js';
+import templatesHandler from '../server/routes/templates/index.js';
+import templatesUseHandler from '../server/routes/templates/[id]/use.js';
 
 type VercelRequest = {
   method?: string;
@@ -99,10 +103,28 @@ export default async function handler(req: any, res: any) {
     return proposalsHandler(req, res);
   }
 
+  if (pathname === '/api/dashboard/summary' && method === 'GET') {
+    return dashboardSummaryHandler(req, res);
+  }
+
+  if (pathname === '/api/dashboard/activity' && method === 'GET') {
+    return dashboardActivityHandler(req, res);
+  }
+
   const proposalMatch = pathname.match(/^\/api\/proposals\/([^/]+)$/);
   if (proposalMatch && ['GET', 'PATCH', 'DELETE'].includes(method)) {
     const id = decodeURIComponent(proposalMatch[1]);
     return proposalsIdHandler(req, res, id);
+  }
+
+  if (pathname === '/api/templates' && method === 'GET') {
+    return templatesHandler(req, res);
+  }
+
+  const templatesUseMatch = pathname.match(/^\/api\/templates\/([^/]+)\/use$/);
+  if (templatesUseMatch && method === 'POST') {
+    const id = decodeURIComponent(templatesUseMatch[1]);
+    return templatesUseHandler(req, res, id);
   }
 
   if (pathname === '/api/shared-links' && (method === 'GET' || method === 'POST')) {

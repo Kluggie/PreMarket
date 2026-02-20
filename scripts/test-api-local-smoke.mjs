@@ -57,7 +57,7 @@ async function run() {
       text: 'Smoke test',
     }),
   });
-  assertStatus(emailUnauthed.status, [401, 500], 'POST /api/email/send unauthenticated');
+  assertStatus(emailUnauthed.status, [401, 500, 501], 'POST /api/email/send unauthenticated');
 
   const vertexUnauthed = await request('/api/vertex/smoke', {
     method: 'POST',
@@ -66,7 +66,7 @@ async function run() {
     },
     body: JSON.stringify({ prompt: 'Reply: ok' }),
   });
-  assertStatus(vertexUnauthed.status, [401, 500], 'POST /api/vertex/smoke unauthenticated');
+  assertStatus(vertexUnauthed.status, [401, 500, 501], 'POST /api/vertex/smoke unauthenticated');
 
   const proposalsUnauthed = await request('/api/proposals');
   assertStatus(proposalsUnauthed.status, [401, 500], 'GET /api/proposals unauthenticated');
