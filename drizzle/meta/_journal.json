@@ -22,6 +22,13 @@
       "when": 1771689600000,
       "tag": "0002_templates_recipient_side5_parity",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1771699200000,
+      "tag": "0003_workflow_parity",
+      "breakpoints": true
     }
   ]
 }

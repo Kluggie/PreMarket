@@ -39,9 +39,20 @@ export const proposals = pgTable(
     status: text('status').notNull().default('draft'),
     templateId: text('template_id'),
     templateName: text('template_name'),
+    proposalType: text('proposal_type').notNull().default('standard'),
+    draftStep: integer('draft_step').notNull().default(1),
+    sourceProposalId: text('source_proposal_id').references(() => proposals.id, {
+      onDelete: 'set null',
+    }),
+    documentComparisonId: text('document_comparison_id'),
     partyAEmail: text('party_a_email'),
     partyBEmail: text('party_b_email'),
     summary: text('summary'),
+    sentAt: timestamp('sent_at', { withTimezone: true }),
+    receivedAt: timestamp('received_at', { withTimezone: true }),
+    evaluatedAt: timestamp('evaluated_at', { withTimezone: true }),
+    lastSharedAt: timestamp('last_shared_at', { withTimezone: true }),
+    statusReason: text('status_reason'),
     payload: jsonb('payload').notNull().default(sql`'{}'::jsonb`),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -49,6 +60,15 @@ export const proposals = pgTable(
   (table) => ({
     proposalsUserCreatedIdx: index('proposals_user_created_idx').on(table.userId, table.createdAt),
     proposalsStatusIdx: index('proposals_status_idx').on(table.status),
+    proposalsTypeIdx: index('proposals_type_idx').on(table.proposalType, table.createdAt),
+    proposalsDraftStepIdx: index('proposals_draft_step_idx').on(table.draftStep, table.updatedAt),
+    proposalsSourceProposalIdx: index('proposals_source_proposal_idx').on(
+      table.sourceProposalId,
+      table.createdAt,
+    ),
+    proposalsDocumentComparisonIdx: index('proposals_document_comparison_idx').on(
+      table.documentComparisonId,
+    ),
     proposalsPartyAEmailIdx: index('proposals_party_a_email_idx').on(table.partyAEmail, table.createdAt),
     proposalsPartyBEmailIdx: index('proposals_party_b_email_idx').on(table.partyBEmail, table.createdAt),
   }),
@@ -279,8 +299,14 @@ export const sharedLinks = pgTable(
       .references(() => proposals.id, { onDelete: 'cascade' }),
     recipientEmail: text('recipient_email'),
     status: text('status').notNull().default('active'),
+    mode: text('mode').notNull().default('standard'),
+    canView: boolean('can_view').notNull().default(true),
+    canEdit: boolean('can_edit').notNull().default(false),
+    canReevaluate: boolean('can_reevaluate').notNull().default(false),
+    canSendBack: boolean('can_send_back').notNull().default(false),
     maxUses: integer('max_uses').notNull().default(1),
     uses: integer('uses').notNull().default(0),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
     expiresAt: timestamp('expires_at', { withTimezone: true }),
     idempotencyKey: text('idempotency_key'),
     reportMetadata: jsonb('report_metadata').notNull().default(sql`'{}'::jsonb`),
@@ -291,9 +317,115 @@ export const sharedLinks = pgTable(
     sharedLinksTokenUnique: uniqueIndex('shared_links_token_unique').on(table.token),
     sharedLinksProposalIdx: index('shared_links_proposal_idx').on(table.proposalId, table.createdAt),
     sharedLinksUserIdx: index('shared_links_user_idx').on(table.userId, table.createdAt),
+    sharedLinksRecipientIdx: index('shared_links_recipient_idx').on(table.recipientEmail, table.createdAt),
     sharedLinksIdempotencyUnique: uniqueIndex('shared_links_idempotency_unique').on(
       table.userId,
       table.idempotencyKey,
+    ),
+  }),
+);
+
+export const sharedLinkResponses = pgTable(
+  'shared_link_responses',
+  {
+    id: text('id').primaryKey(),
+    sharedLinkId: text('shared_link_id')
+      .notNull()
+      .references(() => sharedLinks.id, { onDelete: 'cascade' }),
+    proposalId: text('proposal_id')
+      .notNull()
+      .references(() => proposals.id, { onDelete: 'cascade' }),
+    questionId: text('question_id').notNull(),
+    value: text('value'),
+    valueType: text('value_type').notNull().default('text'),
+    rangeMin: text('range_min'),
+    rangeMax: text('range_max'),
+    visibility: text('visibility').notNull().default('full'),
+    enteredByParty: text('entered_by_party').notNull().default('b'),
+    responderEmail: text('responder_email'),
+    metadata: jsonb('metadata').notNull().default(sql`'{}'::jsonb`),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    sharedLinkResponsesLinkIdx: index('shared_link_responses_link_idx').on(
+      table.sharedLinkId,
+      table.createdAt,
+    ),
+    sharedLinkResponsesProposalIdx: index('shared_link_responses_proposal_idx').on(
+      table.proposalId,
+      table.createdAt,
+    ),
+    sharedLinkResponsesResponderIdx: index('shared_link_responses_responder_idx').on(
+      table.responderEmail,
+      table.createdAt,
+    ),
+  }),
+);
+
+export const proposalEvaluations = pgTable(
+  'proposal_evaluations',
+  {
+    id: text('id').primaryKey(),
+    proposalId: text('proposal_id')
+      .notNull()
+      .references(() => proposals.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    source: text('source').notNull().default('manual'),
+    status: text('status').notNull().default('completed'),
+    score: integer('score'),
+    summary: text('summary'),
+    result: jsonb('result').notNull().default(sql`'{}'::jsonb`),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    proposalEvaluationsProposalIdx: index('proposal_evaluations_proposal_idx').on(
+      table.proposalId,
+      table.createdAt,
+    ),
+    proposalEvaluationsUserIdx: index('proposal_evaluations_user_idx').on(table.userId, table.createdAt),
+  }),
+);
+
+export const documentComparisons = pgTable(
+  'document_comparisons',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    proposalId: text('proposal_id').references(() => proposals.id, { onDelete: 'set null' }),
+    title: text('title').notNull(),
+    status: text('status').notNull().default('draft'),
+    draftStep: integer('draft_step').notNull().default(1),
+    partyALabel: text('party_a_label').notNull().default('Document A'),
+    partyBLabel: text('party_b_label').notNull().default('Document B'),
+    docAText: text('doc_a_text'),
+    docBText: text('doc_b_text'),
+    docASpans: jsonb('doc_a_spans').notNull().default(sql`'[]'::jsonb`),
+    docBSpans: jsonb('doc_b_spans').notNull().default(sql`'[]'::jsonb`),
+    evaluationResult: jsonb('evaluation_result').notNull().default(sql`'{}'::jsonb`),
+    publicReport: jsonb('public_report').notNull().default(sql`'{}'::jsonb`),
+    inputs: jsonb('inputs').notNull().default(sql`'{}'::jsonb`),
+    metadata: jsonb('metadata').notNull().default(sql`'{}'::jsonb`),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    documentComparisonsUserIdx: index('document_comparisons_user_idx').on(
+      table.userId,
+      table.createdAt,
+    ),
+    documentComparisonsProposalIdx: index('document_comparisons_proposal_idx').on(
+      table.proposalId,
+      table.createdAt,
+    ),
+    documentComparisonsStatusIdx: index('document_comparisons_status_idx').on(
+      table.status,
+      table.updatedAt,
     ),
   }),
 );
@@ -306,6 +438,8 @@ export const billingReferences = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     stripeCustomerId: text('stripe_customer_id'),
     stripeSubscriptionId: text('stripe_subscription_id'),
+    stripePriceId: text('stripe_price_id'),
+    stripeCheckoutSessionId: text('stripe_checkout_session_id'),
     plan: text('plan').notNull().default('starter'),
     status: text('status').notNull().default('inactive'),
     cancelAtPeriodEnd: boolean('cancel_at_period_end').notNull().default(false),

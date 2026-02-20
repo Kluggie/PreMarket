@@ -36,14 +36,23 @@ function mapProposalRow(proposal, ownerEmail, currentUser) {
     id: proposal.id,
     title: proposal.title,
     status: proposal.status,
+    status_reason: proposal.statusReason || null,
     directional_status: directionalStatus,
     list_type: listType,
     template_id: proposal.templateId,
     template_name: proposal.templateName,
+    proposal_type: proposal.proposalType || 'standard',
+    draft_step: Number(proposal.draftStep || 1),
+    source_proposal_id: proposal.sourceProposalId || null,
+    document_comparison_id: proposal.documentComparisonId || null,
     party_a_email: proposal.partyAEmail || ownerEmail,
     party_b_email: proposal.partyBEmail,
     summary: proposal.summary,
     payload: proposal.payload || {},
+    sent_at: proposal.sentAt || null,
+    received_at: proposal.receivedAt || null,
+    evaluated_at: proposal.evaluatedAt || null,
+    last_shared_at: proposal.lastSharedAt || null,
     user_id: proposal.userId,
     created_date: proposal.createdAt,
     updated_date: proposal.updatedAt,
@@ -94,6 +103,19 @@ function parseLimit(rawLimit) {
   }
 
   return Math.min(Math.max(Math.floor(candidate), 1), MAX_LIMIT);
+}
+
+function parseDateOrNull(value: unknown) {
+  if (!value) {
+    return null;
+  }
+
+  const candidate = new Date(String(value));
+  if (Number.isNaN(candidate.getTime())) {
+    return null;
+  }
+
+  return candidate;
 }
 
 export default async function handler(req: any, res: any) {
@@ -209,12 +231,27 @@ export default async function handler(req: any, res: any) {
     }
 
     const status = String(body.status || 'draft').trim().toLowerCase() || 'draft';
+    const statusReason = String(body.statusReason || body.status_reason || '').trim() || null;
     const templateId = String(body.templateId || body.template_id || '').trim() || null;
     const templateName = String(body.templateName || body.template_name || '').trim() || null;
+    const proposalType =
+      String(body.proposalType || body.proposal_type || '').trim().toLowerCase() || 'standard';
+    const draftStepRaw = Number(body.draftStep || body.draft_step || 1);
+    const draftStep = Number.isFinite(draftStepRaw)
+      ? Math.min(Math.max(Math.floor(draftStepRaw), 1), 4)
+      : 1;
+    const sourceProposalId =
+      String(body.sourceProposalId || body.source_proposal_id || '').trim() || null;
+    const documentComparisonId =
+      String(body.documentComparisonId || body.document_comparison_id || '').trim() || null;
     const partyAEmail = normalizeEmail(body.partyAEmail || body.party_a_email || auth.user.email || '') || null;
     const partyBEmail = normalizeEmail(body.partyBEmail || body.party_b_email || '') || null;
     const summary = String(body.summary || '').trim() || null;
     const payload = body.payload && typeof body.payload === 'object' ? body.payload : {};
+    const sentAt = parseDateOrNull(body.sentAt || body.sent_at);
+    const receivedAt = parseDateOrNull(body.receivedAt || body.received_at);
+    const evaluatedAt = parseDateOrNull(body.evaluatedAt || body.evaluated_at);
+    const lastSharedAt = parseDateOrNull(body.lastSharedAt || body.last_shared_at);
 
     const now = new Date();
     const proposalId = newId('proposal');
@@ -226,12 +263,21 @@ export default async function handler(req: any, res: any) {
         userId: auth.user.id,
         title,
         status,
+        statusReason,
         templateId,
         templateName,
+        proposalType,
+        draftStep,
+        sourceProposalId,
+        documentComparisonId,
         partyAEmail,
         partyBEmail,
         summary,
         payload,
+        sentAt,
+        receivedAt,
+        evaluatedAt,
+        lastSharedAt,
         createdAt: now,
         updatedAt: now,
       })

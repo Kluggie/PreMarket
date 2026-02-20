@@ -4,18 +4,7 @@ import { requireUser } from '../../_lib/auth.js';
 import { getDb, schema } from '../../_lib/db/client.js';
 import { readJsonBody } from '../../_lib/http.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
-
-function mapBilling(row) {
-  return {
-    plan_tier: row?.plan || 'starter',
-    subscription_status: row?.status || 'inactive',
-    stripe_customer_id: row?.stripeCustomerId || null,
-    stripe_subscription_id: row?.stripeSubscriptionId || null,
-    cancel_at_period_end: Boolean(row?.cancelAtPeriodEnd),
-    current_period_end: row?.currentPeriodEnd || null,
-    updated_date: row?.updatedAt || null,
-  };
-}
+import { ensureBillingRow, mapBilling } from './_shared.js';
 
 export default async function handler(req: any, res: any) {
   await withApiRoute(req, res, '/api/billing', async (context) => {
@@ -29,33 +18,8 @@ export default async function handler(req: any, res: any) {
 
     const db = getDb();
 
-    const ensureRow = async () => {
-      const now = new Date();
-      await db
-        .insert(schema.billingReferences)
-        .values({
-          userId: auth.user.id,
-          plan: 'starter',
-          status: 'inactive',
-          cancelAtPeriodEnd: false,
-          createdAt: now,
-          updatedAt: now,
-        })
-        .onConflictDoNothing({
-          target: schema.billingReferences.userId,
-        });
-
-      const [row] = await db
-        .select()
-        .from(schema.billingReferences)
-        .where(eq(schema.billingReferences.userId, auth.user.id))
-        .limit(1);
-
-      return row || null;
-    };
-
     if (req.method === 'GET') {
-      const row = await ensureRow();
+      const row = await ensureBillingRow(auth.user.id);
       ok(res, 200, {
         billing: mapBilling(row),
       });
@@ -73,6 +37,9 @@ export default async function handler(req: any, res: any) {
         String(body.stripe_customer_id || body.stripeCustomerId || '').trim() || null,
       stripeSubscriptionId:
         String(body.stripe_subscription_id || body.stripeSubscriptionId || '').trim() || null,
+      stripePriceId: String(body.stripe_price_id || body.stripePriceId || '').trim() || null,
+      stripeCheckoutSessionId:
+        String(body.stripe_checkout_session_id || body.stripeCheckoutSessionId || '').trim() || null,
       cancelAtPeriodEnd: Boolean(body.cancel_at_period_end || body.cancelAtPeriodEnd),
       currentPeriodEnd:
         body.current_period_end || body.currentPeriodEnd

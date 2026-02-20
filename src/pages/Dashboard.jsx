@@ -115,6 +115,27 @@ export default function Dashboard() {
       return;
     }
 
+    if (
+      String(proposal.proposal_type || '').toLowerCase() === 'document_comparison' &&
+      proposal.document_comparison_id
+    ) {
+      if ((proposal.list_type || '').toLowerCase() === 'draft') {
+        navigate(
+          createPageUrl(
+            `DocumentComparisonCreate?draft=${encodeURIComponent(
+              proposal.document_comparison_id,
+            )}&proposalId=${encodeURIComponent(proposal.id)}&step=${encodeURIComponent(
+              proposal.draft_step || 1,
+            )}`,
+          ),
+        );
+        return;
+      }
+
+      navigate(createPageUrl(`DocumentComparisonDetail?id=${encodeURIComponent(proposal.document_comparison_id)}`));
+      return;
+    }
+
     if ((proposal.list_type || '').toLowerCase() === 'received') {
       navigate(createPageUrl('Proposals?tab=received'));
       return;

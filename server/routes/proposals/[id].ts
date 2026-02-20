@@ -1,4 +1,4 @@
-import { and, eq, ilike, or } from 'drizzle-orm';
+import { and, asc, desc, eq, ilike, or } from 'drizzle-orm';
 import { ok } from '../../_lib/api-response.js';
 import { assertProposalOwnership, requireUser } from '../../_lib/auth.js';
 import { getDb, schema } from '../../_lib/db/client.js';
@@ -20,12 +20,21 @@ function mapProposalRow(proposal, ownerEmail) {
     id: proposal.id,
     title: proposal.title,
     status: proposal.status,
+    status_reason: proposal.statusReason || null,
     template_id: proposal.templateId,
     template_name: proposal.templateName,
+    proposal_type: proposal.proposalType || 'standard',
+    draft_step: Number(proposal.draftStep || 1),
+    source_proposal_id: proposal.sourceProposalId || null,
+    document_comparison_id: proposal.documentComparisonId || null,
     party_a_email: proposal.partyAEmail || ownerEmail,
     party_b_email: proposal.partyBEmail,
     summary: proposal.summary,
     payload: proposal.payload || {},
+    sent_at: proposal.sentAt || null,
+    received_at: proposal.receivedAt || null,
+    evaluated_at: proposal.evaluatedAt || null,
+    last_shared_at: proposal.lastSharedAt || null,
     user_id: proposal.userId,
     created_date: proposal.createdAt,
     updated_date: proposal.updatedAt,
@@ -34,6 +43,19 @@ function mapProposalRow(proposal, ownerEmail) {
 
 function normalizeEmail(value: unknown) {
   return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+function parseDateOrNull(value: unknown) {
+  if (!value) {
+    return null;
+  }
+
+  const candidate = new Date(String(value));
+  if (Number.isNaN(candidate.getTime())) {
+    return null;
+  }
+
+  return candidate;
 }
 
 export default async function handler(req: any, res: any, proposalIdParam?: string) {
@@ -70,8 +92,70 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         throw new ApiError(404, 'proposal_not_found', 'Proposal not found');
       }
 
+      const [responses, evaluations, sharedLinks] = await Promise.all([
+        db
+          .select()
+          .from(schema.proposalResponses)
+          .where(eq(schema.proposalResponses.proposalId, proposalId))
+          .orderBy(asc(schema.proposalResponses.createdAt)),
+        db
+          .select()
+          .from(schema.proposalEvaluations)
+          .where(eq(schema.proposalEvaluations.proposalId, proposalId))
+          .orderBy(desc(schema.proposalEvaluations.createdAt))
+          .limit(20),
+        db
+          .select()
+          .from(schema.sharedLinks)
+          .where(eq(schema.sharedLinks.proposalId, proposalId))
+          .orderBy(desc(schema.sharedLinks.createdAt))
+          .limit(20),
+      ]);
+
       ok(res, 200, {
         proposal: mapProposalRow(existing, auth.user.email),
+        responses: responses.map((row) => ({
+          id: row.id,
+          proposal_id: row.proposalId,
+          question_id: row.questionId,
+          section_id: row.sectionId,
+          value: row.value,
+          value_type: row.valueType,
+          range_min: row.rangeMin,
+          range_max: row.rangeMax,
+          visibility: row.visibility,
+          claim_type: row.claimType,
+          entered_by_party: row.enteredByParty,
+          created_date: row.createdAt,
+          updated_date: row.updatedAt,
+        })),
+        evaluations: evaluations.map((row) => ({
+          id: row.id,
+          proposal_id: row.proposalId,
+          source: row.source,
+          status: row.status,
+          score: row.score,
+          summary: row.summary,
+          result: row.result || {},
+          created_date: row.createdAt,
+          updated_date: row.updatedAt,
+        })),
+        shared_links: sharedLinks.map((row) => ({
+          id: row.id,
+          token: row.token,
+          status: row.status,
+          mode: row.mode,
+          recipient_email: row.recipientEmail,
+          max_uses: row.maxUses,
+          uses: row.uses,
+          can_view: Boolean(row.canView),
+          can_edit: Boolean(row.canEdit),
+          can_reevaluate: Boolean(row.canReevaluate),
+          can_send_back: Boolean(row.canSendBack),
+          expires_at: row.expiresAt,
+          created_date: row.createdAt,
+          updated_date: row.updatedAt,
+        })),
       });
       return;
     }
@@ -98,6 +182,10 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         body.status === undefined
           ? existing.status
           : String(body.status || '').trim().toLowerCase() || existing.status,
+      statusReason:
+        body.statusReason === undefined && body.status_reason === undefined
+          ? existing.statusReason
+          : String(body.statusReason || body.status_reason || '').trim() || null,
       templateId:
         body.templateId === undefined && body.template_id === undefined
           ? existing.templateId
@@ -106,6 +194,28 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         body.templateName === undefined && body.template_name === undefined
           ? existing.templateName
           : String(body.templateName || body.template_name || '').trim() || null,
+      proposalType:
+        body.proposalType === undefined && body.proposal_type === undefined
+          ? existing.proposalType
+          : String(body.proposalType || body.proposal_type || '').trim().toLowerCase() ||
+            existing.proposalType ||
+            'standard',
+      draftStep:
+        body.draftStep === undefined && body.draft_step === undefined
+          ? existing.draftStep
+          : (() => {
+              const raw = Number(body.draftStep || body.draft_step || existing.draftStep || 1);
+              if (!Number.isFinite(raw)) return existing.draftStep || 1;
+              return Math.min(Math.max(Math.floor(raw), 1), 4);
+            })(),
+      sourceProposalId:
+        body.sourceProposalId === undefined && body.source_proposal_id === undefined
+          ? existing.sourceProposalId
+          : String(body.sourceProposalId || body.source_proposal_id || '').trim() || null,
+      documentComparisonId:
+        body.documentComparisonId === undefined && body.document_comparison_id === undefined
+          ? existing.documentComparisonId
+          : String(body.documentComparisonId || body.document_comparison_id || '').trim() || null,
       partyAEmail:
         body.partyAEmail === undefined && body.party_a_email === undefined
           ? existing.partyAEmail
@@ -118,6 +228,22 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         body.summary === undefined ? existing.summary : String(body.summary || '').trim() || null,
       payload:
         body.payload && typeof body.payload === 'object' ? body.payload : existing.payload || {},
+      sentAt:
+        body.sentAt === undefined && body.sent_at === undefined
+          ? existing.sentAt
+          : parseDateOrNull(body.sentAt || body.sent_at),
+      receivedAt:
+        body.receivedAt === undefined && body.received_at === undefined
+          ? existing.receivedAt
+          : parseDateOrNull(body.receivedAt || body.received_at),
+      evaluatedAt:
+        body.evaluatedAt === undefined && body.evaluated_at === undefined
+          ? existing.evaluatedAt
+          : parseDateOrNull(body.evaluatedAt || body.evaluated_at),
+      lastSharedAt:
+        body.lastSharedAt === undefined && body.last_shared_at === undefined
+          ? existing.lastSharedAt
+          : parseDateOrNull(body.lastSharedAt || body.last_shared_at),
       updatedAt: new Date(),
     };
 

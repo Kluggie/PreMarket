@@ -32,7 +32,6 @@ import {
   Users,
   XCircle,
 } from 'lucide-react';
-import { request } from '@/api/httpClient';
 import { proposalsClient } from '@/api/proposalsClient';
 import { templatesClient } from '@/api/templatesClient';
 
@@ -687,12 +686,7 @@ export default function CreateProposalWithDrafts() {
       }
 
       try {
-        await request('/api/vertex/smoke', {
-          method: 'POST',
-          body: JSON.stringify({
-            prompt: `Run evaluation for proposal ${proposalId}`,
-          }),
-        });
+        await proposalsClient.evaluate(proposalId, {});
       } catch (error) {
         if (error?.status === 501 || error?.code === 'not_configured') {
           setEvaluationError('AI evaluation is not configured for this environment yet.');

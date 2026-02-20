@@ -1,11 +1,337 @@
-import React from 'react';
-import Phase2Placeholder from '@/components/Phase2Placeholder';
+import React, { useEffect, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { useMutation } from '@tanstack/react-query';
+import { motion } from 'framer-motion';
+import { createPageUrl } from '@/utils';
+import { authClient } from '@/api/authClient';
+import { templatesClient } from '@/api/templatesClient';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Check, X, Zap, Building2, Shield } from 'lucide-react';
 
 export default function Pricing() {
+  const navigate = useNavigate();
+  const [showContactSales, setShowContactSales] = useState(false);
+  const [salesFormData, setSalesFormData] = useState({
+    name: '',
+    email: '',
+    organization: '',
+    message: '',
+  });
+  const [submitted, setSubmitted] = useState(false);
+
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, []);
+
+  const submitSalesMutation = useMutation({
+    mutationFn: async (data) =>
+      templatesClient.submitCustomRequest({
+        name: data.name,
+        email: data.email,
+        message:
+          `Sales Inquiry (${data.organization || 'No organization provided'}): ` +
+          `${data.message || 'No details provided'}`,
+      }),
+    onSuccess: () => {
+      setSubmitted(true);
+      setSalesFormData({ name: '', email: '', organization: '', message: '' });
+      setTimeout(() => {
+        setShowContactSales(false);
+        setSubmitted(false);
+      }, 1800);
+    },
+  });
+
+  const plans = [
+    {
+      name: 'Starter',
+      price: '$0',
+      period: 'Forever free',
+      description: 'Perfect for individuals exploring pre-qualification.',
+      icon: Zap,
+      color: 'from-slate-500 to-slate-600',
+      features: [
+        { text: '3 proposals per month', included: true },
+        { text: 'All templates', included: true },
+        { text: 'AI evaluation reports', included: true },
+        { text: 'Re-evaluations per proposal: 1', included: true },
+        { text: 'Pseudonymous mode', included: true },
+        { text: 'Email support', included: true },
+        { text: 'Organization profiles', included: false },
+        { text: 'Custom templates', included: false },
+      ],
+      cta: 'Get Started',
+      popular: false,
+    },
+    {
+      name: 'Professional',
+      price: '$49.99',
+      period: 'per month',
+      description: 'For professionals who need more volume and features.',
+      icon: Building2,
+      color: 'from-blue-500 to-indigo-600',
+      features: [
+        { text: 'Unlimited proposals', included: true },
+        { text: 'All templates', included: true },
+        { text: 'AI evaluation reports', included: true },
+        { text: 'Re-evaluations per proposal: 3', included: true },
+        { text: 'Pseudonymous mode', included: true },
+        { text: 'Priority support', included: true },
+        { text: 'Organization profiles', included: true },
+        { text: 'Custom templates', included: false },
+      ],
+      cta: 'Start Subscription',
+      popular: true,
+    },
+    {
+      name: 'Enterprise',
+      price: 'Custom',
+      period: 'contact us',
+      description: 'For organizations with complex pre-qualification needs.',
+      icon: Shield,
+      color: 'from-indigo-500 to-purple-600',
+      features: [
+        { text: 'Custom volume', included: true },
+        { text: 'Custom templates', included: true },
+        { text: 'AI evaluation reports', included: true },
+        { text: 'Re-evaluations per proposal: 5', included: true },
+        { text: 'Pseudonymous mode', included: true },
+        { text: 'Dedicated support', included: true },
+        { text: 'Organization profiles', included: true },
+        { text: 'Custom security review + onboarding', included: true },
+      ],
+      cta: 'Contact Sales',
+      popular: false,
+    },
+  ];
+
+  const handleSalesSubmit = (event) => {
+    event.preventDefault();
+    submitSalesMutation.mutate(salesFormData);
+  };
+
+  const handleCTA = async (plan) => {
+    if (plan.name === 'Enterprise') {
+      setShowContactSales(true);
+      return;
+    }
+
+    if (plan.name === 'Starter') {
+      authClient.redirectToLogin(createPageUrl('Dashboard'));
+      return;
+    }
+
+    if (plan.name === 'Professional') {
+      try {
+        await authClient.me();
+        navigate(createPageUrl('Billing'));
+      } catch {
+        authClient.redirectToLogin(createPageUrl('Billing'));
+      }
+    }
+  };
+
   return (
-    <Phase2Placeholder
-      title="Pricing"
-      description="This view is temporarily disabled while legacy entity-style APIs are removed."
-    />
+    <div className="min-h-screen bg-slate-50 py-16">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="text-center mb-16">
+          <Badge className="mb-4 bg-blue-100 text-blue-700">Pricing</Badge>
+          <h1 className="text-4xl font-bold text-slate-900 mb-4">Simple, transparent pricing</h1>
+          <p className="text-lg text-slate-600 max-w-2xl mx-auto">
+            Start free and scale as you grow. No hidden fees, no surprises.
+          </p>
+          <p className="text-sm text-slate-500 mt-2">
+            Upgrades apply immediately. Downgrades and cancellations take effect at the end of your
+            billing period.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto">
+          {plans.map((plan, index) => (
+            <motion.div
+              key={plan.name}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: index * 0.1 }}
+              className="relative"
+            >
+              {plan.popular ? (
+                <div className="absolute -top-4 left-1/2 -translate-x-1/2 z-10">
+                  <Badge className="bg-blue-600 text-white px-4 py-1">Most Popular</Badge>
+                </div>
+              ) : null}
+              <Card className={`h-full ${plan.popular ? 'border-2 border-blue-500 shadow-lg' : 'border-0 shadow-sm'}`}>
+                <CardHeader className="text-center pb-2">
+                  <div
+                    className={`w-12 h-12 rounded-xl bg-gradient-to-br ${plan.color} flex items-center justify-center mx-auto mb-4`}
+                  >
+                    <plan.icon className="w-6 h-6 text-white" />
+                  </div>
+                  <CardTitle className="text-xl">{plan.name}</CardTitle>
+                  <p className="text-sm text-slate-500">{plan.description}</p>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-center mb-6">
+                    <span className="text-4xl font-bold text-slate-900">{plan.price}</span>
+                    <span className="text-slate-500 ml-2">{plan.period}</span>
+                  </div>
+
+                  <ul className="space-y-3 mb-8">
+                    {plan.features.map((feature) => (
+                      <li key={`${plan.name}-${feature.text}`} className="flex items-start gap-3">
+                        {feature.included ? (
+                          <Check className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
+                        ) : (
+                          <X className="w-5 h-5 text-slate-300 flex-shrink-0 mt-0.5" />
+                        )}
+                        <span className={feature.included ? 'text-slate-700' : 'text-slate-400'}>
+                          {feature.text}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+
+                  <Button
+                    onClick={() => handleCTA(plan)}
+                    className={`w-full ${plan.popular ? 'bg-blue-600 hover:bg-blue-700' : ''}`}
+                    variant={plan.popular ? 'default' : 'outline'}
+                  >
+                    {plan.cta}
+                  </Button>
+                </CardContent>
+              </Card>
+            </motion.div>
+          ))}
+        </div>
+
+        <div className="mt-20 max-w-3xl mx-auto">
+          <h2 className="text-2xl font-bold text-slate-900 text-center mb-8">Frequently Asked Questions</h2>
+          <div className="space-y-4">
+            {[
+              {
+                q: 'Can I change plans later?',
+                a: 'Yes. Upgrades apply immediately. Downgrades and cancellations apply at the end of your current period.',
+              },
+              {
+                q: 'How do re-evaluations work?',
+                a: 'Recipients can submit updates and run re-evaluation. Limits vary by plan.',
+              },
+              {
+                q: 'Does the report reveal confidential values?',
+                a: 'No. Hidden/partial visibility settings are respected in generated outputs.',
+              },
+              {
+                q: 'What is pseudonymous mode?',
+                a: 'It allows exploratory workflows before identities are explicitly revealed.',
+              },
+            ].map((faq) => (
+              <Card key={faq.q} className="border-0 shadow-sm">
+                <CardContent className="p-6">
+                  <h3 className="font-semibold text-slate-900 mb-2">{faq.q}</h3>
+                  <p className="text-slate-600">{faq.a}</p>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+
+        <div className="mt-12 text-center">
+          <Link to={createPageUrl('Billing')}>
+            <Button variant="outline">Manage current subscription</Button>
+          </Link>
+        </div>
+
+        <Dialog open={showContactSales} onOpenChange={setShowContactSales}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Contact Sales</DialogTitle>
+              <DialogDescription>
+                Share your requirements and we will follow up with a tailored plan.
+              </DialogDescription>
+            </DialogHeader>
+
+            {submitted ? (
+              <div className="py-8 text-center">
+                <h3 className="text-lg font-semibold text-slate-900 mb-2">Request Sent</h3>
+                <p className="text-slate-600">We will contact you shortly.</p>
+              </div>
+            ) : (
+              <form onSubmit={handleSalesSubmit} className="space-y-4 py-4">
+                <div className="space-y-2">
+                  <Label htmlFor="sales-name">Name</Label>
+                  <Input
+                    id="sales-name"
+                    value={salesFormData.name}
+                    onChange={(event) =>
+                      setSalesFormData((prev) => ({ ...prev, name: event.target.value }))
+                    }
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="sales-email">Email</Label>
+                  <Input
+                    id="sales-email"
+                    type="email"
+                    value={salesFormData.email}
+                    onChange={(event) =>
+                      setSalesFormData((prev) => ({ ...prev, email: event.target.value }))
+                    }
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="sales-org">Organization</Label>
+                  <Input
+                    id="sales-org"
+                    value={salesFormData.organization}
+                    onChange={(event) =>
+                      setSalesFormData((prev) => ({ ...prev, organization: event.target.value }))
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="sales-message">Message</Label>
+                  <Textarea
+                    id="sales-message"
+                    rows={4}
+                    value={salesFormData.message}
+                    onChange={(event) =>
+                      setSalesFormData((prev) => ({ ...prev, message: event.target.value }))
+                    }
+                    required
+                  />
+                </div>
+
+                {submitSalesMutation.error ? (
+                  <p className="text-sm text-red-600">{submitSalesMutation.error.message}</p>
+                ) : null}
+
+                <div className="flex justify-end gap-3 pt-2">
+                  <Button type="button" variant="outline" onClick={() => setShowContactSales(false)}>
+                    Cancel
+                  </Button>
+                  <Button type="submit" disabled={submitSalesMutation.isPending}>
+                    {submitSalesMutation.isPending ? 'Sending...' : 'Send Request'}
+                  </Button>
+                </div>
+              </form>
+            )}
+          </DialogContent>
+        </Dialog>
+      </div>
+    </div>
   );
 }

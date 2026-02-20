@@ -9,10 +9,18 @@ import emailSendHandler from '../server/routes/email/send.js';
 import proposalsHandler from '../server/routes/proposals/index.js';
 import proposalsIdHandler from '../server/routes/proposals/[id].js';
 import proposalResponsesHandler from '../server/routes/proposals/[id]/responses.js';
+import proposalSendHandler from '../server/routes/proposals/[id]/send.js';
+import proposalEvaluateHandler from '../server/routes/proposals/[id]/evaluate.js';
+import proposalEvaluationsHandler from '../server/routes/proposals/[id]/evaluations.js';
 import sharedLinksHandler from '../server/routes/shared-links/index.js';
 import sharedLinksTokenHandler from '../server/routes/shared-links/[token].js';
+import sharedLinksConsumeHandler from '../server/routes/shared-links/[token]/consume.js';
+import sharedLinksRespondHandler from '../server/routes/shared-links/[token]/respond.js';
 import vertexSmokeHandler from '../server/routes/vertex/smoke.js';
 import billingHandler from '../server/routes/billing/index.js';
+import billingStatusHandler from '../server/routes/billing/status.js';
+import billingCheckoutHandler from '../server/routes/billing/checkout.js';
+import billingCancelHandler from '../server/routes/billing/cancel.js';
 import notificationsHandler from '../server/routes/notifications/index.js';
 import notificationsIdHandler from '../server/routes/notifications/[id].js';
 import appLogsHandler from '../server/routes/app-logs/index.js';
@@ -23,6 +31,12 @@ import contactRequestsHandler from '../server/routes/contact-requests/index.js';
 import templatesHandler from '../server/routes/templates/index.js';
 import templatesUseHandler from '../server/routes/templates/[id]/use.js';
 import templatesViewHandler from '../server/routes/templates/[id]/view.js';
+import documentComparisonsHandler from '../server/routes/document-comparisons/index.js';
+import documentComparisonsIdHandler from '../server/routes/document-comparisons/[id].js';
+import documentComparisonsEvaluateHandler from '../server/routes/document-comparisons/[id]/evaluate.js';
+import documentComparisonsDownloadJsonHandler from '../server/routes/document-comparisons/[id]/download-json.js';
+import documentComparisonsDownloadInputsHandler from '../server/routes/document-comparisons/[id]/download-inputs.js';
+import documentComparisonsDownloadPdfHandler from '../server/routes/document-comparisons/[id]/download-pdf.js';
 
 type VercelRequest = {
   method?: string;
@@ -134,6 +148,24 @@ export default async function handler(req: any, res: any) {
     return proposalResponsesHandler(req, res, id);
   }
 
+  const proposalSendMatch = pathname.match(/^\/api\/proposals\/([^/]+)\/send$/);
+  if (proposalSendMatch && method === 'POST') {
+    const id = decodeURIComponent(proposalSendMatch[1]);
+    return proposalSendHandler(req, res, id);
+  }
+
+  const proposalEvaluateMatch = pathname.match(/^\/api\/proposals\/([^/]+)\/evaluate$/);
+  if (proposalEvaluateMatch && method === 'POST') {
+    const id = decodeURIComponent(proposalEvaluateMatch[1]);
+    return proposalEvaluateHandler(req, res, id);
+  }
+
+  const proposalEvaluationsMatch = pathname.match(/^\/api\/proposals\/([^/]+)\/evaluations$/);
+  if (proposalEvaluationsMatch && method === 'GET') {
+    const id = decodeURIComponent(proposalEvaluationsMatch[1]);
+    return proposalEvaluationsHandler(req, res, id);
+  }
+
   const templatesUseMatch = pathname.match(/^\/api\/templates\/([^/]+)\/use$/);
   if (templatesUseMatch && method === 'POST') {
     const id = decodeURIComponent(templatesUseMatch[1]);
@@ -156,8 +188,73 @@ export default async function handler(req: any, res: any) {
     return sharedLinksTokenHandler(req, res, token);
   }
 
+  const sharedLinksConsumeMatch = pathname.match(/^\/api\/shared-links\/([^/]+)\/consume$/);
+  if (sharedLinksConsumeMatch && method === 'POST') {
+    const token = decodeURIComponent(sharedLinksConsumeMatch[1]);
+    return sharedLinksConsumeHandler(req, res, token);
+  }
+
+  const sharedLinksRespondMatch = pathname.match(/^\/api\/shared-links\/([^/]+)\/respond$/);
+  if (sharedLinksRespondMatch && method === 'POST') {
+    const token = decodeURIComponent(sharedLinksRespondMatch[1]);
+    return sharedLinksRespondHandler(req, res, token);
+  }
+
   if (pathname === '/api/billing' && (method === 'GET' || method === 'PATCH')) {
     return billingHandler(req, res);
+  }
+
+  if (pathname === '/api/billing/status' && method === 'GET') {
+    return billingStatusHandler(req, res);
+  }
+
+  if (pathname === '/api/billing/checkout' && method === 'POST') {
+    return billingCheckoutHandler(req, res);
+  }
+
+  if (pathname === '/api/billing/cancel' && method === 'POST') {
+    return billingCancelHandler(req, res);
+  }
+
+  if (pathname === '/api/document-comparisons' && (method === 'GET' || method === 'POST')) {
+    return documentComparisonsHandler(req, res);
+  }
+
+  const documentComparisonsEvaluateMatch = pathname.match(
+    /^\/api\/document-comparisons\/([^/]+)\/evaluate$/,
+  );
+  if (documentComparisonsEvaluateMatch && method === 'POST') {
+    const id = decodeURIComponent(documentComparisonsEvaluateMatch[1]);
+    return documentComparisonsEvaluateHandler(req, res, id);
+  }
+
+  const documentComparisonsDownloadJsonMatch = pathname.match(
+    /^\/api\/document-comparisons\/([^/]+)\/download\/json$/,
+  );
+  if (documentComparisonsDownloadJsonMatch && method === 'GET') {
+    const id = decodeURIComponent(documentComparisonsDownloadJsonMatch[1]);
+    return documentComparisonsDownloadJsonHandler(req, res, id);
+  }
+
+  const documentComparisonsDownloadInputsMatch = pathname.match(
+    /^\/api\/document-comparisons\/([^/]+)\/download\/inputs$/,
+  );
+  if (documentComparisonsDownloadInputsMatch && method === 'GET') {
+    const id = decodeURIComponent(documentComparisonsDownloadInputsMatch[1]);
+    return documentComparisonsDownloadInputsHandler(req, res, id);
+  }
+
+  const documentComparisonsDownloadPdfMatch = pathname.match(
+    /^\/api\/document-comparisons\/([^/]+)\/download\/pdf$/,
+  );
+  if (documentComparisonsDownloadPdfMatch && method === 'GET') {
+    return documentComparisonsDownloadPdfHandler(req, res);
+  }
+
+  const documentComparisonsIdMatch = pathname.match(/^\/api\/document-comparisons\/([^/]+)$/);
+  if (documentComparisonsIdMatch && (method === 'GET' || method === 'PATCH')) {
+    const id = decodeURIComponent(documentComparisonsIdMatch[1]);
+    return documentComparisonsIdHandler(req, res, id);
   }
 
   if (pathname === '/api/notifications' && method === 'GET') {

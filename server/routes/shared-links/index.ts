@@ -19,6 +19,10 @@ function buildSharedReportUrl(token: string) {
   return toCanonicalAppUrl(appBaseUrl, returnPath);
 }
 
+function normalizeEmail(value: unknown) {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
 function mapLink(row, proposal) {
   return {
     id: row.id,
@@ -26,10 +30,16 @@ function mapLink(row, proposal) {
     url: buildSharedReportUrl(row.token),
     proposalId: row.proposalId,
     status: row.status,
+    mode: row.mode,
     recipientEmail: row.recipientEmail,
+    canView: Boolean(row.canView),
+    canEdit: Boolean(row.canEdit),
+    canReevaluate: Boolean(row.canReevaluate),
+    canSendBack: Boolean(row.canSendBack),
     expiresAt: row.expiresAt,
     maxUses: row.maxUses,
     uses: row.uses,
+    lastUsedAt: row.lastUsedAt || null,
     reportMetadata: row.reportMetadata || {},
     created_date: row.createdAt,
     updated_date: row.updatedAt,
@@ -46,7 +56,7 @@ function mapLink(row, proposal) {
 
 export default async function handler(req: any, res: any) {
   await withApiRoute(req, res, '/api/shared-links', async (context) => {
-    ensureMethod(req, ['POST']);
+    ensureMethod(req, ['GET', 'POST']);
 
     const auth = await requireUser(req, res);
     if (!auth.ok) {
@@ -54,15 +64,39 @@ export default async function handler(req: any, res: any) {
     }
     context.userId = auth.user.id;
 
+    const db = getDb();
+
+    if (req.method === 'GET') {
+      const rows = await db
+        .select()
+        .from(schema.sharedLinks)
+        .where(eq(schema.sharedLinks.userId, auth.user.id))
+        .orderBy(desc(schema.sharedLinks.createdAt))
+        .limit(50);
+
+      const proposalIds = rows.map((row) => row.proposalId).filter(Boolean);
+      const proposals =
+        proposalIds.length > 0
+          ? await db
+              .select()
+              .from(schema.proposals)
+              .where(eq(schema.proposals.userId, auth.user.id))
+          : [];
+      const byProposalId = new Map(proposals.map((row) => [row.id, row]));
+
+      ok(res, 200, {
+        sharedLinks: rows.map((row) => mapLink(row, byProposalId.get(row.proposalId) || null)),
+      });
+      return;
+    }
+
     const body = await readJsonBody(req);
     const proposalId = String(body.proposalId || body.proposal_id || '').trim();
 
     if (!proposalId) {
       throw new ApiError(400, 'invalid_input', 'proposalId is required');
     }
-
     const proposal = await assertProposalOwnership(auth.user.id, proposalId);
-    const db = getDb();
 
     const idempotencyKey = String(body.idempotencyKey || body.idempotency_key || '').trim() || null;
 
@@ -88,9 +122,14 @@ export default async function handler(req: any, res: any) {
       }
     }
 
-    const recipientEmail = String(body.recipientEmail || body.recipient_email || '').trim() || null;
+    const recipientEmail = normalizeEmail(body.recipientEmail || body.recipient_email || '') || null;
     const reportMetadata =
       body.reportMetadata && typeof body.reportMetadata === 'object' ? body.reportMetadata : {};
+    const mode = String(body.mode || 'workspace').trim().toLowerCase() || 'workspace';
+    const canView = body.canView === undefined ? true : Boolean(body.canView);
+    const canEdit = body.canEdit === undefined ? true : Boolean(body.canEdit);
+    const canReevaluate = body.canReevaluate === undefined ? true : Boolean(body.canReevaluate);
+    const canSendBack = body.canSendBack === undefined ? true : Boolean(body.canSendBack);
 
     const maxUsesRaw = Number(body.maxUses || body.max_uses || 1);
     const maxUses = Number.isFinite(maxUsesRaw) ? Math.min(Math.max(Math.floor(maxUsesRaw), 1), 1000) : 1;
@@ -117,8 +156,14 @@ export default async function handler(req: any, res: any) {
             proposalId,
             recipientEmail,
             status: 'active',
+            mode,
+            canView,
+            canEdit,
+            canReevaluate,
+            canSendBack,
             maxUses,
             uses: 0,
+            lastUsedAt: null,
             expiresAt,
             idempotencyKey,
             reportMetadata,
@@ -139,6 +184,14 @@ export default async function handler(req: any, res: any) {
     if (!created) {
       throw new ApiError(500, 'token_generation_failed', 'Unable to create a unique shared token');
     }
+
+    await db
+      .update(schema.proposals)
+      .set({
+        lastSharedAt: now,
+        updatedAt: now,
+      })
+      .where(eq(schema.proposals.id, proposalId));
 
     ok(res, 201, {
       sharedLink: mapLink(created, proposal),

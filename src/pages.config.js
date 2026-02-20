@@ -49,7 +49,7 @@
  */
 import About from './pages/About';
 import Admin from './pages/Admin';
-import Billing from './pages/db/BillingDb';
+import Billing from './pages/Billing';
 import Contact from './pages/Contact';
 import CreateProposal from './pages/CreateProposal';
 import CreateProposalWithDrafts from './pages/CreateProposalWithDrafts';
@@ -66,11 +66,11 @@ import Organization from './pages/Organization';
 import Pricing from './pages/Pricing';
 import Privacy from './pages/Privacy';
 import Profile from './pages/Profile';
-import ProposalDetail from './pages/db/ProposalDetailDb';
+import ProposalDetail from './pages/ProposalDetail';
 import Proposals from './pages/Proposals';
 import ReportViewer from './pages/ReportViewer';
 import Settings from './pages/Settings';
-import SharedReport from './pages/db/SharedReportDb';
+import SharedReport from './pages/SharedReport';
 import TemplateBuilder from './pages/TemplateBuilder';
 import TemplateDedupe from './pages/TemplateDedupe';
 import Templates from './pages/Templates';

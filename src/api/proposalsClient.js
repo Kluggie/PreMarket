@@ -60,6 +60,16 @@ export const proposalsClient = {
     return response.proposal || null;
   },
 
+  async getDetail(id) {
+    const response = await request(`/api/proposals/${encodeURIComponent(String(id || ''))}`);
+    return {
+      proposal: response.proposal || null,
+      responses: response.responses || [],
+      evaluations: response.evaluations || [],
+      sharedLinks: response.shared_links || [],
+    };
+  },
+
   async update(id, input) {
     const response = await request(`/api/proposals/${encodeURIComponent(String(id || ''))}`, {
       method: 'PATCH',
@@ -89,5 +99,34 @@ export const proposalsClient = {
     });
 
     return response.responses || [];
+  },
+
+  async send(id, input = {}) {
+    const response = await request(`/api/proposals/${encodeURIComponent(String(id || ''))}/send`, {
+      method: 'POST',
+      body: JSON.stringify(input || {}),
+    });
+
+    return {
+      proposal: response.proposal || null,
+      sharedLink: response.sharedLink || null,
+    };
+  },
+
+  async evaluate(id, input = {}) {
+    const response = await request(`/api/proposals/${encodeURIComponent(String(id || ''))}/evaluate`, {
+      method: 'POST',
+      body: JSON.stringify(input || {}),
+    });
+
+    return {
+      evaluation: response.evaluation || null,
+      proposal: response.proposal || null,
+    };
+  },
+
+  async getEvaluations(id) {
+    const response = await request(`/api/proposals/${encodeURIComponent(String(id || ''))}/evaluations`);
+    return response.evaluations || [];
   },
 };

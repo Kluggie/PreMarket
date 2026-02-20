@@ -52,9 +52,12 @@ export async function resetTables() {
   await db.execute(
     sql`truncate table
       contact_requests,
+      shared_link_responses,
       snapshot_access,
       proposal_snapshots,
+      proposal_evaluations,
       proposal_responses,
+      document_comparisons,
       template_questions,
       template_sections,
       templates,

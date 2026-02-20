@@ -1,4 +1,4 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, sql } from 'drizzle-orm';
 import { ok } from '../../_lib/api-response.js';
 import { getDb, schema } from '../../_lib/db/client.js';
 import { toCanonicalAppUrl } from '../../_lib/env.js';
@@ -40,10 +40,16 @@ function mapLink(row, proposal) {
     url: buildSharedReportUrl(row.token),
     proposalId: row.proposalId,
     status: row.status,
+    mode: row.mode,
     recipientEmail: row.recipientEmail,
+    canView: Boolean(row.canView),
+    canEdit: Boolean(row.canEdit),
+    canReevaluate: Boolean(row.canReevaluate),
+    canSendBack: Boolean(row.canSendBack),
     expiresAt: row.expiresAt,
     maxUses: row.maxUses,
     uses: row.uses,
+    lastUsedAt: row.lastUsedAt || null,
     reportMetadata: row.reportMetadata || {},
     created_date: row.createdAt,
     updated_date: row.updatedAt,
@@ -55,6 +61,11 @@ function mapLink(row, proposal) {
           template_name: proposal.templateName,
           summary: proposal.summary,
           payload: proposal.payload || {},
+          proposal_type: proposal.proposalType || 'standard',
+          document_comparison_id: proposal.documentComparisonId || null,
+          sent_at: proposal.sentAt || null,
+          received_at: proposal.receivedAt || null,
+          evaluated_at: proposal.evaluatedAt || null,
         }
       : null,
   };
@@ -105,11 +116,16 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     const shouldConsume = String(req.query?.consume || '').toLowerCase() === 'true';
     let nextLink = link;
 
+    if (!link.canView) {
+      throw new ApiError(403, 'view_not_allowed', 'Viewing is disabled for this shared link');
+    }
+
     if (shouldConsume) {
       const [updated] = await db
         .update(schema.sharedLinks)
         .set({
           uses: sql`${schema.sharedLinks.uses} + 1`,
+          lastUsedAt: new Date(),
           updatedAt: new Date(),
         })
         .where(eq(schema.sharedLinks.id, link.id))
@@ -120,8 +136,73 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       }
     }
 
+    const proposalId = nextLink.proposalId || proposal?.id || null;
+    const [responses, evaluations, comparison] = proposalId
+      ? await Promise.all([
+          db
+            .select()
+            .from(schema.proposalResponses)
+            .where(eq(schema.proposalResponses.proposalId, proposalId))
+            .orderBy(asc(schema.proposalResponses.createdAt)),
+          db
+            .select()
+            .from(schema.proposalEvaluations)
+            .where(eq(schema.proposalEvaluations.proposalId, proposalId))
+            .orderBy(desc(schema.proposalEvaluations.createdAt))
+            .limit(10),
+          proposal?.documentComparisonId
+            ? db
+                .select()
+                .from(schema.documentComparisons)
+                .where(eq(schema.documentComparisons.id, proposal.documentComparisonId))
+                .limit(1)
+                .then((rows) => rows[0] || null)
+            : Promise.resolve(null),
+        ])
+      : [[], [], null];
+
     ok(res, 200, {
       sharedLink: mapLink(nextLink, proposal || null),
+      responses: responses.map((row) => ({
+        id: row.id,
+        question_id: row.questionId,
+        section_id: row.sectionId,
+        value: row.value,
+        value_type: row.valueType,
+        range_min: row.rangeMin,
+        range_max: row.rangeMax,
+        visibility: row.visibility,
+        entered_by_party: row.enteredByParty,
+        claim_type: row.claimType,
+        created_date: row.createdAt,
+        updated_date: row.updatedAt,
+      })),
+      evaluations: evaluations.map((row) => ({
+        id: row.id,
+        source: row.source,
+        status: row.status,
+        score: row.score,
+        summary: row.summary,
+        result: row.result || {},
+        created_date: row.createdAt,
+      })),
+      documentComparison: comparison
+        ? {
+            id: comparison.id,
+            title: comparison.title,
+            status: comparison.status,
+            draft_step: comparison.draftStep,
+            party_a_label: comparison.partyALabel,
+            party_b_label: comparison.partyBLabel,
+            doc_a_text: comparison.docAText,
+            doc_b_text: comparison.docBText,
+            doc_a_spans: comparison.docASpans || [],
+            doc_b_spans: comparison.docBSpans || [],
+            evaluation_result: comparison.evaluationResult || {},
+            public_report: comparison.publicReport || {},
+            updated_date: comparison.updatedAt,
+          }
+        : null,
     });
   });
 }
