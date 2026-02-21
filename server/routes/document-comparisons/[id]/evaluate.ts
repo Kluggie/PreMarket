@@ -5,8 +5,8 @@ import { getDb, schema } from '../../../_lib/db/client.js';
 import { ApiError } from '../../../_lib/errors.js';
 import { newId } from '../../../_lib/ids.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
+import { evaluateDocumentComparisonWithVertex } from '../../../_lib/vertex-evaluation.js';
 import {
-  buildComparisonEvaluation,
   ensureComparisonFound,
   mapComparisonRow,
 } from '../_helpers.js';
@@ -49,7 +49,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
 
     ensureComparisonFound(existing);
 
-    const evaluation = buildComparisonEvaluation({
+    const evaluation = await evaluateDocumentComparisonWithVertex({
       title: existing.title,
       docAText: existing.docAText || '',
       docBText: existing.docBText || '',
@@ -101,7 +101,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
           source: 'document_comparison',
           status: 'completed',
           score: evaluation.score,
-          summary: `Comparison ${evaluation.recommendation} fit (${evaluation.score})`,
+          summary: evaluation.summary,
           result: evaluation,
           createdAt: now,
           updatedAt: now,

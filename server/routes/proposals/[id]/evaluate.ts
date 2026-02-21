@@ -5,6 +5,7 @@ import { getDb, schema } from '../../../_lib/db/client.js';
 import { ApiError } from '../../../_lib/errors.js';
 import { newId } from '../../../_lib/ids.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
+import { evaluateDocumentComparisonWithVertex } from '../../../_lib/vertex-evaluation.js';
 
 function getProposalId(req: any, proposalIdParam?: string) {
   if (proposalIdParam && proposalIdParam.trim().length > 0) {
@@ -110,6 +111,36 @@ function buildEvaluationResult(proposal, responses = []) {
   };
 }
 
+function buildProposalResultFromComparisonEvaluation(proposal, evaluation, comparison) {
+  return {
+    score: evaluation.score,
+    recommendation: evaluation.recommendation,
+    generated_at: evaluation.generatedAt,
+    summary: evaluation.summary,
+    stats: {
+      proposal_type: 'document_comparison',
+      document_comparison_id: comparison.id,
+      hidden_spans:
+        Number(Array.isArray(comparison.docASpans) ? comparison.docASpans.length : 0) +
+        Number(Array.isArray(comparison.docBSpans) ? comparison.docBSpans.length : 0),
+      doc_a_length: String(comparison.docAText || '').length,
+      doc_b_length: String(comparison.docBText || '').length,
+    },
+    sections: Array.isArray(evaluation?.report?.sections) ? evaluation.report.sections : [],
+    report: evaluation.report,
+    provider: evaluation.provider,
+    model: evaluation.model,
+    proposal: {
+      id: proposal.id,
+      title: proposal.title,
+      status: proposal.status,
+      template_name: proposal.templateName,
+      party_a_email: proposal.partyAEmail,
+      party_b_email: proposal.partyBEmail,
+    },
+  };
+}
+
 export default async function handler(req: any, res: any, proposalIdParam?: string) {
   await withApiRoute(req, res, '/api/proposals/[id]/evaluate', async (context) => {
     ensureMethod(req, ['POST']);
@@ -148,7 +179,55 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
       .from(schema.proposalResponses)
       .where(eq(schema.proposalResponses.proposalId, proposalId));
 
-    const result = buildEvaluationResult(proposal, responses);
+    let result = null;
+    let evaluationSource = 'manual';
+
+    const isDocumentComparisonProposal =
+      String(proposal.proposalType || '').toLowerCase() === 'document_comparison' &&
+      String(proposal.documentComparisonId || '').trim().length > 0;
+
+    if (isDocumentComparisonProposal) {
+      const [comparison] = await db
+        .select()
+        .from(schema.documentComparisons)
+        .where(eq(schema.documentComparisons.id, proposal.documentComparisonId))
+        .limit(1);
+
+      if (!comparison) {
+        throw new ApiError(
+          404,
+          'document_comparison_not_found',
+          'Linked document comparison not found for this proposal',
+        );
+      }
+
+      const comparisonEvaluation = await evaluateDocumentComparisonWithVertex({
+        title: comparison.title || proposal.title || 'Document Comparison',
+        docAText: comparison.docAText || '',
+        docBText: comparison.docBText || '',
+        docASpans: Array.isArray(comparison.docASpans) ? comparison.docASpans : [],
+        docBSpans: Array.isArray(comparison.docBSpans) ? comparison.docBSpans : [],
+        partyALabel: comparison.partyALabel || 'Document A',
+        partyBLabel: comparison.partyBLabel || 'Document B',
+      });
+
+      result = buildProposalResultFromComparisonEvaluation(proposal, comparisonEvaluation, comparison);
+      evaluationSource = 'document_comparison_vertex';
+
+      await db
+        .update(schema.documentComparisons)
+        .set({
+          status: 'evaluated',
+          draftStep: 4,
+          evaluationResult: comparisonEvaluation,
+          publicReport: comparisonEvaluation.report,
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.documentComparisons.id, comparison.id));
+    } else {
+      result = buildEvaluationResult(proposal, responses);
+    }
+
     const now = new Date();
     const evaluationStatus =
       String(proposal.status || '').toLowerCase() === 'under_verification' ? 're_evaluated' : 'under_verification';
@@ -159,7 +238,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         id: newId('eval'),
         proposalId: proposal.id,
         userId: proposal.userId,
-        source: 'manual',
+        source: evaluationSource,
         status: 'completed',
         score: result.score,
         summary: result.summary,

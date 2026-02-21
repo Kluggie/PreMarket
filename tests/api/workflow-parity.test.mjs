@@ -21,6 +21,9 @@ import { createMockReq, createMockRes } from '../helpers/httpMock.mjs';
 import { schema } from '../../server/_lib/db/client.js';
 
 ensureTestEnv();
+if (!process.env.VERTEX_MOCK) {
+  process.env.VERTEX_MOCK = '1';
+}
 
 function authCookie(sub, email) {
   return makeSessionCookie({ sub, email });
@@ -373,6 +376,12 @@ if (!hasDatabaseUrl()) {
     assert.equal(evalRes.statusCode, 200);
     assert.equal(evalRes.jsonBody().comparison.status, 'evaluated');
     assert.equal(typeof evalRes.jsonBody().comparison.evaluation_result.score, 'number');
+    assert.equal(evalRes.jsonBody().comparison.evaluation_result.provider, 'mock');
+    assert.equal(
+      Array.isArray(evalRes.jsonBody().comparison.evaluation_result?.report?.sections),
+      true,
+    );
+    assert.equal(evalRes.jsonBody().comparison.evaluation_result.report.sections.length > 0, true);
 
     const getReq = createMockReq({
       method: 'GET',
@@ -403,6 +412,91 @@ if (!hasDatabaseUrl()) {
       .where(eq(schema.documentComparisons.id, comparisonId))
       .limit(1);
     assert.equal(rows.length, 1);
+    assert.equal(rows[0].status, 'evaluated');
+    assert.equal(rows[0].evaluationResult?.provider, 'mock');
+    assert.equal(Array.isArray(rows[0].publicReport?.sections), true);
+    assert.equal(rows[0].publicReport.sections.length > 0, true);
+  });
+
+  test('proposal document-comparison evaluation persists Vertex-style report output to proposal and comparison', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = authCookie('proposal_eval_owner', 'proposal-eval@example.com');
+    const createdProposal = await createProposal(ownerCookie, {
+      title: 'Proposal Linked Comparison',
+      status: 'draft',
+      proposalType: 'document_comparison',
+      partyBEmail: 'recipient@example.com',
+    });
+
+    const createComparisonReq = createMockReq({
+      method: 'POST',
+      url: '/api/document-comparisons',
+      headers: { cookie: ownerCookie },
+      body: {
+        proposalId: createdProposal.id,
+        title: 'Linked Comparison',
+        party_a_label: 'Document A',
+        party_b_label: 'Document B',
+        doc_a_text: 'Confidential terms around payment schedules and renewal rights.',
+        doc_b_text: 'Confidential terms around payment schedules, renewals, and support coverage.',
+        doc_a_spans: [{ start: 0, end: 12, level: 'confidential' }],
+      },
+    });
+    const createComparisonRes = createMockRes();
+    await documentComparisonsHandler(createComparisonReq, createComparisonRes);
+    assert.equal(createComparisonRes.statusCode, 201);
+    const comparisonId = createComparisonRes.jsonBody().comparison.id;
+
+    const evaluateReq = createMockReq({
+      method: 'POST',
+      url: `/api/proposals/${createdProposal.id}/evaluate`,
+      headers: { cookie: ownerCookie },
+      query: { id: createdProposal.id },
+      body: {},
+    });
+    const evaluateRes = createMockRes();
+    await proposalEvaluateHandler(evaluateReq, evaluateRes, createdProposal.id);
+    assert.equal(evaluateRes.statusCode, 200);
+    assert.equal(
+      ['under_verification', 're_evaluated'].includes(evaluateRes.jsonBody().proposal.status),
+      true,
+    );
+    assert.equal(evaluateRes.jsonBody().evaluation.source, 'document_comparison_vertex');
+    assert.equal(
+      Array.isArray(evaluateRes.jsonBody().evaluation.result?.report?.sections),
+      true,
+    );
+
+    const proposalDetailReq = createMockReq({
+      method: 'GET',
+      url: `/api/proposals/${createdProposal.id}`,
+      headers: { cookie: ownerCookie },
+      query: { id: createdProposal.id },
+    });
+    const proposalDetailRes = createMockRes();
+    await proposalDetailHandler(proposalDetailReq, proposalDetailRes, createdProposal.id);
+    assert.equal(proposalDetailRes.statusCode, 200);
+    assert.equal(proposalDetailRes.jsonBody().evaluations.length >= 1, true);
+    assert.equal(proposalDetailRes.jsonBody().evaluations[0].source, 'document_comparison_vertex');
+    assert.equal(
+      Array.isArray(proposalDetailRes.jsonBody().evaluations[0]?.result?.report?.sections),
+      true,
+    );
+
+    const comparisonGetReq = createMockReq({
+      method: 'GET',
+      url: `/api/document-comparisons/${comparisonId}`,
+      headers: { cookie: ownerCookie },
+      query: { id: comparisonId },
+    });
+    const comparisonGetRes = createMockRes();
+    await documentComparisonsIdHandler(comparisonGetReq, comparisonGetRes, comparisonId);
+    assert.equal(comparisonGetRes.statusCode, 200);
+    assert.equal(comparisonGetRes.jsonBody().comparison.status, 'evaluated');
+    assert.equal(comparisonGetRes.jsonBody().comparison.evaluation_result.provider, 'mock');
+    assert.equal(Array.isArray(comparisonGetRes.jsonBody().comparison.public_report.sections), true);
   });
 
   test('document comparison shared-token context can only edit recipient-side highlights', async () => {

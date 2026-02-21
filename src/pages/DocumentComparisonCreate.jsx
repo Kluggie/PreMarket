@@ -29,9 +29,6 @@ import {
   X,
 } from 'lucide-react';
 
-const SUPPORTED_UPLOAD_EXTENSIONS = new Set(['txt', 'md']);
-const SUPPORTED_UPLOAD_MIME_PREFIXES = ['text/plain', 'text/markdown'];
-
 function asText(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
@@ -151,16 +148,6 @@ function fileToMetadata(file) {
     mimeType: file.type || 'application/octet-stream',
     sizeBytes: Number(file.size || 0),
   };
-}
-
-function isSupportedTextFile(file) {
-  const filename = String(file?.name || '').toLowerCase();
-  const extension = filename.includes('.') ? filename.split('.').pop() : '';
-  if (SUPPORTED_UPLOAD_EXTENSIONS.has(extension)) {
-    return true;
-  }
-
-  return SUPPORTED_UPLOAD_MIME_PREFIXES.some((prefix) => String(file?.type || '').startsWith(prefix));
 }
 
 export default function DocumentComparisonCreate() {
@@ -501,22 +488,21 @@ export default function DocumentComparisonCreate() {
     setUploadingSide(doc);
 
     try {
-      if (!isSupportedTextFile(file)) {
-        const ext = String(file.name || '').split('.').pop()?.toLowerCase() || 'unknown';
-        throw Object.assign(new Error(`.${ext} extraction is not configured`), {
-          code: 'not_configured',
-          status: 501,
+      const text = await documentComparisonsClient.extractTextFromFile(file);
+      const normalizedText = String(text || '').trim();
+      if (!normalizedText) {
+        throw Object.assign(new Error('No readable text was extracted from the selected file'), {
+          code: 'extract_failed',
+          status: 422,
         });
       }
 
-      const text = await file.text();
-      const normalizedText = String(text || '').trim();
       setFileForSide(doc, fileToMetadata(file), normalizedText);
       toast.success(`${file.name} loaded`);
     } catch (error) {
       const message =
         error?.code === 'not_configured'
-          ? `${error.message}. Please use .txt or .md files.`
+          ? `${error.message}. Supported types: .txt, .md, .pdf, .docx.`
           : error?.message || 'Failed to load file';
       setUiError(message);
       toast.error(message);

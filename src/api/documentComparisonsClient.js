@@ -4,6 +4,78 @@ function encodeId(id) {
   return encodeURIComponent(String(id || ''));
 }
 
+function getFileExtension(file) {
+  const filename = String(file?.name || '').toLowerCase();
+  if (!filename.includes('.')) {
+    return '';
+  }
+  return filename.split('.').pop() || '';
+}
+
+function normalizeExtractedText(value) {
+  return String(value || '')
+    .replace(/\u0000/g, '')
+    .replace(/\r/g, '')
+    .trim();
+}
+
+function isPdfFile(file) {
+  const extension = getFileExtension(file);
+  return extension === 'pdf' || String(file?.type || '').toLowerCase() === 'application/pdf';
+}
+
+function isDocxFile(file) {
+  const extension = getFileExtension(file);
+  const mime = String(file?.type || '').toLowerCase();
+  return (
+    extension === 'docx' ||
+    mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  );
+}
+
+function isPlainTextFile(file) {
+  const extension = getFileExtension(file);
+  const mime = String(file?.type || '').toLowerCase();
+  return extension === 'txt' || extension === 'md' || mime.startsWith('text/');
+}
+
+async function extractTextFromPdf(file) {
+  const [{ getDocument, GlobalWorkerOptions }, workerModule] = await Promise.all([
+    import('pdfjs-dist/build/pdf.mjs'),
+    import('pdfjs-dist/build/pdf.worker.mjs?url'),
+  ]);
+
+  if (workerModule?.default && GlobalWorkerOptions.workerSrc !== workerModule.default) {
+    GlobalWorkerOptions.workerSrc = workerModule.default;
+  }
+
+  const pdf = await getDocument({ data: await file.arrayBuffer() }).promise;
+  const pages = [];
+
+  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+    const page = await pdf.getPage(pageNumber);
+    const content = await page.getTextContent();
+    const pageText = content.items
+      .map((item) => (typeof item?.str === 'string' ? item.str : ''))
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (pageText) {
+      pages.push(pageText);
+    }
+  }
+
+  return normalizeExtractedText(pages.join('\n\n'));
+}
+
+async function extractTextFromDocx(file) {
+  const mammoth = await import('mammoth/mammoth.browser');
+  const { value } = await mammoth.extractRawText({
+    arrayBuffer: await file.arrayBuffer(),
+  });
+  return normalizeExtractedText(value);
+}
+
 export const documentComparisonsClient = {
   async list(params = {}) {
     const searchParams = new URLSearchParams();
@@ -115,5 +187,48 @@ export const documentComparisonsClient = {
       text: typeof response.text === 'string' ? response.text : '',
       title: typeof response.title === 'string' ? response.title : null,
     };
+  },
+
+  async extractTextFromFile(file) {
+    if (!file || typeof file.arrayBuffer !== 'function') {
+      const error = new Error('A valid file is required for extraction');
+      error.code = 'invalid_input';
+      error.status = 400;
+      throw error;
+    }
+
+    if (isPlainTextFile(file)) {
+      return normalizeExtractedText(await file.text());
+    }
+
+    if (isPdfFile(file)) {
+      try {
+        return await extractTextFromPdf(file);
+      } catch (error) {
+        const wrapped = new Error('Failed to extract text from PDF');
+        wrapped.code = 'extract_failed';
+        wrapped.status = 422;
+        wrapped.cause = error;
+        throw wrapped;
+      }
+    }
+
+    if (isDocxFile(file)) {
+      try {
+        return await extractTextFromDocx(file);
+      } catch (error) {
+        const wrapped = new Error('Failed to extract text from DOCX');
+        wrapped.code = 'extract_failed';
+        wrapped.status = 422;
+        wrapped.cause = error;
+        throw wrapped;
+      }
+    }
+
+    const extension = getFileExtension(file) || 'unknown';
+    const notConfigured = new Error(`.${extension} extraction is not configured`);
+    notConfigured.code = 'not_configured';
+    notConfigured.status = 501;
+    throw notConfigured;
   },
 };
