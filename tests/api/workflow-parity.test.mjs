@@ -258,7 +258,7 @@ if (!hasDatabaseUrl()) {
     );
   });
 
-  test('document comparison workflow persists draft fields and evaluation outputs', async () => {
+  test('document comparison workflow persists inputs, enforces side-locked spans, and stores evaluation output', async () => {
     await ensureMigrated();
     await resetTables();
 
@@ -274,7 +274,13 @@ if (!hasDatabaseUrl()) {
         party_b_label: 'Recipient Draft',
         doc_a_text: 'Confidential obligations and payment terms',
         doc_b_text: 'Confidential obligations and revised payment terms',
-        doc_b_spans: [{ start: 0, end: 12, level: 'confidential' }],
+        doc_a_source: 'typed',
+        doc_b_source: 'typed',
+        doc_a_spans: [{ start: 0, end: 12, level: 'confidential' }],
+        doc_a_files: [{ filename: 'nda-a.md', mimeType: 'text/markdown', sizeBytes: 20 }],
+        doc_b_files: [{ filename: 'nda-b.md', mimeType: 'text/markdown', sizeBytes: 28 }],
+        doc_a_url: 'https://example.com/nda-a',
+        doc_b_url: 'https://example.com/nda-b',
         createProposal: true,
       },
     });
@@ -283,20 +289,77 @@ if (!hasDatabaseUrl()) {
     assert.equal(createRes.statusCode, 201);
     const comparisonId = createRes.jsonBody().comparison.id;
 
+    const getInitialReq = createMockReq({
+      method: 'GET',
+      url: `/api/document-comparisons/${comparisonId}`,
+      headers: { cookie: ownerCookie },
+      query: { id: comparisonId },
+    });
+    const getInitialRes = createMockRes();
+    await documentComparisonsIdHandler(getInitialReq, getInitialRes, comparisonId);
+    assert.equal(getInitialRes.statusCode, 200);
+    assert.equal(getInitialRes.jsonBody().comparison.doc_a_source, 'typed');
+    assert.equal(getInitialRes.jsonBody().comparison.doc_b_source, 'typed');
+    assert.equal(getInitialRes.jsonBody().comparison.doc_a_files.length, 1);
+    assert.equal(getInitialRes.jsonBody().comparison.doc_b_files.length, 1);
+    assert.equal(getInitialRes.jsonBody().permissions.editable_side, 'a');
+    assert.equal(getInitialRes.jsonBody().permissions.can_edit_doc_a, true);
+    assert.equal(getInitialRes.jsonBody().permissions.can_edit_doc_b, false);
+
     const updateReq = createMockReq({
       method: 'PATCH',
       url: `/api/document-comparisons/${comparisonId}`,
       headers: { cookie: ownerCookie },
       query: { id: comparisonId },
       body: {
-        doc_b_text: 'Confidential obligations, payment terms, and support levels',
+        doc_a_text: 'Confidential obligations and revised payment terms for sender',
+        doc_b_text: 'Confidential obligations, payment terms, and support levels for recipient',
         draft_step: 3,
+        doc_a_source: 'url',
+        doc_b_source: 'uploaded',
+        doc_a_url: 'https://example.com/revised-a',
+        doc_b_url: '',
       },
     });
     const updateRes = createMockRes();
     await documentComparisonsIdHandler(updateReq, updateRes, comparisonId);
     assert.equal(updateRes.statusCode, 200);
     assert.equal(updateRes.jsonBody().comparison.draft_step, 3);
+    assert.equal(updateRes.jsonBody().comparison.doc_a_source, 'url');
+    assert.equal(updateRes.jsonBody().comparison.doc_b_source, 'uploaded');
+    assert.equal(updateRes.jsonBody().comparison.doc_a_url, 'https://example.com/revised-a');
+
+    const updateSpansReq = createMockReq({
+      method: 'PATCH',
+      url: `/api/document-comparisons/${comparisonId}`,
+      headers: { cookie: ownerCookie },
+      query: { id: comparisonId },
+      body: {
+        draft_step: 3,
+        doc_a_spans: [
+          { start: 0, end: 12, level: 'confidential' },
+          { start: 10, end: 22, level: 'hidden' },
+        ],
+      },
+    });
+    const updateSpansRes = createMockRes();
+    await documentComparisonsIdHandler(updateSpansReq, updateSpansRes, comparisonId);
+    assert.equal(updateSpansRes.statusCode, 200);
+    assert.equal(updateSpansRes.jsonBody().comparison.doc_a_spans.length, 1);
+
+    const lockedSideReq = createMockReq({
+      method: 'PATCH',
+      url: `/api/document-comparisons/${comparisonId}`,
+      headers: { cookie: ownerCookie },
+      query: { id: comparisonId },
+      body: {
+        doc_b_spans: [{ start: 0, end: 10, level: 'confidential' }],
+      },
+    });
+    const lockedSideRes = createMockRes();
+    await documentComparisonsIdHandler(lockedSideReq, lockedSideRes, comparisonId);
+    assert.equal(lockedSideRes.statusCode, 403);
+    assert.equal(lockedSideRes.jsonBody().error.code, 'forbidden_side');
 
     const evalReq = createMockReq({
       method: 'POST',
@@ -322,6 +385,16 @@ if (!hasDatabaseUrl()) {
     assert.equal(getRes.statusCode, 200);
     assert.equal(getRes.jsonBody().comparison.title, 'NDA Comparison');
     assert.equal(getRes.jsonBody().comparison.status, 'evaluated');
+    assert.equal(getRes.jsonBody().comparison.doc_a_text.length > 0, true);
+    assert.equal(getRes.jsonBody().comparison.doc_b_text.length > 0, true);
+    assert.equal(getRes.jsonBody().comparison.doc_a_spans.length, 1);
+    assert.equal(typeof getRes.jsonBody().comparison.evaluation_result.score, 'number');
+    assert.equal(
+      Number(getRes.jsonBody().comparison.doc_a_text.length) +
+        Number(getRes.jsonBody().comparison.doc_b_text.length) >
+        0,
+      true,
+    );
 
     const db = getDb();
     const rows = await db
@@ -330,5 +403,85 @@ if (!hasDatabaseUrl()) {
       .where(eq(schema.documentComparisons.id, comparisonId))
       .limit(1);
     assert.equal(rows.length, 1);
+  });
+
+  test('document comparison shared-token context can only edit recipient-side highlights', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = authCookie('doc_token_owner', 'owner@example.com');
+    const createdProposal = await createProposal(ownerCookie, {
+      title: 'Token Highlight Proposal',
+      status: 'sent',
+      partyBEmail: 'recipient@example.com',
+      proposalType: 'document_comparison',
+    });
+
+    const createComparisonReq = createMockReq({
+      method: 'POST',
+      url: '/api/document-comparisons',
+      headers: { cookie: ownerCookie },
+      body: {
+        proposalId: createdProposal.id,
+        title: 'Token Comparison',
+        party_a_label: 'Doc A',
+        party_b_label: 'Doc B',
+        doc_a_text: 'Owner text',
+        doc_b_text: 'Recipient text',
+        createProposal: false,
+      },
+    });
+    const createComparisonRes = createMockRes();
+    await documentComparisonsHandler(createComparisonReq, createComparisonRes);
+    assert.equal(createComparisonRes.statusCode, 201);
+    const comparisonId = createComparisonRes.jsonBody().comparison.id;
+
+    const createShareReq = createMockReq({
+      method: 'POST',
+      url: '/api/shared-links',
+      headers: { cookie: ownerCookie },
+      body: {
+        proposalId: createdProposal.id,
+        recipientEmail: 'recipient@example.com',
+        mode: 'workspace',
+        canView: true,
+        canEdit: true,
+        canReevaluate: false,
+        maxUses: 20,
+      },
+    });
+    const createShareRes = createMockRes();
+    await sharedLinksHandler(createShareReq, createShareRes);
+    assert.equal(createShareRes.statusCode, 201);
+    const token = createShareRes.jsonBody().sharedLink.token;
+
+    const recipientPatchReq = createMockReq({
+      method: 'PATCH',
+      url: `/api/document-comparisons/${comparisonId}`,
+      query: { id: comparisonId, token },
+      body: {
+        token,
+        doc_b_spans: [{ start: 0, end: 8, level: 'confidential' }],
+      },
+    });
+    const recipientPatchRes = createMockRes();
+    await documentComparisonsIdHandler(recipientPatchReq, recipientPatchRes, comparisonId);
+    assert.equal(recipientPatchRes.statusCode, 200);
+    assert.equal(recipientPatchRes.jsonBody().comparison.doc_b_spans.length, 1);
+    assert.equal(recipientPatchRes.jsonBody().permissions.editable_side, 'b');
+
+    const forbiddenPatchReq = createMockReq({
+      method: 'PATCH',
+      url: `/api/document-comparisons/${comparisonId}`,
+      query: { id: comparisonId, token },
+      body: {
+        token,
+        doc_a_spans: [{ start: 0, end: 4, level: 'confidential' }],
+      },
+    });
+    const forbiddenPatchRes = createMockRes();
+    await documentComparisonsIdHandler(forbiddenPatchReq, forbiddenPatchRes, comparisonId);
+    assert.equal(forbiddenPatchRes.statusCode, 403);
+    assert.equal(forbiddenPatchRes.jsonBody().error.code, 'forbidden_side');
   });
 }

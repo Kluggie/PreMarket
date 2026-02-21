@@ -1,6 +1,19 @@
 import { ApiError } from '../../_lib/errors.js';
 
 export function mapComparisonRow(row: any) {
+  const inputs =
+    row?.inputs && typeof row.inputs === 'object' && !Array.isArray(row.inputs)
+      ? row.inputs
+      : {};
+  const docASource =
+    typeof inputs.doc_a_source === 'string' && inputs.doc_a_source.trim().length > 0
+      ? inputs.doc_a_source.trim()
+      : 'typed';
+  const docBSource =
+    typeof inputs.doc_b_source === 'string' && inputs.doc_b_source.trim().length > 0
+      ? inputs.doc_b_source.trim()
+      : 'typed';
+
   return {
     id: row.id,
     user_id: row.userId,
@@ -12,6 +25,18 @@ export function mapComparisonRow(row: any) {
     party_b_label: row.partyBLabel || 'Document B',
     doc_a_text: row.docAText || '',
     doc_b_text: row.docBText || '',
+    doc_a_source: docASource,
+    doc_b_source: docBSource,
+    doc_a_files: Array.isArray(inputs.doc_a_files) ? inputs.doc_a_files : [],
+    doc_b_files: Array.isArray(inputs.doc_b_files) ? inputs.doc_b_files : [],
+    doc_a_url:
+      typeof inputs.doc_a_url === 'string' && inputs.doc_a_url.trim().length > 0
+        ? inputs.doc_a_url.trim()
+        : null,
+    doc_b_url:
+      typeof inputs.doc_b_url === 'string' && inputs.doc_b_url.trim().length > 0
+        ? inputs.doc_b_url.trim()
+        : null,
     doc_a_spans: Array.isArray(row.docASpans) ? row.docASpans : [],
     doc_b_spans: Array.isArray(row.docBSpans) ? row.docBSpans : [],
     evaluation_result: row.evaluationResult || {},
@@ -46,8 +71,7 @@ export function normalizeSpans(spans: unknown, text: string) {
   }
 
   const textLength = String(text || '').length;
-
-  return spans
+  const normalized = spans
     .map((span) => {
       const start = clampSpanBoundary(span?.start, textLength);
       const end = clampSpanBoundary(span?.end, textLength);
@@ -61,6 +85,24 @@ export function normalizeSpans(spans: unknown, text: string) {
     })
     .filter(Boolean)
     .sort((left, right) => left.start - right.start);
+
+  const merged = [];
+  normalized.forEach((span) => {
+    const last = merged[merged.length - 1];
+    if (!last) {
+      merged.push({ ...span });
+      return;
+    }
+
+    if (span.start <= last.end) {
+      last.end = Math.max(last.end, span.end);
+      return;
+    }
+
+    merged.push({ ...span });
+  });
+
+  return merged;
 }
 
 export function parseStep(value: unknown, fallback = 1) {
@@ -86,6 +128,54 @@ export function toJsonObject(value: unknown) {
 
 export function toArray(value: unknown) {
   return Array.isArray(value) ? value : [];
+}
+
+export function normalizeEmail(value: unknown) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+  return value.trim().toLowerCase();
+}
+
+export function resolveEditableSide(params: { proposal?: any; user?: any; comparison?: any }) {
+  const proposal = params?.proposal || null;
+  const user = params?.user || null;
+  const comparison = params?.comparison || null;
+  const userId = String(user?.id || '').trim();
+  const userEmail = normalizeEmail(user?.email);
+
+  if (proposal) {
+    const partyAUserId = String(proposal?.partyAUserId || proposal?.userId || '').trim();
+    const partyAEmail = normalizeEmail(proposal?.partyAEmail);
+    if ((userId && partyAUserId && userId === partyAUserId) || (userEmail && partyAEmail === userEmail)) {
+      return 'a';
+    }
+
+    const partyBUserId = String(proposal?.partyBUserId || '').trim();
+    const partyBEmail = normalizeEmail(proposal?.partyBEmail);
+    if ((userId && partyBUserId && userId === partyBUserId) || (userEmail && partyBEmail === userEmail)) {
+      return 'b';
+    }
+  }
+
+  if (comparison && userId && String(comparison?.userId || '').trim() === userId) {
+    return 'a';
+  }
+
+  return 'a';
+}
+
+export function isPastDate(dateValue: unknown) {
+  if (!dateValue) {
+    return false;
+  }
+
+  const timestamp = new Date(dateValue as any).getTime();
+  if (!Number.isFinite(timestamp)) {
+    return false;
+  }
+
+  return timestamp < Date.now();
 }
 
 export function buildComparisonEvaluation(payload: {

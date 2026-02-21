@@ -149,3 +149,116 @@ Source extraction was performed from baseline page/function callsites in:
 - Legacy AI-specific extraction/evaluation providers are not required for local deterministic parity; API contracts and persisted state are the parity-critical target.
 - Where provider configuration is missing, endpoint behavior must be normalized `501` with `{ ok:false, error:{ code:'not_configured', message } }`.
 - `APP_BASE_URL` is canonical for generated links in shared-link and billing redirects.
+
+## Document Comparison Contract (Detailed Baseline Extraction - Recipient Side5)
+
+### Frontend route + query contracts (baseline)
+- `GET /DocumentComparisonCreate`
+- `GET /DocumentComparisonCreate?draft=<comparisonId>`
+- `GET /DocumentComparisonCreate?proposalId=<proposalId>`
+- `GET /DocumentComparisonCreate?draft=<comparisonId>&proposalId=<proposalId>&step=<1..4>`
+- `GET /DocumentComparisonDetail?id=<comparisonId>`
+- Linked navigation from proposals list/detail:
+  - `DocumentComparisonCreate?draft=<document_comparison_id>&proposalId=<proposal.id>&step=<proposal.draft_step || 1>`
+  - `DocumentComparisonDetail?id=<document_comparison_id>`
+
+### Baseline wizard steps + expected behavior
+- Step 1: Source Selection
+  - title, party labels, per-document source selector.
+  - save draft + continue.
+- Step 2: Input
+  - side-by-side document input panes.
+  - source helpers (typed/upload/url/profile/org in baseline; parity scope requires typed/upload/url).
+  - persist `doc_a_plaintext`, `doc_b_plaintext`, source metadata.
+- Step 3: Highlighting
+  - mouse text selection -> mark hidden.
+  - only one editable side based on party context.
+  - instruction banner explicitly states editable side + locked side.
+  - applied highlights list with remove action.
+  - optional sync scrolling toggle.
+- Step 4: Review & Evaluate
+  - title + doc lengths + total hidden spans + confidentiality guarantee text.
+  - save draft and run evaluation.
+  - navigate to linked proposal detail when linked.
+
+### Baseline detail view structure
+- Header summary:
+  - title, status badge, created date, updated date, hidden span count.
+- Top action row:
+  - Run Evaluation
+  - Download report JSON
+  - Download inputs JSON
+  - Open linked proposal detail
+  - Share updated version action in proposal-linked contexts.
+- Tabs:
+  - `Overview`
+  - `AI Report`
+- Overview tab:
+  - Parties card
+  - complete details with read-only Doc A/Doc B previews and hidden highlights rendered
+  - activity timeline card.
+- AI Report tab:
+  - evaluation history
+  - report summary/sections using stored report payload.
+
+### Baseline API/function call contracts used by UI (pre-migration names)
+- `SaveDocumentComparisonDraft`
+  - input used by page:
+    - `comparisonId`, `proposalId`, `stepToSave`
+    - `title`, `partyALabel`, `partyBLabel`
+    - `docAText`, `docBText`
+    - `docASource`, `docBSource`
+    - `docAFiles`, `docBFiles`
+    - `docASpans` or `docBSpans` (only editable side allowed).
+  - output used by page:
+    - `ok`, `comparisonId`, `proposalId`, `editableHighlightSide`.
+- `EvaluateDocumentComparison`
+  - input: `comparison_id`, `trigger: "user_click"`.
+  - output consumed by UI: `{ ok, ...report payload ... }` and status transitions.
+- download helpers:
+  - report JSON and inputs JSON download contract.
+
+### Vercel parity endpoint contracts required for current UI
+- `GET /api/document-comparisons/:id`
+  - returns:
+    - `comparison` with draft fields + spans + report fields
+    - `proposal` linkage summary when linked
+    - `permissions` (editable-side + locked-side booleans) for highlight controls.
+- `POST /api/document-comparisons`
+- `PATCH /api/document-comparisons/:id`
+  - must enforce editable-side permissions server-side for span writes.
+- `POST /api/document-comparisons/:id/evaluate`
+- `POST /api/document-comparisons/extract-url`
+  - request: `{ url }`
+  - success: `{ ok: true, text, title? }`
+  - unconfigured mode: `501` with normalized `not_configured` error.
+- `GET /api/document-comparisons/:id/download/json`
+- `GET /api/document-comparisons/:id/download/inputs`
+- `GET /api/document-comparisons/:id/download/pdf` (501 allowed when renderer unavailable)
+
+### DB fields required by baseline behavior
+- Draft metadata:
+  - `title`, `status`, `draft_step`
+  - `party_a_label`, `party_b_label`
+  - linkage: `proposal_id`, `user_id`
+- Inputs:
+  - `doc_a_text`, `doc_b_text`
+  - `inputs` JSON for source/method metadata (typed/upload/url and file/url metadata).
+- Confidentiality highlights:
+  - `doc_a_spans`, `doc_b_spans` as `[start,end)` offsets + level.
+- Evaluation outputs:
+  - `evaluation_result`, `public_report`
+- Proposal linkage:
+  - `proposal.document_comparison_id`, `proposal.proposal_type="document_comparison"`, draft/status timestamps.
+
+### Baseline component/file mapping (source-of-truth)
+- Wizard shell + step indicator/progress:
+  - `src/pages/DocumentComparisonCreate.jsx`
+- Side-by-side inputs:
+  - Step 2 block in `src/pages/DocumentComparisonCreate.jsx`
+- Mouse highlight flow + locked-side controls + applied highlights:
+  - Step 3 block in `src/pages/DocumentComparisonCreate.jsx`
+- Review screen:
+  - Step 4 block in `src/pages/DocumentComparisonCreate.jsx`
+- Detail tabs (Overview / AI Report):
+  - `src/pages/DocumentComparisonDetail.jsx`

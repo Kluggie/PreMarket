@@ -29,11 +29,34 @@ export const documentComparisonsClient = {
     return response.comparison || null;
   },
 
+  async saveDraft(comparisonId, input = {}) {
+    if (comparisonId) {
+      return this.update(comparisonId, input);
+    }
+    return this.create(input);
+  },
+
   async getById(id) {
     const response = await request(`/api/document-comparisons/${encodeId(id)}`);
     return {
       comparison: response.comparison || null,
       proposal: response.proposal || null,
+      permissions: response.permissions || null,
+    };
+  },
+
+  async getByIdWithToken(id, token) {
+    const query = new URLSearchParams();
+    if (token) {
+      query.set('token', String(token));
+    }
+    const response = await request(
+      `/api/document-comparisons/${encodeId(id)}${query.toString() ? `?${query.toString()}` : ''}`,
+    );
+    return {
+      comparison: response.comparison || null,
+      proposal: response.proposal || null,
+      permissions: response.permissions || null,
     };
   },
 
@@ -42,7 +65,10 @@ export const documentComparisonsClient = {
       method: 'PATCH',
       body: JSON.stringify(input || {}),
     });
-    return response.comparison || null;
+    return {
+      comparison: response.comparison || null,
+      permissions: response.permissions || null,
+    };
   },
 
   async evaluate(id, input = {}) {
@@ -70,6 +96,24 @@ export const documentComparisonsClient = {
     return {
       filename: response.filename || 'document-comparison-inputs.json',
       inputs: response.inputs || {},
+    };
+  },
+
+  async downloadPdf(id) {
+    return request(`/api/document-comparisons/${encodeId(id)}/download/pdf`);
+  },
+
+  async extractUrl(url) {
+    const response = await request('/api/document-comparisons/extract-url', {
+      method: 'POST',
+      body: JSON.stringify({
+        url: String(url || ''),
+      }),
+    });
+    return {
+      ok: response.ok !== false,
+      text: typeof response.text === 'string' ? response.text : '',
+      title: typeof response.title === 'string' ? response.title : null,
     };
   },
 };

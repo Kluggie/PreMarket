@@ -10,14 +10,11 @@ import {
   asText,
   mapComparisonRow,
   normalizeSpans,
+  normalizeEmail,
   parseStep,
   toArray,
   toJsonObject,
 } from './_helpers.js';
-
-function normalizeEmail(value: unknown) {
-  return typeof value === 'string' ? value.trim().toLowerCase() : '';
-}
 
 export default async function handler(req: any, res: any) {
   await withApiRoute(req, res, '/api/document-comparisons', async (context) => {
@@ -73,7 +70,22 @@ export default async function handler(req: any, res: any) {
     const docBText = String(body.docBText || body.doc_b_text || '');
     const draftStep = parseStep(body.draftStep || body.draft_step, 1);
     const metadata = toJsonObject(body.metadata);
-    const inputs = toJsonObject(body.inputs);
+    const rawInputs = toJsonObject(body.inputs);
+    const docASource = asText(body.docASource || body.doc_a_source) || asText(rawInputs.doc_a_source) || 'typed';
+    const docBSource = asText(body.docBSource || body.doc_b_source) || asText(rawInputs.doc_b_source) || 'typed';
+    const docAFiles = toArray(body.docAFiles || body.doc_a_files || rawInputs.doc_a_files);
+    const docBFiles = toArray(body.docBFiles || body.doc_b_files || rawInputs.doc_b_files);
+    const docAUrl = asText(body.docAUrl || body.doc_a_url || rawInputs.doc_a_url) || null;
+    const docBUrl = asText(body.docBUrl || body.doc_b_url || rawInputs.doc_b_url) || null;
+    const inputs = {
+      ...rawInputs,
+      doc_a_source: docASource,
+      doc_b_source: docBSource,
+      doc_a_files: docAFiles,
+      doc_b_files: docBFiles,
+      doc_a_url: docAUrl,
+      doc_b_url: docBUrl,
+    };
     const docASpans = normalizeSpans(toArray(body.docASpans || body.doc_a_spans), docAText);
     const docBSpans = normalizeSpans(toArray(body.docBSpans || body.doc_b_spans), docBText);
 

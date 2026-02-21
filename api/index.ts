@@ -32,6 +32,7 @@ import templatesHandler from '../server/routes/templates/index.js';
 import templatesUseHandler from '../server/routes/templates/[id]/use.js';
 import templatesViewHandler from '../server/routes/templates/[id]/view.js';
 import documentComparisonsHandler from '../server/routes/document-comparisons/index.js';
+import documentComparisonsExtractUrlHandler from '../server/routes/document-comparisons/extract-url.js';
 import documentComparisonsIdHandler from '../server/routes/document-comparisons/[id].js';
 import documentComparisonsEvaluateHandler from '../server/routes/document-comparisons/[id]/evaluate.js';
 import documentComparisonsDownloadJsonHandler from '../server/routes/document-comparisons/[id]/download-json.js';
@@ -218,6 +219,10 @@ export default async function handler(req: any, res: any) {
 
   if (pathname === '/api/document-comparisons' && (method === 'GET' || method === 'POST')) {
     return documentComparisonsHandler(req, res);
+  }
+
+  if (pathname === '/api/document-comparisons/extract-url' && method === 'POST') {
+    return documentComparisonsExtractUrlHandler(req, res);
   }
 
   const documentComparisonsEvaluateMatch = pathname.match(
