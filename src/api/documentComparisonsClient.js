@@ -1,5 +1,7 @@
 import { request } from '@/api/httpClient';
 
+const MAX_IMPORT_FILE_BYTES = 5 * 1024 * 1024;
+
 function encodeId(id) {
   return encodeURIComponent(String(id || ''));
 }
@@ -33,10 +35,62 @@ function isDocxFile(file) {
   );
 }
 
-function isPlainTextFile(file) {
-  const extension = getFileExtension(file);
-  const mime = String(file?.type || '').toLowerCase();
-  return extension === 'txt' || extension === 'md' || mime.startsWith('text/');
+function inferSupportedMimeType(file) {
+  if (isDocxFile(file)) {
+    return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  }
+  if (isPdfFile(file)) {
+    return 'application/pdf';
+  }
+  return '';
+}
+
+function createImportError(message, code, status, body = null) {
+  const error = new Error(message);
+  error.code = code;
+  error.status = status;
+  if (body) {
+    error.body = body;
+  }
+  return error;
+}
+
+function toFriendlyImportError(error) {
+  const code = String(error?.code || '').trim();
+  const status = Number(error?.status || 0);
+
+  if (status === 413 || code === 'payload_too_large') {
+    return createImportError('File is too large. Maximum supported size is 5MB.', 'payload_too_large', 413, error?.body);
+  }
+
+  if (code === 'invalid_file_type') {
+    return createImportError(
+      'Unsupported file type. Please upload a DOCX (.docx) or PDF (.pdf) file.',
+      'invalid_file_type',
+      400,
+      error?.body,
+    );
+  }
+
+  if (code === 'invalid_input') {
+    return createImportError(
+      'Unable to read the selected file payload. Please re-select the file and try again.',
+      'invalid_input',
+      400,
+      error?.body,
+    );
+  }
+
+  if (code === 'extract_failed') {
+    return createImportError(
+      error?.message || 'Could not extract text from this file. Try a different DOCX/PDF.',
+      'extract_failed',
+      400,
+      error?.body,
+    );
+  }
+
+  return error;
 }
 
 function arrayBufferToBase64(arrayBuffer) {
@@ -185,30 +239,39 @@ export const documentComparisonsClient = {
       throw error;
     }
 
-    if (!isPlainTextFile(file) && !isPdfFile(file) && !isDocxFile(file)) {
+    const mimeType = inferSupportedMimeType(file);
+    if (!mimeType) {
       const extension = getFileExtension(file) || 'unknown';
-      const notConfigured = new Error(`.${extension} extraction is not configured`);
-      notConfigured.code = 'not_configured';
-      notConfigured.status = 501;
+      const notConfigured = new Error(`Unsupported file type .${extension}. Please use DOCX or PDF.`);
+      notConfigured.code = 'invalid_file_type';
+      notConfigured.status = 400;
       throw notConfigured;
     }
 
-    const fileBase64 = await arrayBufferToBase64(await file.arrayBuffer());
-    const response = await request('/api/documents/extract', {
-      method: 'POST',
-      body: JSON.stringify({
-        filename: String(file.name || 'document'),
-        mimeType: String(file.type || 'application/octet-stream'),
-        fileBase64,
-      }),
-    });
+    if (Number(file.size || 0) > MAX_IMPORT_FILE_BYTES) {
+      throw createImportError('File is too large. Maximum supported size is 5MB.', 'payload_too_large', 413);
+    }
 
-    return {
-      ok: response.ok !== false,
-      text: normalizeExtractedText(response.text || ''),
-      html: typeof response.html === 'string' ? response.html : '',
-      filename: typeof response.filename === 'string' ? response.filename : String(file.name || ''),
-      mimeType: typeof response.mimeType === 'string' ? response.mimeType : String(file.type || ''),
-    };
+    try {
+      const fileBase64 = await arrayBufferToBase64(await file.arrayBuffer());
+      const response = await request('/api/documents/extract', {
+        method: 'POST',
+        body: JSON.stringify({
+          filename: String(file.name || 'document'),
+          mimeType,
+          fileBase64,
+        }),
+      });
+
+      return {
+        ok: response.ok !== false,
+        text: normalizeExtractedText(response.text || ''),
+        html: typeof response.html === 'string' ? response.html : '',
+        filename: typeof response.filename === 'string' ? response.filename : String(file.name || ''),
+        mimeType: typeof response.mimeType === 'string' ? response.mimeType : mimeType,
+      };
+    } catch (error) {
+      throw toFriendlyImportError(error);
+    }
   },
 };

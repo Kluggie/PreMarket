@@ -11,6 +11,7 @@ ensureTestEnv();
 
 const DOCX_FIXTURE = resolve('tests/fixtures/documents/sample.docx');
 const PDF_FIXTURE = resolve('tests/fixtures/documents/sample.pdf');
+const TOO_LARGE_BASE64 = Buffer.alloc(5 * 1024 * 1024 + 1, 65).toString('base64');
 
 if (!hasDatabaseUrl()) {
   test('document extract API (skipped: DATABASE_URL missing)', { skip: true }, () => {});
@@ -65,5 +66,50 @@ if (!hasDatabaseUrl()) {
     assert.equal(pdfBody.ok, true);
     assert.equal(typeof pdfBody.text, 'string');
     assert.equal(pdfBody.text.includes('Shared PDF import text line'), true);
+
+    const invalidMimeReq = createMockReq({
+      method: 'POST',
+      url: '/api/documents/extract',
+      headers: { cookie: authCookie },
+      body: {
+        filename: 'sample.docx',
+        mimeType: 'text/plain',
+        fileBase64: docxPayload,
+      },
+    });
+    const invalidMimeRes = createMockRes();
+    await documentExtractHandler(invalidMimeReq, invalidMimeRes);
+    assert.equal(invalidMimeRes.statusCode, 400);
+    assert.equal(invalidMimeRes.jsonBody().error.code, 'invalid_file_type');
+
+    const invalidBase64Req = createMockReq({
+      method: 'POST',
+      url: '/api/documents/extract',
+      headers: { cookie: authCookie },
+      body: {
+        filename: 'sample.pdf',
+        mimeType: 'application/pdf',
+        fileBase64: '*not-valid-base64*',
+      },
+    });
+    const invalidBase64Res = createMockRes();
+    await documentExtractHandler(invalidBase64Req, invalidBase64Res);
+    assert.equal(invalidBase64Res.statusCode, 400);
+    assert.equal(invalidBase64Res.jsonBody().error.code, 'invalid_input');
+
+    const tooLargeReq = createMockReq({
+      method: 'POST',
+      url: '/api/documents/extract',
+      headers: { cookie: authCookie },
+      body: {
+        filename: 'large.pdf',
+        mimeType: 'application/pdf',
+        fileBase64: TOO_LARGE_BASE64,
+      },
+    });
+    const tooLargeRes = createMockRes();
+    await documentExtractHandler(tooLargeReq, tooLargeRes);
+    assert.equal(tooLargeRes.statusCode, 413);
+    assert.equal(tooLargeRes.jsonBody().error.code, 'payload_too_large');
   });
 }

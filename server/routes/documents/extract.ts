@@ -4,7 +4,11 @@ import { ApiError } from '../../_lib/errors.js';
 import { readJsonBody } from '../../_lib/http.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 
-const MAX_FILE_BYTES = 15 * 1024 * 1024;
+const MAX_FILE_BYTES = 5 * 1024 * 1024;
+const ALLOWED_MIME_TYPES = new Set([
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/pdf',
+]);
 
 function asText(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
@@ -27,11 +31,24 @@ function decodeBase64File(rawValue: unknown) {
 
   const commaIndex = value.indexOf(',');
   const encoded = value.startsWith('data:') && commaIndex >= 0 ? value.slice(commaIndex + 1) : value;
+  const normalized = encoded.replace(/\s+/g, '');
+  if (!normalized) {
+    throw new ApiError(400, 'invalid_input', 'fileBase64 must be valid base64');
+  }
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(normalized) || normalized.length % 4 !== 0) {
+    throw new ApiError(400, 'invalid_input', 'fileBase64 must be valid base64');
+  }
 
   let buffer: Buffer;
   try {
-    buffer = Buffer.from(encoded, 'base64');
+    buffer = Buffer.from(normalized, 'base64');
   } catch {
+    throw new ApiError(400, 'invalid_input', 'fileBase64 must be valid base64');
+  }
+
+  const normalizedWithoutPadding = normalized.replace(/=+$/g, '');
+  const roundTrip = buffer.toString('base64').replace(/=+$/g, '');
+  if (!buffer.length || normalizedWithoutPadding !== roundTrip) {
     throw new ApiError(400, 'invalid_input', 'fileBase64 must be valid base64');
   }
 
@@ -40,7 +57,11 @@ function decodeBase64File(rawValue: unknown) {
   }
 
   if (buffer.length > MAX_FILE_BYTES) {
-    throw new ApiError(413, 'payload_too_large', `File size exceeds ${MAX_FILE_BYTES} bytes limit`);
+    throw new ApiError(
+      413,
+      'payload_too_large',
+      `File is too large. Maximum supported size is ${Math.floor(MAX_FILE_BYTES / (1024 * 1024))}MB.`,
+    );
   }
 
   return buffer;
@@ -65,10 +86,6 @@ function inferFileType(filename: string, mimeType: string) {
 
   if (extension === 'pdf' || mime === 'application/pdf') {
     return 'pdf';
-  }
-
-  if (extension === 'txt' || extension === 'md' || mime.startsWith('text/')) {
-    return 'text';
   }
 
   return 'unsupported';
@@ -199,23 +216,15 @@ export default async function handler(req: any, res: any) {
     const mimeType = asText(body.mimeType || body.mime_type || body.type || 'application/octet-stream');
     const fileType = inferFileType(filename, mimeType);
 
-    if (fileType === 'unsupported') {
-      throw new ApiError(400, 'invalid_file_type', 'Only .docx and .pdf files are supported for import');
+    if (!ALLOWED_MIME_TYPES.has(String(mimeType || '').toLowerCase()) || fileType === 'unsupported') {
+      throw new ApiError(
+        400,
+        'invalid_file_type',
+        'Unsupported file type. Please upload a DOCX (.docx) or PDF (.pdf) file.',
+      );
     }
 
     const buffer = decodeBase64File(body.fileBase64 || body.file_base64 || body.base64);
-
-    if (fileType === 'text') {
-      const text = normalizeText(buffer.toString('utf8'));
-      ok(res, 200, {
-        ok: true,
-        filename,
-        mimeType,
-        text,
-        html: textToHtml(text),
-      });
-      return;
-    }
 
     if (fileType === 'docx') {
       const extracted = await extractDocx(buffer);

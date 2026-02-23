@@ -4,6 +4,7 @@ import { getDb, schema } from '../../_lib/db/client.js';
 import { toCanonicalAppUrl } from '../../_lib/env.js';
 import { ApiError } from '../../_lib/errors.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
+import { buildRecipientSafeEvaluationProjection } from '../document-comparisons/_helpers.js';
 
 function getToken(req: any, tokenParam?: string) {
   if (tokenParam && tokenParam.trim().length > 0) {
@@ -170,6 +171,16 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         ])
       : [[], [], null];
 
+    const comparisonProjection = comparison
+      ? buildRecipientSafeEvaluationProjection({
+          evaluationResult: comparison.evaluationResult || {},
+          publicReport: comparison.publicReport || {},
+          confidentialText: comparison.docAText || '',
+          sharedText: comparison.docBText || '',
+          title: comparison.title || proposal?.title || 'Document Comparison',
+        })
+      : null;
+
     ok(res, 200, {
       sharedLink: mapLink(nextLink, proposal || null),
       responses: responses.map((row) => ({
@@ -186,15 +197,37 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         created_date: row.createdAt,
         updated_date: row.updatedAt,
       })),
-      evaluations: evaluations.map((row) => ({
-        id: row.id,
-        source: row.source,
-        status: row.status,
-        score: row.score,
-        summary: isDocumentComparisonMode ? 'Available to sender in owner workspace.' : row.summary,
-        result: isDocumentComparisonMode ? {} : row.result || {},
-        created_date: row.createdAt,
-      })),
+      evaluations: evaluations.map((row) => {
+        if (!isDocumentComparisonMode) {
+          return {
+            id: row.id,
+            source: row.source,
+            status: row.status,
+            score: row.score,
+            summary: row.summary,
+            result: row.result || {},
+            created_date: row.createdAt,
+          };
+        }
+
+        const safeProjection = buildRecipientSafeEvaluationProjection({
+          evaluationResult: row.result || {},
+          publicReport: row.result && typeof row.result === 'object' ? (row.result as any).report || {} : {},
+          confidentialText: comparison?.docAText || '',
+          sharedText: comparison?.docBText || '',
+          title: comparison?.title || proposal?.title || 'Document Comparison',
+        });
+
+        return {
+          id: row.id,
+          source: row.source,
+          status: row.status,
+          score: row.score,
+          summary: safeProjection.evaluation_result.summary,
+          result: safeProjection.evaluation_result,
+          created_date: row.createdAt,
+        };
+      }),
       documentComparison: comparison
         ? {
             id: comparison.id,
@@ -238,8 +271,8 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
             })(),
             doc_a_spans: [],
             doc_b_spans: [],
-            evaluation_result: {},
-            public_report: {},
+            evaluation_result: comparisonProjection?.evaluation_result || {},
+            public_report: comparisonProjection?.public_report || {},
             updated_date: comparison.updatedAt,
           }
         : null,

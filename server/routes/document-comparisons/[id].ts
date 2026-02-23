@@ -7,6 +7,7 @@ import { readJsonBody } from '../../_lib/http.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 import {
   asText,
+  buildRecipientSafeEvaluationProjection,
   CONFIDENTIAL_LABEL,
   SHARED_LABEL,
   ensureComparisonFound,
@@ -45,7 +46,15 @@ function toTokenSafeInputs(value: unknown) {
   };
 }
 
-function toTokenSafeComparison(mappedComparison: any) {
+function toRecipientSafeComparison(mappedComparison: any) {
+  const projection = buildRecipientSafeEvaluationProjection({
+    evaluationResult: mappedComparison?.evaluation_result,
+    publicReport: mappedComparison?.public_report,
+    confidentialText: String(mappedComparison?.doc_a_text || ''),
+    sharedText: String(mappedComparison?.doc_b_text || ''),
+    title: String(mappedComparison?.title || ''),
+  });
+
   return {
     ...mappedComparison,
     party_a_label: CONFIDENTIAL_LABEL,
@@ -57,8 +66,8 @@ function toTokenSafeComparison(mappedComparison: any) {
     doc_a_files: [],
     doc_a_url: null,
     doc_a_spans: [],
-    evaluation_result: {},
-    public_report: {},
+    evaluation_result: projection.evaluation_result,
+    public_report: projection.public_report,
     inputs: toTokenSafeInputs(mappedComparison?.inputs),
   };
 }
@@ -195,7 +204,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     if (req.method === 'GET') {
       const mappedComparison = mapComparisonRow(existing);
       ok(res, 200, {
-        comparison: accessMode === 'token' ? toTokenSafeComparison(mappedComparison) : mappedComparison,
+        comparison: accessMode === 'owner' ? mappedComparison : toRecipientSafeComparison(mappedComparison),
         proposal: proposal
           ? {
               id: proposal.id,
@@ -353,7 +362,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
 
     const mappedUpdated = mapComparisonRow(updated);
     ok(res, 200, {
-      comparison: accessMode === 'token' ? toTokenSafeComparison(mappedUpdated) : mappedUpdated,
+      comparison: accessMode === 'owner' ? mappedUpdated : toRecipientSafeComparison(mappedUpdated),
       permissions: {
         access_mode: accessMode,
         editable_side: editableSide,

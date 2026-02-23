@@ -101,6 +101,632 @@ export function mapComparisonRow(row: any) {
   };
 }
 
+function toSafeObject(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {} as Record<string, any>;
+  }
+  return value as Record<string, any>;
+}
+
+function toSafeArray(value: unknown) {
+  return Array.isArray(value) ? value : [];
+}
+
+function toNumber(value: unknown, fallback = 0) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+  return numeric;
+}
+
+function clampScore(value: unknown, fallback = 0) {
+  return Math.max(0, Math.min(100, Math.round(toNumber(value, fallback))));
+}
+
+function clampConfidence(value: unknown, fallback = 0.35) {
+  return Math.max(0, Math.min(1, toNumber(value, fallback)));
+}
+
+function clampRatio(value: unknown, fallback = 0) {
+  return Math.max(0, Math.min(1, toNumber(value, fallback)));
+}
+
+function normalizeLeakText(value: unknown) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function collectConfidentialMarkers(confidentialText: string) {
+  const normalized = normalizeLeakText(confidentialText);
+  if (!normalized) {
+    return [] as string[];
+  }
+
+  const markers = new Set<string>();
+  const words = normalized.split(' ').filter((word) => word.length >= 3);
+  for (let index = 0; index < words.length - 2 && markers.size < 120; index += 1) {
+    const phrase = `${words[index]} ${words[index + 1]} ${words[index + 2]}`.trim();
+    if (phrase.length >= 14) {
+      markers.add(phrase);
+    }
+  }
+
+  const sentenceLike = normalized
+    .split(/\s{2,}/g)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length >= 18)
+    .slice(0, 40);
+  sentenceLike.forEach((entry) => {
+    markers.add(entry.slice(0, 64));
+  });
+
+  return [...markers];
+}
+
+function containsConfidentialMarker(value: unknown, markers: string[]) {
+  if (!markers.length) {
+    return false;
+  }
+
+  const normalized = normalizeLeakText(value);
+  if (!normalized) {
+    return false;
+  }
+
+  return markers.some((marker) => marker.length >= 8 && normalized.includes(marker));
+}
+
+function scrubString(value: unknown, markers: string[], fallback = '') {
+  const text = String(value || '').trim();
+  if (!text) {
+    return fallback;
+  }
+  if (containsConfidentialMarker(text, markers)) {
+    return fallback;
+  }
+  return text;
+}
+
+function scrubStringArray(value: unknown, markers: string[]) {
+  return toSafeArray(value)
+    .map((entry) => scrubString(entry, markers, ''))
+    .filter(Boolean);
+}
+
+function hasDocAIdentifier(value: unknown) {
+  const normalized = normalizeLeakText(value);
+  if (!normalized) {
+    return false;
+  }
+  if (normalized === 'a' || normalized === 'party a' || normalized === 'party_a') {
+    return true;
+  }
+  if (normalized.includes('doc a') || normalized.includes('doc_a')) {
+    return true;
+  }
+  return normalized.includes('doc a visible') || normalized.includes('doc_a_visible');
+}
+
+function sanitizeEvidenceQuestionIds(value: unknown) {
+  const unique = new Set<string>();
+  toSafeArray(value).forEach((entry) => {
+    const id = String(entry || '').trim();
+    if (!id || hasDocAIdentifier(id)) {
+      return;
+    }
+    unique.add(id);
+  });
+  return [...unique];
+}
+
+function sanitizeEvidenceAnchors(value: unknown) {
+  return toSafeArray(value)
+    .map((anchor) => {
+      const doc = String(anchor?.doc || '').trim().toUpperCase();
+      const start = Math.max(0, Math.floor(toNumber(anchor?.start, -1)));
+      const end = Math.max(0, Math.floor(toNumber(anchor?.end, -1)));
+      if (doc !== 'B' || end <= start) {
+        return null;
+      }
+      return {
+        doc: 'B',
+        start,
+        end,
+      };
+    })
+    .filter(Boolean);
+}
+
+function entryMentionsDocA(entry: Record<string, any>) {
+  if (hasDocAIdentifier(entry?.party) || hasDocAIdentifier(entry?.to_party)) {
+    return true;
+  }
+
+  const idFields = ['evidence_question_ids', 'related_question_ids', 'question_ids'];
+  if (
+    idFields.some((field) =>
+      toSafeArray(entry?.[field]).some((id) => hasDocAIdentifier(id)),
+    )
+  ) {
+    return true;
+  }
+
+  const anchors = toSafeArray(entry?.evidence_anchors);
+  if (anchors.some((anchor) => String(anchor?.doc || '').trim().toUpperCase() === 'A')) {
+    return true;
+  }
+
+  const targets = toSafeObject(entry?.targets);
+  if (
+    toSafeArray(targets.question_ids).some((id) => hasDocAIdentifier(id)) ||
+    toSafeArray(targets.evidence_anchors).some((anchor) => String(anchor?.doc || '').trim().toUpperCase() === 'A')
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function sanitizeEvidenceEntry(entry: unknown, markers: string[]) {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+    return null;
+  }
+
+  const source = { ...(entry as Record<string, any>) };
+  if (entryMentionsDocA(source)) {
+    return null;
+  }
+
+  const next: Record<string, any> = {};
+  Object.entries(source).forEach(([key, value]) => {
+    if (key === 'evidence_question_ids' || key === 'related_question_ids' || key === 'question_ids') {
+      next[key] = sanitizeEvidenceQuestionIds(value);
+      return;
+    }
+
+    if (key === 'evidence_anchors') {
+      const anchors = sanitizeEvidenceAnchors(value);
+      const hadAnchors = Array.isArray(value) && value.length > 0;
+      if (hadAnchors && anchors.length === 0) {
+        next.__drop = true;
+        return;
+      }
+      next[key] = anchors;
+      return;
+    }
+
+    if (key === 'targets' && value && typeof value === 'object' && !Array.isArray(value)) {
+      const targetsSource = value as Record<string, any>;
+      const questionIds = sanitizeEvidenceQuestionIds(targetsSource.question_ids);
+      const targetAnchors = sanitizeEvidenceAnchors(targetsSource.evidence_anchors);
+      const hadTargetAnchors =
+        Array.isArray(targetsSource.evidence_anchors) && targetsSource.evidence_anchors.length > 0;
+      if (
+        toSafeArray(targetsSource.question_ids).some((id) => hasDocAIdentifier(id)) ||
+        (hadTargetAnchors && targetAnchors.length === 0)
+      ) {
+        next.__drop = true;
+        return;
+      }
+      next[key] = {
+        ...targetsSource,
+        question_ids: questionIds,
+        evidence_anchors: targetAnchors,
+      };
+      return;
+    }
+
+    if (typeof value === 'string') {
+      const scrubbed = scrubString(value, markers, '');
+      next[key] = scrubbed;
+      return;
+    }
+
+    if (Array.isArray(value) && value.every((item) => typeof item === 'string')) {
+      next[key] = scrubStringArray(value, markers);
+      return;
+    }
+
+    next[key] = value;
+  });
+
+  if (next.__drop) {
+    return null;
+  }
+  delete next.__drop;
+
+  if (containsConfidentialMarker(JSON.stringify(next), markers)) {
+    return null;
+  }
+
+  return next;
+}
+
+function sanitizeEvidenceEntryArray(value: unknown, markers: string[]) {
+  return toSafeArray(value)
+    .map((entry) => sanitizeEvidenceEntry(entry, markers))
+    .filter(Boolean);
+}
+
+function sanitizeFieldDigest(value: unknown, markers: string[]) {
+  const digest = toSafeArray(value)
+    .map((entry) => sanitizeEvidenceEntry(entry, markers))
+    .filter(Boolean)
+    .filter((entry) => {
+      const party = String(entry?.party || '').trim().toLowerCase();
+      return party !== 'a';
+    })
+    .map((entry) => ({
+      question_id: scrubString(entry.question_id, markers, 'doc_b_visible'),
+      label: scrubString(entry.label, markers, SHARED_LABEL),
+      party: 'b',
+      value_summary: scrubString(entry.value_summary, markers, ''),
+      visibility: scrubString(entry.visibility, markers, 'full') || 'full',
+      verified_status: scrubString(entry.verified_status, markers, 'unknown') || 'unknown',
+      last_updated_by: scrubString(entry.last_updated_by, markers, 'recipient') || 'recipient',
+    }))
+    .filter((entry) => Boolean(entry.value_summary));
+
+  if (digest.length > 0) {
+    return digest;
+  }
+
+  return [
+    {
+      question_id: 'doc_b_visible',
+      label: SHARED_LABEL,
+      party: 'b',
+      value_summary: 'Shared information was used to generate this recipient-safe report.',
+      visibility: 'full',
+      verified_status: 'self_declared',
+      last_updated_by: 'system',
+    },
+  ];
+}
+
+function sanitizeLegacySections(value: unknown, markers: string[]) {
+  const sections = toSafeArray(value)
+    .map((section) => {
+      if (!section || typeof section !== 'object' || Array.isArray(section)) {
+        return null;
+      }
+      const key = scrubString((section as any).key, markers, '');
+      const heading = scrubString((section as any).heading, markers, '');
+      const bullets = scrubStringArray((section as any).bullets, markers).filter(
+        (bullet) => !hasDocAIdentifier(bullet) && !/confidential information/i.test(bullet),
+      );
+
+      if (!heading && bullets.length === 0) {
+        return null;
+      }
+
+      return {
+        key: key || 'summary',
+        heading: heading || 'Recipient-Safe Summary',
+        bullets,
+      };
+    })
+    .filter(Boolean);
+
+  if (sections.length > 0) {
+    return sections;
+  }
+
+  return [
+    {
+      key: 'summary',
+      heading: 'Recipient-Safe Summary',
+      bullets: ['Evaluation generated from Shared Information only.'],
+    },
+  ];
+}
+
+function redactConfidentialStrings(value: any, markers: string[]): any {
+  if (typeof value === 'string') {
+    if (!containsConfidentialMarker(value, markers)) {
+      return value;
+    }
+    return '';
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => redactConfidentialStrings(entry, markers))
+      .filter((entry) => {
+        if (typeof entry === 'string') {
+          return entry.trim().length > 0;
+        }
+        return entry !== null && entry !== undefined;
+      });
+  }
+
+  if (value && typeof value === 'object') {
+    const next: Record<string, any> = {};
+    Object.entries(value).forEach(([key, entry]) => {
+      next[key] = redactConfidentialStrings(entry, markers);
+    });
+    return next;
+  }
+
+  return value;
+}
+
+function hasLeakAfterProjection(payload: any, markers: string[]) {
+  if (!markers.length) {
+    return false;
+  }
+  return containsConfidentialMarker(JSON.stringify(payload || {}), markers);
+}
+
+function toRecommendation(value: unknown, scoreFallback = 0): 'High' | 'Medium' | 'Low' {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'high') return 'High';
+  if (normalized === 'medium') return 'Medium';
+  if (normalized === 'low') return 'Low';
+
+  const score = clampScore(scoreFallback, 0);
+  if (score >= 75) return 'High';
+  if (score >= 45) return 'Medium';
+  return 'Low';
+}
+
+function buildFallbackRecipientReport(params: {
+  title: string;
+  generatedAt: string;
+  score: number;
+  confidence: number;
+  recommendation: 'High' | 'Medium' | 'Low';
+}) {
+  const confidenceRatio = clampConfidence(params.confidence, 0.35);
+  const summaryScore = clampScore(params.score, 0);
+  return {
+    template_id: 'document_comparison_template',
+    template_name: params.title || 'Document Comparison',
+    generated_at_iso: params.generatedAt,
+    parties: {
+      a_label: CONFIDENTIAL_LABEL,
+      b_label: SHARED_LABEL,
+    },
+    quality: {
+      completeness_a: 0,
+      completeness_b: 0,
+      confidence_overall: confidenceRatio,
+      confidence_reasoning: ['Recipient-safe projection excludes confidential evidence.'],
+      missing_high_impact_question_ids: [],
+      disputed_question_ids: [],
+    },
+    summary: {
+      overall_score_0_100: summaryScore,
+      fit_level: params.recommendation.toLowerCase(),
+      top_fit_reasons: [
+        {
+          text: 'Shared Information provided enough visible context for a limited recipient-safe summary.',
+          evidence_question_ids: ['doc_b_visible'],
+          evidence_anchors: [],
+        },
+      ],
+      top_blockers: [],
+      next_actions: ['Review Shared Information details and request clarification where needed.'],
+    },
+    category_breakdown: [],
+    gates: [],
+    overlaps_and_constraints: [],
+    contradictions: [],
+    flags: [],
+    verification: {
+      summary: {
+        self_declared_count: 0,
+        evidence_attached_count: 0,
+        tier1_verified_count: 0,
+        disputed_count: 0,
+      },
+      evidence_requested: [],
+    },
+    followup_questions: [],
+    appendix: {
+      field_digest: [
+        {
+          question_id: 'doc_b_visible',
+          label: SHARED_LABEL,
+          party: 'b',
+          value_summary: 'Shared information reviewed for recipient-safe reporting.',
+          visibility: 'full',
+          verified_status: 'self_declared',
+          last_updated_by: 'system',
+        },
+      ],
+    },
+    generated_at: params.generatedAt,
+    recommendation: params.recommendation,
+    confidence_score: Math.round(confidenceRatio * 100),
+    similarity_score: summaryScore,
+    delta_characters: 0,
+    confidentiality_spans: 0,
+    executive_summary: 'Recipient-safe evaluation generated from Shared Information only.',
+    sections: [
+      {
+        key: 'summary',
+        heading: 'Recipient-Safe Summary',
+        bullets: ['Confidential Information is excluded from recipient-facing report payloads.'],
+      },
+    ],
+    provider: 'projection',
+    model: 'recipient-safe',
+  };
+}
+
+export function buildRecipientSafeEvaluationProjection(params: {
+  evaluationResult: unknown;
+  publicReport?: unknown;
+  confidentialText?: string;
+  sharedText?: string;
+  title?: string;
+}) {
+  const evaluation = toSafeObject(params?.evaluationResult);
+  const sourceReport = toSafeObject(params?.publicReport || evaluation.report);
+  const generatedAt =
+    scrubString(evaluation.generatedAt, [], '') ||
+    scrubString(sourceReport.generated_at_iso, [], '') ||
+    new Date().toISOString();
+  const markers = collectConfidentialMarkers(String(params?.confidentialText || ''));
+
+  const score = clampScore(
+    evaluation.score,
+    clampScore(sourceReport.similarity_score, clampScore(sourceReport.summary?.overall_score_0_100, 0)),
+  );
+  const confidence = clampScore(
+    evaluation.confidence,
+    clampScore(toNumber(sourceReport.confidence_score, toNumber(sourceReport.quality?.confidence_overall, 0.35) * 100), 35),
+  );
+  const recommendation = toRecommendation(evaluation.recommendation || sourceReport.recommendation, score);
+
+  const topFitReasons = sanitizeEvidenceEntryArray(sourceReport.summary?.top_fit_reasons, markers);
+  const topBlockers = sanitizeEvidenceEntryArray(sourceReport.summary?.top_blockers, markers);
+  const nextActions = scrubStringArray(sourceReport.summary?.next_actions, markers);
+
+  const safeReport = {
+    template_id: scrubString(sourceReport.template_id, markers, 'document_comparison_template'),
+    template_name: scrubString(
+      sourceReport.template_name || params?.title,
+      markers,
+      scrubString(params?.title, markers, 'Document Comparison'),
+    ),
+    generated_at_iso: generatedAt,
+    parties: {
+      a_label: CONFIDENTIAL_LABEL,
+      b_label: SHARED_LABEL,
+    },
+    quality: {
+      completeness_a: clampRatio(sourceReport.quality?.completeness_a, 0),
+      completeness_b: clampRatio(sourceReport.quality?.completeness_b, 0),
+      confidence_overall: clampConfidence(sourceReport.quality?.confidence_overall, confidence / 100),
+      confidence_reasoning: scrubStringArray(sourceReport.quality?.confidence_reasoning, markers),
+      missing_high_impact_question_ids: sanitizeEvidenceQuestionIds(
+        sourceReport.quality?.missing_high_impact_question_ids,
+      ),
+      disputed_question_ids: sanitizeEvidenceQuestionIds(sourceReport.quality?.disputed_question_ids),
+    },
+    summary: {
+      overall_score_0_100: clampScore(
+        sourceReport.summary?.overall_score_0_100,
+        score,
+      ),
+      fit_level: scrubString(
+        sourceReport.summary?.fit_level,
+        markers,
+        recommendation.toLowerCase(),
+      ),
+      top_fit_reasons:
+        topFitReasons.length > 0
+          ? topFitReasons
+          : [
+              {
+                text: 'Shared Information provides the basis for this recipient-safe fit summary.',
+                evidence_question_ids: ['doc_b_visible'],
+                evidence_anchors: [],
+              },
+            ],
+      top_blockers: topBlockers,
+      next_actions:
+        nextActions.length > 0
+          ? nextActions
+          : ['Review Shared Information and request clarification for unresolved risk areas.'],
+    },
+    category_breakdown: sanitizeEvidenceEntryArray(sourceReport.category_breakdown, markers),
+    gates: sanitizeEvidenceEntryArray(sourceReport.gates, markers),
+    overlaps_and_constraints: sanitizeEvidenceEntryArray(sourceReport.overlaps_and_constraints, markers),
+    contradictions: sanitizeEvidenceEntryArray(sourceReport.contradictions, markers),
+    flags: sanitizeEvidenceEntryArray(sourceReport.flags, markers),
+    verification: {
+      summary: {
+        self_declared_count: Math.max(0, Math.floor(toNumber(sourceReport.verification?.summary?.self_declared_count, 0))),
+        evidence_attached_count: Math.max(
+          0,
+          Math.floor(toNumber(sourceReport.verification?.summary?.evidence_attached_count, 0)),
+        ),
+        tier1_verified_count: Math.max(
+          0,
+          Math.floor(toNumber(sourceReport.verification?.summary?.tier1_verified_count, 0)),
+        ),
+        disputed_count: Math.max(0, Math.floor(toNumber(sourceReport.verification?.summary?.disputed_count, 0))),
+      },
+      evidence_requested: sanitizeEvidenceEntryArray(sourceReport.verification?.evidence_requested, markers),
+    },
+    followup_questions: sanitizeEvidenceEntryArray(sourceReport.followup_questions, markers),
+    appendix: {
+      field_digest: sanitizeFieldDigest(sourceReport.appendix?.field_digest, markers),
+    },
+    generated_at: generatedAt,
+    recommendation,
+    confidence_score: confidence,
+    similarity_score: clampScore(sourceReport.similarity_score, score),
+    delta_characters: Math.max(0, Math.floor(toNumber(sourceReport.delta_characters, 0))),
+    confidentiality_spans: 0,
+    executive_summary:
+      scrubString(
+        sourceReport.executive_summary || evaluation.summary,
+        markers,
+        '',
+      ) || 'Recipient-safe evaluation generated from Shared Information only.',
+    sections: sanitizeLegacySections(sourceReport.sections, markers),
+    provider: scrubString(sourceReport.provider || evaluation.provider, markers, 'projection'),
+    model: scrubString(sourceReport.model || evaluation.model, markers, 'recipient-safe'),
+  } as Record<string, any>;
+
+  const projectedReport = redactConfidentialStrings(safeReport, markers);
+  const projectionHasLeak = hasLeakAfterProjection(projectedReport, markers);
+  const fallbackReport = buildFallbackRecipientReport({
+    title: scrubString(params?.title, markers, 'Document Comparison'),
+    generatedAt,
+    score,
+    confidence: confidence / 100,
+    recommendation,
+  });
+  const finalReport = projectionHasLeak ? fallbackReport : projectedReport;
+  const summary =
+    scrubString(
+      evaluation.summary || finalReport.executive_summary,
+      markers,
+      '',
+    ) || 'Recipient-safe evaluation generated from Shared Information only.';
+
+  const recipientEvaluation = {
+    provider: scrubString(evaluation.provider, markers, 'projection'),
+    model: scrubString(evaluation.model, markers, 'recipient-safe'),
+    generatedAt,
+    score,
+    confidence,
+    recommendation,
+    summary,
+    report: finalReport,
+  };
+
+  if (hasLeakAfterProjection(recipientEvaluation, markers)) {
+    return {
+      evaluation_result: {
+        provider: 'projection',
+        model: 'recipient-safe',
+        generatedAt,
+        score,
+        confidence,
+        recommendation,
+        summary: 'Recipient-safe evaluation generated from Shared Information only.',
+        report: fallbackReport,
+      },
+      public_report: fallbackReport,
+    };
+  }
+
+  return {
+    evaluation_result: recipientEvaluation,
+    public_report: finalReport,
+  };
+}
+
 function clampSpanBoundary(raw: unknown, textLength: number) {
   const numeric = Number(raw);
   if (!Number.isFinite(numeric)) {
