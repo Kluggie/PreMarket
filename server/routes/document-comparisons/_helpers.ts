@@ -15,6 +15,12 @@ function asJsonObject(value: unknown) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return null;
   }
+
+  const type = String((value as any).type || '').trim().toLowerCase();
+  const content = (value as any).content;
+  if (type !== 'doc' || !Array.isArray(content)) {
+    return null;
+  }
   return value as Record<string, unknown>;
 }
 

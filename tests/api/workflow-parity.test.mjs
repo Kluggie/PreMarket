@@ -310,6 +310,89 @@ if (!hasDatabaseUrl()) {
     );
   });
 
+  test('document comparison draft step can advance to editor without uploads/imports', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = authCookie('doc_step_owner', 'doc-step@example.com');
+
+    const createReq = createMockReq({
+      method: 'POST',
+      url: '/api/document-comparisons',
+      headers: { cookie: ownerCookie },
+      body: {
+        title: '',
+        createProposal: true,
+      },
+    });
+    const createRes = createMockRes();
+    await documentComparisonsHandler(createReq, createRes);
+    assert.equal(createRes.statusCode, 201);
+    const comparisonId = createRes.jsonBody().comparison.id;
+    assert.equal(createRes.jsonBody().comparison.draft_step, 1);
+    assert.equal(createRes.jsonBody().comparison.doc_a_text, '');
+    assert.equal(createRes.jsonBody().comparison.doc_b_text, '');
+
+    const step2Req = createMockReq({
+      method: 'PATCH',
+      url: `/api/document-comparisons/${comparisonId}`,
+      headers: { cookie: ownerCookie },
+      query: { id: comparisonId },
+      body: {
+        draft_step: 2,
+      },
+    });
+    const step2Res = createMockRes();
+    await documentComparisonsIdHandler(step2Req, step2Res, comparisonId);
+    assert.equal(step2Res.statusCode, 200);
+    assert.equal(step2Res.jsonBody().comparison.draft_step, 2);
+
+    const getReq = createMockReq({
+      method: 'GET',
+      url: `/api/document-comparisons/${comparisonId}`,
+      headers: { cookie: ownerCookie },
+      query: { id: comparisonId },
+    });
+    const getRes = createMockRes();
+    await documentComparisonsIdHandler(getReq, getRes, comparisonId);
+    assert.equal(getRes.statusCode, 200);
+    assert.equal(getRes.jsonBody().comparison.draft_step, 2);
+  });
+
+  test('document comparison sanitizes malformed editor JSON payloads to prevent editor crashes', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = authCookie('doc_json_owner', 'doc-json@example.com');
+
+    const createReq = createMockReq({
+      method: 'POST',
+      url: '/api/document-comparisons',
+      headers: { cookie: ownerCookie },
+      body: {
+        title: 'Malformed JSON Comparison',
+        doc_a_json: {},
+        doc_b_json: {},
+      },
+    });
+    const createRes = createMockRes();
+    await documentComparisonsHandler(createReq, createRes);
+    assert.equal(createRes.statusCode, 201);
+    const comparisonId = createRes.jsonBody().comparison.id;
+
+    const getReq = createMockReq({
+      method: 'GET',
+      url: `/api/document-comparisons/${comparisonId}`,
+      headers: { cookie: ownerCookie },
+      query: { id: comparisonId },
+    });
+    const getRes = createMockRes();
+    await documentComparisonsIdHandler(getReq, getRes, comparisonId);
+    assert.equal(getRes.statusCode, 200);
+    assert.equal(getRes.jsonBody().comparison.doc_a_json, null);
+    assert.equal(getRes.jsonBody().comparison.doc_b_json, null);
+  });
+
   test('document comparison workflow persists inputs and stores evaluation output', async () => {
     await ensureMigrated();
     await resetTables();

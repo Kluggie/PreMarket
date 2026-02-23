@@ -9,7 +9,6 @@ import Link from '@tiptap/extension-link';
 import Subscript from '@tiptap/extension-subscript';
 import Superscript from '@tiptap/extension-superscript';
 import TextAlign from '@tiptap/extension-text-align';
-import History from '@tiptap/extension-history';
 import {
   AlignCenter,
   AlignJustify,
@@ -36,6 +35,7 @@ import {
   Unlink,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { isTipTapDocJson, normalizeEditorContent } from './editorContent';
 
 const TEXT_COLORS = [
   '#0f172a',
@@ -81,24 +81,11 @@ export default function DocumentRichEditor({
   isFullscreen = false,
   minHeightClassName = 'min-h-[560px]',
 }) {
-  const initialContent = useMemo(() => {
-    if (content && typeof content === 'object') {
-      return content;
-    }
-
-    if (typeof content === 'string' && content.trim().length > 0) {
-      return content;
-    }
-
-    return '<p></p>';
-  }, [content]);
+  const initialContent = useMemo(() => normalizeEditorContent(content), [content]);
 
   const editor = useEditor({
     extensions: [
-      StarterKit.configure({
-        history: false,
-      }),
-      History,
+      StarterKit,
       Underline,
       TextStyle,
       Color,
@@ -138,12 +125,17 @@ export default function DocumentRichEditor({
       return;
     }
 
-    if (content && typeof content === 'object') {
+    if (isTipTapDocJson(content)) {
       const currentJson = editor.getJSON();
       if (JSON.stringify(currentJson) === JSON.stringify(content)) {
         return;
       }
-      editor.commands.setContent(content, false);
+      try {
+        editor.commands.setContent(content, false);
+      } catch (error) {
+        console.error('Failed to initialize document editor JSON content.', error);
+        editor.commands.clearContent();
+      }
       return;
     }
 
@@ -152,7 +144,12 @@ export default function DocumentRichEditor({
       return;
     }
 
-    editor.commands.setContent(nextHtml || '<p></p>', false);
+    try {
+      editor.commands.setContent(nextHtml || '<p></p>', false);
+    } catch (error) {
+      console.error('Failed to initialize document editor HTML content.', error);
+      editor.commands.clearContent();
+    }
   }, [content, editor]);
 
   if (!editor) {

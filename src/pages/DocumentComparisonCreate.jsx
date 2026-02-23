@@ -13,6 +13,7 @@ import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Progress } from '@/components/ui/progress';
 import DocumentRichEditor from '@/components/document-comparison/DocumentRichEditor';
+import DocumentComparisonEditorErrorBoundary from '@/components/document-comparison/DocumentComparisonEditorErrorBoundary';
 import { toast } from 'sonner';
 import {
   AlertTriangle,
@@ -130,6 +131,14 @@ function parseDocJson(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return null;
   }
+
+  if (String(value.type || '').trim().toLowerCase() !== 'doc') {
+    return null;
+  }
+
+  if (!Array.isArray(value.content)) {
+    return null;
+  }
   return value;
 }
 
@@ -189,7 +198,7 @@ export default function DocumentComparisonCreate() {
     queryFn: () => proposalsClient.getById(routeState.proposalId),
   });
 
-  const resolvedDraftId = routeState.draftId || proposalLookup.data?.document_comparison_id || '';
+  const resolvedDraftId = routeState.draftId || comparisonId || proposalLookup.data?.document_comparison_id || '';
 
   const draftQuery = useQuery({
     queryKey: ['document-comparison-draft', resolvedDraftId, routeState.token],
@@ -231,7 +240,10 @@ export default function DocumentComparisonCreate() {
     setDocAPreviewSnippet(previewSnippet(nextDocAText));
     setDocBPreviewSnippet(previewSnippet(nextDocBText));
 
-    const draftStep = clampStep(comparison.draft_step || routeState.step || 1);
+    const draftStep = Math.max(
+      clampStep(comparison.draft_step || 1),
+      clampStep(routeState.step || 1),
+    );
     setStep(draftStep);
   }, [draftQuery.data, resolvedDraftId, routeState.proposalId, routeState.step]);
 
@@ -331,7 +343,10 @@ export default function DocumentComparisonCreate() {
       queryClient.invalidateQueries(['proposals']);
       return comparison.id;
     },
-    onError: (error) => {
+    onError: (error, variables) => {
+      if (variables?.nonBlocking) {
+        return;
+      }
       const message = error?.message || 'Failed to save draft';
       setUiError(message);
       toast.error(message);
@@ -390,6 +405,8 @@ export default function DocumentComparisonCreate() {
 
   const hasAnyDocumentContent = Boolean(asText(docAText) || asText(docBText));
   const hasBothDocumentContents = Boolean(asText(docAText) && asText(docBText));
+  const isStep2LoadingDraft = step === 2 && Boolean(resolvedDraftId) && draftQuery.isLoading;
+  const step2LoadError = step === 2 && Boolean(resolvedDraftId) ? draftQuery.error : null;
 
   const applyImportedContent = (side, file, extracted) => {
     const text = asText(extracted?.text) || htmlToText(extracted?.html || '');
@@ -442,15 +459,50 @@ export default function DocumentComparisonCreate() {
 
   const jumpStep = async (nextStep) => {
     const bounded = clampStep(nextStep || 1);
-    try {
-      const savedId = await saveDraftMutation.mutateAsync({ stepToSave: bounded, silent: true });
-      if (!savedId) {
+    if (saveDraftMutation.isPending) {
+      return;
+    }
+
+    if (bounded === 2 && !comparisonId) {
+      try {
+        const createdId = await saveDraftMutation.mutateAsync({
+          stepToSave: bounded,
+          silent: true,
+        });
+        if (!createdId) {
+          throw new Error('Failed to create comparison draft');
+        }
+      } catch (error) {
+        const message = error?.message || "Couldn't open editor yet. Please retry.";
+        setUiError(message);
+        toast.error("Couldn't open editor yet. Please retry.");
         return;
       }
 
       setStep(bounded);
+      return;
+    }
+
+    try {
+      await saveDraftMutation.mutateAsync({
+        stepToSave: bounded,
+        silent: true,
+        nonBlocking: true,
+      });
     } catch {
-      // saveDraftMutation handles UI errors.
+      if (bounded === 2) {
+        toast("Couldn't save import step yet - your changes will be saved when you hit Save in the editor.");
+      }
+    }
+    setStep(bounded);
+  };
+
+  const retryStep2Load = () => {
+    setUiError('');
+    setFullscreenSide(null);
+    setStep(2);
+    if (resolvedDraftId) {
+      queryClient.invalidateQueries({ queryKey: ['document-comparison-draft', resolvedDraftId, routeState.token] });
     }
   };
 
@@ -616,6 +668,8 @@ export default function DocumentComparisonCreate() {
                   <CardTitle>Step 1: Upload and Import</CardTitle>
                   <CardDescription>
                     Upload DOCX or PDF files and import extracted content before editing.
+                    {' '}
+                    Uploads are optional - you can also type directly in the editor.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-5">
@@ -626,6 +680,11 @@ export default function DocumentComparisonCreate() {
                       onChange={(event) => setTitle(event.target.value)}
                       placeholder="e.g., Mutual NDA comparison"
                     />
+                    {!asText(title) ? (
+                      <p className="text-xs text-slate-500">
+                        Optional for now. If left empty, this will save as "Untitled Comparison".
+                      </p>
+                    ) : null}
                   </div>
 
                   <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
@@ -655,65 +714,141 @@ export default function DocumentComparisonCreate() {
               </Card>
 
               <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => saveDraftMutation.mutate({ stepToSave: 1 })}>
-                  <Save className="w-4 h-4 mr-2" />
-                  Save Draft
+                <Button
+                  variant="outline"
+                  onClick={() => saveDraftMutation.mutate({ stepToSave: 1 })}
+                  disabled={saveDraftMutation.isPending}
+                >
+                  {saveDraftMutation.isPending ? (
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  ) : (
+                    <Save className="w-4 h-4 mr-2" />
+                  )}
+                  {saveDraftMutation.isPending ? 'Saving...' : 'Save Draft'}
                 </Button>
                 <Button
                   onClick={() => jumpStep(2)}
-                  disabled={!hasAnyDocumentContent}
+                  disabled={saveDraftMutation.isPending}
                   className="bg-blue-600 hover:bg-blue-700"
                 >
-                  Continue to Editor
-                  <ArrowRight className="w-4 h-4 ml-2" />
+                  {saveDraftMutation.isPending ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      Continue to Editor
+                      <ArrowRight className="w-4 h-4 ml-2" />
+                    </>
+                  )}
                 </Button>
               </div>
             </motion.div>
           )}
 
           {step === 2 && (
-            <motion.div
-              key="doc-step-2"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              className="space-y-6"
+            <DocumentComparisonEditorErrorBoundary
+              onRetry={retryStep2Load}
+              onBackToStep1={() => setStep(1)}
             >
-              {fullscreenSide && (
-                <button
-                  type="button"
-                  aria-label="Close full screen editor"
-                  className="fixed inset-0 bg-slate-900/45 z-40"
-                  onClick={() => setFullscreenSide(null)}
-                />
-              )}
+              <motion.div
+                key="doc-step-2"
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+                className="space-y-6"
+              >
+                {isStep2LoadingDraft ? (
+                  <Card>
+                    <CardContent className="py-10 text-slate-500 flex items-center gap-2">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Loading editor...
+                    </CardContent>
+                  </Card>
+                ) : null}
 
-              <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
-                {renderEditorPanel('a')}
-                {renderEditorPanel('b')}
-              </div>
+                {step2LoadError ? (
+                  <Card className="border border-amber-200 bg-amber-50">
+                    <CardHeader>
+                      <CardTitle>We couldn&apos;t load the editor yet.</CardTitle>
+                      <CardDescription>
+                        Please retry loading this draft, or return to Step 1.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="flex flex-wrap gap-3">
+                      <Button onClick={retryStep2Load}>
+                        Retry
+                      </Button>
+                      <Button variant="outline" onClick={() => setStep(1)}>
+                        Back to Step 1
+                      </Button>
+                    </CardContent>
+                  </Card>
+                ) : null}
 
-              <div className="flex justify-between pt-2">
-                <Button variant="outline" onClick={() => jumpStep(1)}>
-                  <ArrowLeft className="w-4 h-4 mr-2" />
-                  Back to Upload
-                </Button>
-                <div className="flex gap-2">
-                  <Button variant="outline" onClick={() => saveDraftMutation.mutate({ stepToSave: 2 })}>
-                    <Save className="w-4 h-4 mr-2" />
-                    Save Draft
-                  </Button>
-                  <Button
-                    onClick={() => jumpStep(3)}
-                    disabled={!hasAnyDocumentContent}
-                    className="bg-blue-600 hover:bg-blue-700"
-                  >
-                    Continue to Review
-                    <ArrowRight className="w-4 h-4 ml-2" />
-                  </Button>
-                </div>
-              </div>
-            </motion.div>
+                {!isStep2LoadingDraft && !step2LoadError && !comparisonId ? (
+                  <Card className="border border-amber-200 bg-amber-50">
+                    <CardHeader>
+                      <CardTitle>We couldn&apos;t load the editor yet.</CardTitle>
+                      <CardDescription>
+                        Create the comparison draft first, then continue to editing.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="flex flex-wrap gap-3">
+                      <Button onClick={() => jumpStep(2)} disabled={saveDraftMutation.isPending}>
+                        {saveDraftMutation.isPending ? (
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        ) : null}
+                        Retry
+                      </Button>
+                      <Button variant="outline" onClick={() => setStep(1)}>
+                        Back to Step 1
+                      </Button>
+                    </CardContent>
+                  </Card>
+                ) : null}
+
+                {!isStep2LoadingDraft && !step2LoadError && comparisonId ? (
+                  <>
+                    {fullscreenSide && (
+                      <button
+                        type="button"
+                        aria-label="Close full screen editor"
+                        className="fixed inset-0 bg-slate-900/45 z-40"
+                        onClick={() => setFullscreenSide(null)}
+                      />
+                    )}
+
+                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
+                      {renderEditorPanel('a')}
+                      {renderEditorPanel('b')}
+                    </div>
+
+                    <div className="flex justify-between pt-2">
+                      <Button variant="outline" onClick={() => jumpStep(1)}>
+                        <ArrowLeft className="w-4 h-4 mr-2" />
+                        Back to Upload
+                      </Button>
+                      <div className="flex gap-2">
+                        <Button variant="outline" onClick={() => saveDraftMutation.mutate({ stepToSave: 2 })}>
+                          <Save className="w-4 h-4 mr-2" />
+                          Save Draft
+                        </Button>
+                        <Button
+                          onClick={() => jumpStep(3)}
+                          disabled={!hasAnyDocumentContent}
+                          className="bg-blue-600 hover:bg-blue-700"
+                        >
+                          Continue to Review
+                          <ArrowRight className="w-4 h-4 ml-2" />
+                        </Button>
+                      </div>
+                    </div>
+                  </>
+                ) : null}
+              </motion.div>
+            </DocumentComparisonEditorErrorBoundary>
           )}
 
           {step === 3 && (
