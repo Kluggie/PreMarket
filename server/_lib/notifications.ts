@@ -117,6 +117,7 @@ export async function createNotificationEvent(input: {
   message: string;
   actionUrl?: string | null;
   metadata?: Record<string, unknown> | null;
+  dedupeKey?: string | null;
   emailSubject?: string | null;
   emailText?: string | null;
   emailHtml?: string | null;
@@ -163,21 +164,32 @@ export async function createNotificationEvent(input: {
   }
 
   const now = new Date();
-  const [created] = await db
-    .insert(schema.notifications)
-    .values({
-      id: newId('notification'),
-      userId,
-      eventType,
-      title: asText(input.title) || 'Notification',
-      message: asText(input.message) || '',
-      actionUrl: asText(input.actionUrl) || null,
-      readAt: null,
-      metadata: input.metadata && typeof input.metadata === 'object' ? input.metadata : {},
-      createdAt: now,
-      updatedAt: now,
-    })
-    .returning();
+  const dedupeKey = asText(input.dedupeKey) || null;
+  const insertBuilder = db.insert(schema.notifications).values({
+    id: newId('notification'),
+    userId,
+    eventType,
+    title: asText(input.title) || 'Notification',
+    message: asText(input.message) || '',
+    actionUrl: asText(input.actionUrl) || null,
+    dedupeKey,
+    readAt: null,
+    metadata: input.metadata && typeof input.metadata === 'object' ? input.metadata : {},
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  const [created] = dedupeKey
+    ? await insertBuilder
+        .onConflictDoNothing({
+          target: [schema.notifications.userId, schema.notifications.dedupeKey],
+        })
+        .returning()
+    : await insertBuilder.returning();
+
+  if (!created) {
+    return { created: false, reason: 'duplicate_event' as const };
+  }
 
   const recipientEmail = asText(input.userEmail || userRow.email);
   const shouldAttemptEmail =

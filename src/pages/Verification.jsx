@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { accountClient } from '@/api/accountClient';
@@ -14,43 +14,68 @@ import {
   Mail,
   Shield,
   AlertCircle,
-  LoaderCircle,
 } from 'lucide-react';
 
-function useVerificationToken() {
-  const location = useLocation();
+function mapVerificationBanner(search) {
+  const params = new URLSearchParams(search || '');
+  const verified = String(params.get('verified') || '').trim().toLowerCase();
+  const code = String(params.get('code') || '').trim().toLowerCase();
 
-  return useMemo(() => {
-    const params = new URLSearchParams(location.search || '');
-    return String(params.get('token') || '').trim();
-  }, [location.search]);
+  if (verified === 'success') {
+    return {
+      tone: 'success',
+      message: 'Email verification completed successfully.',
+    };
+  }
+
+  if (verified !== 'error') {
+    return null;
+  }
+
+  if (code === 'token_used') {
+    return {
+      tone: 'error',
+      message: 'This verification link has already been used.',
+    };
+  }
+
+  if (code === 'token_expired') {
+    return {
+      tone: 'error',
+      message: 'This verification link has expired. Please request a new email.',
+    };
+  }
+
+  if (code === 'token_invalid' || code === 'token_missing') {
+    return {
+      tone: 'error',
+      message: 'This verification link is invalid. Please request a new email.',
+    };
+  }
+
+  return {
+    tone: 'error',
+    message: 'Verification could not be completed. Please request a new email.',
+  };
 }
 
 export default function Verification() {
   const { user, isLoadingAuth, navigateToLogin } = useAuth();
+  const location = useLocation();
   const queryClient = useQueryClient();
-  const token = useVerificationToken();
-  const hasAttemptedToken = useRef(false);
   const [emailSent, setEmailSent] = useState(false);
+  const banner = useMemo(() => mapVerificationBanner(location.search), [location.search]);
 
   useEffect(() => {
     if (!isLoadingAuth && !user) {
-      navigateToLogin('/verification');
+      navigateToLogin(`/verification${location.search || ''}`);
     }
-  }, [isLoadingAuth, navigateToLogin, user]);
+  }, [isLoadingAuth, location.search, navigateToLogin, user]);
 
   const profileQuery = useQuery({
     queryKey: ['userProfile', user?.email],
     queryFn: () => accountClient.getProfile(),
     enabled: Boolean(user?.email),
-  });
-
-  const verifyTokenMutation = useMutation({
-    mutationFn: (verificationToken) => verificationClient.confirm(verificationToken),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['userProfile'] });
-      await queryClient.invalidateQueries({ queryKey: ['verificationStatus'] });
-    },
   });
 
   const sendEmailMutation = useMutation({
@@ -65,15 +90,6 @@ export default function Verification() {
       await queryClient.invalidateQueries({ queryKey: ['verificationStatus'] });
     },
   });
-
-  useEffect(() => {
-    if (!token || hasAttemptedToken.current) {
-      return;
-    }
-
-    hasAttemptedToken.current = true;
-    verifyTokenMutation.mutate(token);
-  }, [token, verifyTokenMutation]);
 
   if (isLoadingAuth || profileQuery.isLoading) {
     return (
@@ -116,31 +132,21 @@ export default function Verification() {
           </Badge>
         </div>
 
-        {token ? (
+        {banner ? (
           <Card className="border-0 shadow-sm mb-6">
             <CardContent className="p-5">
-              {verifyTokenMutation.isPending ? (
-                <div className="flex items-center gap-2 text-slate-700">
-                  <LoaderCircle className="w-4 h-4 animate-spin" />
-                  Verifying your email link...
-                </div>
-              ) : null}
-
-              {verifyTokenMutation.isSuccess ? (
-                <div className="flex items-center gap-2 text-green-700">
-                  <CheckCircle2 className="w-4 h-4" />
-                  Email verification completed successfully.
-                </div>
-              ) : null}
-
-              {verifyTokenMutation.isError ? (
-                <div className="flex items-start gap-2 text-red-700">
+              <div
+                className={`flex items-start gap-2 ${
+                  banner.tone === 'success' ? 'text-green-700' : 'text-red-700'
+                }`}
+              >
+                {banner.tone === 'success' ? (
+                  <CheckCircle2 className="w-4 h-4 mt-0.5" />
+                ) : (
                   <AlertCircle className="w-4 h-4 mt-0.5" />
-                  <p className="text-sm">
-                    {verifyTokenMutation.error?.message || 'This verification link is invalid or expired.'}
-                  </p>
-                </div>
-              ) : null}
+                )}
+                <p className="text-sm">{banner.message}</p>
+              </div>
             </CardContent>
           </Card>
         ) : null}

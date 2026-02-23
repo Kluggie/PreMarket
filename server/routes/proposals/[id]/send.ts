@@ -195,6 +195,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
             userId: recipientUser.id,
             userEmail: recipientUser.email,
             eventType: 'new_proposal',
+            dedupeKey: `new_proposal:${updatedProposal.id}:${recipientUser.id}`,
             title: 'New proposal received',
             message: `${auth.user.email} sent you "${updatedProposal.title || 'a proposal'}".`,
             actionUrl: `/ProposalDetail?id=${encodeURIComponent(updatedProposal.id)}`,

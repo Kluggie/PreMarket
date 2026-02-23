@@ -21,14 +21,14 @@ function isLikelyEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
-function toReason(value: unknown) {
+function parseReason(value: unknown) {
   const normalized = asText(value).toLowerCase();
 
   if (ALLOWED_REASONS.has(normalized)) {
     return normalized;
   }
 
-  return 'support';
+  return '';
 }
 
 function toReasonLabel(reason: string) {
@@ -48,18 +48,22 @@ function toReasonLabel(reason: string) {
   }
 }
 
-function resolveSupportEmail(resend: ReturnType<typeof getResendConfig>) {
-  const supportEmail = asText(process.env.CONTACT_SUPPORT_EMAIL || process.env.SUPPORT_EMAIL);
-  if (isLikelyEmail(supportEmail)) {
-    return supportEmail;
+function resolveTargetEmail(reason: string) {
+  const sharedContactEmail = asText(
+    process.env.CONTACT_TO_EMAIL || process.env.CONTACT_SUPPORT_EMAIL || process.env.SUPPORT_EMAIL,
+  );
+  const salesEmail = asText(process.env.SALES_TO_EMAIL || process.env.CONTACT_SALES_EMAIL);
+
+  if (reason === 'sales' && isLikelyEmail(salesEmail)) {
+    return salesEmail;
   }
 
-  if (isLikelyEmail(String(resend.replyTo || ''))) {
-    return String(resend.replyTo);
+  if (isLikelyEmail(sharedContactEmail)) {
+    return sharedContactEmail;
   }
 
-  if (isLikelyEmail(resend.fromEmail)) {
-    return resend.fromEmail;
+  if (isLikelyEmail(salesEmail)) {
+    return salesEmail;
   }
 
   return '';
@@ -90,15 +94,9 @@ async function sendContactNotification(input: {
     body: JSON.stringify(payload),
   });
 
-  if (response.ok) {
-    return;
+  if (!response.ok) {
+    throw new ApiError(500, 'email_send_failed', 'Unable to send contact message right now');
   }
-
-  if (response.status >= 400 && response.status < 500) {
-    throw new ApiError(400, 'email_send_failed', 'Email provider rejected the request');
-  }
-
-  throw new ApiError(502, 'email_send_failed', 'Email provider is unavailable');
 }
 
 export default async function handler(req: any, res: any) {
@@ -109,7 +107,7 @@ export default async function handler(req: any, res: any) {
     const name = asText(body.name);
     const email = asText(body.email).toLowerCase();
     const organization = asText(body.organization);
-    const reason = toReason(body.reason);
+    const reason = parseReason(body.reason);
     const message = asText(body.message || body.details);
 
     if (!name) {
@@ -118,6 +116,10 @@ export default async function handler(req: any, res: any) {
 
     if (!email || !isLikelyEmail(email)) {
       throw new ApiError(400, 'invalid_input', 'A valid email is required');
+    }
+
+    if (!reason) {
+      throw new ApiError(400, 'invalid_input', 'Reason is required');
     }
 
     if (!message) {
@@ -129,9 +131,9 @@ export default async function handler(req: any, res: any) {
       throw new ApiError(501, 'not_configured', 'Contact email integration is not configured');
     }
 
-    const supportEmail = resolveSupportEmail(resend);
-    if (!supportEmail) {
-      throw new ApiError(501, 'not_configured', 'Support inbox is not configured');
+    const targetEmail = resolveTargetEmail(reason);
+    if (!targetEmail) {
+      throw new ApiError(501, 'not_configured', 'Contact email integration is not configured');
     }
 
     const from = resend.fromName ? `${resend.fromName} <${resend.fromEmail}>` : resend.fromEmail;
@@ -151,17 +153,12 @@ export default async function handler(req: any, res: any) {
     await sendContactNotification({
       apiKey: resend.apiKey,
       from,
-      to: supportEmail,
+      to: targetEmail,
       replyTo: email,
-      subject: `Contact form: ${reasonLabel} (${name})`,
+      subject: `Contact: ${reasonLabel} - ${email}`,
       text,
     });
 
-    ok(res, 201, {
-      request: {
-        status: 'new',
-      },
-      delivery: 'email',
-    });
+    ok(res, 200, {});
   });
 }

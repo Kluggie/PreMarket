@@ -150,18 +150,23 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
           evaluated_at: proposal.evaluatedAt,
         };
 
-        await db.insert(schema.proposalEvaluations).values({
-          id: newId('eval'),
-          proposalId: proposal.id,
-          userId: proposal.userId,
-          source: 'document_comparison_vertex',
-          status: 'completed',
-          score: evaluation.score,
-          summary: evaluation.summary,
-          result: evaluation,
-          createdAt: now,
-          updatedAt: now,
-        });
+        const [savedEvaluation] = await db
+          .insert(schema.proposalEvaluations)
+          .values({
+            id: newId('eval'),
+            proposalId: proposal.id,
+            userId: proposal.userId,
+            source: 'document_comparison_vertex',
+            status: 'completed',
+            score: evaluation.score,
+            summary: evaluation.summary,
+            result: evaluation,
+            createdAt: now,
+            updatedAt: now,
+          })
+          .returning({
+            id: schema.proposalEvaluations.id,
+          });
 
         try {
           await createNotificationEvent({
@@ -169,6 +174,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
             userId: proposal.userId,
             userEmail: proposal.partyAEmail || auth.user.email,
             eventType: 'evaluation_update',
+            dedupeKey: `evaluation_update:${proposal.id}:${savedEvaluation?.id || 'document_comparison'}`,
             title: 'Evaluation complete',
             message: `Evaluation finished for "${proposal.title || 'your proposal'}".`,
             actionUrl: `/ProposalDetail?id=${encodeURIComponent(proposal.id)}`,

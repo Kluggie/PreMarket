@@ -10,6 +10,7 @@ import notificationByIdHandler from '../../server/routes/notifications/[id].ts';
 import proposalsHandler from '../../server/routes/proposals/index.ts';
 import proposalSendHandler from '../../server/routes/proposals/[id]/send.ts';
 import proposalEvaluateHandler from '../../server/routes/proposals/[id]/evaluate.ts';
+import { createNotificationEvent } from '../../server/_lib/notifications.ts';
 import { ensureTestEnv, makeSessionCookie } from '../helpers/auth.mjs';
 import { ensureMigrated, getDb, hasDatabaseUrl, resetTables } from '../helpers/db.mjs';
 import { createMockReq, createMockRes } from '../helpers/httpMock.mjs';
@@ -304,5 +305,34 @@ if (!hasDatabaseUrl()) {
     assert.equal(ownerNotificationsRes.statusCode, 200);
     const ownerNotifications = ownerNotificationsRes.jsonBody().notifications;
     assert.equal(ownerNotifications.some((entry) => entry.event_type === 'evaluation_update'), false);
+
+    const db = getDb();
+    await createNotificationEvent({
+      db,
+      userId: 'notify_owner',
+      eventType: 'general',
+      dedupeKey: 'dedupe:test:event',
+      title: 'Dedupe Test',
+      message: 'Only one of these should be stored.',
+    });
+    await createNotificationEvent({
+      db,
+      userId: 'notify_owner',
+      eventType: 'general',
+      dedupeKey: 'dedupe:test:event',
+      title: 'Dedupe Test',
+      message: 'Only one of these should be stored.',
+    });
+
+    const ownerAfterDedupeRes = await callHandler(notificationsHandler, {
+      method: 'GET',
+      url: '/api/notifications',
+      headers: { cookie: ownerCookie },
+    });
+    assert.equal(ownerAfterDedupeRes.statusCode, 200);
+    const dedupeEntries = ownerAfterDedupeRes
+      .jsonBody()
+      .notifications.filter((entry) => entry.title === 'Dedupe Test');
+    assert.equal(dedupeEntries.length, 1);
   });
 }

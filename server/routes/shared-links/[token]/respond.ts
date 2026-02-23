@@ -232,6 +232,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
           db,
           userId: link.userId,
           eventType: 'mutual_interest',
+          dedupeKey: `mutual_interest:${link.proposalId}:${link.id}:responses`,
           title: 'Mutual interest update',
           message: `${responderEmail || proposal?.partyBEmail || 'The counterparty'} sent updates for "${
             proposal?.title || 'your proposal'
@@ -302,6 +303,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
           db,
           userId: link.userId,
           eventType: 'evaluation_update',
+          dedupeKey: `evaluation_update:${link.proposalId}:${saved.id}`,
           title: 'Evaluation complete',
           message: `A re-evaluation completed for "${proposal?.title || 'your proposal'}".`,
           actionUrl: `/ProposalDetail?id=${encodeURIComponent(link.proposalId)}`,

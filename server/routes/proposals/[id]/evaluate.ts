@@ -410,6 +410,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         userId: proposal.userId,
         userEmail: proposal.partyAEmail || auth.user.email,
         eventType: 'evaluation_update',
+        dedupeKey: `evaluation_update:${proposal.id}:${saved.id}`,
         title: 'Evaluation complete',
         message: `Evaluation finished for "${proposal.title || 'your proposal'}".`,
         actionUrl: `/ProposalDetail?id=${encodeURIComponent(proposal.id)}`,

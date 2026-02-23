@@ -15,7 +15,6 @@ import {
   Trophy,
   XCircle,
   ChevronRight,
-  FileText,
 } from 'lucide-react';
 import { proposalsClient } from '@/api/proposalsClient';
 import { dashboardClient } from '@/api/dashboardClient';
@@ -192,33 +191,6 @@ export default function Dashboard() {
 
         <div className="mb-8">
           <ProposalsChart />
-        </div>
-
-        <div className="mb-8">
-          <h2 className="text-lg font-semibold text-slate-900 mb-4">Quick Actions</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            <Link to={createPageUrl('Proposals')}>
-              <Card className="border-0 shadow-sm hover:shadow-md transition-shadow cursor-pointer">
-                <CardContent className="p-6">
-                  <FileText className="w-8 h-8 text-blue-600 mb-3" />
-                  <h3 className="font-semibold text-lg mb-2">Proposals</h3>
-                  <p className="text-sm text-slate-500">
-                    {(summary?.sentCount ?? sentProposals.length) + (summary?.receivedCount ?? receivedProposals.length)} total
-                  </p>
-                </CardContent>
-              </Card>
-            </Link>
-
-            <Link to={createPageUrl('Templates')}>
-              <Card className="border-0 shadow-sm hover:shadow-md transition-shadow cursor-pointer">
-                <CardContent className="p-6">
-                  <FileText className="w-8 h-8 text-purple-600 mb-3" />
-                  <h3 className="font-semibold text-lg mb-2">Templates</h3>
-                  <p className="text-sm text-slate-500">Browse and use proposal templates</p>
-                </CardContent>
-              </Card>
-            </Link>
-          </div>
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">

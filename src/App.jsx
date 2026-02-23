@@ -13,6 +13,7 @@ import DirectoryPersonDetail from '@/pages/DirectoryPersonDetail';
 import DirectoryOrgDetail from '@/pages/DirectoryOrgDetail';
 import RecipientEditStep2 from '@/pages/RecipientEditStep2';
 import RecipientEditStep3 from '@/pages/RecipientEditStep3';
+import Verify from '@/pages/Verify';
 
 const { Pages, Layout, mainPage } = pagesConfig;
 const mainPageKey = mainPage ?? Object.keys(Pages)[0];
@@ -90,7 +91,7 @@ const PublicRoutes = () => {
         path="/verify"
         element={
           <LayoutWrapper currentPageName="Verification">
-            <Pages.Verification />
+            <Verify />
           </LayoutWrapper>
         }
       />

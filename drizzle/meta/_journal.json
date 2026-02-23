@@ -43,6 +43,13 @@
       "when": 1771882200000,
       "tag": "0005_verification_notifications",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1772112000000,
+      "tag": "0006_contact_beta_dedupe",
+      "breakpoints": true
     }
   ]
 }

@@ -85,9 +85,9 @@ export default function Contact() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <div className="lg:col-span-2">
             <Card className="border-0 shadow-sm">
-              <CardHeader className="text-center pb-2">
+              <CardHeader className="pb-2 text-center items-center">
                 <CardTitle>Send us a message</CardTitle>
-                <CardDescription className="max-w-xl mx-auto">
+                <CardDescription className="max-w-xl mx-auto text-center">
                   Fill out the form below and we'll respond within 24 hours.
                 </CardDescription>
               </CardHeader>

@@ -293,6 +293,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
             userId: updated.userId,
             userEmail: updated.partyAEmail || auth.user.email,
             eventType: eventConfig.eventType,
+            dedupeKey: `${eventConfig.eventType}:${updated.id}:${nextStatus}`,
             title: eventConfig.title,
             message: eventConfig.message,
             actionUrl: `/ProposalDetail?id=${encodeURIComponent(updated.id)}`,

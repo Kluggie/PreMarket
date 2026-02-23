@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { createPageUrl } from '@/utils';
 import { authClient } from '@/api/authClient';
-import { templatesClient } from '@/api/templatesClient';
+import { contactClient } from '@/api/contactClient';
+import { betaClient } from '@/api/betaClient';
+import { useAuth } from '@/lib/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -23,9 +25,8 @@ import { Check, X, Zap, Building2, Shield } from 'lucide-react';
 
 export default function Pricing() {
   const navigate = useNavigate();
-  const betaSeatsTotal = 50;
-  const betaSeatsClaimed = 17;
-  const betaProgress = Math.min(100, Math.round((betaSeatsClaimed / betaSeatsTotal) * 100));
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
   const [showContactSales, setShowContactSales] = useState(false);
   const [salesFormData, setSalesFormData] = useState({
     name: '',
@@ -33,28 +34,60 @@ export default function Pricing() {
     organization: '',
     message: '',
   });
+  const [betaEmail, setBetaEmail] = useState('');
+  const [betaSubmitted, setBetaSubmitted] = useState(false);
   const [submitted, setSubmitted] = useState(false);
 
   useEffect(() => {
     window.scrollTo(0, 0);
   }, []);
 
+  useEffect(() => {
+    if (!user?.email) {
+      return;
+    }
+
+    setSalesFormData((prev) => ({
+      ...prev,
+      name: prev.name || user.full_name || user.name || '',
+      email: prev.email || user.email,
+    }));
+    setBetaEmail((prev) => prev || user.email || '');
+  }, [user]);
+
+  const { data: betaCount } = useQuery({
+    queryKey: ['beta-count'],
+    queryFn: () => betaClient.getCount(),
+  });
+
+  const betaSeatsTotal = Number(betaCount?.limit || 50);
+  const betaSeatsClaimed = Number(betaCount?.claimed || 0);
+  const betaProgress = Math.min(100, Math.round((betaSeatsClaimed / Math.max(betaSeatsTotal, 1)) * 100));
+
   const submitSalesMutation = useMutation({
     mutationFn: async (data) =>
-      templatesClient.submitCustomRequest({
+      contactClient.submit({
         name: data.name,
         email: data.email,
-        message:
-          `Sales Inquiry (${data.organization || 'No organization provided'}): ` +
-          `${data.message || 'No details provided'}`,
+        organization: data.organization || '',
+        reason: 'sales',
+        message: data.message || 'Sales inquiry submitted from Pricing page.',
       }),
     onSuccess: () => {
       setSubmitted(true);
-      setSalesFormData({ name: '', email: '', organization: '', message: '' });
+      setSalesFormData((prev) => ({ ...prev, organization: '', message: '' }));
       setTimeout(() => {
         setShowContactSales(false);
         setSubmitted(false);
       }, 1800);
+    },
+  });
+
+  const applyBetaMutation = useMutation({
+    mutationFn: (email) => betaClient.apply({ email, source: 'pricing' }),
+    onSuccess: () => {
+      setBetaSubmitted(true);
+      queryClient.invalidateQueries({ queryKey: ['beta-count'] });
     },
   });
 
@@ -126,6 +159,12 @@ export default function Pricing() {
     submitSalesMutation.mutate(salesFormData);
   };
 
+  const handleBetaApply = (event) => {
+    event.preventDefault();
+    setBetaSubmitted(false);
+    applyBetaMutation.mutate(betaEmail);
+  };
+
   const handleCTA = async (plan) => {
     if (plan.name === 'Enterprise') {
       setShowContactSales(true);
@@ -184,6 +223,27 @@ export default function Pricing() {
               </div>
               <Progress value={betaProgress} className="h-2 bg-white" />
             </div>
+            <form onSubmit={handleBetaApply} className="mt-5 flex flex-col sm:flex-row gap-3">
+              <Input
+                type="email"
+                value={betaEmail}
+                onChange={(event) => setBetaEmail(event.target.value)}
+                placeholder="you@company.com"
+                required
+                className="bg-white"
+              />
+              <Button type="submit" variant="outline" disabled={applyBetaMutation.isPending}>
+                {applyBetaMutation.isPending ? 'Applying...' : 'Apply for Beta'}
+              </Button>
+            </form>
+            {betaSubmitted ? (
+              <p className="text-sm text-blue-700 mt-2">Thanks, your beta application has been recorded.</p>
+            ) : null}
+            {applyBetaMutation.error ? (
+              <p className="text-sm text-red-600 mt-2">
+                {applyBetaMutation.error.message || 'Unable to submit your beta request right now.'}
+              </p>
+            ) : null}
           </CardContent>
         </Card>
 

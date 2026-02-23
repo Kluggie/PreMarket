@@ -20,7 +20,7 @@ function hashToken(token: string) {
 }
 
 function buildVerificationUrl(appBaseUrl: string, token: string) {
-  const returnPath = `/verification?token=${encodeURIComponent(token)}`;
+  const returnPath = `/verify?token=${encodeURIComponent(token)}`;
   return toCanonicalAppUrl(appBaseUrl, returnPath);
 }
 

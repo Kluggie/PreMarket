@@ -268,6 +268,24 @@ export const contactRequests = pgTable(
   }),
 );
 
+export const betaApplications = pgTable(
+  'beta_applications',
+  {
+    id: text('id').primaryKey(),
+    email: text('email').notNull(),
+    status: text('status').notNull().default('applied'),
+    userId: text('user_id').references(() => users.id, { onDelete: 'set null' }),
+    source: text('source'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    betaApplicationsEmailUnique: uniqueIndex('beta_applications_email_unique').on(table.email),
+    betaApplicationsStatusIdx: index('beta_applications_status_idx').on(table.status, table.createdAt),
+    betaApplicationsUserIdx: index('beta_applications_user_idx').on(table.userId, table.createdAt),
+  }),
+);
+
 export const notifications = pgTable(
   'notifications',
   {
@@ -279,6 +297,7 @@ export const notifications = pgTable(
     title: text('title').notNull(),
     message: text('message').notNull(),
     actionUrl: text('action_url'),
+    dedupeKey: text('dedupe_key'),
     readAt: timestamp('read_at', { withTimezone: true }),
     metadata: jsonb('metadata').notNull().default(sql`'{}'::jsonb`),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -293,6 +312,10 @@ export const notifications = pgTable(
     notificationsEventTypeIdx: index('notifications_event_type_idx').on(
       table.eventType,
       table.createdAt,
+    ),
+    notificationsUserDedupeUnique: uniqueIndex('notifications_user_dedupe_unique').on(
+      table.userId,
+      table.dedupeKey,
     ),
   }),
 );
