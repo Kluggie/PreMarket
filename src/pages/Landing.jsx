@@ -1,44 +1,16 @@
-import React, { useState } from 'react';
-import { authClient } from '@/api/authClient';
+import React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { createPageUrl } from '../utils';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { 
   Shield, ArrowRight, CheckCircle2, Lock, Eye, FileText, BarChart3, RefreshCw
 } from 'lucide-react';
 
 export default function Landing() {
   const navigate = useNavigate();
-  const [showCTAModal, setShowCTAModal] = useState(false);
 
-  const handleStartFree = async () => {
-    // Check if user is authenticated
-    const isAuth = await authClient.isAuthenticated();
-    if (isAuth) {
-      // Redirect authenticated users directly to Templates
-      navigate(createPageUrl('Templates'));
-    } else {
-      // Show modal for guests
-      setShowCTAModal(true);
-    }
-  };
-
-  const handleGuestProposal = () => {
-    setShowCTAModal(false);
-    navigate(createPageUrl('CreateProposal?guest=true'));
-  };
-
-  const handleSignIn = () => {
-    setShowCTAModal(false);
-    authClient.redirectToLogin(createPageUrl('CreateProposal'));
+  const handleStartFree = () => {
+    navigate('/templates');
   };
 
   const features = [
@@ -147,45 +119,12 @@ export default function Landing() {
                 Start Free
                 <ArrowRight className="ml-2 w-5 h-5" />
               </Button>
-              <Link to={createPageUrl('Templates')}>
+              <Link to="/templates">
                 <Button variant="outline" size="lg" className="px-8 py-6 text-lg h-auto border-slate-200">
                   Browse Templates
                 </Button>
               </Link>
             </motion.div>
-
-            {/* CTA Choice Modal */}
-            <Dialog open={showCTAModal} onOpenChange={setShowCTAModal}>
-              <DialogContent className="sm:max-w-md">
-                <DialogHeader>
-                  <DialogTitle>Get Started with PreMarket</DialogTitle>
-                  <DialogDescription>
-                    Choose how you'd like to begin your pre-qualification journey.
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="space-y-3 py-4">
-                  <Button 
-                    onClick={handleGuestProposal}
-                    variant="outline"
-                    className="w-full h-auto py-4 justify-start"
-                  >
-                    <div className="text-left">
-                      <p className="font-semibold">Create Proposal (Guest)</p>
-                      <p className="text-xs text-slate-500">No account required • Email link to continue later</p>
-                    </div>
-                  </Button>
-                  <Button 
-                    onClick={handleSignIn}
-                    className="w-full h-auto py-4 bg-blue-600 hover:bg-blue-700 justify-start"
-                  >
-                    <div className="text-left">
-                      <p className="font-semibold">Sign In / Create Account</p>
-                      <p className="text-xs text-blue-100">Full dashboard • Analytics • Manage proposals</p>
-                    </div>
-                  </Button>
-                </div>
-              </DialogContent>
-            </Dialog>
 
             {/* Trust indicators */}
             <motion.div
@@ -303,26 +242,21 @@ export default function Landing() {
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
             <Button 
               size="lg"
-              onClick={() => {
-                handleStartFree();
-                setTimeout(() => window.scrollTo(0, 0), 100);
-              }}
+              onClick={handleStartFree}
               className="bg-white text-slate-900 hover:bg-slate-100 px-8 py-6 text-lg h-auto"
             >
               Get Started
               <ArrowRight className="ml-2 w-5 h-5" />
             </Button>
-            <Button 
-              variant="outline" 
-              size="lg" 
-              className="px-8 py-6 text-lg h-auto border-white/30 text-white hover:bg-white/10 bg-transparent"
-              onClick={() => {
-                window.location.href = createPageUrl('Documentation');
-                setTimeout(() => window.scrollTo(0, 0), 100);
-              }}
-            >
-              View Documentation
-            </Button>
+            <Link to="/documentation">
+              <Button 
+                variant="outline" 
+                size="lg" 
+                className="px-8 py-6 text-lg h-auto border-white/30 text-white hover:bg-white/10 bg-transparent"
+              >
+                View Documentation
+              </Button>
+            </Link>
           </div>
         </div>
       </section>

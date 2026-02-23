@@ -1,147 +1,189 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { FileText } from 'lucide-react';
+
+const LAST_UPDATED = 'February 23, 2026';
+
+const tocItems = [
+  { id: 'acceptance', label: 'Acceptance' },
+  { id: 'service', label: 'Service Scope' },
+  { id: 'disclaimers', label: 'Critical Disclaimers' },
+  { id: 'responsibilities', label: 'User Responsibilities' },
+  { id: 'accounts', label: 'Accounts and Security' },
+  { id: 'ai-evaluations', label: 'AI Evaluations' },
+  { id: 'prohibited', label: 'Prohibited Conduct' },
+  { id: 'liability', label: 'Liability Limits' },
+  { id: 'termination', label: 'Termination' },
+  { id: 'changes', label: 'Changes to Terms' },
+  { id: 'governing-law', label: 'Governing Law' },
+  { id: 'contact', label: 'Contact' },
+];
+
+function Section({ id, title, children }) {
+  return (
+    <section id={id} className="scroll-mt-24 border-t border-slate-100 pt-8 first:border-0 first:pt-0">
+      <h2 className="text-xl font-semibold text-slate-900 mb-3">{title}</h2>
+      <div className="space-y-4 text-slate-700 leading-7">{children}</div>
+    </section>
+  );
+}
 
 export default function Terms() {
   return (
     <div className="min-h-screen bg-slate-50 py-16">
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="text-center mb-12">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="text-center mb-10">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-indigo-100 mb-4">
             <FileText className="w-8 h-8 text-indigo-600" />
           </div>
-          <h1 className="text-3xl font-bold text-slate-900 mb-4">Terms of Service</h1>
-          <p className="text-slate-600">Last updated: {new Date().toLocaleDateString()}</p>
+          <h1 className="text-3xl sm:text-4xl font-bold text-slate-900 mb-3">Terms of Service</h1>
+          <p className="text-slate-600">Last updated: {LAST_UPDATED}</p>
         </div>
 
-        <Card className="border-0 shadow-sm">
-          <CardContent className="p-8 prose prose-slate max-w-none">
-            <h2>1. Acceptance of Terms</h2>
-            <p>
-              By accessing or using PreMarket, you agree to be bound by these Terms of Service. If you do not agree to these terms, please do not use our platform.
-            </p>
-
-            <h2>2. Description of Service</h2>
-            <p>
-              PreMarket is a pre-qualification information platform that enables parties to:
-            </p>
-            <ul>
-              <li>Create structured pre-qualification proposals</li>
-              <li>Exchange information with privacy controls</li>
-              <li>Receive AI-powered compatibility evaluations</li>
-              <li>Manage progressive identity reveal</li>
-            </ul>
-
-            <div className="p-4 bg-red-50 border border-red-200 rounded-lg my-6">
-              <h3 className="mt-0 text-red-900">CRITICAL DISCLAIMERS</h3>
-              <ul className="mb-0">
-                <li><strong>No Brokerage Services:</strong> PreMarket does not act as a broker, intermediary, or agent in any transaction</li>
-                <li><strong>No Financial Advice:</strong> We do not provide investment, financial, or legal advice</li>
-                <li><strong>No Transaction Handling:</strong> We do not facilitate, process, or handle any financial transactions</li>
-                <li><strong>Information Only:</strong> All evaluations and recommendations are informational only</li>
-              </ul>
-            </div>
-
-            <h2>3. User Responsibilities</h2>
-            <p>You agree to:</p>
-            <ul>
-              <li>Provide accurate and truthful information</li>
-              <li>Maintain the security of your account</li>
-              <li>Comply with all applicable laws and regulations</li>
-              <li>Not use the platform for illegal purposes</li>
-              <li>Not misrepresent your identity or intentions</li>
-              <li>Conduct your own due diligence on all parties and proposals</li>
-            </ul>
-
-            <h2>4. Account Registration</h2>
-            <p>
-              To access certain features, you must register for an account. You are responsible for maintaining the confidentiality of your account credentials and for all activities under your account.
-            </p>
-
-            <h2>5. Privacy and Data Protection</h2>
-            <p>
-              Your use of PreMarket is subject to our Privacy Policy. You acknowledge that:
-            </p>
-            <ul>
-              <li>Information shared in proposals may be visible to counterparties</li>
-              <li>AI evaluations require your explicit consent</li>
-              <li>You control privacy settings and reveal gates</li>
-              <li>We implement security measures but cannot guarantee absolute security</li>
-            </ul>
-
-            <h2>6. AI Evaluations</h2>
-            <p>
-              AI-powered evaluations are provided for informational purposes only. They:
-            </p>
-            <ul>
-              <li>Are not guarantees of compatibility or success</li>
-              <li>Should not be solely relied upon for decision-making</li>
-              <li>May contain errors or limitations</li>
-              <li>Require your explicit consent for social profile analysis</li>
-            </ul>
-
-            <h2>7. Intellectual Property</h2>
-            <p>
-              All content, features, and functionality of PreMarket are owned by us and protected by intellectual property laws. You may not copy, modify, or distribute our platform without permission.
-            </p>
-
-            <h2>8. Prohibited Activities</h2>
-            <p>You may not:</p>
-            <ul>
-              <li>Use automated systems to access the platform</li>
-              <li>Interfere with or disrupt the platform</li>
-              <li>Attempt to gain unauthorized access</li>
-              <li>Use the platform to spam or harass others</li>
-              <li>Violate any applicable laws or regulations</li>
-            </ul>
-
-            <h2>9. Limitation of Liability</h2>
-            <p>
-              PreMarket and its operators shall not be liable for:
-            </p>
-            <ul>
-              <li>Any decisions made based on platform information</li>
-              <li>Losses resulting from proposal interactions</li>
-              <li>Accuracy of user-provided information</li>
-              <li>Results of AI evaluations</li>
-              <li>Actions or conduct of other users</li>
-            </ul>
-            <p>
-              <strong>TO THE MAXIMUM EXTENT PERMITTED BY LAW, OUR TOTAL LIABILITY SHALL NOT EXCEED THE AMOUNT PAID BY YOU FOR THE SERVICE IN THE PAST 12 MONTHS.</strong>
-            </p>
-
-            <h2>10. Indemnification</h2>
-            <p>
-              You agree to indemnify and hold PreMarket harmless from any claims, damages, or expenses arising from your use of the platform or violation of these terms.
-            </p>
-
-            <h2>11. Termination</h2>
-            <p>
-              We may suspend or terminate your access to PreMarket at any time, with or without cause. You may terminate your account at any time through your settings.
-            </p>
-
-            <h2>12. Changes to Terms</h2>
-            <p>
-              We reserve the right to modify these Terms of Service at any time. Continued use of the platform after changes constitutes acceptance of the new terms.
-            </p>
-
-            <h2>13. Governing Law</h2>
-            <p>
-              These Terms shall be governed by and construed in accordance with applicable laws, without regard to conflict of law provisions.
-            </p>
-
-            <h2>14. Contact Information</h2>
-            <p>
-              For questions about these Terms of Service, please contact us through our Contact Us page or email legal@premarket.com.
-            </p>
-
-            <div className="mt-8 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-              <p className="text-sm text-blue-800 mb-0">
-                By using PreMarket, you acknowledge that you have read, understood, and agree to be bound by these Terms of Service and our Privacy Policy.
+        <div className="grid grid-cols-1 lg:grid-cols-[240px_1fr] gap-6">
+          <Card className="border-0 shadow-sm h-fit lg:sticky lg:top-24">
+            <CardContent className="p-5">
+              <p className="text-xs font-semibold tracking-wide text-slate-500 uppercase mb-3">
+                On this page
               </p>
-            </div>
-          </CardContent>
-        </Card>
+              <nav className="space-y-2">
+                {tocItems.map((item) => (
+                  <a
+                    key={item.id}
+                    href={`#${item.id}`}
+                    className="block text-sm text-slate-600 hover:text-slate-900 transition-colors"
+                  >
+                    {item.label}
+                  </a>
+                ))}
+              </nav>
+            </CardContent>
+          </Card>
+
+          <Card className="border-0 shadow-sm">
+            <CardContent className="p-6 sm:p-8 lg:p-10 space-y-8">
+              <Section id="acceptance" title="Acceptance">
+                <p>
+                  By accessing or using PreMarket, you agree to these Terms of Service. If you do not
+                  agree, do not use the platform.
+                </p>
+              </Section>
+
+              <Section id="service" title="Service Scope">
+                <p>
+                  PreMarket is a pre-qualification information platform that allows users to exchange
+                  structured proposals, apply visibility controls, and request AI-assisted evaluations.
+                </p>
+              </Section>
+
+              <Section id="disclaimers" title="Critical Disclaimers">
+                <div className="rounded-xl border border-red-200 bg-red-50 p-4">
+                  <ul className="list-disc pl-5 space-y-2 text-red-900">
+                    <li>PreMarket is not a broker, intermediary, or transactional agent.</li>
+                    <li>PreMarket does not provide legal, financial, tax, or investment advice.</li>
+                    <li>PreMarket does not execute or settle transactions between parties.</li>
+                    <li>
+                      Compatibility scores and recommendations are informational and must not be treated
+                      as guarantees.
+                    </li>
+                  </ul>
+                </div>
+              </Section>
+
+              <Section id="responsibilities" title="User Responsibilities">
+                <p>You agree to use the service lawfully and responsibly, including by:</p>
+                <ul className="list-disc pl-5 space-y-2">
+                  <li>Providing accurate and non-misleading information.</li>
+                  <li>Maintaining control and confidentiality of account credentials.</li>
+                  <li>Respecting confidentiality and rights of counterparties.</li>
+                  <li>Conducting your own diligence before decisions or agreements.</li>
+                </ul>
+              </Section>
+
+              <Section id="accounts" title="Accounts and Security">
+                <p>
+                  Certain features require an account. You are responsible for activity under your account
+                  and for promptly notifying us of suspected unauthorized use.
+                </p>
+                <p>
+                  Your use of PreMarket is also governed by our{' '}
+                  <Link to="/privacy" className="text-blue-600 hover:text-blue-700">
+                    Privacy Policy
+                  </Link>.
+                </p>
+              </Section>
+
+              <Section id="ai-evaluations" title="AI Evaluations">
+                <p>AI outputs are designed to support pre-qualification workflows, not replace judgment.</p>
+                <ul className="list-disc pl-5 space-y-2">
+                  <li>Outputs may be incomplete, inaccurate, or context-limited.</li>
+                  <li>Evaluation results are not promises of fit, performance, or outcomes.</li>
+                  <li>Optional social-link analysis requires explicit user consent.</li>
+                </ul>
+              </Section>
+
+              <Section id="prohibited" title="Prohibited Conduct">
+                <p>You may not:</p>
+                <ul className="list-disc pl-5 space-y-2">
+                  <li>Access the service through unauthorized automation or scraping.</li>
+                  <li>Attempt to bypass security controls or gain unauthorized access.</li>
+                  <li>Use the platform for unlawful, abusive, deceptive, or harmful activity.</li>
+                  <li>Interfere with platform stability, availability, or integrity.</li>
+                </ul>
+              </Section>
+
+              <Section id="liability" title="Liability Limits">
+                <p>
+                  To the maximum extent permitted by law, PreMarket is not liable for user decisions,
+                  third-party conduct, or losses resulting from reliance on platform information.
+                </p>
+                <p className="font-semibold text-slate-900">
+                  Our aggregate liability is limited to amounts paid by you for the service in the
+                  preceding 12 months.
+                </p>
+              </Section>
+
+              <Section id="termination" title="Termination">
+                <p>
+                  We may suspend or terminate access when necessary to protect users, enforce policy,
+                  comply with law, or maintain service integrity.
+                </p>
+              </Section>
+
+              <Section id="changes" title="Changes to Terms">
+                <p>
+                  We may update these Terms periodically. Continued use after updates are published
+                  constitutes acceptance of the revised Terms.
+                </p>
+              </Section>
+
+              <Section id="governing-law" title="Governing Law">
+                <p>
+                  These Terms are governed by applicable law, without regard to conflict-of-laws principles.
+                </p>
+              </Section>
+
+              <Section id="contact" title="Contact">
+                <p>
+                  Questions regarding these Terms can be sent through our{' '}
+                  <Link to="/contact" className="text-blue-600 hover:text-blue-700">
+                    Contact page
+                  </Link>{' '}
+                  or by email at{' '}
+                  <a href="mailto:legal@premarket.com" className="text-blue-600 hover:text-blue-700">
+                    legal@premarket.com
+                  </a>.
+                </p>
+              </Section>
+
+              <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
+                By using PreMarket, you confirm that you have read and accepted these Terms and our Privacy
+                Policy.
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     </div>
   );

@@ -1,6 +1,5 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { createPageUrl } from '../utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { 
@@ -116,7 +115,7 @@ export default function Documentation() {
                 <p className="text-blue-100 text-sm">Receive compatibility analysis and recommendations</p>
               </div>
             </div>
-            <Link to={createPageUrl('CreateProposal')}>
+            <Link to="/templates">
               <Button className="mt-6 bg-white text-blue-600 hover:bg-blue-50">
                 Create Your First Proposal
                 <ArrowRight className="ml-2 w-4 h-4" />
@@ -184,7 +183,7 @@ export default function Documentation() {
             <p className="text-slate-600 mb-6">
               Our support team is here to help you get the most out of PreMarket.
             </p>
-            <Link to={createPageUrl('Contact')}>
+            <Link to="/contact">
               <Button>
                 Contact Support
                 <ArrowRight className="ml-2 w-4 h-4" />

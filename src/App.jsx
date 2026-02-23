@@ -2,6 +2,7 @@ import { Toaster } from "@/components/ui/toaster"
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClientInstance } from '@/lib/query-client'
 import NavigationTracker from '@/lib/NavigationTracker'
+import ScrollToTop from '@/lib/ScrollToTop'
 import { pagesConfig } from './pages.config'
 import { BrowserRouter as Router, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import PageNotFound from './lib/PageNotFound';
@@ -74,6 +75,46 @@ const PublicRoutes = () => {
         element={
           <LayoutWrapper currentPageName="Settings">
             <Pages.Settings />
+          </LayoutWrapper>
+        }
+      />
+      <Route
+        path="/contact"
+        element={
+          <LayoutWrapper currentPageName="Contact">
+            <Pages.Contact />
+          </LayoutWrapper>
+        }
+      />
+      <Route
+        path="/privacy"
+        element={
+          <LayoutWrapper currentPageName="Privacy">
+            <Pages.Privacy />
+          </LayoutWrapper>
+        }
+      />
+      <Route
+        path="/terms"
+        element={
+          <LayoutWrapper currentPageName="Terms">
+            <Pages.Terms />
+          </LayoutWrapper>
+        }
+      />
+      <Route
+        path="/documentation"
+        element={
+          <LayoutWrapper currentPageName="Documentation">
+            <Pages.Documentation />
+          </LayoutWrapper>
+        }
+      />
+      <Route
+        path="/templates"
+        element={
+          <LayoutWrapper currentPageName="Templates">
+            <Pages.Templates />
           </LayoutWrapper>
         }
       />
@@ -184,6 +225,7 @@ function App() {
       <QueryClientProvider client={queryClientInstance}>
         <Router>
           <NavigationTracker />
+          <ScrollToTop />
           <AppRoutes />
         </Router>
         <Toaster />

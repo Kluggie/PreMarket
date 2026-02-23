@@ -27,6 +27,7 @@ import appLogsHandler from '../server/routes/app-logs/index.js';
 import verificationItemsHandler from '../server/routes/verification-items/index.js';
 import dashboardSummaryHandler from '../server/routes/dashboard/summary.js';
 import dashboardActivityHandler from '../server/routes/dashboard/activity.js';
+import contactHandler from '../server/routes/contact/index.js';
 import contactRequestsHandler from '../server/routes/contact-requests/index.js';
 import templatesHandler from '../server/routes/templates/index.js';
 import templatesUseHandler from '../server/routes/templates/[id]/use.js';
@@ -147,6 +148,10 @@ export default async function handler(req: any, res: any) {
 
   if (pathname === '/api/contact-requests' && method === 'POST') {
     return contactRequestsHandler(req, res);
+  }
+
+  if (pathname === '/api/contact' && method === 'POST') {
+    return contactHandler(req, res);
   }
 
   const proposalResponsesMatch = pathname.match(/^\/api\/proposals\/([^/]+)\/responses$/);
