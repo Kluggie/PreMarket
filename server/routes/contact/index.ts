@@ -138,6 +138,7 @@ export default async function handler(req: any, res: any) {
 
     const from = resend.fromName ? `${resend.fromName} <${resend.fromEmail}>` : resend.fromEmail;
     const reasonLabel = toReasonLabel(reason);
+    const effectiveReplyTo = resend.replyTo || email;
     const text = [
       'New contact request',
       '',
@@ -154,7 +155,7 @@ export default async function handler(req: any, res: any) {
       apiKey: resend.apiKey,
       from,
       to: targetEmail,
-      replyTo: email,
+      replyTo: effectiveReplyTo,
       subject: `Contact: ${reasonLabel} - ${email}`,
       text,
     });

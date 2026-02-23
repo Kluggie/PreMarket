@@ -16,10 +16,23 @@ Set in **Development**, **Preview**, and **Production**:
 - `GOOGLE_CLIENT_ID`
 - `VITE_GOOGLE_CLIENT_ID`
 - `DATABASE_URL`
+- `RESEND_API_KEY`
+- `RESEND_FROM_EMAIL`
+- `CONTACT_TO_EMAIL`
 
 Recommended values:
 - Production: `APP_BASE_URL=https://www.getpremarket.com`
 - Local (`vercel dev`): `APP_BASE_URL=http://localhost:3000`
+
+Email mapping:
+```bash
+RESEND_API_KEY=re_...
+RESEND_FROM_EMAIL=reports@mail.getpremarket.com
+RESEND_FROM_NAME=PreMarket
+RESEND_REPLY_TO=support@getpremarket.com
+CONTACT_TO_EMAIL=support@getpremarket.com
+SALES_TO_EMAIL=sales@getpremarket.com # optional, falls back to CONTACT_TO_EMAIL
+```
 
 ## Local Setup
 

@@ -6,12 +6,18 @@ export type VertexServiceAccountCredentials = {
   token_uri: string;
 };
 
+let warnedAboutReplyToApiKey = false;
+
 function asTrimmedString(value: unknown) {
   if (typeof value !== 'string') {
     return '';
   }
 
   return value.trim();
+}
+
+function isLikelyEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
 export function getStripeWebhookSecret() {
@@ -22,7 +28,16 @@ export function getResendConfig() {
   const apiKey = asTrimmedString(process.env.RESEND_API_KEY);
   const fromEmail = asTrimmedString(process.env.RESEND_FROM_EMAIL);
   const fromName = asTrimmedString(process.env.RESEND_FROM_NAME);
-  const replyTo = asTrimmedString(process.env.RESEND_REPLY_TO) || null;
+  const rawReplyTo = asTrimmedString(process.env.RESEND_REPLY_TO);
+  const looksLikeApiKey =
+    rawReplyTo.length > 0 && rawReplyTo.toLowerCase().startsWith('re_') && !rawReplyTo.includes('@');
+
+  if (looksLikeApiKey && !warnedAboutReplyToApiKey) {
+    warnedAboutReplyToApiKey = true;
+    console.warn('RESEND_REPLY_TO appears to be an API key; it should be an email address.');
+  }
+
+  const replyTo = isLikelyEmail(rawReplyTo) ? rawReplyTo : null;
 
   return {
     apiKey,

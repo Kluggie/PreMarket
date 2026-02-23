@@ -9,6 +9,25 @@ Set these in Vercel for **Development**, **Preview**, and **Production**:
 - `GOOGLE_CLIENT_ID`
 - `VITE_GOOGLE_CLIENT_ID`
 - `DATABASE_URL`
+- `RESEND_API_KEY`
+- `RESEND_FROM_EMAIL`
+- `CONTACT_TO_EMAIL`
+
+Optional:
+- `RESEND_FROM_NAME`
+- `RESEND_REPLY_TO` (must be an email address, never an API key)
+- `SALES_TO_EMAIL` (falls back to `CONTACT_TO_EMAIL`)
+
+## Contact + Sales Email Mapping
+
+```bash
+RESEND_API_KEY=re_...
+RESEND_FROM_EMAIL=reports@mail.getpremarket.com
+RESEND_FROM_NAME=PreMarket
+RESEND_REPLY_TO=support@getpremarket.com
+CONTACT_TO_EMAIL=support@getpremarket.com
+SALES_TO_EMAIL=sales@getpremarket.com
+```
 
 ## Environment-Specific Values
 

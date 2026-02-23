@@ -26,6 +26,8 @@ export default async function handler(req: any, res: any) {
     const fromEmail = getEnvString('RESEND_FROM_EMAIL');
     const fromName = getEnvString('RESEND_FROM_NAME');
     const replyTo = getEnvString('RESEND_REPLY_TO');
+    const contactToEmail = getEnvString('CONTACT_TO_EMAIL');
+    const salesToEmail = getEnvString('SALES_TO_EMAIL');
 
     const fromDomain = fromEmail.includes('@') ? fromEmail.split('@')[1] : null;
     const replyToDomain = replyTo.includes('@') ? replyTo.split('@')[1] : null;
@@ -36,18 +38,26 @@ export default async function handler(req: any, res: any) {
     const baseUrl = getEnvString('APP_BASE_URL') || inferredBaseUrl || null;
 
     const environment = process.env.VERCEL_ENV || process.env.NODE_ENV || 'development';
+    const configured = Boolean(resendApiKey && fromEmail);
     const hasResendKey = Boolean(resendApiKey);
+    const hasContactInbox = Boolean(contactToEmail);
+    const hasSalesInbox = Boolean(salesToEmail);
 
     ok(res, 200, {
+      configured,
       hasResendKey,
       fromEmail: fromEmail || null,
       fromName: fromName || null,
       fromDomain: fromDomain || null,
       replyTo: replyTo || null,
       replyToDomain: replyToDomain || null,
+      hasContactInbox,
+      hasSalesInbox,
+      contactToEmail: contactToEmail || null,
+      salesToEmail: salesToEmail || null,
       baseUrl,
       environment,
-      isValidConfig: hasResendKey && fromDomain === 'mail.getpremarket.com',
+      isValidConfig: configured,
     });
   });
 }
