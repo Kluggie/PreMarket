@@ -5,6 +5,7 @@ import { getDb, schema } from '../../_lib/db/client.js';
 import { ApiError } from '../../_lib/errors.js';
 import { readJsonBody } from '../../_lib/http.js';
 import { newId } from '../../_lib/ids.js';
+import { normalizeNotificationSettings } from '../../_lib/notifications.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 
 const VALID_PRIVACY_MODES = new Set(['public', 'pseudonymous', 'private']);
@@ -35,13 +36,7 @@ function sanitizeSocialLinks(value: unknown) {
 }
 
 function sanitizeNotificationSettings(value: unknown) {
-  const source = value && typeof value === 'object' ? value : {};
-  return {
-    email_proposals: toBoolean((source as any).email_proposals ?? true),
-    email_evaluations: toBoolean((source as any).email_evaluations ?? true),
-    email_reveals: toBoolean((source as any).email_reveals ?? true),
-    email_marketing: toBoolean((source as any).email_marketing ?? false),
-  };
+  return normalizeNotificationSettings(value);
 }
 
 function mapProfileRow(profile) {
@@ -68,12 +63,7 @@ function mapProfileRow(profile) {
       crunchbase: '',
     },
     social_links_ai_consent: Boolean(profile.socialLinksAiConsent),
-    notification_settings: profile.notificationSettings || {
-      email_proposals: true,
-      email_evaluations: true,
-      email_reveals: true,
-      email_marketing: false,
-    },
+    notification_settings: sanitizeNotificationSettings(profile.notificationSettings || {}),
     email_verified: Boolean(profile.emailVerified),
     document_verified: Boolean(profile.documentVerified),
     verification_status: profile.verificationStatus || 'unverified',
@@ -201,6 +191,7 @@ export default async function handler(req: any, res: any) {
           },
           socialLinksAiConsent: false,
           notificationSettings: {
+            email_notifications: true,
             email_proposals: true,
             email_evaluations: true,
             email_reveals: true,

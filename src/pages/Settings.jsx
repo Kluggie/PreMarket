@@ -47,6 +47,7 @@ export default function Settings() {
   });
 
   const [notifications, setNotifications] = useState({
+    email_notifications: true,
     email_proposals: true,
     email_evaluations: true,
     email_reveals: true,
@@ -55,7 +56,13 @@ export default function Settings() {
 
   useEffect(() => {
     if (profile?.notification_settings) {
-      setNotifications(profile.notification_settings);
+      setNotifications({
+        email_notifications: profile.notification_settings.email_notifications ?? true,
+        email_proposals: profile.notification_settings.email_proposals ?? true,
+        email_evaluations: profile.notification_settings.email_evaluations ?? true,
+        email_reveals: profile.notification_settings.email_reveals ?? true,
+        email_marketing: profile.notification_settings.email_marketing ?? false
+      });
     }
   }, [profile]);
 
@@ -247,6 +254,17 @@ export default function Settings() {
               <CardDescription>Choose what you want to be notified about.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="font-medium">Email Notifications</p>
+                  <p className="text-sm text-slate-500">Receive email copies for enabled notification types.</p>
+                </div>
+                <Switch
+                  checked={notifications.email_notifications}
+                  onCheckedChange={(v) => handleNotificationChange('email_notifications', v)}
+                />
+              </div>
+              <Separator />
               <div className="flex items-center justify-between">
                 <div>
                   <p className="font-medium">New Proposals</p>

@@ -4,6 +4,7 @@ import { requireUser } from '../../../_lib/auth.js';
 import { getDb, schema } from '../../../_lib/db/client.js';
 import { ApiError } from '../../../_lib/errors.js';
 import { newId } from '../../../_lib/ids.js';
+import { createNotificationEvent } from '../../../_lib/notifications.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 import { evaluateDocumentComparisonWithVertex } from '../../../_lib/vertex-evaluation.js';
 import { ensureComparisonFound, mapComparisonRow } from '../_helpers.js';
@@ -161,6 +162,28 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
           createdAt: now,
           updatedAt: now,
         });
+
+        try {
+          await createNotificationEvent({
+            db,
+            userId: proposal.userId,
+            userEmail: proposal.partyAEmail || auth.user.email,
+            eventType: 'evaluation_update',
+            title: 'Evaluation complete',
+            message: `Evaluation finished for "${proposal.title || 'your proposal'}".`,
+            actionUrl: `/ProposalDetail?id=${encodeURIComponent(proposal.id)}`,
+            emailSubject: 'Proposal evaluation complete',
+            emailText: [
+              `Your proposal "${proposal.title || 'Untitled Proposal'}" has a new evaluation.`,
+              '',
+              `Score: ${evaluation.score ?? 'N/A'}`,
+              '',
+              'Sign in to PreMarket to review the full report.',
+            ].join('\n'),
+          });
+        } catch {
+          // Best-effort notifications should not block evaluation responses.
+        }
       }
     }
 

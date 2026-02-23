@@ -52,6 +52,16 @@ if (!hasDatabaseUrl()) {
       status: 'sent',
       partyBEmail: 'recipient@example.com',
     });
+    await createProposal(ownerCookie, {
+      title: 'Owner Won',
+      status: 'won',
+      partyBEmail: 'recipient@example.com',
+    });
+    await createProposal(ownerCookie, {
+      title: 'Owner Lost',
+      status: 'lost',
+      partyBEmail: 'recipient@example.com',
+    });
     await createProposal(otherCookie, {
       title: 'Inbound For Owner',
       status: 'sent',
@@ -74,10 +84,12 @@ if (!hasDatabaseUrl()) {
     assert.equal(summaryRes.statusCode, 200);
     const summaryPayload = summaryRes.jsonBody();
     assert.equal(summaryPayload.ok, true);
-    assert.equal(summaryPayload.summary.sentCount, 1);
+    assert.equal(summaryPayload.summary.sentCount, 3);
     assert.equal(summaryPayload.summary.receivedCount, 1);
     assert.equal(summaryPayload.summary.draftsCount, 1);
-    assert.equal(summaryPayload.summary.totalCount, 3);
+    assert.equal(summaryPayload.summary.wonCount, 1);
+    assert.equal(summaryPayload.summary.lostCount, 1);
+    assert.equal(summaryPayload.summary.totalCount, 5);
 
     const activityReq = createMockReq({
       method: 'GET',
@@ -99,16 +111,18 @@ if (!hasDatabaseUrl()) {
       (acc, point) => {
         acc.sent += Number(point?.sent || 0);
         acc.received += Number(point?.received || 0);
-        acc.active += Number(point?.active || 0);
+        acc.won += Number(point?.won || 0);
+        acc.lost += Number(point?.lost || 0);
         acc.mutual += Number(point?.mutual || 0);
         return acc;
       },
-      { sent: 0, received: 0, active: 0, mutual: 0 },
+      { sent: 0, received: 0, won: 0, lost: 0, mutual: 0 },
     );
 
     assert.equal(aggregate.sent >= 1, true);
     assert.equal(aggregate.received >= 1, true);
-    assert.equal(aggregate.active >= 2, true);
+    assert.equal(aggregate.won >= 1, true);
+    assert.equal(aggregate.lost >= 1, true);
   });
 
   test('proposals list supports owner scoping, tab/status filtering, and search', async () => {

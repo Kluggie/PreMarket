@@ -36,6 +36,13 @@
       "when": 1771702800000,
       "tag": "0004_account_directory_parity",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1771882200000,
+      "tag": "0005_verification_notifications",
+      "breakpoints": true
     }
   ]
 }

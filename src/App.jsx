@@ -79,6 +79,22 @@ const PublicRoutes = () => {
         }
       />
       <Route
+        path="/verification"
+        element={
+          <LayoutWrapper currentPageName="Verification">
+            <Pages.Verification />
+          </LayoutWrapper>
+        }
+      />
+      <Route
+        path="/verify"
+        element={
+          <LayoutWrapper currentPageName="Verification">
+            <Pages.Verification />
+          </LayoutWrapper>
+        }
+      />
+      <Route
         path="/contact"
         element={
           <LayoutWrapper currentPageName="Contact">

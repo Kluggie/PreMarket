@@ -4,6 +4,7 @@ import { assertProposalOwnership, requireUser } from '../../_lib/auth.js';
 import { getDb, schema } from '../../_lib/db/client.js';
 import { ApiError } from '../../_lib/errors.js';
 import { readJsonBody } from '../../_lib/http.js';
+import { createNotificationEvent } from '../../_lib/notifications.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 
 function getProposalId(req: any, proposalIdParam?: string) {
@@ -247,11 +248,66 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
       updatedAt: new Date(),
     };
 
+    const previousStatus = String(existing.status || '').trim().toLowerCase();
+    const nextStatus = String(updateValues.status || '').trim().toLowerCase();
+
     const [updated] = await db
       .update(schema.proposals)
       .set(updateValues)
       .where(eq(schema.proposals.id, proposalId))
       .returning();
+
+    if (nextStatus && previousStatus !== nextStatus) {
+      const eventMap = {
+        revealed: {
+          eventType: 'reveal_request',
+          title: 'Reveal request update',
+          message: `Reveal workflow updated for "${updated.title || 'your proposal'}".`,
+          emailSubject: 'Reveal request update',
+        },
+        mutual_interest: {
+          eventType: 'mutual_interest',
+          title: 'Mutual interest update',
+          message: `Mutual interest was marked for "${updated.title || 'your proposal'}".`,
+          emailSubject: 'Mutual interest update',
+        },
+        won: {
+          eventType: 'status_won',
+          title: 'Proposal marked Won',
+          message: `"${updated.title || 'Your proposal'}" was marked as Won.`,
+          emailSubject: 'Proposal marked Won',
+        },
+        lost: {
+          eventType: 'status_lost',
+          title: 'Proposal marked Lost',
+          message: `"${updated.title || 'Your proposal'}" was marked as Lost.`,
+          emailSubject: 'Proposal marked Lost',
+        },
+      } as const;
+
+      const eventConfig = eventMap[nextStatus as keyof typeof eventMap];
+      if (eventConfig) {
+        try {
+          await createNotificationEvent({
+            db,
+            userId: updated.userId,
+            userEmail: updated.partyAEmail || auth.user.email,
+            eventType: eventConfig.eventType,
+            title: eventConfig.title,
+            message: eventConfig.message,
+            actionUrl: `/ProposalDetail?id=${encodeURIComponent(updated.id)}`,
+            emailSubject: eventConfig.emailSubject,
+            emailText: [
+              eventConfig.message,
+              '',
+              'Sign in to PreMarket to review proposal details.',
+            ].join('\n'),
+          });
+        } catch {
+          // Best-effort notifications should not block status updates.
+        }
+      }
+    }
 
     ok(res, 200, {
       proposal: mapProposalRow(updated, auth.user.email),

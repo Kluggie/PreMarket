@@ -43,8 +43,9 @@ export default async function handler(req: any, res: any) {
     let sentCount = 0;
     let receivedCount = 0;
     let draftsCount = 0;
-    let activeReviewsCount = 0;
     let mutualInterestCount = 0;
+    let wonCount = 0;
+    let lostCount = 0;
 
     rows.forEach((row) => {
       const status = String(row.status || '').trim().toLowerCase();
@@ -65,11 +66,15 @@ export default async function handler(req: any, res: any) {
         sentCount += 1;
       }
 
-      if (['sent', 'received', 'under_verification', 're_evaluated'].includes(status)) {
-        activeReviewsCount += 1;
+      if (status === 'won') {
+        wonCount += 1;
       }
 
-      if (['mutual_interest', 'revealed'].includes(status)) {
+      if (status === 'lost') {
+        lostCount += 1;
+      }
+
+      if (status === 'mutual_interest' || (status === 'received' && !isReceived)) {
         mutualInterestCount += 1;
       }
     });
@@ -79,8 +84,9 @@ export default async function handler(req: any, res: any) {
         sentCount,
         receivedCount,
         draftsCount,
-        activeReviewsCount,
         mutualInterestCount,
+        wonCount,
+        lostCount,
         totalCount: rows.length,
       },
     });

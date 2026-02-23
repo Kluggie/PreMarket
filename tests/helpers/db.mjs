@@ -56,6 +56,8 @@ export async function resetTables() {
       organizations,
       user_profiles,
       contact_requests,
+      notifications,
+      email_verification_tokens,
       shared_link_responses,
       snapshot_access,
       proposal_snapshots,

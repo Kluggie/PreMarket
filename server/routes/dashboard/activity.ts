@@ -92,8 +92,9 @@ export default async function handler(req: any, res: any) {
         label: formatDateLabel(cursor),
         sent: 0,
         received: 0,
-        active: 0,
         mutual: 0,
+        won: 0,
+        lost: 0,
       });
     }
 
@@ -120,11 +121,15 @@ export default async function handler(req: any, res: any) {
         }
       }
 
-      if (['sent', 'received', 'under_verification', 're_evaluated'].includes(status)) {
-        point.active += 1;
+      if (status === 'won') {
+        point.won += 1;
       }
 
-      if (['mutual_interest', 'revealed'].includes(status)) {
+      if (status === 'lost') {
+        point.lost += 1;
+      }
+
+      if (status === 'mutual_interest' || (status === 'received' && !isReceived)) {
         point.mutual += 1;
       }
     });

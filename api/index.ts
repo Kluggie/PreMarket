@@ -43,6 +43,9 @@ import accountProfileHandler from '../server/routes/account/profile.js';
 import accountOrganizationsHandler from '../server/routes/account/organizations.js';
 import accountOrganizationsIdHandler from '../server/routes/account/organizations/[id].js';
 import accountEmailConfigStatusHandler from '../server/routes/account/email-config-status.js';
+import accountVerificationStatusHandler from '../server/routes/account/verification/status.js';
+import accountVerificationSendHandler from '../server/routes/account/verification/send.js';
+import accountVerificationConfirmHandler from '../server/routes/account/verification/confirm.js';
 import directorySearchHandler from '../server/routes/directory/search.js';
 import directoryDetailHandler from '../server/routes/directory/detail.js';
 
@@ -307,6 +310,18 @@ export default async function handler(req: any, res: any) {
 
   if (pathname === '/api/account/email-config-status' && method === 'GET') {
     return accountEmailConfigStatusHandler(req, res);
+  }
+
+  if (pathname === '/api/account/verification/status' && method === 'GET') {
+    return accountVerificationStatusHandler(req, res);
+  }
+
+  if (pathname === '/api/account/verification/send' && method === 'POST') {
+    return accountVerificationSendHandler(req, res);
+  }
+
+  if (pathname === '/api/account/verification/confirm' && method === 'POST') {
+    return accountVerificationConfirmHandler(req, res);
   }
 
   if (pathname === '/api/directory/search' && method === 'GET') {

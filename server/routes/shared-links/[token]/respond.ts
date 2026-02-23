@@ -4,6 +4,7 @@ import { getDb, schema } from '../../../_lib/db/client.js';
 import { ApiError } from '../../../_lib/errors.js';
 import { readJsonBody } from '../../../_lib/http.js';
 import { newId } from '../../../_lib/ids.js';
+import { createNotificationEvent } from '../../../_lib/notifications.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 
 function getToken(req: any, tokenParam?: string) {
@@ -215,6 +216,39 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
           updatedAt: now,
         })
         .where(eq(schema.proposals.id, link.proposalId));
+
+      try {
+        const [proposal] = await db
+          .select({
+            id: schema.proposals.id,
+            title: schema.proposals.title,
+            partyBEmail: schema.proposals.partyBEmail,
+          })
+          .from(schema.proposals)
+          .where(eq(schema.proposals.id, link.proposalId))
+          .limit(1);
+
+        await createNotificationEvent({
+          db,
+          userId: link.userId,
+          eventType: 'mutual_interest',
+          title: 'Mutual interest update',
+          message: `${responderEmail || proposal?.partyBEmail || 'The counterparty'} sent updates for "${
+            proposal?.title || 'your proposal'
+          }".`,
+          actionUrl: `/ProposalDetail?id=${encodeURIComponent(link.proposalId)}`,
+          emailSubject: 'Mutual interest activity on PreMarket',
+          emailText: [
+            `${responderEmail || 'A counterparty'} submitted updates to your proposal.`,
+            '',
+            `Proposal: ${proposal?.title || 'Untitled Proposal'}`,
+            '',
+            'Sign in to review the latest details.',
+          ].join('\n'),
+        });
+      } catch {
+        // Best-effort notifications should not block shared-link responses.
+      }
     }
 
     let evaluation = null;
@@ -253,6 +287,36 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         result: saved.result || {},
         created_date: saved.createdAt,
       };
+
+      try {
+        const [proposal] = await db
+          .select({
+            id: schema.proposals.id,
+            title: schema.proposals.title,
+          })
+          .from(schema.proposals)
+          .where(eq(schema.proposals.id, link.proposalId))
+          .limit(1);
+
+        await createNotificationEvent({
+          db,
+          userId: link.userId,
+          eventType: 'evaluation_update',
+          title: 'Evaluation complete',
+          message: `A re-evaluation completed for "${proposal?.title || 'your proposal'}".`,
+          actionUrl: `/ProposalDetail?id=${encodeURIComponent(link.proposalId)}`,
+          emailSubject: 'Proposal re-evaluation complete',
+          emailText: [
+            `A re-evaluation has completed for "${proposal?.title || 'your proposal'}".`,
+            '',
+            `Score: ${saved.score ?? 'N/A'}`,
+            '',
+            'Sign in to review the updated report.',
+          ].join('\n'),
+        });
+      } catch {
+        // Best-effort notifications should not block shared-link responses.
+      }
     }
 
     const [updatedLink] = await db

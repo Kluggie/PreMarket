@@ -13,8 +13,9 @@ export default function ProposalsChart() {
   const [visibleSeries, setVisibleSeries] = useState({
     sent: true,
     received: true,
-    active: true,
     mutual: true,
+    won: true,
+    lost: true,
   });
 
   const timeRanges = [
@@ -35,8 +36,9 @@ export default function ProposalsChart() {
     return (
       Number(point.sent || 0) > 0 ||
       Number(point.received || 0) > 0 ||
-      Number(point.active || 0) > 0 ||
-      Number(point.mutual || 0) > 0
+      Number(point.mutual || 0) > 0 ||
+      Number(point.won || 0) > 0 ||
+      Number(point.lost || 0) > 0
     );
   });
 
@@ -105,17 +107,6 @@ export default function ProposalsChart() {
               </div>
               <div className="flex items-center gap-2">
                 <Checkbox
-                  id="active-series"
-                  checked={visibleSeries.active}
-                  onCheckedChange={() => toggleSeries('active')}
-                />
-                <Label htmlFor="active-series" className="flex items-center gap-2 cursor-pointer">
-                  <div className="w-3 h-3 rounded-full bg-amber-500" />
-                  Active Reviews
-                </Label>
-              </div>
-              <div className="flex items-center gap-2">
-                <Checkbox
                   id="mutual-series"
                   checked={visibleSeries.mutual}
                   onCheckedChange={() => toggleSeries('mutual')}
@@ -123,6 +114,28 @@ export default function ProposalsChart() {
                 <Label htmlFor="mutual-series" className="flex items-center gap-2 cursor-pointer">
                   <div className="w-3 h-3 rounded-full bg-green-500" />
                   Mutual Interest
+                </Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="won-series"
+                  checked={visibleSeries.won}
+                  onCheckedChange={() => toggleSeries('won')}
+                />
+                <Label htmlFor="won-series" className="flex items-center gap-2 cursor-pointer">
+                  <div className="w-3 h-3 rounded-full bg-emerald-500" />
+                  Won
+                </Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="lost-series"
+                  checked={visibleSeries.lost}
+                  onCheckedChange={() => toggleSeries('lost')}
+                />
+                <Label htmlFor="lost-series" className="flex items-center gap-2 cursor-pointer">
+                  <div className="w-3 h-3 rounded-full bg-rose-500" />
+                  Lost
                 </Label>
               </div>
             </div>
@@ -162,17 +175,6 @@ export default function ProposalsChart() {
                       name="Received"
                     />
                   )}
-                  {visibleSeries.active && (
-                    <Line
-                      type="monotone"
-                      dataKey="active"
-                      stroke="#f59e0b"
-                      strokeWidth={2}
-                      dot={{ fill: '#f59e0b', r: 3 }}
-                      activeDot={{ r: 5 }}
-                      name="Active"
-                    />
-                  )}
                   {visibleSeries.mutual && (
                     <Line
                       type="monotone"
@@ -182,6 +184,28 @@ export default function ProposalsChart() {
                       dot={{ fill: '#10b981', r: 3 }}
                       activeDot={{ r: 5 }}
                       name="Mutual Interest"
+                    />
+                  )}
+                  {visibleSeries.won && (
+                    <Line
+                      type="monotone"
+                      dataKey="won"
+                      stroke="#10b981"
+                      strokeWidth={2}
+                      dot={{ fill: '#10b981', r: 3 }}
+                      activeDot={{ r: 5 }}
+                      name="Won"
+                    />
+                  )}
+                  {visibleSeries.lost && (
+                    <Line
+                      type="monotone"
+                      dataKey="lost"
+                      stroke="#f43f5e"
+                      strokeWidth={2}
+                      dot={{ fill: '#f43f5e', r: 3 }}
+                      activeDot={{ r: 5 }}
+                      name="Lost"
                     />
                   )}
                 </LineChart>

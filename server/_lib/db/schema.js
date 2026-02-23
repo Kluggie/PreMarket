@@ -62,6 +62,40 @@ export const userProfiles = pgTable(
   }),
 );
 
+export const emailVerificationTokens = pgTable(
+  'email_verification_tokens',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    userEmail: text('user_email').notNull(),
+    tokenHash: text('token_hash').notNull(),
+    status: text('status').notNull().default('pending'),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    usedAt: timestamp('used_at', { withTimezone: true }),
+    metadata: jsonb('metadata').notNull().default(sql`'{}'::jsonb`),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    emailVerificationTokensHashUnique: uniqueIndex('email_verification_tokens_hash_unique').on(
+      table.tokenHash,
+    ),
+    emailVerificationTokensUserIdx: index('email_verification_tokens_user_idx').on(
+      table.userId,
+      table.createdAt,
+    ),
+    emailVerificationTokensStatusIdx: index('email_verification_tokens_status_idx').on(
+      table.status,
+      table.expiresAt,
+    ),
+    emailVerificationTokensExpiryIdx: index('email_verification_tokens_expiry_idx').on(
+      table.expiresAt,
+    ),
+  }),
+);
+
 export const organizations = pgTable(
   'organizations',
   {
@@ -231,6 +265,35 @@ export const contactRequests = pgTable(
   (table) => ({
     contactRequestsUserIdx: index('contact_requests_user_idx').on(table.userId, table.createdAt),
     contactRequestsStatusIdx: index('contact_requests_status_idx').on(table.status, table.createdAt),
+  }),
+);
+
+export const notifications = pgTable(
+  'notifications',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    eventType: text('event_type').notNull().default('general'),
+    title: text('title').notNull(),
+    message: text('message').notNull(),
+    actionUrl: text('action_url'),
+    readAt: timestamp('read_at', { withTimezone: true }),
+    metadata: jsonb('metadata').notNull().default(sql`'{}'::jsonb`),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    notificationsUserCreatedIdx: index('notifications_user_created_idx').on(
+      table.userId,
+      table.createdAt,
+    ),
+    notificationsUserReadIdx: index('notifications_user_read_idx').on(table.userId, table.readAt),
+    notificationsEventTypeIdx: index('notifications_event_type_idx').on(
+      table.eventType,
+      table.createdAt,
+    ),
   }),
 );
 

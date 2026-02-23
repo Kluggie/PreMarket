@@ -11,8 +11,9 @@ import {
   Plus,
   Send,
   Inbox,
-  Eye,
   Users,
+  Trophy,
+  XCircle,
   ChevronRight,
   FileText,
 } from 'lucide-react';
@@ -26,7 +27,8 @@ const statusConfig = {
   under_verification: { color: 'bg-purple-100 text-purple-700', label: 'Under Review' },
   re_evaluated: { color: 'bg-indigo-100 text-indigo-700', label: 'Re-evaluated' },
   mutual_interest: { color: 'bg-green-100 text-green-700', label: 'Mutual Interest' },
-  revealed: { color: 'bg-emerald-100 text-emerald-700', label: 'Revealed' },
+  won: { color: 'bg-emerald-100 text-emerald-700', label: 'Won' },
+  lost: { color: 'bg-rose-100 text-rose-700', label: 'Lost' },
   closed: { color: 'bg-slate-100 text-slate-600', label: 'Closed' },
   withdrawn: { color: 'bg-red-100 text-red-700', label: 'Withdrawn' },
 };
@@ -95,10 +97,16 @@ export default function Dashboard() {
         color: 'from-indigo-500 to-indigo-600',
       },
       {
-        label: 'Active Reviews',
-        value: summary?.activeReviewsCount ?? 0,
-        icon: Eye,
-        color: 'from-amber-500 to-amber-600',
+        label: 'Won',
+        value: summary?.wonCount ?? 0,
+        icon: Trophy,
+        color: 'from-emerald-500 to-emerald-600',
+      },
+      {
+        label: 'Lost',
+        value: summary?.lostCount ?? 0,
+        icon: XCircle,
+        color: 'from-rose-500 to-rose-600',
       },
       {
         label: 'Mutual Interest',
@@ -160,7 +168,7 @@ export default function Dashboard() {
           </Link>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
           {stats.map((stat) => (
             <Card key={stat.label} className="border-0 shadow-sm">
               <CardContent className="p-5">

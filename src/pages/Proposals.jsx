@@ -32,12 +32,13 @@ const statusConfig = {
   under_verification: { color: 'bg-purple-100 text-purple-700', icon: Eye, label: 'Under Review' },
   re_evaluated: { color: 'bg-indigo-100 text-indigo-700', icon: BarChart3, label: 'Re-evaluated' },
   mutual_interest: { color: 'bg-green-100 text-green-700', icon: Users, label: 'Mutual Interest' },
-  revealed: { color: 'bg-emerald-100 text-emerald-700', icon: CheckCircle2, label: 'Revealed' },
+  won: { color: 'bg-emerald-100 text-emerald-700', icon: CheckCircle2, label: 'Won' },
+  lost: { color: 'bg-rose-100 text-rose-700', icon: AlertTriangle, label: 'Lost' },
   closed: { color: 'bg-slate-100 text-slate-600', icon: Clock, label: 'Closed' },
   withdrawn: { color: 'bg-red-100 text-red-700', icon: AlertTriangle, label: 'Withdrawn' },
 };
 
-const TAB_VALUES = new Set(['all', 'sent', 'received', 'drafts']);
+const TAB_VALUES = new Set(['all', 'sent', 'received', 'drafts', 'mutual_interest']);
 
 function normalizeTabValue(value) {
   const nextValue = String(value || '').trim().toLowerCase();
@@ -160,6 +161,7 @@ export default function Proposals() {
     sent: summary?.sentCount || 0,
     received: summary?.receivedCount || 0,
     drafts: summary?.draftsCount || 0,
+    mutual_interest: summary?.mutualInterestCount || 0,
   };
 
   const handleOpenProposal = (proposal) => {
@@ -273,9 +275,9 @@ export default function Proposals() {
                   <SelectItem value="draft">Draft</SelectItem>
                   <SelectItem value="sent">Sent</SelectItem>
                   <SelectItem value="received">Received</SelectItem>
-                  <SelectItem value="under_verification">Under Review</SelectItem>
                   <SelectItem value="mutual_interest">Mutual Interest</SelectItem>
-                  <SelectItem value="revealed">Revealed</SelectItem>
+                  <SelectItem value="won">Won</SelectItem>
+                  <SelectItem value="lost">Lost</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -295,6 +297,9 @@ export default function Proposals() {
             </TabsTrigger>
             <TabsTrigger value="drafts" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
               Drafts ({tabCounts.drafts})
+            </TabsTrigger>
+            <TabsTrigger value="mutual_interest" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
+              Mutual Interest ({tabCounts.mutual_interest})
             </TabsTrigger>
           </TabsList>
 

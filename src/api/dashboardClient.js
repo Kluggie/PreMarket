@@ -7,8 +7,9 @@ export const dashboardClient = {
       sentCount: 0,
       receivedCount: 0,
       draftsCount: 0,
-      activeReviewsCount: 0,
       mutualInterestCount: 0,
+      wonCount: 0,
+      lostCount: 0,
       totalCount: 0,
     };
   },

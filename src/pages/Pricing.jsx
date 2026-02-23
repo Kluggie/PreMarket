@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Progress } from '@/components/ui/progress';
 import {
   Dialog,
   DialogContent,
@@ -22,6 +23,9 @@ import { Check, X, Zap, Building2, Shield } from 'lucide-react';
 
 export default function Pricing() {
   const navigate = useNavigate();
+  const betaSeatsTotal = 50;
+  const betaSeatsClaimed = 17;
+  const betaProgress = Math.min(100, Math.round((betaSeatsClaimed / betaSeatsTotal) * 100));
   const [showContactSales, setShowContactSales] = useState(false);
   const [salesFormData, setSalesFormData] = useState({
     name: '',
@@ -157,6 +161,31 @@ export default function Pricing() {
             billing period.
           </p>
         </div>
+
+        <Card className="max-w-3xl mx-auto border-0 shadow-sm mb-10 bg-blue-50/60">
+          <CardContent className="p-6 sm:p-7">
+            <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">Beta program: 6 months free for the first 50 users</h2>
+                <p className="text-sm text-slate-600 mt-2 max-w-2xl">
+                  Beta members get early access to workflow updates and a direct feedback loop with the product team.
+                </p>
+              </div>
+              <Link to="/templates">
+                <Button variant="outline">Apply via Templates</Button>
+              </Link>
+            </div>
+            <div className="mt-5">
+              <div className="flex items-center justify-between text-sm mb-2">
+                <span className="text-slate-600">Beta seats claimed</span>
+                <span className="font-semibold text-slate-900">
+                  {betaSeatsClaimed}/{betaSeatsTotal}
+                </span>
+              </div>
+              <Progress value={betaProgress} className="h-2 bg-white" />
+            </div>
+          </CardContent>
+        </Card>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto">
           {plans.map((plan, index) => (

@@ -29,8 +29,16 @@ function mapProposalRow(proposal, ownerEmail, currentUser) {
     listType = 'received';
   }
 
-  const directionalStatus =
-    listType === 'draft' ? 'draft' : listType === 'received' ? 'received' : 'sent';
+  const normalizedStatus = String(proposal.status || '').trim().toLowerCase();
+  let directionalStatus = listType === 'draft' ? 'draft' : listType === 'received' ? 'received' : 'sent';
+
+  if (normalizedStatus && normalizedStatus !== 'draft' && normalizedStatus !== 'sent') {
+    directionalStatus = normalizedStatus;
+  }
+
+  if (listType === 'received' && (normalizedStatus === 'sent' || normalizedStatus === 'received')) {
+    directionalStatus = 'received';
+  }
 
   return {
     id: proposal.id,
@@ -163,6 +171,16 @@ export default async function handler(req: any, res: any) {
         conditions.push(and(ownerScope, ne(schema.proposals.status, 'draft')));
       } else if (tab === 'received') {
         conditions.push(and(recipientScope, ne(schema.proposals.status, 'draft')));
+      } else if (tab === 'mutual_interest') {
+        conditions.push(
+          and(
+            ownerScope,
+            or(
+              eq(schema.proposals.status, 'mutual_interest'),
+              eq(schema.proposals.status, 'received'),
+            ),
+          ),
+        );
       }
 
       if (statusFilter && statusFilter !== 'all') {
@@ -172,6 +190,13 @@ export default async function handler(req: any, res: any) {
           conditions.push(and(ownerScope, ne(schema.proposals.status, 'draft')));
         } else if (statusFilter === 'received') {
           conditions.push(and(recipientScope, ne(schema.proposals.status, 'draft')));
+        } else if (statusFilter === 'mutual_interest') {
+          conditions.push(
+            or(
+              eq(schema.proposals.status, 'mutual_interest'),
+              and(ownerScope, eq(schema.proposals.status, 'received')),
+            ),
+          );
         } else {
           conditions.push(eq(schema.proposals.status, statusFilter));
         }

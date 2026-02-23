@@ -6,6 +6,7 @@ import { toCanonicalAppUrl } from '../../../_lib/env.js';
 import { ApiError } from '../../../_lib/errors.js';
 import { readJsonBody } from '../../../_lib/http.js';
 import { newId, newToken } from '../../../_lib/ids.js';
+import { createNotificationEvent } from '../../../_lib/notifications.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 
 function getProposalId(req: any, proposalIdParam?: string) {
@@ -175,6 +176,41 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         expires_at: created.expiresAt,
         created_date: created.createdAt,
       };
+    }
+
+    if (recipientEmail) {
+      try {
+        const [recipientUser] = await db
+          .select({
+            id: schema.users.id,
+            email: schema.users.email,
+          })
+          .from(schema.users)
+          .where(ilike(schema.users.email, recipientEmail))
+          .limit(1);
+
+        if (recipientUser && recipientUser.id !== auth.user.id) {
+          await createNotificationEvent({
+            db,
+            userId: recipientUser.id,
+            userEmail: recipientUser.email,
+            eventType: 'new_proposal',
+            title: 'New proposal received',
+            message: `${auth.user.email} sent you "${updatedProposal.title || 'a proposal'}".`,
+            actionUrl: `/ProposalDetail?id=${encodeURIComponent(updatedProposal.id)}`,
+            emailSubject: 'New proposal received on PreMarket',
+            emailText: [
+              `You received a new proposal from ${auth.user.email}.`,
+              '',
+              `Title: ${updatedProposal.title || 'Untitled Proposal'}`,
+              '',
+              'Sign in to PreMarket to review it.',
+            ].join('\n'),
+          });
+        }
+      } catch {
+        // Best-effort notifications should not block proposal delivery.
+      }
     }
 
     ok(res, 200, {
