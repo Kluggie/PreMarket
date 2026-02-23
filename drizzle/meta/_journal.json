@@ -29,6 +29,13 @@
       "when": 1771699200000,
       "tag": "0003_workflow_parity",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1771702800000,
+      "tag": "0004_account_directory_parity",
+      "breakpoints": true
     }
   ]
 }

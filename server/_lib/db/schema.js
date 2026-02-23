@@ -28,6 +28,111 @@ export const users = pgTable(
   }),
 );
 
+export const userProfiles = pgTable(
+  'user_profiles',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    userEmail: text('user_email').notNull(),
+    pseudonym: text('pseudonym'),
+    userType: text('user_type').notNull().default('individual'),
+    title: text('title'),
+    industry: text('industry'),
+    location: text('location'),
+    bio: text('bio'),
+    website: text('website'),
+    privacyMode: text('privacy_mode').notNull().default('pseudonymous'),
+    socialLinks: jsonb('social_links').notNull().default(sql`'{}'::jsonb`),
+    socialLinksAiConsent: boolean('social_links_ai_consent').notNull().default(false),
+    notificationSettings: jsonb('notification_settings').notNull().default(sql`'{}'::jsonb`),
+    emailVerified: boolean('email_verified').notNull().default(false),
+    documentVerified: boolean('document_verified').notNull().default(false),
+    verificationStatus: text('verification_status').notNull().default('unverified'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    userProfilesUserUnique: uniqueIndex('user_profiles_user_unique').on(table.userId),
+    userProfilesEmailUnique: uniqueIndex('user_profiles_email_unique').on(table.userEmail),
+    userProfilesPrivacyIdx: index('user_profiles_privacy_idx').on(table.privacyMode, table.updatedAt),
+    userProfilesIndustryIdx: index('user_profiles_industry_idx').on(table.industry, table.updatedAt),
+    userProfilesLocationIdx: index('user_profiles_location_idx').on(table.location, table.updatedAt),
+  }),
+);
+
+export const organizations = pgTable(
+  'organizations',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    pseudonym: text('pseudonym'),
+    type: text('type').notNull().default('startup'),
+    industry: text('industry'),
+    location: text('location'),
+    website: text('website'),
+    bio: text('bio'),
+    isPublicDirectory: boolean('is_public_directory').notNull().default(false),
+    socialLinks: jsonb('social_links').notNull().default(sql`'{}'::jsonb`),
+    verificationStatus: text('verification_status').notNull().default('unverified'),
+    createdByUserId: text('created_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    organizationsPublicIdx: index('organizations_public_idx').on(table.isPublicDirectory, table.updatedAt),
+    organizationsTypeIdx: index('organizations_type_idx').on(table.type, table.updatedAt),
+    organizationsIndustryIdx: index('organizations_industry_idx').on(table.industry, table.updatedAt),
+    organizationsLocationIdx: index('organizations_location_idx').on(table.location, table.updatedAt),
+  }),
+);
+
+export const memberships = pgTable(
+  'memberships',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    userEmail: text('user_email').notNull(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    role: text('role').notNull().default('member'),
+    status: text('status').notNull().default('active'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    membershipsUserOrgUnique: uniqueIndex('memberships_user_org_unique').on(
+      table.userId,
+      table.organizationId,
+    ),
+    membershipsUserIdx: index('memberships_user_idx').on(table.userId, table.updatedAt),
+    membershipsUserEmailIdx: index('memberships_user_email_idx').on(table.userEmail, table.updatedAt),
+    membershipsOrgIdx: index('memberships_org_idx').on(table.organizationId, table.updatedAt),
+  }),
+);
+
+export const auditLogs = pgTable(
+  'audit_logs',
+  {
+    id: text('id').primaryKey(),
+    entityType: text('entity_type').notNull(),
+    entityId: text('entity_id'),
+    userId: text('user_id').references(() => users.id, { onDelete: 'set null' }),
+    userEmail: text('user_email'),
+    action: text('action').notNull(),
+    details: jsonb('details').notNull().default(sql`'{}'::jsonb`),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    auditLogsEntityIdx: index('audit_logs_entity_idx').on(table.entityType, table.entityId, table.createdAt),
+    auditLogsUserIdx: index('audit_logs_user_idx').on(table.userId, table.createdAt),
+  }),
+);
+
 export const proposals = pgTable(
   'proposals',
   {

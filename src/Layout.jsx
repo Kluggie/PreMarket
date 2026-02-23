@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { authClient } from '@/api/authClient';
+import { useAuth } from '@/lib/AuthContext';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from './utils';
 import { 
@@ -18,21 +19,9 @@ import NotificationDropdown from './components/NotificationDropdown';
 import GoogleSignInButton from '@/components/auth/GoogleSignInButton';
 
 export default function Layout({ children, currentPageName }) {
-  const [user, setUser] = useState(null);
+  const { user, logout, navigateToLogin } = useAuth();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
-
-  useEffect(() => {
-    const loadUser = async () => {
-      try {
-        const userData = await authClient.me();
-        setUser(userData);
-      } catch (e) {
-        setUser(null);
-      }
-    };
-    loadUser();
-  }, []);
 
   useEffect(() => {
     const handleScroll = () => setIsScrolled(window.scrollY > 10);
@@ -45,11 +34,13 @@ export default function Layout({ children, currentPageName }) {
 
   const handleLogout = async () => {
     try {
-      await authClient.logout('/');
+      await logout(true);
     } catch {
-      window.location.assign('/');
+      await authClient.logout('/');
     }
   };
+
+  const displayName = user?.full_name || user?.name || user?.email || 'User';
 
   const navLinks = user ? [
     { name: 'Home', href: createPageUrl('Landing'), icon: LayoutDashboard },
@@ -136,27 +127,27 @@ export default function Layout({ children, currentPageName }) {
                     <DropdownMenuTrigger asChild>
                       <Button variant="ghost" className="flex items-center gap-2 pl-2 pr-3">
                         <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white text-sm font-medium">
-                          {((user?.full_name?.[0] || user?.email?.[0] || 'U') || 'U').toUpperCase()}
+                          {((displayName?.[0] || user?.email?.[0] || 'U') || 'U').toUpperCase()}
                         </div>
                         <span className="hidden sm:block text-sm font-medium text-slate-700">
-                          {user?.full_name || 'User'}
+                          {displayName}
                         </span>
                         <ChevronDown className="w-4 h-4 text-slate-400" />
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" className="w-56">
                       <div className="px-3 py-2 border-b border-slate-100">
-                        <p className="text-sm font-medium text-slate-900">{user?.full_name || 'User'}</p>
+                        <p className="text-sm font-medium text-slate-900">{displayName}</p>
                         <p className="text-xs text-slate-500">{user?.email || ''}</p>
                       </div>
                       <DropdownMenuItem asChild>
-                        <Link to={createPageUrl('Profile')} className="flex items-center gap-2 cursor-pointer">
+                        <Link to="/profile" className="flex items-center gap-2 cursor-pointer">
                           <User className="w-4 h-4" />
                           My Profile
                         </Link>
                       </DropdownMenuItem>
                       <DropdownMenuItem asChild>
-                        <Link to={createPageUrl('Organization')} className="flex items-center gap-2 cursor-pointer">
+                        <Link to="/organization" className="flex items-center gap-2 cursor-pointer">
                           <Building2 className="w-4 h-4" />
                           Organization
                         </Link>
@@ -168,7 +159,7 @@ export default function Layout({ children, currentPageName }) {
                         </Link>
                       </DropdownMenuItem>
                       <DropdownMenuItem asChild>
-                        <Link to={createPageUrl('Settings')} className="flex items-center gap-2 cursor-pointer">
+                        <Link to="/settings" className="flex items-center gap-2 cursor-pointer">
                           <Settings className="w-4 h-4" />
                           Settings
                         </Link>
@@ -198,7 +189,7 @@ export default function Layout({ children, currentPageName }) {
                     <GoogleSignInButton returnTo={createPageUrl('Dashboard')} width={210} />
                   </div>
                   <Button
-                    onClick={() => authClient.redirectToLogin(createPageUrl('Dashboard'))}
+                    onClick={() => navigateToLogin(createPageUrl('Dashboard'))}
                     className="bg-blue-600 hover:bg-blue-700 text-white sm:hidden"
                   >
                     {isLandingPage ? 'Get Started' : 'Sign In'}

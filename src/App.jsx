@@ -54,6 +54,30 @@ const PublicRoutes = () => {
         }
       />
       <Route
+        path="/profile"
+        element={
+          <LayoutWrapper currentPageName="Profile">
+            <Pages.Profile />
+          </LayoutWrapper>
+        }
+      />
+      <Route
+        path="/organization"
+        element={
+          <LayoutWrapper currentPageName="Organization">
+            <Pages.Organization />
+          </LayoutWrapper>
+        }
+      />
+      <Route
+        path="/settings"
+        element={
+          <LayoutWrapper currentPageName="Settings">
+            <Pages.Settings />
+          </LayoutWrapper>
+        }
+      />
+      <Route
         path="/SharedReport"
         element={
           <LayoutWrapper currentPageName="SharedReport">

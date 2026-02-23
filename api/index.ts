@@ -38,6 +38,12 @@ import documentComparisonsEvaluateHandler from '../server/routes/document-compar
 import documentComparisonsDownloadJsonHandler from '../server/routes/document-comparisons/[id]/download-json.js';
 import documentComparisonsDownloadInputsHandler from '../server/routes/document-comparisons/[id]/download-inputs.js';
 import documentComparisonsDownloadPdfHandler from '../server/routes/document-comparisons/[id]/download-pdf.js';
+import accountProfileHandler from '../server/routes/account/profile.js';
+import accountOrganizationsHandler from '../server/routes/account/organizations.js';
+import accountOrganizationsIdHandler from '../server/routes/account/organizations/[id].js';
+import accountEmailConfigStatusHandler from '../server/routes/account/email-config-status.js';
+import directorySearchHandler from '../server/routes/directory/search.js';
+import directoryDetailHandler from '../server/routes/directory/detail.js';
 
 type VercelRequest = {
   method?: string;
@@ -278,6 +284,32 @@ export default async function handler(req: any, res: any) {
 
   if (pathname === '/api/verification-items' && method === 'POST') {
     return verificationItemsHandler(req, res);
+  }
+
+  if (pathname === '/api/account/profile' && (method === 'GET' || method === 'PUT')) {
+    return accountProfileHandler(req, res);
+  }
+
+  if (pathname === '/api/account/organizations' && (method === 'GET' || method === 'POST')) {
+    return accountOrganizationsHandler(req, res);
+  }
+
+  const accountOrganizationsIdMatch = pathname.match(/^\/api\/account\/organizations\/([^/]+)$/);
+  if (accountOrganizationsIdMatch && method === 'PATCH') {
+    const id = decodeURIComponent(accountOrganizationsIdMatch[1]);
+    return accountOrganizationsIdHandler(req, res, id);
+  }
+
+  if (pathname === '/api/account/email-config-status' && method === 'GET') {
+    return accountEmailConfigStatusHandler(req, res);
+  }
+
+  if (pathname === '/api/directory/search' && method === 'GET') {
+    return directorySearchHandler(req, res);
+  }
+
+  if (pathname === '/api/directory/detail' && method === 'GET') {
+    return directoryDetailHandler(req, res);
   }
 
   fail(res, 404, 'not_found', 'Route not found', {
