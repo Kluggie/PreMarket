@@ -24,6 +24,9 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 
+const CONFIDENTIAL_LABEL = 'Confidential Information';
+const SHARED_LABEL = 'Shared Information';
+
 function useProposalId() {
   const location = useLocation();
   return useMemo(() => {
@@ -50,63 +53,24 @@ function formatDateTime(value) {
   return parsed.toLocaleString();
 }
 
-function normalizeHighlightLevel(level) {
-  const normalized = String(level || '').trim().toLowerCase();
-  if (normalized === 'confidential' || normalized === 'hidden' || normalized === 'partial') {
-    return 'confidential';
-  }
-  return null;
-}
+function renderDocumentReadOnly({ text, html }) {
+  const safeText = String(text || '').trim();
+  const safeHtml = asText(html);
 
-function normalizeSpans(spans, textLength) {
-  if (!Array.isArray(spans)) return [];
-  return spans
-    .map((span) => {
-      const rawStart = Number(span?.start);
-      const rawEnd = Number(span?.end);
-      const level = normalizeHighlightLevel(span?.level);
-      if (!Number.isFinite(rawStart) || !Number.isFinite(rawEnd) || !level) return null;
-      const start = Math.max(0, Math.min(rawStart, textLength));
-      const end = Math.max(0, Math.min(rawEnd, textLength));
-      if (end <= start) return null;
-      return { start, end, level };
-    })
-    .filter(Boolean)
-    .sort((left, right) => left.start - right.start);
-}
-
-function renderHighlightedReadOnlyText(text, spans) {
-  if (!text) {
+  if (!safeText && !safeHtml) {
     return <p className="text-sm text-slate-500 italic">No text available.</p>;
   }
 
-  const normalizedSpans = normalizeSpans(spans, text.length);
-  if (!normalizedSpans.length) {
-    return <div className="whitespace-pre-wrap font-mono text-sm text-slate-800">{text}</div>;
+  if (safeHtml) {
+    return (
+      <div
+        className="text-sm text-slate-800 leading-relaxed"
+        dangerouslySetInnerHTML={{ __html: safeHtml }}
+      />
+    );
   }
 
-  const segments = [];
-  let cursor = 0;
-  normalizedSpans.forEach((span) => {
-    if (span.start > cursor) {
-      segments.push({ text: text.slice(cursor, span.start), hidden: false });
-    }
-    segments.push({ text: text.slice(span.start, span.end), hidden: true });
-    cursor = span.end;
-  });
-  if (cursor < text.length) {
-    segments.push({ text: text.slice(cursor), hidden: false });
-  }
-
-  return (
-    <div className="whitespace-pre-wrap font-mono text-sm text-slate-800">
-      {segments.map((segment, index) => (
-        <span key={`segment-${index}`} className={segment.hidden ? 'bg-red-200 text-red-900 px-0.5 rounded' : ''}>
-          {segment.text}
-        </span>
-      ))}
-    </div>
-  );
+  return <div className="whitespace-pre-wrap text-sm text-slate-800">{safeText}</div>;
 }
 
 function getStatusLabel(status) {
@@ -195,10 +159,10 @@ async function downloadProposalInfoPdf(proposal, comparison) {
   y += 8;
 
   if (comparison) {
-    writeLine('Document A', { bold: true });
+    writeLine(CONFIDENTIAL_LABEL, { bold: true });
     writeLine(comparison.doc_a_text || '');
     y += 8;
-    writeLine('Document B', { bold: true });
+    writeLine(SHARED_LABEL, { bold: true });
     writeLine(comparison.doc_b_text || '');
   } else {
     writeLine('No linked document comparison content was found for this proposal.');
@@ -235,9 +199,16 @@ export default function ProposalDetail() {
   });
 
   const comparison = comparisonQuery.data?.comparison || null;
-  const hiddenSpansCount =
-    Number(Array.isArray(comparison?.doc_a_spans) ? comparison.doc_a_spans.length : 0) +
-    Number(Array.isArray(comparison?.doc_b_spans) ? comparison.doc_b_spans.length : 0);
+  const confidentialLength = String(comparison?.doc_a_text || '').length;
+  const sharedLength = String(comparison?.doc_b_text || '').length;
+  const confidentialWordCount = String(comparison?.doc_a_text || '')
+    .trim()
+    .split(/\s+/g)
+    .filter(Boolean).length;
+  const sharedWordCount = String(comparison?.doc_b_text || '')
+    .trim()
+    .split(/\s+/g)
+    .filter(Boolean).length;
   const latestEvaluation = evaluations[0] || null;
   const latestResult = latestEvaluation?.result || {};
   const reportSections = Array.isArray(latestResult?.report?.sections)
@@ -377,8 +348,8 @@ export default function ProposalDetail() {
                   <span className="text-slate-800">{formatDate(proposal.created_date)}</span>
                 </div>
                 <div className="flex items-center gap-3">
-                  <span className="text-slate-500 uppercase tracking-wide font-semibold">Hidden Spans</span>
-                  <Badge variant="outline">{hiddenSpansCount}</Badge>
+                  <span className="text-slate-500 uppercase tracking-wide font-semibold">Total Characters</span>
+                  <Badge variant="outline">{confidentialLength + sharedLength}</Badge>
                 </div>
                 <div className="flex items-center gap-3">
                   <span className="text-slate-500 uppercase tracking-wide font-semibold">Last Updated</span>
@@ -530,22 +501,25 @@ export default function ProposalDetail() {
                 <Card className="border border-slate-200 shadow-sm">
                   <CardHeader>
                     <CardTitle>Complete Proposal Details</CardTitle>
-                    <p className="text-slate-500">Read-only document content with hidden highlights.</p>
+                    <p className="text-slate-500">Read-only content for confidential and shared information documents.</p>
                   </CardHeader>
                   <CardContent className="space-y-6">
                     <div className="space-y-3">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2 text-slate-700 font-semibold">
                           <FileText className="w-4 h-4" />
-                          {comparison?.party_a_label || 'Document A'}
+                          {comparison?.party_a_label || CONFIDENTIAL_LABEL}
                         </div>
                         <div className="flex gap-2">
                           <Badge variant="outline">{comparison?.doc_a_source || 'typed'}</Badge>
-                          <Badge className="bg-red-100 text-red-700">{comparison?.doc_a_spans?.length || 0} hidden</Badge>
+                          <Badge variant="outline">{confidentialWordCount} words</Badge>
                         </div>
                       </div>
                       <div className="rounded-xl border border-slate-200 bg-white p-4 max-h-[280px] overflow-auto">
-                        {renderHighlightedReadOnlyText(comparison?.doc_a_text || '', comparison?.doc_a_spans || [])}
+                        {renderDocumentReadOnly({
+                          text: comparison?.doc_a_text || '',
+                          html: comparison?.doc_a_html || '',
+                        })}
                       </div>
                     </div>
 
@@ -553,15 +527,18 @@ export default function ProposalDetail() {
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2 text-slate-700 font-semibold">
                           <FileText className="w-4 h-4" />
-                          {comparison?.party_b_label || 'Document B'}
+                          {comparison?.party_b_label || SHARED_LABEL}
                         </div>
                         <div className="flex gap-2">
                           <Badge variant="outline">{comparison?.doc_b_source || 'typed'}</Badge>
-                          <Badge className="bg-red-100 text-red-700">{comparison?.doc_b_spans?.length || 0} hidden</Badge>
+                          <Badge variant="outline">{sharedWordCount} words</Badge>
                         </div>
                       </div>
                       <div className="rounded-xl border border-slate-200 bg-white p-4 max-h-[280px] overflow-auto">
-                        {renderHighlightedReadOnlyText(comparison?.doc_b_text || '', comparison?.doc_b_spans || [])}
+                        {renderDocumentReadOnly({
+                          text: comparison?.doc_b_text || '',
+                          html: comparison?.doc_b_html || '',
+                        })}
                       </div>
                     </div>
 
@@ -611,16 +588,12 @@ export default function ProposalDetail() {
                   <CardContent className="space-y-5">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       <div>
-                        <p className="text-slate-500">Party A Completeness</p>
-                        <p className="text-4xl font-bold text-slate-900">
-                          {Math.max(0, 100 - Number(comparison?.doc_a_spans?.length || 0) * 5)}%
-                        </p>
+                        <p className="text-slate-500">{CONFIDENTIAL_LABEL} Words</p>
+                        <p className="text-4xl font-bold text-slate-900">{confidentialWordCount}</p>
                       </div>
                       <div>
-                        <p className="text-slate-500">Party B Completeness</p>
-                        <p className="text-4xl font-bold text-slate-900">
-                          {Math.max(0, 100 - Number(comparison?.doc_b_spans?.length || 0) * 5)}%
-                        </p>
+                        <p className="text-slate-500">{SHARED_LABEL} Words</p>
+                        <p className="text-4xl font-bold text-slate-900">{sharedWordCount}</p>
                       </div>
                     </div>
                     <div>

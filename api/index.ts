@@ -41,6 +41,7 @@ import documentComparisonsEvaluateHandler from '../server/routes/document-compar
 import documentComparisonsDownloadJsonHandler from '../server/routes/document-comparisons/[id]/download-json.js';
 import documentComparisonsDownloadInputsHandler from '../server/routes/document-comparisons/[id]/download-inputs.js';
 import documentComparisonsDownloadPdfHandler from '../server/routes/document-comparisons/[id]/download-pdf.js';
+import documentsExtractHandler from '../server/routes/documents/extract.js';
 import accountProfileHandler from '../server/routes/account/profile.js';
 import accountOrganizationsHandler from '../server/routes/account/organizations.js';
 import accountOrganizationsIdHandler from '../server/routes/account/organizations/[id].js';
@@ -247,6 +248,10 @@ export default async function handler(req: any, res: any) {
 
   if (pathname === '/api/document-comparisons/extract-url' && method === 'POST') {
     return documentComparisonsExtractUrlHandler(req, res);
+  }
+
+  if (pathname === '/api/documents/extract' && method === 'POST') {
+    return documentsExtractHandler(req, res);
   }
 
   const documentComparisonsEvaluateMatch = pathname.match(

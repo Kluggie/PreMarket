@@ -8,13 +8,21 @@ import { newId } from '../../_lib/ids.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 import {
   asText,
+  CONFIDENTIAL_LABEL,
+  SHARED_LABEL,
   mapComparisonRow,
-  normalizeSpans,
   normalizeEmail,
   parseStep,
   toArray,
   toJsonObject,
 } from './_helpers.js';
+
+function toOptionalJsonObject(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
 
 export default async function handler(req: any, res: any) {
   await withApiRoute(req, res, '/api/document-comparisons', async (context) => {
@@ -64,15 +72,27 @@ export default async function handler(req: any, res: any) {
     const title = asText(body.title) || 'Untitled Comparison';
     const proposalId = asText(body.proposalId || body.proposal_id) || null;
     const createLinkedProposal = Boolean(body.createProposal || body.create_proposal);
-    const partyALabel = asText(body.partyALabel || body.party_a_label) || 'Document A';
-    const partyBLabel = asText(body.partyBLabel || body.party_b_label) || 'Document B';
-    const docAText = String(body.docAText || body.doc_a_text || '');
-    const docBText = String(body.docBText || body.doc_b_text || '');
+    const partyALabel = CONFIDENTIAL_LABEL;
+    const partyBLabel = SHARED_LABEL;
+    const docAText = String(
+      body.docAText ||
+        body.doc_a_text ||
+        body.confidentialDocContent ||
+        body.confidential_doc_content ||
+        '',
+    );
+    const docBText = String(
+      body.docBText || body.doc_b_text || body.sharedDocContent || body.shared_doc_content || '',
+    );
     const draftStep = parseStep(body.draftStep || body.draft_step, 1);
     const metadata = toJsonObject(body.metadata);
     const rawInputs = toJsonObject(body.inputs);
     const docASource = asText(body.docASource || body.doc_a_source) || asText(rawInputs.doc_a_source) || 'typed';
     const docBSource = asText(body.docBSource || body.doc_b_source) || asText(rawInputs.doc_b_source) || 'typed';
+    const docAHtml = asText(body.docAHtml || body.doc_a_html || rawInputs.doc_a_html) || null;
+    const docBHtml = asText(body.docBHtml || body.doc_b_html || rawInputs.doc_b_html) || null;
+    const docAJson = toOptionalJsonObject(body.docAJson || body.doc_a_json || rawInputs.doc_a_json);
+    const docBJson = toOptionalJsonObject(body.docBJson || body.doc_b_json || rawInputs.doc_b_json);
     const docAFiles = toArray(body.docAFiles || body.doc_a_files || rawInputs.doc_a_files);
     const docBFiles = toArray(body.docBFiles || body.doc_b_files || rawInputs.doc_b_files);
     const docAUrl = asText(body.docAUrl || body.doc_a_url || rawInputs.doc_a_url) || null;
@@ -81,13 +101,17 @@ export default async function handler(req: any, res: any) {
       ...rawInputs,
       doc_a_source: docASource,
       doc_b_source: docBSource,
+      doc_a_html: docAHtml,
+      doc_b_html: docBHtml,
+      doc_a_json: docAJson,
+      doc_b_json: docBJson,
       doc_a_files: docAFiles,
       doc_b_files: docBFiles,
       doc_a_url: docAUrl,
       doc_b_url: docBUrl,
+      confidential_doc_content: docAText,
+      shared_doc_content: docBText,
     };
-    const docASpans = normalizeSpans(toArray(body.docASpans || body.doc_a_spans), docAText);
-    const docBSpans = normalizeSpans(toArray(body.docBSpans || body.doc_b_spans), docBText);
 
     let linkedProposalId = proposalId;
     if (linkedProposalId) {
@@ -137,8 +161,8 @@ export default async function handler(req: any, res: any) {
         partyBLabel,
         docAText,
         docBText,
-        docASpans,
-        docBSpans,
+        docASpans: [],
+        docBSpans: [],
         evaluationResult: {},
         publicReport: {},
         inputs,

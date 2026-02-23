@@ -7,15 +7,61 @@ import { readJsonBody } from '../../_lib/http.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 import {
   asText,
+  CONFIDENTIAL_LABEL,
+  SHARED_LABEL,
   ensureComparisonFound,
   isPastDate,
   mapComparisonRow,
-  normalizeSpans,
   resolveEditableSide,
   parseStep,
   toArray,
   toJsonObject,
 } from './_helpers.js';
+
+function toOptionalJsonObject(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function toTokenSafeInputs(value: unknown) {
+  const inputs =
+    value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+
+  return {
+    doc_b_source:
+      typeof inputs.doc_b_source === 'string' && inputs.doc_b_source.trim().length > 0
+        ? inputs.doc_b_source
+        : 'typed',
+    doc_b_files: Array.isArray(inputs.doc_b_files) ? inputs.doc_b_files : [],
+    doc_b_url: typeof inputs.doc_b_url === 'string' ? inputs.doc_b_url : null,
+    doc_b_html: typeof inputs.doc_b_html === 'string' ? inputs.doc_b_html : null,
+    doc_b_json:
+      inputs.doc_b_json && typeof inputs.doc_b_json === 'object' && !Array.isArray(inputs.doc_b_json)
+        ? inputs.doc_b_json
+        : null,
+    shared_doc_content: typeof inputs.shared_doc_content === 'string' ? inputs.shared_doc_content : '',
+  };
+}
+
+function toTokenSafeComparison(mappedComparison: any) {
+  return {
+    ...mappedComparison,
+    party_a_label: CONFIDENTIAL_LABEL,
+    party_b_label: SHARED_LABEL,
+    doc_a_text: '',
+    doc_a_html: '',
+    doc_a_json: null,
+    doc_a_source: 'private',
+    doc_a_files: [],
+    doc_a_url: null,
+    doc_a_spans: [],
+    evaluation_result: {},
+    public_report: {},
+    inputs: toTokenSafeInputs(mappedComparison?.inputs),
+  };
+}
 
 function getComparisonId(req: any, comparisonIdParam?: string) {
   if (comparisonIdParam && comparisonIdParam.trim().length > 0) {
@@ -147,8 +193,9 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     }
 
     if (req.method === 'GET') {
+      const mappedComparison = mapComparisonRow(existing);
       ok(res, 200, {
-        comparison: mapComparisonRow(existing),
+        comparison: accessMode === 'token' ? toTokenSafeComparison(mappedComparison) : mappedComparison,
         proposal: proposal
           ? {
               id: proposal.id,
@@ -176,27 +223,56 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
 
     const nextTitle = asText(body.title);
     const nextStatus = asText(body.status).toLowerCase();
-    const nextPartyALabel = asText(body.partyALabel || body.party_a_label);
-    const nextPartyBLabel = asText(body.partyBLabel || body.party_b_label);
     const hasDocAText = body.docAText !== undefined || body.doc_a_text !== undefined;
     const hasDocBText = body.docBText !== undefined || body.doc_b_text !== undefined;
     const nextDocAText = hasDocAText ? String(body.docAText || body.doc_a_text || '') : existing.docAText || '';
     const nextDocBText = hasDocBText ? String(body.docBText || body.doc_b_text || '') : existing.docBText || '';
-    const hasDocASpans = body.docASpans !== undefined || body.doc_a_spans !== undefined;
-    const hasDocBSpans = body.docBSpans !== undefined || body.doc_b_spans !== undefined;
-
-    if (hasDocASpans && editableSide !== 'a') {
-      throw new ApiError(403, 'forbidden_side', 'You cannot edit Document A confidentiality spans');
-    }
-    if (hasDocBSpans && editableSide !== 'b') {
-      throw new ApiError(403, 'forbidden_side', 'You cannot edit Document B confidentiality spans');
-    }
+    const hasDocAHtml = body.docAHtml !== undefined || body.doc_a_html !== undefined;
+    const hasDocBHtml = body.docBHtml !== undefined || body.doc_b_html !== undefined;
+    const hasDocAJson = body.docAJson !== undefined || body.doc_a_json !== undefined;
+    const hasDocBJson = body.docBJson !== undefined || body.doc_b_json !== undefined;
+    const hasDocASource = body.docASource !== undefined || body.doc_a_source !== undefined;
+    const hasDocAFiles = body.docAFiles !== undefined || body.doc_a_files !== undefined;
+    const hasDocAUrl = body.docAUrl !== undefined || body.doc_a_url !== undefined;
+    const hasPartyALabel = body.partyALabel !== undefined || body.party_a_label !== undefined;
+    const hasPartyBLabel = body.partyBLabel !== undefined || body.party_b_label !== undefined;
+    const hasInputsOverride = body.inputs !== undefined;
+    const nextDocAHtml = hasDocAHtml
+      ? asText(body.docAHtml || body.doc_a_html) || null
+      : asText((existing.inputs || {}).doc_a_html) || null;
+    const nextDocBHtml = hasDocBHtml
+      ? asText(body.docBHtml || body.doc_b_html) || null
+      : asText((existing.inputs || {}).doc_b_html) || null;
+    const nextDocAJson = hasDocAJson
+      ? toOptionalJsonObject(body.docAJson || body.doc_a_json)
+      : toOptionalJsonObject((existing.inputs || {}).doc_a_json);
+    const nextDocBJson = hasDocBJson
+      ? toOptionalJsonObject(body.docBJson || body.doc_b_json)
+      : toOptionalJsonObject((existing.inputs || {}).doc_b_json);
 
     if (
       accessMode === 'token' &&
-      (hasDocAText || hasDocBText || nextTitle || nextPartyALabel || nextPartyBLabel || hasDocASpans)
+      (
+        nextTitle ||
+        hasPartyALabel ||
+        hasPartyBLabel ||
+        hasDocAText ||
+        hasDocAHtml ||
+        hasDocAJson ||
+        hasDocASource ||
+        hasDocAFiles ||
+        hasDocAUrl ||
+        hasInputsOverride
+      )
     ) {
-      throw new ApiError(403, 'edit_not_allowed', 'Shared token can only update recipient confidentiality highlights');
+      throw new ApiError(403, 'edit_not_allowed', 'Shared token can only update shared information content');
+    }
+
+    if (
+      editableSide === 'b' &&
+      (hasDocAText || hasDocAHtml || hasDocAJson || hasDocASource || hasDocAFiles || hasDocAUrl || hasPartyALabel)
+    ) {
+      throw new ApiError(403, 'forbidden_side', 'Recipient can only update shared information content');
     }
 
     const rawInputs =
@@ -217,16 +293,12 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
         body.draftStep === undefined && body.draft_step === undefined
           ? existing.draftStep
           : parseStep(body.draftStep || body.draft_step, existing.draftStep || 1),
-      partyALabel: nextPartyALabel || existing.partyALabel,
-      partyBLabel: nextPartyBLabel || existing.partyBLabel,
+      partyALabel: CONFIDENTIAL_LABEL,
+      partyBLabel: SHARED_LABEL,
       docAText: nextDocAText,
       docBText: nextDocBText,
-      docASpans: hasDocASpans
-        ? normalizeSpans(toArray(body.docASpans || body.doc_a_spans), nextDocAText)
-        : existing.docASpans || [],
-      docBSpans: hasDocBSpans
-        ? normalizeSpans(toArray(body.docBSpans || body.doc_b_spans), nextDocBText)
-        : existing.docBSpans || [],
+      docASpans: [],
+      docBSpans: [],
       evaluationResult:
         body.evaluationResult && typeof body.evaluationResult === 'object'
           ? body.evaluationResult
@@ -243,10 +315,16 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
         ...rawInputs,
         doc_a_source: docASource,
         doc_b_source: docBSource,
+        doc_a_html: nextDocAHtml,
+        doc_b_html: nextDocBHtml,
+        doc_a_json: nextDocAJson,
+        doc_b_json: nextDocBJson,
         doc_a_files: docAFiles,
         doc_b_files: docBFiles,
         doc_a_url: docAUrl,
         doc_b_url: docBUrl,
+        confidential_doc_content: nextDocAText,
+        shared_doc_content: nextDocBText,
       },
       metadata:
         body.metadata && typeof body.metadata === 'object' ? body.metadata : existing.metadata || {},
@@ -273,8 +351,9 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
         .where(eq(schema.proposals.id, existing.proposalId));
     }
 
+    const mappedUpdated = mapComparisonRow(updated);
     ok(res, 200, {
-      comparison: mapComparisonRow(updated),
+      comparison: accessMode === 'token' ? toTokenSafeComparison(mappedUpdated) : mappedUpdated,
       permissions: {
         access_mode: accessMode,
         editable_side: editableSide,

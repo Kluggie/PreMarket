@@ -9,6 +9,9 @@ import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 import { evaluateDocumentComparisonWithVertex } from '../../../_lib/vertex-evaluation.js';
 import { ensureComparisonFound, mapComparisonRow } from '../_helpers.js';
 
+const CONFIDENTIAL_LABEL = 'Confidential Information';
+const SHARED_LABEL = 'Shared Information';
+
 function getComparisonId(req: any, comparisonIdParam?: string) {
   if (comparisonIdParam && comparisonIdParam.trim().length > 0) {
     return comparisonIdParam.trim();
@@ -88,10 +91,10 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
         title: existing.title,
         docAText: existing.docAText || '',
         docBText: existing.docBText || '',
-        docASpans: Array.isArray(existing.docASpans) ? existing.docASpans : [],
-        docBSpans: Array.isArray(existing.docBSpans) ? existing.docBSpans : [],
-        partyALabel: existing.partyALabel || 'Document A',
-        partyBLabel: existing.partyBLabel || 'Document B',
+        docASpans: [],
+        docBSpans: [],
+        partyALabel: CONFIDENTIAL_LABEL,
+        partyBLabel: SHARED_LABEL,
       });
     } catch (error: any) {
       await db
@@ -120,7 +123,9 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       .update(schema.documentComparisons)
       .set({
         status: 'evaluated',
-        draftStep: 4,
+        draftStep: 3,
+        partyALabel: CONFIDENTIAL_LABEL,
+        partyBLabel: SHARED_LABEL,
         evaluationResult: evaluation,
         publicReport: evaluation.report,
         updatedAt: now,
@@ -135,7 +140,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
         .set({
           status: 'under_verification',
           proposalType: 'document_comparison',
-          draftStep: 4,
+          draftStep: 3,
           evaluatedAt: now,
           documentComparisonId: existing.id,
           updatedAt: now,

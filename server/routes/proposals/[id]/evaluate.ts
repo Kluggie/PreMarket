@@ -301,17 +301,15 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
           title: comparison.title || proposal.title || 'Document Comparison',
           docAText: comparison.docAText || '',
           docBText: comparison.docBText || '',
-          docASpans: Array.isArray(comparison.docASpans) ? comparison.docASpans : [],
-          docBSpans: Array.isArray(comparison.docBSpans) ? comparison.docBSpans : [],
-          partyALabel: comparison.partyALabel || 'Document A',
-          partyBLabel: comparison.partyBLabel || 'Document B',
+          docASpans: [],
+          docBSpans: [],
+          partyALabel: 'Confidential Information',
+          partyBLabel: 'Shared Information',
         });
 
         result = buildProposalResultFromEvaluation(proposal, comparisonEvaluation, {
           document_comparison_id: comparison.id,
-          hidden_spans:
-            Number(Array.isArray(comparison.docASpans) ? comparison.docASpans.length : 0) +
-            Number(Array.isArray(comparison.docBSpans) ? comparison.docBSpans.length : 0),
+          hidden_spans: 0,
           doc_a_length: String(comparison.docAText || '').length,
           doc_b_length: String(comparison.docBText || '').length,
         });
@@ -320,7 +318,9 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
           .update(schema.documentComparisons)
           .set({
             status: 'evaluated',
-            draftStep: 4,
+            draftStep: 3,
+            partyALabel: 'Confidential Information',
+            partyBLabel: 'Shared Information',
             evaluationResult: comparisonEvaluation,
             publicReport: comparisonEvaluation.report,
             updatedAt: new Date(),

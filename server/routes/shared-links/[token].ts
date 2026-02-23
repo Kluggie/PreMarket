@@ -71,6 +71,13 @@ function mapLink(row, proposal) {
   };
 }
 
+function toObject(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {} as Record<string, unknown>;
+  }
+  return value as Record<string, unknown>;
+}
+
 export default async function handler(req: any, res: any, tokenParam?: string) {
   await withApiRoute(req, res, '/api/shared-links/[token]', async (context) => {
     ensureMethod(req, ['GET']);
@@ -137,6 +144,8 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     }
 
     const proposalId = nextLink.proposalId || proposal?.id || null;
+    const isDocumentComparisonMode =
+      String(proposal?.proposalType || '').trim().toLowerCase() === 'document_comparison';
     const [responses, evaluations, comparison] = proposalId
       ? await Promise.all([
           db
@@ -182,8 +191,8 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         source: row.source,
         status: row.status,
         score: row.score,
-        summary: row.summary,
-        result: row.result || {},
+        summary: isDocumentComparisonMode ? 'Available to sender in owner workspace.' : row.summary,
+        result: isDocumentComparisonMode ? {} : row.result || {},
         created_date: row.createdAt,
       })),
       documentComparison: comparison
@@ -192,14 +201,45 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
             title: comparison.title,
             status: comparison.status,
             draft_step: comparison.draftStep,
-            party_a_label: comparison.partyALabel,
-            party_b_label: comparison.partyBLabel,
-            doc_a_text: comparison.docAText,
-            doc_b_text: comparison.docBText,
-            doc_a_spans: comparison.docASpans || [],
-            doc_b_spans: comparison.docBSpans || [],
-            evaluation_result: comparison.evaluationResult || {},
-            public_report: comparison.publicReport || {},
+            confidential_label: 'Confidential Information',
+            shared_label: 'Shared Information',
+            party_a_label: 'Confidential Information',
+            party_b_label: 'Shared Information',
+            shared_doc_source: (() => {
+              const inputs = toObject(comparison.inputs);
+              return typeof inputs.doc_b_source === 'string' && inputs.doc_b_source.trim().length > 0
+                ? inputs.doc_b_source
+                : 'typed';
+            })(),
+            shared_doc_text: comparison.docBText || '',
+            shared_doc_html: (() => {
+              const inputs = toObject(comparison.inputs);
+              return typeof inputs.doc_b_html === 'string' ? inputs.doc_b_html : null;
+            })(),
+            shared_doc_json: (() => {
+              const inputs = toObject(comparison.inputs);
+              return inputs.doc_b_json && typeof inputs.doc_b_json === 'object' && !Array.isArray(inputs.doc_b_json)
+                ? inputs.doc_b_json
+                : null;
+            })(),
+            doc_a_text: '',
+            doc_b_text: comparison.docBText || '',
+            doc_a_html: '',
+            doc_b_html: (() => {
+              const inputs = toObject(comparison.inputs);
+              return typeof inputs.doc_b_html === 'string' ? inputs.doc_b_html : '';
+            })(),
+            doc_a_json: null,
+            doc_b_json: (() => {
+              const inputs = toObject(comparison.inputs);
+              return inputs.doc_b_json && typeof inputs.doc_b_json === 'object' && !Array.isArray(inputs.doc_b_json)
+                ? inputs.doc_b_json
+                : null;
+            })(),
+            doc_a_spans: [],
+            doc_b_spans: [],
+            evaluation_result: {},
+            public_report: {},
             updated_date: comparison.updatedAt,
           }
         : null,

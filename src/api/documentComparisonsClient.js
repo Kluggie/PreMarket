@@ -39,41 +39,24 @@ function isPlainTextFile(file) {
   return extension === 'txt' || extension === 'md' || mime.startsWith('text/');
 }
 
-async function extractTextFromPdf(file) {
-  const [{ getDocument, GlobalWorkerOptions }, workerModule] = await Promise.all([
-    import('pdfjs-dist/build/pdf.mjs'),
-    import('pdfjs-dist/build/pdf.worker.mjs?url'),
-  ]);
-
-  if (workerModule?.default && GlobalWorkerOptions.workerSrc !== workerModule.default) {
-    GlobalWorkerOptions.workerSrc = workerModule.default;
-  }
-
-  const pdf = await getDocument({ data: await file.arrayBuffer() }).promise;
-  const pages = [];
-
-  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
-    const page = await pdf.getPage(pageNumber);
-    const content = await page.getTextContent();
-    const pageText = content.items
-      .map((item) => (typeof item?.str === 'string' ? item.str : ''))
-      .join(' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-    if (pageText) {
-      pages.push(pageText);
+function arrayBufferToBase64(arrayBuffer) {
+  return new Promise((resolve, reject) => {
+    try {
+      const blob = new Blob([arrayBuffer]);
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = String(reader.result || '');
+        const comma = result.indexOf(',');
+        resolve(comma >= 0 ? result.slice(comma + 1) : result);
+      };
+      reader.onerror = () => {
+        reject(new Error('Failed to encode file payload'));
+      };
+      reader.readAsDataURL(blob);
+    } catch (error) {
+      reject(error);
     }
-  }
-
-  return normalizeExtractedText(pages.join('\n\n'));
-}
-
-async function extractTextFromDocx(file) {
-  const mammoth = await import('mammoth/mammoth.browser');
-  const { value } = await mammoth.extractRawText({
-    arrayBuffer: await file.arrayBuffer(),
   });
-  return normalizeExtractedText(value);
 }
 
 export const documentComparisonsClient = {
@@ -190,6 +173,11 @@ export const documentComparisonsClient = {
   },
 
   async extractTextFromFile(file) {
+    const extracted = await this.extractDocumentFromFile(file);
+    return normalizeExtractedText(extracted?.text || '');
+  },
+
+  async extractDocumentFromFile(file) {
     if (!file || typeof file.arrayBuffer !== 'function') {
       const error = new Error('A valid file is required for extraction');
       error.code = 'invalid_input';
@@ -197,38 +185,30 @@ export const documentComparisonsClient = {
       throw error;
     }
 
-    if (isPlainTextFile(file)) {
-      return normalizeExtractedText(await file.text());
+    if (!isPlainTextFile(file) && !isPdfFile(file) && !isDocxFile(file)) {
+      const extension = getFileExtension(file) || 'unknown';
+      const notConfigured = new Error(`.${extension} extraction is not configured`);
+      notConfigured.code = 'not_configured';
+      notConfigured.status = 501;
+      throw notConfigured;
     }
 
-    if (isPdfFile(file)) {
-      try {
-        return await extractTextFromPdf(file);
-      } catch (error) {
-        const wrapped = new Error('Failed to extract text from PDF');
-        wrapped.code = 'extract_failed';
-        wrapped.status = 422;
-        wrapped.cause = error;
-        throw wrapped;
-      }
-    }
+    const fileBase64 = await arrayBufferToBase64(await file.arrayBuffer());
+    const response = await request('/api/documents/extract', {
+      method: 'POST',
+      body: JSON.stringify({
+        filename: String(file.name || 'document'),
+        mimeType: String(file.type || 'application/octet-stream'),
+        fileBase64,
+      }),
+    });
 
-    if (isDocxFile(file)) {
-      try {
-        return await extractTextFromDocx(file);
-      } catch (error) {
-        const wrapped = new Error('Failed to extract text from DOCX');
-        wrapped.code = 'extract_failed';
-        wrapped.status = 422;
-        wrapped.cause = error;
-        throw wrapped;
-      }
-    }
-
-    const extension = getFileExtension(file) || 'unknown';
-    const notConfigured = new Error(`.${extension} extraction is not configured`);
-    notConfigured.code = 'not_configured';
-    notConfigured.status = 501;
-    throw notConfigured;
+    return {
+      ok: response.ok !== false,
+      text: normalizeExtractedText(response.text || ''),
+      html: typeof response.html === 'string' ? response.html : '',
+      filename: typeof response.filename === 'string' ? response.filename : String(file.name || ''),
+      mimeType: typeof response.mimeType === 'string' ? response.mimeType : String(file.type || ''),
+    };
   },
 };

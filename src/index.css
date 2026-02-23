@@ -86,3 +86,58 @@
     @apply bg-background text-foreground;
   }
 }
+
+.pm-tiptap-editor {
+  min-height: 560px;
+  padding: 1.25rem;
+  color: #1e293b;
+  font-size: 0.95rem;
+  line-height: 1.7;
+  outline: none;
+}
+
+.pm-tiptap-editor p {
+  margin: 0 0 0.85rem;
+}
+
+.pm-tiptap-editor h1,
+.pm-tiptap-editor h2,
+.pm-tiptap-editor h3 {
+  color: #0f172a;
+  font-weight: 700;
+  line-height: 1.3;
+  margin: 1.2rem 0 0.6rem;
+}
+
+.pm-tiptap-editor h1 {
+  font-size: 1.5rem;
+}
+
+.pm-tiptap-editor h2 {
+  font-size: 1.3rem;
+}
+
+.pm-tiptap-editor h3 {
+  font-size: 1.15rem;
+}
+
+.pm-tiptap-editor ul,
+.pm-tiptap-editor ol {
+  margin: 0 0 0.9rem 1.2rem;
+}
+
+.pm-tiptap-editor li {
+  margin: 0.2rem 0;
+}
+
+.pm-tiptap-editor a {
+  color: #2563eb;
+  text-decoration: underline;
+}
+
+.pm-tiptap-editor blockquote {
+  border-left: 3px solid #cbd5e1;
+  margin: 0.9rem 0;
+  padding-left: 0.8rem;
+  color: #334155;
+}

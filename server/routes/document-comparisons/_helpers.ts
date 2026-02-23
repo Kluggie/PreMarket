@@ -1,5 +1,48 @@
 import { ApiError } from '../../_lib/errors.js';
 
+export const CONFIDENTIAL_LABEL = 'Confidential Information';
+export const SHARED_LABEL = 'Shared Information';
+
+function normalizeComparisonLabel(side: 'a' | 'b') {
+  return side === 'a' ? CONFIDENTIAL_LABEL : SHARED_LABEL;
+}
+
+function asHtml(value: unknown) {
+  return typeof value === 'string' ? value : '';
+}
+
+function asJsonObject(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function escapeHtml(value: string) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function textToHtml(text: string) {
+  const normalized = String(text || '').replace(/\r/g, '').trim();
+  if (!normalized) {
+    return '<p></p>';
+  }
+
+  const paragraphs = normalized.split(/\n{2,}/g).filter(Boolean);
+  if (!paragraphs.length) {
+    return '<p></p>';
+  }
+
+  return paragraphs
+    .map((paragraph) => `<p>${escapeHtml(paragraph).replace(/\n/g, '<br/>')}</p>`)
+    .join('');
+}
+
 export function mapComparisonRow(row: any) {
   const inputs =
     row?.inputs && typeof row.inputs === 'object' && !Array.isArray(row.inputs)
@@ -13,6 +56,12 @@ export function mapComparisonRow(row: any) {
     typeof inputs.doc_b_source === 'string' && inputs.doc_b_source.trim().length > 0
       ? inputs.doc_b_source.trim()
       : 'typed';
+  const docAText = row.docAText || '';
+  const docBText = row.docBText || '';
+  const docAHtml = asHtml(inputs.doc_a_html) || textToHtml(docAText);
+  const docBHtml = asHtml(inputs.doc_b_html) || textToHtml(docBText);
+  const docAJson = asJsonObject(inputs.doc_a_json);
+  const docBJson = asJsonObject(inputs.doc_b_json);
 
   return {
     id: row.id,
@@ -21,10 +70,14 @@ export function mapComparisonRow(row: any) {
     title: row.title,
     status: row.status,
     draft_step: Number(row.draftStep || 1),
-    party_a_label: row.partyALabel || 'Document A',
-    party_b_label: row.partyBLabel || 'Document B',
-    doc_a_text: row.docAText || '',
-    doc_b_text: row.docBText || '',
+    party_a_label: normalizeComparisonLabel('a'),
+    party_b_label: normalizeComparisonLabel('b'),
+    doc_a_text: docAText,
+    doc_b_text: docBText,
+    doc_a_html: docAHtml,
+    doc_b_html: docBHtml,
+    doc_a_json: docAJson,
+    doc_b_json: docBJson,
     doc_a_source: docASource,
     doc_b_source: docBSource,
     doc_a_files: Array.isArray(inputs.doc_a_files) ? inputs.doc_a_files : [],
@@ -37,8 +90,8 @@ export function mapComparisonRow(row: any) {
       typeof inputs.doc_b_url === 'string' && inputs.doc_b_url.trim().length > 0
         ? inputs.doc_b_url.trim()
         : null,
-    doc_a_spans: Array.isArray(row.docASpans) ? row.docASpans : [],
-    doc_b_spans: Array.isArray(row.docBSpans) ? row.docBSpans : [],
+    doc_a_spans: [],
+    doc_b_spans: [],
     evaluation_result: row.evaluationResult || {},
     public_report: row.publicReport || {},
     inputs: row.inputs || {},
@@ -111,7 +164,7 @@ export function parseStep(value: unknown, fallback = 1) {
     return fallback;
   }
 
-  return Math.min(Math.max(Math.floor(numeric), 1), 4);
+  return Math.min(Math.max(Math.floor(numeric), 1), 3);
 }
 
 export function asText(value: unknown) {
@@ -203,7 +256,7 @@ export function buildComparisonEvaluation(payload: {
   const union = new Set([...tokensA, ...tokensB]);
   const similarity = union.size > 0 ? Math.round((intersection.size / union.size) * 100) : 0;
   const deltaChars = Math.abs(docAText.length - docBText.length);
-  const confidentialityCount = payload.docASpans.length + payload.docBSpans.length;
+  const confidentialityCount = 0;
 
   let fit = 'Low';
   if (similarity >= 80) fit = 'High';
@@ -228,12 +281,12 @@ export function buildComparisonEvaluation(payload: {
         ],
       },
       {
-        key: 'confidentiality',
-        heading: 'Confidentiality Highlights',
+        key: 'information_scope',
+        heading: 'Information Scope',
         bullets: [
-          `Total marked spans: ${confidentialityCount}`,
-          `Document A marked spans: ${payload.docASpans.length}`,
-          `Document B marked spans: ${payload.docBSpans.length}`,
+          `${CONFIDENTIAL_LABEL} is private and kept out of recipient-facing payloads.`,
+          `${SHARED_LABEL} is the only recipient-facing document.`,
+          `Confidential span model: disabled`,
         ],
       },
     ],

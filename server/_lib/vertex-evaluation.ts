@@ -1998,8 +1998,8 @@ function normalizeProposalInput(input: ProposalInput): ProposalInput {
 function normalizeComparisonInput(input: ComparisonInput): ComparisonInput {
   return {
     title: asText(input.title) || 'Untitled Comparison',
-    partyALabel: asText(input.partyALabel) || 'Document A',
-    partyBLabel: asText(input.partyBLabel) || 'Document B',
+    partyALabel: asText(input.partyALabel) || 'Confidential Information',
+    partyBLabel: asText(input.partyBLabel) || 'Shared Information',
     docAText: String(input.docAText || ''),
     docBText: String(input.docBText || ''),
     docASpans: normalizeSpans(input.docASpans || [], String(input.docAText || '')),
