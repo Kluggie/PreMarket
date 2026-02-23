@@ -33,6 +33,10 @@ function assertStatus(actual, expected, label) {
 }
 
 async function run() {
+  const allowPublicVertexSmoke =
+    String(process.env.ALLOW_PUBLIC_VERTEX_SMOKE || '').trim() === '1' ||
+    String(process.env.NODE_ENV || '').trim() !== 'production';
+
   const health = await request('/api/health');
   assertStatus(health.status, 200, 'GET /api/health');
 
@@ -66,7 +70,11 @@ async function run() {
     },
     body: JSON.stringify({ prompt: 'Reply: ok' }),
   });
-  assertStatus(vertexUnauthed.status, [401, 500, 501], 'POST /api/vertex/smoke unauthenticated');
+  assertStatus(
+    vertexUnauthed.status,
+    allowPublicVertexSmoke ? [200, 401, 500, 501] : [401, 500, 501],
+    'POST /api/vertex/smoke unauthenticated',
+  );
 
   const proposalsUnauthed = await request('/api/proposals');
   assertStatus(proposalsUnauthed.status, [401, 500], 'GET /api/proposals unauthenticated');

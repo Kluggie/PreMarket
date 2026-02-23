@@ -149,6 +149,60 @@ Source extraction was performed from baseline page/function callsites in:
 - Legacy AI-specific extraction/evaluation providers are not required for local deterministic parity; API contracts and persisted state are the parity-critical target.
 - Where provider configuration is missing, endpoint behavior must be normalized `501` with `{ ok:false, error:{ code:'not_configured', message } }`.
 - `APP_BASE_URL` is canonical for generated links in shared-link and billing redirects.
+- The requested source file `/mnt/data/EvaluateProposal.ts` is not available in this workspace; contract extraction below uses the equivalent repo source `functions/EvaluateProposal.ts`.
+
+## Evaluation Contract (From EvaluateProposal.ts)
+
+### Instruction rules that must be enforced
+- Evidence-only: every finding, blocker, flag, recommendation, and follow-up must cite evidence IDs.
+- No hallucinations: never claim controls, certifications, pricing/revenue, or document facts not present in input responses/signals.
+- Visibility enforcement:
+  - `hidden`: never reveal value; only redacted generic statements, `detail_level="redacted"`.
+  - `partial`: summarize without exact sensitive specifics, `detail_level="partial"`.
+  - `full`: normal detail allowed.
+- Use `computedSignals` when present for gates/overlaps/contradictions.
+- Strict JSON output only, no prose/markdown outside JSON.
+- Missing/ambiguous data must be represented as unknown, not guessed.
+- Completeness and confidence must drop when required fields are missing/disputed/unverified.
+
+### Canonical output schema (required fields)
+- Root:
+  - `template_id: string`
+  - `template_name: string`
+  - `generated_at_iso: string`
+  - `parties: { a_label: string, b_label: string }`
+  - `quality: { completeness_a: number, completeness_b: number, confidence_overall: number, confidence_reasoning: string[], missing_high_impact_question_ids: string[], disputed_question_ids: string[] }`
+  - `summary: { overall_score_0_100: number|null, fit_level: "high"|"medium"|"low"|"unknown", top_fit_reasons: { text: string, evidence_question_ids: string[] }[], top_blockers: { text: string, evidence_question_ids: string[] }[], next_actions: string[] }`
+  - `category_breakdown: { category_key: string, name: string, weight: number, score_0_100: number|null, confidence_0_1: number, notes: string[], evidence_question_ids: string[] }[]`
+  - `gates: { gate_key: string, outcome: "pass"|"fail"|"unknown", message: string, evidence_question_ids: string[] }[]`
+  - `overlaps_and_constraints: { key: string, outcome: "pass"|"fail"|"unknown", short_explanation: string, evidence_question_ids: string[] }[]`
+  - `contradictions: { key: string, severity: "low"|"med"|"high", description: string, evidence_question_ids: string[] }[]`
+  - `flags: { severity: "low"|"med"|"high", type: "security"|"privacy"|"ops"|"commercial"|"integrity"|"other", title: string, detail: string, detail_level: "full"|"partial"|"redacted", evidence_question_ids: string[] }[]`
+  - `verification: { summary: { self_declared_count: number, evidence_attached_count: number, tier1_verified_count: number, disputed_count: number }, evidence_requested: { item: string, reason: string, related_question_ids: string[] }[] }`
+  - `followup_questions: { priority: "high"|"med"|"low", to_party: "a"|"b"|"both", question_text: string, why_this_matters: string, targets: { category_key: string, question_ids: string[] } }[]`
+  - `appendix: { field_digest: { question_id: string, label: string, party: "a"|"b", value_summary: string, visibility: "full"|"partial"|"hidden", verified_status: "self_declared"|"evidence_attached"|"tier1_verified"|"disputed"|"unknown", last_updated_by: "proposer"|"recipient"|"system" }[] }`
+
+### Minimal extension for document-comparison mode
+- Keep canonical structure and semantics.
+- Add optional evidence anchor format for non-question sources:
+  - `evidence_anchors?: { doc: "A"|"B", start: number, end: number }[]`
+- Anchor constraints:
+  - offsets must be within source document bounds.
+  - anchors must not overlap hidden/confidential spans.
+  - hidden source text must never be quoted verbatim in report payload.
+
+### Completeness / confidence semantics
+- Completeness is required-answer coverage per party (`answered_required / total_required`).
+- Confidence must be low when required coverage is poor, evidence is thin, or disputes/high-impact missing fields exist.
+- Numeric score fields can remain `null` when rubric cannot support scoring; confidence/completeness are still mandatory.
+
+### Post-model normalization and validation required
+- Parse JSON with fenced-markdown stripping fallback.
+- Validate required root keys and nested field types/enums.
+- Clamp numeric confidence/completeness to `[0,1]`.
+- Normalize/clean arrays and enums (`fit_level`, `severity`, `detail_level`, outcomes).
+- Reject or fail evaluation when schema is invalid; persist failure state/row.
+- Redaction enforcement pass: ensure hidden response values or hidden span snippets are absent from serialized output.
 
 ## Document Comparison Contract (Detailed Baseline Extraction - Recipient Side5)
 

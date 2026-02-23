@@ -29,6 +29,45 @@ function authCookie(sub, email) {
   return makeSessionCookie({ sub, email });
 }
 
+function assertContractReportShape(report) {
+  assert.equal(Boolean(report && typeof report === 'object' && !Array.isArray(report)), true);
+  assert.equal(typeof report.template_id, 'string');
+  assert.equal(typeof report.template_name, 'string');
+  assert.equal(typeof report.generated_at_iso, 'string');
+  assert.equal(typeof report.parties?.a_label, 'string');
+  assert.equal(typeof report.parties?.b_label, 'string');
+  assert.equal(typeof report.quality?.completeness_a, 'number');
+  assert.equal(typeof report.quality?.completeness_b, 'number');
+  assert.equal(typeof report.quality?.confidence_overall, 'number');
+  assert.equal(Array.isArray(report.quality?.confidence_reasoning), true);
+  assert.equal(Array.isArray(report.quality?.missing_high_impact_question_ids), true);
+  assert.equal(Array.isArray(report.quality?.disputed_question_ids), true);
+  assert.equal(typeof report.summary?.fit_level, 'string');
+  assert.equal(Array.isArray(report.summary?.top_fit_reasons), true);
+  assert.equal(Array.isArray(report.summary?.top_blockers), true);
+  assert.equal(Array.isArray(report.summary?.next_actions), true);
+  assert.equal(Array.isArray(report.category_breakdown), true);
+  assert.equal(Array.isArray(report.gates), true);
+  assert.equal(Array.isArray(report.overlaps_and_constraints), true);
+  assert.equal(Array.isArray(report.contradictions), true);
+  assert.equal(Array.isArray(report.flags), true);
+  assert.equal(
+    Boolean(report.verification && typeof report.verification === 'object' && !Array.isArray(report.verification)),
+    true,
+  );
+  assert.equal(
+    Boolean(
+      report.verification?.summary &&
+        typeof report.verification.summary === 'object' &&
+        !Array.isArray(report.verification.summary),
+    ),
+    true,
+  );
+  assert.equal(Array.isArray(report.verification?.evidence_requested), true);
+  assert.equal(Array.isArray(report.followup_questions), true);
+  assert.equal(Array.isArray(report.appendix?.field_digest), true);
+}
+
 async function createProposal(cookie, body) {
   const req = createMockReq({
     method: 'POST',
@@ -84,6 +123,16 @@ if (!hasDatabaseUrl()) {
     await proposalEvaluateHandler(evaluateReq, evaluateRes, created.id);
     assert.equal(evaluateRes.statusCode, 200);
     assert.equal(typeof evaluateRes.jsonBody().evaluation.score, 'number');
+    assert.equal(evaluateRes.jsonBody().evaluation.source, 'proposal_vertex');
+    assertContractReportShape(evaluateRes.jsonBody().evaluation.result?.report || {});
+    assert.equal(
+      Number(evaluateRes.jsonBody().evaluation.result?.report?.quality?.completeness_a) < 1,
+      true,
+    );
+    assert.equal(
+      Number(evaluateRes.jsonBody().evaluation.result?.report?.quality?.confidence_overall) <= 0.4,
+      true,
+    );
     assert.equal(
       ['under_verification', 're_evaluated'].includes(evaluateRes.jsonBody().proposal.status),
       true,
@@ -377,6 +426,7 @@ if (!hasDatabaseUrl()) {
     assert.equal(evalRes.jsonBody().comparison.status, 'evaluated');
     assert.equal(typeof evalRes.jsonBody().comparison.evaluation_result.score, 'number');
     assert.equal(evalRes.jsonBody().comparison.evaluation_result.provider, 'mock');
+    assertContractReportShape(evalRes.jsonBody().comparison.evaluation_result?.report || {});
     assert.equal(
       Array.isArray(evalRes.jsonBody().comparison.evaluation_result?.report?.sections),
       true,
@@ -416,6 +466,54 @@ if (!hasDatabaseUrl()) {
     assert.equal(rows[0].evaluationResult?.provider, 'mock');
     assert.equal(Array.isArray(rows[0].publicReport?.sections), true);
     assert.equal(rows[0].publicReport.sections.length > 0, true);
+  });
+
+  test('minimal document inputs keep completeness/confidence low and never echo hidden spans', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = authCookie('doc_min_owner', 'doc-min@example.com');
+    const hiddenToken = 'SECRET_UNIQUE_TOKEN_987654321';
+
+    const createReq = createMockReq({
+      method: 'POST',
+      url: '/api/document-comparisons',
+      headers: { cookie: ownerCookie },
+      body: {
+        title: 'Tiny Comparison',
+        party_a_label: 'A',
+        party_b_label: 'B',
+        doc_a_text: `${hiddenToken} good`,
+        doc_b_text: 'bad ugly',
+        doc_a_spans: [{ start: 0, end: hiddenToken.length, level: 'confidential' }],
+        createProposal: true,
+      },
+    });
+    const createRes = createMockRes();
+    await documentComparisonsHandler(createReq, createRes);
+    assert.equal(createRes.statusCode, 201);
+    const comparisonId = createRes.jsonBody().comparison.id;
+
+    const evalReq = createMockReq({
+      method: 'POST',
+      url: `/api/document-comparisons/${comparisonId}/evaluate`,
+      headers: { cookie: ownerCookie },
+      query: { id: comparisonId },
+      body: {},
+    });
+    const evalRes = createMockRes();
+    await documentComparisonsEvaluateHandler(evalReq, evalRes, comparisonId);
+    assert.equal(evalRes.statusCode, 200);
+
+    const evaluation = evalRes.jsonBody().comparison.evaluation_result;
+    assert.equal(['vertex', 'mock'].includes(String(evaluation?.provider || '')), true);
+    assertContractReportShape(evaluation?.report || {});
+    assert.equal(Number(evaluation?.report?.quality?.completeness_a) < 1, true);
+    assert.equal(Number(evaluation?.report?.quality?.completeness_b) < 1, true);
+    assert.equal(Number(evaluation?.report?.quality?.confidence_overall) <= 0.4, true);
+
+    const serialized = JSON.stringify(evaluation?.report || {});
+    assert.equal(serialized.includes(hiddenToken), false);
   });
 
   test('proposal document-comparison evaluation persists Vertex-style report output to proposal and comparison', async () => {

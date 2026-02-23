@@ -6,10 +6,7 @@ import { ApiError } from '../../../_lib/errors.js';
 import { newId } from '../../../_lib/ids.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 import { evaluateDocumentComparisonWithVertex } from '../../../_lib/vertex-evaluation.js';
-import {
-  ensureComparisonFound,
-  mapComparisonRow,
-} from '../_helpers.js';
+import { ensureComparisonFound, mapComparisonRow } from '../_helpers.js';
 
 function getComparisonId(req: any, comparisonIdParam?: string) {
   if (comparisonIdParam && comparisonIdParam.trim().length > 0) {
@@ -18,6 +15,46 @@ function getComparisonId(req: any, comparisonIdParam?: string) {
 
   const rawId = Array.isArray(req.query?.id) ? req.query.id[0] : req.query?.id;
   return String(rawId || '').trim();
+}
+
+function asText(value: unknown) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function toFailedResult(error: any) {
+  const statusCode = Number(error?.statusCode || error?.status || 500);
+  const code = asText(error?.code) || 'evaluation_failed';
+  const message = asText(error?.message) || 'Evaluation failed';
+
+  return {
+    error: {
+      statusCode,
+      code,
+      message,
+      details: error?.extra && typeof error.extra === 'object' ? error.extra : {},
+    },
+  };
+}
+
+async function persistFailedProposalEvaluation(params: {
+  db: any;
+  proposalId: string;
+  userId: string;
+  error: any;
+}) {
+  const now = new Date();
+  await params.db.insert(schema.proposalEvaluations).values({
+    id: newId('eval'),
+    proposalId: params.proposalId,
+    userId: params.userId,
+    source: 'document_comparison_vertex',
+    status: 'failed',
+    score: null,
+    summary: asText(params.error?.message) || 'Document comparison evaluation failed',
+    result: toFailedResult(params.error),
+    createdAt: now,
+    updatedAt: now,
+  });
 }
 
 export default async function handler(req: any, res: any, comparisonIdParam?: string) {
@@ -39,25 +76,43 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     const [existing] = await db
       .select()
       .from(schema.documentComparisons)
-      .where(
-        and(
-          eq(schema.documentComparisons.id, comparisonId),
-          eq(schema.documentComparisons.userId, auth.user.id),
-        ),
-      )
+      .where(and(eq(schema.documentComparisons.id, comparisonId), eq(schema.documentComparisons.userId, auth.user.id)))
       .limit(1);
 
     ensureComparisonFound(existing);
 
-    const evaluation = await evaluateDocumentComparisonWithVertex({
-      title: existing.title,
-      docAText: existing.docAText || '',
-      docBText: existing.docBText || '',
-      docASpans: Array.isArray(existing.docASpans) ? existing.docASpans : [],
-      docBSpans: Array.isArray(existing.docBSpans) ? existing.docBSpans : [],
-      partyALabel: existing.partyALabel || 'Document A',
-      partyBLabel: existing.partyBLabel || 'Document B',
-    });
+    let evaluation: any;
+    try {
+      evaluation = await evaluateDocumentComparisonWithVertex({
+        title: existing.title,
+        docAText: existing.docAText || '',
+        docBText: existing.docBText || '',
+        docASpans: Array.isArray(existing.docASpans) ? existing.docASpans : [],
+        docBSpans: Array.isArray(existing.docBSpans) ? existing.docBSpans : [],
+        partyALabel: existing.partyALabel || 'Document A',
+        partyBLabel: existing.partyBLabel || 'Document B',
+      });
+    } catch (error: any) {
+      await db
+        .update(schema.documentComparisons)
+        .set({
+          status: 'failed',
+          evaluationResult: toFailedResult(error),
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.documentComparisons.id, existing.id));
+
+      if (existing.proposalId) {
+        await persistFailedProposalEvaluation({
+          db,
+          proposalId: existing.proposalId,
+          userId: auth.user.id,
+          error,
+        });
+      }
+
+      throw error;
+    }
 
     const now = new Date();
     const [updated] = await db
@@ -98,7 +153,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
           id: newId('eval'),
           proposalId: proposal.id,
           userId: proposal.userId,
-          source: 'document_comparison',
+          source: 'document_comparison_vertex',
           status: 'completed',
           score: evaluation.score,
           summary: evaluation.summary,
