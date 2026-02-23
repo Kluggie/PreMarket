@@ -82,124 +82,112 @@ export default function Contact() {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          <div className="lg:col-span-2">
-            <Card className="border-0 shadow-sm">
-              <CardHeader className="pb-2 text-center items-center">
-                <CardTitle>Send us a message</CardTitle>
-                <CardDescription className="max-w-xl mx-auto text-center">
+        <div className="max-w-3xl mx-auto">
+          <Card className="border-0 shadow-sm">
+            <CardHeader className="pb-2 w-full items-center">
+              <div className="w-full flex flex-col items-center text-center">
+                <CardTitle className="w-full text-center">Send us a message</CardTitle>
+                <CardDescription className="w-full max-w-xl mx-auto text-center">
                   Fill out the form below and we'll respond within 24 hours.
                 </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <form onSubmit={handleSubmit} className="space-y-6">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="space-y-2">
-                      <Label htmlFor="name">Name *</Label>
-                      <Input
-                        id="name"
-                        required
-                        value={formData.name}
-                        onChange={(event) => setFormData({ ...formData, name: event.target.value })}
-                        placeholder="Your name"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="email">Email *</Label>
-                      <Input
-                        id="email"
-                        type="email"
-                        required
-                        value={formData.email}
-                        onChange={(event) => setFormData({ ...formData, email: event.target.value })}
-                        placeholder="you@example.com"
-                      />
-                    </div>
-                  </div>
-
+              </div>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={handleSubmit} className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="space-y-2">
-                    <Label htmlFor="organization">Organization</Label>
+                    <Label htmlFor="name">Name *</Label>
                     <Input
-                      id="organization"
-                      value={formData.organization}
-                      onChange={(event) =>
-                        setFormData({ ...formData, organization: event.target.value })
-                      }
-                      placeholder="Your company (optional)"
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="reason">Reason for Contact *</Label>
-                    <Select
-                      value={formData.reason}
-                      onValueChange={(value) => setFormData({ ...formData, reason: value })}
-                    >
-                      <SelectTrigger id="reason">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="support">Support</SelectItem>
-                        <SelectItem value="sales">Sales</SelectItem>
-                        <SelectItem value="request">Feature Request</SelectItem>
-                        <SelectItem value="customer_review">Customer Review</SelectItem>
-                        <SelectItem value="complaint">Complaint</SelectItem>
-                        <SelectItem value="other">Other</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="message">Message *</Label>
-                    <Textarea
-                      id="message"
+                      id="name"
                       required
-                      value={formData.message}
-                      onChange={(event) => setFormData({ ...formData, message: event.target.value })}
-                      placeholder="How can we help you?"
-                      className="min-h-[150px]"
+                      value={formData.name}
+                      onChange={(event) => setFormData({ ...formData, name: event.target.value })}
+                      placeholder="Your name"
                     />
                   </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="email">Email *</Label>
+                    <Input
+                      id="email"
+                      type="email"
+                      required
+                      value={formData.email}
+                      onChange={(event) => setFormData({ ...formData, email: event.target.value })}
+                      placeholder="you@example.com"
+                    />
+                  </div>
+                </div>
 
-                  {submitMutation.error ? (
-                    <p className="text-sm text-red-600">
-                      {submitMutation.error.message || 'Unable to send your message right now.'}
-                    </p>
-                  ) : null}
+                <div className="space-y-2">
+                  <Label htmlFor="organization">Organization</Label>
+                  <Input
+                    id="organization"
+                    value={formData.organization}
+                    onChange={(event) =>
+                      setFormData({ ...formData, organization: event.target.value })
+                    }
+                    placeholder="Your company (optional)"
+                  />
+                </div>
 
-                  <Button
-                    type="submit"
-                    disabled={submitMutation.isPending}
-                    className="w-full bg-blue-600 hover:bg-blue-700"
+                <div className="space-y-2">
+                  <Label htmlFor="reason">Reason for Contact *</Label>
+                  <Select
+                    value={formData.reason}
+                    onValueChange={(value) => setFormData({ ...formData, reason: value })}
                   >
-                    {submitMutation.isPending ? 'Sending...' : 'Send Message'}
-                  </Button>
+                    <SelectTrigger id="reason">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="support">Support</SelectItem>
+                      <SelectItem value="sales">Sales</SelectItem>
+                      <SelectItem value="request">Feature Request</SelectItem>
+                      <SelectItem value="customer_review">Customer Review</SelectItem>
+                      <SelectItem value="complaint">Complaint</SelectItem>
+                      <SelectItem value="other">Other</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
 
-                  <Card className="border-0 shadow-sm bg-blue-50 mt-4">
-                    <CardContent className="p-4">
-                      <h3 className="font-semibold text-blue-900 mb-2 text-sm">Response Time</h3>
-                      <p className="text-xs text-blue-700">
-                        We typically respond to all inquiries within 24 hours during business days.
-                        For urgent matters, please mention "URGENT" in your message subject.
-                      </p>
-                    </CardContent>
-                  </Card>
-                </form>
-              </CardContent>
-            </Card>
-          </div>
+                <div className="space-y-2">
+                  <Label htmlFor="message">Message *</Label>
+                  <Textarea
+                    id="message"
+                    required
+                    value={formData.message}
+                    onChange={(event) => setFormData({ ...formData, message: event.target.value })}
+                    placeholder="How can we help you?"
+                    className="min-h-[150px]"
+                  />
+                </div>
 
-          <div className="space-y-6">
-            <Card className="border-0 shadow-sm bg-slate-50 opacity-0 pointer-events-none">
-              <CardContent className="p-6">
-                <h3 className="font-semibold text-blue-900 mb-2">Response Time</h3>
-                <p className="text-sm text-blue-700">
-                  We typically respond to all inquiries within 24 hours during business days. For
-                  urgent matters, please mention "URGENT" in your message subject.
-                </p>
-              </CardContent>
-            </Card>
-          </div>
+                {submitMutation.error ? (
+                  <p className="text-sm text-red-600">
+                    {submitMutation.error.message || 'Unable to send your message right now.'}
+                  </p>
+                ) : null}
+
+                <Button
+                  type="submit"
+                  disabled={submitMutation.isPending}
+                  className="w-full bg-blue-600 hover:bg-blue-700"
+                >
+                  {submitMutation.isPending ? 'Sending...' : 'Send Message'}
+                </Button>
+
+                <Card className="border-0 shadow-sm bg-blue-50 mt-4">
+                  <CardContent className="p-4">
+                    <h3 className="font-semibold text-blue-900 mb-2 text-sm">Response Time</h3>
+                    <p className="text-xs text-blue-700">
+                      We typically respond to all inquiries within 24 hours during business days.
+                      For urgent matters, please mention "URGENT" in your message subject.
+                    </p>
+                  </CardContent>
+                </Card>
+              </form>
+            </CardContent>
+          </Card>
         </div>
       </div>
     </div>

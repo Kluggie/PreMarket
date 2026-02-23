@@ -12,6 +12,7 @@ const ALLOWED_REASONS = new Set([
   'complaint',
   'other',
 ]);
+const DEFAULT_CONTACT_ADDITIONAL_RECIPIENTS = ['gregoryklugman@gmail.com'];
 
 function asText(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
@@ -69,17 +70,39 @@ function resolveTargetEmail(reason: string) {
   return '';
 }
 
+function parseEmailList(rawValue: unknown) {
+  const raw = asText(rawValue);
+  if (!raw) {
+    return [];
+  }
+
+  return raw
+    .split(',')
+    .map((entry) => entry.trim().toLowerCase())
+    .filter((entry, index, list) => isLikelyEmail(entry) && list.indexOf(entry) === index);
+}
+
+function resolveAdditionalRecipients() {
+  const parsed = [
+    ...parseEmailList(process.env.CONTACT_CC_EMAILS),
+    ...parseEmailList(process.env.CONTACT_BCC_EMAILS),
+    ...DEFAULT_CONTACT_ADDITIONAL_RECIPIENTS,
+  ];
+
+  return parsed.filter((entry, index, list) => list.indexOf(entry) === index);
+}
+
 async function sendContactNotification(input: {
   apiKey: string;
   from: string;
-  to: string;
+  to: string[];
   replyTo: string;
   subject: string;
   text: string;
 }) {
   const payload: Record<string, unknown> = {
     from: input.from,
-    to: [input.to],
+    to: input.to,
     subject: input.subject,
     text: input.text,
     reply_to: input.replyTo,
@@ -139,6 +162,10 @@ export default async function handler(req: any, res: any) {
     const from = resend.fromName ? `${resend.fromName} <${resend.fromEmail}>` : resend.fromEmail;
     const reasonLabel = toReasonLabel(reason);
     const effectiveReplyTo = resend.replyTo || email;
+    const recipients = [
+      targetEmail,
+      ...resolveAdditionalRecipients().filter((recipient) => recipient !== targetEmail),
+    ];
     const text = [
       'New contact request',
       '',
@@ -154,7 +181,7 @@ export default async function handler(req: any, res: any) {
     await sendContactNotification({
       apiKey: resend.apiKey,
       from,
-      to: targetEmail,
+      to: recipients,
       replyTo: effectiveReplyTo,
       subject: `Contact: ${reasonLabel} - ${email}`,
       text,

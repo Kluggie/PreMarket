@@ -319,7 +319,7 @@ export default function Pricing() {
               },
               {
                 q: 'Does the report reveal confidential values?',
-                a: 'No. Hidden/partial visibility settings are respected in generated outputs.',
+                a: 'No. Confidential visibility settings are respected in generated outputs.',
               },
               {
                 q: 'What is pseudonymous mode?',
