@@ -113,7 +113,7 @@ export default async function handler(req: any, res: any) {
     return emailSendHandler(req, res);
   }
 
-  if (pathname === '/api/vertex/smoke' && method === 'POST') {
+  if (pathname === '/api/vertex/smoke' && (method === 'GET' || method === 'POST')) {
     return vertexSmokeHandler(req, res);
   }
 

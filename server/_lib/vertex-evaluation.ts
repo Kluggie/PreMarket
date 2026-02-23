@@ -451,43 +451,76 @@ async function callVertex(prompt: string) {
   const accessToken = await fetchGoogleAccessToken(vertex.credentials);
   const projectId = asText(process.env.GCP_PROJECT_ID) || vertex.credentials.project_id;
   const location = asText(process.env.GCP_LOCATION) || vertex.location;
-  const model = asText(process.env.VERTEX_MODEL) || vertex.model;
+  const preferredModel = asText(process.env.VERTEX_MODEL) || vertex.model;
+  const modelCandidates = [
+    preferredModel,
+    'gemini-2.0-flash-001',
+    'gemini-1.5-flash-001',
+    'gemini-1.5-flash',
+    'gemini-1.5-flash-002',
+  ]
+    .map((model) => asText(model))
+    .filter(Boolean)
+    .filter((model, index, values) => values.indexOf(model) === index);
 
-  const endpoint =
-    `https://${location}-aiplatform.googleapis.com/v1/projects/${encodeURIComponent(projectId)}` +
-    `/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(model)}:generateContent`;
+  let lastStatus = 0;
+  let lastMessage = '';
 
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      contents: [
-        {
-          role: 'user',
-          parts: [{ text: prompt }],
-        },
-      ],
-      generationConfig: {
-        maxOutputTokens: 1400,
-        temperature: 0.1,
-        topP: 0.9,
+  for (const model of modelCandidates) {
+    const endpoint =
+      `https://${location}-aiplatform.googleapis.com/v1/projects/${encodeURIComponent(projectId)}` +
+      `/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(model)}:generateContent`;
+
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
       },
-    }),
-  });
+      body: JSON.stringify({
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: prompt }],
+          },
+        ],
+        generationConfig: {
+          maxOutputTokens: 1400,
+          temperature: 0.1,
+          topP: 0.9,
+        },
+      }),
+    });
 
-  if (!response.ok) {
-    throw new ApiError(502, 'vertex_request_failed', 'Vertex AI request failed');
+    if (response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      const text = extractModelText(payload);
+      return {
+        model,
+        text,
+      };
+    }
+
+    const details = await response.text().catch(() => '');
+    lastStatus = response.status;
+    lastMessage = details ? details.slice(0, 400) : '';
+    const modelMissing = response.status === 404 && /publisher model/i.test(details);
+    if (modelMissing) {
+      continue;
+    }
+
+    throw new ApiError(502, 'vertex_request_failed', 'Vertex AI request failed', {
+      upstreamStatus: response.status,
+      upstreamMessage: lastMessage || null,
+      triedModels: modelCandidates,
+    });
   }
 
-  const payload = await response.json().catch(() => ({}));
-  const text = extractModelText(payload);
-  return {
-    model,
-    text,
-  };
+  throw new ApiError(502, 'vertex_request_failed', 'Vertex AI request failed', {
+    upstreamStatus: lastStatus || 404,
+    upstreamMessage: lastMessage || 'No accessible Vertex model found for this project',
+    triedModels: modelCandidates,
+  });
 }
 
 export async function evaluateDocumentComparisonWithVertex(input: ComparisonInput): Promise<ComparisonEvaluation> {
