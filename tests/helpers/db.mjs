@@ -58,6 +58,7 @@ export async function resetTables() {
       contact_requests,
       beta_applications,
       notifications,
+      email_dedupes,
       email_verification_tokens,
       shared_link_responses,
       snapshot_access,

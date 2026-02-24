@@ -3,10 +3,10 @@ import { and, eq, lt } from 'drizzle-orm';
 import { ok } from '../../../_lib/api-response.js';
 import { requireUser } from '../../../_lib/auth.js';
 import { getDb, schema } from '../../../_lib/db/client.js';
+import { sendCategorizedEmail } from '../../../_lib/email-delivery.js';
 import { toCanonicalAppUrl } from '../../../_lib/env.js';
 import { ApiError } from '../../../_lib/errors.js';
 import { newId, newToken } from '../../../_lib/ids.js';
-import { getResendConfig } from '../../../_lib/integrations.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 
 const TOKEN_TTL_HOURS = 24;
@@ -24,45 +24,6 @@ function buildVerificationUrl(appBaseUrl: string, token: string) {
   return toCanonicalAppUrl(appBaseUrl, returnPath);
 }
 
-async function sendVerificationEmail(input: {
-  apiKey: string;
-  from: string;
-  to: string;
-  replyTo: string | null;
-  subject: string;
-  text: string;
-}) {
-  const payload: Record<string, unknown> = {
-    from: input.from,
-    to: [input.to],
-    subject: input.subject,
-    text: input.text,
-  };
-
-  if (input.replyTo) {
-    payload.reply_to = input.replyTo;
-  }
-
-  const response = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${input.apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(payload),
-  });
-
-  if (response.ok) {
-    return;
-  }
-
-  if (response.status >= 400 && response.status < 500) {
-    throw new ApiError(400, 'email_send_failed', 'Email provider rejected the request');
-  }
-
-  throw new ApiError(502, 'email_send_failed', 'Email provider is unavailable');
-}
-
 export default async function handler(req: any, res: any) {
   await withApiRoute(req, res, '/api/account/verification/send', async (context) => {
     ensureMethod(req, ['POST']);
@@ -72,11 +33,6 @@ export default async function handler(req: any, res: any) {
       return;
     }
     context.userId = auth.user.id;
-
-    const resend = getResendConfig();
-    if (!resend.ready) {
-      throw new ApiError(501, 'not_configured', 'Email integration is not configured');
-    }
 
     const db = getDb();
     const now = new Date();
@@ -163,7 +119,6 @@ export default async function handler(req: any, res: any) {
         },
       });
 
-    const from = resend.fromName ? `${resend.fromName} <${resend.fromEmail}>` : resend.fromEmail;
     const text = [
       'Verify your email address for PreMarket',
       '',
@@ -177,17 +132,36 @@ export default async function handler(req: any, res: any) {
       'If you did not request this, you can ignore this email.',
     ].join('\n');
 
-    await sendVerificationEmail({
-      apiKey: resend.apiKey,
-      from,
+    const delivery = await sendCategorizedEmail({
+      category: 'account_verification',
       to: normalizeEmail(auth.user.email),
-      replyTo: resend.replyTo,
+      dedupeKey: `account_verification:${auth.user.id}:${tokenHash}`,
       subject: 'Verify your email for PreMarket',
       text,
     });
 
+    if (delivery.status === 'not_configured') {
+      throw new ApiError(501, 'not_configured', 'Email integration is not configured');
+    }
+
+    if (delivery.status === 'failed') {
+      if (delivery.reason === 'provider_rejected') {
+        throw new ApiError(400, 'email_send_failed', 'Email provider rejected the request');
+      }
+      throw new ApiError(502, 'email_send_failed', 'Email provider is unavailable');
+    }
+
+    if (delivery.status === 'invalid_input') {
+      throw new ApiError(400, 'invalid_input', 'Email payload is invalid');
+    }
+
+    if (delivery.status === 'blocked') {
+      throw new ApiError(403, 'email_blocked_by_policy', 'Verification emails are disabled by current email policy');
+    }
+
     ok(res, 200, {
-      sent: true,
+      sent: delivery.status === 'sent',
+      blocked: delivery.blocked,
       expires_at: expiresAt,
       verification_status: 'pending',
     });

@@ -59,11 +59,13 @@ if (!hasDatabaseUrl()) {
     const originalResendFrom = process.env.RESEND_FROM_EMAIL;
     const originalResendName = process.env.RESEND_FROM_NAME;
     const originalResendReplyTo = process.env.RESEND_REPLY_TO;
+    const originalEmailMode = process.env.EMAIL_MODE;
 
     process.env.RESEND_API_KEY = 'test_resend_key';
     process.env.RESEND_FROM_EMAIL = 'notifications@mail.getpremarket.com';
     process.env.RESEND_FROM_NAME = 'PreMarket';
     process.env.RESEND_REPLY_TO = 'support@getpremarket.com';
+    process.env.EMAIL_MODE = 'transactional';
 
     globalThis.fetch = async (url, init) => {
       if (String(url).includes('api.resend.com')) {
@@ -147,6 +149,94 @@ if (!hasDatabaseUrl()) {
       else process.env.RESEND_FROM_NAME = originalResendName;
       if (originalResendReplyTo === undefined) delete process.env.RESEND_REPLY_TO;
       else process.env.RESEND_REPLY_TO = originalResendReplyTo;
+      if (originalEmailMode === undefined) delete process.env.EMAIL_MODE;
+      else process.env.EMAIL_MODE = originalEmailMode;
+    }
+  });
+
+  test('contact_only blocks transactional notification email delivery while still creating the notification', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = authCookie('notify_owner_policy', 'owner-policy@example.com');
+    await callHandler(profileHandler, {
+      method: 'GET',
+      url: '/api/account/profile',
+      headers: { cookie: ownerCookie },
+    });
+
+    const originalMode = process.env.EMAIL_MODE;
+    const originalResendKey = process.env.RESEND_API_KEY;
+    const originalResendFrom = process.env.RESEND_FROM_EMAIL;
+    const originalFetch = globalThis.fetch;
+    let resendCalls = 0;
+
+    process.env.EMAIL_MODE = 'contact_only';
+    process.env.RESEND_API_KEY = 'test_resend_key';
+    process.env.RESEND_FROM_EMAIL = 'notifications@mail.getpremarket.com';
+
+    globalThis.fetch = async (url, init) => {
+      if (String(url).includes('api.resend.com/emails')) {
+        resendCalls += 1;
+      }
+      return originalFetch.call(globalThis, url, init);
+    };
+
+    try {
+      const db = getDb();
+      const created = await createNotificationEvent({
+        db,
+        userId: 'notify_owner_policy',
+        userEmail: 'owner-policy@example.com',
+        eventType: 'evaluation_update',
+        emailCategory: 'evaluation_complete',
+        dedupeKey: 'evaluation_update:policy_test:v1',
+        title: 'Evaluation complete',
+        message: 'A policy test evaluation has completed.',
+        emailSubject: 'Evaluation complete',
+        emailText: 'This email should be blocked by contact_only mode.',
+      });
+
+      assert.equal(created.created, true);
+      assert.equal(resendCalls, 0);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalMode === undefined) delete process.env.EMAIL_MODE;
+      else process.env.EMAIL_MODE = originalMode;
+      if (originalResendKey === undefined) delete process.env.RESEND_API_KEY;
+      else process.env.RESEND_API_KEY = originalResendKey;
+      if (originalResendFrom === undefined) delete process.env.RESEND_FROM_EMAIL;
+      else process.env.RESEND_FROM_EMAIL = originalResendFrom;
+    }
+  });
+
+  test('verification email route returns policy error when account_verification is blocked in contact_only mode', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const cookie = authCookie('verify_blocked_user', 'verify-blocked@example.com');
+    await callHandler(profileHandler, {
+      method: 'GET',
+      url: '/api/account/profile',
+      headers: { cookie },
+    });
+
+    const originalMode = process.env.EMAIL_MODE;
+    process.env.EMAIL_MODE = 'contact_only';
+
+    try {
+      const sendRes = await callHandler(verificationSendHandler, {
+        method: 'POST',
+        url: '/api/account/verification/send',
+        headers: { cookie },
+        body: {},
+      });
+
+      assert.equal(sendRes.statusCode, 403);
+      assert.equal(sendRes.jsonBody().error?.code, 'email_blocked_by_policy');
+    } finally {
+      if (originalMode === undefined) delete process.env.EMAIL_MODE;
+      else process.env.EMAIL_MODE = originalMode;
     }
   });
 

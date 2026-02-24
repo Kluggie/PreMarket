@@ -18,7 +18,9 @@ Set in **Development**, **Preview**, and **Production**:
 - `DATABASE_URL`
 - `RESEND_API_KEY`
 - `RESEND_FROM_EMAIL`
-- `CONTACT_TO_EMAIL`
+- `EMAIL_MODE` (`contact_only` by default)
+- `SUPPORT_INBOX_EMAIL`
+- `SALES_INBOX_EMAIL`
 
 Recommended values:
 - Production: `APP_BASE_URL=https://www.getpremarket.com`
@@ -30,8 +32,10 @@ RESEND_API_KEY=re_...
 RESEND_FROM_EMAIL=reports@mail.getpremarket.com
 RESEND_FROM_NAME=PreMarket
 RESEND_REPLY_TO=support@getpremarket.com
-CONTACT_TO_EMAIL=support@getpremarket.com
-SALES_TO_EMAIL=sales@getpremarket.com # optional, falls back to CONTACT_TO_EMAIL
+EMAIL_MODE=contact_only # contact_only | transactional | disabled
+SUPPORT_INBOX_EMAIL=support@getpremarket.com
+SALES_INBOX_EMAIL=sales@getpremarket.com
+DEV_EMAIL_SINK=dev-sink@getpremarket.com # optional; non-production transactional mode only
 ```
 
 ## Local Setup

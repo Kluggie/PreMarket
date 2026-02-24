@@ -94,6 +94,8 @@ if (!hasDatabaseUrl()) {
       email: 'integration@example.com',
     });
     const db = getDb();
+    const previousEmailMode = process.env.EMAIL_MODE;
+    process.env.EMAIL_MODE = 'transactional';
 
     const originalFetch = global.fetch;
     const fetchCalls = [];
@@ -149,6 +151,8 @@ if (!hasDatabaseUrl()) {
         url: '/api/email/send',
         headers: { cookie: authCookie },
         body: {
+          category: 'shared_link_activity',
+          dedupeKey: 'shared_link_activity:integration_smoke:v1',
           to: 'recipient@example.com',
           subject: 'Phase 3 email test',
           text: 'hello world',
@@ -207,6 +211,11 @@ if (!hasDatabaseUrl()) {
         assert.equal(fetchCalls.length >= 1, true);
       }
     } finally {
+      if (previousEmailMode === undefined) {
+        delete process.env.EMAIL_MODE;
+      } else {
+        process.env.EMAIL_MODE = previousEmailMode;
+      }
       global.fetch = originalFetch;
     }
   });

@@ -320,6 +320,21 @@ export const notifications = pgTable(
   }),
 );
 
+export const emailDedupes = pgTable(
+  'email_dedupes',
+  {
+    id: text('id').primaryKey(),
+    dedupeKey: text('dedupe_key').notNull(),
+    category: text('category').notNull(),
+    toEmail: text('to_email').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    emailDedupesKeyUnique: uniqueIndex('email_dedupes_key_unique').on(table.dedupeKey),
+    emailDedupesCategoryIdx: index('email_dedupes_category_idx').on(table.category, table.createdAt),
+  }),
+);
+
 export const templateSections = pgTable(
   'template_sections',
   {

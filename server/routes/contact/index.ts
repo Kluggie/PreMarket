@@ -1,6 +1,10 @@
 import { ok } from '../../_lib/api-response.js';
+import {
+  resolveSalesInboxEmail,
+  resolveSupportInboxEmail,
+  sendCategorizedEmail,
+} from '../../_lib/email-delivery.js';
 import { ApiError } from '../../_lib/errors.js';
-import { getResendConfig } from '../../_lib/integrations.js';
 import { readJsonBody } from '../../_lib/http.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 
@@ -12,7 +16,6 @@ const ALLOWED_REASONS = new Set([
   'complaint',
   'other',
 ]);
-const DEFAULT_CONTACT_ADDITIONAL_RECIPIENTS = ['gregoryklugman@gmail.com'];
 
 function asText(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
@@ -50,76 +53,8 @@ function toReasonLabel(reason: string) {
 }
 
 function resolveTargetEmail(reason: string) {
-  const sharedContactEmail = asText(
-    process.env.CONTACT_TO_EMAIL || process.env.CONTACT_SUPPORT_EMAIL || process.env.SUPPORT_EMAIL,
-  );
-  const salesEmail = asText(process.env.SALES_TO_EMAIL || process.env.CONTACT_SALES_EMAIL);
-
-  if (reason === 'sales' && isLikelyEmail(salesEmail)) {
-    return salesEmail;
-  }
-
-  if (isLikelyEmail(sharedContactEmail)) {
-    return sharedContactEmail;
-  }
-
-  if (isLikelyEmail(salesEmail)) {
-    return salesEmail;
-  }
-
-  return '';
-}
-
-function parseEmailList(rawValue: unknown) {
-  const raw = asText(rawValue);
-  if (!raw) {
-    return [];
-  }
-
-  return raw
-    .split(',')
-    .map((entry) => entry.trim().toLowerCase())
-    .filter((entry, index, list) => isLikelyEmail(entry) && list.indexOf(entry) === index);
-}
-
-function resolveAdditionalRecipients() {
-  const parsed = [
-    ...parseEmailList(process.env.CONTACT_CC_EMAILS),
-    ...parseEmailList(process.env.CONTACT_BCC_EMAILS),
-    ...DEFAULT_CONTACT_ADDITIONAL_RECIPIENTS,
-  ];
-
-  return parsed.filter((entry, index, list) => list.indexOf(entry) === index);
-}
-
-async function sendContactNotification(input: {
-  apiKey: string;
-  from: string;
-  to: string[];
-  replyTo: string;
-  subject: string;
-  text: string;
-}) {
-  const payload: Record<string, unknown> = {
-    from: input.from,
-    to: input.to,
-    subject: input.subject,
-    text: input.text,
-    reply_to: input.replyTo,
-  };
-
-  const response = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${input.apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(payload),
-  });
-
-  if (!response.ok) {
-    throw new ApiError(500, 'email_send_failed', 'Unable to send contact message right now');
-  }
+  const target = reason === 'sales' ? resolveSalesInboxEmail() : resolveSupportInboxEmail();
+  return isLikelyEmail(target) ? target : '';
 }
 
 export default async function handler(req: any, res: any) {
@@ -149,23 +84,13 @@ export default async function handler(req: any, res: any) {
       throw new ApiError(400, 'invalid_input', 'Message is required');
     }
 
-    const resend = getResendConfig();
-    if (!resend.ready) {
-      throw new ApiError(501, 'not_configured', 'Contact email integration is not configured');
-    }
-
     const targetEmail = resolveTargetEmail(reason);
     if (!targetEmail) {
       throw new ApiError(501, 'not_configured', 'Contact email integration is not configured');
     }
 
-    const from = resend.fromName ? `${resend.fromName} <${resend.fromEmail}>` : resend.fromEmail;
     const reasonLabel = toReasonLabel(reason);
-    const effectiveReplyTo = resend.replyTo || email;
-    const recipients = [
-      targetEmail,
-      ...resolveAdditionalRecipients().filter((recipient) => recipient !== targetEmail),
-    ];
+    const category = reason === 'sales' ? 'contact_sales' : 'contact_support';
     const text = [
       'New contact request',
       '',
@@ -178,14 +103,28 @@ export default async function handler(req: any, res: any) {
       message,
     ].join('\n');
 
-    await sendContactNotification({
-      apiKey: resend.apiKey,
-      from,
-      to: recipients,
-      replyTo: effectiveReplyTo,
+    const delivery = await sendCategorizedEmail({
+      category,
+      to: targetEmail,
+      replyTo: email,
       subject: `Contact: ${reasonLabel} - ${email}`,
       text,
     });
+
+    if (delivery.status === 'not_configured') {
+      throw new ApiError(501, 'not_configured', 'Contact email integration is not configured');
+    }
+
+    if (delivery.status === 'failed') {
+      if (delivery.reason === 'provider_rejected') {
+        throw new ApiError(400, 'email_send_failed', 'Email provider rejected the request');
+      }
+      throw new ApiError(502, 'email_send_failed', 'Email provider is unavailable');
+    }
+
+    if (delivery.status === 'invalid_input') {
+      throw new ApiError(400, 'invalid_input', 'Contact email payload is invalid');
+    }
 
     ok(res, 200, {});
   });

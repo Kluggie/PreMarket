@@ -1,4 +1,5 @@
 import { ok } from '../../_lib/api-response.js';
+import { resolveSalesInboxEmail, resolveSupportInboxEmail } from '../../_lib/email-delivery.js';
 import { requireUser } from '../../_lib/auth.js';
 import { ApiError } from '../../_lib/errors.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
@@ -26,8 +27,10 @@ export default async function handler(req: any, res: any) {
     const fromEmail = getEnvString('RESEND_FROM_EMAIL');
     const fromName = getEnvString('RESEND_FROM_NAME');
     const replyTo = getEnvString('RESEND_REPLY_TO');
-    const contactToEmail = getEnvString('CONTACT_TO_EMAIL');
-    const salesToEmail = getEnvString('SALES_TO_EMAIL');
+    const emailMode = getEnvString('EMAIL_MODE') || 'contact_only';
+    const devEmailSink = getEnvString('DEV_EMAIL_SINK');
+    const contactToEmail = resolveSupportInboxEmail();
+    const salesToEmail = resolveSalesInboxEmail();
 
     const fromDomain = fromEmail.includes('@') ? fromEmail.split('@')[1] : null;
     const replyToDomain = replyTo.includes('@') ? replyTo.split('@')[1] : null;
@@ -40,8 +43,26 @@ export default async function handler(req: any, res: any) {
     const environment = process.env.VERCEL_ENV || process.env.NODE_ENV || 'development';
     const configured = Boolean(resendApiKey && fromEmail);
     const hasResendKey = Boolean(resendApiKey);
-    const hasContactInbox = Boolean(contactToEmail);
-    const hasSalesInbox = Boolean(salesToEmail);
+    const hasContactInbox = Boolean(getEnvString('SUPPORT_INBOX_EMAIL') || contactToEmail);
+    const hasSalesInbox = Boolean(getEnvString('SALES_INBOX_EMAIL') || salesToEmail);
+    const normalizedMode = ['contact_only', 'transactional', 'disabled'].includes(emailMode)
+      ? emailMode
+      : 'contact_only';
+    const allowedEmailCategories =
+      normalizedMode === 'disabled'
+        ? []
+        : normalizedMode === 'contact_only'
+          ? ['contact_support', 'contact_sales']
+          : [
+              'contact_support',
+              'contact_sales',
+              'proposal_received',
+              'evaluation_complete',
+              'proposal_reevaluation_complete',
+              'mutual_interest',
+              'shared_link_activity',
+              'account_verification',
+            ];
 
     ok(res, 200, {
       configured,
@@ -55,6 +76,9 @@ export default async function handler(req: any, res: any) {
       hasSalesInbox,
       contactToEmail: contactToEmail || null,
       salesToEmail: salesToEmail || null,
+      emailMode: normalizedMode,
+      allowedEmailCategories,
+      devEmailSink: devEmailSink || null,
       baseUrl,
       environment,
       isValidConfig: configured,

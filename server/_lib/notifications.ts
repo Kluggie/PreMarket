@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { getDb, schema } from './db/client.js';
+import { normalizeEmailCategory, sendCategorizedEmail } from './email-delivery.js';
 import { newId } from './ids.js';
-import { getResendConfig } from './integrations.js';
 
 export const DEFAULT_NOTIFICATION_SETTINGS = {
   email_notifications: true,
@@ -18,6 +18,15 @@ const EVENT_SETTING_KEY = {
   mutual_interest: 'email_reveals',
   status_won: 'email_proposals',
   status_lost: 'email_proposals',
+} as const;
+
+const EVENT_EMAIL_CATEGORY = {
+  new_proposal: 'proposal_received',
+  evaluation_update: 'evaluation_complete',
+  reveal_request: 'shared_link_activity',
+  mutual_interest: 'mutual_interest',
+  status_won: 'shared_link_activity',
+  status_lost: 'shared_link_activity',
 } as const;
 
 function toBoolean(value: unknown) {
@@ -69,45 +78,6 @@ export function mapNotificationRow(row) {
   };
 }
 
-async function sendNotificationEmail(input: {
-  to: string;
-  subject: string;
-  text: string;
-  html?: string | null;
-}) {
-  const resend = getResendConfig();
-  if (!resend.ready || !isLikelyEmail(input.to)) {
-    return false;
-  }
-
-  const from = resend.fromName ? `${resend.fromName} <${resend.fromEmail}>` : resend.fromEmail;
-  const payload: Record<string, unknown> = {
-    from,
-    to: [input.to],
-    subject: input.subject,
-    text: input.text,
-  };
-
-  if (input.html) {
-    payload.html = input.html;
-  }
-
-  if (resend.replyTo) {
-    payload.reply_to = resend.replyTo;
-  }
-
-  const response = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${resend.apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(payload),
-  });
-
-  return response.ok;
-}
-
 export async function createNotificationEvent(input: {
   db?: any;
   userId: string;
@@ -118,6 +88,7 @@ export async function createNotificationEvent(input: {
   actionUrl?: string | null;
   metadata?: Record<string, unknown> | null;
   dedupeKey?: string | null;
+  emailCategory?: string | null;
   emailSubject?: string | null;
   emailText?: string | null;
   emailHtml?: string | null;
@@ -199,9 +170,16 @@ export async function createNotificationEvent(input: {
 
   if (shouldAttemptEmail && (input.emailSubject || input.emailText || input.emailHtml)) {
     try {
-      await sendNotificationEmail({
+      const defaultCategory = Object.prototype.hasOwnProperty.call(EVENT_EMAIL_CATEGORY, eventType)
+        ? EVENT_EMAIL_CATEGORY[eventType as keyof typeof EVENT_EMAIL_CATEGORY]
+        : 'shared_link_activity';
+      const emailCategory = normalizeEmailCategory(input.emailCategory) || defaultCategory;
+
+      await sendCategorizedEmail({
+        category: emailCategory,
         to: recipientEmail,
         subject: asText(input.emailSubject) || asText(input.title) || 'PreMarket notification',
+        dedupeKey,
         text: asText(input.emailText) || asText(input.message) || 'You have a new notification.',
         html: asText(input.emailHtml) || null,
       });

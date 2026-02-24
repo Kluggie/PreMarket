@@ -261,24 +261,28 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
       const eventMap = {
         revealed: {
           eventType: 'reveal_request',
+          emailCategory: 'shared_link_activity',
           title: 'Reveal request update',
           message: `Reveal workflow updated for "${updated.title || 'your proposal'}".`,
           emailSubject: 'Reveal request update',
         },
         mutual_interest: {
           eventType: 'mutual_interest',
+          emailCategory: 'mutual_interest',
           title: 'Mutual interest update',
           message: `Mutual interest was marked for "${updated.title || 'your proposal'}".`,
           emailSubject: 'Mutual interest update',
         },
         won: {
           eventType: 'status_won',
+          emailCategory: 'shared_link_activity',
           title: 'Proposal marked Won',
           message: `"${updated.title || 'Your proposal'}" was marked as Won.`,
           emailSubject: 'Proposal marked Won',
         },
         lost: {
           eventType: 'status_lost',
+          emailCategory: 'shared_link_activity',
           title: 'Proposal marked Lost',
           message: `"${updated.title || 'Your proposal'}" was marked as Lost.`,
           emailSubject: 'Proposal marked Lost',
@@ -293,6 +297,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
             userId: updated.userId,
             userEmail: updated.partyAEmail || auth.user.email,
             eventType: eventConfig.eventType,
+            emailCategory: eventConfig.emailCategory,
             dedupeKey: `${eventConfig.eventType}:${updated.id}:${nextStatus}`,
             title: eventConfig.title,
             message: eventConfig.message,

@@ -1,6 +1,29 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.6';
 import { SHARE_REPORT_PATH, validateShareUrl } from './_utils/shareUrl.ts';
 
+type EmailMode = 'contact_only' | 'transactional' | 'disabled';
+
+function isLikelyEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function getEmailMode(): EmailMode {
+  const raw = String(Deno.env.get('EMAIL_MODE') || '').trim().toLowerCase();
+  if (raw === 'transactional' || raw === 'disabled' || raw === 'contact_only') {
+    return raw;
+  }
+  return 'contact_only';
+}
+
+function resolveRecipientForDelivery(email: string, mode: EmailMode) {
+  const nodeEnv = String(Deno.env.get('NODE_ENV') || '').trim().toLowerCase();
+  const sink = String(Deno.env.get('DEV_EMAIL_SINK') || '').trim().toLowerCase();
+  if (mode === 'transactional' && nodeEnv !== 'production' && isLikelyEmail(sink)) {
+    return sink;
+  }
+  return email;
+}
+
 function assertCanonicalShareUrl(rawShareUrl: unknown, correlationId: string) {
   const shareUrl = String(rawShareUrl || '').trim();
   if (!shareUrl) {
@@ -110,7 +133,30 @@ Deno.serve(async (req) => {
       }, { status: 400 });
     }
 
-    const emailDomain = email.split('@')[1];
+    const emailMode = getEmailMode();
+    if (emailMode !== 'transactional') {
+      console.log(
+        JSON.stringify({
+          level: 'info',
+          correlationId,
+          category: 'shared_link_activity',
+          to: email,
+          subject: 'Report share',
+          dedupeKey: null,
+          status: emailMode === 'disabled' ? 'blocked_disabled' : 'blocked_contact_only',
+        }),
+      );
+      return Response.json({
+        ok: false,
+        errorCode: 'EMAIL_BLOCKED_BY_MODE',
+        message: `Email sending is disabled by EMAIL_MODE=${emailMode}`,
+        correlationId,
+      }, { status: 403 });
+    }
+
+    const deliveryEmail = resolveRecipientForDelivery(email, emailMode);
+
+    const emailDomain = deliveryEmail.split('@')[1];
     console.log(`[${correlationId}] Sending to domain: ${emailDomain}`);
 
     // Validate that item exists
@@ -200,7 +246,7 @@ Deno.serve(async (req) => {
       proposalId,
       evaluationItemId,
       documentComparisonId,
-      recipientEmail: email
+      recipientEmail: deliveryEmail
     });
 
     if (!shareLinkResult.data.ok) {
@@ -312,7 +358,7 @@ https://getpremarket.com
     try {
       const emailPayload: any = {
         from: fromEmail,
-        to: email,
+        to: deliveryEmail,
         subject: `${user.full_name || user.email} shared: ${itemTitle}`,
         text: emailBody,
         html: emailHtml
@@ -365,7 +411,7 @@ https://getpremarket.com
 
       return Response.json({
         ok: true,
-        message: `Report sent to ${email}`,
+        message: `Report sent to ${deliveryEmail}`,
         shareUrl,
         correlationId
       });

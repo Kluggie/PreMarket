@@ -2,8 +2,8 @@ import { and, eq } from 'drizzle-orm';
 import { ok } from '../../_lib/api-response.js';
 import { requireUser } from '../../_lib/auth.js';
 import { getDb, schema } from '../../_lib/db/client.js';
+import { resolveSupportInboxEmail, sendCategorizedEmail } from '../../_lib/email-delivery.js';
 import { ApiError } from '../../_lib/errors.js';
-import { getResendConfig } from '../../_lib/integrations.js';
 import { readJsonBody } from '../../_lib/http.js';
 import { newId } from '../../_lib/ids.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
@@ -14,48 +14,6 @@ function asText(value: unknown) {
 
 function isLikelyEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
-}
-
-async function trySendNotificationEmail(input: {
-  fromName: string;
-  fromEmail: string;
-  replyTo: string | null;
-  apiKey: string;
-  requesterName: string;
-  requesterEmail: string;
-  message: string;
-}) {
-  const to = input.replyTo || input.fromEmail;
-  const from = input.fromName ? `${input.fromName} <${input.fromEmail}>` : input.fromEmail;
-
-  const text = [
-    'New custom template request',
-    '',
-    `Name: ${input.requesterName}`,
-    `Email: ${input.requesterEmail}`,
-    '',
-    'Message:',
-    input.message,
-  ].join('\n');
-
-  const payload: Record<string, unknown> = {
-    from,
-    to: [to],
-    subject: `Custom template request from ${input.requesterName}`,
-    text,
-    reply_to: input.requesterEmail,
-  };
-
-  const response = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${input.apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(payload),
-  });
-
-  return response.ok;
 }
 
 export default async function handler(req: any, res: any) {
@@ -85,7 +43,6 @@ export default async function handler(req: any, res: any) {
       throw new ApiError(400, 'invalid_input', 'Message is required');
     }
 
-    const resend = getResendConfig();
     const db = getDb();
     const now = new Date();
     const requestId = newId('contact_request');
@@ -93,21 +50,28 @@ export default async function handler(req: any, res: any) {
     let emailAttempted = false;
     let emailSent = false;
 
-    if (resend.ready) {
-      emailAttempted = true;
-      try {
-        emailSent = await trySendNotificationEmail({
-          fromName: resend.fromName,
-          fromEmail: resend.fromEmail,
-          replyTo: resend.replyTo,
-          apiKey: resend.apiKey,
-          requesterName: name,
-          requesterEmail: email,
+    try {
+      const targetEmail = resolveSupportInboxEmail();
+      const delivery = await sendCategorizedEmail({
+        category: 'contact_support',
+        to: targetEmail,
+        replyTo: email,
+        subject: `Custom template request from ${name}`,
+        text: [
+          'New custom template request',
+          '',
+          `Name: ${name}`,
+          `Email: ${email}`,
+          '',
+          'Message:',
           message,
-        });
-      } catch {
-        emailSent = false;
-      }
+        ].join('\n'),
+      });
+      emailAttempted = delivery.status !== 'not_configured';
+      emailSent = delivery.status === 'sent';
+    } catch {
+      emailAttempted = true;
+      emailSent = false;
     }
 
     await db.insert(schema.contactRequests).values({

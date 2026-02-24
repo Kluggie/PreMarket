@@ -3,6 +3,29 @@ import { SHARE_REPORT_PATH, validateShareUrl } from './_utils/shareUrl.ts';
 
 const SEND_SAFE_VERSION = "SEND_SAFE_DEBUG_V1_2026_02_11";
 
+type EmailMode = 'contact_only' | 'transactional' | 'disabled';
+
+function isLikelyEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function getEmailMode(): EmailMode {
+  const raw = String(Deno.env.get('EMAIL_MODE') || '').trim().toLowerCase();
+  if (raw === 'transactional' || raw === 'disabled' || raw === 'contact_only') {
+    return raw;
+  }
+  return 'contact_only';
+}
+
+function resolveRecipientForDelivery(email: string, mode: EmailMode) {
+  const nodeEnv = String(Deno.env.get('NODE_ENV') || '').trim().toLowerCase();
+  const sink = String(Deno.env.get('DEV_EMAIL_SINK') || '').trim().toLowerCase();
+  if (mode === 'transactional' && nodeEnv !== 'production' && isLikelyEmail(sink)) {
+    return sink;
+  }
+  return email;
+}
+
 function logInfo(payload: Record<string, unknown>) {
   console.log(JSON.stringify({ level: 'info', ...payload }));
 }
@@ -140,7 +163,36 @@ Deno.serve(async (req) => {
       });
     }
 
-    const recipientDomain = resolvedRecipientEmail.split('@')[1];
+    const emailMode = getEmailMode();
+    if (emailMode !== 'transactional') {
+      await logEmailSend(base44, {
+        correlationId,
+        proposalId,
+        evaluationItemId,
+        documentComparisonId,
+        ok: false,
+        errorCode: 'EMAIL_BLOCKED_BY_MODE',
+        message: `Email sending is disabled by EMAIL_MODE=${emailMode}`,
+      });
+      logInfo({
+        correlationId,
+        category: 'shared_link_activity',
+        to: resolvedRecipientEmail,
+        subject: 'Report share',
+        dedupeKey: null,
+        status: emailMode === 'disabled' ? 'blocked_disabled' : 'blocked_contact_only',
+      });
+      return Response.json({
+        ok: false,
+        correlationId,
+        errorCode: 'EMAIL_BLOCKED_BY_MODE',
+        message: `Email sending is disabled by EMAIL_MODE=${emailMode}`
+      }, { status: 403 });
+    }
+
+    const deliveryRecipientEmail = resolveRecipientForDelivery(resolvedRecipientEmail, emailMode);
+
+    const recipientDomain = deliveryRecipientEmail.split('@')[1];
     console.log(`[${correlationId}] Sending to domain: ${recipientDomain}`);
 
     // Validate at least one ID
@@ -251,7 +303,7 @@ Deno.serve(async (req) => {
         proposalId,
         evaluationItemId,
         documentComparisonId,
-        recipientEmail: resolvedRecipientEmail
+        recipientEmail: deliveryRecipientEmail
       });
     } catch (shareLinkError) {
       const errorCode = shareLinkError?.response?.data?.errorCode || shareLinkError?.response?.data?.error || 'SHARE_LINK_FAILED';
@@ -417,7 +469,7 @@ https://getpremarket.com`;
     try {
       const emailPayload: any = {
         from: fromEmail,
-        to: resolvedRecipientEmail,
+        to: deliveryRecipientEmail,
         subject: `${user.full_name || user.email} shared: ${itemTitle}`,
         text: emailBody,
         html: emailHtml
@@ -516,7 +568,7 @@ https://getpremarket.com`;
         ok: true,
         sendSafeVersion: SEND_SAFE_VERSION,
         correlationId,
-        message: `Report sent to ${resolvedRecipientEmail}`,
+        message: `Report sent to ${deliveryRecipientEmail}`,
         shareUrl,
         token: shareToken,
         debugShareUrlSent: shareUrl,

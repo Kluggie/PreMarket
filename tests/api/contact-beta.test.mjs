@@ -25,7 +25,8 @@ test('contact endpoint sends email when configured and returns 501 when email in
   const originalResendFrom = process.env.RESEND_FROM_EMAIL;
   const originalResendName = process.env.RESEND_FROM_NAME;
   const originalResendReplyTo = process.env.RESEND_REPLY_TO;
-  const originalContactTo = process.env.CONTACT_TO_EMAIL;
+  const originalSupportInbox = process.env.SUPPORT_INBOX_EMAIL;
+  const originalSalesInbox = process.env.SALES_INBOX_EMAIL;
 
   const sentPayloads = [];
 
@@ -33,7 +34,8 @@ test('contact endpoint sends email when configured and returns 501 when email in
   process.env.RESEND_FROM_EMAIL = 'notifications@mail.getpremarket.com';
   process.env.RESEND_FROM_NAME = 'PreMarket';
   process.env.RESEND_REPLY_TO = 'support@getpremarket.com';
-  process.env.CONTACT_TO_EMAIL = 'support@getpremarket.com';
+  process.env.SUPPORT_INBOX_EMAIL = 'support@getpremarket.com';
+  process.env.SALES_INBOX_EMAIL = 'sales@getpremarket.com';
 
   globalThis.fetch = async (url, init) => {
     if (String(url).includes('api.resend.com/emails')) {
@@ -66,12 +68,12 @@ test('contact endpoint sends email when configured and returns 501 when email in
     assert.equal(sentPayloads.length, 1);
     assert.equal(sentPayloads[0].subject.includes('Sales'), true);
     assert.equal(sentPayloads[0].subject.includes('jane@example.com'), true);
-    assert.deepEqual(sentPayloads[0].to, ['support@getpremarket.com']);
+    assert.deepEqual(sentPayloads[0].to, ['sales@getpremarket.com']);
     assert.equal(sentPayloads[0].reply_to, 'jane@example.com');
 
     delete process.env.RESEND_API_KEY;
     delete process.env.RESEND_FROM_EMAIL;
-    delete process.env.CONTACT_TO_EMAIL;
+    delete process.env.SUPPORT_INBOX_EMAIL;
 
     const notConfiguredRes = await callHandler(contactHandler, {
       method: 'POST',
@@ -96,8 +98,10 @@ test('contact endpoint sends email when configured and returns 501 when email in
     else process.env.RESEND_FROM_NAME = originalResendName;
     if (originalResendReplyTo === undefined) delete process.env.RESEND_REPLY_TO;
     else process.env.RESEND_REPLY_TO = originalResendReplyTo;
-    if (originalContactTo === undefined) delete process.env.CONTACT_TO_EMAIL;
-    else process.env.CONTACT_TO_EMAIL = originalContactTo;
+    if (originalSupportInbox === undefined) delete process.env.SUPPORT_INBOX_EMAIL;
+    else process.env.SUPPORT_INBOX_EMAIL = originalSupportInbox;
+    if (originalSalesInbox === undefined) delete process.env.SALES_INBOX_EMAIL;
+    else process.env.SALES_INBOX_EMAIL = originalSalesInbox;
   }
 });
 

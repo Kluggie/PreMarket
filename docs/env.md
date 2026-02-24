@@ -11,12 +11,14 @@ Set these in Vercel for **Development**, **Preview**, and **Production**:
 - `DATABASE_URL`
 - `RESEND_API_KEY`
 - `RESEND_FROM_EMAIL`
-- `CONTACT_TO_EMAIL`
+- `EMAIL_MODE` (`contact_only` | `transactional` | `disabled`; default `contact_only`)
+- `SUPPORT_INBOX_EMAIL`
+- `SALES_INBOX_EMAIL`
 
 Optional:
 - `RESEND_FROM_NAME`
 - `RESEND_REPLY_TO` (must be an email address, never an API key)
-- `SALES_TO_EMAIL` (falls back to `CONTACT_TO_EMAIL`)
+- `DEV_EMAIL_SINK` (non-production safety sink in `EMAIL_MODE=transactional`)
 
 ## Contact + Sales Email Mapping
 
@@ -25,8 +27,10 @@ RESEND_API_KEY=re_...
 RESEND_FROM_EMAIL=reports@mail.getpremarket.com
 RESEND_FROM_NAME=PreMarket
 RESEND_REPLY_TO=support@getpremarket.com
-CONTACT_TO_EMAIL=support@getpremarket.com
-SALES_TO_EMAIL=sales@getpremarket.com
+EMAIL_MODE=contact_only
+SUPPORT_INBOX_EMAIL=support@getpremarket.com
+SALES_INBOX_EMAIL=sales@getpremarket.com
+DEV_EMAIL_SINK=dev-sink@getpremarket.com
 ```
 
 ## Environment-Specific Values
