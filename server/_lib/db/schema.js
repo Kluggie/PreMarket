@@ -621,6 +621,44 @@ export const documentComparisons = pgTable(
   }),
 );
 
+export const documentComparisonCoachCache = pgTable(
+  'document_comparison_coach_cache',
+  {
+    id: text('id').primaryKey(),
+    comparisonId: text('comparison_id')
+      .notNull()
+      .references(() => documentComparisons.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    cacheHash: text('cache_hash').notNull(),
+    mode: text('mode').notNull().default('full'),
+    intent: text('intent'),
+    selectionTarget: text('selection_target'),
+    selectionTextHash: text('selection_text_hash'),
+    promptVersion: text('prompt_version').notNull().default('coach-v1'),
+    provider: text('provider').notNull().default('vertex'),
+    model: text('model').notNull().default('unknown'),
+    result: jsonb('result').notNull().default(sql`'{}'::jsonb`),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    documentComparisonCoachCacheUnique: uniqueIndex('doc_comparison_coach_cache_unique').on(
+      table.comparisonId,
+      table.cacheHash,
+    ),
+    documentComparisonCoachCacheComparisonIdx: index('doc_comparison_coach_cache_comparison_idx').on(
+      table.comparisonId,
+      table.createdAt,
+    ),
+    documentComparisonCoachCacheUserIdx: index('doc_comparison_coach_cache_user_idx').on(
+      table.userId,
+      table.createdAt,
+    ),
+  }),
+);
+
 export const billingReferences = pgTable(
   'billing_references',
   {

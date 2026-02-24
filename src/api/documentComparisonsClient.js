@@ -192,6 +192,24 @@ export const documentComparisonsClient = {
     };
   },
 
+  async coach(id, input = {}) {
+    const response = await request(`/api/document-comparisons/${encodeId(id)}/coach`, {
+      method: 'POST',
+      body: JSON.stringify(input || {}),
+    });
+    return {
+      comparisonId: response.comparison_id || id,
+      cacheHash: response.cache_hash || null,
+      cached: Boolean(response.cached),
+      provider: typeof response.provider === 'string' ? response.provider : 'vertex',
+      model: typeof response.model === 'string' ? response.model : 'unknown',
+      promptVersion: typeof response.prompt_version === 'string' ? response.prompt_version : null,
+      coach: response.coach || null,
+      createdAt: response.created_at || null,
+      withheldCount: Number(response.withheld_count || 0),
+    };
+  },
+
   async downloadJson(id) {
     const response = await request(`/api/document-comparisons/${encodeId(id)}/download/json`);
     return {

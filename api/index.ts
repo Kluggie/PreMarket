@@ -38,6 +38,7 @@ import documentComparisonsHandler from '../server/routes/document-comparisons/in
 import documentComparisonsExtractUrlHandler from '../server/routes/document-comparisons/extract-url.js';
 import documentComparisonsIdHandler from '../server/routes/document-comparisons/[id].js';
 import documentComparisonsEvaluateHandler from '../server/routes/document-comparisons/[id]/evaluate.js';
+import documentComparisonsCoachHandler from '../server/routes/document-comparisons/[id]/coach.js';
 import documentComparisonsDownloadJsonHandler from '../server/routes/document-comparisons/[id]/download-json.js';
 import documentComparisonsDownloadInputsHandler from '../server/routes/document-comparisons/[id]/download-inputs.js';
 import documentComparisonsDownloadPdfHandler from '../server/routes/document-comparisons/[id]/download-pdf.js';
@@ -260,6 +261,14 @@ export default async function handler(req: any, res: any) {
   if (documentComparisonsEvaluateMatch && method === 'POST') {
     const id = decodeURIComponent(documentComparisonsEvaluateMatch[1]);
     return documentComparisonsEvaluateHandler(req, res, id);
+  }
+
+  const documentComparisonsCoachMatch = pathname.match(
+    /^\/api\/document-comparisons\/([^/]+)\/coach$/,
+  );
+  if (documentComparisonsCoachMatch && method === 'POST') {
+    const id = decodeURIComponent(documentComparisonsCoachMatch[1]);
+    return documentComparisonsCoachHandler(req, res, id);
   }
 
   const documentComparisonsDownloadJsonMatch = pathname.match(

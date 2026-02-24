@@ -63,6 +63,7 @@ export async function resetTables() {
       snapshot_access,
       proposal_snapshots,
       proposal_evaluations,
+      document_comparison_coach_cache,
       proposal_responses,
       document_comparisons,
       template_questions,

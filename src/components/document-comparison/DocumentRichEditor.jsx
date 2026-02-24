@@ -112,6 +112,7 @@ export default function DocumentRichEditor({
   content,
   placeholder,
   onChange,
+  onSelectionTextChange,
   onToggleFullscreen,
   onContentScroll,
   contentScrollRef,
@@ -119,6 +120,8 @@ export default function DocumentRichEditor({
   minHeightClassName = 'min-h-[560px]',
   scrollContainerClassName = 'h-[560px]',
   maxCharacters = null,
+  shouldFocus = false,
+  focusRequestId = 0,
 }) {
   const initialContent = useMemo(() => normalizeEditorContent(content), [content]);
 
@@ -219,6 +222,37 @@ export default function DocumentRichEditor({
       editor.commands.clearContent();
     }
   }, [content, editor]);
+
+  useEffect(() => {
+    if (!editor || typeof onSelectionTextChange !== 'function') {
+      return;
+    }
+
+    const emitSelectionText = () => {
+      const { from, to } = editor.state.selection;
+      if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) {
+        onSelectionTextChange('');
+        return;
+      }
+      const selected = editor.state.doc.textBetween(from, to, ' ').trim();
+      onSelectionTextChange(selected);
+    };
+
+    emitSelectionText();
+    editor.on('selectionUpdate', emitSelectionText);
+    return () => {
+      editor.off('selectionUpdate', emitSelectionText);
+    };
+  }, [editor, onSelectionTextChange]);
+
+  useEffect(() => {
+    if (!editor || !shouldFocus || !focusRequestId) {
+      return;
+    }
+    requestAnimationFrame(() => {
+      editor.commands.focus('end');
+    });
+  }, [editor, shouldFocus, focusRequestId]);
 
   if (!editor) {
     return (

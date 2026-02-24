@@ -33,6 +33,11 @@ const CONFIDENTIAL_LABEL = 'Confidential Information';
 const SHARED_LABEL = 'Shared Information';
 const MAX_PREVIEW_CHARS = 500;
 const TOTAL_STEPS = 3;
+const COACH_TRIGGER_OPTIONS = [
+  { id: 'improve_shared', label: 'Improve Shared wording', mode: 'shared_only', intent: 'improve' },
+  { id: 'negotiate_full', label: 'Negotiation suggestions', mode: 'full', intent: 'negotiate' },
+  { id: 'risks_full', label: 'Find risks/concerns', mode: 'full', intent: 'risks' },
+];
 
 function asText(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -164,6 +169,58 @@ function buildDraftStateHash(payload) {
   });
 }
 
+function escapeRegExp(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function applySuggestedTextChange({ currentText, op, nextText, headingHint, selectedText }) {
+  const base = String(currentText || '');
+  const incoming = String(nextText || '').trim();
+  if (!incoming) {
+    return base;
+  }
+
+  if (op === 'append') {
+    return base.trim() ? `${base.trim()}\n\n${incoming}` : incoming;
+  }
+
+  if (op === 'replace_selection') {
+    const selection = String(selectedText || '').trim();
+    if (selection && base.includes(selection)) {
+      return base.replace(selection, incoming);
+    }
+    return base.trim() ? `${base.trim()}\n\n${incoming}` : incoming;
+  }
+
+  if (op === 'insert_after_heading') {
+    const hint = String(headingHint || '').trim();
+    if (!hint) {
+      return base.trim() ? `${base.trim()}\n\n${incoming}` : incoming;
+    }
+    const lines = base.split('\n');
+    const index = lines.findIndex((line) => line.toLowerCase().includes(hint.toLowerCase()));
+    if (index < 0) {
+      return base.trim() ? `${base.trim()}\n\n${incoming}` : incoming;
+    }
+    const nextLines = [...lines.slice(0, index + 1), '', incoming, ...lines.slice(index + 1)];
+    return nextLines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  }
+
+  if (op === 'replace_section') {
+    const hint = String(headingHint || '').trim();
+    if (!hint) {
+      return incoming;
+    }
+    const pattern = new RegExp(`${escapeRegExp(hint)}[\\s\\S]*?(?=\\n\\n[^\\n]+:|$)`, 'i');
+    if (pattern.test(base)) {
+      return base.replace(pattern, `${hint}\n${incoming}`).trim();
+    }
+    return base.trim() ? `${base.trim()}\n\n${incoming}` : incoming;
+  }
+
+  return base.trim() ? `${base.trim()}\n\n${incoming}` : incoming;
+}
+
 function useRouteState() {
   const location = useLocation();
   return useMemo(() => {
@@ -210,6 +267,17 @@ export default function DocumentComparisonCreate() {
   const [fullscreenSide, setFullscreenSide] = useState(null);
   const [lastSavedHash, setLastSavedHash] = useState('');
   const [syncScrolling, setSyncScrolling] = useState(false);
+  const [coachResult, setCoachResult] = useState(null);
+  const [coachLoading, setCoachLoading] = useState(false);
+  const [coachError, setCoachError] = useState('');
+  const [coachCached, setCoachCached] = useState(false);
+  const [coachWithheldCount, setCoachWithheldCount] = useState(0);
+  const [coachRequestMeta, setCoachRequestMeta] = useState(null);
+  const [dismissedSuggestionIds, setDismissedSuggestionIds] = useState([]);
+  const [expandedSuggestionIds, setExpandedSuggestionIds] = useState([]);
+  const [selectionContext, setSelectionContext] = useState({ side: 'b', text: '' });
+  const [focusEditorRequest, setFocusEditorRequest] = useState({ side: null, id: 0 });
+  const [lastCoachAutoKey, setLastCoachAutoKey] = useState('');
 
   const docAInputFileRef = useRef(null);
   const docBInputFileRef = useRef(null);
@@ -303,6 +371,17 @@ export default function DocumentComparisonCreate() {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [fullscreenSide]);
+
+  useEffect(() => {
+    setCoachResult(null);
+    setCoachError('');
+    setCoachCached(false);
+    setCoachWithheldCount(0);
+    setCoachRequestMeta(null);
+    setDismissedSuggestionIds([]);
+    setExpandedSuggestionIds([]);
+    setLastCoachAutoKey('');
+  }, [comparisonId]);
 
   const currentStateHash = useMemo(
     () =>
@@ -496,6 +575,17 @@ export default function DocumentComparisonCreate() {
   const hasBothDocumentContents = Boolean(asText(docAText) && asText(docBText));
   const isStep2LoadingDraft = step === 2 && Boolean(resolvedDraftId) && draftQuery.isLoading;
   const step2LoadError = step === 2 && Boolean(resolvedDraftId) ? draftQuery.error : null;
+  const editableSide = String(draftQuery.data?.permissions?.editable_side || 'a').toLowerCase();
+  const canUseOwnerCoach = !routeState.token && editableSide !== 'b';
+  const coachSuggestions = Array.isArray(coachResult?.suggestions) ? coachResult.suggestions : [];
+  const coachConcerns = Array.isArray(coachResult?.concerns) ? coachResult.concerns : [];
+  const coachQuestions = Array.isArray(coachResult?.questions) ? coachResult.questions : [];
+  const coachNegotiationMoves = Array.isArray(coachResult?.negotiation_moves)
+    ? coachResult.negotiation_moves
+    : [];
+  const visibleCoachSuggestions = coachSuggestions.filter(
+    (suggestion) => !dismissedSuggestionIds.includes(String(suggestion?.id || '')),
+  );
 
   const applyImportedContent = (side, file, extracted) => {
     const rawText = asText(extracted?.text) || htmlToText(extracted?.html || '');
@@ -610,6 +700,133 @@ export default function DocumentComparisonCreate() {
     }
   };
 
+  const ensureComparisonIdForCoach = async () => {
+    if (comparisonId) {
+      return comparisonId;
+    }
+    try {
+      const createdId = await saveDraftMutation.mutateAsync({
+        stepToSave: Math.max(2, clampStep(step || 2)),
+        silent: true,
+      });
+      return createdId || '';
+    } catch (error) {
+      const message = error?.message || "Couldn't prepare AI Coach yet. Save the draft and retry.";
+      setCoachError(message);
+      toast.error(message);
+      return '';
+    }
+  };
+
+  const runCoach = async ({
+    mode = 'full',
+    intent = 'improve',
+    selectionText = '',
+    selectionTarget = null,
+    silent = false,
+  } = {}) => {
+    const resolvedId = await ensureComparisonIdForCoach();
+    if (!resolvedId) {
+      return null;
+    }
+
+    setCoachLoading(true);
+    setCoachError('');
+
+    try {
+      const response = await documentComparisonsClient.coach(resolvedId, {
+        mode,
+        intent,
+        selectionText: selectionText || undefined,
+        selectionTarget: selectionTarget || undefined,
+      });
+      const coach = response?.coach || null;
+      setCoachResult(coach);
+      setCoachCached(Boolean(response?.cached));
+      setCoachWithheldCount(Number(response?.withheldCount || 0));
+      setCoachRequestMeta({
+        mode,
+        intent,
+        model: response?.model || 'unknown',
+        provider: response?.provider || 'vertex',
+      });
+      setDismissedSuggestionIds([]);
+      setExpandedSuggestionIds([]);
+      if (!silent) {
+        toast.success(response?.cached ? 'Loaded cached AI Coach suggestions' : 'AI Coach suggestions ready');
+      }
+      return response;
+    } catch (error) {
+      const message = error?.message || 'AI Coach request failed';
+      setCoachError(message);
+      if (!silent) {
+        toast.error(message);
+      }
+      return null;
+    } finally {
+      setCoachLoading(false);
+    }
+  };
+
+  const applyCoachSuggestion = (suggestion) => {
+    const target = suggestion?.proposed_change?.target === 'doc_a' ? 'a' : 'b';
+    const op = String(suggestion?.proposed_change?.op || 'append');
+    const nextText = String(suggestion?.proposed_change?.text || '');
+    const headingHint = String(suggestion?.proposed_change?.heading_hint || '');
+    const selectedText =
+      selectionContext.side === target ? String(selectionContext.text || '').trim() : '';
+    const currentText = target === 'a' ? docAText : docBText;
+    const updatedText = applySuggestedTextChange({
+      currentText,
+      op,
+      nextText,
+      headingHint,
+      selectedText,
+    });
+    const updatedHtml = sanitizeEditorHtml(textToHtml(updatedText));
+
+    if (target === 'a') {
+      setDocAText(updatedText);
+      setDocAHtml(updatedHtml);
+      setDocAJson(null);
+      setDocASource('typed');
+    } else {
+      setDocBText(updatedText);
+      setDocBHtml(updatedHtml);
+      setDocBJson(null);
+      setDocBSource('typed');
+    }
+
+    setStep(2);
+    setFocusEditorRequest({
+      side: target,
+      id: Date.now(),
+    });
+    toast.success('Suggestion applied locally. Click Save Draft to persist.');
+  };
+
+  const toggleSuggestionExpanded = (suggestionId) => {
+    const normalizedId = String(suggestionId || '');
+    if (!normalizedId) {
+      return;
+    }
+    setExpandedSuggestionIds((previous) =>
+      previous.includes(normalizedId)
+        ? previous.filter((id) => id !== normalizedId)
+        : [...previous, normalizedId],
+    );
+  };
+
+  const dismissSuggestion = (suggestionId) => {
+    const normalizedId = String(suggestionId || '');
+    if (!normalizedId) {
+      return;
+    }
+    setDismissedSuggestionIds((previous) =>
+      previous.includes(normalizedId) ? previous : [...previous, normalizedId],
+    );
+  };
+
   const syncScroll = (source, target) => {
     if (!syncScrolling || syncScrollLockRef.current) {
       return;
@@ -653,6 +870,42 @@ export default function DocumentComparisonCreate() {
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [isDirty]);
+
+  useEffect(() => {
+    if (step !== 3 || !canUseOwnerCoach) {
+      return;
+    }
+    const autoKey = [
+      comparisonId || '',
+      docAText.length,
+      docBText.length,
+      docAText.slice(0, 200),
+      docBText.slice(0, 200),
+    ].join('|');
+    if (lastCoachAutoKey === autoKey) {
+      return;
+    }
+    setLastCoachAutoKey(autoKey);
+
+    let cancelled = false;
+    (async () => {
+      const response = await runCoach({
+        mode: 'full',
+        intent: 'negotiate',
+        silent: true,
+      });
+      if (cancelled || !response) {
+        return;
+      }
+      if (!response.cached) {
+        toast.success('AI Coach refreshed for current draft');
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [canUseOwnerCoach, comparisonId, docAText, docBText, lastCoachAutoKey, step]);
 
   const renderImportPanel = ({ side, label, selectedFile, setSelectedFile, preview, source, files, fileRef }) => {
     const isImporting = importingSide === side;
@@ -759,6 +1012,15 @@ export default function DocumentComparisonCreate() {
           onToggleFullscreen={() => setFullscreenSide((prev) => (prev === side ? null : side))}
           contentScrollRef={isA ? docAEditorScrollRef : docBEditorScrollRef}
           onContentScroll={() => handleEditorScroll(side)}
+          shouldFocus={focusEditorRequest.side === side}
+          focusRequestId={focusEditorRequest.side === side ? focusEditorRequest.id : 0}
+          onSelectionTextChange={(selectedText) => {
+            const normalized = String(selectedText || '').trim();
+            setSelectionContext({
+              side,
+              text: normalized,
+            });
+          }}
           onChange={({ html, text, json }) => {
             if (isA) {
               setDocAText(text);
@@ -957,6 +1219,135 @@ export default function DocumentComparisonCreate() {
                   </CardContent>
                 </Card>
 
+                {canUseOwnerCoach ? (
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-blue-600" />
+                      AI Coach (On demand)
+                      {coachCached ? <Badge variant="outline">Cached</Badge> : null}
+                    </CardTitle>
+                    <CardDescription>
+                      Generate coaching suggestions only when you click an action. No live background requests.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="flex flex-wrap gap-2">
+                      {COACH_TRIGGER_OPTIONS.map((option) => (
+                        <Button
+                          key={option.id}
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={coachLoading}
+                          onClick={() =>
+                            runCoach({
+                              mode: option.mode,
+                              intent: option.intent,
+                            })
+                          }
+                        >
+                          {coachLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
+                          {option.label}
+                        </Button>
+                      ))}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={coachLoading || !selectionContext.text}
+                        onClick={() =>
+                          runCoach({
+                            mode: 'selection',
+                            intent: 'rewrite',
+                            selectionTarget: selectionContext.side === 'a' ? 'confidential' : 'shared',
+                            selectionText: selectionContext.text,
+                          })
+                        }
+                      >
+                        {coachLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
+                        Rewrite selection
+                      </Button>
+                    </div>
+
+                    <p className="text-xs text-slate-500">
+                      Selection source: {selectionContext.side === 'a' ? CONFIDENTIAL_LABEL : SHARED_LABEL}
+                      {' · '}
+                      {selectionContext.text
+                        ? `"${selectionContext.text.slice(0, 120)}${selectionContext.text.length > 120 ? '…' : ''}"`
+                        : 'no selection'}
+                    </p>
+
+                    {coachError ? (
+                      <Alert className="bg-red-50 border-red-200">
+                        <AlertTriangle className="h-4 w-4 text-red-700" />
+                        <AlertDescription className="text-red-800">{coachError}</AlertDescription>
+                      </Alert>
+                    ) : null}
+
+                    {coachRequestMeta?.model ? (
+                      <p className="text-xs text-slate-500">
+                        Model: {coachRequestMeta.model}
+                        {coachRequestMeta.provider ? ` (${coachRequestMeta.provider})` : ''}
+                        {coachWithheldCount > 0 ? ` · ${coachWithheldCount} unsafe shared suggestion(s) withheld` : ''}
+                      </p>
+                    ) : null}
+
+                    {visibleCoachSuggestions.length > 0 ? (
+                      <div className="space-y-2">
+                        {visibleCoachSuggestions.slice(0, 4).map((suggestion, index) => {
+                          const suggestionId = String(suggestion?.id || '');
+                          const expanded = expandedSuggestionIds.includes(suggestionId);
+                          const isShared = suggestion?.scope === 'shared' || suggestion?.proposed_change?.target === 'doc_b';
+                          return (
+                            <div key={suggestionId || `coach-suggestion-${index}`} className="rounded-lg border border-slate-200 bg-white p-3">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div className="flex items-center gap-2">
+                                  <Badge variant="outline">{String(suggestion?.severity || 'info')}</Badge>
+                                  <Badge variant={isShared ? 'secondary' : 'outline'}>
+                                    {isShared ? 'Shared-safe' : 'Confidential-only'}
+                                  </Badge>
+                                  <span className="text-sm font-medium text-slate-800">{suggestion?.title || 'Suggestion'}</span>
+                                </div>
+                                <div className="flex gap-2">
+                                  <Button type="button" size="sm" onClick={() => applyCoachSuggestion(suggestion)}>
+                                    Apply
+                                  </Button>
+                                  <Button type="button" size="sm" variant="outline" onClick={() => toggleSuggestionExpanded(suggestionId)}>
+                                    {expanded ? 'Hide' : 'Explain'}
+                                  </Button>
+                                  <Button type="button" size="sm" variant="ghost" onClick={() => dismissSuggestion(suggestionId)}>
+                                    Ignore
+                                  </Button>
+                                </div>
+                              </div>
+                              {expanded ? (
+                                <div className="mt-2 space-y-2 text-sm text-slate-600">
+                                  <p>{suggestion?.rationale || 'No rationale provided.'}</p>
+                                  <div className="rounded border border-slate-200 bg-slate-50 p-2 whitespace-pre-wrap">
+                                    {suggestion?.proposed_change?.text || ''}
+                                  </div>
+                                  {isShared && Array.isArray(suggestion?.evidence?.shared_quotes) && suggestion.evidence.shared_quotes.length ? (
+                                    <div>
+                                      <p className="text-xs font-semibold text-slate-500 mb-1">Shared evidence</p>
+                                      <ul className="list-disc pl-5 text-xs text-slate-600">
+                                        {suggestion.evidence.shared_quotes.map((quote) => (
+                                          <li key={`${suggestionId}-${quote.slice(0, 24)}`}>{quote}</li>
+                                        ))}
+                                      </ul>
+                                    </div>
+                                  ) : null}
+                                </div>
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+                  </CardContent>
+                </Card>
+                ) : null}
+
                 {isStep2LoadingDraft ? (
                   <Card>
                     <CardContent className="py-10 text-slate-500 flex items-center gap-2">
@@ -1091,6 +1482,180 @@ export default function DocumentComparisonCreate() {
                       <strong>Safety rule:</strong> Recipient-facing outputs are limited to {SHARED_LABEL}. {CONFIDENTIAL_LABEL} remains private.
                     </AlertDescription>
                   </Alert>
+
+                  {canUseOwnerCoach ? (
+                    <Card className="border border-slate-200">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-base flex items-center gap-2">
+                        <Sparkles className="w-4 h-4 text-blue-600" />
+                        AI Coach
+                        {coachCached ? <Badge variant="outline">Cached</Badge> : null}
+                      </CardTitle>
+                      <CardDescription>
+                        Interactive coaching suggestions based on confidential + shared context for owner-only editing.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={coachLoading}
+                          onClick={() => runCoach({ mode: 'full', intent: 'negotiate' })}
+                        >
+                          {coachLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
+                          Refresh Coach
+                        </Button>
+                      </div>
+
+                      {coachLoading ? (
+                        <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600 flex items-center gap-2">
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Generating coaching suggestions...
+                        </div>
+                      ) : null}
+
+                      {coachError ? (
+                        <Alert className="bg-red-50 border-red-200">
+                          <AlertTriangle className="h-4 w-4 text-red-700" />
+                          <AlertDescription className="text-red-800">{coachError}</AlertDescription>
+                        </Alert>
+                      ) : null}
+
+                      {coachResult?.summary?.overall ? (
+                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                          <p className="text-sm font-medium text-slate-800 mb-1">Summary</p>
+                          <p className="text-sm text-slate-700">{coachResult.summary.overall}</p>
+                          {Array.isArray(coachResult?.summary?.top_priorities) && coachResult.summary.top_priorities.length > 0 ? (
+                            <ul className="mt-2 list-disc pl-5 text-xs text-slate-600 space-y-1">
+                              {coachResult.summary.top_priorities.map((priority) => (
+                                <li key={priority}>{priority}</li>
+                              ))}
+                            </ul>
+                          ) : null}
+                        </div>
+                      ) : null}
+
+                      {coachRequestMeta?.model ? (
+                        <p className="text-xs text-slate-500">
+                          Model: {coachRequestMeta.model}
+                          {coachRequestMeta.provider ? ` (${coachRequestMeta.provider})` : ''}
+                          {coachWithheldCount > 0 ? ` · ${coachWithheldCount} unsafe shared suggestion(s) withheld` : ''}
+                        </p>
+                      ) : null}
+
+                      {visibleCoachSuggestions.length > 0 ? (
+                        <div className="space-y-2">
+                          {visibleCoachSuggestions.map((suggestion) => {
+                            const suggestionId = String(suggestion?.id || '');
+                            const expanded = expandedSuggestionIds.includes(suggestionId);
+                            const isShared = suggestion?.scope === 'shared' || suggestion?.proposed_change?.target === 'doc_b';
+                            return (
+                              <div key={suggestionId || `${suggestion?.title || 'coach'}-${isShared ? 'shared' : 'conf'}`} className="rounded-lg border border-slate-200 bg-white p-3">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <div className="flex items-center gap-2">
+                                    <Badge variant="outline">{String(suggestion?.severity || 'info')}</Badge>
+                                    <Badge variant={isShared ? 'secondary' : 'outline'}>
+                                      {isShared ? 'Shared-safe' : 'Confidential-only'}
+                                    </Badge>
+                                    <span className="text-sm font-medium text-slate-800">{suggestion?.title || 'Suggestion'}</span>
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <Button type="button" size="sm" onClick={() => applyCoachSuggestion(suggestion)}>
+                                      Apply
+                                    </Button>
+                                    <Button type="button" size="sm" variant="outline" onClick={() => toggleSuggestionExpanded(suggestionId)}>
+                                      {expanded ? 'Hide' : 'Explain'}
+                                    </Button>
+                                    <Button type="button" size="sm" variant="ghost" onClick={() => dismissSuggestion(suggestionId)}>
+                                      Ignore
+                                    </Button>
+                                  </div>
+                                </div>
+                                {expanded ? (
+                                  <div className="mt-2 space-y-2 text-sm text-slate-600">
+                                    <p>{suggestion?.rationale || 'No rationale provided.'}</p>
+                                    <div className="rounded border border-slate-200 bg-slate-50 p-2 whitespace-pre-wrap">
+                                      {suggestion?.proposed_change?.text || ''}
+                                    </div>
+                                    {isShared && Array.isArray(suggestion?.evidence?.shared_quotes) && suggestion.evidence.shared_quotes.length ? (
+                                      <div>
+                                        <p className="text-xs font-semibold text-slate-500 mb-1">Shared evidence</p>
+                                        <ul className="list-disc pl-5 text-xs text-slate-600">
+                                          {suggestion.evidence.shared_quotes.map((quote) => (
+                                            <li key={`${suggestionId}-shared-${quote.slice(0, 20)}`}>{quote}</li>
+                                          ))}
+                                        </ul>
+                                      </div>
+                                    ) : null}
+                                    {!isShared && Array.isArray(suggestion?.evidence?.confidential_quotes) && suggestion.evidence.confidential_quotes.length ? (
+                                      <div>
+                                        <p className="text-xs font-semibold text-slate-500 mb-1">Confidential evidence</p>
+                                        <ul className="list-disc pl-5 text-xs text-slate-600">
+                                          {suggestion.evidence.confidential_quotes.map((quote) => (
+                                            <li key={`${suggestionId}-conf-${quote.slice(0, 20)}`}>{quote}</li>
+                                          ))}
+                                        </ul>
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                ) : null}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : coachLoading ? null : (
+                        <p className="text-sm text-slate-500">No active suggestions yet. Run AI Coach to generate recommendations.</p>
+                      )}
+
+                      {coachConcerns.length > 0 ? (
+                        <div>
+                          <p className="text-sm font-semibold text-slate-700 mb-1">Concerns</p>
+                          <ul className="list-disc pl-5 text-sm text-slate-600 space-y-1">
+                            {coachConcerns.map((concern) => (
+                              <li key={concern.id || concern.title}>
+                                <span className="font-medium">{concern.title}: </span>
+                                {concern.details}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+
+                      {coachNegotiationMoves.length > 0 ? (
+                        <div>
+                          <p className="text-sm font-semibold text-slate-700 mb-1">Negotiation moves</p>
+                          <ul className="list-disc pl-5 text-sm text-slate-600 space-y-1">
+                            {coachNegotiationMoves.map((move) => (
+                              <li key={move.id || move.title}>
+                                <span className="font-medium">{move.title}: </span>
+                                {move.move}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+
+                      {coachQuestions.length > 0 ? (
+                        <div>
+                          <p className="text-sm font-semibold text-slate-700 mb-1">Questions to ask</p>
+                          <ul className="list-disc pl-5 text-sm text-slate-600 space-y-1">
+                            {coachQuestions.map((question) => (
+                              <li key={question.id || question.text}>{question.text}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+                    </CardContent>
+                    </Card>
+                  ) : (
+                    <Card className="border border-slate-200">
+                      <CardContent className="py-4 text-sm text-slate-600">
+                        AI Coach is available only to the comparison owner.
+                      </CardContent>
+                    </Card>
+                  )}
 
                   <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
                     <div className="rounded-xl border border-slate-200 bg-white p-4">

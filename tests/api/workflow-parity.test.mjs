@@ -15,6 +15,7 @@ import sharedLinksRespondHandler from '../../server/routes/shared-links/[token]/
 import documentComparisonsHandler from '../../server/routes/document-comparisons/index.ts';
 import documentComparisonsIdHandler from '../../server/routes/document-comparisons/[id].ts';
 import documentComparisonsEvaluateHandler from '../../server/routes/document-comparisons/[id]/evaluate.ts';
+import documentComparisonsCoachHandler from '../../server/routes/document-comparisons/[id]/coach.ts';
 import { ensureTestEnv, makeSessionCookie } from '../helpers/auth.mjs';
 import { ensureMigrated, getDb, hasDatabaseUrl, resetTables } from '../helpers/db.mjs';
 import { createMockReq, createMockRes } from '../helpers/httpMock.mjs';
@@ -417,6 +418,129 @@ if (!hasDatabaseUrl()) {
 
     assert.equal(createRes.statusCode, 413);
     assert.equal(createRes.jsonBody().error.code, 'payload_too_large');
+  });
+
+  test('document comparison coach route is owner-only, cached, and strips shared confidential leaks', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = authCookie('doc_coach_owner', 'doc-coach-owner@example.com');
+    const confidentialPhrase = 'SECRET PRICE 123 with premium escalation clause';
+    const maliciousCoachPayload = {
+      version: 'coach-v1',
+      summary: {
+        overall: 'Coaching summary',
+        top_priorities: ['Improve shared clarity'],
+      },
+      suggestions: [
+        {
+          id: 'unsafe_shared',
+          scope: 'shared',
+          severity: 'warning',
+          title: 'Unsafe shared edit',
+          rationale: 'This should be filtered',
+          proposed_change: {
+            target: 'doc_b',
+            op: 'append',
+            text: `Add this exact detail: ${confidentialPhrase}.`,
+          },
+          evidence: {
+            shared_quotes: ['Shared baseline obligation.'],
+            confidential_quotes: [],
+          },
+        },
+      ],
+      concerns: [],
+      questions: [],
+      negotiation_moves: [],
+    };
+
+    const createReq = createMockReq({
+      method: 'POST',
+      url: '/api/document-comparisons',
+      headers: { cookie: ownerCookie },
+      body: {
+        title: 'Coach Leak Guard',
+        doc_a_text: `Internal memo includes ${confidentialPhrase} and private margin assumptions.`,
+        doc_b_text: 'Shared baseline obligation.',
+        createProposal: true,
+      },
+    });
+    const createRes = createMockRes();
+    await documentComparisonsHandler(createReq, createRes);
+    assert.equal(createRes.statusCode, 201);
+    const comparisonId = createRes.jsonBody().comparison.id;
+
+    const unauthCoachReq = createMockReq({
+      method: 'POST',
+      url: `/api/document-comparisons/${comparisonId}/coach`,
+      headers: {},
+      query: { id: comparisonId },
+      body: {
+        mode: 'full',
+        intent: 'negotiate',
+      },
+    });
+    const unauthCoachRes = createMockRes();
+    await documentComparisonsCoachHandler(unauthCoachReq, unauthCoachRes, comparisonId);
+    assert.equal(unauthCoachRes.statusCode, 401);
+
+    const originalMockPayload = process.env.VERTEX_COACH_MOCK_RESPONSE;
+    process.env.VERTEX_COACH_MOCK_RESPONSE = JSON.stringify(maliciousCoachPayload);
+    try {
+      const coachReq = createMockReq({
+        method: 'POST',
+        url: `/api/document-comparisons/${comparisonId}/coach`,
+        headers: { cookie: ownerCookie },
+        query: { id: comparisonId },
+        body: {
+          mode: 'full',
+          intent: 'negotiate',
+        },
+      });
+      const coachRes = createMockRes();
+      await documentComparisonsCoachHandler(coachReq, coachRes, comparisonId);
+      assert.equal(coachRes.statusCode, 200);
+      assert.equal(coachRes.jsonBody().cached, false);
+      assert.equal(coachRes.jsonBody().coach.summary.overall.length > 0, true);
+      assert.equal(
+        coachRes
+          .jsonBody()
+          .coach.suggestions.every(
+            (suggestion) => !String(suggestion?.proposed_change?.text || '').includes(confidentialPhrase),
+          ),
+        true,
+      );
+      assert.equal(
+        coachRes
+          .jsonBody()
+          .coach.concerns.some((concern) =>
+            String(concern?.title || '').toLowerCase().includes('withheld shared suggestion'),
+          ),
+        true,
+      );
+
+      const cachedReq = createMockReq({
+        method: 'POST',
+        url: `/api/document-comparisons/${comparisonId}/coach`,
+        headers: { cookie: ownerCookie },
+        query: { id: comparisonId },
+        body: {
+          mode: 'full',
+          intent: 'negotiate',
+        },
+      });
+      const cachedRes = createMockRes();
+      await documentComparisonsCoachHandler(cachedReq, cachedRes, comparisonId);
+      assert.equal(cachedRes.statusCode, 200);
+      assert.equal(cachedRes.jsonBody().cached, true);
+    } finally {
+      if (originalMockPayload === undefined) {
+        delete process.env.VERTEX_COACH_MOCK_RESPONSE;
+      } else {
+        process.env.VERTEX_COACH_MOCK_RESPONSE = originalMockPayload;
+      }
+    }
   });
 
   test('document comparison workflow persists inputs and stores evaluation output', async () => {
