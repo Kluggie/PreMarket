@@ -22,6 +22,11 @@ import {
 } from '@/components/ui/dialog';
 import DocumentRichEditor from '@/components/document-comparison/DocumentRichEditor';
 import DocumentComparisonEditorErrorBoundary from '@/components/document-comparison/DocumentComparisonEditorErrorBoundary';
+import {
+  buildCoachActionRequest,
+  canRunRewriteSelection,
+  DOCUMENT_COMPARISON_COACH_ACTIONS,
+} from '@/components/document-comparison/coachActions';
 import { sanitizeEditorHtml } from '@/components/document-comparison/editorSanitization';
 import { countWords, getDocumentComparisonTextLimits } from '@/config/aiLimits';
 import { toast } from 'sonner';
@@ -40,11 +45,6 @@ const CONFIDENTIAL_LABEL = 'Confidential Information';
 const SHARED_LABEL = 'Shared Information';
 const MAX_PREVIEW_CHARS = 500;
 const TOTAL_STEPS = 2;
-const COACH_TRIGGER_OPTIONS = [
-  { id: 'improve_shared', label: 'Improve Shared wording', mode: 'shared_only', intent: 'improve' },
-  { id: 'negotiate_full', label: 'Negotiation suggestions', mode: 'full', intent: 'negotiate' },
-  { id: 'risks_full', label: 'Find risks/concerns', mode: 'full', intent: 'risks' },
-];
 const DIFF_CONTEXT_CHARS = 220;
 
 function asText(value) {
@@ -313,6 +313,88 @@ function getNormalizedSuggestionId(suggestion, fallbackIndex = -1) {
   return seed || `suggestion-${fallbackIndex >= 0 ? fallbackIndex : 'unknown'}`;
 }
 
+function tokenizeWords(value) {
+  return String(value || '')
+    .trim()
+    .split(/\s+/g)
+    .filter(Boolean);
+}
+
+function buildWordDiffPreview(beforeText, afterText) {
+  const beforeWords = tokenizeWords(beforeText);
+  const afterWords = tokenizeWords(afterText);
+  if (!beforeWords.length && !afterWords.length) {
+    return {
+      beforeHtml: '(No content)',
+      afterHtml: '(No content)',
+    };
+  }
+
+  const dp = Array.from({ length: beforeWords.length + 1 }, () =>
+    Array.from({ length: afterWords.length + 1 }, () => 0),
+  );
+  for (let i = beforeWords.length - 1; i >= 0; i -= 1) {
+    for (let j = afterWords.length - 1; j >= 0; j -= 1) {
+      if (beforeWords[i] === afterWords[j]) {
+        dp[i][j] = dp[i + 1][j + 1] + 1;
+      } else {
+        dp[i][j] = Math.max(dp[i + 1][j], dp[i][j + 1]);
+      }
+    }
+  }
+
+  const beforeParts = [];
+  const afterParts = [];
+  let i = 0;
+  let j = 0;
+  while (i < beforeWords.length && j < afterWords.length) {
+    if (beforeWords[i] === afterWords[j]) {
+      const safe = escapeHtml(beforeWords[i]);
+      beforeParts.push(safe);
+      afterParts.push(safe);
+      i += 1;
+      j += 1;
+      continue;
+    }
+
+    if (dp[i + 1][j] >= dp[i][j + 1]) {
+      beforeParts.push(`<span class="bg-rose-100 text-rose-800 line-through rounded-sm px-0.5">${escapeHtml(beforeWords[i])}</span>`);
+      i += 1;
+    } else {
+      afterParts.push(`<span class="bg-emerald-100 text-emerald-800 rounded-sm px-0.5">${escapeHtml(afterWords[j])}</span>`);
+      j += 1;
+    }
+  }
+
+  while (i < beforeWords.length) {
+    beforeParts.push(`<span class="bg-rose-100 text-rose-800 line-through rounded-sm px-0.5">${escapeHtml(beforeWords[i])}</span>`);
+    i += 1;
+  }
+  while (j < afterWords.length) {
+    afterParts.push(`<span class="bg-emerald-100 text-emerald-800 rounded-sm px-0.5">${escapeHtml(afterWords[j])}</span>`);
+    j += 1;
+  }
+
+  return {
+    beforeHtml: beforeParts.join(' '),
+    afterHtml: afterParts.join(' '),
+  };
+}
+
+function getSuggestionCategoryLabel(category) {
+  const normalized = String(category || '').trim().toLowerCase();
+  if (normalized === 'negotiation') {
+    return 'Negotiation';
+  }
+  if (normalized === 'risk') {
+    return 'Risk';
+  }
+  if (normalized === 'wording') {
+    return 'Wording';
+  }
+  return '';
+}
+
 function useRouteState() {
   const location = useLocation();
   return useMemo(() => {
@@ -369,7 +451,15 @@ export default function DocumentComparisonCreate() {
   const [appliedSuggestionIdsByHash, setAppliedSuggestionIdsByHash] = useState({});
   const [ignoredSuggestionIdsByHash, setIgnoredSuggestionIdsByHash] = useState({});
   const [expandedSuggestionIds, setExpandedSuggestionIds] = useState([]);
-  const [selectionContext, setSelectionContext] = useState({ side: 'b', text: '' });
+  const [selectionContext, setSelectionContext] = useState({ side: 'b', text: '', range: null });
+  const [replaceSelectionRequest, setReplaceSelectionRequest] = useState({
+    side: null,
+    id: 0,
+    from: 0,
+    to: 0,
+    text: '',
+  });
+  const [pendingSelectionApply, setPendingSelectionApply] = useState(null);
   const [focusEditorRequest, setFocusEditorRequest] = useState({ side: null, id: 0, jumpText: '' });
   const [pendingReviewSuggestion, setPendingReviewSuggestion] = useState(null);
   const [isApplyingReviewSuggestion, setIsApplyingReviewSuggestion] = useState(false);
@@ -476,6 +566,9 @@ export default function DocumentComparisonCreate() {
     setAppliedSuggestionIdsByHash({});
     setIgnoredSuggestionIdsByHash({});
     setExpandedSuggestionIds([]);
+    setSelectionContext({ side: 'b', text: '', range: null });
+    setReplaceSelectionRequest({ side: null, id: 0, from: 0, to: 0, text: '' });
+    setPendingSelectionApply(null);
     setPendingReviewSuggestion(null);
     setIsApplyingReviewSuggestion(false);
     setShowFinishConfirmDialog(false);
@@ -931,9 +1024,10 @@ export default function DocumentComparisonCreate() {
 
   const runCoach = async ({
     mode = 'full',
-    intent = 'improve',
+    intent = 'general',
     selectionText = '',
     selectionTarget = null,
+    selectionRange = null,
     silent = false,
   } = {}) => {
     const resolvedId = await ensureComparisonIdForCoach();
@@ -969,6 +1063,15 @@ export default function DocumentComparisonCreate() {
         intent,
         model: response?.model || 'unknown',
         provider: response?.provider || 'vertex',
+        selectionText: selectionText || '',
+        selectionTarget: selectionTarget || null,
+        selectionRange:
+          selectionRange && Number.isFinite(selectionRange.from) && Number.isFinite(selectionRange.to)
+            ? {
+                from: Number(selectionRange.from),
+                to: Number(selectionRange.to),
+              }
+            : null,
       });
       setExpandedSuggestionIds([]);
       if (!silent) {
@@ -992,8 +1095,26 @@ export default function DocumentComparisonCreate() {
     const op = String(suggestion?.proposed_change?.op || 'append');
     const nextText = String(suggestion?.proposed_change?.text || '');
     const headingHint = String(suggestion?.proposed_change?.heading_hint || '');
-    const selectedText =
-      selectionContext.side === target ? String(selectionContext.text || '').trim() : '';
+    const requestIntent = String(coachRequestMeta?.intent || '').trim().toLowerCase();
+    const isRewriteSelectionIntent = requestIntent === 'rewrite_selection' && op === 'replace_selection';
+    const requestSelectionTarget = String(coachRequestMeta?.selectionTarget || '').toLowerCase();
+    const requestSelectionSide = requestSelectionTarget === 'confidential' ? 'a' : requestSelectionTarget === 'shared' ? 'b' : null;
+    const selectionRangeFromRequest =
+      isRewriteSelectionIntent &&
+      coachRequestMeta?.selectionRange &&
+      requestSelectionSide === target &&
+      Number.isFinite(coachRequestMeta.selectionRange.from) &&
+      Number.isFinite(coachRequestMeta.selectionRange.to)
+        ? {
+            from: Number(coachRequestMeta.selectionRange.from),
+            to: Number(coachRequestMeta.selectionRange.to),
+          }
+        : null;
+    const selectedText = isRewriteSelectionIntent
+      ? String(coachRequestMeta?.selectionText || '').trim()
+      : selectionContext.side === target
+        ? String(selectionContext.text || '').trim()
+        : '';
     const currentText = target === 'a' ? docAText : docBText;
     const updatedText = applySuggestedTextChange({
       currentText,
@@ -1003,7 +1124,9 @@ export default function DocumentComparisonCreate() {
       selectedText,
     });
     const isShared = suggestion?.scope === 'shared' || suggestion?.proposed_change?.target === 'doc_b';
-    const diffPreview = buildDiffPreview(currentText, updatedText);
+    const diffPreview = isRewriteSelectionIntent
+      ? buildWordDiffPreview(selectedText, nextText)
+      : buildDiffPreview(currentText, updatedText);
     const jumpText = String(nextText || selectedText || headingHint || '').trim();
 
     setPendingReviewSuggestion({
@@ -1017,10 +1140,14 @@ export default function DocumentComparisonCreate() {
       headingHint,
       currentText,
       updatedText,
+      intent: requestIntent,
+      selectionRange: selectionRangeFromRequest,
       isShared,
       diffPreview,
       jumpText: jumpText.slice(0, 280),
-      changeSummary: getSuggestionChangeSummary(op, headingHint),
+      changeSummary: isRewriteSelectionIntent
+        ? 'This will replace only the selected snippet in the target editor.'
+        : getSuggestionChangeSummary(op, headingHint),
     });
   };
 
@@ -1037,6 +1164,52 @@ export default function DocumentComparisonCreate() {
     }
   };
 
+  const markSuggestionApplied = (suggestionIdValue, suggestionHashValue) => {
+    const suggestionId = String(suggestionIdValue || '');
+    const suggestionHash = String(suggestionHashValue || activeCoachHash || 'unhashed');
+    if (!suggestionId) {
+      return;
+    }
+    setAppliedSuggestionIdsByHash((previous) => {
+      const current = Array.isArray(previous[suggestionHash]) ? previous[suggestionHash] : [];
+      if (current.includes(suggestionId)) {
+        return previous;
+      }
+      return {
+        ...previous,
+        [suggestionHash]: [...current, suggestionId],
+      };
+    });
+    setExpandedSuggestionIds((previous) => previous.filter((id) => id !== suggestionId));
+  };
+
+  const handleReplaceSelectionApplied = (result) => {
+    const requestId = Number(result?.id || 0);
+    if (!pendingSelectionApply || requestId !== Number(pendingSelectionApply.requestId || 0)) {
+      return;
+    }
+    setReplaceSelectionRequest({ side: null, id: 0, from: 0, to: 0, text: '' });
+
+    if (!result?.success) {
+      setIsApplyingReviewSuggestion(false);
+      setPendingSelectionApply(null);
+      toast.error('Could not apply rewrite to the selected text. Please reselect and try again.');
+      return;
+    }
+
+    markSuggestionApplied(pendingSelectionApply.suggestionId, pendingSelectionApply.suggestionHash);
+    setPendingSelectionApply(null);
+    setPendingReviewSuggestion(null);
+    setStep(2);
+    setIsApplyingReviewSuggestion(false);
+    setFocusEditorRequest({
+      side: pendingSelectionApply.target,
+      id: Date.now(),
+      jumpText: String(result?.text || '').trim().slice(0, 280),
+    });
+    toast.success('Suggestion applied locally. Click Save Draft to persist.');
+  };
+
   const confirmCoachSuggestionApply = () => {
     if (!pendingReviewSuggestion) {
       return;
@@ -1044,9 +1217,43 @@ export default function DocumentComparisonCreate() {
 
     setIsApplyingReviewSuggestion(true);
     const target = pendingReviewSuggestion.target === 'a' ? 'a' : 'b';
+    const jumpText = String(pendingReviewSuggestion.jumpText || '').trim();
+    const suggestionId = String(pendingReviewSuggestion.suggestionId || '');
+    const suggestionHash = String(pendingReviewSuggestion.coachHash || activeCoachHash || 'unhashed');
+    const isRewriteSelection = pendingReviewSuggestion.intent === 'rewrite_selection';
+
+    if (isRewriteSelection) {
+      const range = pendingReviewSuggestion.selectionRange;
+      const nextText = String(pendingReviewSuggestion.nextText || '').trim();
+      if (!range || !Number.isFinite(range.from) || !Number.isFinite(range.to) || range.to <= range.from) {
+        setIsApplyingReviewSuggestion(false);
+        toast.error('Selection is no longer available. Re-select text and request rewrite again.');
+        return;
+      }
+      if (!nextText) {
+        setIsApplyingReviewSuggestion(false);
+        toast.error('No rewritten text returned for this suggestion.');
+        return;
+      }
+      const requestId = Date.now();
+      setPendingSelectionApply({
+        requestId,
+        suggestionId,
+        suggestionHash,
+        target,
+      });
+      setReplaceSelectionRequest({
+        side: target,
+        id: requestId,
+        from: Number(range.from),
+        to: Number(range.to),
+        text: nextText,
+      });
+      return;
+    }
+
     const updatedText = String(pendingReviewSuggestion.updatedText || '');
     const updatedHtml = sanitizeEditorHtml(textToHtml(updatedText));
-    const jumpText = String(pendingReviewSuggestion.jumpText || '').trim();
 
     if (target === 'a') {
       setDocAText(updatedText);
@@ -1060,21 +1267,7 @@ export default function DocumentComparisonCreate() {
       setDocBSource('typed');
     }
 
-    const suggestionId = String(pendingReviewSuggestion.suggestionId || '');
-    const suggestionHash = String(pendingReviewSuggestion.coachHash || activeCoachHash || 'unhashed');
-    if (suggestionId) {
-      setAppliedSuggestionIdsByHash((previous) => {
-        const current = Array.isArray(previous[suggestionHash]) ? previous[suggestionHash] : [];
-        if (current.includes(suggestionId)) {
-          return previous;
-        }
-        return {
-          ...previous,
-          [suggestionHash]: [...current, suggestionId],
-        };
-      });
-      setExpandedSuggestionIds((previous) => previous.filter((id) => id !== suggestionId));
-    }
+    markSuggestionApplied(suggestionId, suggestionHash);
 
     setPendingReviewSuggestion(null);
     setStep(2);
@@ -1242,11 +1435,21 @@ export default function DocumentComparisonCreate() {
               ? { id: focusEditorRequest.id, text: focusEditorRequest.jumpText }
               : null
           }
-          onSelectionTextChange={(selectedText) => {
+          replaceSelectionRequest={
+            replaceSelectionRequest.side === side && replaceSelectionRequest.id
+              ? replaceSelectionRequest
+              : null
+          }
+          onReplaceSelectionApplied={handleReplaceSelectionApplied}
+          onSelectionChange={({ text: selectedText, range }) => {
             const normalized = String(selectedText || '').trim();
             setSelectionContext({
               side,
               text: normalized,
+              range:
+                range && Number.isFinite(range.from) && Number.isFinite(range.to)
+                  ? { from: Number(range.from), to: Number(range.to) }
+                  : null,
             });
           }}
           onChange={({ html, text, json }) => {
@@ -1457,19 +1660,20 @@ export default function DocumentComparisonCreate() {
                   </CardHeader>
                   <CardContent className="space-y-3">
                     <div className="flex flex-wrap gap-2">
-                      {COACH_TRIGGER_OPTIONS.map((option) => (
+                      {DOCUMENT_COMPARISON_COACH_ACTIONS.map((option) => (
                         <Button
                           key={option.id}
                           type="button"
                           variant="outline"
                           size="sm"
                           disabled={coachLoading}
-                          onClick={() =>
-                            runCoach({
-                              mode: option.mode,
-                              intent: option.intent,
-                            })
-                          }
+                          onClick={() => {
+                            const request = buildCoachActionRequest(option, selectionContext);
+                            if (!request) {
+                              return;
+                            }
+                            runCoach(request);
+                          }}
                         >
                           {coachLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
                           {option.label}
@@ -1479,18 +1683,24 @@ export default function DocumentComparisonCreate() {
                         type="button"
                         variant="outline"
                         size="sm"
-                        disabled={coachLoading || !selectionContext.text}
-                        onClick={() =>
-                          runCoach({
-                            mode: 'selection',
-                            intent: 'rewrite',
-                            selectionTarget: selectionContext.side === 'a' ? 'confidential' : 'shared',
-                            selectionText: selectionContext.text,
-                          })
-                        }
+                        disabled={coachLoading || !canRunRewriteSelection(selectionContext)}
+                        onClick={() => {
+                          const request = buildCoachActionRequest(
+                            {
+                              id: 'rewrite_selection',
+                              mode: 'selection',
+                              intent: 'rewrite_selection',
+                            },
+                            selectionContext,
+                          );
+                          if (!request) {
+                            return;
+                          }
+                          runCoach(request);
+                        }}
                       >
                         {coachLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
-                        Rewrite selection
+                        Rewrite Selection
                       </Button>
                     </div>
 
@@ -1519,10 +1729,11 @@ export default function DocumentComparisonCreate() {
 
                     {visibleCoachSuggestions.length > 0 ? (
                       <div className="space-y-2">
-                        {visibleCoachSuggestions.slice(0, 4).map((suggestion, index) => {
+                        {visibleCoachSuggestions.slice(0, 12).map((suggestion, index) => {
                           const suggestionId = getNormalizedSuggestionId(suggestion, index);
                           const expanded = expandedSuggestionIds.includes(suggestionId);
                           const isShared = suggestion?.scope === 'shared' || suggestion?.proposed_change?.target === 'doc_b';
+                          const categoryLabel = getSuggestionCategoryLabel(suggestion?.category);
                           return (
                             <div key={suggestionId || `coach-suggestion-${index}`} className="rounded-lg border border-slate-200 bg-white p-3">
                               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1531,6 +1742,7 @@ export default function DocumentComparisonCreate() {
                                   <Badge variant={isShared ? 'secondary' : 'outline'}>
                                     {isShared ? 'Shared-safe' : 'Confidential-only'}
                                   </Badge>
+                                  {categoryLabel ? <Badge variant="outline">{categoryLabel}</Badge> : null}
                                   <span className="text-sm font-medium text-slate-800">{suggestion?.title || 'Suggestion'}</span>
                                 </div>
                                 <div className="flex gap-2">
@@ -1766,6 +1978,11 @@ export default function DocumentComparisonCreate() {
                 >
                   {pendingReviewSuggestion?.isShared ? 'Shared-safe' : 'Confidential-only'}
                 </Badge>
+                {getSuggestionCategoryLabel(pendingReviewSuggestion?.suggestion?.category) ? (
+                  <Badge variant="outline">
+                    {getSuggestionCategoryLabel(pendingReviewSuggestion?.suggestion?.category)}
+                  </Badge>
+                ) : null}
                 <span className="text-sm font-medium text-slate-800">
                   {pendingReviewSuggestion?.suggestion?.title || 'Suggestion'}
                 </span>

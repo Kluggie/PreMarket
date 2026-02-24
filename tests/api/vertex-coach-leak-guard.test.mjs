@@ -206,3 +206,43 @@ test('applyCoachRelevanceGuard allows empty-document integrity suggestion when b
   assert.equal(guarded.coachResult.suggestions[0].id, 'integrity_warning_empty');
   assert.equal(guarded.withheldCount, 0);
 });
+
+test('applyCoachLeakGuard removes shared suggestions that introduce unsupported numeric/date facts', () => {
+  const coach = validateCoachResultV1({
+    version: 'coach-v1',
+    summary: {
+      overall: 'Summary',
+      top_priorities: ['Keep shared edits grounded'],
+    },
+    suggestions: [
+      {
+        id: 'shared_new_fact',
+        scope: 'shared',
+        severity: 'warning',
+        title: 'Add unsupported fact',
+        rationale: 'Should be removed by no-new-facts guard',
+        proposed_change: {
+          target: 'doc_b',
+          op: 'append',
+          text: 'Set delivery deadline to 2026-04-30 and final payment to $145,000.',
+        },
+        evidence: {
+          shared_quotes: ['Shared baseline obligation.'],
+          confidential_quotes: [],
+        },
+      },
+    ],
+    concerns: [],
+    questions: [],
+    negotiation_moves: [],
+  });
+
+  const guarded = applyCoachLeakGuard({
+    coachResult: coach,
+    confidentialText: 'Internal notes mention private numbers and dates.',
+    sharedText: 'Shared baseline obligation.',
+  });
+
+  assert.equal(guarded.coachResult.suggestions.length, 0);
+  assert.equal(guarded.withheldCount, 1);
+});

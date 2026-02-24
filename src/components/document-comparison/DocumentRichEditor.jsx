@@ -166,6 +166,9 @@ export default function DocumentRichEditor({
   placeholder,
   onChange,
   onSelectionTextChange,
+  onSelectionChange,
+  replaceSelectionRequest = null,
+  onReplaceSelectionApplied,
   onToggleFullscreen,
   isFullscreen = false,
   minHeightClassName = 'min-h-[560px]',
@@ -276,18 +279,37 @@ export default function DocumentRichEditor({
   }, [content, editor]);
 
   useEffect(() => {
-    if (!editor || typeof onSelectionTextChange !== 'function') {
+    if (!editor) {
+      return;
+    }
+    if (typeof onSelectionTextChange !== 'function' && typeof onSelectionChange !== 'function') {
       return;
     }
 
     const emitSelectionText = () => {
       const { from, to } = editor.state.selection;
       if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) {
-        onSelectionTextChange('');
+        if (typeof onSelectionTextChange === 'function') {
+          onSelectionTextChange('');
+        }
+        if (typeof onSelectionChange === 'function') {
+          onSelectionChange({
+            text: '',
+            range: null,
+          });
+        }
         return;
       }
       const selected = editor.state.doc.textBetween(from, to, ' ').trim();
-      onSelectionTextChange(selected);
+      if (typeof onSelectionTextChange === 'function') {
+        onSelectionTextChange(selected);
+      }
+      if (typeof onSelectionChange === 'function') {
+        onSelectionChange({
+          text: selected,
+          range: { from, to },
+        });
+      }
     };
 
     emitSelectionText();
@@ -295,7 +317,72 @@ export default function DocumentRichEditor({
     return () => {
       editor.off('selectionUpdate', emitSelectionText);
     };
-  }, [editor, onSelectionTextChange]);
+  }, [editor, onSelectionChange, onSelectionTextChange]);
+
+  useEffect(() => {
+    if (!editor || !replaceSelectionRequest?.id) {
+      return;
+    }
+
+    const requestId = Number(replaceSelectionRequest.id || 0);
+    const rawText = String(replaceSelectionRequest.text || '');
+    const rawFrom = Number(replaceSelectionRequest.from || 0);
+    const rawTo = Number(replaceSelectionRequest.to || 0);
+    if (!requestId || !rawText.trim() || !Number.isFinite(rawFrom) || !Number.isFinite(rawTo) || rawTo <= rawFrom) {
+      onReplaceSelectionApplied?.({
+        id: requestId || 0,
+        success: false,
+        error: 'invalid_selection_range',
+      });
+      return;
+    }
+
+    try {
+      const currentDocSize = editor.state.doc.content.size;
+      const from = Math.max(1, Math.min(rawFrom, currentDocSize));
+      const to = Math.max(from, Math.min(rawTo, currentDocSize));
+      const replacementText = String(rawText || '').replace(/\r/g, '');
+      if (to <= from) {
+        onReplaceSelectionApplied?.({
+          id: requestId,
+          success: false,
+          error: 'selection_out_of_bounds',
+        });
+        return;
+      }
+
+      editor
+        .chain()
+        .focus()
+        .setTextSelection({ from, to })
+        .insertContent({
+          type: 'text',
+          text: replacementText,
+        })
+        .scrollIntoView()
+        .run();
+      const updatedDocSize = editor.state.doc.content.size;
+      const highlightTo = Math.max(from, Math.min(updatedDocSize, from + replacementText.length));
+      editor.chain().focus().setTextSelection({ from, to: highlightTo }).run();
+      window.setTimeout(() => {
+        editor.chain().focus(highlightTo).run();
+      }, 2200);
+
+      onReplaceSelectionApplied?.({
+        id: requestId,
+        success: true,
+        range: { from, to: highlightTo },
+        text: replacementText,
+      });
+    } catch (error) {
+      console.error('Failed to apply selection replacement in document editor.', error);
+      onReplaceSelectionApplied?.({
+        id: requestId,
+        success: false,
+        error: 'replace_selection_failed',
+      });
+    }
+  }, [editor, onReplaceSelectionApplied, replaceSelectionRequest?.from, replaceSelectionRequest?.id, replaceSelectionRequest?.text, replaceSelectionRequest?.to]);
 
   useEffect(() => {
     if (!editor || !shouldFocus || !focusRequestId) {

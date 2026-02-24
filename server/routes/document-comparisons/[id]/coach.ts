@@ -23,9 +23,19 @@ import { ensureComparisonFound } from '../_helpers.js';
 import { assertDocumentComparisonWithinLimits } from '../_limits.js';
 
 const ALLOWED_MODES = new Set(['full', 'shared_only', 'selection']);
-const ALLOWED_INTENTS = new Set(['improve', 'negotiate', 'risks', 'rewrite']);
+const ALLOWED_INTENTS = new Set([
+  'improve_shared',
+  'negotiate',
+  'risks',
+  'rewrite_selection',
+  'general',
+]);
 const ALLOWED_SELECTION_TARGETS = new Set(['confidential', 'shared']);
 const COACH_DEBUG_ENABLED = String(process.env.DEBUG_DOCUMENT_COMPARISON_COACH || '').trim() === '1';
+
+type CoachRouteContext = {
+  userId?: string | null;
+};
 
 function asText(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
@@ -45,12 +55,16 @@ function parseMode(value: unknown) {
 function parseIntent(value: unknown) {
   const intent = asText(value).toLowerCase();
   if (!intent) {
-    return 'improve';
+    return 'general';
   }
   if (!ALLOWED_INTENTS.has(intent)) {
-    throw new ApiError(400, 'invalid_input', 'intent must be one of: improve, negotiate, risks, rewrite');
+    throw new ApiError(
+      400,
+      'invalid_input',
+      'intent must be one of: improve_shared, negotiate, risks, rewrite_selection, general',
+    );
   }
-  return intent as 'improve' | 'negotiate' | 'risks' | 'rewrite';
+  return intent as 'improve_shared' | 'negotiate' | 'risks' | 'rewrite_selection' | 'general';
 }
 
 function parseSelectionTarget(value: unknown) {
@@ -62,6 +76,40 @@ function parseSelectionTarget(value: unknown) {
     throw new ApiError(400, 'invalid_input', 'selectionTarget must be one of: confidential, shared');
   }
   return target as 'confidential' | 'shared';
+}
+
+function validateIntentMode(params: {
+  intent: 'improve_shared' | 'negotiate' | 'risks' | 'rewrite_selection' | 'general';
+  mode: 'full' | 'shared_only' | 'selection';
+  selectionText: string;
+  selectionTarget: 'confidential' | 'shared' | null;
+}) {
+  const { intent, mode, selectionText, selectionTarget } = params;
+
+  if (intent === 'improve_shared' && mode !== 'shared_only') {
+    throw new ApiError(400, 'invalid_input', 'improve_shared requires mode=shared_only');
+  }
+
+  if (intent === 'rewrite_selection') {
+    if (mode !== 'selection') {
+      throw new ApiError(400, 'invalid_input', 'rewrite_selection requires mode=selection');
+    }
+    if (!selectionTarget) {
+      throw new ApiError(400, 'invalid_input', 'selectionTarget is required for rewrite_selection');
+    }
+    if (!selectionText) {
+      throw new ApiError(400, 'invalid_input', 'selectionText is required for rewrite_selection');
+    }
+    return;
+  }
+
+  if (mode === 'selection') {
+    throw new ApiError(400, 'invalid_input', 'mode=selection is only supported for rewrite_selection');
+  }
+
+  if ((intent === 'negotiate' || intent === 'risks' || intent === 'general') && mode !== 'full') {
+    throw new ApiError(400, 'invalid_input', `${intent} requires mode=full`);
+  }
 }
 
 function getComparisonId(req: any, comparisonIdParam?: string) {
@@ -124,7 +172,11 @@ function resolveCoachDocumentSide(params: {
 }
 
 export default async function handler(req: any, res: any, comparisonIdParam?: string) {
-  await withApiRoute(req, res, '/api/document-comparisons/[id]/coach', async (context) => {
+  await withApiRoute(
+    req,
+    res,
+    '/api/document-comparisons/[id]/coach',
+    async (context: CoachRouteContext) => {
     ensureMethod(req, ['POST']);
 
     const comparisonId = getComparisonId(req, comparisonIdParam);
@@ -133,20 +185,23 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     }
 
     const auth = await requireUser(req, res);
-    if (!auth.ok) {
+    if (!auth.ok || !auth.user) {
       return;
     }
-    context.userId = auth.user.id;
+    const userId = auth.user.id;
+    context.userId = userId;
 
     const body = await readJsonBody(req);
     const mode = parseMode(body.mode);
     const intent = parseIntent(body.intent);
     const selectionTarget = parseSelectionTarget(body.selectionTarget || body.selection_target);
     const selectionText = sanitizeEditorText(body.selectionText || body.selection_text || '').slice(0, 20000);
-
-    if (mode === 'selection' && !selectionText) {
-      throw new ApiError(400, 'invalid_input', 'selectionText is required when mode=selection');
-    }
+    validateIntentMode({
+      intent,
+      mode,
+      selectionTarget,
+      selectionText,
+    });
 
     const db = getDb();
     const [existing] = await db
@@ -155,7 +210,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       .where(
         and(
           eq(schema.documentComparisons.id, comparisonId),
-          eq(schema.documentComparisons.userId, auth.user.id),
+          eq(schema.documentComparisons.userId, userId),
         ),
       )
       .limit(1);
@@ -271,7 +326,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       .values({
         id: newId('coach'),
         comparisonId,
-        userId: auth.user.id,
+        userId,
         cacheHash,
         mode,
         intent,
@@ -311,5 +366,6 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       created_at: saved?.createdAt || now,
       withheld_count: totalWithheldCount,
     });
-  });
+    },
+  );
 }

@@ -6,8 +6,14 @@ import { getVertexConfig } from './integrations.js';
 export const COACH_PROMPT_VERSION = 'coach-v1';
 
 export type CoachMode = 'full' | 'shared_only' | 'selection';
-export type CoachIntent = 'improve' | 'negotiate' | 'risks' | 'rewrite';
+export type CoachIntent =
+  | 'improve_shared'
+  | 'negotiate'
+  | 'risks'
+  | 'rewrite_selection'
+  | 'general';
 export type CoachSelectionTarget = 'confidential' | 'shared';
+export type CoachSuggestionCategory = 'wording' | 'negotiation' | 'risk';
 
 const SuggestionSchema = z
   .object({
@@ -16,6 +22,7 @@ const SuggestionSchema = z
     severity: z.enum(['info', 'warning', 'critical']),
     title: z.string().min(1),
     rationale: z.string().min(1),
+    category: z.enum(['wording', 'negotiation', 'risk']).optional(),
     proposed_change: z.object({
       target: z.enum(['doc_a', 'doc_b']),
       op: z.enum(['replace_selection', 'append', 'insert_after_heading', 'replace_section']),
@@ -92,6 +99,21 @@ export type CoachResultV1 = {
 const EMPTY_DOC_THRESHOLD_CHARS = 50;
 const SUSPICIOUS_REPLACE_SECTION_MIN_CHARS = 30;
 const SUSPICIOUS_REPLACE_SECTION_LARGE_SECTION_CHARS = 220;
+const MAX_GENERAL_SUGGESTIONS = 12;
+const MIN_GENERAL_SUGGESTIONS = 5;
+const DATE_FACT_PATTERN =
+  /\b(?:\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?|\d{4}-\d{2}-\d{2}|jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b/gi;
+const NUMERIC_FACT_PATTERN = /\b\d[\d,./-]*\b/g;
+const CURRENCY_FACT_PATTERN = /\b(?:\$|usd|aud|eur|gbp|cad|inr|jpy)\s*\d[\d,.]*/gi;
+const POLICY_FACT_KEYWORDS = [
+  'residency',
+  'resident',
+  'jurisdiction',
+  'governing law',
+  'citizenship',
+  'country',
+  'state of',
+];
 
 type GenerateCoachParams = {
   title: string;
@@ -216,51 +238,127 @@ function parseModelJson(text: string) {
   return null;
 }
 
+function extractSelectionContext(docText: string, selectionText: string) {
+  const text = String(docText || '');
+  const selection = asText(selectionText);
+  if (!text || !selection) {
+    return '';
+  }
+
+  const loweredText = text.toLowerCase();
+  const loweredSelection = selection.toLowerCase();
+  const index = loweredText.indexOf(loweredSelection);
+  if (index < 0) {
+    return selection;
+  }
+
+  const contextWindow = 260;
+  const start = Math.max(0, index - contextWindow);
+  const end = Math.min(text.length, index + selection.length + contextWindow);
+  const prefix = start > 0 ? '…' : '';
+  const suffix = end < text.length ? '…' : '';
+  return `${prefix}${text.slice(start, end)}${suffix}`;
+}
+
+function buildCoachSchemaTemplate() {
+  return JSON.stringify(
+    {
+      version: COACH_PROMPT_VERSION,
+      summary: { overall: 'string', top_priorities: ['string'] },
+      suggestions: [
+        {
+          id: 'string',
+          scope: 'confidential|shared',
+          severity: 'info|warning|critical',
+          category: 'wording|negotiation|risk',
+          title: 'string',
+          rationale: 'string',
+          proposed_change: {
+            target: 'doc_a|doc_b',
+            op: 'replace_selection|append|insert_after_heading|replace_section',
+            heading_hint: 'string?',
+            text: 'string',
+          },
+          evidence: {
+            shared_quotes: ['string'],
+            confidential_quotes: ['string'],
+          },
+        },
+      ],
+      concerns: [{ id: 'string', severity: 'warning|critical', title: 'string', details: 'string' }],
+      questions: [{ id: 'string', to: 'counterparty|self', text: 'string', why: 'string' }],
+      negotiation_moves: [{ id: 'string', title: 'string', move: 'string', tradeoff: 'string' }],
+    },
+    null,
+    2,
+  );
+}
+
+function buildIntentSpecificRules(params: GenerateCoachParams) {
+  switch (params.intent) {
+    case 'improve_shared':
+      return [
+        'Intent-specific rules (improve_shared):',
+        '- Analyze and improve ONLY doc_b.',
+        '- Output suggestions must all target doc_b with scope=shared and category=wording.',
+        '- Focus on clarity, tone, concision, and structure.',
+        '- Do NOT introduce new requirements, dates, numbers, budgets, or constraints that are not already in doc_b.',
+        '- concerns, questions, and negotiation_moves must be empty arrays.',
+      ];
+    case 'negotiate':
+      return [
+        'Intent-specific rules (negotiate):',
+        '- Focus on negotiation strategy, trade-offs, concessions, and leverage framing.',
+        '- Provide actionable negotiation_moves and questions arrays.',
+        '- You may include confidential-only preparation notes targeting doc_a.',
+        '- Any doc_b suggestion must remain shared-safe and fact-preserving.',
+      ];
+    case 'risks':
+      return [
+        'Intent-specific rules (risks):',
+        '- Prioritize concerns with severity and mitigation details.',
+        '- concerns array must contain concrete risk findings when possible.',
+        '- Suggestions are optional and should focus on clarifications/mitigations.',
+        '- negotiation_moves should usually be empty for this intent.',
+      ];
+    case 'rewrite_selection':
+      return [
+        'Intent-specific rules (rewrite_selection):',
+        '- Return EXACTLY one suggestion.',
+        '- suggestions[0].proposed_change.op MUST be "replace_selection".',
+        `- suggestions[0].proposed_change.target MUST be "${params.selectionTarget === 'confidential' ? 'doc_a' : 'doc_b'}".`,
+        '- suggestions[0].proposed_change.text must contain only the rewritten selection text.',
+        '- Do not rewrite outside the selected snippet. No headings, no append, no insert.',
+        '- concerns, questions, and negotiation_moves must be empty arrays.',
+      ];
+    case 'general':
+      return [
+        'Intent-specific rules (general):',
+        `- Return a prioritized mixed set of ${MIN_GENERAL_SUGGESTIONS}-${MAX_GENERAL_SUGGESTIONS} high-impact items.`,
+        '- Mix wording, negotiation, and risk improvements.',
+        '- Set suggestion.category to one of: wording, negotiation, risk.',
+        '- Keep recommendations specific to current docs and avoid generic filler.',
+      ];
+    default:
+      return ['Intent-specific rules:', '- Provide concise, actionable coaching output.'];
+  }
+}
+
 function buildCoachPrompt(params: GenerateCoachParams) {
-  const mode = params.mode;
-  const intent = params.intent;
+  const title = params.title || 'Untitled Comparison';
   const selectionTarget = params.selectionTarget || 'shared';
   const selectionText = asText(params.selectionText);
-  const selectionSection =
-    mode === 'selection'
-      ? `Selection Target: ${selectionTarget}\nSelection Text:\n${selectionText || '(none provided)'}`
-      : 'Selection Target: n/a\nSelection Text: n/a';
+  const selectionDocText = selectionTarget === 'confidential' ? params.docAText : params.docBText;
+  const selectionContext = extractSelectionContext(selectionDocText, selectionText);
+  const includeConfidentialDoc = params.mode === 'full' || (params.mode === 'selection' && selectionTarget === 'confidential');
+  const includeSharedDoc = params.mode !== 'selection' || selectionTarget === 'shared';
 
   return [
     'You are an AI negotiation coach for a document comparison workflow.',
-    'Return ONLY valid JSON. Do not return markdown.',
+    'Return ONLY valid JSON. Do not return markdown or prose outside JSON.',
     `JSON schema version MUST be "${COACH_PROMPT_VERSION}".`,
     'Output schema:',
-    JSON.stringify(
-      {
-        version: COACH_PROMPT_VERSION,
-        summary: { overall: 'string', top_priorities: ['string'] },
-        suggestions: [
-          {
-            id: 'string',
-            scope: 'confidential|shared',
-            severity: 'info|warning|critical',
-            title: 'string',
-            rationale: 'string',
-            proposed_change: {
-              target: 'doc_a|doc_b',
-              op: 'replace_selection|append|insert_after_heading|replace_section',
-              heading_hint: 'string?',
-              text: 'string',
-            },
-            evidence: {
-              shared_quotes: ['string'],
-              confidential_quotes: ['string'],
-            },
-          },
-        ],
-        concerns: [{ id: 'string', severity: 'warning|critical', title: 'string', details: 'string' }],
-        questions: [{ id: 'string', to: 'counterparty|self', text: 'string', why: 'string' }],
-        negotiation_moves: [{ id: 'string', title: 'string', move: 'string', tradeoff: 'string' }],
-      },
-      null,
-      2,
-    ),
+    buildCoachSchemaTemplate(),
     '',
     'Security rules (non-negotiable):',
     '1) You may read BOTH documents (doc_a confidential + doc_b shared) to coach the OWNER.',
@@ -268,21 +366,26 @@ function buildCoachPrompt(params: GenerateCoachParams) {
     '   - Do NOT introduce facts/numbers/names/details that are only in doc_a.',
     '   - Keep evidence.shared_quotes to exact snippets from doc_b only.',
     '   - evidence.confidential_quotes MUST be [] for shared suggestions.',
-    '   - If confidential context helps, convert to a generic recommendation without revealing details.',
+    '   - If confidential context helps, convert it into a generic recommendation without revealing hidden details.',
     '3) For confidential suggestions (target doc_a/scope=confidential), confidential references are allowed.',
-    '4) Provide concise, actionable suggestions.',
+    '4) Prefer concrete, document-grounded recommendations over generic advice.',
     '',
-    `Mode: ${mode}`,
-    `Intent: ${intent}`,
-    selectionSection,
+    ...buildIntentSpecificRules(params),
     '',
-    `Title: ${params.title || 'Untitled Comparison'}`,
+    `Mode: ${params.mode}`,
+    `Intent: ${params.intent}`,
+    `Title: ${title}`,
+    `Selection Target: ${params.mode === 'selection' ? selectionTarget : 'n/a'}`,
+    'Selection Text:',
+    params.mode === 'selection' ? selectionText || '(none provided)' : 'n/a',
+    'Selection Context (target document window):',
+    params.mode === 'selection' ? selectionContext || '(no context found)' : 'n/a',
     '',
     'Confidential Document (doc_a):',
-    params.docAText || '(empty)',
+    includeConfidentialDoc ? params.docAText || '(empty)' : '(not provided for this intent)',
     '',
     'Shared Document (doc_b):',
-    params.docBText || '(empty)',
+    includeSharedDoc ? params.docBText || '(empty)' : '(not provided for this intent)',
   ].join('\n');
 }
 
@@ -421,6 +524,181 @@ export function validateCoachResultV1(raw: unknown): CoachResultV1 {
     concerns,
     questions,
     negotiation_moves: negotiationMoves,
+  };
+}
+
+function inferSuggestionCategory(
+  suggestion: CoachSuggestion,
+  intent: CoachIntent,
+): CoachSuggestionCategory {
+  if (suggestion.category) {
+    return suggestion.category;
+  }
+
+  if (intent === 'improve_shared') {
+    return 'wording';
+  }
+  if (intent === 'risks') {
+    return 'risk';
+  }
+  if (intent === 'rewrite_selection') {
+    return 'wording';
+  }
+  if (intent === 'negotiate') {
+    return 'negotiation';
+  }
+
+  const text = stripSpaces(
+    `${suggestion.title || ''} ${suggestion.rationale || ''} ${suggestion.proposed_change?.text || ''}`,
+  ).toLowerCase();
+  if (!text) {
+    return 'wording';
+  }
+  if (/(risk|liability|ambigu|security|compliance|red flag|mitigation)/.test(text)) {
+    return 'risk';
+  }
+  if (/(negotiat|concession|trade[- ]?off|counterparty|leverage|fallback)/.test(text)) {
+    return 'negotiation';
+  }
+  return 'wording';
+}
+
+function normalizeSuggestionForIntent(
+  suggestion: CoachSuggestion,
+  intent: CoachIntent,
+): CoachSuggestion {
+  const isShared = isSharedTargetSuggestion(suggestion);
+  const category = inferSuggestionCategory(suggestion, intent);
+  return {
+    ...suggestion,
+    category,
+    scope: isShared ? 'shared' : 'confidential',
+    proposed_change: {
+      ...suggestion.proposed_change,
+      target: isShared ? 'doc_b' : 'doc_a',
+      text: asText(suggestion.proposed_change.text) || 'Clarify this section.',
+    },
+    evidence: {
+      shared_quotes: Array.isArray(suggestion?.evidence?.shared_quotes)
+        ? suggestion.evidence.shared_quotes.map((value) => String(value || '').trim()).filter(Boolean)
+        : [],
+      confidential_quotes: Array.isArray(suggestion?.evidence?.confidential_quotes)
+        ? suggestion.evidence.confidential_quotes.map((value) => String(value || '').trim()).filter(Boolean)
+        : [],
+    },
+  };
+}
+
+export function enforceCoachIntentShape(params: {
+  coachResult: CoachResultV1;
+  intent: CoachIntent;
+  mode: CoachMode;
+  selectionText?: string;
+  selectionTarget?: CoachSelectionTarget;
+}): CoachResultV1 {
+  const intent = params.intent;
+  const selectionTarget = params.selectionTarget === 'confidential' ? 'doc_a' : 'doc_b';
+  let suggestions = (params.coachResult.suggestions || []).map((suggestion) =>
+    normalizeSuggestionForIntent(suggestion, intent),
+  );
+  let concerns = [...(params.coachResult.concerns || [])];
+  let questions = [...(params.coachResult.questions || [])];
+  let negotiationMoves = [...(params.coachResult.negotiation_moves || [])];
+
+  if (intent === 'improve_shared') {
+    suggestions = suggestions
+      .filter((suggestion) => suggestion.proposed_change.target === 'doc_b')
+      .map((suggestion) => ({
+        ...suggestion,
+        scope: 'shared',
+        category: 'wording',
+        evidence: {
+          shared_quotes: suggestion.evidence.shared_quotes,
+          confidential_quotes: [],
+        },
+      }));
+    concerns = [];
+    questions = [];
+    negotiationMoves = [];
+  } else if (intent === 'negotiate') {
+    suggestions = suggestions.map((suggestion) => ({
+      ...suggestion,
+      category: suggestion.category || 'negotiation',
+    }));
+  } else if (intent === 'risks') {
+    suggestions = suggestions.map((suggestion) => ({
+      ...suggestion,
+      category: 'risk',
+    }));
+    negotiationMoves = [];
+    if (!concerns.length) {
+      concerns.push({
+        id: 'risk_review_required',
+        severity: 'warning',
+        title: 'Risk review needs follow-up',
+        details:
+          'No concrete risk concerns were returned. Manually verify legal, security, timeline, and scope risks before sharing.',
+      });
+    }
+  } else if (intent === 'rewrite_selection') {
+    const expectedScope = selectionTarget === 'doc_a' ? 'confidential' : 'shared';
+    const rewriteSuggestion = suggestions.find(
+      (suggestion) =>
+        suggestion.proposed_change.op === 'replace_selection' &&
+        suggestion.proposed_change.target === selectionTarget &&
+        asText(suggestion.proposed_change.text),
+    );
+    if (!rewriteSuggestion) {
+      throw invalidModelOutput('rewrite_selection intent requires one valid replace_selection suggestion');
+    }
+    suggestions = [
+      {
+        ...rewriteSuggestion,
+        category: 'wording',
+        scope: expectedScope,
+        proposed_change: {
+          ...rewriteSuggestion.proposed_change,
+          target: selectionTarget,
+          op: 'replace_selection',
+          heading_hint: undefined,
+          text: asText(rewriteSuggestion.proposed_change.text),
+        },
+        evidence: {
+          shared_quotes: rewriteSuggestion.evidence.shared_quotes,
+          confidential_quotes: expectedScope === 'shared' ? [] : rewriteSuggestion.evidence.confidential_quotes,
+        },
+      },
+    ];
+    concerns = [];
+    questions = [];
+    negotiationMoves = [];
+    if (!asText(params.selectionText)) {
+      throw invalidModelOutput('rewrite_selection intent requires non-empty selection text');
+    }
+  } else if (intent === 'general') {
+    suggestions = suggestions
+      .map((suggestion) => ({
+        ...suggestion,
+        category: suggestion.category || inferSuggestionCategory(suggestion, intent),
+      }))
+      .slice(0, MAX_GENERAL_SUGGESTIONS);
+  }
+
+  return {
+    ...params.coachResult,
+    suggestions,
+    concerns,
+    questions,
+    negotiation_moves: negotiationMoves,
+    summary: {
+      overall: asText(params.coachResult.summary?.overall) || 'Coaching summary unavailable.',
+      top_priorities: Array.isArray(params.coachResult.summary?.top_priorities)
+        ? params.coachResult.summary.top_priorities
+            .map((value) => asText(value))
+            .filter(Boolean)
+            .slice(0, MAX_GENERAL_SUGGESTIONS)
+        : [],
+    },
   };
 }
 
@@ -643,6 +921,49 @@ function hasConfidentialLeakInSharedSuggestion(changeText: string, leakProfile: 
   return false;
 }
 
+function extractFactSignals(text: string) {
+  const source = String(text || '').toLowerCase();
+  const values = new Set<string>();
+
+  for (const match of source.match(NUMERIC_FACT_PATTERN) || []) {
+    const token = match.trim();
+    if (token.length >= 2) {
+      values.add(token);
+    }
+  }
+
+  for (const match of source.match(CURRENCY_FACT_PATTERN) || []) {
+    const token = match.trim();
+    if (token.length >= 3) {
+      values.add(token);
+    }
+  }
+
+  for (const match of source.match(DATE_FACT_PATTERN) || []) {
+    const token = match.trim();
+    if (token.length >= 3) {
+      values.add(token);
+    }
+  }
+
+  for (const keyword of POLICY_FACT_KEYWORDS) {
+    if (source.includes(keyword)) {
+      values.add(keyword);
+    }
+  }
+
+  return [...values];
+}
+
+function introducesNewFactSignals(changeText: string, sharedText: string) {
+  const sharedLower = String(sharedText || '').toLowerCase();
+  const changeSignals = extractFactSignals(changeText);
+  if (!changeSignals.length) {
+    return false;
+  }
+  return changeSignals.some((signal) => signal && !sharedLower.includes(signal));
+}
+
 export function applyCoachLeakGuard(params: {
   coachResult: CoachResultV1;
   confidentialText: string;
@@ -674,14 +995,19 @@ export function applyCoachLeakGuard(params: {
       String(suggestion?.proposed_change?.text || ''),
       leakProfile,
     );
+    const hasNewFactSignal = introducesNewFactSignals(
+      String(suggestion?.proposed_change?.text || ''),
+      sharedText,
+    );
 
-    if (hasInvalidQuote || hasConfidentialQuotes || hasLeak) {
+    if (hasInvalidQuote || hasConfidentialQuotes || hasLeak || hasNewFactSignal) {
       withheldCount += 1;
       concerns.push({
         id: `withheld_${suggestion.id || withheldCount}`,
         severity: 'warning',
         title: 'Withheld shared suggestion for confidentiality safety',
-        details: 'A shared-side suggestion was removed because it risked exposing confidential information.',
+        details:
+          'A shared-side suggestion was removed because it risked exposing confidential information or introduced unsupported facts.',
       });
       continue;
     }
@@ -717,18 +1043,17 @@ function buildMockCoachResult(params: GenerateCoachParams): CoachResultV1 {
   const selectionTarget = params.selectionTarget === 'confidential' ? 'doc_a' : 'doc_b';
   const sharedQuote = sharedPreview.length > 20 ? sharedPreview.slice(0, Math.min(sharedPreview.length, 90)) : '';
 
-  const selectionSuggestion: CoachSuggestion = {
+  const rewriteSuggestion: CoachSuggestion = {
     id: 'suggestion_selection_rewrite',
     scope: selectionTarget === 'doc_a' ? 'confidential' : 'shared',
     severity: 'info',
+    category: 'wording',
     title: 'Rewrite the selected text for clarity',
-    rationale: 'This revision simplifies sentence structure and keeps the intent explicit.',
+    rationale: 'This revision simplifies sentence structure while preserving intent.',
     proposed_change: {
       target: selectionTarget,
       op: 'replace_selection',
-      text: selectionText
-        ? `Rewritten: ${selectionText}`
-        : `Add a concise and specific rewrite for this ${selectionTarget === 'doc_a' ? 'confidential' : 'shared'} section.`,
+      text: selectionText ? `Refined: ${selectionText}` : 'Provide a clearer rewrite of the selected sentence.',
     },
     evidence: {
       shared_quotes: selectionTarget === 'doc_b' && sharedQuote ? [sharedQuote] : [],
@@ -736,73 +1061,233 @@ function buildMockCoachResult(params: GenerateCoachParams): CoachResultV1 {
     },
   };
 
-  const baseSuggestions: CoachSuggestion[] =
-    params.mode === 'selection'
-      ? [selectionSuggestion]
-      : [
-          {
-            id: 'suggestion_shared_clarity',
-            scope: 'shared',
-            severity: 'warning',
-            title: 'Clarify obligations in shared language',
-            rationale: 'Explicit obligations reduce ambiguity during negotiation.',
-            proposed_change: {
-              target: 'doc_b',
-              op: 'append',
-              text: 'Add a short section that clarifies deliverables, acceptance criteria, and timeline ownership.',
-            },
-            evidence: {
-              shared_quotes: sharedQuote ? [sharedQuote] : [],
-              confidential_quotes: [],
-            },
+  if (params.intent === 'rewrite_selection') {
+    return {
+      version: COACH_PROMPT_VERSION,
+      summary: {
+        overall: 'Rewrote the selected snippet for clarity.',
+        top_priorities: ['Preserve intent', 'Improve readability'],
+      },
+      suggestions: [rewriteSuggestion],
+      concerns: [],
+      questions: [],
+      negotiation_moves: [],
+    };
+  }
+
+  if (params.intent === 'improve_shared') {
+    return {
+      version: COACH_PROMPT_VERSION,
+      summary: {
+        overall: 'Improve readability and structure of the shared document.',
+        top_priorities: ['Clarify obligations', 'Tighten wording', 'Reduce ambiguity'],
+      },
+      suggestions: [
+        {
+          id: 'shared_wording_1',
+          scope: 'shared',
+          severity: 'warning',
+          category: 'wording',
+          title: 'Clarify acceptance criteria language',
+          rationale: 'Specific acceptance wording reduces interpretation gaps.',
+          proposed_change: {
+            target: 'doc_b',
+            op: 'replace_section',
+            heading_hint: 'Acceptance Criteria',
+            text: 'Define measurable acceptance criteria for each deliverable using clear pass/fail language.',
           },
-          {
-            id: 'suggestion_confidential_positioning',
-            scope: 'confidential',
-            severity: 'info',
-            title: 'Strengthen internal negotiation fallback',
-            rationale: 'A clear fallback improves owner-side negotiation readiness.',
-            proposed_change: {
-              target: 'doc_a',
-              op: 'append',
-              text: 'Add internal fallback terms and acceptable concessions before discussing revisions externally.',
-            },
-            evidence: {
-              shared_quotes: [],
-              confidential_quotes: confidentialPreview ? [confidentialPreview.slice(0, 90)] : [],
-            },
+          evidence: {
+            shared_quotes: sharedQuote ? [sharedQuote] : [],
+            confidential_quotes: [],
           },
-        ];
+        },
+      ],
+      concerns: [],
+      questions: [],
+      negotiation_moves: [],
+    };
+  }
+
+  if (params.intent === 'risks') {
+    return {
+      version: COACH_PROMPT_VERSION,
+      summary: {
+        overall: 'Primary risks are ambiguity in scope and validation checkpoints.',
+        top_priorities: ['Resolve ambiguous terms', 'Add verification checkpoints'],
+      },
+      suggestions: [
+        {
+          id: 'risk_shared_clarify_scope',
+          scope: 'shared',
+          severity: 'warning',
+          category: 'risk',
+          title: 'Clarify scope boundaries',
+          rationale: 'Undefined scope creates delivery and billing risk.',
+          proposed_change: {
+            target: 'doc_b',
+            op: 'append',
+            text: 'Add a section defining in-scope and out-of-scope work with examples.',
+          },
+          evidence: {
+            shared_quotes: sharedQuote ? [sharedQuote] : [],
+            confidential_quotes: [],
+          },
+        },
+      ],
+      concerns: [
+        {
+          id: 'risk_scope_ambiguity',
+          severity: 'critical',
+          title: 'Scope ambiguity',
+          details: 'Current terms leave implementation boundaries open to interpretation.',
+        },
+        {
+          id: 'risk_acceptance_gap',
+          severity: 'warning',
+          title: 'Acceptance process gap',
+          details: 'No explicit review timeline or acceptance protocol is defined.',
+        },
+      ],
+      questions: [],
+      negotiation_moves: [],
+    };
+  }
+
+  if (params.intent === 'negotiate') {
+    return {
+      version: COACH_PROMPT_VERSION,
+      summary: {
+        overall: 'Prioritize concession sequencing and trade-offs before discussing pricing.',
+        top_priorities: ['Sequence concessions', 'Ask clarifying counterparty questions'],
+      },
+      suggestions: [
+        {
+          id: 'confidential_fallbacks',
+          scope: 'confidential',
+          severity: 'info',
+          category: 'negotiation',
+          title: 'Document fallback positions internally',
+          rationale: 'Defined fallback positions increase consistency in live negotiation.',
+          proposed_change: {
+            target: 'doc_a',
+            op: 'append',
+            text: 'List acceptable fallback positions for timeline, scope, and support commitments.',
+          },
+          evidence: {
+            shared_quotes: [],
+            confidential_quotes: confidentialPreview ? [confidentialPreview.slice(0, 90)] : [],
+          },
+        },
+      ],
+      concerns: [
+        {
+          id: 'negotiation_position_gap',
+          severity: 'warning',
+          title: 'Limited concession strategy',
+          details: 'Concession order is not explicitly documented for owner-side execution.',
+        },
+      ],
+      questions: [
+        {
+          id: 'question_counterparty_priority',
+          to: 'counterparty',
+          text: 'Which term matters most to your approval path: timeline certainty or pricing flexibility?',
+          why: 'This helps prioritize trade-off options efficiently.',
+        },
+      ],
+      negotiation_moves: [
+        {
+          id: 'move_scope_timeline_trade',
+          title: 'Trade scope certainty for timeline certainty',
+          move: 'Offer phased delivery with milestone gates in exchange for clearer acceptance timing.',
+          tradeoff: 'Improves execution certainty but may reduce flexibility on scope changes.',
+        },
+      ],
+    };
+  }
 
   return {
     version: COACH_PROMPT_VERSION,
     summary: {
-      overall: 'Prioritize clearer shared wording and define negotiation fallback positions.',
-      top_priorities: ['Improve shared clarity', 'Prepare negotiation fallback', 'Resolve high-risk ambiguities'],
+      overall: 'Balanced improvements across wording, negotiation strategy, and risk mitigation.',
+      top_priorities: ['Tighten shared wording', 'Prepare negotiation path', 'Mitigate top risks'],
     },
-    suggestions: baseSuggestions,
+    suggestions: [
+      {
+        id: 'general_wording_1',
+        scope: 'shared',
+        severity: 'warning',
+        category: 'wording',
+        title: 'Improve shared structure',
+        rationale: 'A cleaner structure makes key commitments easier to review.',
+        proposed_change: {
+          target: 'doc_b',
+          op: 'replace_section',
+          heading_hint: 'Scope',
+          text: 'Rewrite the scope section into short bullet points with clear ownership and outcomes.',
+        },
+        evidence: {
+          shared_quotes: sharedQuote ? [sharedQuote] : [],
+          confidential_quotes: [],
+        },
+      },
+      {
+        id: 'general_negotiation_1',
+        scope: 'confidential',
+        severity: 'info',
+        category: 'negotiation',
+        title: 'Prepare concession ladder',
+        rationale: 'Pre-planned concessions reduce reactive compromises.',
+        proposed_change: {
+          target: 'doc_a',
+          op: 'append',
+          text: 'Add a concession ladder with must-have, nice-to-have, and fallback positions.',
+        },
+        evidence: {
+          shared_quotes: [],
+          confidential_quotes: confidentialPreview ? [confidentialPreview.slice(0, 90)] : [],
+        },
+      },
+      {
+        id: 'general_risk_1',
+        scope: 'shared',
+        severity: 'warning',
+        category: 'risk',
+        title: 'Close verification gaps',
+        rationale: 'Explicit verification requests reduce delivery disputes.',
+        proposed_change: {
+          target: 'doc_b',
+          op: 'append',
+          text: 'Request explicit verification checkpoints for delivery readiness and acceptance.',
+        },
+        evidence: {
+          shared_quotes: sharedQuote ? [sharedQuote] : [],
+          confidential_quotes: [],
+        },
+      },
+    ],
     concerns: [
       {
-        id: 'concern_alignment',
+        id: 'general_risk_scope',
         severity: 'warning',
-        title: 'Potential misalignment between scope and commitments',
-        details: 'Review whether shared commitments are specific enough for the expected delivery timeline.',
+        title: 'Scope language may be interpreted broadly',
+        details: 'Ambiguous scope terms can create unplanned obligations.',
       },
     ],
     questions: [
       {
-        id: 'question_counterparty_scope',
+        id: 'general_question_priority',
         to: 'counterparty',
-        text: 'Can you confirm measurable acceptance criteria for each deliverable?',
-        why: 'This reduces ambiguity before final approval.',
+        text: 'Which acceptance criteria are mandatory versus preferred?',
+        why: 'Clarifies where flexibility exists before final negotiations.',
       },
     ],
     negotiation_moves: [
       {
-        id: 'move_trade_scope_for_timeline',
-        title: 'Scope-for-timeline trade',
-        move: 'Offer phased scope with milestone-based acceptance.',
-        tradeoff: 'Improves predictability but may reduce short-term flexibility.',
+        id: 'general_move_tradeoff',
+        title: 'Trade support scope for faster approvals',
+        move: 'Offer narrower support guarantees in exchange for faster acceptance milestones.',
+        tradeoff: 'Lowers support exposure but may require clearer scope wording.',
       },
     ],
   };
@@ -848,18 +1333,32 @@ export async function generateDocumentComparisonCoach(params: GenerateCoachParam
     if (!parsed) {
       throw invalidModelOutput('VERTEX_COACH_MOCK_RESPONSE is not valid JSON');
     }
+    const validated = validateCoachResultV1(parsed);
     return {
       provider: 'mock' as const,
       model: 'vertex-coach-mock',
-      result: validateCoachResultV1(parsed),
+      result: enforceCoachIntentShape({
+        coachResult: validated,
+        intent: params.intent,
+        mode: params.mode,
+        selectionTarget: params.selectionTarget,
+        selectionText: params.selectionText,
+      }),
     };
   }
 
   if (String(process.env.VERTEX_MOCK || '').trim() === '1') {
+    const validated = validateCoachResultV1(buildMockCoachResult(params));
     return {
       provider: 'mock' as const,
       model: 'vertex-coach-mock',
-      result: validateCoachResultV1(buildMockCoachResult(params)),
+      result: enforceCoachIntentShape({
+        coachResult: validated,
+        intent: params.intent,
+        mode: params.mode,
+        selectionTarget: params.selectionTarget,
+        selectionText: params.selectionText,
+      }),
     };
   }
 
@@ -876,11 +1375,27 @@ export async function generateDocumentComparisonCoach(params: GenerateCoachParam
     if (!parsed) {
       continue;
     }
-    return {
-      provider: vertex.provider,
-      model: vertex.model,
-      result: validateCoachResultV1(parsed),
-    };
+    try {
+      const validated = validateCoachResultV1(parsed);
+      const normalized = enforceCoachIntentShape({
+        coachResult: validated,
+        intent: params.intent,
+        mode: params.mode,
+        selectionTarget: params.selectionTarget,
+        selectionText: params.selectionText,
+      });
+      return {
+        provider: vertex.provider,
+        model: vertex.model,
+        result: normalized,
+      };
+    } catch (error) {
+      if (attempt === 0) {
+        latestText = `${latestText}\n${String((error as any)?.message || '')}`.slice(0, 4000);
+        continue;
+      }
+      throw error;
+    }
   }
 
   throw invalidModelOutput('Coach model output was not valid JSON after retry', {
