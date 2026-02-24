@@ -42,6 +42,7 @@ import documentComparisonsCoachHandler from '../server/routes/document-compariso
 import documentComparisonsDownloadJsonHandler from '../server/routes/document-comparisons/[id]/download-json.js';
 import documentComparisonsDownloadInputsHandler from '../server/routes/document-comparisons/[id]/download-inputs.js';
 import documentComparisonsDownloadPdfHandler from '../server/routes/document-comparisons/[id]/download-pdf.js';
+import documentComparisonsDownloadProposalPdfHandler from '../server/routes/document-comparisons/[id]/download-proposal-pdf.js';
 import documentsExtractHandler from '../server/routes/documents/extract.js';
 import accountProfileHandler from '../server/routes/account/profile.js';
 import accountOrganizationsHandler from '../server/routes/account/organizations.js';
@@ -291,7 +292,16 @@ export default async function handler(req: any, res: any) {
     /^\/api\/document-comparisons\/([^/]+)\/download\/pdf$/,
   );
   if (documentComparisonsDownloadPdfMatch && method === 'GET') {
-    return documentComparisonsDownloadPdfHandler(req, res);
+    const id = decodeURIComponent(documentComparisonsDownloadPdfMatch[1]);
+    return documentComparisonsDownloadPdfHandler(req, res, id);
+  }
+
+  const documentComparisonsDownloadProposalPdfMatch = pathname.match(
+    /^\/api\/document-comparisons\/([^/]+)\/download\/proposal-pdf$/,
+  );
+  if (documentComparisonsDownloadProposalPdfMatch && method === 'GET') {
+    const id = decodeURIComponent(documentComparisonsDownloadProposalPdfMatch[1]);
+    return documentComparisonsDownloadProposalPdfHandler(req, res, id);
   }
 
   const documentComparisonsIdMatch = pathname.match(/^\/api\/document-comparisons\/([^/]+)$/);
