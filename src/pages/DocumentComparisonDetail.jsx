@@ -115,6 +115,10 @@ export default function DocumentComparisonDetail() {
       toast.success('AI report PDF download started');
     },
     onError: (error) => {
+      if (error?.code === 'not_configured' || Number(error?.status || 0) === 501) {
+        toast.error('AI report PDF is not configured in this environment yet.');
+        return;
+      }
       toast.error(error?.message || 'AI report PDF download unavailable');
     },
   });
@@ -217,110 +221,104 @@ export default function DocumentComparisonDetail() {
           Back to Proposals
         </Link>
 
-        <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-6 items-start">
-          <div className="space-y-6 min-w-0">
-            <Card className="border border-slate-200 shadow-sm">
-              <CardContent className="pt-6">
-                <h1 className="text-4xl lg:text-5xl font-bold text-slate-900 leading-tight break-words">
-                  {comparison.title}
-                </h1>
-              </CardContent>
-            </Card>
+        <div className="space-y-6 min-w-0">
+          <Card className="border border-slate-200 shadow-sm">
+            <CardContent className="pt-6">
+              <h1 className="text-4xl lg:text-5xl font-bold text-slate-900 leading-tight break-words">
+                {comparison.title}
+              </h1>
+            </CardContent>
+          </Card>
 
-            <div className="flex flex-wrap gap-3">
-              <Button
-                variant="outline"
-                onClick={() =>
-                  navigate(
-                    createPageUrl(
-                      `DocumentComparisonCreate?draft=${encodeURIComponent(comparison.id)}&step=1`,
-                    ),
-                  )
-                }
-              >
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                Edit Proposal
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => downloadProposalPdfMutation.mutate()}
-                disabled={downloadProposalPdfMutation.isPending}
-              >
-                <Download className="w-4 h-4 mr-2" />
-                Complete Proposal Details
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => downloadAiReportMutation.mutate()}
-                disabled={!hasReport || downloadAiReportMutation.isPending}
-              >
-                <Download className="w-4 h-4 mr-2" />
-                AI report
-              </Button>
-              <Button onClick={() => shareMutation.mutate()} disabled={!proposal?.id || shareMutation.isPending}>
-                <Send className="w-4 h-4 mr-2" />
-                Share
-              </Button>
-            </div>
+          <div className="flex flex-wrap gap-3">
+            <Button
+              variant="outline"
+              onClick={() =>
+                navigate(
+                  createPageUrl(
+                    `DocumentComparisonCreate?draft=${encodeURIComponent(comparison.id)}&step=1`,
+                  ),
+                )
+              }
+            >
+              <ArrowLeft className="w-4 h-4 mr-2" />
+              Edit Proposal
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => downloadProposalPdfMutation.mutate()}
+              disabled={downloadProposalPdfMutation.isPending}
+            >
+              <Download className="w-4 h-4 mr-2" />
+              Complete Proposal Details
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => downloadAiReportMutation.mutate()}
+              disabled={downloadAiReportMutation.isPending}
+            >
+              <Download className="w-4 h-4 mr-2" />
+              AI report
+            </Button>
+            <Button onClick={() => shareMutation.mutate()} disabled={!proposal?.id || shareMutation.isPending}>
+              <Send className="w-4 h-4 mr-2" />
+              Share
+            </Button>
+          </div>
 
-            <Card className="border border-slate-200 shadow-sm">
-              <CardHeader>
-                <CardTitle>Parties</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="rounded-xl border border-slate-200 p-4 bg-slate-50">
-                    <p className="text-xs font-semibold tracking-wide uppercase text-slate-500 mb-2">
-                      Party A (Proposer)
-                    </p>
-                    <p className="font-semibold text-slate-900">
-                      {proposal?.party_a_email || 'Not specified'}
-                    </p>
-                    <Badge variant="outline" className="mt-3">
-                      You
-                    </Badge>
-                  </div>
-                  <div className="rounded-xl border border-slate-200 p-4 bg-slate-50">
-                    <p className="text-xs font-semibold tracking-wide uppercase text-slate-500 mb-2">
-                      Party B (Recipient)
-                    </p>
-                    <p className="font-semibold text-slate-900">
-                      {proposal?.party_b_email || 'Not specified'}
-                    </p>
-                  </div>
+          <Card className="border border-slate-200 shadow-sm">
+            <CardHeader>
+              <CardTitle>Parties</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="rounded-xl border border-slate-200 p-4 bg-slate-50">
+                  <p className="text-xs font-semibold tracking-wide uppercase text-slate-500 mb-2">
+                    Party A (Proposer)
+                  </p>
+                  <p className="font-semibold text-slate-900">{proposal?.party_a_email || 'Not specified'}</p>
+                  <Badge variant="outline" className="mt-3">
+                    You
+                  </Badge>
                 </div>
-              </CardContent>
-            </Card>
+                <div className="rounded-xl border border-slate-200 p-4 bg-slate-50">
+                  <p className="text-xs font-semibold tracking-wide uppercase text-slate-500 mb-2">
+                    Party B (Recipient)
+                  </p>
+                  <p className="font-semibold text-slate-900">{proposal?.party_b_email || 'Not specified'}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
 
-            <Tabs value={activeTab} onValueChange={setActiveTab}>
-              <TabsList className="bg-white border border-slate-200 p-1">
-                <TabsTrigger
-                  value="overview"
-                  className="data-[state=active]:bg-slate-900 data-[state=active]:text-white"
-                >
-                  <FileText className="w-4 h-4 mr-2" />
-                  Overview
-                </TabsTrigger>
-                <TabsTrigger
-                  value="report"
-                  className="data-[state=active]:bg-slate-900 data-[state=active]:text-white"
-                >
-                  <BarChart3 className="w-4 h-4 mr-2" />
-                  AI Report
-                  {hasReport && (
-                    <Badge className="ml-2 bg-green-100 text-green-700 text-xs">Complete</Badge>
-                  )}
-                </TabsTrigger>
-                <TabsTrigger
-                  value="details"
-                  className="data-[state=active]:bg-slate-900 data-[state=active]:text-white"
-                >
-                  <FileText className="w-4 h-4 mr-2" />
-                  Complete Proposal Details
-                </TabsTrigger>
-              </TabsList>
+          <Tabs value={activeTab} onValueChange={setActiveTab}>
+            <TabsList className="bg-white border border-slate-200 p-1">
+              <TabsTrigger
+                value="overview"
+                className="data-[state=active]:bg-slate-900 data-[state=active]:text-white"
+              >
+                <FileText className="w-4 h-4 mr-2" />
+                Overview
+              </TabsTrigger>
+              <TabsTrigger
+                value="report"
+                className="data-[state=active]:bg-slate-900 data-[state=active]:text-white"
+              >
+                <BarChart3 className="w-4 h-4 mr-2" />
+                AI Report
+                {hasReport && <Badge className="ml-2 bg-green-100 text-green-700 text-xs">Complete</Badge>}
+              </TabsTrigger>
+              <TabsTrigger
+                value="details"
+                className="data-[state=active]:bg-slate-900 data-[state=active]:text-white"
+              >
+                <FileText className="w-4 h-4 mr-2" />
+                Complete Proposal Details
+              </TabsTrigger>
+            </TabsList>
 
-              <TabsContent value="overview" className="mt-6 space-y-6">
+            <TabsContent value="overview" className="mt-6">
+              <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-6 items-start">
                 <Card className="border border-slate-200 shadow-sm">
                   <CardHeader>
                     <CardTitle>Overview</CardTitle>
@@ -334,9 +332,47 @@ export default function DocumentComparisonDetail() {
                     </p>
                   </CardContent>
                 </Card>
-              </TabsContent>
 
-              <TabsContent value="report" className="mt-6 space-y-6">
+                <Card className="border border-slate-200 shadow-sm">
+                  <CardHeader>
+                    <CardTitle>Activity Timeline</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="flex items-start gap-3">
+                      <div className="w-9 h-9 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center">
+                        <FileText className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <p className="font-medium text-slate-900">Proposal Created</p>
+                        <p className="text-slate-500">{formatDateTime(comparison.created_date)}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3">
+                      <div className="w-9 h-9 rounded-full bg-slate-100 text-slate-700 flex items-center justify-center">
+                        <Clock className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <p className="font-medium text-slate-900">Last Updated</p>
+                        <p className="text-slate-500">{formatDateTime(comparison.updated_date)}</p>
+                      </div>
+                    </div>
+                    {latestEvaluation && (
+                      <div className="flex items-start gap-3">
+                        <div className="w-9 h-9 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center">
+                          <Sparkles className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <p className="font-medium text-slate-900">Evaluation Complete</p>
+                          <p className="text-slate-500">{formatDateTime(latestEvaluation.created_date)}</p>
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="report" className="mt-6 space-y-6">
                 <Card className="border border-slate-200 shadow-sm">
                   <CardHeader>
                     <CardTitle>Evaluation History ({evaluationHistory.length || (hasReport ? 1 : 0)})</CardTitle>
@@ -430,9 +466,9 @@ export default function DocumentComparisonDetail() {
                     )}
                   </CardContent>
                 </Card>
-              </TabsContent>
+            </TabsContent>
 
-              <TabsContent value="details" className="mt-6">
+            <TabsContent value="details" className="mt-6">
                 <Card className="border border-slate-200 shadow-sm">
                   <CardHeader>
                     <CardTitle>Complete Proposal Details</CardTitle>
@@ -440,13 +476,13 @@ export default function DocumentComparisonDetail() {
                       Read-only document content for both information documents.
                     </p>
                   </CardHeader>
-                  <CardContent className="space-y-5">
-                    <div className="space-y-2">
+                  <CardContent className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div className="space-y-2 min-w-0">
                       <div className="flex items-center gap-2 text-slate-700 font-semibold">
                         <FileText className="w-4 h-4" />
                         {comparison.party_a_label || CONFIDENTIAL_LABEL}
                       </div>
-                      <div className="rounded-xl border border-slate-200 bg-white p-4 max-h-[280px] overflow-auto">
+                      <div className="rounded-xl border border-slate-200 bg-white p-4 min-h-[320px] max-h-[560px] overflow-auto">
                         {renderDocumentReadOnly({
                           text: comparison.doc_a_text || '',
                           html: comparison.doc_a_html || '',
@@ -454,12 +490,12 @@ export default function DocumentComparisonDetail() {
                       </div>
                     </div>
 
-                    <div className="space-y-2">
+                    <div className="space-y-2 min-w-0">
                       <div className="flex items-center gap-2 text-slate-700 font-semibold">
                         <FileText className="w-4 h-4" />
                         {comparison.party_b_label || SHARED_LABEL}
                       </div>
-                      <div className="rounded-xl border border-slate-200 bg-white p-4 max-h-[280px] overflow-auto">
+                      <div className="rounded-xl border border-slate-200 bg-white p-4 min-h-[320px] max-h-[560px] overflow-auto">
                         {renderDocumentReadOnly({
                           text: comparison.doc_b_text || '',
                           html: comparison.doc_b_html || '',
@@ -468,49 +504,10 @@ export default function DocumentComparisonDetail() {
                     </div>
                   </CardContent>
                 </Card>
-              </TabsContent>
-            </Tabs>
-          </div>
-
-          <Card className="border border-slate-200 shadow-sm">
-            <CardHeader>
-              <CardTitle>Activity Timeline</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex items-start gap-3">
-                <div className="w-9 h-9 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center">
-                  <FileText className="w-4 h-4" />
-                </div>
-                <div>
-                  <p className="font-medium text-slate-900">Proposal Created</p>
-                  <p className="text-slate-500">{formatDateTime(comparison.created_date)}</p>
-                </div>
-              </div>
-              <div className="flex items-start gap-3">
-                <div className="w-9 h-9 rounded-full bg-slate-100 text-slate-700 flex items-center justify-center">
-                  <Clock className="w-4 h-4" />
-                </div>
-                <div>
-                  <p className="font-medium text-slate-900">Last Updated</p>
-                  <p className="text-slate-500">{formatDateTime(comparison.updated_date)}</p>
-                </div>
-              </div>
-              {latestEvaluation && (
-                <div className="flex items-start gap-3">
-                  <div className="w-9 h-9 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center">
-                    <Sparkles className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <p className="font-medium text-slate-900">Evaluation Complete</p>
-                    <p className="text-slate-500">{formatDateTime(latestEvaluation.created_date)}</p>
-                  </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+            </TabsContent>
+          </Tabs>
         </div>
       </div>
     </div>
   );
 }
-

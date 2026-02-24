@@ -3,7 +3,14 @@ import { requireUser } from '../../../_lib/auth.js';
 import { getDb, schema } from '../../../_lib/db/client.js';
 import { ApiError } from '../../../_lib/errors.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
-import { asText, getComparisonId, renderPdfBuffer, sendPdf, slugify, toParagraphs } from '../_pdf.js';
+import {
+  asText,
+  getComparisonId,
+  renderProfessionalPdfBuffer,
+  sendPdf,
+  slugify,
+  toParagraphs,
+} from '../_pdf.js';
 
 function asObject(value: unknown) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -67,33 +74,11 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       evaluationResult.score ?? report.similarity_score ?? report.score ?? 0,
     );
 
-    const blocks = [
-      {
-        text: comparison.title || 'Document Comparison',
-        bold: true,
-        fontSize: 20,
-        gapAfter: 8,
-      },
-      {
-        text: `Recommendation: ${recommendation}`,
-        bold: true,
-        gapAfter: 4,
-      },
-      {
-        text: `Confidence: ${confidence}%`,
-        gapAfter: 8,
-      },
-      {
-        text: 'Executive Summary',
-        bold: true,
-        fontSize: 14,
-        gapAfter: 4,
-      },
-      {
-        text: summary,
-        gapAfter: 10,
-      },
-    ];
+    const reportSections = [];
+    reportSections.push({
+      heading: 'Summary',
+      paragraphs: [summary, `Recommendation: ${recommendation}`, `Confidence Score: ${confidence}%`],
+    });
 
     if (sections.length > 0) {
       sections.forEach((section: any, sectionIndex: number) => {
@@ -101,36 +86,32 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
           asText(section?.heading) ||
           asText(section?.title) ||
           asText(section?.key) ||
-          `Section ${sectionIndex + 1}`;
-        blocks.push({
-          text: heading,
-          bold: true,
-          fontSize: 13,
-          gapAfter: 2,
-        });
+          `Finding ${sectionIndex + 1}`;
+        const bullets = (Array.isArray(section?.bullets) ? section.bullets : [])
+          .map((bullet) => asText(bullet))
+          .filter(Boolean);
+        const paragraphs = toParagraphs(section?.summary || section?.text);
 
-        const bullets = Array.isArray(section?.bullets) ? section.bullets : [];
-        if (bullets.length > 0) {
-          bullets.forEach((bullet: unknown, bulletIndex: number) => {
-            blocks.push({
-              text: `- ${asText(bullet)}`,
-              gapAfter: bulletIndex === bullets.length - 1 ? 6 : 1,
-            });
-          });
-        } else {
-          const sectionParagraphs = toParagraphs(section?.summary || section?.text);
-          sectionParagraphs.forEach((paragraph, paragraphIndex) => {
-            blocks.push({
-              text: paragraph,
-              gapAfter: paragraphIndex === sectionParagraphs.length - 1 ? 6 : 1,
-            });
-          });
-        }
+        reportSections.push({
+          heading,
+          bullets,
+          paragraphs,
+        });
+      });
+    } else {
+      reportSections.push({
+        heading: 'Findings',
+        paragraphs: ['Report sections are not available yet.'],
       });
     }
 
     const filename = `${slugify(comparison.title)}-ai-report.pdf`;
-    const pdfBuffer = await renderPdfBuffer(blocks);
+    const pdfBuffer = await renderProfessionalPdfBuffer({
+      title: comparison.title || 'Document Comparison',
+      subtitle: 'AI Report',
+      comparisonId: comparison.id,
+      sections: reportSections,
+    });
     sendPdf(res, filename, pdfBuffer);
   });
 }
