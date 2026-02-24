@@ -616,6 +616,214 @@ if (!hasDatabaseUrl()) {
     }
   });
 
+  test('document comparison coach prefers request content over empty DB content', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = authCookie('doc_coach_request_owner', 'doc-coach-request-owner@example.com');
+    const integrityPayload = {
+      version: 'coach-v1',
+      summary: {
+        overall: 'Coaching summary',
+        top_priorities: ['Validate document readiness'],
+      },
+      suggestions: [
+        {
+          id: 'integrity_suggestion',
+          scope: 'confidential',
+          severity: 'critical',
+          title: 'Verify Document Integrity',
+          rationale: 'The documents are currently empty.',
+          proposed_change: {
+            target: 'doc_a',
+            op: 'replace_section',
+            text: 'Ensure the correct document is loaded for comparison.',
+          },
+          evidence: {
+            shared_quotes: [],
+            confidential_quotes: [],
+          },
+        },
+      ],
+      concerns: [],
+      questions: [],
+      negotiation_moves: [],
+    };
+
+    const createReq = createMockReq({
+      method: 'POST',
+      url: '/api/document-comparisons',
+      headers: { cookie: ownerCookie },
+      body: {
+        title: 'Coach Request Content',
+        doc_a_text: '',
+        doc_b_text: '',
+        createProposal: true,
+      },
+    });
+    const createRes = createMockRes();
+    await documentComparisonsHandler(createReq, createRes);
+    assert.equal(createRes.statusCode, 201);
+    const comparisonId = createRes.jsonBody().comparison.id;
+
+    const originalMockPayload = process.env.VERTEX_COACH_MOCK_RESPONSE;
+    process.env.VERTEX_COACH_MOCK_RESPONSE = JSON.stringify(integrityPayload);
+    try {
+      const coachReq = createMockReq({
+        method: 'POST',
+        url: `/api/document-comparisons/${comparisonId}/coach`,
+        headers: { cookie: ownerCookie },
+        query: { id: comparisonId },
+        body: {
+          mode: 'full',
+          intent: 'negotiate',
+          doc_a_text: 'Non-empty confidential document context with project constraints.',
+          doc_b_text: 'Non-empty shared document context with obligations and milestones.',
+        },
+      });
+      const coachRes = createMockRes();
+      await documentComparisonsCoachHandler(coachReq, coachRes, comparisonId);
+      assert.equal(coachRes.statusCode, 200);
+      assert.equal(
+        coachRes
+          .jsonBody()
+          .coach.suggestions.some((suggestion) =>
+            String(suggestion?.title || '').toLowerCase().includes('verify document integrity'),
+          ),
+        false,
+      );
+      assert.equal(
+        coachRes
+          .jsonBody()
+          .coach.concerns.some((concern) =>
+            String(concern?.title || '').toLowerCase().includes('withheld generic empty-document suggestion'),
+          ),
+        true,
+      );
+    } finally {
+      if (originalMockPayload === undefined) {
+        delete process.env.VERTEX_COACH_MOCK_RESPONSE;
+      } else {
+        process.env.VERTEX_COACH_MOCK_RESPONSE = originalMockPayload;
+      }
+    }
+  });
+
+  test('document comparison coach cache key varies by request content', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = authCookie('doc_coach_hash_owner', 'doc-coach-hash-owner@example.com');
+    const stablePayload = {
+      version: 'coach-v1',
+      summary: {
+        overall: 'Hash cache summary',
+        top_priorities: ['Keep cache deterministic'],
+      },
+      suggestions: [
+        {
+          id: 'shared_append',
+          scope: 'shared',
+          severity: 'info',
+          title: 'Shared wording suggestion',
+          rationale: 'Improve readability.',
+          proposed_change: {
+            target: 'doc_b',
+            op: 'append',
+            text: 'Clarify acceptance criteria and delivery dates.',
+          },
+          evidence: {
+            shared_quotes: ['Shared baseline obligation.'],
+            confidential_quotes: [],
+          },
+        },
+      ],
+      concerns: [],
+      questions: [],
+      negotiation_moves: [],
+    };
+
+    const createReq = createMockReq({
+      method: 'POST',
+      url: '/api/document-comparisons',
+      headers: { cookie: ownerCookie },
+      body: {
+        title: 'Coach Cache Hash',
+        doc_a_text: '',
+        doc_b_text: '',
+      },
+    });
+    const createRes = createMockRes();
+    await documentComparisonsHandler(createReq, createRes);
+    assert.equal(createRes.statusCode, 201);
+    const comparisonId = createRes.jsonBody().comparison.id;
+
+    const originalMockPayload = process.env.VERTEX_COACH_MOCK_RESPONSE;
+    process.env.VERTEX_COACH_MOCK_RESPONSE = JSON.stringify(stablePayload);
+    try {
+      const firstReq = createMockReq({
+        method: 'POST',
+        url: `/api/document-comparisons/${comparisonId}/coach`,
+        headers: { cookie: ownerCookie },
+        query: { id: comparisonId },
+        body: {
+          mode: 'full',
+          intent: 'negotiate',
+          doc_a_text: 'Confidential version one.',
+          doc_b_text: 'Shared baseline obligation.',
+        },
+      });
+      const firstRes = createMockRes();
+      await documentComparisonsCoachHandler(firstReq, firstRes, comparisonId);
+      assert.equal(firstRes.statusCode, 200);
+      assert.equal(firstRes.jsonBody().cached, false);
+      const firstHash = firstRes.jsonBody().cache_hash;
+
+      const secondReq = createMockReq({
+        method: 'POST',
+        url: `/api/document-comparisons/${comparisonId}/coach`,
+        headers: { cookie: ownerCookie },
+        query: { id: comparisonId },
+        body: {
+          mode: 'full',
+          intent: 'negotiate',
+          doc_a_text: 'Confidential version two changed.',
+          doc_b_text: 'Shared baseline obligation.',
+        },
+      });
+      const secondRes = createMockRes();
+      await documentComparisonsCoachHandler(secondReq, secondRes, comparisonId);
+      assert.equal(secondRes.statusCode, 200);
+      assert.equal(secondRes.jsonBody().cached, false);
+      const secondHash = secondRes.jsonBody().cache_hash;
+      assert.notEqual(secondHash, firstHash);
+
+      const thirdReq = createMockReq({
+        method: 'POST',
+        url: `/api/document-comparisons/${comparisonId}/coach`,
+        headers: { cookie: ownerCookie },
+        query: { id: comparisonId },
+        body: {
+          mode: 'full',
+          intent: 'negotiate',
+          doc_a_text: 'Confidential version two changed.',
+          doc_b_text: 'Shared baseline obligation.',
+        },
+      });
+      const thirdRes = createMockRes();
+      await documentComparisonsCoachHandler(thirdReq, thirdRes, comparisonId);
+      assert.equal(thirdRes.statusCode, 200);
+      assert.equal(thirdRes.jsonBody().cached, true);
+      assert.equal(thirdRes.jsonBody().cache_hash, secondHash);
+    } finally {
+      if (originalMockPayload === undefined) {
+        delete process.env.VERTEX_COACH_MOCK_RESPONSE;
+      } else {
+        process.env.VERTEX_COACH_MOCK_RESPONSE = originalMockPayload;
+      }
+    }
+  });
+
   test('document comparison workflow persists inputs and stores evaluation output', async () => {
     await ensureMigrated();
     await resetTables();

@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { applyCoachLeakGuard, validateCoachResultV1 } from '../../server/_lib/vertex-coach.ts';
+import {
+  applyCoachLeakGuard,
+  applyCoachRelevanceGuard,
+  validateCoachResultV1,
+} from '../../server/_lib/vertex-coach.ts';
 
 test('validateCoachResultV1 drops malformed suggestions while keeping valid entries', () => {
   const validated = validateCoachResultV1({
@@ -114,4 +118,91 @@ test('applyCoachLeakGuard removes shared suggestions that leak confidential phra
     ),
     true,
   );
+});
+
+test('applyCoachRelevanceGuard removes empty-document integrity suggestion when docs are non-empty', () => {
+  const coach = validateCoachResultV1({
+    version: 'coach-v1',
+    summary: {
+      overall: 'Summary',
+      top_priorities: ['Prioritize analysis'],
+    },
+    suggestions: [
+      {
+        id: 'integrity_warning',
+        scope: 'confidential',
+        severity: 'critical',
+        title: 'Verify Document Integrity',
+        rationale: 'The documents are currently empty.',
+        proposed_change: {
+          target: 'doc_a',
+          op: 'replace_section',
+          text: 'Ensure the correct document is loaded for comparison.',
+        },
+        evidence: {
+          shared_quotes: [],
+          confidential_quotes: [],
+        },
+      },
+    ],
+    concerns: [],
+    questions: [],
+    negotiation_moves: [],
+  });
+
+  const guarded = applyCoachRelevanceGuard({
+    coachResult: coach,
+    confidentialText: 'Project Orion scope and strategy constraints are documented here.',
+    sharedText: 'Shared obligations include deliverables, acceptance criteria, and delivery milestones.',
+  });
+
+  assert.equal(guarded.coachResult.suggestions.length, 0);
+  assert.equal(guarded.withheldCount, 1);
+  assert.equal(
+    guarded.coachResult.concerns.some((concern) =>
+      String(concern.title || '').toLowerCase().includes('withheld generic empty-document suggestion'),
+    ),
+    true,
+  );
+});
+
+test('applyCoachRelevanceGuard allows empty-document integrity suggestion when both docs are empty', () => {
+  const coach = validateCoachResultV1({
+    version: 'coach-v1',
+    summary: {
+      overall: 'Summary',
+      top_priorities: ['Verify data'],
+    },
+    suggestions: [
+      {
+        id: 'integrity_warning_empty',
+        scope: 'confidential',
+        severity: 'critical',
+        title: 'Verify Document Integrity',
+        rationale: 'The documents are currently empty.',
+        proposed_change: {
+          target: 'doc_a',
+          op: 'append',
+          text: 'Ensure the correct document is loaded for comparison.',
+        },
+        evidence: {
+          shared_quotes: [],
+          confidential_quotes: [],
+        },
+      },
+    ],
+    concerns: [],
+    questions: [],
+    negotiation_moves: [],
+  });
+
+  const guarded = applyCoachRelevanceGuard({
+    coachResult: coach,
+    confidentialText: '',
+    sharedText: '',
+  });
+
+  assert.equal(guarded.coachResult.suggestions.length, 1);
+  assert.equal(guarded.coachResult.suggestions[0].id, 'integrity_warning_empty');
+  assert.equal(guarded.withheldCount, 0);
 });

@@ -2,13 +2,18 @@ import { and, desc, eq } from 'drizzle-orm';
 import { ok } from '../../../_lib/api-response.js';
 import { requireUser } from '../../../_lib/auth.js';
 import { getDb, schema } from '../../../_lib/db/client.js';
-import { sanitizeEditorText } from '../../../_lib/document-editor-sanitization.js';
+import {
+  htmlToEditorText,
+  sanitizeEditorHtml,
+  sanitizeEditorText,
+} from '../../../_lib/document-editor-sanitization.js';
 import { ApiError } from '../../../_lib/errors.js';
 import { readJsonBody } from '../../../_lib/http.js';
 import { newId } from '../../../_lib/ids.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 import {
   applyCoachLeakGuard,
+  applyCoachRelevanceGuard,
   buildCoachCacheHash,
   buildSelectionTextHash,
   COACH_PROMPT_VERSION,
@@ -20,6 +25,7 @@ import { assertDocumentComparisonWithinLimits } from '../_limits.js';
 const ALLOWED_MODES = new Set(['full', 'shared_only', 'selection']);
 const ALLOWED_INTENTS = new Set(['improve', 'negotiate', 'risks', 'rewrite']);
 const ALLOWED_SELECTION_TARGETS = new Set(['confidential', 'shared']);
+const COACH_DEBUG_ENABLED = String(process.env.DEBUG_DOCUMENT_COMPARISON_COACH || '').trim() === '1';
 
 function asText(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
@@ -70,6 +76,53 @@ function toSafeCoachResult(value: unknown) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
 
+function logCoachDebug(event: string, details: Record<string, unknown>) {
+  if (!COACH_DEBUG_ENABLED) {
+    return;
+  }
+
+  console.info(
+    JSON.stringify({
+      level: 'debug',
+      route: '/api/document-comparisons/[id]/coach',
+      event,
+      ...details,
+    }),
+  );
+}
+
+function resolveCoachDocumentSide(params: {
+  requestText: unknown;
+  requestHtml: unknown;
+  dbText: unknown;
+  dbHtml: unknown;
+  dbLegacyText: unknown;
+}) {
+  const hasRequestText = params.requestText !== undefined;
+  const hasRequestHtml = params.requestHtml !== undefined;
+  const requestText = asText(params.requestText);
+  const requestHtml = asText(params.requestHtml);
+  const dbText = asText(params.dbText);
+  const dbHtml = asText(params.dbHtml);
+  const dbLegacyText = asText(params.dbLegacyText);
+  const source =
+    hasRequestText || hasRequestHtml
+      ? 'request'
+      : dbText.length > 0 || dbLegacyText.length > 0 || dbHtml.length > 0
+        ? 'db'
+        : 'empty';
+  const rawText = source === 'request' ? requestText : dbText || dbLegacyText;
+  const rawHtml = source === 'request' ? requestHtml : dbHtml;
+  const html = sanitizeEditorHtml(rawHtml || rawText || '');
+  const text = sanitizeEditorText(rawText || htmlToEditorText(html));
+
+  return {
+    source,
+    text,
+    html,
+  };
+}
+
 export default async function handler(req: any, res: any, comparisonIdParam?: string) {
   await withApiRoute(req, res, '/api/document-comparisons/[id]/coach', async (context) => {
     ensureMethod(req, ['POST']);
@@ -109,8 +162,39 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
 
     ensureComparisonFound(existing);
 
-    const docAText = sanitizeEditorText(existing.docAText || '');
-    const docBText = sanitizeEditorText(existing.docBText || '');
+    const existingInputs =
+      existing.inputs && typeof existing.inputs === 'object' && !Array.isArray(existing.inputs)
+        ? existing.inputs
+        : {};
+    const resolvedDocA = resolveCoachDocumentSide({
+      requestText: body.docAText ?? body.doc_a_text,
+      requestHtml: body.docAHtml ?? body.doc_a_html,
+      dbText: existing.docAText,
+      dbHtml: existingInputs.doc_a_html,
+      dbLegacyText: existingInputs.confidential_doc_content,
+    });
+    const resolvedDocB = resolveCoachDocumentSide({
+      requestText: body.docBText ?? body.doc_b_text,
+      requestHtml: body.docBHtml ?? body.doc_b_html,
+      dbText: existing.docBText,
+      dbHtml: existingInputs.doc_b_html,
+      dbLegacyText: existingInputs.shared_doc_content,
+    });
+    const docAText = resolvedDocA.text;
+    const docBText = resolvedDocB.text;
+    const docAHtml = resolvedDocA.html;
+    const docBHtml = resolvedDocB.html;
+
+    logCoachDebug('content_resolved', {
+      comparison_id: comparisonId,
+      doc_a_source: resolvedDocA.source,
+      doc_b_source: resolvedDocB.source,
+      doc_a_text_length: docAText.length,
+      doc_b_text_length: docBText.length,
+      doc_a_html_length: docAHtml.length,
+      doc_b_html_length: docBHtml.length,
+    });
+
     assertDocumentComparisonWithinLimits({
       docAText,
       docBText,
@@ -126,6 +210,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       selectionTarget: selectionTarget || undefined,
       selectionText: selectionText || undefined,
     });
+    const cacheHashPrefix = cacheHash.slice(0, 12);
 
     const [cached] = await db
       .select()
@@ -138,6 +223,12 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       )
       .orderBy(desc(schema.documentComparisonCoachCache.createdAt))
       .limit(1);
+
+    logCoachDebug('cache_lookup', {
+      comparison_id: comparisonId,
+      cache_hit: Boolean(cached),
+      cache_hash_prefix: cacheHashPrefix,
+    });
 
     if (cached) {
       ok(res, 200, {
@@ -162,11 +253,17 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       selectionTarget: selectionTarget || undefined,
       selectionText: selectionText || undefined,
     });
-    const guarded = applyCoachLeakGuard({
+    const relevanceGuarded = applyCoachRelevanceGuard({
       coachResult: generated.result,
       confidentialText: docAText,
       sharedText: docBText,
     });
+    const leakGuarded = applyCoachLeakGuard({
+      coachResult: relevanceGuarded.coachResult,
+      confidentialText: docAText,
+      sharedText: docBText,
+    });
+    const totalWithheldCount = relevanceGuarded.withheldCount + leakGuarded.withheldCount;
 
     const now = new Date();
     const [saved] = await db
@@ -183,7 +280,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
         promptVersion: COACH_PROMPT_VERSION,
         provider: generated.provider,
         model: generated.model,
-        result: guarded.coachResult,
+        result: leakGuarded.coachResult,
         createdAt: now,
         updatedAt: now,
       })
@@ -197,7 +294,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
           promptVersion: COACH_PROMPT_VERSION,
           provider: generated.provider,
           model: generated.model,
-          result: guarded.coachResult,
+          result: leakGuarded.coachResult,
           updatedAt: now,
         },
       })
@@ -210,9 +307,9 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       provider: generated.provider,
       model: generated.model,
       prompt_version: COACH_PROMPT_VERSION,
-      coach: toSafeCoachResult(saved?.result || guarded.coachResult),
+      coach: toSafeCoachResult(saved?.result || leakGuarded.coachResult),
       created_at: saved?.createdAt || now,
-      withheld_count: guarded.withheldCount,
+      withheld_count: totalWithheldCount,
     });
   });
 }

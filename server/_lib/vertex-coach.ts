@@ -89,6 +89,10 @@ export type CoachResultV1 = {
   negotiation_moves: CoachNegotiationMove[];
 };
 
+const EMPTY_DOC_THRESHOLD_CHARS = 50;
+const SUSPICIOUS_REPLACE_SECTION_MIN_CHARS = 30;
+const SUSPICIOUS_REPLACE_SECTION_LARGE_SECTION_CHARS = 220;
+
 type GenerateCoachParams = {
   title: string;
   docAText: string;
@@ -433,6 +437,114 @@ function normalizeSpaces(value: string) {
     .toLowerCase()
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function isSharedTargetSuggestion(suggestion: CoachSuggestion) {
+  return suggestion?.scope === 'shared' || suggestion?.proposed_change?.target === 'doc_b';
+}
+
+function stripSpaces(value: unknown) {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isDocumentIntegritySuggestion(suggestion: CoachSuggestion) {
+  const text = stripSpaces(
+    `${suggestion?.title || ''} ${suggestion?.rationale || ''} ${suggestion?.proposed_change?.text || ''}`,
+  ).toLowerCase();
+
+  if (!text) {
+    return false;
+  }
+
+  const patterns = [
+    /verify document integrity/,
+    /documents?\s+(are|is)\s+(currently\s+)?empty/,
+    /ensure the correct document is loaded/,
+    /confirm that the correct documents? are loaded/,
+    /check document integrity/,
+  ];
+
+  return patterns.some((pattern) => pattern.test(text));
+}
+
+function estimateSectionLengthFromHeading(text: string, headingHint: string) {
+  const normalizedText = String(text || '');
+  const hint = stripSpaces(headingHint);
+  if (!normalizedText || !hint) {
+    return normalizedText.length;
+  }
+
+  const escapedHint = hint.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(`${escapedHint}[\\s\\S]*?(?=\\n\\n[^\\n]+:|$)`, 'i');
+  const match = normalizedText.match(pattern);
+  if (match?.[0]) {
+    return match[0].length;
+  }
+
+  return normalizedText.length;
+}
+
+export function applyCoachRelevanceGuard(params: {
+  coachResult: CoachResultV1;
+  confidentialText: string;
+  sharedText: string;
+}) {
+  const confidentialText = String(params.confidentialText || '');
+  const sharedText = String(params.sharedText || '');
+  const docsEffectivelyEmpty =
+    confidentialText.trim().length < EMPTY_DOC_THRESHOLD_CHARS &&
+    sharedText.trim().length < EMPTY_DOC_THRESHOLD_CHARS;
+  const safeSuggestions: CoachSuggestion[] = [];
+  const concerns = [...(Array.isArray(params.coachResult.concerns) ? params.coachResult.concerns : [])];
+  let withheldCount = 0;
+
+  for (const suggestion of params.coachResult.suggestions || []) {
+    if (!docsEffectivelyEmpty && isDocumentIntegritySuggestion(suggestion)) {
+      withheldCount += 1;
+      concerns.push({
+        id: `withheld_relevance_${suggestion.id || withheldCount}`,
+        severity: 'warning',
+        title: 'Withheld generic empty-document suggestion',
+        details: 'A suggestion claiming documents are empty was removed because current documents contain content.',
+      });
+      continue;
+    }
+
+    if (
+      isSharedTargetSuggestion(suggestion) &&
+      suggestion?.proposed_change?.op === 'replace_section' &&
+      stripSpaces(suggestion?.proposed_change?.text).length < SUSPICIOUS_REPLACE_SECTION_MIN_CHARS
+    ) {
+      const candidateSectionLength = estimateSectionLengthFromHeading(
+        sharedText,
+        String(suggestion?.proposed_change?.heading_hint || ''),
+      );
+      if (candidateSectionLength >= SUSPICIOUS_REPLACE_SECTION_LARGE_SECTION_CHARS) {
+        withheldCount += 1;
+        concerns.push({
+          id: `withheld_short_replace_${suggestion.id || withheldCount}`,
+          severity: 'warning',
+          title: 'Withheld suspicious shared replace-section suggestion',
+          details:
+            'A shared-side replace-section suggestion was removed because the proposed replacement was too short for a large section.',
+        });
+        continue;
+      }
+    }
+
+    safeSuggestions.push(suggestion);
+  }
+
+  return {
+    coachResult: {
+      ...params.coachResult,
+      suggestions: safeSuggestions,
+      concerns,
+    } as CoachResultV1,
+    withheldCount,
+  };
 }
 
 type LeakProfile = {

@@ -911,11 +911,19 @@ export default function DocumentComparisonCreate() {
     setCoachError('');
 
     try {
+      const sanitizedDocAHtml = sanitizeEditorHtml(docAHtml || textToHtml(docAText));
+      const sanitizedDocBHtml = sanitizeEditorHtml(docBHtml || textToHtml(docBText));
+      const normalizedDocAText = asText(docAText) || htmlToText(sanitizedDocAHtml);
+      const normalizedDocBText = asText(docBText) || htmlToText(sanitizedDocBHtml);
       const response = await documentComparisonsClient.coach(resolvedId, {
         mode,
         intent,
         selectionText: selectionText || undefined,
         selectionTarget: selectionTarget || undefined,
+        doc_a_text: normalizedDocAText,
+        doc_b_text: normalizedDocBText,
+        doc_a_html: sanitizedDocAHtml,
+        doc_b_html: sanitizedDocBHtml,
       });
       const coach = response?.coach || null;
       setCoachResult(coach);
