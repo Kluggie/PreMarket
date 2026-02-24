@@ -10,9 +10,16 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Switch } from '@/components/ui/switch';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Progress } from '@/components/ui/progress';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import DocumentRichEditor from '@/components/document-comparison/DocumentRichEditor';
 import DocumentComparisonEditorErrorBoundary from '@/components/document-comparison/DocumentComparisonEditorErrorBoundary';
 import { sanitizeEditorHtml } from '@/components/document-comparison/editorSanitization';
@@ -38,6 +45,7 @@ const COACH_TRIGGER_OPTIONS = [
   { id: 'negotiate_full', label: 'Negotiation suggestions', mode: 'full', intent: 'negotiate' },
   { id: 'risks_full', label: 'Find risks/concerns', mode: 'full', intent: 'risks' },
 ];
+const DIFF_CONTEXT_CHARS = 220;
 
 function asText(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -221,6 +229,78 @@ function applySuggestedTextChange({ currentText, op, nextText, headingHint, sele
   return base.trim() ? `${base.trim()}\n\n${incoming}` : incoming;
 }
 
+function buildDiffPreview(beforeText, afterText) {
+  const before = String(beforeText || '');
+  const after = String(afterText || '');
+  if (before === after) {
+    const snippet = before.length > 0 ? before.slice(0, DIFF_CONTEXT_CHARS * 2) : '(No content)';
+    return {
+      beforeHtml: escapeHtml(snippet),
+      afterHtml: escapeHtml(snippet),
+    };
+  }
+
+  let prefixLength = 0;
+  const maxPrefix = Math.min(before.length, after.length);
+  while (prefixLength < maxPrefix && before[prefixLength] === after[prefixLength]) {
+    prefixLength += 1;
+  }
+
+  let beforeSuffixStart = before.length;
+  let afterSuffixStart = after.length;
+  while (
+    beforeSuffixStart > prefixLength &&
+    afterSuffixStart > prefixLength &&
+    before[beforeSuffixStart - 1] === after[afterSuffixStart - 1]
+  ) {
+    beforeSuffixStart -= 1;
+    afterSuffixStart -= 1;
+  }
+
+  const sliceStart = Math.max(0, prefixLength - DIFF_CONTEXT_CHARS);
+  const beforeSliceEnd = Math.min(before.length, beforeSuffixStart + DIFF_CONTEXT_CHARS);
+  const afterSliceEnd = Math.min(after.length, afterSuffixStart + DIFF_CONTEXT_CHARS);
+  const leadingEllipsis = sliceStart > 0 ? '…' : '';
+  const trailingEllipsis =
+    beforeSliceEnd < before.length || afterSliceEnd < after.length ? '…' : '';
+
+  const prefixContext = before.slice(sliceStart, prefixLength);
+  const removedText = before.slice(prefixLength, beforeSuffixStart);
+  const addedText = after.slice(prefixLength, afterSuffixStart);
+  const suffixContext = before.slice(beforeSuffixStart, beforeSliceEnd);
+
+  return {
+    beforeHtml:
+      `${leadingEllipsis}${escapeHtml(prefixContext)}` +
+      `${removedText ? `<span class="bg-rose-100 text-rose-800 line-through rounded-sm px-0.5">${escapeHtml(removedText)}</span>` : ''}` +
+      `${escapeHtml(suffixContext)}${trailingEllipsis}`,
+    afterHtml:
+      `${leadingEllipsis}${escapeHtml(prefixContext)}` +
+      `${addedText ? `<span class="bg-emerald-100 text-emerald-800 rounded-sm px-0.5">${escapeHtml(addedText)}</span>` : ''}` +
+      `${escapeHtml(suffixContext)}${trailingEllipsis}`,
+  };
+}
+
+function getSuggestionChangeSummary(op, headingHint) {
+  if (op === 'append') {
+    return 'This will append text at the end of the target document.';
+  }
+  if (op === 'replace_selection') {
+    return 'This will replace the current selected text if found, otherwise append the proposal.';
+  }
+  if (op === 'insert_after_heading') {
+    return headingHint
+      ? `This will insert text after heading "${headingHint}".`
+      : 'This will insert text after a heading when available, otherwise append.';
+  }
+  if (op === 'replace_section') {
+    return headingHint
+      ? `This will replace the section matching "${headingHint}" when found.`
+      : 'This will replace a section when detected, otherwise append.';
+  }
+  return 'This will apply the proposed text change to the target document.';
+}
+
 function useRouteState() {
   const location = useLocation();
   return useMemo(() => {
@@ -237,6 +317,7 @@ function useRouteState() {
 
 export default function DocumentComparisonCreate() {
   const navigate = useNavigate();
+  const location = useLocation();
   const routeState = useRouteState();
   const queryClient = useQueryClient();
 
@@ -266,7 +347,6 @@ export default function DocumentComparisonCreate() {
   const [uiError, setUiError] = useState('');
   const [fullscreenSide, setFullscreenSide] = useState(null);
   const [lastSavedHash, setLastSavedHash] = useState('');
-  const [syncScrolling, setSyncScrolling] = useState(false);
   const [coachResult, setCoachResult] = useState(null);
   const [coachLoading, setCoachLoading] = useState(false);
   const [coachError, setCoachError] = useState('');
@@ -276,14 +356,13 @@ export default function DocumentComparisonCreate() {
   const [dismissedSuggestionIds, setDismissedSuggestionIds] = useState([]);
   const [expandedSuggestionIds, setExpandedSuggestionIds] = useState([]);
   const [selectionContext, setSelectionContext] = useState({ side: 'b', text: '' });
-  const [focusEditorRequest, setFocusEditorRequest] = useState({ side: null, id: 0 });
+  const [focusEditorRequest, setFocusEditorRequest] = useState({ side: null, id: 0, jumpText: '' });
   const [lastCoachAutoKey, setLastCoachAutoKey] = useState('');
+  const [pendingReviewSuggestion, setPendingReviewSuggestion] = useState(null);
+  const [isApplyingReviewSuggestion, setIsApplyingReviewSuggestion] = useState(false);
 
   const docAInputFileRef = useRef(null);
   const docBInputFileRef = useRef(null);
-  const docAEditorScrollRef = useRef(null);
-  const docBEditorScrollRef = useRef(null);
-  const syncScrollLockRef = useRef(false);
 
   const proposalLookup = useQuery({
     queryKey: ['document-comparison-proposal-lookup', routeState.proposalId],
@@ -381,6 +460,8 @@ export default function DocumentComparisonCreate() {
     setDismissedSuggestionIds([]);
     setExpandedSuggestionIds([]);
     setLastCoachAutoKey('');
+    setPendingReviewSuggestion(null);
+    setIsApplyingReviewSuggestion(false);
   }, [comparisonId]);
 
   const currentStateHash = useMemo(
@@ -456,27 +537,57 @@ export default function DocumentComparisonCreate() {
         throw new Error('Failed to save draft');
       }
 
-      setComparisonId(comparison.id);
-      if (comparison.proposal_id && !linkedProposalId) {
-        setLinkedProposalId(comparison.proposal_id);
-      }
+      const persistedStep = clampStep(comparison.draft_step || savedStep);
+      const persistedComparisonId = comparison.id;
+      const persistedProposalId =
+        comparison.proposal_id || linkedProposalId || routeState.proposalId || '';
+      const persistedTitle = asText(comparison.title) || payload.title;
+      const persistedDocAText = String(comparison.doc_a_text || normalizedDocAText || '');
+      const persistedDocBText = String(comparison.doc_b_text || normalizedDocBText || '');
+      const persistedDocAHtml =
+        asText(comparison.doc_a_html) || sanitizedDocAHtml || textToHtml(persistedDocAText);
+      const persistedDocBHtml =
+        asText(comparison.doc_b_html) || sanitizedDocBHtml || textToHtml(persistedDocBText);
+      const persistedDocAJson = parseDocJson(comparison.doc_a_json);
+      const persistedDocBJson = parseDocJson(comparison.doc_b_json);
+      const persistedDocASource = comparison.doc_a_source || docASource || 'typed';
+      const persistedDocBSource = comparison.doc_b_source || docBSource || 'typed';
+      const persistedDocAFiles = Array.isArray(comparison.doc_a_files) ? comparison.doc_a_files : docAFiles;
+      const persistedDocBFiles = Array.isArray(comparison.doc_b_files) ? comparison.doc_b_files : docBFiles;
+
+      setComparisonId(persistedComparisonId);
+      setLinkedProposalId(persistedProposalId);
+      setStep(persistedStep);
+      setTitle(persistedTitle);
+      setDocAText(persistedDocAText);
+      setDocBText(persistedDocBText);
+      setDocAHtml(persistedDocAHtml);
+      setDocBHtml(persistedDocBHtml);
+      setDocAJson(persistedDocAJson);
+      setDocBJson(persistedDocBJson);
+      setDocASource(persistedDocASource);
+      setDocBSource(persistedDocBSource);
+      setDocAFiles(persistedDocAFiles);
+      setDocBFiles(persistedDocBFiles);
+      setDocAPreviewSnippet(previewSnippet(persistedDocAText));
+      setDocBPreviewSnippet(previewSnippet(persistedDocBText));
 
       setLastSavedHash(
         buildDraftStateHash({
-          comparisonId: comparison.id,
-          linkedProposalId: comparison.proposal_id || linkedProposalId || routeState.proposalId || '',
-          step: savedStep,
-          title,
-          docAText: normalizedDocAText,
-          docBText: normalizedDocBText,
-          docAHtml: sanitizedDocAHtml,
-          docBHtml: sanitizedDocBHtml,
-          docAJson,
-          docBJson,
-          docASource,
-          docBSource,
-          docAFiles,
-          docBFiles,
+          comparisonId: persistedComparisonId,
+          linkedProposalId: persistedProposalId,
+          step: persistedStep,
+          title: persistedTitle,
+          docAText: persistedDocAText,
+          docBText: persistedDocBText,
+          docAHtml: persistedDocAHtml,
+          docBHtml: persistedDocBHtml,
+          docAJson: persistedDocAJson,
+          docBJson: persistedDocBJson,
+          docASource: persistedDocASource,
+          docBSource: persistedDocBSource,
+          docAFiles: persistedDocAFiles,
+          docBFiles: persistedDocBFiles,
         }),
       );
       if (!silent) {
@@ -484,7 +595,10 @@ export default function DocumentComparisonCreate() {
       }
 
       queryClient.invalidateQueries(['proposals']);
-      return comparison.id;
+      queryClient.invalidateQueries({
+        queryKey: ['document-comparison-draft', persistedComparisonId, routeState.token],
+      });
+      return persistedComparisonId;
     },
     onError: (error, variables) => {
       if (variables?.nonBlocking) {
@@ -550,6 +664,69 @@ export default function DocumentComparisonCreate() {
     lastSavedHash,
     proposalLookup.isLoading,
     resolvedDraftId,
+  ]);
+
+  useEffect(() => {
+    const draftParam = comparisonId || resolvedDraftId || '';
+    const proposalParam = linkedProposalId || routeState.proposalId || '';
+    if (!draftParam && !proposalParam) {
+      return;
+    }
+
+    const nextStep = String(clampStep(step || 1));
+    const params = new URLSearchParams(location.search || '');
+    let changed = false;
+
+    if (draftParam) {
+      if (params.get('draft') !== draftParam) {
+        params.set('draft', draftParam);
+        changed = true;
+      }
+    } else if (params.has('draft')) {
+      params.delete('draft');
+      changed = true;
+    }
+
+    if (proposalParam) {
+      if (params.get('proposalId') !== proposalParam) {
+        params.set('proposalId', proposalParam);
+        changed = true;
+      }
+    } else if (params.has('proposalId')) {
+      params.delete('proposalId');
+      changed = true;
+    }
+
+    if (routeState.token) {
+      if (params.get('token') !== routeState.token) {
+        params.set('token', routeState.token);
+        changed = true;
+      }
+    }
+
+    if (params.get('step') !== nextStep) {
+      params.set('step', nextStep);
+      changed = true;
+    }
+
+    if (!changed) {
+      return;
+    }
+
+    navigate(
+      `${location.pathname}${params.toString() ? `?${params.toString()}` : ''}`,
+      { replace: true },
+    );
+  }, [
+    comparisonId,
+    linkedProposalId,
+    location.pathname,
+    location.search,
+    navigate,
+    resolvedDraftId,
+    routeState.proposalId,
+    routeState.token,
+    step,
   ]);
 
   const progress = (step / TOTAL_STEPS) * 100;
@@ -768,7 +945,7 @@ export default function DocumentComparisonCreate() {
     }
   };
 
-  const applyCoachSuggestion = (suggestion) => {
+  const openCoachSuggestionReview = (suggestion) => {
     const target = suggestion?.proposed_change?.target === 'doc_a' ? 'a' : 'b';
     const op = String(suggestion?.proposed_change?.op || 'append');
     const nextText = String(suggestion?.proposed_change?.text || '');
@@ -783,7 +960,49 @@ export default function DocumentComparisonCreate() {
       headingHint,
       selectedText,
     });
+    const isShared = suggestion?.scope === 'shared' || suggestion?.proposed_change?.target === 'doc_b';
+    const diffPreview = buildDiffPreview(currentText, updatedText);
+    const jumpText = String(nextText || selectedText || headingHint || '').trim();
+
+    setPendingReviewSuggestion({
+      suggestion,
+      target,
+      op,
+      nextText,
+      selectedText,
+      headingHint,
+      currentText,
+      updatedText,
+      isShared,
+      diffPreview,
+      jumpText: jumpText.slice(0, 280),
+      changeSummary: getSuggestionChangeSummary(op, headingHint),
+    });
+  };
+
+  const copyPendingProposedText = async () => {
+    if (!pendingReviewSuggestion?.nextText) {
+      toast.error('No proposed text to copy.');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(String(pendingReviewSuggestion.nextText || ''));
+      toast.success('Proposed text copied.');
+    } catch {
+      toast.error('Could not copy proposed text.');
+    }
+  };
+
+  const confirmCoachSuggestionApply = () => {
+    if (!pendingReviewSuggestion) {
+      return;
+    }
+
+    setIsApplyingReviewSuggestion(true);
+    const target = pendingReviewSuggestion.target === 'a' ? 'a' : 'b';
+    const updatedText = String(pendingReviewSuggestion.updatedText || '');
     const updatedHtml = sanitizeEditorHtml(textToHtml(updatedText));
+    const jumpText = String(pendingReviewSuggestion.jumpText || '').trim();
 
     if (target === 'a') {
       setDocAText(updatedText);
@@ -797,11 +1016,14 @@ export default function DocumentComparisonCreate() {
       setDocBSource('typed');
     }
 
+    setPendingReviewSuggestion(null);
     setStep(2);
     setFocusEditorRequest({
       side: target,
       id: Date.now(),
+      jumpText,
     });
+    setIsApplyingReviewSuggestion(false);
     toast.success('Suggestion applied locally. Click Save Draft to persist.');
   };
 
@@ -825,36 +1047,6 @@ export default function DocumentComparisonCreate() {
     setDismissedSuggestionIds((previous) =>
       previous.includes(normalizedId) ? previous : [...previous, normalizedId],
     );
-  };
-
-  const syncScroll = (source, target) => {
-    if (!syncScrolling || syncScrollLockRef.current) {
-      return;
-    }
-    if (!source || !target) {
-      return;
-    }
-
-    const sourceScrollableHeight = source.scrollHeight - source.clientHeight;
-    const targetScrollableHeight = target.scrollHeight - target.clientHeight;
-    if (sourceScrollableHeight <= 0 || targetScrollableHeight <= 0) {
-      return;
-    }
-
-    syncScrollLockRef.current = true;
-    const ratio = source.scrollTop / sourceScrollableHeight;
-    target.scrollTop = ratio * targetScrollableHeight;
-    requestAnimationFrame(() => {
-      syncScrollLockRef.current = false;
-    });
-  };
-
-  const handleEditorScroll = (side) => {
-    if (side === 'a') {
-      syncScroll(docAEditorScrollRef.current, docBEditorScrollRef.current);
-      return;
-    }
-    syncScroll(docBEditorScrollRef.current, docAEditorScrollRef.current);
   };
 
   useEffect(() => {
@@ -1010,10 +1202,13 @@ export default function DocumentComparisonCreate() {
           isFullscreen={fullscreenSide === side}
           maxCharacters={limits.perDocumentCharacterLimit}
           onToggleFullscreen={() => setFullscreenSide((prev) => (prev === side ? null : side))}
-          contentScrollRef={isA ? docAEditorScrollRef : docBEditorScrollRef}
-          onContentScroll={() => handleEditorScroll(side)}
           shouldFocus={focusEditorRequest.side === side}
           focusRequestId={focusEditorRequest.side === side ? focusEditorRequest.id : 0}
+          jumpToTextRequest={
+            focusEditorRequest.side === side && focusEditorRequest.jumpText
+              ? { id: focusEditorRequest.id, text: focusEditorRequest.jumpText }
+              : null
+          }
           onSelectionTextChange={(selectedText) => {
             const normalized = String(selectedText || '').trim();
             setSelectionContext({
@@ -1197,11 +1392,7 @@ export default function DocumentComparisonCreate() {
               >
                 <Card>
                   <CardContent className="py-4 space-y-3">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
-                        <Switch checked={syncScrolling} onCheckedChange={setSyncScrolling} />
-                        <Label className="text-sm text-slate-700">Sync scrolling</Label>
-                      </div>
+                    <div className="flex justify-end">
                       <div className={`text-xs ${exceedsAnySizeLimit ? 'text-red-700' : totalNearLimit ? 'text-amber-700' : 'text-slate-500'}`}>
                         Total: {totalCharacters.toLocaleString()} / {limits.totalCharacterLimit.toLocaleString()} chars ({limits.model})
                       </div>
@@ -1310,8 +1501,8 @@ export default function DocumentComparisonCreate() {
                                   <span className="text-sm font-medium text-slate-800">{suggestion?.title || 'Suggestion'}</span>
                                 </div>
                                 <div className="flex gap-2">
-                                  <Button type="button" size="sm" onClick={() => applyCoachSuggestion(suggestion)}>
-                                    Apply
+                                  <Button type="button" size="sm" onClick={() => openCoachSuggestionReview(suggestion)}>
+                                    Review & Apply
                                   </Button>
                                   <Button type="button" size="sm" variant="outline" onClick={() => toggleSuggestionExpanded(suggestionId)}>
                                     {expanded ? 'Hide' : 'Explain'}
@@ -1562,8 +1753,8 @@ export default function DocumentComparisonCreate() {
                                     <span className="text-sm font-medium text-slate-800">{suggestion?.title || 'Suggestion'}</span>
                                   </div>
                                   <div className="flex gap-2">
-                                    <Button type="button" size="sm" onClick={() => applyCoachSuggestion(suggestion)}>
-                                      Apply
+                                    <Button type="button" size="sm" onClick={() => openCoachSuggestionReview(suggestion)}>
+                                      Review & Apply
                                     </Button>
                                     <Button type="button" size="sm" variant="outline" onClick={() => toggleSuggestionExpanded(suggestionId)}>
                                       {expanded ? 'Hide' : 'Explain'}
@@ -1709,6 +1900,133 @@ export default function DocumentComparisonCreate() {
             </motion.div>
           )}
         </AnimatePresence>
+
+        <Dialog
+          open={Boolean(pendingReviewSuggestion)}
+          onOpenChange={(open) => {
+            if (!open) {
+              setPendingReviewSuggestion(null);
+            }
+          }}
+        >
+          <DialogContent className="sm:max-w-4xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Review Suggested Change</DialogTitle>
+              <DialogDescription>
+                Confirm this suggestion before applying it to{' '}
+                {pendingReviewSuggestion?.target === 'a' ? CONFIDENTIAL_LABEL : SHARED_LABEL}.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="outline">
+                  {String(pendingReviewSuggestion?.suggestion?.severity || 'info')}
+                </Badge>
+                <Badge
+                  variant={pendingReviewSuggestion?.isShared ? 'secondary' : 'outline'}
+                >
+                  {pendingReviewSuggestion?.isShared ? 'Shared-safe' : 'Confidential-only'}
+                </Badge>
+                <span className="text-sm font-medium text-slate-800">
+                  {pendingReviewSuggestion?.suggestion?.title || 'Suggestion'}
+                </span>
+              </div>
+
+              <p className="text-sm text-slate-600">
+                {pendingReviewSuggestion?.suggestion?.rationale || 'No rationale provided.'}
+              </p>
+
+              <p className="text-xs text-slate-500">
+                {pendingReviewSuggestion?.changeSummary || ''}
+              </p>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div className="rounded-lg border border-slate-200 bg-white">
+                  <div className="border-b border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600">
+                    Original
+                  </div>
+                  <div
+                    className="px-3 py-3 text-sm text-slate-700 whitespace-pre-wrap min-h-[120px]"
+                    dangerouslySetInnerHTML={{
+                      __html: pendingReviewSuggestion?.diffPreview?.beforeHtml || '',
+                    }}
+                  />
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-white">
+                  <div className="border-b border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600">
+                    Proposed
+                  </div>
+                  <div
+                    className="px-3 py-3 text-sm text-slate-700 whitespace-pre-wrap min-h-[120px]"
+                    dangerouslySetInnerHTML={{
+                      __html: pendingReviewSuggestion?.diffPreview?.afterHtml || '',
+                    }}
+                  />
+                </div>
+              </div>
+
+              {pendingReviewSuggestion?.isShared &&
+              Array.isArray(pendingReviewSuggestion?.suggestion?.evidence?.shared_quotes) &&
+              pendingReviewSuggestion.suggestion.evidence.shared_quotes.length > 0 ? (
+                <div>
+                  <p className="text-xs font-semibold text-slate-500 mb-1">Shared evidence</p>
+                  <ul className="list-disc pl-5 text-xs text-slate-600 space-y-1">
+                    {pendingReviewSuggestion.suggestion.evidence.shared_quotes.map((quote) => (
+                      <li key={`pending-review-shared-${quote.slice(0, 30)}`}>{quote}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+
+              {!pendingReviewSuggestion?.isShared &&
+              Array.isArray(pendingReviewSuggestion?.suggestion?.evidence?.confidential_quotes) &&
+              pendingReviewSuggestion.suggestion.evidence.confidential_quotes.length > 0 ? (
+                <div>
+                  <p className="text-xs font-semibold text-slate-500 mb-1">Confidential evidence</p>
+                  <ul className="list-disc pl-5 text-xs text-slate-600 space-y-1">
+                    {pendingReviewSuggestion.suggestion.evidence.confidential_quotes.map((quote) => (
+                      <li key={`pending-review-conf-${quote.slice(0, 30)}`}>{quote}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+            </div>
+
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={copyPendingProposedText}
+                disabled={!pendingReviewSuggestion?.nextText}
+              >
+                Copy proposed text
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setPendingReviewSuggestion(null)}
+                disabled={isApplyingReviewSuggestion}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                onClick={confirmCoachSuggestionApply}
+                disabled={isApplyingReviewSuggestion}
+              >
+                {isApplyingReviewSuggestion ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Applying...
+                  </>
+                ) : (
+                  'Confirm & Apply'
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );

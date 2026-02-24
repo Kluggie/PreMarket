@@ -107,6 +107,59 @@ function sanitizeUrl(url, mode = 'link') {
   return SAFE_LINK_SCHEME_PATTERN.test(trimmed) ? trimmed : '';
 }
 
+function mapTextIndexToPos(textNodes, targetIndex) {
+  const index = Math.max(0, Number(targetIndex || 0));
+  for (const node of textNodes) {
+    if (index <= node.end) {
+      const offset = Math.max(0, Math.min(node.text.length, index - node.start));
+      return node.pos + offset;
+    }
+  }
+  const lastNode = textNodes[textNodes.length - 1];
+  return lastNode ? lastNode.pos + lastNode.text.length : 1;
+}
+
+function findTextSelectionRange(doc, searchText) {
+  const needle = String(searchText || '').trim();
+  if (!doc || !needle) {
+    return null;
+  }
+
+  const textNodes = [];
+  let fullText = '';
+
+  doc.descendants((node, pos) => {
+    if (!node?.isText || !node.text) {
+      return;
+    }
+    const text = String(node.text || '');
+    const start = fullText.length;
+    const end = start + text.length;
+    textNodes.push({ pos, text, start, end });
+    fullText += text;
+  });
+
+  if (!fullText || !textNodes.length) {
+    return null;
+  }
+
+  const lowerFullText = fullText.toLowerCase();
+  const lowerNeedle = needle.toLowerCase();
+  const startIndex = lowerFullText.lastIndexOf(lowerNeedle);
+  if (startIndex < 0) {
+    return null;
+  }
+
+  const endIndex = startIndex + needle.length;
+  const from = mapTextIndexToPos(textNodes, startIndex);
+  const to = mapTextIndexToPos(textNodes, endIndex);
+  if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) {
+    return null;
+  }
+
+  return { from, to };
+}
+
 export default function DocumentRichEditor({
   label,
   content,
@@ -114,14 +167,13 @@ export default function DocumentRichEditor({
   onChange,
   onSelectionTextChange,
   onToggleFullscreen,
-  onContentScroll,
-  contentScrollRef,
   isFullscreen = false,
   minHeightClassName = 'min-h-[560px]',
   scrollContainerClassName = 'h-[560px]',
   maxCharacters = null,
   shouldFocus = false,
   focusRequestId = 0,
+  jumpToTextRequest = null,
 }) {
   const initialContent = useMemo(() => normalizeEditorContent(content), [content]);
 
@@ -253,6 +305,58 @@ export default function DocumentRichEditor({
       editor.commands.focus('end');
     });
   }, [editor, shouldFocus, focusRequestId]);
+
+  useEffect(() => {
+    if (!editor || !jumpToTextRequest?.id) {
+      return;
+    }
+
+    let cancelled = false;
+    let retryTimer = null;
+    let clearSelectionTimer = null;
+    const jumpText = String(jumpToTextRequest.text || '').trim();
+
+    const tryFocus = (attempt = 0) => {
+      if (cancelled) {
+        return;
+      }
+
+      if (!jumpText) {
+        editor.chain().focus('end').scrollIntoView().run();
+        return;
+      }
+
+      const range = findTextSelectionRange(editor.state.doc, jumpText);
+      if (!range) {
+        if (attempt < 4) {
+          retryTimer = window.setTimeout(() => tryFocus(attempt + 1), 90);
+          return;
+        }
+        editor.chain().focus('end').scrollIntoView().run();
+        return;
+      }
+
+      editor.chain().focus().setTextSelection(range).scrollIntoView().run();
+      clearSelectionTimer = window.setTimeout(() => {
+        if (cancelled) {
+          return;
+        }
+        editor.chain().focus(range.to).run();
+      }, 2600);
+    };
+
+    requestAnimationFrame(() => tryFocus(0));
+
+    return () => {
+      cancelled = true;
+      if (retryTimer) {
+        clearTimeout(retryTimer);
+      }
+      if (clearSelectionTimer) {
+        clearTimeout(clearSelectionTimer);
+      }
+    };
+  }, [editor, jumpToTextRequest?.id, jumpToTextRequest?.text]);
 
   if (!editor) {
     return (
@@ -634,12 +738,7 @@ export default function DocumentRichEditor({
         </div>
       </div>
 
-      <div
-        ref={contentScrollRef}
-        onScroll={onContentScroll}
-        className={`bg-white overflow-y-auto ${scrollContainerClassName}`}
-        data-testid="doc-rich-editor-scroll"
-      >
+      <div className={`bg-white overflow-y-auto ${scrollContainerClassName}`} data-testid="doc-rich-editor-scroll">
         <EditorContent editor={editor} data-testid="doc-rich-editor" />
       </div>
 

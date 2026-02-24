@@ -92,6 +92,51 @@ function getComparisonId(req: any, comparisonIdParam?: string) {
   return String(rawId || '').trim();
 }
 
+function hasAnyWritablePatchField(body: Record<string, unknown>) {
+  const writableKeys = [
+    'title',
+    'status',
+    'draftStep',
+    'draft_step',
+    'partyALabel',
+    'party_a_label',
+    'partyBLabel',
+    'party_b_label',
+    'docAText',
+    'doc_a_text',
+    'docBText',
+    'doc_b_text',
+    'docAHtml',
+    'doc_a_html',
+    'docBHtml',
+    'doc_b_html',
+    'docAJson',
+    'doc_a_json',
+    'docBJson',
+    'doc_b_json',
+    'docASource',
+    'doc_a_source',
+    'docBSource',
+    'doc_b_source',
+    'docAFiles',
+    'doc_a_files',
+    'docBFiles',
+    'doc_b_files',
+    'docAUrl',
+    'doc_a_url',
+    'docBUrl',
+    'doc_b_url',
+    'evaluationResult',
+    'evaluation_result',
+    'publicReport',
+    'public_report',
+    'metadata',
+    'inputs',
+  ];
+
+  return writableKeys.some((key) => body[key] !== undefined);
+}
+
 export default async function handler(req: any, res: any, comparisonIdParam?: string) {
   await withApiRoute(req, res, '/api/document-comparisons/[id]', async (context) => {
     ensureMethod(req, ['GET', 'PATCH']);
@@ -102,6 +147,13 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     }
 
     const body = req.method === 'PATCH' ? await readJsonBody(req) : {};
+    if (req.method === 'PATCH' && !hasAnyWritablePatchField(body as Record<string, unknown>)) {
+      throw new ApiError(
+        400,
+        'invalid_input',
+        'At least one writable field is required for update',
+      );
+    }
     const token = asText(
       body.sharedToken ||
         body.shared_token ||

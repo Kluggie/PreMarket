@@ -395,6 +395,79 @@ if (!hasDatabaseUrl()) {
     assert.equal(getRes.jsonBody().comparison.doc_b_json, null);
   });
 
+  test('document comparison update persists html/text fields and rejects empty patch payloads', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = authCookie('doc_save_owner', 'doc-save@example.com');
+
+    const createReq = createMockReq({
+      method: 'POST',
+      url: '/api/document-comparisons',
+      headers: { cookie: ownerCookie },
+      body: {
+        title: 'Save Persistence',
+        doc_a_text: 'Initial confidential text',
+        doc_b_text: 'Initial shared text',
+      },
+    });
+    const createRes = createMockRes();
+    await documentComparisonsHandler(createReq, createRes);
+    assert.equal(createRes.statusCode, 201);
+    const comparisonId = createRes.jsonBody().comparison.id;
+
+    const updatedDocAHtml = '<p><strong>Updated confidential clause</strong></p>';
+    const updatedDocBHtml = '<p><em>Updated shared clause</em></p>';
+    const patchReq = createMockReq({
+      method: 'PATCH',
+      url: `/api/document-comparisons/${comparisonId}`,
+      headers: { cookie: ownerCookie },
+      query: { id: comparisonId },
+      body: {
+        doc_a_text: 'Updated confidential text',
+        doc_b_text: 'Updated shared text',
+        doc_a_html: updatedDocAHtml,
+        doc_b_html: updatedDocBHtml,
+        draft_step: 2,
+      },
+    });
+    const patchRes = createMockRes();
+    await documentComparisonsIdHandler(patchReq, patchRes, comparisonId);
+    assert.equal(patchRes.statusCode, 200);
+    assert.equal(patchRes.jsonBody().comparison.doc_a_text, 'Updated confidential text');
+    assert.equal(patchRes.jsonBody().comparison.doc_b_text, 'Updated shared text');
+    assert.equal(patchRes.jsonBody().comparison.doc_a_html, updatedDocAHtml);
+    assert.equal(patchRes.jsonBody().comparison.doc_b_html, updatedDocBHtml);
+    assert.equal(patchRes.jsonBody().comparison.draft_step, 2);
+
+    const getReq = createMockReq({
+      method: 'GET',
+      url: `/api/document-comparisons/${comparisonId}`,
+      headers: { cookie: ownerCookie },
+      query: { id: comparisonId },
+    });
+    const getRes = createMockRes();
+    await documentComparisonsIdHandler(getReq, getRes, comparisonId);
+    assert.equal(getRes.statusCode, 200);
+    assert.equal(getRes.jsonBody().comparison.doc_a_text, 'Updated confidential text');
+    assert.equal(getRes.jsonBody().comparison.doc_b_text, 'Updated shared text');
+    assert.equal(getRes.jsonBody().comparison.doc_a_html, updatedDocAHtml);
+    assert.equal(getRes.jsonBody().comparison.doc_b_html, updatedDocBHtml);
+    assert.equal(getRes.jsonBody().comparison.draft_step, 2);
+
+    const emptyPatchReq = createMockReq({
+      method: 'PATCH',
+      url: `/api/document-comparisons/${comparisonId}`,
+      headers: { cookie: ownerCookie },
+      query: { id: comparisonId },
+      body: {},
+    });
+    const emptyPatchRes = createMockRes();
+    await documentComparisonsIdHandler(emptyPatchReq, emptyPatchRes, comparisonId);
+    assert.equal(emptyPatchRes.statusCode, 400);
+    assert.equal(emptyPatchRes.jsonBody().error.code, 'invalid_input');
+  });
+
   test('document comparison create rejects payloads beyond Vertex-safe limits', async () => {
     await ensureMigrated();
     await resetTables();
