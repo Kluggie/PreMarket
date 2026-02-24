@@ -6,6 +6,11 @@ import { ApiError } from '../../_lib/errors.js';
 import { readJsonBody } from '../../_lib/http.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 import {
+  htmlToEditorText,
+  sanitizeEditorHtml,
+  sanitizeEditorText,
+} from '../../_lib/document-editor-sanitization.js';
+import {
   asText,
   buildRecipientSafeEvaluationProjection,
   CONFIDENTIAL_LABEL,
@@ -18,6 +23,7 @@ import {
   toArray,
   toJsonObject,
 } from './_helpers.js';
+import { assertDocumentComparisonWithinLimits } from './_limits.js';
 
 function toOptionalJsonObject(value: unknown) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -239,8 +245,8 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     const nextStatus = asText(body.status).toLowerCase();
     const hasDocAText = body.docAText !== undefined || body.doc_a_text !== undefined;
     const hasDocBText = body.docBText !== undefined || body.doc_b_text !== undefined;
-    const nextDocAText = hasDocAText ? String(body.docAText || body.doc_a_text || '') : existing.docAText || '';
-    const nextDocBText = hasDocBText ? String(body.docBText || body.doc_b_text || '') : existing.docBText || '';
+    const rawNextDocAText = hasDocAText ? String(body.docAText || body.doc_a_text || '') : existing.docAText || '';
+    const rawNextDocBText = hasDocBText ? String(body.docBText || body.doc_b_text || '') : existing.docBText || '';
     const hasDocAHtml = body.docAHtml !== undefined || body.doc_a_html !== undefined;
     const hasDocBHtml = body.docBHtml !== undefined || body.doc_b_html !== undefined;
     const hasDocAJson = body.docAJson !== undefined || body.doc_a_json !== undefined;
@@ -251,12 +257,16 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     const hasPartyALabel = body.partyALabel !== undefined || body.party_a_label !== undefined;
     const hasPartyBLabel = body.partyBLabel !== undefined || body.party_b_label !== undefined;
     const hasInputsOverride = body.inputs !== undefined;
-    const nextDocAHtml = hasDocAHtml
-      ? asText(body.docAHtml || body.doc_a_html) || null
-      : asText((existing.inputs || {}).doc_a_html) || null;
-    const nextDocBHtml = hasDocBHtml
-      ? asText(body.docBHtml || body.doc_b_html) || null
-      : asText((existing.inputs || {}).doc_b_html) || null;
+    const rawNextDocAHtml = hasDocAHtml
+      ? asText(body.docAHtml || body.doc_a_html)
+      : asText((existing.inputs || {}).doc_a_html);
+    const rawNextDocBHtml = hasDocBHtml
+      ? asText(body.docBHtml || body.doc_b_html)
+      : asText((existing.inputs || {}).doc_b_html);
+    const nextDocAHtml = sanitizeEditorHtml(rawNextDocAHtml || rawNextDocAText);
+    const nextDocBHtml = sanitizeEditorHtml(rawNextDocBHtml || rawNextDocBText);
+    const nextDocAText = sanitizeEditorText(rawNextDocAText || htmlToEditorText(nextDocAHtml));
+    const nextDocBText = sanitizeEditorText(rawNextDocBText || htmlToEditorText(nextDocBHtml));
     const nextDocAJson = hasDocAJson
       ? toOptionalJsonObject(body.docAJson || body.doc_a_json)
       : toOptionalJsonObject((existing.inputs || {}).doc_a_json);
@@ -299,6 +309,10 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     const docBFiles = toArray(body.docBFiles || body.doc_b_files || rawInputs.doc_b_files);
     const docAUrl = asText(body.docAUrl || body.doc_a_url || rawInputs.doc_a_url) || null;
     const docBUrl = asText(body.docBUrl || body.doc_b_url || rawInputs.doc_b_url) || null;
+    assertDocumentComparisonWithinLimits({
+      docAText: nextDocAText,
+      docBText: nextDocBText,
+    });
 
     const updateValues = {
       title: nextTitle || existing.title,
@@ -329,8 +343,8 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
         ...rawInputs,
         doc_a_source: docASource,
         doc_b_source: docBSource,
-        doc_a_html: nextDocAHtml,
-        doc_b_html: nextDocBHtml,
+        doc_a_html: nextDocAHtml || null,
+        doc_b_html: nextDocBHtml || null,
         doc_a_json: nextDocAJson,
         doc_b_json: nextDocBJson,
         doc_a_files: docAFiles,

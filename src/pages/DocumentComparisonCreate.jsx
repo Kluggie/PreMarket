@@ -10,10 +10,13 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Switch } from '@/components/ui/switch';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Progress } from '@/components/ui/progress';
 import DocumentRichEditor from '@/components/document-comparison/DocumentRichEditor';
 import DocumentComparisonEditorErrorBoundary from '@/components/document-comparison/DocumentComparisonEditorErrorBoundary';
+import { sanitizeEditorHtml } from '@/components/document-comparison/editorSanitization';
+import { countWords, getDocumentComparisonTextLimits } from '@/config/aiLimits';
 import { toast } from 'sonner';
 import {
   AlertTriangle,
@@ -142,6 +145,25 @@ function parseDocJson(value) {
   return value;
 }
 
+function buildDraftStateHash(payload) {
+  return JSON.stringify({
+    comparisonId: payload.comparisonId || '',
+    linkedProposalId: payload.linkedProposalId || '',
+    step: clampStep(payload.step || 1),
+    title: payload.title || '',
+    docAText: payload.docAText || '',
+    docBText: payload.docBText || '',
+    docAHtml: payload.docAHtml || '<p></p>',
+    docBHtml: payload.docBHtml || '<p></p>',
+    docAJson: payload.docAJson || null,
+    docBJson: payload.docBJson || null,
+    docASource: payload.docASource || 'typed',
+    docBSource: payload.docBSource || 'typed',
+    docAFiles: Array.isArray(payload.docAFiles) ? payload.docAFiles : [],
+    docBFiles: Array.isArray(payload.docBFiles) ? payload.docBFiles : [],
+  });
+}
+
 function useRouteState() {
   const location = useLocation();
   return useMemo(() => {
@@ -187,10 +209,13 @@ export default function DocumentComparisonCreate() {
   const [uiError, setUiError] = useState('');
   const [fullscreenSide, setFullscreenSide] = useState(null);
   const [lastSavedHash, setLastSavedHash] = useState('');
+  const [syncScrolling, setSyncScrolling] = useState(false);
 
   const docAInputFileRef = useRef(null);
   const docBInputFileRef = useRef(null);
-  const hydratedRef = useRef(false);
+  const docAEditorScrollRef = useRef(null);
+  const docBEditorScrollRef = useRef(null);
+  const syncScrollLockRef = useRef(false);
 
   const proposalLookup = useQuery({
     queryKey: ['document-comparison-proposal-lookup', routeState.proposalId],
@@ -216,7 +241,6 @@ export default function DocumentComparisonCreate() {
 
     const comparison = draftQuery.data.comparison;
 
-    hydratedRef.current = true;
     setComparisonId(comparison.id || resolvedDraftId || '');
     setLinkedProposalId(draftQuery.data.proposal?.id || routeState.proposalId || '');
 
@@ -245,6 +269,24 @@ export default function DocumentComparisonCreate() {
       clampStep(routeState.step || 1),
     );
     setStep(draftStep);
+    setLastSavedHash(
+      buildDraftStateHash({
+        comparisonId: comparison.id || resolvedDraftId || '',
+        linkedProposalId: draftQuery.data.proposal?.id || routeState.proposalId || '',
+        step: draftStep,
+        title: comparison.title || '',
+        docAText: nextDocAText,
+        docBText: nextDocBText,
+        docAHtml: asText(comparison.doc_a_html) || textToHtml(nextDocAText),
+        docBHtml: asText(comparison.doc_b_html) || textToHtml(nextDocBText),
+        docAJson: parseDocJson(comparison.doc_a_json),
+        docBJson: parseDocJson(comparison.doc_b_json),
+        docASource: comparison.doc_a_source || 'typed',
+        docBSource: comparison.doc_b_source || 'typed',
+        docAFiles: Array.isArray(comparison.doc_a_files) ? comparison.doc_a_files : [],
+        docBFiles: Array.isArray(comparison.doc_b_files) ? comparison.doc_b_files : [],
+      }),
+    );
   }, [draftQuery.data, resolvedDraftId, routeState.proposalId, routeState.step]);
 
   useEffect(() => {
@@ -264,7 +306,7 @@ export default function DocumentComparisonCreate() {
 
   const currentStateHash = useMemo(
     () =>
-      JSON.stringify({
+      buildDraftStateHash({
         comparisonId,
         linkedProposalId,
         step,
@@ -300,21 +342,26 @@ export default function DocumentComparisonCreate() {
 
   const saveDraftMutation = useMutation({
     mutationFn: async ({ stepToSave, silent = false }) => {
+      const savedStep = clampStep(stepToSave || step || 1);
+      const sanitizedDocAHtml = sanitizeEditorHtml(docAHtml || textToHtml(docAText));
+      const sanitizedDocBHtml = sanitizeEditorHtml(docBHtml || textToHtml(docBText));
+      const normalizedDocAText = docAText || htmlToText(sanitizedDocAHtml);
+      const normalizedDocBText = docBText || htmlToText(sanitizedDocBHtml);
       const payload = {
         title: asText(title) || 'Untitled Comparison',
         party_a_label: CONFIDENTIAL_LABEL,
         party_b_label: SHARED_LABEL,
-        doc_a_text: docAText,
-        doc_b_text: docBText,
-        doc_a_html: docAHtml,
-        doc_b_html: docBHtml,
+        doc_a_text: normalizedDocAText,
+        doc_b_text: normalizedDocBText,
+        doc_a_html: sanitizedDocAHtml,
+        doc_b_html: sanitizedDocBHtml,
         doc_a_json: docAJson,
         doc_b_json: docBJson,
         doc_a_source: docASource,
         doc_b_source: docBSource,
         doc_a_files: docAFiles,
         doc_b_files: docBFiles,
-        draft_step: clampStep(stepToSave || step || 1),
+        draft_step: savedStep,
         proposalId: linkedProposalId || routeState.proposalId || null,
         createProposal: !(linkedProposalId || routeState.proposalId),
       };
@@ -335,7 +382,24 @@ export default function DocumentComparisonCreate() {
         setLinkedProposalId(comparison.proposal_id);
       }
 
-      setLastSavedHash(currentStateHash);
+      setLastSavedHash(
+        buildDraftStateHash({
+          comparisonId: comparison.id,
+          linkedProposalId: comparison.proposal_id || linkedProposalId || routeState.proposalId || '',
+          step: savedStep,
+          title,
+          docAText: normalizedDocAText,
+          docBText: normalizedDocBText,
+          docAHtml: sanitizedDocAHtml,
+          docBHtml: sanitizedDocBHtml,
+          docAJson,
+          docBJson,
+          docASource,
+          docBSource,
+          docAFiles,
+          docBFiles,
+        }),
+      );
       if (!silent) {
         toast.success('Draft saved');
       }
@@ -355,6 +419,9 @@ export default function DocumentComparisonCreate() {
 
   const evaluateMutation = useMutation({
     mutationFn: async () => {
+      if (exceedsAnySizeLimit) {
+        throw new Error(`Document size exceeds the ${limits.model} limit.`);
+      }
       const persistedId = comparisonId || (await saveDraftMutation.mutateAsync({ stepToSave: 3, silent: true }));
       if (!persistedId) {
         throw new Error('Unable to save comparison before evaluation');
@@ -384,24 +451,46 @@ export default function DocumentComparisonCreate() {
   });
 
   useEffect(() => {
-    if (!hydratedRef.current) {
-      return;
-    }
-    if (!comparisonId) {
-      return;
-    }
-    if (currentStateHash === lastSavedHash) {
+    if (lastSavedHash) {
       return;
     }
 
-    const timer = setTimeout(() => {
-      saveDraftMutation.mutate({ stepToSave: step, silent: true });
-    }, 1200);
+    if (draftQuery.isLoading || proposalLookup.isLoading) {
+      return;
+    }
 
-    return () => clearTimeout(timer);
-  }, [comparisonId, currentStateHash, lastSavedHash, saveDraftMutation, step]);
+    if (resolvedDraftId && !draftQuery.data?.comparison) {
+      return;
+    }
+
+    setLastSavedHash(currentStateHash);
+  }, [
+    currentStateHash,
+    draftQuery.data?.comparison,
+    draftQuery.isLoading,
+    lastSavedHash,
+    proposalLookup.isLoading,
+    resolvedDraftId,
+  ]);
 
   const progress = (step / TOTAL_STEPS) * 100;
+  const isDirty = currentStateHash !== lastSavedHash;
+  const limits = useMemo(
+    () => getDocumentComparisonTextLimits(import.meta.env?.VITE_VERTEX_MODEL || ''),
+    [],
+  );
+  const docACharacters = docAText.length;
+  const docBCharacters = docBText.length;
+  const docAWords = countWords(docAText);
+  const docBWords = countWords(docBText);
+  const totalCharacters = docACharacters + docBCharacters;
+  const docANearLimit = docACharacters >= limits.warningCharacterThreshold;
+  const docBNearLimit = docBCharacters >= limits.warningCharacterThreshold;
+  const totalNearLimit = totalCharacters >= limits.totalWarningCharacterThreshold;
+  const docAOverLimit = docACharacters > limits.perDocumentCharacterLimit;
+  const docBOverLimit = docBCharacters > limits.perDocumentCharacterLimit;
+  const totalOverLimit = totalCharacters > limits.totalCharacterLimit;
+  const exceedsAnySizeLimit = docAOverLimit || docBOverLimit || totalOverLimit;
 
   const hasAnyDocumentContent = Boolean(asText(docAText) || asText(docBText));
   const hasBothDocumentContents = Boolean(asText(docAText) && asText(docBText));
@@ -409,8 +498,9 @@ export default function DocumentComparisonCreate() {
   const step2LoadError = step === 2 && Boolean(resolvedDraftId) ? draftQuery.error : null;
 
   const applyImportedContent = (side, file, extracted) => {
-    const text = asText(extracted?.text) || htmlToText(extracted?.html || '');
-    const html = asText(extracted?.html) || textToHtml(text);
+    const rawText = asText(extracted?.text) || htmlToText(extracted?.html || '');
+    const html = sanitizeEditorHtml(asText(extracted?.html) || textToHtml(rawText));
+    const text = rawText || htmlToText(html);
 
     if (!text && !html) {
       throw new Error('No readable content was extracted from the selected file');
@@ -506,6 +596,64 @@ export default function DocumentComparisonCreate() {
     }
   };
 
+  const saveDraft = async (stepToSave = step) => {
+    if (exceedsAnySizeLimit) {
+      toast.error(
+        `Document content exceeds the ${limits.model} limit. Reduce text before saving.`,
+      );
+      return;
+    }
+    try {
+      await saveDraftMutation.mutateAsync({ stepToSave });
+    } catch {
+      // Error toast is handled by mutation onError.
+    }
+  };
+
+  const syncScroll = (source, target) => {
+    if (!syncScrolling || syncScrollLockRef.current) {
+      return;
+    }
+    if (!source || !target) {
+      return;
+    }
+
+    const sourceScrollableHeight = source.scrollHeight - source.clientHeight;
+    const targetScrollableHeight = target.scrollHeight - target.clientHeight;
+    if (sourceScrollableHeight <= 0 || targetScrollableHeight <= 0) {
+      return;
+    }
+
+    syncScrollLockRef.current = true;
+    const ratio = source.scrollTop / sourceScrollableHeight;
+    target.scrollTop = ratio * targetScrollableHeight;
+    requestAnimationFrame(() => {
+      syncScrollLockRef.current = false;
+    });
+  };
+
+  const handleEditorScroll = (side) => {
+    if (side === 'a') {
+      syncScroll(docAEditorScrollRef.current, docBEditorScrollRef.current);
+      return;
+    }
+    syncScroll(docBEditorScrollRef.current, docAEditorScrollRef.current);
+  };
+
+  useEffect(() => {
+    if (!isDirty) {
+      return undefined;
+    }
+
+    const handleBeforeUnload = (event) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [isDirty]);
+
   const renderImportPanel = ({ side, label, selectedFile, setSelectedFile, preview, source, files, fileRef }) => {
     const isImporting = importingSide === side;
 
@@ -574,6 +722,11 @@ export default function DocumentComparisonCreate() {
     const isA = side === 'a';
     const label = isA ? CONFIDENTIAL_LABEL : SHARED_LABEL;
     const source = isA ? docASource : docBSource;
+    const characters = isA ? docACharacters : docBCharacters;
+    const words = isA ? docAWords : docBWords;
+    const nearLimit = isA ? docANearLimit : docBNearLimit;
+    const overLimit = isA ? docAOverLimit : docBOverLimit;
+    const limitTextClass = overLimit ? 'text-red-700' : nearLimit ? 'text-amber-700' : 'text-slate-500';
 
     const panelModeClass =
       fullscreenSide === side
@@ -590,6 +743,9 @@ export default function DocumentComparisonCreate() {
             <h3 className="text-sm font-semibold text-slate-700">{label}</h3>
             <Badge variant="outline">{source}</Badge>
           </div>
+          <div className={`text-xs ${limitTextClass}`}>
+            {characters.toLocaleString()} chars • {words.toLocaleString()} words
+          </div>
         </div>
 
         <DocumentRichEditor
@@ -597,8 +753,12 @@ export default function DocumentComparisonCreate() {
           content={isA ? docAJson || docAHtml : docBJson || docBHtml}
           placeholder={`Edit ${label}...`}
           minHeightClassName={fullscreenSide === side ? 'min-h-[70vh]' : 'min-h-[560px]'}
+          scrollContainerClassName={fullscreenSide === side ? 'h-[72vh]' : 'h-[560px]'}
           isFullscreen={fullscreenSide === side}
+          maxCharacters={limits.perDocumentCharacterLimit}
           onToggleFullscreen={() => setFullscreenSide((prev) => (prev === side ? null : side))}
+          contentScrollRef={isA ? docAEditorScrollRef : docBEditorScrollRef}
+          onContentScroll={() => handleEditorScroll(side)}
           onChange={({ html, text, json }) => {
             if (isA) {
               setDocAText(text);
@@ -623,6 +783,15 @@ export default function DocumentComparisonCreate() {
           <Link
             to={createPageUrl('Proposals')}
             className="inline-flex items-center text-slate-600 hover:text-slate-900 mb-2"
+            onClick={(event) => {
+              if (!isDirty) {
+                return;
+              }
+              const shouldLeave = window.confirm('You have unsaved changes. Leave this page?');
+              if (!shouldLeave) {
+                event.preventDefault();
+              }
+            }}
           >
             <ArrowLeft className="w-4 h-4 mr-2" />
             Back to Proposals
@@ -635,7 +804,12 @@ export default function DocumentComparisonCreate() {
 
         <div className="mb-5">
           <div className="flex items-center justify-between text-sm mb-3">
-            <span className={`font-semibold ${step === 1 ? 'text-blue-600' : 'text-slate-400'}`}>Step {step} of 3</span>
+            <div className="flex items-center gap-3">
+              <span className={`font-semibold ${step === 1 ? 'text-blue-600' : 'text-slate-400'}`}>Step {step} of 3</span>
+              <span className={`text-xs ${isDirty ? 'text-amber-700' : 'text-emerald-700'}`}>
+                {isDirty ? 'Unsaved changes' : 'All changes saved'}
+              </span>
+            </div>
             <span className="text-slate-500">{Math.round(progress)}% complete</span>
           </div>
           <Progress value={progress} className="h-3" />
@@ -716,8 +890,8 @@ export default function DocumentComparisonCreate() {
               <div className="flex justify-end gap-2">
                 <Button
                   variant="outline"
-                  onClick={() => saveDraftMutation.mutate({ stepToSave: 1 })}
-                  disabled={saveDraftMutation.isPending}
+                  onClick={() => saveDraft(1)}
+                  disabled={saveDraftMutation.isPending || exceedsAnySizeLimit}
                 >
                   {saveDraftMutation.isPending ? (
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />
@@ -759,6 +933,30 @@ export default function DocumentComparisonCreate() {
                 exit={{ opacity: 0, x: -20 }}
                 className="space-y-6"
               >
+                <Card>
+                  <CardContent className="py-4 space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <Switch checked={syncScrolling} onCheckedChange={setSyncScrolling} />
+                        <Label className="text-sm text-slate-700">Sync scrolling</Label>
+                      </div>
+                      <div className={`text-xs ${exceedsAnySizeLimit ? 'text-red-700' : totalNearLimit ? 'text-amber-700' : 'text-slate-500'}`}>
+                        Total: {totalCharacters.toLocaleString()} / {limits.totalCharacterLimit.toLocaleString()} chars ({limits.model})
+                      </div>
+                    </div>
+                    {(docANearLimit || docBNearLimit || totalNearLimit) ? (
+                      <Alert className={exceedsAnySizeLimit ? 'bg-red-50 border-red-200' : 'bg-amber-50 border-amber-200'}>
+                        <AlertTriangle className={`h-4 w-4 ${exceedsAnySizeLimit ? 'text-red-700' : 'text-amber-700'}`} />
+                        <AlertDescription className={exceedsAnySizeLimit ? 'text-red-800' : 'text-amber-800'}>
+                          {exceedsAnySizeLimit
+                            ? `Editor content is over the ${limits.model} safety limit. Reduce text before saving or evaluating.`
+                            : `Approaching the ${limits.model} input limit. Keep each document under ${limits.perDocumentCharacterLimit.toLocaleString()} characters.`}
+                        </AlertDescription>
+                      </Alert>
+                    ) : null}
+                  </CardContent>
+                </Card>
+
                 {isStep2LoadingDraft ? (
                   <Card>
                     <CardContent className="py-10 text-slate-500 flex items-center gap-2">
@@ -831,9 +1029,17 @@ export default function DocumentComparisonCreate() {
                         Back to Upload
                       </Button>
                       <div className="flex gap-2">
-                        <Button variant="outline" onClick={() => saveDraftMutation.mutate({ stepToSave: 2 })}>
-                          <Save className="w-4 h-4 mr-2" />
-                          Save Draft
+                        <Button
+                          variant="outline"
+                          onClick={() => saveDraft(2)}
+                          disabled={saveDraftMutation.isPending || exceedsAnySizeLimit}
+                        >
+                          {saveDraftMutation.isPending ? (
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          ) : (
+                            <Save className="w-4 h-4 mr-2" />
+                          )}
+                          {saveDraftMutation.isPending ? 'Saving...' : 'Save Draft'}
                         </Button>
                         <Button
                           onClick={() => jumpStep(3)}
@@ -907,13 +1113,21 @@ export default function DocumentComparisonCreate() {
                       Back to Editor
                     </Button>
                     <div className="flex gap-2">
-                      <Button variant="outline" onClick={() => saveDraftMutation.mutate({ stepToSave: 3 })}>
-                        <Save className="w-4 h-4 mr-2" />
-                        Save Draft
+                      <Button
+                        variant="outline"
+                        onClick={() => saveDraft(3)}
+                        disabled={saveDraftMutation.isPending || exceedsAnySizeLimit}
+                      >
+                        {saveDraftMutation.isPending ? (
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        ) : (
+                          <Save className="w-4 h-4 mr-2" />
+                        )}
+                        {saveDraftMutation.isPending ? 'Saving...' : 'Save Draft'}
                       </Button>
                       <Button
                         onClick={() => evaluateMutation.mutate()}
-                        disabled={evaluateMutation.isPending || !hasBothDocumentContents}
+                        disabled={evaluateMutation.isPending || !hasBothDocumentContents || exceedsAnySizeLimit}
                         className="bg-purple-600 hover:bg-purple-700"
                       >
                         {evaluateMutation.isPending ? (

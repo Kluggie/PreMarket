@@ -9,6 +9,14 @@ import Link from '@tiptap/extension-link';
 import Subscript from '@tiptap/extension-subscript';
 import Superscript from '@tiptap/extension-superscript';
 import TextAlign from '@tiptap/extension-text-align';
+import CharacterCount from '@tiptap/extension-character-count';
+import { Table } from '@tiptap/extension-table';
+import TableRow from '@tiptap/extension-table-row';
+import TableCell from '@tiptap/extension-table-cell';
+import TableHeader from '@tiptap/extension-table-header';
+import TaskList from '@tiptap/extension-task-list';
+import TaskItem from '@tiptap/extension-task-item';
+import Image from '@tiptap/extension-image';
 import {
   AlignCenter,
   AlignJustify,
@@ -20,15 +28,20 @@ import {
   Heading2,
   Heading3,
   Highlighter,
+  ImagePlus,
   Italic,
   Link2,
   List,
+  ListChecks,
   ListOrdered,
   Minimize,
+  Paperclip,
+  Quote,
   Redo2,
   Strikethrough,
   Subscript as SubscriptIcon,
   Superscript as SuperscriptIcon,
+  Table2,
   Type,
   Underline as UnderlineIcon,
   Undo2,
@@ -36,6 +49,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { isTipTapDocJson, normalizeEditorContent } from './editorContent';
+import { sanitizePastedHtml, sanitizePastedText } from './editorSanitization';
 
 const TEXT_COLORS = [
   '#0f172a',
@@ -48,6 +62,9 @@ const TEXT_COLORS = [
 ];
 
 const HIGHLIGHT_COLORS = ['#fef08a', '#fecaca', '#bbf7d0', '#bfdbfe', '#ddd6fe'];
+
+const SAFE_LINK_SCHEME_PATTERN = /^(https?:|mailto:|\/|#)/i;
+const SAFE_IMAGE_SCHEME_PATTERN = /^(https?:|blob:)/i;
 
 function normalizeHtml(value) {
   return String(value || '')
@@ -72,14 +89,36 @@ function ToolbarButton({ onClick, active = false, disabled = false, title, child
   );
 }
 
+function sanitizeUrl(url, mode = 'link') {
+  const trimmed = String(url || '').trim();
+  if (!trimmed) {
+    return '';
+  }
+
+  const lower = trimmed.toLowerCase();
+  if (lower.startsWith('javascript:') || lower.startsWith('data:')) {
+    return '';
+  }
+
+  if (mode === 'image') {
+    return SAFE_IMAGE_SCHEME_PATTERN.test(trimmed) ? trimmed : '';
+  }
+
+  return SAFE_LINK_SCHEME_PATTERN.test(trimmed) ? trimmed : '';
+}
+
 export default function DocumentRichEditor({
   label,
   content,
   placeholder,
   onChange,
   onToggleFullscreen,
+  onContentScroll,
+  contentScrollRef,
   isFullscreen = false,
   minHeightClassName = 'min-h-[560px]',
+  scrollContainerClassName = 'h-[560px]',
+  maxCharacters = null,
 }) {
   const initialContent = useMemo(() => normalizeEditorContent(content), [content]);
 
@@ -104,18 +143,47 @@ export default function DocumentRichEditor({
       TextAlign.configure({
         types: ['heading', 'paragraph'],
       }),
+      CharacterCount,
+      Table.configure({
+        resizable: true,
+      }),
+      TableRow,
+      TableHeader,
+      TableCell,
+      TaskList,
+      TaskItem.configure({
+        nested: true,
+      }),
+      Image,
     ],
     content: initialContent,
     editorProps: {
       attributes: {
         class: `pm-tiptap-editor ${minHeightClassName}`,
       },
+      transformPastedHTML(html) {
+        return sanitizePastedHtml(html);
+      },
+      transformPastedText(text) {
+        return sanitizePastedText(text);
+      },
+    },
+    onCreate: ({ editor: instance }) => {
+      onChange?.({
+        html: instance.getHTML(),
+        text: instance.getText({ blockSeparator: '\n\n' }).trim(),
+        json: instance.getJSON(),
+        characters: instance.storage.characterCount.characters(),
+        words: instance.storage.characterCount.words(),
+      });
     },
     onUpdate: ({ editor: instance }) => {
       onChange?.({
         html: instance.getHTML(),
         text: instance.getText({ blockSeparator: '\n\n' }).trim(),
         json: instance.getJSON(),
+        characters: instance.storage.characterCount.characters(),
+        words: instance.storage.characterCount.words(),
       });
     },
   });
@@ -176,13 +244,61 @@ export default function DocumentRichEditor({
       return;
     }
 
-    const trimmed = String(url || '').trim();
-    if (!trimmed) {
+    const safeUrl = sanitizeUrl(url, 'link');
+    if (!safeUrl) {
       editor.chain().focus().unsetLink().run();
       return;
     }
 
-    editor.chain().focus().extendMarkRange('link').setLink({ href: trimmed }).run();
+    editor.chain().focus().extendMarkRange('link').setLink({ href: safeUrl }).run();
+  };
+
+  const insertImageFromUrl = () => {
+    const url = window.prompt('Image URL', 'https://');
+    if (url === null) {
+      return;
+    }
+
+    const safeUrl = sanitizeUrl(url, 'image');
+    if (!safeUrl) {
+      window.alert('Use an http(s) or blob image URL.');
+      return;
+    }
+
+    editor.chain().focus().setImage({ src: safeUrl, alt: 'Inserted image' }).run();
+  };
+
+  const insertAttachmentLink = () => {
+    const url = window.prompt('Attachment URL', 'https://');
+    if (url === null) {
+      return;
+    }
+
+    const safeUrl = sanitizeUrl(url, 'link');
+    if (!safeUrl) {
+      window.alert('Use an http(s) or mailto link.');
+      return;
+    }
+
+    const label = String(window.prompt('Attachment label', 'Attachment') || '').trim() || 'Attachment';
+    editor
+      .chain()
+      .focus()
+      .insertContent({
+        type: 'paragraph',
+        content: [
+          {
+            type: 'text',
+            text: label,
+            marks: [{ type: 'link', attrs: { href: safeUrl } }],
+          },
+        ],
+      })
+      .run();
+  };
+
+  const insertTable = () => {
+    editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
   };
 
   return (
@@ -190,10 +306,17 @@ export default function DocumentRichEditor({
       <div className="border-b border-slate-200 bg-slate-50 px-3 py-2 space-y-2">
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <div className="text-sm font-semibold text-slate-700">{label}</div>
-          <Button type="button" variant="outline" size="sm" onClick={onToggleFullscreen}>
-            {isFullscreen ? <Minimize className="w-4 h-4 mr-2" /> : <Expand className="w-4 h-4 mr-2" />}
-            {isFullscreen ? 'Exit Full Screen' : 'Expand'}
-          </Button>
+          <div className="flex items-center gap-2">
+            {maxCharacters ? (
+              <span className="text-xs text-slate-500">
+                {editor.storage.characterCount.characters().toLocaleString()} / {maxCharacters.toLocaleString()} chars
+              </span>
+            ) : null}
+            <Button type="button" variant="outline" size="sm" onClick={onToggleFullscreen}>
+              {isFullscreen ? <Minimize className="w-4 h-4 mr-2" /> : <Expand className="w-4 h-4 mr-2" />}
+              {isFullscreen ? 'Exit Full Screen' : 'Expand'}
+            </Button>
+          </div>
         </div>
 
         <div className="flex flex-wrap gap-2 items-center">
@@ -285,6 +408,30 @@ export default function DocumentRichEditor({
           >
             <ListOrdered className="w-4 h-4" />
           </ToolbarButton>
+          <ToolbarButton
+            title="Checklist"
+            onClick={() => editor.chain().focus().toggleTaskList().run()}
+            active={editor.isActive('taskList')}
+          >
+            <ListChecks className="w-4 h-4" />
+          </ToolbarButton>
+
+          <div className="h-6 w-px bg-slate-200" />
+
+          <ToolbarButton
+            title="Blockquote"
+            onClick={() => editor.chain().focus().toggleBlockquote().run()}
+            active={editor.isActive('blockquote')}
+          >
+            <Quote className="w-4 h-4" />
+          </ToolbarButton>
+          <ToolbarButton
+            title="Callout"
+            onClick={() => editor.chain().focus().toggleBlockquote().run()}
+            active={editor.isActive('blockquote')}
+          >
+            Callout
+          </ToolbarButton>
 
           <div className="h-6 w-px bg-slate-200" />
 
@@ -293,6 +440,12 @@ export default function DocumentRichEditor({
           </ToolbarButton>
           <ToolbarButton title="Remove Link" onClick={() => editor.chain().focus().unsetLink().run()}>
             <Unlink className="w-4 h-4" />
+          </ToolbarButton>
+          <ToolbarButton title="Insert Image URL" onClick={insertImageFromUrl}>
+            <ImagePlus className="w-4 h-4" />
+          </ToolbarButton>
+          <ToolbarButton title="Insert Attachment Link" onClick={insertAttachmentLink}>
+            <Paperclip className="w-4 h-4" />
           </ToolbarButton>
 
           <div className="h-6 w-px bg-slate-200" />
@@ -345,6 +498,47 @@ export default function DocumentRichEditor({
 
           <div className="h-6 w-px bg-slate-200" />
 
+          <ToolbarButton title="Insert Table" onClick={insertTable}>
+            <Table2 className="w-4 h-4" />
+          </ToolbarButton>
+          <ToolbarButton
+            title="Add Row"
+            onClick={() => editor.chain().focus().addRowAfter().run()}
+            disabled={!editor.isActive('table')}
+          >
+            +Row
+          </ToolbarButton>
+          <ToolbarButton
+            title="Add Column"
+            onClick={() => editor.chain().focus().addColumnAfter().run()}
+            disabled={!editor.isActive('table')}
+          >
+            +Col
+          </ToolbarButton>
+          <ToolbarButton
+            title="Delete Row"
+            onClick={() => editor.chain().focus().deleteRow().run()}
+            disabled={!editor.isActive('table')}
+          >
+            -Row
+          </ToolbarButton>
+          <ToolbarButton
+            title="Delete Column"
+            onClick={() => editor.chain().focus().deleteColumn().run()}
+            disabled={!editor.isActive('table')}
+          >
+            -Col
+          </ToolbarButton>
+          <ToolbarButton
+            title="Delete Table"
+            onClick={() => editor.chain().focus().deleteTable().run()}
+            disabled={!editor.isActive('table')}
+          >
+            DelTbl
+          </ToolbarButton>
+
+          <div className="h-6 w-px bg-slate-200" />
+
           <div className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2 py-1">
             <Type className="w-4 h-4 text-slate-500" />
             {TEXT_COLORS.map((color) => (
@@ -389,17 +583,30 @@ export default function DocumentRichEditor({
 
           <div className="h-6 w-px bg-slate-200" />
 
-          <ToolbarButton title="Undo" onClick={() => editor.chain().focus().undo().run()} disabled={!editor.can().chain().focus().undo().run()}>
+          <ToolbarButton
+            title="Undo"
+            onClick={() => editor.chain().focus().undo().run()}
+            disabled={!editor.can().chain().focus().undo().run()}
+          >
             <Undo2 className="w-4 h-4" />
           </ToolbarButton>
-          <ToolbarButton title="Redo" onClick={() => editor.chain().focus().redo().run()} disabled={!editor.can().chain().focus().redo().run()}>
+          <ToolbarButton
+            title="Redo"
+            onClick={() => editor.chain().focus().redo().run()}
+            disabled={!editor.can().chain().focus().redo().run()}
+          >
             <Redo2 className="w-4 h-4" />
           </ToolbarButton>
         </div>
       </div>
 
-      <div className="bg-white">
-        <EditorContent editor={editor} />
+      <div
+        ref={contentScrollRef}
+        onScroll={onContentScroll}
+        className={`bg-white overflow-y-auto ${scrollContainerClassName}`}
+        data-testid="doc-rich-editor-scroll"
+      >
+        <EditorContent editor={editor} data-testid="doc-rich-editor" />
       </div>
 
       {placeholder ? (

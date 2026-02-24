@@ -7,7 +7,9 @@ import { newId } from '../../../_lib/ids.js';
 import { createNotificationEvent } from '../../../_lib/notifications.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 import { evaluateDocumentComparisonWithVertex } from '../../../_lib/vertex-evaluation.js';
+import { sanitizeEditorText } from '../../../_lib/document-editor-sanitization.js';
 import { ensureComparisonFound, mapComparisonRow } from '../_helpers.js';
+import { assertDocumentComparisonWithinLimits } from '../_limits.js';
 
 const CONFIDENTIAL_LABEL = 'Confidential Information';
 const SHARED_LABEL = 'Shared Information';
@@ -87,10 +89,16 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
 
     let evaluation: any;
     try {
+      const sanitizedDocAText = sanitizeEditorText(existing.docAText || '');
+      const sanitizedDocBText = sanitizeEditorText(existing.docBText || '');
+      assertDocumentComparisonWithinLimits({
+        docAText: sanitizedDocAText,
+        docBText: sanitizedDocBText,
+      });
       evaluation = await evaluateDocumentComparisonWithVertex({
         title: existing.title,
-        docAText: existing.docAText || '',
-        docBText: existing.docBText || '',
+        docAText: sanitizedDocAText,
+        docBText: sanitizedDocBText,
         docASpans: [],
         docBSpans: [],
         partyALabel: CONFIDENTIAL_LABEL,

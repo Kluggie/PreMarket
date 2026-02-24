@@ -7,6 +7,11 @@ import { readJsonBody } from '../../_lib/http.js';
 import { newId } from '../../_lib/ids.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 import {
+  htmlToEditorText,
+  sanitizeEditorHtml,
+  sanitizeEditorText,
+} from '../../_lib/document-editor-sanitization.js';
+import {
   asText,
   CONFIDENTIAL_LABEL,
   SHARED_LABEL,
@@ -16,6 +21,7 @@ import {
   toArray,
   toJsonObject,
 } from './_helpers.js';
+import { assertDocumentComparisonWithinLimits } from './_limits.js';
 
 function toOptionalJsonObject(value: unknown) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -79,14 +85,14 @@ export default async function handler(req: any, res: any) {
     const createLinkedProposal = Boolean(body.createProposal || body.create_proposal);
     const partyALabel = CONFIDENTIAL_LABEL;
     const partyBLabel = SHARED_LABEL;
-    const docAText = String(
+    const rawDocAText = String(
       body.docAText ||
         body.doc_a_text ||
         body.confidentialDocContent ||
         body.confidential_doc_content ||
         '',
     );
-    const docBText = String(
+    const rawDocBText = String(
       body.docBText || body.doc_b_text || body.sharedDocContent || body.shared_doc_content || '',
     );
     const draftStep = parseStep(body.draftStep || body.draft_step, 1);
@@ -94,20 +100,28 @@ export default async function handler(req: any, res: any) {
     const rawInputs = toJsonObject(body.inputs);
     const docASource = asText(body.docASource || body.doc_a_source) || asText(rawInputs.doc_a_source) || 'typed';
     const docBSource = asText(body.docBSource || body.doc_b_source) || asText(rawInputs.doc_b_source) || 'typed';
-    const docAHtml = asText(body.docAHtml || body.doc_a_html || rawInputs.doc_a_html) || null;
-    const docBHtml = asText(body.docBHtml || body.doc_b_html || rawInputs.doc_b_html) || null;
+    const rawDocAHtml = asText(body.docAHtml || body.doc_a_html || rawInputs.doc_a_html);
+    const rawDocBHtml = asText(body.docBHtml || body.doc_b_html || rawInputs.doc_b_html);
+    const docAHtml = sanitizeEditorHtml(rawDocAHtml || rawDocAText);
+    const docBHtml = sanitizeEditorHtml(rawDocBHtml || rawDocBText);
+    const docAText = sanitizeEditorText(rawDocAText || htmlToEditorText(docAHtml));
+    const docBText = sanitizeEditorText(rawDocBText || htmlToEditorText(docBHtml));
     const docAJson = toOptionalJsonObject(body.docAJson || body.doc_a_json || rawInputs.doc_a_json);
     const docBJson = toOptionalJsonObject(body.docBJson || body.doc_b_json || rawInputs.doc_b_json);
     const docAFiles = toArray(body.docAFiles || body.doc_a_files || rawInputs.doc_a_files);
     const docBFiles = toArray(body.docBFiles || body.doc_b_files || rawInputs.doc_b_files);
     const docAUrl = asText(body.docAUrl || body.doc_a_url || rawInputs.doc_a_url) || null;
     const docBUrl = asText(body.docBUrl || body.doc_b_url || rawInputs.doc_b_url) || null;
+    assertDocumentComparisonWithinLimits({
+      docAText,
+      docBText,
+    });
     const inputs = {
       ...rawInputs,
       doc_a_source: docASource,
       doc_b_source: docBSource,
-      doc_a_html: docAHtml,
-      doc_b_html: docBHtml,
+      doc_a_html: docAHtml || null,
+      doc_b_html: docBHtml || null,
       doc_a_json: docAJson,
       doc_b_json: docBJson,
       doc_a_files: docAFiles,

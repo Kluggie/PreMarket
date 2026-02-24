@@ -19,6 +19,7 @@ import { ensureTestEnv, makeSessionCookie } from '../helpers/auth.mjs';
 import { ensureMigrated, getDb, hasDatabaseUrl, resetTables } from '../helpers/db.mjs';
 import { createMockReq, createMockRes } from '../helpers/httpMock.mjs';
 import { schema } from '../../server/_lib/db/client.js';
+import { getDocumentComparisonTextLimits } from '../../src/config/aiLimits.js';
 
 ensureTestEnv();
 if (!process.env.VERTEX_MOCK) {
@@ -391,6 +392,31 @@ if (!hasDatabaseUrl()) {
     assert.equal(getRes.statusCode, 200);
     assert.equal(getRes.jsonBody().comparison.doc_a_json, null);
     assert.equal(getRes.jsonBody().comparison.doc_b_json, null);
+  });
+
+  test('document comparison create rejects payloads beyond Vertex-safe limits', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = authCookie('doc_limit_owner', 'doc-limit@example.com');
+    const limits = getDocumentComparisonTextLimits(process.env.VERTEX_MODEL || '');
+    const oversized = 'A'.repeat(limits.perDocumentCharacterLimit + 1);
+
+    const createReq = createMockReq({
+      method: 'POST',
+      url: '/api/document-comparisons',
+      headers: { cookie: ownerCookie },
+      body: {
+        title: 'Oversized Comparison',
+        doc_a_text: oversized,
+        doc_b_text: 'short',
+      },
+    });
+    const createRes = createMockRes();
+    await documentComparisonsHandler(createReq, createRes);
+
+    assert.equal(createRes.statusCode, 413);
+    assert.equal(createRes.jsonBody().error.code, 'payload_too_large');
   });
 
   test('document comparison workflow persists inputs and stores evaluation output', async () => {
