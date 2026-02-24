@@ -47,10 +47,10 @@ export default function Landing() {
   ];
 
   const steps = [
-    { number: '01', title: 'Choose Template', description: 'Select from M&A, recruiting, investment, or custom templates.' },
-    { number: '02', title: 'Fill & Control', description: 'Enter your data with granular visibility controls per field.' },
-    { number: '03', title: 'AI Evaluation', description: 'Get instant compatibility score and detailed analysis.' },
-    { number: '04', title: 'Verify & Reveal', description: 'Recipient verifies, both parties reveal when ready.' }
+    { number: '01', title: 'Share Deal Terms', description: 'Add private constraints and a shared position for the other side to review.' },
+    { number: '02', title: 'AI Negotiation', description: 'The AI finds gaps, risks, and trade-offs without leaking confidential info.' },
+    { number: '03', title: 'Converge on Terms', description: 'Iterate until you reach an agreed commercial position.' },
+    { number: '04', title: 'Verify & Finalize', description: 'Lock the agreed terms, export a summary, and move to contracts.' }
   ];
 
   return (
@@ -78,7 +78,7 @@ export default function Landing() {
             >
               <span className="inline-flex items-center gap-2 px-4 py-2 bg-blue-50 border border-blue-100 rounded-full text-sm text-blue-700 font-medium mb-8">
                 <Shield className="w-4 h-4" />
-                Privacy Preserving Pre-Qualification
+                Secure Data Handling
               </span>
             </motion.div>
 
@@ -88,10 +88,10 @@ export default function Landing() {
               transition={{ duration: 0.6, delay: 0.1 }}
               className="text-5xl sm:text-6xl lg:text-7xl font-bold text-slate-900 tracking-tight mb-6"
             >
-              Verify Test
+              Zero Consulting Fees
               <br />
               <span className="bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
-                Before You Reveal
+                AI Driven Negotiation
               </span>
             </motion.h1>
 
@@ -101,8 +101,7 @@ export default function Landing() {
               transition={{ duration: 0.6, delay: 0.2 }}
               className="text-xl text-slate-600 max-w-2xl mx-auto mb-10"
             >
-              Exchange structured proposals and evaluate compatibility through AI-powered assessments. 
-              Reveal identity only when both parties are ready.
+              PreMarket is a software platform that helps both sides align on terms without leaking confidential details.
             </motion.p>
 
             <motion.div
@@ -139,11 +138,11 @@ export default function Landing() {
               </div>
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 text-green-500" />
-                No transaction handling
+                No scheduling delays
               </div>
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 text-green-500" />
-                No financial advice
+                No personal bias
               </div>
             </motion.div>
           </div>

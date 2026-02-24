@@ -39,7 +39,7 @@ import {
 const CONFIDENTIAL_LABEL = 'Confidential Information';
 const SHARED_LABEL = 'Shared Information';
 const MAX_PREVIEW_CHARS = 500;
-const TOTAL_STEPS = 3;
+const TOTAL_STEPS = 2;
 const COACH_TRIGGER_OPTIONS = [
   { id: 'improve_shared', label: 'Improve Shared wording', mode: 'shared_only', intent: 'improve' },
   { id: 'negotiate_full', label: 'Negotiation suggestions', mode: 'full', intent: 'negotiate' },
@@ -301,6 +301,18 @@ function getSuggestionChangeSummary(op, headingHint) {
   return 'This will apply the proposed text change to the target document.';
 }
 
+function getNormalizedSuggestionId(suggestion, fallbackIndex = -1) {
+  const explicitId = String(suggestion?.id || '').trim();
+  if (explicitId) {
+    return explicitId;
+  }
+  const title = String(suggestion?.title || '').trim();
+  const target = String(suggestion?.proposed_change?.target || '').trim();
+  const text = String(suggestion?.proposed_change?.text || '').trim().slice(0, 32);
+  const seed = [title, target, text, fallbackIndex >= 0 ? String(fallbackIndex) : ''].join('|');
+  return seed || `suggestion-${fallbackIndex >= 0 ? fallbackIndex : 'unknown'}`;
+}
+
 function useRouteState() {
   const location = useLocation();
   return useMemo(() => {
@@ -353,13 +365,16 @@ export default function DocumentComparisonCreate() {
   const [coachCached, setCoachCached] = useState(false);
   const [coachWithheldCount, setCoachWithheldCount] = useState(0);
   const [coachRequestMeta, setCoachRequestMeta] = useState(null);
-  const [dismissedSuggestionIds, setDismissedSuggestionIds] = useState([]);
+  const [coachResultHash, setCoachResultHash] = useState('');
+  const [appliedSuggestionIdsByHash, setAppliedSuggestionIdsByHash] = useState({});
+  const [ignoredSuggestionIdsByHash, setIgnoredSuggestionIdsByHash] = useState({});
   const [expandedSuggestionIds, setExpandedSuggestionIds] = useState([]);
   const [selectionContext, setSelectionContext] = useState({ side: 'b', text: '' });
   const [focusEditorRequest, setFocusEditorRequest] = useState({ side: null, id: 0, jumpText: '' });
-  const [lastCoachAutoKey, setLastCoachAutoKey] = useState('');
   const [pendingReviewSuggestion, setPendingReviewSuggestion] = useState(null);
   const [isApplyingReviewSuggestion, setIsApplyingReviewSuggestion] = useState(false);
+  const [showFinishConfirmDialog, setShowFinishConfirmDialog] = useState(false);
+  const [isFinishingComparison, setIsFinishingComparison] = useState(false);
 
   const docAInputFileRef = useRef(null);
   const docBInputFileRef = useRef(null);
@@ -457,11 +472,14 @@ export default function DocumentComparisonCreate() {
     setCoachCached(false);
     setCoachWithheldCount(0);
     setCoachRequestMeta(null);
-    setDismissedSuggestionIds([]);
+    setCoachResultHash('');
+    setAppliedSuggestionIdsByHash({});
+    setIgnoredSuggestionIdsByHash({});
     setExpandedSuggestionIds([]);
-    setLastCoachAutoKey('');
     setPendingReviewSuggestion(null);
     setIsApplyingReviewSuggestion(false);
+    setShowFinishConfirmDialog(false);
+    setIsFinishingComparison(false);
   }, [comparisonId]);
 
   const currentStateHash = useMemo(
@@ -610,39 +628,6 @@ export default function DocumentComparisonCreate() {
     },
   });
 
-  const evaluateMutation = useMutation({
-    mutationFn: async () => {
-      if (exceedsAnySizeLimit) {
-        throw new Error(`Document size exceeds the ${limits.model} limit.`);
-      }
-      const persistedId = comparisonId || (await saveDraftMutation.mutateAsync({ stepToSave: 3, silent: true }));
-      if (!persistedId) {
-        throw new Error('Unable to save comparison before evaluation');
-      }
-
-      return documentComparisonsClient.evaluate(persistedId, {});
-    },
-    onSuccess: (result) => {
-      queryClient.invalidateQueries(['proposals']);
-      queryClient.invalidateQueries(['document-comparison-draft', comparisonId, routeState.token]);
-      const proposalId = result?.proposal?.id || linkedProposalId || routeState.proposalId;
-      if (proposalId) {
-        navigate(createPageUrl(`ProposalDetail?id=${encodeURIComponent(proposalId)}`));
-        return;
-      }
-
-      const id = result?.comparison?.id || comparisonId;
-      if (id) {
-        navigate(createPageUrl(`DocumentComparisonDetail?id=${encodeURIComponent(id)}`));
-      }
-    },
-    onError: (error) => {
-      const message = error?.message || 'Evaluation failed';
-      setUiError(message);
-      toast.error(message);
-    },
-  });
-
   useEffect(() => {
     if (lastSavedHash) {
       return;
@@ -748,20 +733,17 @@ export default function DocumentComparisonCreate() {
   const totalOverLimit = totalCharacters > limits.totalCharacterLimit;
   const exceedsAnySizeLimit = docAOverLimit || docBOverLimit || totalOverLimit;
 
-  const hasAnyDocumentContent = Boolean(asText(docAText) || asText(docBText));
-  const hasBothDocumentContents = Boolean(asText(docAText) && asText(docBText));
   const isStep2LoadingDraft = step === 2 && Boolean(resolvedDraftId) && draftQuery.isLoading;
   const step2LoadError = step === 2 && Boolean(resolvedDraftId) ? draftQuery.error : null;
   const editableSide = String(draftQuery.data?.permissions?.editable_side || 'a').toLowerCase();
   const canUseOwnerCoach = !routeState.token && editableSide !== 'b';
   const coachSuggestions = Array.isArray(coachResult?.suggestions) ? coachResult.suggestions : [];
-  const coachConcerns = Array.isArray(coachResult?.concerns) ? coachResult.concerns : [];
-  const coachQuestions = Array.isArray(coachResult?.questions) ? coachResult.questions : [];
-  const coachNegotiationMoves = Array.isArray(coachResult?.negotiation_moves)
-    ? coachResult.negotiation_moves
-    : [];
+  const activeCoachHash = coachResultHash || 'unhashed';
+  const appliedSuggestionIds = appliedSuggestionIdsByHash[activeCoachHash] || [];
+  const ignoredSuggestionIds = ignoredSuggestionIdsByHash[activeCoachHash] || [];
+  const hiddenSuggestionIds = new Set([...appliedSuggestionIds, ...ignoredSuggestionIds]);
   const visibleCoachSuggestions = coachSuggestions.filter(
-    (suggestion) => !dismissedSuggestionIds.includes(String(suggestion?.id || '')),
+    (suggestion, index) => !hiddenSuggestionIds.has(getNormalizedSuggestionId(suggestion, index)),
   );
 
   const applyImportedContent = (side, file, extracted) => {
@@ -877,6 +859,58 @@ export default function DocumentComparisonCreate() {
     }
   };
 
+  const finishToComparisonDetail = async ({ saveFirst }) => {
+    if (isFinishingComparison) {
+      return;
+    }
+    if (saveFirst && exceedsAnySizeLimit) {
+      toast.error(
+        `Document content exceeds the ${limits.model} limit. Reduce text before saving.`,
+      );
+      return;
+    }
+
+    setIsFinishingComparison(true);
+    try {
+      let resolvedId = comparisonId;
+      if (saveFirst) {
+        resolvedId = await saveDraftMutation.mutateAsync({
+          stepToSave: 2,
+          silent: true,
+        });
+      } else if (!resolvedId) {
+        resolvedId = await saveDraftMutation.mutateAsync({
+          stepToSave: 2,
+          silent: true,
+        });
+      }
+
+      if (!resolvedId) {
+        throw new Error('Unable to open the comparison details yet.');
+      }
+
+      setShowFinishConfirmDialog(false);
+      navigate(createPageUrl(`DocumentComparisonDetail?id=${encodeURIComponent(resolvedId)}`));
+    } catch (error) {
+      const message = error?.message || 'Failed to open comparison details.';
+      setUiError(message);
+      toast.error(message);
+    } finally {
+      setIsFinishingComparison(false);
+    }
+  };
+
+  const handleFinishClick = () => {
+    if (saveDraftMutation.isPending || isFinishingComparison) {
+      return;
+    }
+    if (isDirty) {
+      setShowFinishConfirmDialog(true);
+      return;
+    }
+    finishToComparisonDetail({ saveFirst: false });
+  };
+
   const ensureComparisonIdForCoach = async () => {
     if (comparisonId) {
       return comparisonId;
@@ -927,6 +961,7 @@ export default function DocumentComparisonCreate() {
       });
       const coach = response?.coach || null;
       setCoachResult(coach);
+      setCoachResultHash(String(response?.cacheHash || ''));
       setCoachCached(Boolean(response?.cached));
       setCoachWithheldCount(Number(response?.withheldCount || 0));
       setCoachRequestMeta({
@@ -935,7 +970,6 @@ export default function DocumentComparisonCreate() {
         model: response?.model || 'unknown',
         provider: response?.provider || 'vertex',
       });
-      setDismissedSuggestionIds([]);
       setExpandedSuggestionIds([]);
       if (!silent) {
         toast.success(response?.cached ? 'Loaded cached AI Coach suggestions' : 'AI Coach suggestions ready');
@@ -953,7 +987,7 @@ export default function DocumentComparisonCreate() {
     }
   };
 
-  const openCoachSuggestionReview = (suggestion) => {
+  const openCoachSuggestionReview = (suggestion, suggestionIdOverride = '') => {
     const target = suggestion?.proposed_change?.target === 'doc_a' ? 'a' : 'b';
     const op = String(suggestion?.proposed_change?.op || 'append');
     const nextText = String(suggestion?.proposed_change?.text || '');
@@ -974,6 +1008,8 @@ export default function DocumentComparisonCreate() {
 
     setPendingReviewSuggestion({
       suggestion,
+      suggestionId: String(suggestionIdOverride || getNormalizedSuggestionId(suggestion)),
+      coachHash: activeCoachHash,
       target,
       op,
       nextText,
@@ -1024,6 +1060,22 @@ export default function DocumentComparisonCreate() {
       setDocBSource('typed');
     }
 
+    const suggestionId = String(pendingReviewSuggestion.suggestionId || '');
+    const suggestionHash = String(pendingReviewSuggestion.coachHash || activeCoachHash || 'unhashed');
+    if (suggestionId) {
+      setAppliedSuggestionIdsByHash((previous) => {
+        const current = Array.isArray(previous[suggestionHash]) ? previous[suggestionHash] : [];
+        if (current.includes(suggestionId)) {
+          return previous;
+        }
+        return {
+          ...previous,
+          [suggestionHash]: [...current, suggestionId],
+        };
+      });
+      setExpandedSuggestionIds((previous) => previous.filter((id) => id !== suggestionId));
+    }
+
     setPendingReviewSuggestion(null);
     setStep(2);
     setFocusEditorRequest({
@@ -1052,9 +1104,18 @@ export default function DocumentComparisonCreate() {
     if (!normalizedId) {
       return;
     }
-    setDismissedSuggestionIds((previous) =>
-      previous.includes(normalizedId) ? previous : [...previous, normalizedId],
-    );
+    const suggestionHash = String(activeCoachHash || 'unhashed');
+    setIgnoredSuggestionIdsByHash((previous) => {
+      const current = Array.isArray(previous[suggestionHash]) ? previous[suggestionHash] : [];
+      if (current.includes(normalizedId)) {
+        return previous;
+      }
+      return {
+        ...previous,
+        [suggestionHash]: [...current, normalizedId],
+      };
+    });
+    setExpandedSuggestionIds((previous) => previous.filter((id) => id !== normalizedId));
   };
 
   useEffect(() => {
@@ -1070,42 +1131,6 @@ export default function DocumentComparisonCreate() {
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [isDirty]);
-
-  useEffect(() => {
-    if (step !== 3 || !canUseOwnerCoach) {
-      return;
-    }
-    const autoKey = [
-      comparisonId || '',
-      docAText.length,
-      docBText.length,
-      docAText.slice(0, 200),
-      docBText.slice(0, 200),
-    ].join('|');
-    if (lastCoachAutoKey === autoKey) {
-      return;
-    }
-    setLastCoachAutoKey(autoKey);
-
-    let cancelled = false;
-    (async () => {
-      const response = await runCoach({
-        mode: 'full',
-        intent: 'negotiate',
-        silent: true,
-      });
-      if (cancelled || !response) {
-        return;
-      }
-      if (!response.cached) {
-        toast.success('AI Coach refreshed for current draft');
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [canUseOwnerCoach, comparisonId, docAText, docBText, lastCoachAutoKey, step]);
 
   const renderImportPanel = ({ side, label, selectedFile, setSelectedFile, preview, source, files, fileRef }) => {
     const isImporting = importingSide === side;
@@ -1270,7 +1295,7 @@ export default function DocumentComparisonCreate() {
         <div className="mb-5">
           <div className="flex items-center justify-between text-sm mb-3">
             <div className="flex items-center gap-3">
-              <span className={`font-semibold ${step === 1 ? 'text-blue-600' : 'text-slate-400'}`}>Step {step} of 3</span>
+              <span className={`font-semibold ${step === 1 ? 'text-blue-600' : 'text-slate-400'}`}>Step {step} of 2</span>
               <span className={`text-xs ${isDirty ? 'text-amber-700' : 'text-emerald-700'}`}>
                 {isDirty ? 'Unsaved changes' : 'All changes saved'}
               </span>
@@ -1495,7 +1520,7 @@ export default function DocumentComparisonCreate() {
                     {visibleCoachSuggestions.length > 0 ? (
                       <div className="space-y-2">
                         {visibleCoachSuggestions.slice(0, 4).map((suggestion, index) => {
-                          const suggestionId = String(suggestion?.id || '');
+                          const suggestionId = getNormalizedSuggestionId(suggestion, index);
                           const expanded = expandedSuggestionIds.includes(suggestionId);
                           const isShared = suggestion?.scope === 'shared' || suggestion?.proposed_change?.target === 'doc_b';
                           return (
@@ -1509,7 +1534,7 @@ export default function DocumentComparisonCreate() {
                                   <span className="text-sm font-medium text-slate-800">{suggestion?.title || 'Suggestion'}</span>
                                 </div>
                                 <div className="flex gap-2">
-                                  <Button type="button" size="sm" onClick={() => openCoachSuggestionReview(suggestion)}>
+                                  <Button type="button" size="sm" onClick={() => openCoachSuggestionReview(suggestion, suggestionId)}>
                                     Review & Apply
                                   </Button>
                                   <Button type="button" size="sm" variant="outline" onClick={() => toggleSuggestionExpanded(suggestionId)}>
@@ -1632,12 +1657,21 @@ export default function DocumentComparisonCreate() {
                           {saveDraftMutation.isPending ? 'Saving...' : 'Save Draft'}
                         </Button>
                         <Button
-                          onClick={() => jumpStep(3)}
-                          disabled={!hasAnyDocumentContent}
+                          onClick={handleFinishClick}
+                          disabled={saveDraftMutation.isPending || isFinishingComparison}
                           className="bg-blue-600 hover:bg-blue-700"
                         >
-                          Continue to Review
-                          <ArrowRight className="w-4 h-4 ml-2" />
+                          {isFinishingComparison ? (
+                            <>
+                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                              Opening...
+                            </>
+                          ) : (
+                            <>
+                              Go to Comparison
+                              <ArrowRight className="w-4 h-4 ml-2" />
+                            </>
+                          )}
                         </Button>
                       </div>
                     </div>
@@ -1646,268 +1680,64 @@ export default function DocumentComparisonCreate() {
               </motion.div>
             </DocumentComparisonEditorErrorBoundary>
           )}
-
-          {step === 3 && (
-            <motion.div
-              key="doc-step-3"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-            >
-              <Card>
-                <CardHeader>
-                  <CardTitle>Step 3: Review & Evaluate</CardTitle>
-                  <CardDescription>Review imported and edited content before running AI evaluation.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-6">
-                  <div className="p-4 bg-slate-50 rounded-xl space-y-3">
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">Title</span>
-                      <span className="font-medium">{title || 'Untitled Comparison'}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">{CONFIDENTIAL_LABEL} Length</span>
-                      <span className="font-medium">{docAText.length} characters</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-500">{SHARED_LABEL} Length</span>
-                      <span className="font-medium">{docBText.length} characters</span>
-                    </div>
-                  </div>
-
-                  <Alert>
-                    <AlertTriangle className="w-4 h-4" />
-                    <AlertDescription>
-                      <strong>Safety rule:</strong> Recipient-facing outputs are limited to {SHARED_LABEL}. {CONFIDENTIAL_LABEL} remains private.
-                    </AlertDescription>
-                  </Alert>
-
-                  {canUseOwnerCoach ? (
-                    <Card className="border border-slate-200">
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-base flex items-center gap-2">
-                        <Sparkles className="w-4 h-4 text-blue-600" />
-                        AI Coach
-                        {coachCached ? <Badge variant="outline">Cached</Badge> : null}
-                      </CardTitle>
-                      <CardDescription>
-                        Interactive coaching suggestions based on confidential + shared context for owner-only editing.
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                      <div className="flex flex-wrap gap-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          disabled={coachLoading}
-                          onClick={() => runCoach({ mode: 'full', intent: 'negotiate' })}
-                        >
-                          {coachLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
-                          Refresh Coach
-                        </Button>
-                      </div>
-
-                      {coachLoading ? (
-                        <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600 flex items-center gap-2">
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          Generating coaching suggestions...
-                        </div>
-                      ) : null}
-
-                      {coachError ? (
-                        <Alert className="bg-red-50 border-red-200">
-                          <AlertTriangle className="h-4 w-4 text-red-700" />
-                          <AlertDescription className="text-red-800">{coachError}</AlertDescription>
-                        </Alert>
-                      ) : null}
-
-                      {coachResult?.summary?.overall ? (
-                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                          <p className="text-sm font-medium text-slate-800 mb-1">Summary</p>
-                          <p className="text-sm text-slate-700">{coachResult.summary.overall}</p>
-                          {Array.isArray(coachResult?.summary?.top_priorities) && coachResult.summary.top_priorities.length > 0 ? (
-                            <ul className="mt-2 list-disc pl-5 text-xs text-slate-600 space-y-1">
-                              {coachResult.summary.top_priorities.map((priority) => (
-                                <li key={priority}>{priority}</li>
-                              ))}
-                            </ul>
-                          ) : null}
-                        </div>
-                      ) : null}
-
-                      {coachRequestMeta?.model ? (
-                        <p className="text-xs text-slate-500">
-                          Model: {coachRequestMeta.model}
-                          {coachRequestMeta.provider ? ` (${coachRequestMeta.provider})` : ''}
-                          {coachWithheldCount > 0 ? ` · ${coachWithheldCount} unsafe shared suggestion(s) withheld` : ''}
-                        </p>
-                      ) : null}
-
-                      {visibleCoachSuggestions.length > 0 ? (
-                        <div className="space-y-2">
-                          {visibleCoachSuggestions.map((suggestion) => {
-                            const suggestionId = String(suggestion?.id || '');
-                            const expanded = expandedSuggestionIds.includes(suggestionId);
-                            const isShared = suggestion?.scope === 'shared' || suggestion?.proposed_change?.target === 'doc_b';
-                            return (
-                              <div key={suggestionId || `${suggestion?.title || 'coach'}-${isShared ? 'shared' : 'conf'}`} className="rounded-lg border border-slate-200 bg-white p-3">
-                                <div className="flex flex-wrap items-center justify-between gap-2">
-                                  <div className="flex items-center gap-2">
-                                    <Badge variant="outline">{String(suggestion?.severity || 'info')}</Badge>
-                                    <Badge variant={isShared ? 'secondary' : 'outline'}>
-                                      {isShared ? 'Shared-safe' : 'Confidential-only'}
-                                    </Badge>
-                                    <span className="text-sm font-medium text-slate-800">{suggestion?.title || 'Suggestion'}</span>
-                                  </div>
-                                  <div className="flex gap-2">
-                                    <Button type="button" size="sm" onClick={() => openCoachSuggestionReview(suggestion)}>
-                                      Review & Apply
-                                    </Button>
-                                    <Button type="button" size="sm" variant="outline" onClick={() => toggleSuggestionExpanded(suggestionId)}>
-                                      {expanded ? 'Hide' : 'Explain'}
-                                    </Button>
-                                    <Button type="button" size="sm" variant="ghost" onClick={() => dismissSuggestion(suggestionId)}>
-                                      Ignore
-                                    </Button>
-                                  </div>
-                                </div>
-                                {expanded ? (
-                                  <div className="mt-2 space-y-2 text-sm text-slate-600">
-                                    <p>{suggestion?.rationale || 'No rationale provided.'}</p>
-                                    <div className="rounded border border-slate-200 bg-slate-50 p-2 whitespace-pre-wrap">
-                                      {suggestion?.proposed_change?.text || ''}
-                                    </div>
-                                    {isShared && Array.isArray(suggestion?.evidence?.shared_quotes) && suggestion.evidence.shared_quotes.length ? (
-                                      <div>
-                                        <p className="text-xs font-semibold text-slate-500 mb-1">Shared evidence</p>
-                                        <ul className="list-disc pl-5 text-xs text-slate-600">
-                                          {suggestion.evidence.shared_quotes.map((quote) => (
-                                            <li key={`${suggestionId}-shared-${quote.slice(0, 20)}`}>{quote}</li>
-                                          ))}
-                                        </ul>
-                                      </div>
-                                    ) : null}
-                                    {!isShared && Array.isArray(suggestion?.evidence?.confidential_quotes) && suggestion.evidence.confidential_quotes.length ? (
-                                      <div>
-                                        <p className="text-xs font-semibold text-slate-500 mb-1">Confidential evidence</p>
-                                        <ul className="list-disc pl-5 text-xs text-slate-600">
-                                          {suggestion.evidence.confidential_quotes.map((quote) => (
-                                            <li key={`${suggestionId}-conf-${quote.slice(0, 20)}`}>{quote}</li>
-                                          ))}
-                                        </ul>
-                                      </div>
-                                    ) : null}
-                                  </div>
-                                ) : null}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      ) : coachLoading ? null : (
-                        <p className="text-sm text-slate-500">No active suggestions yet. Run AI Coach to generate recommendations.</p>
-                      )}
-
-                      {coachConcerns.length > 0 ? (
-                        <div>
-                          <p className="text-sm font-semibold text-slate-700 mb-1">Concerns</p>
-                          <ul className="list-disc pl-5 text-sm text-slate-600 space-y-1">
-                            {coachConcerns.map((concern) => (
-                              <li key={concern.id || concern.title}>
-                                <span className="font-medium">{concern.title}: </span>
-                                {concern.details}
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      ) : null}
-
-                      {coachNegotiationMoves.length > 0 ? (
-                        <div>
-                          <p className="text-sm font-semibold text-slate-700 mb-1">Negotiation moves</p>
-                          <ul className="list-disc pl-5 text-sm text-slate-600 space-y-1">
-                            {coachNegotiationMoves.map((move) => (
-                              <li key={move.id || move.title}>
-                                <span className="font-medium">{move.title}: </span>
-                                {move.move}
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      ) : null}
-
-                      {coachQuestions.length > 0 ? (
-                        <div>
-                          <p className="text-sm font-semibold text-slate-700 mb-1">Questions to ask</p>
-                          <ul className="list-disc pl-5 text-sm text-slate-600 space-y-1">
-                            {coachQuestions.map((question) => (
-                              <li key={question.id || question.text}>{question.text}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      ) : null}
-                    </CardContent>
-                    </Card>
-                  ) : (
-                    <Card className="border border-slate-200">
-                      <CardContent className="py-4 text-sm text-slate-600">
-                        AI Coach is available only to the comparison owner.
-                      </CardContent>
-                    </Card>
-                  )}
-
-                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                    <div className="rounded-xl border border-slate-200 bg-white p-4">
-                      <p className="text-sm font-semibold text-slate-700 mb-2">{CONFIDENTIAL_LABEL}</p>
-                      <p className="text-sm text-slate-600 whitespace-pre-wrap max-h-48 overflow-auto">
-                        {previewSnippet(docAText) || 'No content'}
-                      </p>
-                    </div>
-                    <div className="rounded-xl border border-slate-200 bg-white p-4">
-                      <p className="text-sm font-semibold text-slate-700 mb-2">{SHARED_LABEL}</p>
-                      <p className="text-sm text-slate-600 whitespace-pre-wrap max-h-48 overflow-auto">
-                        {previewSnippet(docBText) || 'No content'}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex justify-between">
-                    <Button variant="outline" onClick={() => jumpStep(2)}>
-                      <ArrowLeft className="w-4 h-4 mr-2" />
-                      Back to Editor
-                    </Button>
-                    <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        onClick={() => saveDraft(3)}
-                        disabled={saveDraftMutation.isPending || exceedsAnySizeLimit}
-                      >
-                        {saveDraftMutation.isPending ? (
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        ) : (
-                          <Save className="w-4 h-4 mr-2" />
-                        )}
-                        {saveDraftMutation.isPending ? 'Saving...' : 'Save Draft'}
-                      </Button>
-                      <Button
-                        onClick={() => evaluateMutation.mutate()}
-                        disabled={evaluateMutation.isPending || !hasBothDocumentContents || exceedsAnySizeLimit}
-                        className="bg-purple-600 hover:bg-purple-700"
-                      >
-                        {evaluateMutation.isPending ? (
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        ) : (
-                          <Sparkles className="w-4 h-4 mr-2" />
-                        )}
-                        Run Evaluation
-                      </Button>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </motion.div>
-          )}
         </AnimatePresence>
+
+        <Dialog
+          open={showFinishConfirmDialog}
+          onOpenChange={(open) => {
+            if (!isFinishingComparison) {
+              setShowFinishConfirmDialog(open);
+            }
+          }}
+        >
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Unsaved changes</DialogTitle>
+              <DialogDescription>
+                You have unsaved changes. Save draft before leaving to the comparison overview?
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setShowFinishConfirmDialog(false)}
+                disabled={isFinishingComparison}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => finishToComparisonDetail({ saveFirst: false })}
+                disabled={isFinishingComparison}
+              >
+                {isFinishingComparison ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Opening...
+                  </>
+                ) : (
+                  'Continue without saving'
+                )}
+              </Button>
+              <Button
+                type="button"
+                onClick={() => finishToComparisonDetail({ saveFirst: true })}
+                disabled={isFinishingComparison || saveDraftMutation.isPending || exceedsAnySizeLimit}
+              >
+                {isFinishingComparison || saveDraftMutation.isPending ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  'Save & Continue'
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <Dialog
           open={Boolean(pendingReviewSuggestion)}
