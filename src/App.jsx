@@ -143,6 +143,14 @@ const PublicRoutes = () => {
           </LayoutWrapper>
         }
       />
+      <Route
+        path="/share/:token"
+        element={
+          <LayoutWrapper currentPageName="SharedReport">
+            <Pages.SharedReport />
+          </LayoutWrapper>
+        }
+      />
       <Route path="/shared-report" element={<SharedReportAliasRedirect />} />
       <Route
         path="/proposals/:proposalId/recipient-edit"
@@ -230,7 +238,9 @@ const AppRoutes = () => {
     location.pathname === '/directory' ||
     location.pathname.startsWith('/directory/') ||
     location.pathname === '/SharedReport' ||
-    location.pathname === '/shared-report';
+    location.pathname === '/shared-report' ||
+    location.pathname === '/share' ||
+    location.pathname.startsWith('/share/');
   return <AuthenticatedApp isPublicDirectoryRoute={isPublicDirectoryRoute} />;
 };
 

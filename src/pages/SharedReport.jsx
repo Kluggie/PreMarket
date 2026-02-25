@@ -1,67 +1,70 @@
 import React, { useMemo, useState } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { createPageUrl } from '@/utils';
-import { sharedLinksClient } from '@/api/sharedLinksClient';
+import { sharedReportsClient } from '@/api/sharedReportsClient';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import {
-  ArrowLeft,
-  Loader2,
-  AlertTriangle,
-  CheckCircle2,
-  RefreshCw,
-  Send,
-  Sparkles,
-  FileText,
-  PenSquare,
-} from 'lucide-react';
+import { ArrowLeft, AlertTriangle, CheckCircle2, Loader2, Send } from 'lucide-react';
+import { toast } from 'sonner';
 
-function normalizeText(value) {
-  return String(value || '').trim();
+function asText(value) {
+  return typeof value === 'string' ? value.trim() : '';
 }
 
-function useToken() {
-  const location = useLocation();
-  return useMemo(() => {
-    const params = new URLSearchParams(location.search || '');
-    return params.get('token') || '';
-  }, [location.search]);
+function formatDateTime(dateValue) {
+  if (!dateValue) return '—';
+  const parsed = new Date(dateValue);
+  if (Number.isNaN(parsed.getTime())) return '—';
+  return parsed.toLocaleString();
 }
 
-function buildQuestionSet(rows = []) {
-  const byQuestion = new Map();
+function getTokenFromRoute(paramsToken, locationSearch) {
+  const pathToken = asText(paramsToken);
+  if (pathToken) {
+    return pathToken;
+  }
 
-  rows.forEach((row) => {
-    const questionId = normalizeText(row.question_id);
-    if (!questionId) return;
+  const search = new URLSearchParams(locationSearch || '');
+  return asText(search.get('token'));
+}
 
-    if (!byQuestion.has(questionId)) {
-      byQuestion.set(questionId, {
-        question_id: questionId,
-        current_value: '',
-      });
-    }
+function renderReadOnly({ text, html }) {
+  const safeText = String(text || '').trim();
+  const safeHtml = asText(html);
 
-    if (row.entered_by_party === 'b' && row.value) {
-      byQuestion.get(questionId).current_value = row.value;
-    }
-  });
+  if (!safeText && !safeHtml) {
+    return <p className="text-sm text-slate-500 italic">No shared report content available.</p>;
+  }
 
-  return Array.from(byQuestion.values());
+  if (safeHtml) {
+    return (
+      <div
+        className="text-sm text-slate-800 leading-relaxed"
+        dangerouslySetInnerHTML={{ __html: safeHtml }}
+      />
+    );
+  }
+
+  return <div className="whitespace-pre-wrap text-sm text-slate-800 leading-relaxed">{safeText}</div>;
 }
 
 export default function SharedReport() {
-  const token = useToken();
+  const params = useParams();
+  const location = useLocation();
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
+  const token = useMemo(
+    () => getTokenFromRoute(params.token, location.search),
+    [params.token, location.search],
+  );
+
   const [responderEmail, setResponderEmail] = useState('');
-  const [questionValues, setQuestionValues] = useState({});
+  const [responseMessage, setResponseMessage] = useState('');
 
   const {
     data: payload,
@@ -69,58 +72,36 @@ export default function SharedReport() {
     error,
     refetch,
   } = useQuery({
-    queryKey: ['shared-report', token],
+    queryKey: ['shared-report-public', token],
     enabled: Boolean(token),
-    queryFn: () => sharedLinksClient.getByToken(token, { consume: true, includeDetails: true }),
+    queryFn: () => sharedReportsClient.getByToken(token),
   });
 
-  const sharedLink = payload?.sharedLink || null;
-  const responses = payload?.responses || [];
-  const evaluations = payload?.evaluations || [];
-  const comparison = payload?.documentComparison || null;
-  const proposal = sharedLink?.proposal || null;
+  const sharedReport = payload?.sharedReport || null;
 
-  const questions = useMemo(() => buildQuestionSet(responses), [responses]);
-
-  React.useEffect(() => {
-    const nextState = {};
-    questions.forEach((question) => {
-      nextState[question.question_id] = question.current_value || '';
-    });
-    setQuestionValues(nextState);
-  }, [questions]);
-
-  React.useEffect(() => {
-    if (sharedLink?.recipientEmail) {
-      setResponderEmail(sharedLink.recipientEmail);
-    }
-  }, [sharedLink?.recipientEmail]);
-
-  const submitMutation = useMutation({
-    mutationFn: (runEvaluation = false) =>
-      sharedLinksClient.respond(token, {
-        responderEmail,
-        runEvaluation,
-        responses: questions.map((question) => ({
-          question_id: question.question_id,
-          value: questionValues[question.question_id] || '',
-          value_type: 'text',
-          visibility: 'full',
-        })),
+  const respondMutation = useMutation({
+    mutationFn: () =>
+      sharedReportsClient.respond(token, {
+        responderEmail: asText(responderEmail) || null,
+        message: asText(responseMessage) || null,
       }),
     onSuccess: () => {
-      queryClient.invalidateQueries(['shared-report', token]);
+      setResponseMessage('');
+      toast.success('Response sent');
       refetch();
+    },
+    onError: (mutationError) => {
+      toast.error(mutationError?.message || 'Unable to submit response');
     },
   });
 
   if (!token) {
     return (
-      <div className="min-h-screen bg-slate-50 py-8">
+      <div className="min-h-screen bg-slate-50 py-10">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
           <Alert className="bg-amber-50 border-amber-200">
             <AlertTriangle className="h-4 w-4 text-amber-700" />
-            <AlertDescription className="text-amber-800">Missing shared token.</AlertDescription>
+            <AlertDescription className="text-amber-800">Missing shared report token.</AlertDescription>
           </Alert>
         </div>
       </div>
@@ -129,11 +110,11 @@ export default function SharedReport() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-slate-50 py-8">
+      <div className="min-h-screen bg-slate-50 py-10">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-          <Card className="border-0 shadow-sm">
+          <Card className="border border-slate-200 shadow-sm">
             <CardContent className="py-16 text-center">
-              <Loader2 className="w-8 h-8 animate-spin text-blue-600 mx-auto mb-4" />
+              <Loader2 className="w-8 h-8 animate-spin text-slate-600 mx-auto mb-4" />
               <p className="text-slate-700">Loading shared report...</p>
             </CardContent>
           </Card>
@@ -142,25 +123,37 @@ export default function SharedReport() {
     );
   }
 
-  if (error || !sharedLink) {
+  if (error || !sharedReport) {
+    const code = asText(error?.code);
+    const title =
+      code === 'token_expired'
+        ? 'This link has expired'
+        : code === 'token_inactive'
+          ? 'This link has been revoked'
+          : code === 'max_uses_reached'
+            ? 'This link is no longer available'
+            : 'Shared report unavailable';
+
     return (
-      <div className="min-h-screen bg-slate-50 py-8">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div className="min-h-screen bg-slate-50 py-10">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 space-y-4">
           <Alert className="bg-red-50 border-red-200">
             <AlertTriangle className="h-4 w-4 text-red-700" />
-            <AlertDescription className="text-red-800">
-              {error?.message || 'Unable to open shared report'}
-            </AlertDescription>
+            <AlertDescription className="text-red-800">{title}</AlertDescription>
           </Alert>
+          <p className="text-sm text-slate-600">{error?.message || 'Unable to open shared report.'}</p>
         </div>
       </div>
     );
   }
 
-  const latestEvaluation = evaluations[0] || null;
+  const sharedContent = sharedReport.shared_content || {};
+  const aiReport = sharedReport.ai_report || {};
+  const aiSections = Array.isArray(aiReport.sections) ? aiReport.sections : [];
+  const recommendation = asText(aiReport.recommendation) || 'unknown fit';
 
   return (
-    <div className="min-h-screen bg-slate-50 py-8">
+    <div className="min-h-screen bg-slate-50 py-10">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
         <div className="flex items-center justify-between">
           <Button variant="ghost" onClick={() => navigate(createPageUrl('Proposals'))}>
@@ -169,143 +162,112 @@ export default function SharedReport() {
           </Button>
           <div className="flex items-center gap-2">
             <Badge className="bg-blue-100 text-blue-700">Shared Report</Badge>
-            <Badge variant="outline">Uses {sharedLink.uses || 0}</Badge>
+            <Badge variant="outline">Opened {Number(sharedReport.uses || 0)} times</Badge>
           </div>
         </div>
 
-        <Card className="border-0 shadow-sm">
+        <Card className="border border-slate-200 shadow-sm">
           <CardHeader>
-            <CardTitle>{proposal?.title || 'Shared Proposal'}</CardTitle>
+            <CardTitle>{sharedReport.title || 'Shared Report'}</CardTitle>
             <CardDescription>
-              {proposal?.template_name || 'Template'} • Status: {proposal?.status || sharedLink.status}
+              Status: {sharedReport.status || 'active'} • Expires: {formatDateTime(sharedReport.expires_at)}
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-3">
-            <p className="text-sm text-slate-600">{proposal?.summary || 'No summary provided.'}</p>
-            <p className="text-xs text-slate-500 break-all">Token: {sharedLink.token}</p>
-            {latestEvaluation ? (
-              <div className="p-3 rounded-lg bg-indigo-50 border border-indigo-200">
-                <p className="text-sm font-medium text-indigo-900">
-                  Latest Evaluation: {latestEvaluation.score ?? '—'}
-                </p>
-                <p className="text-sm text-indigo-800">{latestEvaluation.summary || 'No summary'}</p>
-              </div>
-            ) : null}
+        </Card>
+
+        <Card className="border border-slate-200 shadow-sm">
+          <CardHeader>
+            <CardTitle>{sharedContent.label || 'Shared Information'}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {renderReadOnly({
+              text: sharedContent.text || '',
+              html: sharedContent.html || '',
+            })}
           </CardContent>
         </Card>
 
-        <Card className="border-0 shadow-sm">
+        <Card className="border border-slate-200 shadow-sm">
           <CardHeader>
-            <CardTitle>Submit Recipient Response</CardTitle>
+            <CardTitle>AI Report</CardTitle>
             <CardDescription>
-              Update your response values and optionally run a re-evaluation.
+              Recommendation: <span className="capitalize">{recommendation}</span>
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="space-y-1">
-              <Label>Recipient Email</Label>
-              <Input
-                type="email"
-                value={responderEmail}
-                onChange={(event) => setResponderEmail(event.target.value)}
-                placeholder="recipient@example.com"
-              />
-            </div>
+            {asText(aiReport.executive_summary) ? (
+              <p className="text-slate-700">{aiReport.executive_summary}</p>
+            ) : null}
 
-            {questions.length === 0 ? (
-              <p className="text-sm text-slate-500">
-                No structured questions were found on this proposal. You can still submit a general response.
-              </p>
-            ) : (
-              <div className="space-y-3">
-                {questions.map((question) => (
-                  <div key={question.question_id} className="space-y-1">
-                    <Label>{question.question_id}</Label>
-                    <Textarea
-                      rows={2}
-                      value={questionValues[question.question_id] || ''}
-                      onChange={(event) =>
-                        setQuestionValues((prev) => ({
-                          ...prev,
-                          [question.question_id]: event.target.value,
-                        }))
-                      }
-                    />
+            {aiSections.length > 0 ? (
+              <div className="space-y-4">
+                {aiSections.map((section, index) => (
+                  <div
+                    key={`${section.key || section.heading || 'section'}-${index}`}
+                    className="rounded-xl border border-slate-200 p-4"
+                  >
+                    <p className="font-semibold text-slate-900 mb-2">
+                      {section.heading || section.key || `Section ${index + 1}`}
+                    </p>
+                    <ul className="list-disc pl-5 space-y-1 text-slate-700">
+                      {(Array.isArray(section.bullets) ? section.bullets : []).map((line, lineIndex) => (
+                        <li key={`${index}-${lineIndex}`}>{line}</li>
+                      ))}
+                    </ul>
                   </div>
                 ))}
               </div>
+            ) : (
+              <p className="text-sm text-slate-600">No AI report details are available yet.</p>
             )}
+          </CardContent>
+        </Card>
 
-            {submitMutation.error ? (
-              <Alert className="bg-red-50 border-red-200">
-                <AlertTriangle className="h-4 w-4 text-red-700" />
-                <AlertDescription className="text-red-800">{submitMutation.error.message}</AlertDescription>
-              </Alert>
-            ) : null}
+        <Card className="border border-slate-200 shadow-sm">
+          <CardHeader>
+            <CardTitle>Send Response</CardTitle>
+            <CardDescription>Share optional feedback with the report owner.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="response-email">Email (optional)</Label>
+              <Input
+                id="response-email"
+                type="email"
+                placeholder="recipient@example.com"
+                value={responderEmail}
+                onChange={(event) => setResponderEmail(event.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="response-message">Message</Label>
+              <Textarea
+                id="response-message"
+                rows={4}
+                placeholder="Add your response..."
+                value={responseMessage}
+                onChange={(event) => setResponseMessage(event.target.value)}
+              />
+            </div>
 
-            {submitMutation.data ? (
+            {respondMutation.data ? (
               <Alert className="bg-green-50 border-green-200">
                 <CheckCircle2 className="h-4 w-4 text-green-700" />
                 <AlertDescription className="text-green-800">
-                  Responses saved ({submitMutation.data.savedResponses} fields).
+                  Response saved ({respondMutation.data.savedResponses} entries).
                 </AlertDescription>
               </Alert>
             ) : null}
 
-            <div className="flex flex-wrap gap-3">
-              <Button onClick={() => submitMutation.mutate(false)} disabled={submitMutation.isPending}>
-                <Send className="w-4 h-4 mr-2" />
-                {submitMutation.isPending ? 'Submitting...' : 'Submit Responses'}
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={() => submitMutation.mutate(true)}
-                disabled={submitMutation.isPending}
-              >
-                <Sparkles className="w-4 h-4 mr-2" />
-                Re-evaluate
-              </Button>
-              <Button variant="outline" onClick={() => refetch()}>
-                <RefreshCw className="w-4 h-4 mr-2" />
-                Refresh
-              </Button>
-            </div>
+            <Button
+              onClick={() => respondMutation.mutate()}
+              disabled={respondMutation.isPending || !asText(responseMessage)}
+            >
+              <Send className="w-4 h-4 mr-2" />
+              {respondMutation.isPending ? 'Sending...' : 'Submit response'}
+            </Button>
           </CardContent>
         </Card>
-
-        {comparison ? (
-          <Card className="border-0 shadow-sm">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <FileText className="w-5 h-5 text-indigo-600" />
-                Document Comparison Workspace
-              </CardTitle>
-              <CardDescription>{comparison.title}</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <p className="text-sm text-slate-600">
-                Continue recipient edit flow for the linked comparison draft.
-              </p>
-              <div className="flex gap-3 flex-wrap">
-                {proposal?.id ? (
-                  <Link
-                    to={createPageUrl(
-                      `proposals/${encodeURIComponent(proposal.id)}/recipient-edit?sharedToken=${encodeURIComponent(token)}`,
-                    )}
-                  >
-                    <Button variant="outline">
-                      <PenSquare className="w-4 h-4 mr-2" />
-                      Recipient Edit Step 2
-                    </Button>
-                  </Link>
-                ) : null}
-                <Link to={createPageUrl(`DocumentComparisonDetail?id=${encodeURIComponent(comparison.id)}`)}>
-                  <Button variant="outline">Open Comparison Detail</Button>
-                </Link>
-              </div>
-            </CardContent>
-          </Card>
-        ) : null}
       </div>
     </div>
   );

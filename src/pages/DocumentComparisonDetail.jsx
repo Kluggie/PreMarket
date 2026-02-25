@@ -1,21 +1,32 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { createPageUrl } from '@/utils';
 import { documentComparisonsClient } from '@/api/documentComparisonsClient';
 import { proposalsClient } from '@/api/proposalsClient';
-import { sharedLinksClient } from '@/api/sharedLinksClient';
+import { sharedReportsClient } from '@/api/sharedReportsClient';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import {
   ArrowLeft,
   BarChart3,
   Clock,
+  Copy,
   Download,
   FileText,
+  Loader2,
   Send,
   Sparkles,
 } from 'lucide-react';
@@ -65,8 +76,12 @@ function useComparisonId() {
 
 export default function DocumentComparisonDetail() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const comparisonId = useComparisonId();
   const [activeTab, setActiveTab] = useState('overview');
+  const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
+  const [shareRecipientEmail, setShareRecipientEmail] = useState('');
+  const [selectedShareToken, setSelectedShareToken] = useState('');
 
   const comparisonQuery = useQuery({
     queryKey: ['document-comparison-detail', comparisonId],
@@ -90,6 +105,47 @@ export default function DocumentComparisonDetail() {
     enabled: Boolean(proposal?.id),
     queryFn: () => proposalsClient.getEvaluations(proposal.id),
   });
+
+  const sharedReportsQuery = useQuery({
+    queryKey: ['shared-reports', comparisonId],
+    enabled: Boolean(isShareDialogOpen && comparisonId),
+    queryFn: () => sharedReportsClient.list({ comparisonId }),
+  });
+
+  const sharedReports = Array.isArray(sharedReportsQuery.data?.sharedReports)
+    ? sharedReportsQuery.data.sharedReports
+    : [];
+
+  useEffect(() => {
+    if (!isShareDialogOpen) {
+      return;
+    }
+    setShareRecipientEmail((current) => current || asText(proposal?.party_b_email));
+  }, [isShareDialogOpen, proposal?.party_b_email]);
+
+  useEffect(() => {
+    if (selectedShareToken) {
+      return;
+    }
+    if (sharedReports.length > 0 && sharedReports[0]?.token) {
+      setSelectedShareToken(sharedReports[0].token);
+    }
+  }, [selectedShareToken, sharedReports]);
+
+  const activeSharedReport = useMemo(() => {
+    if (!sharedReports.length) {
+      return null;
+    }
+
+    if (selectedShareToken) {
+      const matched = sharedReports.find((item) => item.token === selectedShareToken);
+      if (matched) {
+        return matched;
+      }
+    }
+
+    return sharedReports[0] || null;
+  }, [selectedShareToken, sharedReports]);
 
   const report = comparison?.public_report || comparison?.evaluation_result?.report || {};
   const reportSections = Array.isArray(report?.sections) ? report.sections : [];
@@ -123,48 +179,94 @@ export default function DocumentComparisonDetail() {
     },
   });
 
-  const shareMutation = useMutation({
+  const createShareLinkMutation = useMutation({
     mutationFn: async () => {
-      if (!proposal?.id) {
-        throw new Error('Proposal linkage is required before sharing');
-      }
-
-      const defaultRecipient = asText(proposal?.party_b_email);
-      const recipientEmail =
-        window.prompt('Recipient email for the updated shared workspace link:', defaultRecipient || '') ||
-        '';
-
-      const payload = await sharedLinksClient.create({
-        proposalId: proposal.id,
-        recipientEmail: asText(recipientEmail) || null,
-        mode: 'workspace',
-        canView: true,
-        canEdit: true,
-        canReevaluate: true,
-        canSendBack: true,
-        maxUses: 50,
+      const response = await sharedReportsClient.create({
+        comparisonId,
+        recipientEmail: asText(shareRecipientEmail) || null,
       });
 
-      if (!payload?.url) {
-        throw new Error('Share link could not be created');
+      if (!response?.token) {
+        throw new Error('Shared report link could not be created');
       }
 
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(payload.url).catch(() => null);
-      }
-
-      return payload;
+      return response;
     },
-    onSuccess: (payload) => {
-      toast.success('Share link generated and copied');
-      if (payload?.url) {
-        window.alert(`Shared link:\n\n${payload.url}`);
-      }
+    onSuccess: async (payload) => {
+      setSelectedShareToken(payload.token);
+      await queryClient.invalidateQueries({ queryKey: ['shared-reports', comparisonId] });
+      toast.success('Shared report link created');
     },
     onError: (error) => {
-      toast.error(error?.message || 'Failed to generate share link');
+      toast.error(error?.message || 'Failed to create shared report link');
     },
   });
+
+  const sendShareEmailMutation = useMutation({
+    mutationFn: async (token) => {
+      let workingToken = asText(token);
+      if (!workingToken) {
+        const created = await sharedReportsClient.create({
+          comparisonId,
+          recipientEmail: asText(shareRecipientEmail) || null,
+        });
+        workingToken = asText(created?.token);
+      }
+
+      if (!workingToken) {
+        throw new Error('Shared report link could not be created');
+      }
+
+      return sharedReportsClient.send(workingToken, {
+        recipientEmail: asText(shareRecipientEmail) || null,
+      });
+    },
+    onSuccess: async (payload) => {
+      if (payload?.token) {
+        setSelectedShareToken(payload.token);
+      }
+      await queryClient.invalidateQueries({ queryKey: ['shared-reports', comparisonId] });
+      toast.success('Shared report email sent');
+    },
+    onError: (error) => {
+      if (error?.code === 'not_configured' || Number(error?.status || 0) === 501) {
+        toast.error('Email delivery is not configured in this environment yet.');
+        return;
+      }
+      toast.error(error?.message || 'Failed to send shared report email');
+    },
+  });
+
+  const revokeShareLinkMutation = useMutation({
+    mutationFn: (token) => sharedReportsClient.revoke(token),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['shared-reports', comparisonId] });
+      toast.success('Shared report link revoked');
+    },
+    onError: (error) => {
+      toast.error(error?.message || 'Failed to revoke shared report link');
+    },
+  });
+
+  async function copyShareUrl(url) {
+    const normalized = asText(url);
+    if (!normalized) {
+      toast.error('Share URL is not available yet');
+      return;
+    }
+
+    if (!navigator.clipboard?.writeText) {
+      toast.error('Clipboard is not available in this browser');
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(normalized);
+      toast.success('Share link copied');
+    } catch {
+      toast.error('Unable to copy share link');
+    }
+  }
 
   if (!comparisonId) {
     return (
@@ -260,7 +362,7 @@ export default function DocumentComparisonDetail() {
               <Download className="w-4 h-4 mr-2" />
               AI report
             </Button>
-            <Button onClick={() => shareMutation.mutate()} disabled={!proposal?.id || shareMutation.isPending}>
+            <Button onClick={() => setIsShareDialogOpen(true)} disabled={!proposal?.id}>
               <Send className="w-4 h-4 mr-2" />
               Share
             </Button>
@@ -373,141 +475,257 @@ export default function DocumentComparisonDetail() {
             </TabsContent>
 
             <TabsContent value="report" className="mt-6 space-y-6">
-                <Card className="border border-slate-200 shadow-sm">
-                  <CardHeader>
-                    <CardTitle>Evaluation History ({evaluationHistory.length || (hasReport ? 1 : 0)})</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    {evaluationHistory.length > 0 ? (
-                      <div className="space-y-3">
-                        {evaluationHistory.map((evaluation, index) => (
-                          <div
-                            key={evaluation.id || `evaluation-${index}`}
-                            className="flex items-center justify-between rounded-xl border border-blue-200 bg-blue-50 p-3"
-                          >
-                            <div className="flex items-center gap-3">
-                              <Badge className="bg-green-100 text-green-700">succeeded</Badge>
-                              <span className="text-slate-700">{formatDateTime(evaluation.created_date)}</span>
-                              {index === 0 && <Badge variant="outline">Latest</Badge>}
-                            </div>
-                            <span className="text-blue-600 font-semibold">
-                              {Number(evaluation.score || 0)}% confidence
-                            </span>
+              <Card className="border border-slate-200 shadow-sm">
+                <CardHeader>
+                  <CardTitle>Evaluation History ({evaluationHistory.length || (hasReport ? 1 : 0)})</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {evaluationHistory.length > 0 ? (
+                    <div className="space-y-3">
+                      {evaluationHistory.map((evaluation, index) => (
+                        <div
+                          key={evaluation.id || `evaluation-${index}`}
+                          className="flex items-center justify-between rounded-xl border border-blue-200 bg-blue-50 p-3"
+                        >
+                          <div className="flex items-center gap-3">
+                            <Badge className="bg-green-100 text-green-700">succeeded</Badge>
+                            <span className="text-slate-700">{formatDateTime(evaluation.created_date)}</span>
+                            {index === 0 && <Badge variant="outline">Latest</Badge>}
                           </div>
-                        ))}
-                      </div>
-                    ) : hasReport ? (
-                      <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-slate-700">
-                        Report available for this comparison.
-                      </div>
-                    ) : (
-                      <p className="text-slate-500">No evaluation history yet.</p>
-                    )}
-                  </CardContent>
-                </Card>
+                          <span className="text-blue-600 font-semibold">
+                            {Number(evaluation.score || 0)}% confidence
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : hasReport ? (
+                    <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-slate-700">
+                      Report available for this comparison.
+                    </div>
+                  ) : (
+                    <p className="text-slate-500">No evaluation history yet.</p>
+                  )}
+                </CardContent>
+              </Card>
 
-                <Card className="border border-slate-200 shadow-sm">
-                  <CardHeader>
-                    <CardTitle>Quality Assessment</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-5">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <div>
-                        <p className="text-slate-500">{CONFIDENTIAL_LABEL} Words</p>
-                        <p className="text-4xl font-bold text-slate-900">{confidentialWordCount}</p>
-                      </div>
-                      <div>
-                        <p className="text-slate-500">{SHARED_LABEL} Words</p>
-                        <p className="text-4xl font-bold text-slate-900">{sharedWordCount}</p>
-                      </div>
+              <Card className="border border-slate-200 shadow-sm">
+                <CardHeader>
+                  <CardTitle>Quality Assessment</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-5">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                      <p className="text-slate-500">{CONFIDENTIAL_LABEL} Words</p>
+                      <p className="text-4xl font-bold text-slate-900">{confidentialWordCount}</p>
                     </div>
                     <div>
-                      <p className="text-slate-500 mb-2">Overall Confidence</p>
-                      <div className="h-3 bg-slate-200 rounded-full overflow-hidden">
-                        <div
-                          className="h-3 bg-slate-500 rounded-full"
-                          style={{ width: `${Math.max(0, Math.min(similarityScore, 100))}%` }}
-                        />
-                      </div>
+                      <p className="text-slate-500">{SHARED_LABEL} Words</p>
+                      <p className="text-4xl font-bold text-slate-900">{sharedWordCount}</p>
                     </div>
-                  </CardContent>
-                </Card>
+                  </div>
+                  <div>
+                    <p className="text-slate-500 mb-2">Overall Confidence</p>
+                    <div className="h-3 bg-slate-200 rounded-full overflow-hidden">
+                      <div
+                        className="h-3 bg-slate-500 rounded-full"
+                        style={{ width: `${Math.max(0, Math.min(similarityScore, 100))}%` }}
+                      />
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
 
-                <Card className="border border-slate-200 shadow-sm">
-                  <CardHeader>
-                    <CardTitle>Executive Summary</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <Badge variant="outline" className="capitalize">
-                      {recommendation}
-                    </Badge>
-                    {reportSections.length > 0 ? (
-                      <div className="space-y-4">
-                        {reportSections.map((section, index) => (
-                          <div
-                            key={`${section.key || section.heading || 'section'}-${index}`}
-                            className="rounded-xl border border-slate-200 p-4"
-                          >
-                            <p className="font-semibold text-slate-900 mb-2">
-                              {section.heading || section.key || `Section ${index + 1}`}
-                            </p>
-                            <ul className="list-disc pl-5 space-y-1 text-slate-700">
-                              {(Array.isArray(section.bullets) ? section.bullets : []).map(
-                                (line, lineIndex) => (
-                                  <li key={`${index}-${lineIndex}`}>{line}</li>
-                                ),
-                              )}
-                            </ul>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-slate-600">AI report content is not available yet.</p>
-                    )}
-                  </CardContent>
-                </Card>
+              <Card className="border border-slate-200 shadow-sm">
+                <CardHeader>
+                  <CardTitle>Executive Summary</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <Badge variant="outline" className="capitalize">
+                    {recommendation}
+                  </Badge>
+                  {reportSections.length > 0 ? (
+                    <div className="space-y-4">
+                      {reportSections.map((section, index) => (
+                        <div
+                          key={`${section.key || section.heading || 'section'}-${index}`}
+                          className="rounded-xl border border-slate-200 p-4"
+                        >
+                          <p className="font-semibold text-slate-900 mb-2">
+                            {section.heading || section.key || `Section ${index + 1}`}
+                          </p>
+                          <ul className="list-disc pl-5 space-y-1 text-slate-700">
+                            {(Array.isArray(section.bullets) ? section.bullets : []).map((line, lineIndex) => (
+                              <li key={`${index}-${lineIndex}`}>{line}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-slate-600">AI report content is not available yet.</p>
+                  )}
+                </CardContent>
+              </Card>
             </TabsContent>
 
             <TabsContent value="details" className="mt-6">
-                <Card className="border border-slate-200 shadow-sm">
-                  <CardHeader>
-                    <CardTitle>Complete Proposal Details</CardTitle>
-                    <p className="text-slate-500">
-                      Read-only document content for both information documents.
-                    </p>
-                  </CardHeader>
-                  <CardContent className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    <div className="space-y-2 min-w-0">
-                      <div className="flex items-center gap-2 text-slate-700 font-semibold">
-                        <FileText className="w-4 h-4" />
-                        {comparison.party_a_label || CONFIDENTIAL_LABEL}
-                      </div>
-                      <div className="rounded-xl border border-slate-200 bg-white p-4 min-h-[320px] max-h-[560px] overflow-auto">
-                        {renderDocumentReadOnly({
-                          text: comparison.doc_a_text || '',
-                          html: comparison.doc_a_html || '',
-                        })}
-                      </div>
+              <Card className="border border-slate-200 shadow-sm">
+                <CardHeader>
+                  <CardTitle>Complete Proposal Details</CardTitle>
+                  <p className="text-slate-500">
+                    Read-only document content for both information documents.
+                  </p>
+                </CardHeader>
+                <CardContent className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <div className="space-y-2 min-w-0">
+                    <div className="flex items-center gap-2 text-slate-700 font-semibold">
+                      <FileText className="w-4 h-4" />
+                      {comparison.party_a_label || CONFIDENTIAL_LABEL}
                     </div>
+                    <div className="rounded-xl border border-slate-200 bg-white p-4 min-h-[320px] max-h-[560px] overflow-auto">
+                      {renderDocumentReadOnly({
+                        text: comparison.doc_a_text || '',
+                        html: comparison.doc_a_html || '',
+                      })}
+                    </div>
+                  </div>
 
-                    <div className="space-y-2 min-w-0">
-                      <div className="flex items-center gap-2 text-slate-700 font-semibold">
-                        <FileText className="w-4 h-4" />
-                        {comparison.party_b_label || SHARED_LABEL}
-                      </div>
-                      <div className="rounded-xl border border-slate-200 bg-white p-4 min-h-[320px] max-h-[560px] overflow-auto">
-                        {renderDocumentReadOnly({
-                          text: comparison.doc_b_text || '',
-                          html: comparison.doc_b_html || '',
-                        })}
-                      </div>
+                  <div className="space-y-2 min-w-0">
+                    <div className="flex items-center gap-2 text-slate-700 font-semibold">
+                      <FileText className="w-4 h-4" />
+                      {comparison.party_b_label || SHARED_LABEL}
                     </div>
-                  </CardContent>
-                </Card>
+                    <div className="rounded-xl border border-slate-200 bg-white p-4 min-h-[320px] max-h-[560px] overflow-auto">
+                      {renderDocumentReadOnly({
+                        text: comparison.doc_b_text || '',
+                        html: comparison.doc_b_html || '',
+                      })}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
             </TabsContent>
           </Tabs>
         </div>
       </div>
+
+      <Dialog
+        open={isShareDialogOpen}
+        onOpenChange={(nextOpen) => {
+          setIsShareDialogOpen(nextOpen);
+          if (!nextOpen) {
+            setShareRecipientEmail('');
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Send Shared Report</DialogTitle>
+            <DialogDescription>
+              Share one recipient-safe report link. Confidential information stays private and never appears in email content.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="shared-report-recipient">Recipient email (optional)</Label>
+              <Input
+                id="shared-report-recipient"
+                type="email"
+                placeholder="recipient@example.com"
+                value={shareRecipientEmail}
+                onChange={(event) => setShareRecipientEmail(event.target.value)}
+              />
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                onClick={() => createShareLinkMutation.mutate()}
+                disabled={createShareLinkMutation.isPending || sendShareEmailMutation.isPending}
+              >
+                {createShareLinkMutation.isPending ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <FileText className="w-4 h-4 mr-2" />
+                )}
+                Create link
+              </Button>
+              <Button
+                onClick={() => sendShareEmailMutation.mutate(activeSharedReport?.token || '')}
+                disabled={createShareLinkMutation.isPending || sendShareEmailMutation.isPending}
+              >
+                {sendShareEmailMutation.isPending ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <Send className="w-4 h-4 mr-2" />
+                )}
+                Send email
+              </Button>
+            </div>
+
+            {sharedReportsQuery.isLoading ? (
+              <p className="text-sm text-slate-500">Loading shared links...</p>
+            ) : null}
+
+            {activeSharedReport ? (
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="outline">{activeSharedReport.status || 'active'}</Badge>
+                  {activeSharedReport.last_delivery?.status ? (
+                    <Badge className="bg-blue-100 text-blue-700">
+                      Last delivery: {activeSharedReport.last_delivery.status}
+                    </Badge>
+                  ) : null}
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Share URL</Label>
+                  <Input readOnly value={activeSharedReport.url || ''} />
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="outline" onClick={() => copyShareUrl(activeSharedReport.url || '')}>
+                    <Copy className="w-4 h-4 mr-2" />
+                    Copy link
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => sendShareEmailMutation.mutate(activeSharedReport.token)}
+                    disabled={sendShareEmailMutation.isPending}
+                  >
+                    <Send className="w-4 h-4 mr-2" />
+                    Resend email
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => revokeShareLinkMutation.mutate(activeSharedReport.token)}
+                    disabled={revokeShareLinkMutation.isPending || activeSharedReport.status === 'revoked'}
+                  >
+                    Revoke link
+                  </Button>
+                </div>
+
+                {Array.isArray(activeSharedReport.deliveries) && activeSharedReport.deliveries.length > 0 ? (
+                  <div className="space-y-1 pt-2">
+                    {activeSharedReport.deliveries.map((delivery) => (
+                      <p key={delivery.id} className="text-xs text-slate-600">
+                        {delivery.status} • {delivery.sent_to_email || 'recipient'} •{' '}
+                        {formatDateTime(delivery.sent_at || delivery.created_at)}
+                        {delivery.last_error ? ` • ${delivery.last_error}` : ''}
+                      </p>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500 pt-2">No delivery attempts yet.</p>
+                )}
+              </div>
+            ) : (
+              <p className="text-sm text-slate-500">No shared report link has been created yet.</p>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

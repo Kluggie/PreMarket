@@ -569,6 +569,48 @@ export const sharedLinkResponses = pgTable(
   }),
 );
 
+export const sharedReportDeliveries = pgTable(
+  'shared_report_deliveries',
+  {
+    id: text('id').primaryKey(),
+    sharedLinkId: text('shared_link_id')
+      .notNull()
+      .references(() => sharedLinks.id, { onDelete: 'cascade' }),
+    proposalId: text('proposal_id')
+      .notNull()
+      .references(() => proposals.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    sentToEmail: text('sent_to_email').notNull(),
+    status: text('status').notNull().default('queued'),
+    providerMessageId: text('provider_message_id'),
+    lastError: text('last_error'),
+    sentAt: timestamp('sent_at', { withTimezone: true }),
+    metadata: jsonb('metadata').notNull().default(sql`'{}'::jsonb`),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    sharedReportDeliveriesLinkIdx: index('shared_report_deliveries_link_idx').on(
+      table.sharedLinkId,
+      table.createdAt,
+    ),
+    sharedReportDeliveriesProposalIdx: index('shared_report_deliveries_proposal_idx').on(
+      table.proposalId,
+      table.createdAt,
+    ),
+    sharedReportDeliveriesUserIdx: index('shared_report_deliveries_user_idx').on(
+      table.userId,
+      table.createdAt,
+    ),
+    sharedReportDeliveriesStatusIdx: index('shared_report_deliveries_status_idx').on(
+      table.status,
+      table.createdAt,
+    ),
+  }),
+);
+
 export const proposalEvaluations = pgTable(
   'proposal_evaluations',
   {
