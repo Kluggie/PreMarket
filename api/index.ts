@@ -1,4 +1,6 @@
 import { fail } from '../server/_lib/api-response.js';
+import { randomUUID } from 'node:crypto';
+import { json } from '../server/_lib/http.js';
 import healthHandler from '../server/routes/health.js';
 import healthAuthHandler from '../server/routes/health/auth.js';
 import stripeWebhookHandler from '../server/routes/stripeWebhook.js';
@@ -91,6 +93,17 @@ function getPathname(req: VercelRequest) {
   return normalizePathname(pathname);
 }
 
+function getRequestId(req: VercelRequest) {
+  const headerValue = req?.query?.requestId || req?.query?.request_id || req?.query?.['x-request-id'];
+  if (headerValue) {
+    return String(Array.isArray(headerValue) ? headerValue[0] : headerValue).trim() || randomUUID();
+  }
+
+  const rawHeader = (req as any)?.headers?.['x-request-id'];
+  const normalized = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
+  return String(normalized || '').trim() || randomUUID();
+}
+
 let documentComparisonRouteHandlersPromise:
   | Promise<{
       documentComparisonsHandler: any;
@@ -148,8 +161,11 @@ async function getDocumentComparisonRouteHandlers() {
 export default async function handler(req: any, res: any) {
   const method = String(req.method || 'GET').toUpperCase();
   const pathname = getPathname(req);
+  const requestId = getRequestId(req);
 
   stripRouterPathQuery(req);
+
+  try {
 
   if (pathname === '/api/health' && method === 'GET') {
     return healthHandler(req, res);
@@ -462,4 +478,26 @@ export default async function handler(req: any, res: any) {
     method,
     path: pathname,
   });
+  } catch (error: any) {
+    const message = error instanceof Error ? error.message : String(error || 'unknown_error');
+    const name = error instanceof Error ? error.name : 'UnknownError';
+    const stack = error instanceof Error ? error.stack || null : null;
+    console.error(
+      JSON.stringify({
+        level: 'error',
+        requestId,
+        route: '/api/index',
+        method,
+        path: pathname,
+        errorName: name,
+        errorMessage: message,
+        errorStack: stack,
+      }),
+    );
+
+    json(res, 500, {
+      code: 'internal_error',
+      requestId,
+    });
+  }
 }
