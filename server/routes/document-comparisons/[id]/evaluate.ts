@@ -100,6 +100,13 @@ function toStringArray(value: unknown) {
   }) as any[];
 }
 
+function firstRow<T = any>(value: unknown): T | null {
+  if (!Array.isArray(value) || value.length === 0) {
+    return null;
+  }
+  return value[0] as T;
+}
+
 function resolveEvaluationDraft(params: {
   existing: any;
   body: Record<string, unknown>;
@@ -522,11 +529,12 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     const requestId = asText((context as any)?.requestId) || newId('request');
 
     const db = getDb();
-    const [existing] = await db
+    const existingRows = await db
       .select()
       .from(schema.documentComparisons)
       .where(and(eq(schema.documentComparisons.id, comparisonId), eq(schema.documentComparisons.userId, auth.user.id)))
       .limit(1);
+    const existing = firstRow(existingRows);
 
     ensureComparisonFound(existing);
     const body = (await readJsonBody(req)) as Record<string, unknown>;
@@ -696,7 +704,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     }
 
     const now = new Date();
-    const [updated] = await withDbWriteGuard({
+    const updatedRows = await withDbWriteGuard({
       requestId,
       message: 'Failed to persist document comparison evaluation success',
       operation: () =>
@@ -714,10 +722,19 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
           .where(eq(schema.documentComparisons.id, existing.id))
           .returning(),
     });
+    const updated = firstRow(updatedRows);
+    if (!updated) {
+      throw new ApiError(500, 'db_write_failed', 'Failed to persist document comparison evaluation success', {
+        requestId,
+        failure_code: 'db_write_failed',
+        failure_stage: 'db_write',
+        http_status: 500,
+      });
+    }
 
     let proposalSummary = null;
     if (existing.proposalId) {
-      const [proposal] = await withDbWriteGuard({
+      const proposalRows = await withDbWriteGuard({
         requestId,
         message: 'Failed to persist proposal evaluation status',
         operation: () =>
@@ -735,6 +752,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
             .where(eq(schema.proposals.id, existing.proposalId))
             .returning(),
       });
+      const proposal = firstRow(proposalRows);
 
       if (proposal) {
         proposalSummary = {
@@ -743,7 +761,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
           evaluated_at: proposal.evaluatedAt,
         };
 
-        const [savedEvaluation] = await withDbWriteGuard({
+        const savedEvaluationRows = await withDbWriteGuard({
           requestId,
           message: 'Failed to persist proposal evaluation history',
           operation: () =>
@@ -765,6 +783,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
                 id: schema.proposalEvaluations.id,
               }),
         });
+        const savedEvaluation = firstRow(savedEvaluationRows);
 
         try {
           await createNotificationEvent({
