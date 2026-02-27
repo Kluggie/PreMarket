@@ -20,6 +20,8 @@ import { ensureTestEnv, makeSessionCookie } from '../helpers/auth.mjs';
 import { ensureMigrated, getDb, hasDatabaseUrl, resetTables } from '../helpers/db.mjs';
 import { createMockReq, createMockRes } from '../helpers/httpMock.mjs';
 import { schema } from '../../server/_lib/db/client.js';
+import { ApiError } from '../../server/_lib/errors.js';
+import { evaluateDocumentComparisonWithVertex } from '../../server/_lib/vertex-evaluation.ts';
 import { getDocumentComparisonTextLimits } from '../../src/config/aiLimits.js';
 
 ensureTestEnv();
@@ -617,6 +619,187 @@ if (!hasDatabaseUrl()) {
         delete process.env.GCP_SERVICE_ACCOUNT_JSON;
       } else {
         process.env.GCP_SERVICE_ACCOUNT_JSON = originalServiceAccount;
+      }
+    }
+  });
+
+  test('document comparison evaluate retries transient failures once and records attempt details', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = authCookie('doc_eval_retry_owner', 'doc-eval-retry@example.com');
+
+    const createReq = createMockReq({
+      method: 'POST',
+      url: '/api/document-comparisons',
+      headers: { cookie: ownerCookie },
+      body: {
+        title: 'Retryable Vertex Failure',
+        doc_a_text: 'Confidential obligations and legal constraints.',
+        doc_b_text: 'Shared obligations and summary.',
+        createProposal: true,
+      },
+    });
+    const createRes = createMockRes();
+    await documentComparisonsHandler(createReq, createRes);
+    assert.equal(createRes.statusCode, 201);
+    const comparisonId = createRes.jsonBody().comparison.id;
+    const proposalId = createRes.jsonBody().comparison.proposal_id;
+    assert.ok(proposalId);
+
+    const originalEvaluator = globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
+    let calls = 0;
+
+    try {
+      globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = async (input) => {
+        calls += 1;
+        if (calls === 1) {
+          throw new ApiError(503, 'vertex_request_failed', 'Vertex temporarily unavailable', {
+            upstreamStatus: 503,
+          });
+        }
+        return evaluateDocumentComparisonWithVertex(input);
+      };
+
+      const evaluateReq = createMockReq({
+        method: 'POST',
+        url: `/api/document-comparisons/${comparisonId}/evaluate`,
+        headers: { cookie: ownerCookie },
+        query: { id: comparisonId },
+        body: {},
+      });
+      const evaluateRes = createMockRes();
+      await documentComparisonsEvaluateHandler(evaluateReq, evaluateRes, comparisonId);
+
+      assert.equal(evaluateRes.statusCode, 200);
+      assert.equal(calls, 2);
+      assert.equal(Number(evaluateRes.jsonBody().attempt_count || 0), 2);
+      assert.equal(evaluateRes.jsonBody().comparison.status, 'evaluated');
+      assert.equal(Number(evaluateRes.jsonBody().comparison.evaluation_result?.attempt?.number || 0), 2);
+      assert.equal(
+        typeof evaluateRes.jsonBody().comparison.evaluation_result?.attempt?.request_id,
+        'string',
+      );
+
+      const evaluationsReq = createMockReq({
+        method: 'GET',
+        url: `/api/proposals/${proposalId}/evaluations`,
+        headers: { cookie: ownerCookie },
+        query: { id: proposalId },
+      });
+      const evaluationsRes = createMockRes();
+      await proposalEvaluationsHandler(evaluationsReq, evaluationsRes, proposalId);
+      assert.equal(evaluationsRes.statusCode, 200);
+
+      const evaluations = Array.isArray(evaluationsRes.jsonBody().evaluations)
+        ? evaluationsRes.jsonBody().evaluations
+        : [];
+      assert.equal(evaluations.length >= 2, true);
+      assert.equal(String(evaluations[0]?.status || '').toLowerCase(), 'completed');
+      assert.equal(String(evaluations[1]?.status || '').toLowerCase(), 'failed');
+      assert.equal(String(evaluations[1]?.result?.error?.failure_code || ''), 'vertex_unavailable');
+      assert.equal(String(evaluations[1]?.result?.error?.failure_stage || ''), 'vertex_call');
+      assert.equal(Boolean(evaluations[1]?.result?.error?.requestId), true);
+      assert.equal(Boolean(evaluations[1]?.result?.error?.details?.retry_scheduled), true);
+    } finally {
+      if (originalEvaluator === undefined) {
+        delete globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
+      } else {
+        globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = originalEvaluator;
+      }
+    }
+  });
+
+  test('document comparison evaluate does not retry unauthorized vertex failures', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = authCookie('doc_eval_unauthorized_owner', 'doc-eval-unauthorized@example.com');
+
+    const createReq = createMockReq({
+      method: 'POST',
+      url: '/api/document-comparisons',
+      headers: { cookie: ownerCookie },
+      body: {
+        title: 'Unauthorized Vertex Failure',
+        doc_a_text: 'Confidential baseline.',
+        doc_b_text: 'Shared baseline.',
+        createProposal: true,
+      },
+    });
+    const createRes = createMockRes();
+    await documentComparisonsHandler(createReq, createRes);
+    assert.equal(createRes.statusCode, 201);
+    const comparisonId = createRes.jsonBody().comparison.id;
+    const proposalId = createRes.jsonBody().comparison.proposal_id;
+    assert.ok(proposalId);
+
+    const originalEvaluator = globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
+    let calls = 0;
+
+    try {
+      globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = async () => {
+        calls += 1;
+        throw new ApiError(401, 'vertex_request_failed', 'Vertex unauthorized', {
+          upstreamStatus: 401,
+        });
+      };
+
+      const evaluateReq = createMockReq({
+        method: 'POST',
+        url: `/api/document-comparisons/${comparisonId}/evaluate`,
+        headers: { cookie: ownerCookie },
+        query: { id: comparisonId },
+        body: {},
+      });
+      const evaluateRes = createMockRes();
+      await documentComparisonsEvaluateHandler(evaluateReq, evaluateRes, comparisonId);
+      assert.equal(evaluateRes.statusCode, 401);
+      assert.equal(calls, 1);
+      assert.equal(evaluateRes.jsonBody().error.code, 'vertex_unauthorized');
+      assert.equal(Number(evaluateRes.jsonBody().error.attempt_count || 0), 1);
+
+      const detailReq = createMockReq({
+        method: 'GET',
+        url: `/api/document-comparisons/${comparisonId}`,
+        headers: { cookie: ownerCookie },
+        query: { id: comparisonId },
+      });
+      const detailRes = createMockRes();
+      await documentComparisonsIdHandler(detailReq, detailRes, comparisonId);
+      assert.equal(detailRes.statusCode, 200);
+      assert.equal(detailRes.jsonBody().comparison.status, 'failed');
+      assert.equal(
+        String(detailRes.jsonBody().comparison.evaluation_result?.error?.failure_code || ''),
+        'vertex_unauthorized',
+      );
+      assert.equal(
+        String(detailRes.jsonBody().comparison.evaluation_result?.error?.failure_stage || ''),
+        'auth',
+      );
+
+      const evaluationsReq = createMockReq({
+        method: 'GET',
+        url: `/api/proposals/${proposalId}/evaluations`,
+        headers: { cookie: ownerCookie },
+        query: { id: proposalId },
+      });
+      const evaluationsRes = createMockRes();
+      await proposalEvaluationsHandler(evaluationsReq, evaluationsRes, proposalId);
+      assert.equal(evaluationsRes.statusCode, 200);
+      const evaluations = Array.isArray(evaluationsRes.jsonBody().evaluations)
+        ? evaluationsRes.jsonBody().evaluations
+        : [];
+      assert.equal(evaluations.length >= 1, true);
+      assert.equal(String(evaluations[0]?.status || '').toLowerCase(), 'failed');
+      assert.equal(String(evaluations[0]?.result?.error?.failure_code || ''), 'vertex_unauthorized');
+      assert.equal(Boolean(evaluations[0]?.result?.error?.details?.retry_scheduled), false);
+      assert.equal(Boolean(evaluations[0]?.result?.error?.requestId), true);
+    } finally {
+      if (originalEvaluator === undefined) {
+        delete globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
+      } else {
+        globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = originalEvaluator;
       }
     }
   });

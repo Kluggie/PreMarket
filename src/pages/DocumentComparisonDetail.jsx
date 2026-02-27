@@ -52,9 +52,73 @@ function isSuccessfulEvaluationStatus(value) {
   return status === 'completed' || status === 'succeeded' || status === 'success' || status === 'evaluated';
 }
 
+function extractEvaluationFailureDetails(rawError) {
+  if (!rawError || typeof rawError !== 'object' || Array.isArray(rawError)) {
+    return null;
+  }
+
+  const details =
+    rawError.details && typeof rawError.details === 'object' && !Array.isArray(rawError.details)
+      ? rawError.details
+      : {};
+  const failureCode = asLower(
+    rawError.failure_code || details.failure_code || rawError.code || details.code,
+  );
+  const failureStage = asLower(
+    rawError.failure_stage || details.failure_stage || rawError.stage || details.stage,
+  );
+  const message = asText(rawError.message) || 'Evaluation failed';
+  const requestId = asText(
+    rawError.requestId ||
+      rawError.request_id ||
+      details.requestId ||
+      details.request_id,
+  );
+  const httpStatus = Number(
+    rawError.http_status ||
+      rawError.statusCode ||
+      details.http_status ||
+      details.statusCode ||
+      0,
+  );
+
+  if (!failureCode && !message) {
+    return null;
+  }
+
+  return {
+    failureCode: failureCode || 'unknown_error',
+    failureStage: failureStage || 'unknown',
+    message,
+    requestId: requestId || '',
+    httpStatus: Number.isFinite(httpStatus) && httpStatus > 0 ? httpStatus : null,
+  };
+}
+
+function toFailureBannerMessage(failure) {
+  const code = asLower(failure?.failureCode);
+  if (code === 'vertex_timeout' || code === 'vertex_rate_limited' || code === 'vertex_unavailable') {
+    return 'Vertex temporarily unavailable. Please retry.';
+  }
+  if (code === 'vertex_unauthorized') {
+    return 'Vertex auth failed. Check service account configuration.';
+  }
+  if (code === 'vertex_bad_request') {
+    return 'Invalid request. Adjust inputs and retry.';
+  }
+  if (code === 'db_write_failed') {
+    return 'Evaluation could not be saved. Please retry.';
+  }
+  if (code === 'not_configured') {
+    return 'Vertex AI integration is not configured.';
+  }
+  return 'Evaluation failed. Please retry from the editor.';
+}
+
 function getEvaluationRowMeta(evaluation) {
   const status = asLower(evaluation?.status);
-  const errorCode = asLower(evaluation?.result?.error?.code);
+  const failure = extractEvaluationFailureDetails(evaluation?.result?.error);
+  const errorCode = asLower(failure?.failureCode || evaluation?.result?.error?.code);
 
   if (errorCode === 'not_configured') {
     return {
@@ -168,6 +232,7 @@ export default function DocumentComparisonDetail() {
   const [shareRecipientEmail, setShareRecipientEmail] = useState('');
   const [selectedShareToken, setSelectedShareToken] = useState('');
   const [evaluationPollDeadline, setEvaluationPollDeadline] = useState(null);
+  const [selectedFailureEntry, setSelectedFailureEntry] = useState(null);
 
   const comparisonQuery = useQuery({
     queryKey: ['document-comparison-detail', comparisonId],
@@ -249,10 +314,17 @@ export default function DocumentComparisonDetail() {
   const reportSections = Array.isArray(report?.sections) ? report.sections : [];
   const evaluationHistory = Array.isArray(evaluationsQuery.data) ? evaluationsQuery.data : [];
   const latestEvaluation = evaluationHistory[0] || null;
+  const latestHistoryFailure = extractEvaluationFailureDetails(latestEvaluation?.result?.error);
+  const comparisonFailure = extractEvaluationFailureDetails(comparison?.evaluation_result?.error);
+  const latestFailureDetails = latestHistoryFailure || comparisonFailure;
   const latestEvaluationMeta = getEvaluationRowMeta(latestEvaluation);
   const comparisonStatus = asLower(comparison?.status);
-  const comparisonErrorCode = asLower(comparison?.evaluation_result?.error?.code);
-  const latestHistoryErrorCode = asLower(latestEvaluation?.result?.error?.code);
+  const comparisonErrorCode = asLower(
+    comparisonFailure?.failureCode || comparison?.evaluation_result?.error?.code,
+  );
+  const latestHistoryErrorCode = asLower(
+    latestHistoryFailure?.failureCode || latestEvaluation?.result?.error?.code,
+  );
   const isEvaluationNotConfigured =
     comparisonErrorCode === 'not_configured' || latestHistoryErrorCode === 'not_configured';
   const hasLatestHistoryFailure = latestEvaluationMeta.label === 'Failed';
@@ -264,7 +336,14 @@ export default function DocumentComparisonDetail() {
       Boolean(comparison?.evaluation_result?.error && typeof comparison?.evaluation_result?.error === 'object') ||
       hasLatestHistoryFailure);
   const evaluationFailureMessage =
-    asText(comparison?.evaluation_result?.error?.message) || asText(latestEvaluation?.result?.error?.message);
+    asText(latestFailureDetails?.message) ||
+    asText(comparison?.evaluation_result?.error?.message) ||
+    asText(latestEvaluation?.result?.error?.message);
+  const evaluationFailureBannerMessage = latestFailureDetails
+    ? `${toFailureBannerMessage(latestFailureDetails)}${
+        latestFailureDetails.requestId ? ` (requestId: ${latestFailureDetails.requestId})` : ''
+      }`
+    : `Evaluation failed. ${evaluationFailureMessage || 'Please retry from the editor.'}`;
   const hasReportData = hasObjectContent(report);
   const isEvaluationSucceeded =
     !isEvaluationRunning &&
@@ -612,7 +691,7 @@ export default function DocumentComparisonDetail() {
                     {isEvaluationFailed ? (
                       <Alert className="bg-red-50 border-red-200">
                         <AlertDescription className="text-red-900">
-                          Evaluation failed. {evaluationFailureMessage || 'Please retry from the editor.'}
+                          {evaluationFailureBannerMessage}
                         </AlertDescription>
                       </Alert>
                     ) : null}
@@ -720,7 +799,7 @@ export default function DocumentComparisonDetail() {
               {isEvaluationFailed ? (
                 <Alert className="bg-red-50 border-red-200">
                   <AlertDescription className="text-red-900">
-                    Evaluation failed. {evaluationFailureMessage || 'Please retry from the editor.'}
+                    {evaluationFailureBannerMessage}
                   </AlertDescription>
                 </Alert>
               ) : null}
@@ -742,23 +821,51 @@ export default function DocumentComparisonDetail() {
                     <div className="space-y-3">
                       {evaluationHistory.map((evaluation, index) => {
                         const rowMeta = getEvaluationRowMeta(evaluation);
+                        const rowFailure = extractEvaluationFailureDetails(evaluation?.result?.error);
                         return (
                           <div
                             key={evaluation.id || `evaluation-${index}`}
-                            className={`flex items-center justify-between ${rowMeta.rowClassName}`}
+                            className={rowMeta.rowClassName}
                           >
-                            <div className="flex items-center gap-3">
-                              <Badge className={rowMeta.badgeClassName}>{rowMeta.label}</Badge>
-                              <span className="text-slate-700">{formatDateTime(evaluation.created_date)}</span>
-                              {index === 0 ? <Badge variant="outline">Latest</Badge> : null}
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-3">
+                                  <Badge className={rowMeta.badgeClassName}>{rowMeta.label}</Badge>
+                                  <span className="text-slate-700">{formatDateTime(evaluation.created_date)}</span>
+                                  {index === 0 ? <Badge variant="outline">Latest</Badge> : null}
+                                </div>
+                                {rowFailure ? (
+                                  <p className="text-xs text-slate-500">
+                                    Failure code:{' '}
+                                    <span className="font-mono text-slate-700">{rowFailure.failureCode}</span>
+                                  </p>
+                                ) : null}
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span
+                                  className={`font-semibold ${
+                                    rowMeta.label === 'Succeeded' ? 'text-blue-600' : 'text-slate-600'
+                                  }`}
+                                >
+                                  {rowMeta.scoreLabel}
+                                </span>
+                                {rowFailure ? (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() =>
+                                      setSelectedFailureEntry({
+                                        evaluationId: evaluation.id || '',
+                                        createdDate: evaluation.created_date || null,
+                                        failure: rowFailure,
+                                      })
+                                    }
+                                  >
+                                    View details
+                                  </Button>
+                                ) : null}
+                              </div>
                             </div>
-                            <span
-                              className={`font-semibold ${
-                                rowMeta.label === 'Succeeded' ? 'text-blue-600' : 'text-slate-600'
-                              }`}
-                            >
-                              {rowMeta.scoreLabel}
-                            </span>
                           </div>
                         );
                       })}
@@ -871,6 +978,54 @@ export default function DocumentComparisonDetail() {
           </Tabs>
         </div>
       </div>
+
+      <Dialog
+        open={Boolean(selectedFailureEntry)}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) {
+            setSelectedFailureEntry(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Evaluation Failure Details</DialogTitle>
+            <DialogDescription>
+              Safe diagnostic details for this evaluation attempt.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 text-sm">
+            <div>
+              <p className="text-slate-500">Failure code</p>
+              <p className="font-mono text-slate-900">
+                {asText(selectedFailureEntry?.failure?.failureCode) || 'unknown_error'}
+              </p>
+            </div>
+            <div>
+              <p className="text-slate-500">Failure message</p>
+              <p className="text-slate-900">
+                {asText(selectedFailureEntry?.failure?.message) || 'Evaluation failed'}
+              </p>
+            </div>
+            <div>
+              <p className="text-slate-500">Failure stage</p>
+              <p className="font-mono text-slate-900">
+                {asText(selectedFailureEntry?.failure?.failureStage) || 'unknown'}
+              </p>
+            </div>
+            <div>
+              <p className="text-slate-500">Request ID</p>
+              <p className="font-mono text-slate-900">
+                {asText(selectedFailureEntry?.failure?.requestId) || '—'}
+              </p>
+            </div>
+            <div>
+              <p className="text-slate-500">Timestamp</p>
+              <p className="text-slate-900">{formatDateTime(selectedFailureEntry?.createdDate)}</p>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={isShareDialogOpen}
