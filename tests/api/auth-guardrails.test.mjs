@@ -5,7 +5,7 @@ import authCsrfHandler from '../../server/routes/auth/csrf.ts';
 import authMeHandler from '../../server/routes/auth/me.ts';
 import { hasDatabaseUrl } from '../../server/_lib/db/client.js';
 import { createMockReq, createMockRes } from '../helpers/httpMock.mjs';
-import { ensureTestEnv } from '../helpers/auth.mjs';
+import { ensureTestEnv, makeSessionCookie } from '../helpers/auth.mjs';
 
 ensureTestEnv();
 
@@ -156,4 +156,52 @@ test('api route aliases for csrf and me resolve correctly', async () => {
   const meRes = createMockRes();
   await apiHandler(meReq, meRes);
   assert.equal([401, 503].includes(meRes.statusCode), true);
+});
+
+test('debug db endpoint is protected and returns safe identity fields', async () => {
+  const unauthorizedReq = createMockReq({
+    method: 'GET',
+    url: '/api/index?path=debug%2Fdb',
+    query: {
+      path: 'debug/db',
+    },
+  });
+  const unauthorizedRes = createMockRes();
+  await apiHandler(unauthorizedReq, unauthorizedRes);
+  assert.equal([401, 503].includes(unauthorizedRes.statusCode), true);
+
+  if (!hasDatabaseUrl()) {
+    return;
+  }
+
+  const sessionCookie = makeSessionCookie({
+    sub: 'debug_db_tester',
+    email: 'debug-db-tester@example.com',
+  });
+
+  const authorizedReq = createMockReq({
+    method: 'GET',
+    url: '/api/index?path=debug%2Fdb',
+    query: {
+      path: 'debug/db',
+    },
+    headers: {
+      cookie: sessionCookie,
+    },
+  });
+  const authorizedRes = createMockRes();
+  await apiHandler(authorizedReq, authorizedRes);
+  assert.equal(authorizedRes.statusCode, 200);
+
+  const body = authorizedRes.jsonBody();
+  assert.equal(body.ok, true);
+  assert.equal(typeof body.dbConfigured, 'boolean');
+  assert.equal(typeof body.dbConnected, 'boolean');
+  assert.equal(typeof body.dbHost === 'string' || body.dbHost === null, true);
+  assert.equal(typeof body.dbName === 'string' || body.dbName === null, true);
+  assert.equal(typeof body.dbUrlHash === 'string' || body.dbUrlHash === null, true);
+  assert.equal(typeof body.sourceEnvKey, 'string');
+  assert.equal(typeof body.envPresence?.DATABASE_URL, 'boolean');
+  assert.equal(typeof body.envPresence?.POSTGRES_URL, 'boolean');
+  assert.equal(typeof body.envPresence?.NEON_DATABASE_URL, 'boolean');
 });

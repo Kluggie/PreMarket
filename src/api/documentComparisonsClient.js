@@ -256,6 +256,8 @@ export const documentComparisonsClient = {
       comparison: response.comparison || null,
       evaluation: response.evaluation || null,
       proposal: response.proposal || null,
+      requestId: response.request_id || null,
+      attemptCount: Number(response.attempt_count || 0),
     };
   },
 

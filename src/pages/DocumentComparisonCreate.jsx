@@ -398,15 +398,32 @@ function getSuggestionCategoryLabel(category) {
 
 function toEvaluationErrorMessage(error) {
   const status = Number(error?.status || 0);
-  const code = asText(error?.body?.code || error?.body?.error?.code || error?.code);
-  const requestId = asText(error?.body?.requestId || error?.body?.error?.requestId);
+  const code = asText(
+    error?.body?.error?.failure_code ||
+      error?.body?.error?.code ||
+      error?.body?.code ||
+      error?.code,
+  );
+  const requestId = asText(
+    error?.body?.error?.requestId ||
+      error?.body?.error?.request_id ||
+      error?.body?.requestId ||
+      error?.body?.request_id,
+  );
 
   if (status === 501 || code === 'not_configured') {
     return 'Evaluation is not configured in this environment yet.';
   }
 
   const message = asText(error?.message) || 'Evaluation failed';
-  return requestId ? `${message} (requestId: ${requestId})` : message;
+  const parts = [message];
+  if (code) {
+    parts.push(`code: ${code}`);
+  }
+  if (requestId) {
+    parts.push(`requestId: ${requestId}`);
+  }
+  return parts.join(' · ');
 }
 
 function getApiErrorCode(error) {
@@ -491,11 +508,25 @@ export default function DocumentComparisonCreate() {
   const [showFinishConfirmDialog, setShowFinishConfirmDialog] = useState(false);
   const [isFinishingComparison, setIsFinishingComparison] = useState(false);
   const [isRunningEvaluation, setIsRunningEvaluation] = useState(false);
+  const [finishStage, setFinishStage] = useState('idle');
   const [ignoredRouteDraftId, setIgnoredRouteDraftId] = useState('');
 
   const docAInputFileRef = useRef(null);
   const docBInputFileRef = useRef(null);
   const recoveredMissingDraftIdRef = useRef('');
+  const latestDraftStateRef = useRef({
+    title: '',
+    docAText: '',
+    docBText: '',
+    docAHtml: '<p></p>',
+    docBHtml: '<p></p>',
+    docAJson: null,
+    docBJson: null,
+    docASource: 'typed',
+    docBSource: 'typed',
+    docAFiles: [],
+    docBFiles: [],
+  });
 
   const proposalLookup = useQuery({
     queryKey: ['document-comparison-proposal-lookup', routeState.proposalId],
@@ -538,18 +569,40 @@ export default function DocumentComparisonCreate() {
 
     const nextDocAText = String(comparison.doc_a_text || '');
     const nextDocBText = String(comparison.doc_b_text || '');
+    const nextDocAHtml = asText(comparison.doc_a_html) || textToHtml(nextDocAText);
+    const nextDocBHtml = asText(comparison.doc_b_html) || textToHtml(nextDocBText);
+    const nextDocAJson = parseDocJson(comparison.doc_a_json);
+    const nextDocBJson = parseDocJson(comparison.doc_b_json);
+    const nextDocASource = comparison.doc_a_source || 'typed';
+    const nextDocBSource = comparison.doc_b_source || 'typed';
+    const nextDocAFiles = Array.isArray(comparison.doc_a_files) ? comparison.doc_a_files : [];
+    const nextDocBFiles = Array.isArray(comparison.doc_b_files) ? comparison.doc_b_files : [];
 
     setDocAText(nextDocAText);
     setDocBText(nextDocBText);
-    setDocAHtml(asText(comparison.doc_a_html) || textToHtml(nextDocAText));
-    setDocBHtml(asText(comparison.doc_b_html) || textToHtml(nextDocBText));
-    setDocAJson(parseDocJson(comparison.doc_a_json));
-    setDocBJson(parseDocJson(comparison.doc_b_json));
+    setDocAHtml(nextDocAHtml);
+    setDocBHtml(nextDocBHtml);
+    setDocAJson(nextDocAJson);
+    setDocBJson(nextDocBJson);
 
-    setDocASource(comparison.doc_a_source || 'typed');
-    setDocBSource(comparison.doc_b_source || 'typed');
-    setDocAFiles(Array.isArray(comparison.doc_a_files) ? comparison.doc_a_files : []);
-    setDocBFiles(Array.isArray(comparison.doc_b_files) ? comparison.doc_b_files : []);
+    setDocASource(nextDocASource);
+    setDocBSource(nextDocBSource);
+    setDocAFiles(nextDocAFiles);
+    setDocBFiles(nextDocBFiles);
+
+    latestDraftStateRef.current = {
+      title: comparison.title || '',
+      docAText: nextDocAText,
+      docBText: nextDocBText,
+      docAHtml: nextDocAHtml,
+      docBHtml: nextDocBHtml,
+      docAJson: nextDocAJson,
+      docBJson: nextDocBJson,
+      docASource: nextDocASource,
+      docBSource: nextDocBSource,
+      docAFiles: nextDocAFiles,
+      docBFiles: nextDocBFiles,
+    };
 
     setDocAPreviewSnippet(previewSnippet(nextDocAText));
     setDocBPreviewSnippet(previewSnippet(nextDocBText));
@@ -567,14 +620,14 @@ export default function DocumentComparisonCreate() {
         title: comparison.title || '',
         docAText: nextDocAText,
         docBText: nextDocBText,
-        docAHtml: asText(comparison.doc_a_html) || textToHtml(nextDocAText),
-        docBHtml: asText(comparison.doc_b_html) || textToHtml(nextDocBText),
-        docAJson: parseDocJson(comparison.doc_a_json),
-        docBJson: parseDocJson(comparison.doc_b_json),
-        docASource: comparison.doc_a_source || 'typed',
-        docBSource: comparison.doc_b_source || 'typed',
-        docAFiles: Array.isArray(comparison.doc_a_files) ? comparison.doc_a_files : [],
-        docBFiles: Array.isArray(comparison.doc_b_files) ? comparison.doc_b_files : [],
+        docAHtml: nextDocAHtml,
+        docBHtml: nextDocBHtml,
+        docAJson: nextDocAJson,
+        docBJson: nextDocBJson,
+        docASource: nextDocASource,
+        docBSource: nextDocBSource,
+        docAFiles: nextDocAFiles,
+        docBFiles: nextDocBFiles,
       }),
     );
   }, [
@@ -641,6 +694,34 @@ export default function DocumentComparisonCreate() {
   }, [fullscreenSide]);
 
   useEffect(() => {
+    latestDraftStateRef.current = {
+      title: asText(title) || 'Untitled Comparison',
+      docAText,
+      docBText,
+      docAHtml,
+      docBHtml,
+      docAJson,
+      docBJson,
+      docASource,
+      docBSource,
+      docAFiles: Array.isArray(docAFiles) ? docAFiles : [],
+      docBFiles: Array.isArray(docBFiles) ? docBFiles : [],
+    };
+  }, [
+    title,
+    docAText,
+    docBText,
+    docAHtml,
+    docBHtml,
+    docAJson,
+    docBJson,
+    docASource,
+    docBSource,
+    docAFiles,
+    docBFiles,
+  ]);
+
+  useEffect(() => {
     setCoachResult(null);
     setCoachError('');
     setCoachNotConfigured(false);
@@ -658,6 +739,8 @@ export default function DocumentComparisonCreate() {
     setIsApplyingReviewSuggestion(false);
     setShowFinishConfirmDialog(false);
     setIsFinishingComparison(false);
+    setIsRunningEvaluation(false);
+    setFinishStage('idle');
   }, [comparisonId]);
 
   const currentStateHash = useMemo(
@@ -699,24 +782,30 @@ export default function DocumentComparisonCreate() {
   const saveDraftMutation = useMutation({
     mutationFn: async ({ stepToSave, silent = false }) => {
       const savedStep = clampStep(stepToSave || step || 1);
-      const sanitizedDocAHtml = sanitizeEditorHtml(docAHtml || textToHtml(docAText));
-      const sanitizedDocBHtml = sanitizeEditorHtml(docBHtml || textToHtml(docBText));
-      const normalizedDocAText = docAText || htmlToText(sanitizedDocAHtml);
-      const normalizedDocBText = docBText || htmlToText(sanitizedDocBHtml);
+      const snapshot = latestDraftStateRef.current || {};
+      const nextTitle = asText(snapshot.title || title) || 'Untitled Comparison';
+      const nextDocAText = String(snapshot.docAText || docAText || '');
+      const nextDocBText = String(snapshot.docBText || docBText || '');
+      const nextDocAHtml = snapshot.docAHtml || docAHtml || textToHtml(nextDocAText);
+      const nextDocBHtml = snapshot.docBHtml || docBHtml || textToHtml(nextDocBText);
+      const sanitizedDocAHtml = sanitizeEditorHtml(nextDocAHtml);
+      const sanitizedDocBHtml = sanitizeEditorHtml(nextDocBHtml);
+      const normalizedDocAText = nextDocAText || htmlToText(sanitizedDocAHtml);
+      const normalizedDocBText = nextDocBText || htmlToText(sanitizedDocBHtml);
       const payload = {
-        title: asText(title) || 'Untitled Comparison',
+        title: nextTitle,
         party_a_label: CONFIDENTIAL_LABEL,
         party_b_label: SHARED_LABEL,
         doc_a_text: normalizedDocAText,
         doc_b_text: normalizedDocBText,
         doc_a_html: sanitizedDocAHtml,
         doc_b_html: sanitizedDocBHtml,
-        doc_a_json: docAJson,
-        doc_b_json: docBJson,
-        doc_a_source: docASource,
-        doc_b_source: docBSource,
-        doc_a_files: docAFiles,
-        doc_b_files: docBFiles,
+        doc_a_json: snapshot.docAJson || docAJson,
+        doc_b_json: snapshot.docBJson || docBJson,
+        doc_a_source: asText(snapshot.docASource || docASource) || 'typed',
+        doc_b_source: asText(snapshot.docBSource || docBSource) || 'typed',
+        doc_a_files: Array.isArray(snapshot.docAFiles) ? snapshot.docAFiles : docAFiles,
+        doc_b_files: Array.isArray(snapshot.docBFiles) ? snapshot.docBFiles : docBFiles,
         draft_step: savedStep,
         proposalId: linkedProposalId || routeState.proposalId || null,
         createProposal: !(linkedProposalId || routeState.proposalId),
@@ -956,6 +1045,14 @@ export default function DocumentComparisonCreate() {
     }
 
     if (side === 'a') {
+      latestDraftStateRef.current = {
+        ...latestDraftStateRef.current,
+        docAText: text,
+        docAHtml: html,
+        docAJson: null,
+        docASource: 'uploaded',
+        docAFiles: [fileToMetadata(file)],
+      };
       setDocAText(text);
       setDocAHtml(html);
       setDocAJson(null);
@@ -965,6 +1062,14 @@ export default function DocumentComparisonCreate() {
       return;
     }
 
+    latestDraftStateRef.current = {
+      ...latestDraftStateRef.current,
+      docBText: text,
+      docBHtml: html,
+      docBJson: null,
+      docBSource: 'uploaded',
+      docBFiles: [fileToMetadata(file)],
+    };
     setDocBText(text);
     setDocBHtml(html);
     setDocBJson(null);
@@ -1059,6 +1164,32 @@ export default function DocumentComparisonCreate() {
     }
   };
 
+  const buildEvaluationPayload = () => {
+    const snapshot = latestDraftStateRef.current || {};
+    const normalizedTitle = asText(snapshot.title || title) || 'Untitled Comparison';
+    const sanitizedDocAHtml = sanitizeEditorHtml(snapshot.docAHtml || docAHtml || textToHtml(snapshot.docAText || docAText));
+    const sanitizedDocBHtml = sanitizeEditorHtml(snapshot.docBHtml || docBHtml || textToHtml(snapshot.docBText || docBText));
+    const normalizedDocAText = String(snapshot.docAText || docAText || htmlToText(sanitizedDocAHtml) || '');
+    const normalizedDocBText = String(snapshot.docBText || docBText || htmlToText(sanitizedDocBHtml) || '');
+
+    return {
+      title: normalizedTitle,
+      draft_step: 2,
+      party_a_label: CONFIDENTIAL_LABEL,
+      party_b_label: SHARED_LABEL,
+      doc_a_text: normalizedDocAText,
+      doc_b_text: normalizedDocBText,
+      doc_a_html: sanitizedDocAHtml,
+      doc_b_html: sanitizedDocBHtml,
+      doc_a_json: snapshot.docAJson || docAJson || null,
+      doc_b_json: snapshot.docBJson || docBJson || null,
+      doc_a_source: asText(snapshot.docASource || docASource) || 'typed',
+      doc_b_source: asText(snapshot.docBSource || docBSource) || 'typed',
+      doc_a_files: Array.isArray(snapshot.docAFiles) ? snapshot.docAFiles : docAFiles,
+      doc_b_files: Array.isArray(snapshot.docBFiles) ? snapshot.docBFiles : docBFiles,
+    };
+  };
+
   const finishToComparisonDetail = async () => {
     if (isFinishingComparison) {
       return;
@@ -1071,22 +1202,41 @@ export default function DocumentComparisonCreate() {
     }
 
     setIsFinishingComparison(true);
+    setFinishStage('saving');
     setIsRunningEvaluation(false);
     try {
-      const resolvedId = await saveDraftMutation.mutateAsync({
-        stepToSave: 2,
-        silent: true,
-      });
+      let resolvedId = asText(comparisonId);
+      if (!resolvedId) {
+        resolvedId = await saveDraftMutation.mutateAsync({
+          stepToSave: 2,
+          silent: true,
+        });
+      }
 
       if (!resolvedId) {
         throw new Error('Unable to open the comparison details yet.');
       }
 
+      const evaluationPayload = buildEvaluationPayload();
+      setFinishStage('evaluating');
       setIsRunningEvaluation(true);
       try {
-        await documentComparisonsClient.evaluate(resolvedId, {});
+        await documentComparisonsClient.evaluate(resolvedId, evaluationPayload);
       } catch (error) {
-        toast.error(toEvaluationErrorMessage(error));
+        if (isDocumentComparisonNotFoundError(error)) {
+          const recreatedId = await saveDraftMutation.mutateAsync({
+            stepToSave: 2,
+            silent: true,
+          });
+          if (recreatedId) {
+            resolvedId = recreatedId;
+            await documentComparisonsClient.evaluate(resolvedId, evaluationPayload);
+          } else {
+            throw error;
+          }
+        } else {
+          toast.error(toEvaluationErrorMessage(error));
+        }
       } finally {
         setIsRunningEvaluation(false);
       }
@@ -1098,6 +1248,7 @@ export default function DocumentComparisonCreate() {
       setUiError(message);
       toast.error(message);
     } finally {
+      setFinishStage('idle');
       setIsRunningEvaluation(false);
       setIsFinishingComparison(false);
     }
@@ -1406,11 +1557,25 @@ export default function DocumentComparisonCreate() {
     const updatedHtml = sanitizeEditorHtml(textToHtml(updatedText));
 
     if (target === 'a') {
+      latestDraftStateRef.current = {
+        ...latestDraftStateRef.current,
+        docAText: updatedText,
+        docAHtml: updatedHtml,
+        docAJson: null,
+        docASource: 'typed',
+      };
       setDocAText(updatedText);
       setDocAHtml(updatedHtml);
       setDocAJson(null);
       setDocASource('typed');
     } else {
+      latestDraftStateRef.current = {
+        ...latestDraftStateRef.current,
+        docBText: updatedText,
+        docBHtml: updatedHtml,
+        docBJson: null,
+        docBSource: 'typed',
+      };
       setDocBText(updatedText);
       setDocBHtml(updatedHtml);
       setDocBJson(null);
@@ -1604,12 +1769,24 @@ export default function DocumentComparisonCreate() {
           }}
           onChange={({ html, text, json }) => {
             if (isA) {
+              latestDraftStateRef.current = {
+                ...latestDraftStateRef.current,
+                docAText: text,
+                docAHtml: html,
+                docAJson: json,
+              };
               setDocAText(text);
               setDocAHtml(html);
               setDocAJson(json);
               return;
             }
 
+            latestDraftStateRef.current = {
+              ...latestDraftStateRef.current,
+              docBText: text,
+              docBHtml: html,
+              docBJson: json,
+            };
             setDocBText(text);
             setDocBHtml(html);
             setDocBJson(json);
@@ -1694,7 +1871,14 @@ export default function DocumentComparisonCreate() {
                     <Label>Comparison Title</Label>
                     <Input
                       value={title}
-                      onChange={(event) => setTitle(event.target.value)}
+                      onChange={(event) => {
+                        const nextTitle = event.target.value;
+                        latestDraftStateRef.current = {
+                          ...latestDraftStateRef.current,
+                          title: nextTitle,
+                        };
+                        setTitle(nextTitle);
+                      }}
                       placeholder="e.g., Mutual NDA comparison"
                     />
                     {!asText(title) ? (
@@ -2035,7 +2219,7 @@ export default function DocumentComparisonCreate() {
                           {isFinishingComparison ? (
                             <>
                               <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                              {isRunningEvaluation ? 'Running evaluation...' : 'Saving draft...'}
+                              {finishStage === 'evaluating' ? 'Evaluating...' : 'Saving...'}
                             </>
                           ) : (
                             <>
@@ -2090,7 +2274,7 @@ export default function DocumentComparisonCreate() {
                 {isFinishingComparison || isRunningEvaluation || saveDraftMutation.isPending ? (
                   <>
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    {isRunningEvaluation ? 'Running evaluation...' : 'Saving draft...'}
+                    {finishStage === 'evaluating' ? 'Evaluating...' : 'Saving...'}
                   </>
                 ) : (
                   'Save and run evaluation'

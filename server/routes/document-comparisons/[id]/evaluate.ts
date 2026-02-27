@@ -3,11 +3,16 @@ import { ok } from '../../../_lib/api-response.js';
 import { requireUser } from '../../../_lib/auth.js';
 import { getDb, schema } from '../../../_lib/db/client.js';
 import { ApiError } from '../../../_lib/errors.js';
+import { readJsonBody } from '../../../_lib/http.js';
 import { newId } from '../../../_lib/ids.js';
 import { createNotificationEvent } from '../../../_lib/notifications.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 import { evaluateDocumentComparisonWithVertex } from '../../../_lib/vertex-evaluation.js';
-import { sanitizeEditorText } from '../../../_lib/document-editor-sanitization.js';
+import {
+  htmlToEditorText,
+  sanitizeEditorHtml,
+  sanitizeEditorText,
+} from '../../../_lib/document-editor-sanitization.js';
 import { ensureComparisonFound, mapComparisonRow } from '../_helpers.js';
 import { assertDocumentComparisonWithinLimits } from '../_limits.js';
 
@@ -22,6 +27,7 @@ type EvaluationFailureCode =
   | 'vertex_unavailable'
   | 'vertex_unauthorized'
   | 'vertex_bad_request'
+  | 'vertex_invalid_response'
   | 'vertex_internal_error'
   | 'db_write_failed'
   | 'unknown_error';
@@ -61,6 +67,152 @@ function toHttpStatus(value: unknown, fallback = 500) {
     return fallback;
   }
   return Math.floor(numeric);
+}
+
+function toSafeInteger(value: unknown) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return null;
+  }
+  return Math.floor(numeric);
+}
+
+function toOptionalJsonObject(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  const type = String((value as any).type || '').trim().toLowerCase();
+  const content = (value as any).content;
+  if (type !== 'doc' || !Array.isArray(content)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function toStringArray(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((entry) => {
+    if (entry === null || entry === undefined) return false;
+    const type = typeof entry;
+    return type === 'string' || type === 'number' || type === 'boolean' || type === 'object';
+  }) as any[];
+}
+
+function resolveEvaluationDraft(params: {
+  existing: any;
+  body: Record<string, unknown>;
+}) {
+  const { existing, body } = params;
+  const existingInputs =
+    existing?.inputs && typeof existing.inputs === 'object' && !Array.isArray(existing.inputs)
+      ? existing.inputs
+      : {};
+
+  const title = asText(body.title) || asText(existing?.title) || 'Untitled Comparison';
+  const rawDocAText =
+    body.docAText !== undefined || body.doc_a_text !== undefined
+      ? String(body.docAText || body.doc_a_text || '')
+      : String(existing?.docAText || '');
+  const rawDocBText =
+    body.docBText !== undefined || body.doc_b_text !== undefined
+      ? String(body.docBText || body.doc_b_text || '')
+      : String(existing?.docBText || '');
+  const rawDocAHtml =
+    body.docAHtml !== undefined || body.doc_a_html !== undefined
+      ? asText(body.docAHtml || body.doc_a_html)
+      : asText(existingInputs.doc_a_html);
+  const rawDocBHtml =
+    body.docBHtml !== undefined || body.doc_b_html !== undefined
+      ? asText(body.docBHtml || body.doc_b_html)
+      : asText(existingInputs.doc_b_html);
+
+  const docAHtml = sanitizeEditorHtml(rawDocAHtml || rawDocAText);
+  const docBHtml = sanitizeEditorHtml(rawDocBHtml || rawDocBText);
+  const docAText = sanitizeEditorText(rawDocAText || htmlToEditorText(docAHtml));
+  const docBText = sanitizeEditorText(rawDocBText || htmlToEditorText(docBHtml));
+  const docAJson =
+    body.docAJson !== undefined || body.doc_a_json !== undefined
+      ? toOptionalJsonObject(body.docAJson || body.doc_a_json)
+      : toOptionalJsonObject(existingInputs.doc_a_json);
+  const docBJson =
+    body.docBJson !== undefined || body.doc_b_json !== undefined
+      ? toOptionalJsonObject(body.docBJson || body.doc_b_json)
+      : toOptionalJsonObject(existingInputs.doc_b_json);
+  const docASource = asText(body.docASource || body.doc_a_source || existingInputs.doc_a_source) || 'typed';
+  const docBSource = asText(body.docBSource || body.doc_b_source || existingInputs.doc_b_source) || 'typed';
+  const docAFiles = toStringArray(body.docAFiles || body.doc_a_files || existingInputs.doc_a_files);
+  const docBFiles = toStringArray(body.docBFiles || body.doc_b_files || existingInputs.doc_b_files);
+  const docAUrl = asText(body.docAUrl || body.doc_a_url || existingInputs.doc_a_url) || null;
+  const docBUrl = asText(body.docBUrl || body.doc_b_url || existingInputs.doc_b_url) || null;
+  const updatedInputs = {
+    ...existingInputs,
+    doc_a_source: docASource,
+    doc_b_source: docBSource,
+    doc_a_html: docAHtml || null,
+    doc_b_html: docBHtml || null,
+    doc_a_json: docAJson,
+    doc_b_json: docBJson,
+    doc_a_files: docAFiles,
+    doc_b_files: docBFiles,
+    doc_a_url: docAUrl,
+    doc_b_url: docBUrl,
+    confidential_doc_content: docAText,
+    shared_doc_content: docBText,
+  };
+
+  return {
+    title,
+    docAText,
+    docBText,
+    inputs: updatedInputs,
+  };
+}
+
+function sanitizeFailureDiagnostics(extra: unknown) {
+  if (!extra || typeof extra !== 'object' || Array.isArray(extra)) {
+    return null;
+  }
+  const source = extra as Record<string, unknown>;
+  const model = asText(source.model);
+  const reasonCode = asText(source.reasonCode);
+  const parseErrorName = asText(source.parseErrorName);
+  const parseErrorMessage = asText(source.parseErrorMessage);
+  const sourceEnvKey = asText(source.sourceEnvKey);
+  const diagnostics = {
+    model: model || null,
+    reason_code: reasonCode || null,
+    parse_error_name: parseErrorName || null,
+    parse_error_message: parseErrorMessage || null,
+    source_env_key: sourceEnvKey || null,
+    response_keys: Array.isArray(source.responseKeys)
+      ? source.responseKeys.map((value) => asText(value)).filter(Boolean).slice(0, 20)
+      : [],
+    candidate_count: toSafeInteger(source.candidateCount),
+    first_candidate_keys: Array.isArray(source.firstCandidateKeys)
+      ? source.firstCandidateKeys.map((value) => asText(value)).filter(Boolean).slice(0, 20)
+      : [],
+    first_part_keys: Array.isArray(source.firstPartKeys)
+      ? source.firstPartKeys.map((value) => asText(value)).filter(Boolean).slice(0, 20)
+      : [],
+    text_length: toSafeInteger(source.textLength),
+    upstream_status: toSafeInteger(source.upstreamStatus),
+    status: toSafeInteger(source.status),
+  };
+  const hasAnyValue =
+    Boolean(diagnostics.model) ||
+    Boolean(diagnostics.reason_code) ||
+    Boolean(diagnostics.parse_error_name) ||
+    Boolean(diagnostics.parse_error_message) ||
+    Boolean(diagnostics.source_env_key) ||
+    diagnostics.response_keys.length > 0 ||
+    diagnostics.first_candidate_keys.length > 0 ||
+    diagnostics.first_part_keys.length > 0 ||
+    Boolean(diagnostics.text_length) ||
+    Boolean(diagnostics.upstream_status) ||
+    Boolean(diagnostics.status);
+  return hasAnyValue ? diagnostics : null;
 }
 
 function getDocumentComparisonEvaluator() {
@@ -175,7 +327,7 @@ function classifyEvaluationFailure(error: any): ClassifiedEvaluationFailure {
 
   if (sourceCode === 'invalid_model_output') {
     return {
-      failureCode: 'vertex_internal_error',
+      failureCode: 'vertex_invalid_response',
       failureStage: 'parse',
       failureMessage: 'Vertex returned an invalid response',
       httpStatus: 502,
@@ -256,6 +408,7 @@ function buildFailedEvaluationResult(params: {
         source_code: classified.sourceCode || null,
         upstream_status: classified.upstreamStatus,
         raw_status: toHttpStatus(error?.statusCode || error?.status || 0, 0) || null,
+        diagnostics: sanitizeFailureDiagnostics(error?.extra),
       },
     },
     attempt: {
@@ -376,6 +529,15 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       .limit(1);
 
     ensureComparisonFound(existing);
+    const body = (await readJsonBody(req)) as Record<string, unknown>;
+    const draft = resolveEvaluationDraft({
+      existing,
+      body,
+    });
+    assertDocumentComparisonWithinLimits({
+      docAText: draft.docAText,
+      docBText: draft.docBText,
+    });
 
     await withDbWriteGuard({
       requestId,
@@ -384,6 +546,15 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
         db
           .update(schema.documentComparisons)
           .set({
+            title: draft.title,
+            draftStep: 2,
+            partyALabel: CONFIDENTIAL_LABEL,
+            partyBLabel: SHARED_LABEL,
+            docAText: draft.docAText,
+            docBText: draft.docBText,
+            docASpans: [],
+            docBSpans: [],
+            inputs: draft.inputs,
             status: 'running',
             updatedAt: new Date(),
           })
@@ -401,17 +572,10 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       const attemptStartedAt = new Date();
 
       try {
-        const sanitizedDocAText = sanitizeEditorText(existing.docAText || '');
-        const sanitizedDocBText = sanitizeEditorText(existing.docBText || '');
-        assertDocumentComparisonWithinLimits({
-          docAText: sanitizedDocAText,
-          docBText: sanitizedDocBText,
-        });
-
         const evaluated = await evaluateComparison({
-          title: existing.title,
-          docAText: sanitizedDocAText,
-          docBText: sanitizedDocBText,
+          title: draft.title,
+          docAText: draft.docAText,
+          docBText: draft.docBText,
           docASpans: [],
           docBSpans: [],
           partyALabel: CONFIDENTIAL_LABEL,
@@ -433,6 +597,20 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
         const attemptCompletedAt = new Date();
         const classified = classifyEvaluationFailure(error);
         const retryScheduled = classified.retryable && attemptCount < MAX_EVALUATION_ATTEMPTS;
+        const diagnostics = sanitizeFailureDiagnostics(error?.extra);
+        console.error(
+          JSON.stringify({
+            level: 'error',
+            route: '/api/document-comparisons/[id]/evaluate',
+            requestId,
+            comparisonId: existing.id,
+            attempt: attemptCount,
+            failureCode: classified.failureCode,
+            failureStage: classified.failureStage,
+            retryScheduled,
+            diagnostics,
+          }),
+        );
         const failedResult = buildFailedEvaluationResult({
           error,
           classified,
@@ -546,6 +724,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
           db
             .update(schema.proposals)
             .set({
+              title: updated.title,
               status: 'under_verification',
               proposalType: 'document_comparison',
               draftStep: 3,

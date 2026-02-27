@@ -470,7 +470,7 @@ if (!hasDatabaseUrl()) {
     assert.equal(emptyPatchRes.jsonBody().error.code, 'invalid_input');
   });
 
-  test('go-to-comparison sequence evaluates the latest saved editor draft', async () => {
+  test('go-to-comparison evaluation persists payload content without requiring a separate save call', async () => {
     await ensureMigrated();
     await resetTables();
 
@@ -492,37 +492,27 @@ if (!hasDatabaseUrl()) {
     assert.equal(createRes.statusCode, 201);
     const comparisonId = createRes.jsonBody().comparison.id;
 
-    const latestDocAText = 'Final confidential terms saved from editor before finish.';
-    const latestDocBText = 'Final shared terms saved from editor before finish.';
-    const patchReq = createMockReq({
-      method: 'PATCH',
-      url: `/api/document-comparisons/${comparisonId}`,
-      headers: { cookie: ownerCookie },
-      query: { id: comparisonId },
-      body: {
-        doc_a_text: latestDocAText,
-        doc_b_text: latestDocBText,
-        draft_step: 2,
-      },
-    });
-    const patchRes = createMockRes();
-    await documentComparisonsIdHandler(patchReq, patchRes, comparisonId);
-    assert.equal(patchRes.statusCode, 200);
-    assert.equal(patchRes.jsonBody().comparison.doc_a_text, latestDocAText);
-    assert.equal(patchRes.jsonBody().comparison.doc_b_text, latestDocBText);
-    assert.equal(patchRes.jsonBody().comparison.draft_step, 2);
+    const latestDocAText = 'Final confidential terms sent with evaluate payload.';
+    const latestDocBText = 'Final shared terms sent with evaluate payload.';
+    const latestTitle = 'Finish Flow Comparison (latest editor title)';
 
     const evaluateReq = createMockReq({
       method: 'POST',
       url: `/api/document-comparisons/${comparisonId}/evaluate`,
       headers: { cookie: ownerCookie },
       query: { id: comparisonId },
-      body: {},
+      body: {
+        title: latestTitle,
+        draft_step: 2,
+        doc_a_text: latestDocAText,
+        doc_b_text: latestDocBText,
+      },
     });
     const evaluateRes = createMockRes();
     await documentComparisonsEvaluateHandler(evaluateReq, evaluateRes, comparisonId);
     assert.equal(evaluateRes.statusCode, 200);
     assert.equal(evaluateRes.jsonBody().comparison.status, 'evaluated');
+    assert.equal(evaluateRes.jsonBody().comparison.title, latestTitle);
     assert.equal(evaluateRes.jsonBody().comparison.doc_a_text, latestDocAText);
     assert.equal(evaluateRes.jsonBody().comparison.doc_b_text, latestDocBText);
     assert.equal(evaluateRes.jsonBody().comparison.draft_step, 3);
@@ -530,6 +520,18 @@ if (!hasDatabaseUrl()) {
       Array.isArray(evaluateRes.jsonBody().comparison.evaluation_result?.report?.sections),
       true,
     );
+
+    const detailReq = createMockReq({
+      method: 'GET',
+      url: `/api/document-comparisons/${comparisonId}`,
+      headers: { cookie: ownerCookie },
+      query: { id: comparisonId },
+    });
+    const detailRes = createMockRes();
+    await documentComparisonsIdHandler(detailReq, detailRes, comparisonId);
+    assert.equal(detailRes.statusCode, 200);
+    assert.equal(detailRes.jsonBody().comparison.doc_a_text, latestDocAText);
+    assert.equal(detailRes.jsonBody().comparison.doc_b_text, latestDocBText);
   });
 
   test('document comparison evaluate returns 501 when Vertex config is missing', async () => {

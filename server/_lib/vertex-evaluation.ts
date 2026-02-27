@@ -1855,6 +1855,32 @@ function extractModelText(payload: any) {
     .trim();
 }
 
+function summarizeVertexPayload(payload: any) {
+  const root =
+    payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? (payload as Record<string, unknown>)
+      : {};
+  const candidates = Array.isArray(root.candidates) ? root.candidates : [];
+  const firstCandidate =
+    candidates[0] && typeof candidates[0] === 'object' && !Array.isArray(candidates[0])
+      ? (candidates[0] as Record<string, unknown>)
+      : {};
+  const firstParts = Array.isArray((firstCandidate as any)?.content?.parts)
+    ? ((firstCandidate as any).content.parts as unknown[])
+    : [];
+  const firstPart =
+    firstParts[0] && typeof firstParts[0] === 'object' && !Array.isArray(firstParts[0])
+      ? (firstParts[0] as Record<string, unknown>)
+      : {};
+
+  return {
+    responseKeys: Object.keys(root).slice(0, 20),
+    candidateCount: candidates.length,
+    firstCandidateKeys: Object.keys(firstCandidate).slice(0, 20),
+    firstPartKeys: Object.keys(firstPart).slice(0, 20),
+  };
+}
+
 async function callVertex(prompt: string) {
   const vertex = getVertexConfig();
   if (!vertex.ready || !vertex.credentials) {
@@ -1908,10 +1934,19 @@ async function callVertex(prompt: string) {
 
     if (response.ok) {
       const payload = await response.json().catch(() => ({}));
+      const payloadSummary = summarizeVertexPayload(payload);
       const text = extractModelText(payload);
+      if (!text) {
+        throw invalidModelOutput('Vertex response did not contain text content', {
+          model,
+          ...payloadSummary,
+          textLength: 0,
+        });
+      }
       return {
         model,
         text,
+        ...payloadSummary,
       };
     }
 
@@ -2042,7 +2077,16 @@ export async function evaluateProposalWithVertex(input: ProposalInput): Promise<
     const vertex = await callVertex(prompt);
     const parsed = parseModelJson(vertex.text);
     if (!parsed) {
-      throw invalidModelOutput('Model output was not valid JSON');
+      throw invalidModelOutput('Model output was not valid JSON', {
+        model: vertex.model,
+        textLength: String(vertex.text || '').length,
+        responseKeys: Array.isArray((vertex as any).responseKeys) ? (vertex as any).responseKeys : [],
+        candidateCount: Number((vertex as any).candidateCount || 0),
+        firstCandidateKeys: Array.isArray((vertex as any).firstCandidateKeys)
+          ? (vertex as any).firstCandidateKeys
+          : [],
+        firstPartKeys: Array.isArray((vertex as any).firstPartKeys) ? (vertex as any).firstPartKeys : [],
+      });
     }
     report = normalizeContractReport(parsed, { mode: 'proposal' });
     model = vertex.model;
@@ -2076,7 +2120,16 @@ export async function evaluateDocumentComparisonWithVertex(
     const vertex = await callVertex(prompt);
     const parsed = parseModelJson(vertex.text);
     if (!parsed) {
-      throw invalidModelOutput('Model output was not valid JSON');
+      throw invalidModelOutput('Model output was not valid JSON', {
+        model: vertex.model,
+        textLength: String(vertex.text || '').length,
+        responseKeys: Array.isArray((vertex as any).responseKeys) ? (vertex as any).responseKeys : [],
+        candidateCount: Number((vertex as any).candidateCount || 0),
+        firstCandidateKeys: Array.isArray((vertex as any).firstCandidateKeys)
+          ? (vertex as any).firstCandidateKeys
+          : [],
+        firstPartKeys: Array.isArray((vertex as any).firstPartKeys) ? (vertex as any).firstPartKeys : [],
+      });
     }
 
     report = normalizeContractReport(parsed, {

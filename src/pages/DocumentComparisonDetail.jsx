@@ -106,6 +106,9 @@ function toFailureBannerMessage(failure) {
   if (code === 'vertex_bad_request') {
     return 'Invalid request. Adjust inputs and retry.';
   }
+  if (code === 'vertex_invalid_response') {
+    return 'Vertex returned an invalid response format. Please retry.';
+  }
   if (code === 'db_write_failed') {
     return 'Evaluation could not be saved. Please retry.';
   }
