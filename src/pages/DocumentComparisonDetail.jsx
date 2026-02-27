@@ -46,6 +46,24 @@ function formatDateTime(dateValue) {
   return parsed.toLocaleString();
 }
 
+function toSummaryLines(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((entry) => {
+      if (typeof entry === 'string') {
+        return asText(entry);
+      }
+      if (entry && typeof entry === 'object') {
+        return asText(entry.text || entry.title || '');
+      }
+      return '';
+    })
+    .filter(Boolean);
+}
+
 function renderDocumentReadOnly({ text, html }) {
   const safeText = String(text || '').trim();
   const safeHtml = asText(html);
@@ -82,11 +100,24 @@ export default function DocumentComparisonDetail() {
   const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
   const [shareRecipientEmail, setShareRecipientEmail] = useState('');
   const [selectedShareToken, setSelectedShareToken] = useState('');
+  const [evaluationPollDeadline, setEvaluationPollDeadline] = useState(null);
 
   const comparisonQuery = useQuery({
     queryKey: ['document-comparison-detail', comparisonId],
     enabled: Boolean(comparisonId),
     queryFn: () => documentComparisonsClient.getById(comparisonId),
+    refetchInterval: (query) => {
+      const status = asText(query.state.data?.comparison?.status).toLowerCase();
+      const isRunning = status === 'running' || status === 'queued' || status === 'evaluating';
+      if (!isRunning) {
+        return false;
+      }
+      if (typeof evaluationPollDeadline === 'number' && Date.now() > evaluationPollDeadline) {
+        return false;
+      }
+      return 2000;
+    },
+    refetchIntervalInBackground: true,
   });
 
   const comparison = comparisonQuery.data?.comparison || null;
@@ -150,10 +181,36 @@ export default function DocumentComparisonDetail() {
   const report = comparison?.public_report || comparison?.evaluation_result?.report || {};
   const reportSections = Array.isArray(report?.sections) ? report.sections : [];
   const evaluationHistory = Array.isArray(evaluationsQuery.data) ? evaluationsQuery.data : [];
-  const hasReport = Boolean(
-    (report && typeof report === 'object' && Object.keys(report).length > 0) ||
-      evaluationHistory.length > 0,
-  );
+  const comparisonStatus = asText(comparison?.status).toLowerCase();
+  const isEvaluationRunning =
+    comparisonStatus === 'running' || comparisonStatus === 'queued' || comparisonStatus === 'evaluating';
+  const isEvaluationFailed =
+    comparisonStatus === 'failed' ||
+    Boolean(comparison?.evaluation_result?.error && typeof comparison?.evaluation_result?.error === 'object');
+  const evaluationFailureMessage = asText(comparison?.evaluation_result?.error?.message);
+  const hasReportData = Boolean(report && typeof report === 'object' && Object.keys(report).length > 0);
+  const hasReport = Boolean(hasReportData || evaluationHistory.length > 0);
+  const isPollingTimedOut =
+    isEvaluationRunning &&
+    typeof evaluationPollDeadline === 'number' &&
+    Date.now() > evaluationPollDeadline;
+
+  useEffect(() => {
+    if (!comparisonId) {
+      setEvaluationPollDeadline(null);
+      return;
+    }
+    if (isEvaluationRunning) {
+      setEvaluationPollDeadline((current) => {
+        if (typeof current === 'number' && current > Date.now()) {
+          return current;
+        }
+        return Date.now() + 60000;
+      });
+      return;
+    }
+    setEvaluationPollDeadline(null);
+  }, [comparisonId, isEvaluationRunning]);
 
   const downloadProposalPdfMutation = useMutation({
     mutationFn: () => documentComparisonsClient.downloadProposalPdf(comparisonId),
@@ -306,8 +363,30 @@ export default function DocumentComparisonDetail() {
   const recommendation =
     asText(report?.recommendation) ||
     asText(comparison?.evaluation_result?.recommendation) ||
-    asText(latestEvaluation?.summary) ||
-    'unknown fit';
+    asText(latestEvaluation?.summary);
+  const overviewBullets = (() => {
+    const collected = [];
+    const pushUnique = (line) => {
+      const normalized = asText(line);
+      if (!normalized || collected.includes(normalized)) {
+        return;
+      }
+      collected.push(normalized);
+    };
+
+    toSummaryLines(report?.summary?.top_fit_reasons).forEach(pushUnique);
+    toSummaryLines(report?.summary?.top_blockers).forEach(pushUnique);
+    toSummaryLines(report?.summary?.next_actions).forEach(pushUnique);
+
+    if (collected.length === 0) {
+      reportSections.forEach((section) => {
+        const bullets = Array.isArray(section?.bullets) ? section.bullets : [];
+        bullets.forEach(pushUnique);
+      });
+    }
+
+    return collected.slice(0, 6);
+  })();
   const similarityScore = Number(
     comparison?.evaluation_result?.score ?? report?.similarity_score ?? latestEvaluation?.score ?? 0,
   );
@@ -425,13 +504,52 @@ export default function DocumentComparisonDetail() {
                   <CardHeader>
                     <CardTitle>Overview</CardTitle>
                   </CardHeader>
-                  <CardContent className="space-y-3">
-                    <p className="text-slate-700">
-                      Latest recommendation: <span className="font-semibold capitalize">{recommendation}</span>
-                    </p>
-                    <p className="text-slate-600">
-                      Use the top action bar for PDF downloads and sharing.
-                    </p>
+                  <CardContent className="space-y-4">
+                    {isEvaluationRunning ? (
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 text-slate-700">
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <span className="font-medium">Evaluation is running...</span>
+                        </div>
+                        <p className="text-sm text-slate-500">
+                          {isPollingTimedOut
+                            ? 'Still processing. Refresh to check for updates.'
+                            : 'This page refreshes automatically while evaluation is in progress.'}
+                        </p>
+                      </div>
+                    ) : null}
+
+                    {isEvaluationFailed ? (
+                      <Alert className="bg-red-50 border-red-200">
+                        <AlertDescription className="text-red-900">
+                          Evaluation failed. {evaluationFailureMessage || 'Please retry from the editor.'}
+                        </AlertDescription>
+                      </Alert>
+                    ) : null}
+
+                    {!isEvaluationRunning && !isEvaluationFailed && hasReport ? (
+                      <>
+                        <p className="text-slate-700">
+                          Latest recommendation:{' '}
+                          <span className="font-semibold capitalize">{recommendation || 'not provided'}</span>
+                        </p>
+                        {overviewBullets.length > 0 ? (
+                          <ul className="list-disc pl-5 space-y-1 text-sm text-slate-700">
+                            {overviewBullets.map((line, index) => (
+                              <li key={`overview-bullet-${index}`}>{line}</li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p className="text-sm text-slate-600">Evaluation completed. Open AI Report for full details.</p>
+                        )}
+                      </>
+                    ) : null}
+
+                    {!isEvaluationRunning && !isEvaluationFailed && !hasReport ? (
+                      <p className="text-sm text-slate-600">
+                        No evaluation yet. Use Go to Comparison from the editor to generate it.
+                      </p>
+                    ) : null}
                   </CardContent>
                 </Card>
 
@@ -475,97 +593,131 @@ export default function DocumentComparisonDetail() {
             </TabsContent>
 
             <TabsContent value="report" className="mt-6 space-y-6">
-              <Card className="border border-slate-200 shadow-sm">
-                <CardHeader>
-                  <CardTitle>Evaluation History ({evaluationHistory.length || (hasReport ? 1 : 0)})</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {evaluationHistory.length > 0 ? (
-                    <div className="space-y-3">
-                      {evaluationHistory.map((evaluation, index) => (
-                        <div
-                          key={evaluation.id || `evaluation-${index}`}
-                          className="flex items-center justify-between rounded-xl border border-blue-200 bg-blue-50 p-3"
-                        >
-                          <div className="flex items-center gap-3">
-                            <Badge className="bg-green-100 text-green-700">succeeded</Badge>
-                            <span className="text-slate-700">{formatDateTime(evaluation.created_date)}</span>
-                            {index === 0 && <Badge variant="outline">Latest</Badge>}
-                          </div>
-                          <span className="text-blue-600 font-semibold">
-                            {Number(evaluation.score || 0)}% confidence
-                          </span>
-                        </div>
-                      ))}
+              {isEvaluationRunning ? (
+                <Card className="border border-slate-200 shadow-sm">
+                  <CardContent className="py-6">
+                    <div className="flex items-center gap-2 text-slate-700">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span className="font-medium">Evaluation in progress...</span>
                     </div>
-                  ) : hasReport ? (
-                    <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-slate-700">
-                      Report available for this comparison.
-                    </div>
-                  ) : (
-                    <p className="text-slate-500">No evaluation history yet.</p>
-                  )}
-                </CardContent>
-              </Card>
+                    <p className="text-sm text-slate-500 mt-2">
+                      {isPollingTimedOut
+                        ? 'Still processing. Refresh to check status.'
+                        : 'Report updates automatically when processing finishes.'}
+                    </p>
+                  </CardContent>
+                </Card>
+              ) : null}
 
-              <Card className="border border-slate-200 shadow-sm">
-                <CardHeader>
-                  <CardTitle>Quality Assessment</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-5">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div>
-                      <p className="text-slate-500">{CONFIDENTIAL_LABEL} Words</p>
-                      <p className="text-4xl font-bold text-slate-900">{confidentialWordCount}</p>
-                    </div>
-                    <div>
-                      <p className="text-slate-500">{SHARED_LABEL} Words</p>
-                      <p className="text-4xl font-bold text-slate-900">{sharedWordCount}</p>
-                    </div>
-                  </div>
-                  <div>
-                    <p className="text-slate-500 mb-2">Overall Confidence</p>
-                    <div className="h-3 bg-slate-200 rounded-full overflow-hidden">
-                      <div
-                        className="h-3 bg-slate-500 rounded-full"
-                        style={{ width: `${Math.max(0, Math.min(similarityScore, 100))}%` }}
-                      />
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+              {isEvaluationFailed ? (
+                <Alert className="bg-red-50 border-red-200">
+                  <AlertDescription className="text-red-900">
+                    Evaluation failed. {evaluationFailureMessage || 'Please retry from the editor.'}
+                  </AlertDescription>
+                </Alert>
+              ) : null}
 
-              <Card className="border border-slate-200 shadow-sm">
-                <CardHeader>
-                  <CardTitle>Executive Summary</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <Badge variant="outline" className="capitalize">
-                    {recommendation}
-                  </Badge>
-                  {reportSections.length > 0 ? (
-                    <div className="space-y-4">
-                      {reportSections.map((section, index) => (
-                        <div
-                          key={`${section.key || section.heading || 'section'}-${index}`}
-                          className="rounded-xl border border-slate-200 p-4"
-                        >
-                          <p className="font-semibold text-slate-900 mb-2">
-                            {section.heading || section.key || `Section ${index + 1}`}
-                          </p>
-                          <ul className="list-disc pl-5 space-y-1 text-slate-700">
-                            {(Array.isArray(section.bullets) ? section.bullets : []).map((line, lineIndex) => (
-                              <li key={`${index}-${lineIndex}`}>{line}</li>
-                            ))}
-                          </ul>
+              {!isEvaluationRunning && !isEvaluationFailed && !hasReport ? (
+                <Card className="border border-slate-200 shadow-sm">
+                  <CardContent className="py-6 text-slate-600">
+                    No evaluation yet. Go to the editor and use Go to Comparison to run it.
+                  </CardContent>
+                </Card>
+              ) : null}
+
+              {hasReport ? (
+                <>
+                  <Card className="border border-slate-200 shadow-sm">
+                    <CardHeader>
+                      <CardTitle>Evaluation History ({evaluationHistory.length || 1})</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      {evaluationHistory.length > 0 ? (
+                        <div className="space-y-3">
+                          {evaluationHistory.map((evaluation, index) => (
+                            <div
+                              key={evaluation.id || `evaluation-${index}`}
+                              className="flex items-center justify-between rounded-xl border border-blue-200 bg-blue-50 p-3"
+                            >
+                              <div className="flex items-center gap-3">
+                                <Badge className="bg-green-100 text-green-700">succeeded</Badge>
+                                <span className="text-slate-700">{formatDateTime(evaluation.created_date)}</span>
+                                {index === 0 ? <Badge variant="outline">Latest</Badge> : null}
+                              </div>
+                              <span className="text-blue-600 font-semibold">
+                                {Number(evaluation.score || 0)}% confidence
+                              </span>
+                            </div>
+                          ))}
                         </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-slate-600">AI report content is not available yet.</p>
-                  )}
-                </CardContent>
-              </Card>
+                      ) : (
+                        <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-slate-700">
+                          Report available for this comparison.
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  <Card className="border border-slate-200 shadow-sm">
+                    <CardHeader>
+                      <CardTitle>Quality Assessment</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-5">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                          <p className="text-slate-500">{CONFIDENTIAL_LABEL} Words</p>
+                          <p className="text-4xl font-bold text-slate-900">{confidentialWordCount}</p>
+                        </div>
+                        <div>
+                          <p className="text-slate-500">{SHARED_LABEL} Words</p>
+                          <p className="text-4xl font-bold text-slate-900">{sharedWordCount}</p>
+                        </div>
+                      </div>
+                      <div>
+                        <p className="text-slate-500 mb-2">Overall Confidence</p>
+                        <div className="h-3 bg-slate-200 rounded-full overflow-hidden">
+                          <div
+                            className="h-3 bg-slate-500 rounded-full"
+                            style={{ width: `${Math.max(0, Math.min(similarityScore, 100))}%` }}
+                          />
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card className="border border-slate-200 shadow-sm">
+                    <CardHeader>
+                      <CardTitle>Executive Summary</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <Badge variant="outline" className="capitalize">
+                        {recommendation || 'No recommendation provided'}
+                      </Badge>
+                      {reportSections.length > 0 ? (
+                        <div className="space-y-4">
+                          {reportSections.map((section, index) => (
+                            <div
+                              key={`${section.key || section.heading || 'section'}-${index}`}
+                              className="rounded-xl border border-slate-200 p-4"
+                            >
+                              <p className="font-semibold text-slate-900 mb-2">
+                                {section.heading || section.key || `Section ${index + 1}`}
+                              </p>
+                              <ul className="list-disc pl-5 space-y-1 text-slate-700">
+                                {(Array.isArray(section.bullets) ? section.bullets : []).map((line, lineIndex) => (
+                                  <li key={`${index}-${lineIndex}`}>{line}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-slate-600">AI report content is not available yet.</p>
+                      )}
+                    </CardContent>
+                  </Card>
+                </>
+              ) : null}
             </TabsContent>
 
             <TabsContent value="details" className="mt-6">

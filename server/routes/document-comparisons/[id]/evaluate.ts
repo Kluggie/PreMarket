@@ -87,6 +87,14 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
 
     ensureComparisonFound(existing);
 
+    await db
+      .update(schema.documentComparisons)
+      .set({
+        status: 'running',
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.documentComparisons.id, existing.id));
+
     let evaluation: any;
     try {
       const sanitizedDocAText = sanitizeEditorText(existing.docAText || '');

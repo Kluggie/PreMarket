@@ -44,7 +44,8 @@ import {
 const CONFIDENTIAL_LABEL = 'Confidential Information';
 const SHARED_LABEL = 'Shared Information';
 const MAX_PREVIEW_CHARS = 500;
-const TOTAL_STEPS = 2;
+const TOTAL_EDITOR_STEPS = 2;
+const TOTAL_WORKFLOW_STEPS = 3;
 const DIFF_CONTEXT_CHARS = 220;
 
 function asText(value) {
@@ -57,7 +58,7 @@ function clampStep(value) {
     return 1;
   }
 
-  return Math.min(Math.max(Math.floor(numeric), 1), TOTAL_STEPS);
+  return Math.min(Math.max(Math.floor(numeric), 1), TOTAL_EDITOR_STEPS);
 }
 
 function escapeHtml(value) {
@@ -395,6 +396,19 @@ function getSuggestionCategoryLabel(category) {
   return '';
 }
 
+function toEvaluationErrorMessage(error) {
+  const status = Number(error?.status || 0);
+  const code = asText(error?.body?.code || error?.body?.error?.code || error?.code);
+  const requestId = asText(error?.body?.requestId || error?.body?.error?.requestId);
+
+  if (status === 501 || code === 'not_configured') {
+    return 'Evaluation is not configured in this environment yet.';
+  }
+
+  const message = asText(error?.message) || 'Evaluation failed';
+  return requestId ? `${message} (requestId: ${requestId})` : message;
+}
+
 function useRouteState() {
   const location = useLocation();
   return useMemo(() => {
@@ -465,6 +479,7 @@ export default function DocumentComparisonCreate() {
   const [isApplyingReviewSuggestion, setIsApplyingReviewSuggestion] = useState(false);
   const [showFinishConfirmDialog, setShowFinishConfirmDialog] = useState(false);
   const [isFinishingComparison, setIsFinishingComparison] = useState(false);
+  const [isRunningEvaluation, setIsRunningEvaluation] = useState(false);
 
   const docAInputFileRef = useRef(null);
   const docBInputFileRef = useRef(null);
@@ -807,7 +822,7 @@ export default function DocumentComparisonCreate() {
     step,
   ]);
 
-  const progress = (step / TOTAL_STEPS) * 100;
+  const progress = (step / TOTAL_WORKFLOW_STEPS) * 100;
   const isDirty = currentStateHash !== lastSavedHash;
   const limits = useMemo(
     () => getDocumentComparisonTextLimits(import.meta.env?.VITE_VERTEX_MODEL || ''),
@@ -952,11 +967,11 @@ export default function DocumentComparisonCreate() {
     }
   };
 
-  const finishToComparisonDetail = async ({ saveFirst }) => {
+  const finishToComparisonDetail = async () => {
     if (isFinishingComparison) {
       return;
     }
-    if (saveFirst && exceedsAnySizeLimit) {
+    if (exceedsAnySizeLimit) {
       toast.error(
         `Document content exceeds the ${limits.model} limit. Reduce text before saving.`,
       );
@@ -964,22 +979,24 @@ export default function DocumentComparisonCreate() {
     }
 
     setIsFinishingComparison(true);
+    setIsRunningEvaluation(false);
     try {
-      let resolvedId = comparisonId;
-      if (saveFirst) {
-        resolvedId = await saveDraftMutation.mutateAsync({
-          stepToSave: 2,
-          silent: true,
-        });
-      } else if (!resolvedId) {
-        resolvedId = await saveDraftMutation.mutateAsync({
-          stepToSave: 2,
-          silent: true,
-        });
-      }
+      const resolvedId = await saveDraftMutation.mutateAsync({
+        stepToSave: 2,
+        silent: true,
+      });
 
       if (!resolvedId) {
         throw new Error('Unable to open the comparison details yet.');
+      }
+
+      setIsRunningEvaluation(true);
+      try {
+        await documentComparisonsClient.evaluate(resolvedId, {});
+      } catch (error) {
+        toast.error(toEvaluationErrorMessage(error));
+      } finally {
+        setIsRunningEvaluation(false);
       }
 
       setShowFinishConfirmDialog(false);
@@ -989,19 +1006,20 @@ export default function DocumentComparisonCreate() {
       setUiError(message);
       toast.error(message);
     } finally {
+      setIsRunningEvaluation(false);
       setIsFinishingComparison(false);
     }
   };
 
   const handleFinishClick = () => {
-    if (saveDraftMutation.isPending || isFinishingComparison) {
+    if (saveDraftMutation.isPending || isFinishingComparison || isRunningEvaluation) {
       return;
     }
     if (isDirty) {
       setShowFinishConfirmDialog(true);
       return;
     }
-    finishToComparisonDetail({ saveFirst: false });
+    finishToComparisonDetail();
   };
 
   const ensureComparisonIdForCoach = async () => {
@@ -1498,7 +1516,7 @@ export default function DocumentComparisonCreate() {
         <div className="mb-5">
           <div className="flex items-center justify-between text-sm mb-3">
             <div className="flex items-center gap-3">
-              <span className={`font-semibold ${step === 1 ? 'text-blue-600' : 'text-slate-400'}`}>Step {step} of 2</span>
+              <span className={`font-semibold ${step === 1 ? 'text-blue-600' : 'text-slate-400'}`}>Step {step} of {TOTAL_WORKFLOW_STEPS}</span>
               <span className={`text-xs ${isDirty ? 'text-amber-700' : 'text-emerald-700'}`}>
                 {isDirty ? 'Unsaved changes' : 'All changes saved'}
               </span>
@@ -1870,13 +1888,13 @@ export default function DocumentComparisonCreate() {
                         </Button>
                         <Button
                           onClick={handleFinishClick}
-                          disabled={saveDraftMutation.isPending || isFinishingComparison}
+                          disabled={saveDraftMutation.isPending || isFinishingComparison || isRunningEvaluation}
                           className="bg-blue-600 hover:bg-blue-700"
                         >
                           {isFinishingComparison ? (
                             <>
                               <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                              Opening...
+                              {isRunningEvaluation ? 'Running evaluation...' : 'Saving draft...'}
                             </>
                           ) : (
                             <>
@@ -1906,7 +1924,7 @@ export default function DocumentComparisonCreate() {
             <DialogHeader>
               <DialogTitle>Unsaved changes</DialogTitle>
               <DialogDescription>
-                You have unsaved changes. Save draft before leaving to the comparison overview?
+                Save draft and run evaluation before opening comparison details?
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>
@@ -1914,37 +1932,27 @@ export default function DocumentComparisonCreate() {
                 type="button"
                 variant="outline"
                 onClick={() => setShowFinishConfirmDialog(false)}
-                disabled={isFinishingComparison}
+                disabled={isFinishingComparison || isRunningEvaluation}
               >
                 Cancel
               </Button>
               <Button
                 type="button"
-                variant="outline"
-                onClick={() => finishToComparisonDetail({ saveFirst: false })}
-                disabled={isFinishingComparison}
+                onClick={() => finishToComparisonDetail()}
+                disabled={
+                  isFinishingComparison ||
+                  isRunningEvaluation ||
+                  saveDraftMutation.isPending ||
+                  exceedsAnySizeLimit
+                }
               >
-                {isFinishingComparison ? (
+                {isFinishingComparison || isRunningEvaluation || saveDraftMutation.isPending ? (
                   <>
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Opening...
+                    {isRunningEvaluation ? 'Running evaluation...' : 'Saving draft...'}
                   </>
                 ) : (
-                  'Continue without saving'
-                )}
-              </Button>
-              <Button
-                type="button"
-                onClick={() => finishToComparisonDetail({ saveFirst: true })}
-                disabled={isFinishingComparison || saveDraftMutation.isPending || exceedsAnySizeLimit}
-              >
-                {isFinishingComparison || saveDraftMutation.isPending ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Saving...
-                  </>
-                ) : (
-                  'Save & Continue'
+                  'Save and run evaluation'
                 )}
               </Button>
             </DialogFooter>

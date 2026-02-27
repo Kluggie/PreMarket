@@ -468,6 +468,123 @@ if (!hasDatabaseUrl()) {
     assert.equal(emptyPatchRes.jsonBody().error.code, 'invalid_input');
   });
 
+  test('go-to-comparison sequence evaluates the latest saved editor draft', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = authCookie('doc_finish_owner', 'doc-finish@example.com');
+
+    const createReq = createMockReq({
+      method: 'POST',
+      url: '/api/document-comparisons',
+      headers: { cookie: ownerCookie },
+      body: {
+        title: 'Finish Flow Comparison',
+        doc_a_text: 'Initial confidential text',
+        doc_b_text: 'Initial shared text',
+        createProposal: true,
+      },
+    });
+    const createRes = createMockRes();
+    await documentComparisonsHandler(createReq, createRes);
+    assert.equal(createRes.statusCode, 201);
+    const comparisonId = createRes.jsonBody().comparison.id;
+
+    const latestDocAText = 'Final confidential terms saved from editor before finish.';
+    const latestDocBText = 'Final shared terms saved from editor before finish.';
+    const patchReq = createMockReq({
+      method: 'PATCH',
+      url: `/api/document-comparisons/${comparisonId}`,
+      headers: { cookie: ownerCookie },
+      query: { id: comparisonId },
+      body: {
+        doc_a_text: latestDocAText,
+        doc_b_text: latestDocBText,
+        draft_step: 2,
+      },
+    });
+    const patchRes = createMockRes();
+    await documentComparisonsIdHandler(patchReq, patchRes, comparisonId);
+    assert.equal(patchRes.statusCode, 200);
+    assert.equal(patchRes.jsonBody().comparison.doc_a_text, latestDocAText);
+    assert.equal(patchRes.jsonBody().comparison.doc_b_text, latestDocBText);
+    assert.equal(patchRes.jsonBody().comparison.draft_step, 2);
+
+    const evaluateReq = createMockReq({
+      method: 'POST',
+      url: `/api/document-comparisons/${comparisonId}/evaluate`,
+      headers: { cookie: ownerCookie },
+      query: { id: comparisonId },
+      body: {},
+    });
+    const evaluateRes = createMockRes();
+    await documentComparisonsEvaluateHandler(evaluateReq, evaluateRes, comparisonId);
+    assert.equal(evaluateRes.statusCode, 200);
+    assert.equal(evaluateRes.jsonBody().comparison.status, 'evaluated');
+    assert.equal(evaluateRes.jsonBody().comparison.doc_a_text, latestDocAText);
+    assert.equal(evaluateRes.jsonBody().comparison.doc_b_text, latestDocBText);
+    assert.equal(evaluateRes.jsonBody().comparison.draft_step, 3);
+    assert.equal(
+      Array.isArray(evaluateRes.jsonBody().comparison.evaluation_result?.report?.sections),
+      true,
+    );
+  });
+
+  test('document comparison evaluate returns 501 when Vertex config is missing', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = authCookie('doc_eval_config_owner', 'doc-eval-config@example.com');
+
+    const createReq = createMockReq({
+      method: 'POST',
+      url: '/api/document-comparisons',
+      headers: { cookie: ownerCookie },
+      body: {
+        title: 'Unconfigured Vertex Comparison',
+        doc_a_text: 'Confidential text',
+        doc_b_text: 'Shared text',
+        createProposal: true,
+      },
+    });
+    const createRes = createMockRes();
+    await documentComparisonsHandler(createReq, createRes);
+    assert.equal(createRes.statusCode, 201);
+    const comparisonId = createRes.jsonBody().comparison.id;
+
+    const originalMock = process.env.VERTEX_MOCK;
+    const originalServiceAccount = process.env.GCP_SERVICE_ACCOUNT_JSON;
+
+    try {
+      process.env.VERTEX_MOCK = '';
+      delete process.env.GCP_SERVICE_ACCOUNT_JSON;
+
+      const evaluateReq = createMockReq({
+        method: 'POST',
+        url: `/api/document-comparisons/${comparisonId}/evaluate`,
+        headers: { cookie: ownerCookie },
+        query: { id: comparisonId },
+        body: {},
+      });
+      const evaluateRes = createMockRes();
+      await documentComparisonsEvaluateHandler(evaluateReq, evaluateRes, comparisonId);
+      assert.equal(evaluateRes.statusCode, 501);
+      assert.equal(evaluateRes.jsonBody().error.code, 'not_configured');
+    } finally {
+      if (originalMock === undefined) {
+        delete process.env.VERTEX_MOCK;
+      } else {
+        process.env.VERTEX_MOCK = originalMock;
+      }
+
+      if (originalServiceAccount === undefined) {
+        delete process.env.GCP_SERVICE_ACCOUNT_JSON;
+      } else {
+        process.env.GCP_SERVICE_ACCOUNT_JSON = originalServiceAccount;
+      }
+    }
+  });
+
   test('document comparison create rejects payloads beyond Vertex-safe limits', async () => {
     await ensureMigrated();
     await resetTables();
