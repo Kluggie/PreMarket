@@ -409,6 +409,16 @@ function toEvaluationErrorMessage(error) {
   return requestId ? `${message} (requestId: ${requestId})` : message;
 }
 
+function getApiErrorCode(error) {
+  return asText(error?.body?.error?.code || error?.body?.code || error?.code);
+}
+
+function isDocumentComparisonNotFoundError(error) {
+  const status = Number(error?.status || 0);
+  const code = getApiErrorCode(error);
+  return status === 404 && code === 'document_comparison_not_found';
+}
+
 function useRouteState() {
   const location = useLocation();
   return useMemo(() => {
@@ -481,17 +491,22 @@ export default function DocumentComparisonCreate() {
   const [showFinishConfirmDialog, setShowFinishConfirmDialog] = useState(false);
   const [isFinishingComparison, setIsFinishingComparison] = useState(false);
   const [isRunningEvaluation, setIsRunningEvaluation] = useState(false);
+  const [ignoredRouteDraftId, setIgnoredRouteDraftId] = useState('');
 
   const docAInputFileRef = useRef(null);
   const docBInputFileRef = useRef(null);
+  const recoveredMissingDraftIdRef = useRef('');
 
   const proposalLookup = useQuery({
     queryKey: ['document-comparison-proposal-lookup', routeState.proposalId],
-    enabled: Boolean(routeState.proposalId && !routeState.draftId),
+    enabled: Boolean(routeState.proposalId),
     queryFn: () => proposalsClient.getById(routeState.proposalId),
   });
 
-  const resolvedDraftId = routeState.draftId || comparisonId || proposalLookup.data?.document_comparison_id || '';
+  const routeDraftId =
+    routeState.draftId && routeState.draftId !== ignoredRouteDraftId ? routeState.draftId : '';
+  const resolvedDraftId =
+    comparisonId || routeDraftId || proposalLookup.data?.document_comparison_id || '';
 
   const draftQuery = useQuery({
     queryKey: ['document-comparison-draft', resolvedDraftId, routeState.token],
@@ -500,6 +515,8 @@ export default function DocumentComparisonCreate() {
       routeState.token
         ? documentComparisonsClient.getByIdWithToken(resolvedDraftId, routeState.token)
         : documentComparisonsClient.getById(resolvedDraftId),
+    retry: (failureCount, error) =>
+      !isDocumentComparisonNotFoundError(error) && failureCount < 2,
   });
 
   useEffect(() => {
@@ -508,6 +525,11 @@ export default function DocumentComparisonCreate() {
     }
 
     const comparison = draftQuery.data.comparison;
+
+    recoveredMissingDraftIdRef.current = '';
+    if (routeState.draftId && comparison.id === routeState.draftId && ignoredRouteDraftId) {
+      setIgnoredRouteDraftId('');
+    }
 
     setComparisonId(comparison.id || resolvedDraftId || '');
     setLinkedProposalId(draftQuery.data.proposal?.id || routeState.proposalId || '');
@@ -555,7 +577,53 @@ export default function DocumentComparisonCreate() {
         docBFiles: Array.isArray(comparison.doc_b_files) ? comparison.doc_b_files : [],
       }),
     );
-  }, [draftQuery.data, resolvedDraftId, routeState.proposalId, routeState.step]);
+  }, [
+    draftQuery.data,
+    ignoredRouteDraftId,
+    resolvedDraftId,
+    routeState.draftId,
+    routeState.proposalId,
+    routeState.step,
+  ]);
+
+  useEffect(() => {
+    if (!resolvedDraftId || !isDocumentComparisonNotFoundError(draftQuery.error)) {
+      return;
+    }
+
+    if (recoveredMissingDraftIdRef.current === resolvedDraftId) {
+      return;
+    }
+    recoveredMissingDraftIdRef.current = resolvedDraftId;
+
+    const proposalComparisonId = asText(proposalLookup.data?.document_comparison_id);
+    if (proposalComparisonId && proposalComparisonId !== resolvedDraftId) {
+      if (routeState.draftId) {
+        setIgnoredRouteDraftId(routeState.draftId);
+      }
+      setComparisonId(proposalComparisonId);
+      setUiError('');
+      toast.error('The previous draft was missing. Loading the latest linked draft.');
+      return;
+    }
+
+    setIgnoredRouteDraftId(routeState.draftId || resolvedDraftId);
+    setComparisonId('');
+    setLastSavedHash('');
+    setUiError('This comparison draft no longer exists. Saving will create a new draft.');
+    setCoachResult(null);
+    setCoachError('Draft not found. Save Draft to create a new comparison, then request suggestions.');
+    setCoachCached(false);
+    setCoachWithheldCount(0);
+    setCoachRequestMeta(null);
+    setCoachResultHash('');
+    toast.error('Draft not found. Save Draft to recreate it.');
+  }, [
+    draftQuery.error,
+    proposalLookup.data?.document_comparison_id,
+    resolvedDraftId,
+    routeState.draftId,
+  ]);
 
   useEffect(() => {
     if (!fullscreenSide) {
@@ -658,7 +726,21 @@ export default function DocumentComparisonCreate() {
         payload.token = routeState.token;
       }
 
-      const response = await documentComparisonsClient.saveDraft(comparisonId || null, payload);
+      let response;
+      try {
+        response = await documentComparisonsClient.saveDraft(comparisonId || null, payload);
+      } catch (error) {
+        if (!routeState.token && comparisonId && isDocumentComparisonNotFoundError(error)) {
+          setIgnoredRouteDraftId(routeState.draftId || comparisonId);
+          setComparisonId('');
+          response = await documentComparisonsClient.create(payload);
+          if (!silent) {
+            toast.error('Previous draft was missing. Created a new draft.');
+          }
+        } else {
+          throw error;
+        }
+      }
       const comparison = response?.comparison || response;
 
       if (!comparison?.id) {
@@ -764,12 +846,20 @@ export default function DocumentComparisonCreate() {
   useEffect(() => {
     const draftParam = comparisonId || resolvedDraftId || '';
     const proposalParam = linkedProposalId || routeState.proposalId || '';
-    if (!draftParam && !proposalParam) {
+    const params = new URLSearchParams(location.search || '');
+    if (
+      !draftParam &&
+      !proposalParam &&
+      !routeState.token &&
+      !params.has('draft') &&
+      !params.has('proposalId') &&
+      !params.has('token') &&
+      !params.has('sharedToken')
+    ) {
       return;
     }
 
     const nextStep = String(clampStep(step || 1));
-    const params = new URLSearchParams(location.search || '');
     let changed = false;
 
     if (draftParam) {
@@ -1025,7 +1115,7 @@ export default function DocumentComparisonCreate() {
   };
 
   const ensureComparisonIdForCoach = async () => {
-    if (comparisonId) {
+    if (comparisonId && !isDocumentComparisonNotFoundError(draftQuery.error)) {
       return comparisonId;
     }
     try {
@@ -1117,6 +1207,23 @@ export default function DocumentComparisonCreate() {
         setCoachError(message);
         setCoachNotConfigured(true);
         if (!silent && !coachNotConfigured) {
+          toast.error(message);
+        }
+        return null;
+      }
+
+      if (status === 404 && code === 'document_comparison_not_found') {
+        setIgnoredRouteDraftId(routeState.draftId || resolvedId);
+        setComparisonId('');
+        const message = 'Draft not found. Save Draft to create a new comparison and retry.';
+        setCoachResult(null);
+        setCoachResultHash('');
+        setCoachCached(false);
+        setCoachWithheldCount(0);
+        setCoachRequestMeta(null);
+        setExpandedSuggestionIds([]);
+        setCoachError(message);
+        if (!silent) {
           toast.error(message);
         }
         return null;
