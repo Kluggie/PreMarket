@@ -1,6 +1,6 @@
 import { createSign } from 'node:crypto';
 import { ApiError } from './errors.js';
-import { getVertexConfig } from './integrations.js';
+import { getVertexConfig, getVertexNotConfiguredError } from './integrations.js';
 
 type Span = { start: number; end: number; level: string };
 type EvidenceAnchor = { doc: 'A' | 'B'; start: number; end: number };
@@ -1858,7 +1858,8 @@ function extractModelText(payload: any) {
 async function callVertex(prompt: string) {
   const vertex = getVertexConfig();
   if (!vertex.ready || !vertex.credentials) {
-    throw new ApiError(501, 'not_configured', 'Vertex AI integration is not configured');
+    const config = getVertexNotConfiguredError();
+    throw new ApiError(501, 'not_configured', config.message, config.details);
   }
 
   const accessToken = await fetchGoogleAccessToken(vertex.credentials);

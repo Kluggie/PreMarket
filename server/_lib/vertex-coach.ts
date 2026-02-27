@@ -1,7 +1,7 @@
 import { createHash, createSign } from 'node:crypto';
 import { z } from 'zod';
 import { ApiError } from './errors.js';
-import { getVertexConfig } from './integrations.js';
+import { getVertexConfig, getVertexNotConfiguredError } from './integrations.js';
 
 export const COACH_PROMPT_VERSION = 'coach-v1';
 
@@ -402,7 +402,8 @@ function buildCoachCorrectionPrompt(basePrompt: string, invalidOutput: string) {
 async function callVertexCoach(prompt: string, preferredModel = '') {
   const vertex = getVertexConfig();
   if (!vertex.ready || !vertex.credentials) {
-    throw new ApiError(501, 'not_configured', 'Vertex AI integration is not configured');
+    const config = getVertexNotConfiguredError();
+    throw new ApiError(501, 'not_configured', config.message, config.details);
   }
 
   const accessToken = await fetchGoogleAccessToken(vertex.credentials);

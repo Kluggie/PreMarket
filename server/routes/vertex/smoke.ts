@@ -2,7 +2,7 @@ import { createSign } from 'node:crypto';
 import { ok } from '../../_lib/api-response.js';
 import { requireUser } from '../../_lib/auth.js';
 import { ApiError } from '../../_lib/errors.js';
-import { getVertexConfig } from '../../_lib/integrations.js';
+import { getVertexConfig, getVertexNotConfiguredError } from '../../_lib/integrations.js';
 import { readJsonBody } from '../../_lib/http.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 
@@ -146,7 +146,8 @@ export default async function handler(req: any, res: any) {
 
     const vertex = getVertexConfig();
     if (!vertex.ready || !vertex.credentials) {
-      throw new ApiError(501, 'not_configured', 'Vertex AI integration is not configured');
+      const config = getVertexNotConfiguredError();
+      throw new ApiError(501, 'not_configured', config.message, config.details);
     }
 
     if (!allowPublicSmoke()) {

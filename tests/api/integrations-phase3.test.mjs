@@ -120,6 +120,29 @@ test('vertex config parser supports base64 payloads and escaped private-key newl
   }
 });
 
+test('vertex config parser repairs unwrapped service-account JSON snippets', () => {
+  const original = process.env.GCP_SERVICE_ACCOUNT_JSON;
+
+  try {
+    process.env.GCP_SERVICE_ACCOUNT_JSON =
+      '"type":"service_account","project_id":"test-project","private_key":"-----BEGIN PRIVATE KEY-----\nline-1\n-----END PRIVATE KEY-----\n","client_email":"svc@test-project.iam.gserviceaccount.com","token_uri":"https://oauth2.googleapis.com/token"';
+
+    const parsed = parseVertexServiceAccountEnv();
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.reasonCode, 'ok');
+    assert.equal(parsed.credentials.project_id, 'test-project');
+    assert.equal(parsed.credentials.client_email, 'svc@test-project.iam.gserviceaccount.com');
+    assert.equal(parsed.credentials.private_key.includes('\n'), true);
+    assert.equal(parsed.credentials.private_key.includes('\\n'), false);
+  } finally {
+    if (original === undefined) {
+      delete process.env.GCP_SERVICE_ACCOUNT_JSON;
+    } else {
+      process.env.GCP_SERVICE_ACCOUNT_JSON = original;
+    }
+  }
+});
+
 test('health vertex endpoint exposes safe readiness snapshot', async () => {
   const req = createMockReq({
     method: 'GET',
@@ -135,6 +158,10 @@ test('health vertex endpoint exposes safe readiness snapshot', async () => {
   assert.equal(typeof payload.parsedServiceAccountOk, 'boolean');
   assert.equal(typeof payload.projectIdPresent, 'boolean');
   assert.equal(typeof payload.vertexRegionPresent, 'boolean');
+  assert.equal(typeof payload.clientEmailPresent, 'boolean');
+  assert.equal(typeof payload.privateKeyPresent, 'boolean');
+  assert.equal(typeof payload.regionPresent, 'boolean');
+  assert.equal(typeof payload.modelPresent, 'boolean');
   assert.equal('private_key' in payload, false);
 });
 
