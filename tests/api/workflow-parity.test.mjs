@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import proposalsHandler from '../../server/routes/proposals/index.ts';
 import proposalDetailHandler from '../../server/routes/proposals/[id].ts';
@@ -31,6 +32,10 @@ if (!process.env.VERTEX_MOCK) {
 
 function authCookie(sub, email) {
   return makeSessionCookie({ sub, email });
+}
+
+function hashPrefix(value, length = 10) {
+  return createHash('sha256').update(String(value || '')).digest('hex').slice(0, length);
 }
 
 function assertContractReportShape(report) {
@@ -546,8 +551,8 @@ if (!hasDatabaseUrl()) {
       headers: { cookie: ownerCookie },
       body: {
         title: 'Unconfigured Vertex Comparison',
-        doc_a_text: 'Confidential text',
-        doc_b_text: 'Shared text',
+        doc_a_text: 'Confidential text with non-empty evaluation context.',
+        doc_b_text: 'Shared text with recipient-safe non-empty context.',
         createProposal: true,
       },
     });
@@ -797,6 +802,94 @@ if (!hasDatabaseUrl()) {
       assert.equal(String(evaluations[0]?.result?.error?.failure_code || ''), 'vertex_unauthorized');
       assert.equal(Boolean(evaluations[0]?.result?.error?.details?.retry_scheduled), false);
       assert.equal(Boolean(evaluations[0]?.result?.error?.requestId), true);
+    } finally {
+      if (originalEvaluator === undefined) {
+        delete globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
+      } else {
+        globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = originalEvaluator;
+      }
+    }
+  });
+
+  test('document comparison evaluate fails with vertex_generic_output when model output is insufficiently grounded', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = authCookie('doc_eval_generic_owner', 'doc-eval-generic@example.com');
+
+    const createReq = createMockReq({
+      method: 'POST',
+      url: '/api/document-comparisons',
+      headers: { cookie: ownerCookie },
+      body: {
+        title: 'Generic Output Failure',
+        doc_a_text: 'Confidential obligations and non-public strategy notes.',
+        doc_b_text: 'Shared obligations include milestones, pricing terms, and support SLAs.',
+        createProposal: true,
+      },
+    });
+    const createRes = createMockRes();
+    await documentComparisonsHandler(createReq, createRes);
+    assert.equal(createRes.statusCode, 201);
+    const comparisonId = createRes.jsonBody().comparison.id;
+    const proposalId = createRes.jsonBody().comparison.proposal_id;
+    assert.ok(proposalId);
+
+    const originalEvaluator = globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
+    let calls = 0;
+
+    try {
+      globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = async () => {
+        calls += 1;
+        throw new ApiError(502, 'insufficient_detail', 'Model output lacked references to shared input', {
+          reasonCode: 'missing_shared_reference',
+        });
+      };
+
+      const evaluateReq = createMockReq({
+        method: 'POST',
+        url: `/api/document-comparisons/${comparisonId}/evaluate`,
+        headers: { cookie: ownerCookie },
+        query: { id: comparisonId },
+        body: {},
+      });
+      const evaluateRes = createMockRes();
+      await documentComparisonsEvaluateHandler(evaluateReq, evaluateRes, comparisonId);
+      assert.equal(evaluateRes.statusCode, 502);
+      assert.equal(calls, 1);
+      assert.equal(evaluateRes.jsonBody().error.code, 'vertex_generic_output');
+      assert.equal(Number(evaluateRes.jsonBody().error.attempt_count || 0), 1);
+
+      const detailReq = createMockReq({
+        method: 'GET',
+        url: `/api/document-comparisons/${comparisonId}`,
+        headers: { cookie: ownerCookie },
+        query: { id: comparisonId },
+      });
+      const detailRes = createMockRes();
+      await documentComparisonsIdHandler(detailReq, detailRes, comparisonId);
+      assert.equal(detailRes.statusCode, 200);
+      assert.equal(detailRes.jsonBody().comparison.status, 'failed');
+      assert.equal(
+        String(detailRes.jsonBody().comparison.evaluation_result?.error?.failure_code || ''),
+        'vertex_generic_output',
+      );
+
+      const evaluationsReq = createMockReq({
+        method: 'GET',
+        url: `/api/proposals/${proposalId}/evaluations`,
+        headers: { cookie: ownerCookie },
+        query: { id: proposalId },
+      });
+      const evaluationsRes = createMockRes();
+      await proposalEvaluationsHandler(evaluationsReq, evaluationsRes, proposalId);
+      assert.equal(evaluationsRes.statusCode, 200);
+      const evaluations = Array.isArray(evaluationsRes.jsonBody().evaluations)
+        ? evaluationsRes.jsonBody().evaluations
+        : [];
+      assert.equal(evaluations.length >= 1, true);
+      assert.equal(String(evaluations[0]?.status || '').toLowerCase(), 'failed');
+      assert.equal(String(evaluations[0]?.result?.error?.failure_code || ''), 'vertex_generic_output');
     } finally {
       if (originalEvaluator === undefined) {
         delete globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
@@ -1209,14 +1302,18 @@ if (!hasDatabaseUrl()) {
     assert.equal(getInitialRes.jsonBody().permissions.can_edit_doc_a, true);
     assert.equal(getInitialRes.jsonBody().permissions.can_edit_doc_b, false);
 
+    const updatedDocAText = 'Confidential obligations and revised payment terms for sender';
+    const updatedDocBText =
+      'Confidential obligations, payment terms, and support levels for recipient';
+
     const updateReq = createMockReq({
       method: 'PATCH',
       url: `/api/document-comparisons/${comparisonId}`,
       headers: { cookie: ownerCookie },
       query: { id: comparisonId },
       body: {
-        doc_a_text: 'Confidential obligations and revised payment terms for sender',
-        doc_b_text: 'Confidential obligations, payment terms, and support levels for recipient',
+        doc_a_text: updatedDocAText,
+        doc_b_text: updatedDocBText,
         draft_step: 3,
         doc_a_source: 'url',
         doc_b_source: 'uploaded',
@@ -1245,6 +1342,23 @@ if (!hasDatabaseUrl()) {
     assert.equal(evalRes.jsonBody().comparison.status, 'evaluated');
     assert.equal(typeof evalRes.jsonBody().comparison.evaluation_result.score, 'number');
     assert.equal(evalRes.jsonBody().comparison.evaluation_result.provider, 'mock');
+    assert.equal(evalRes.jsonBody().comparison.evaluation_result.input_trace?.source, 'db');
+    assert.equal(
+      Number(evalRes.jsonBody().comparison.evaluation_result.input_trace?.confidential_length),
+      updatedDocAText.length,
+    );
+    assert.equal(
+      Number(evalRes.jsonBody().comparison.evaluation_result.input_trace?.shared_length),
+      updatedDocBText.length,
+    );
+    assert.equal(
+      String(evalRes.jsonBody().comparison.evaluation_result.input_trace?.confidential_hash || ''),
+      hashPrefix(updatedDocAText),
+    );
+    assert.equal(
+      String(evalRes.jsonBody().comparison.evaluation_result.input_trace?.shared_hash || ''),
+      hashPrefix(updatedDocBText),
+    );
     assertContractReportShape(evalRes.jsonBody().comparison.evaluation_result?.report || {});
     assert.equal(
       Array.isArray(evalRes.jsonBody().comparison.evaluation_result?.report?.sections),
@@ -1265,7 +1379,24 @@ if (!hasDatabaseUrl()) {
     assert.equal(getRes.jsonBody().comparison.status, 'evaluated');
     assert.equal(getRes.jsonBody().comparison.doc_a_text.length > 0, true);
     assert.equal(getRes.jsonBody().comparison.doc_b_text.length > 0, true);
+    assert.equal(getRes.jsonBody().comparison.evaluation_result.input_trace?.source, 'db');
+    assert.equal(
+      Number(getRes.jsonBody().comparison.evaluation_result.input_trace?.shared_length),
+      updatedDocBText.length,
+    );
     assert.equal(typeof getRes.jsonBody().comparison.evaluation_result.score, 'number');
+    assert.equal(
+      String(
+        getRes
+          .jsonBody()
+          .comparison.evaluation_result.report?.appendix?.field_digest?.find(
+            (entry) => String(entry?.question_id || '') === 'doc_b_visible',
+          )?.value_summary || '',
+      )
+        .toLowerCase()
+        .includes('support levels for recipient'),
+      true,
+    );
     assert.equal(
       Number(getRes.jsonBody().comparison.doc_a_text.length) +
         Number(getRes.jsonBody().comparison.doc_b_text.length) >
@@ -1282,8 +1413,75 @@ if (!hasDatabaseUrl()) {
     assert.equal(rows.length, 1);
     assert.equal(rows[0].status, 'evaluated');
     assert.equal(rows[0].evaluationResult?.provider, 'mock');
+    assert.equal(rows[0].evaluationResult?.input_trace?.source, 'db');
+    assert.equal(Number(rows[0].evaluationResult?.input_trace?.shared_length || 0), updatedDocBText.length);
     assert.equal(Array.isArray(rows[0].publicReport?.sections), true);
     assert.equal(rows[0].publicReport.sections.length > 0, true);
+  });
+
+  test('document comparison evaluate rejects empty inputs and never records a succeeded history entry', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = authCookie('doc_empty_eval_owner', 'doc-empty@example.com');
+
+    const createReq = createMockReq({
+      method: 'POST',
+      url: '/api/document-comparisons',
+      headers: { cookie: ownerCookie },
+      body: {
+        title: 'Empty Inputs Comparison',
+        doc_a_text: '',
+        doc_b_text: '',
+        createProposal: true,
+      },
+    });
+    const createRes = createMockRes();
+    await documentComparisonsHandler(createReq, createRes);
+    assert.equal(createRes.statusCode, 201);
+    const comparisonId = createRes.jsonBody().comparison.id;
+    const proposalId = createRes.jsonBody().comparison.proposal_id;
+    assert.ok(proposalId);
+
+    const evalReq = createMockReq({
+      method: 'POST',
+      url: `/api/document-comparisons/${comparisonId}/evaluate`,
+      headers: { cookie: ownerCookie },
+      query: { id: comparisonId },
+      body: {},
+    });
+    const evalRes = createMockRes();
+    await documentComparisonsEvaluateHandler(evalReq, evalRes, comparisonId);
+    assert.equal(evalRes.statusCode, 400);
+    assert.equal(evalRes.jsonBody().error.code, 'invalid_input');
+
+    const comparisonReq = createMockReq({
+      method: 'GET',
+      url: `/api/document-comparisons/${comparisonId}`,
+      headers: { cookie: ownerCookie },
+      query: { id: comparisonId },
+    });
+    const comparisonRes = createMockRes();
+    await documentComparisonsIdHandler(comparisonReq, comparisonRes, comparisonId);
+    assert.equal(comparisonRes.statusCode, 200);
+    assert.notEqual(String(comparisonRes.jsonBody().comparison.status || '').trim().toLowerCase(), 'evaluated');
+
+    const evaluationsReq = createMockReq({
+      method: 'GET',
+      url: `/api/proposals/${proposalId}/evaluations`,
+      headers: { cookie: ownerCookie },
+      query: { id: proposalId },
+    });
+    const evaluationsRes = createMockRes();
+    await proposalEvaluationsHandler(evaluationsReq, evaluationsRes, proposalId);
+    assert.equal(evaluationsRes.statusCode, 200);
+    const evaluations = Array.isArray(evaluationsRes.jsonBody().evaluations)
+      ? evaluationsRes.jsonBody().evaluations
+      : [];
+    assert.equal(
+      evaluations.some((entry) => String(entry?.status || '').toLowerCase() === 'completed'),
+      false,
+    );
   });
 
   test('minimal document inputs keep completeness/confidence low', async () => {
@@ -1299,8 +1497,8 @@ if (!hasDatabaseUrl()) {
         title: 'Tiny Comparison',
         party_a_label: 'A',
         party_b_label: 'B',
-        doc_a_text: 'confidential good',
-        doc_b_text: 'bad ugly',
+        doc_a_text: 'confidential obligations only',
+        doc_b_text: 'shared obligations only',
         createProposal: true,
       },
     });

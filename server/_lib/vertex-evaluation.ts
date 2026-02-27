@@ -447,6 +447,104 @@ function parseModelJson(text: string) {
   return null;
 }
 
+function normalizeForComparison(value: string) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function collectStringValues(value: unknown, output: string[] = [], depth = 0): string[] {
+  if (depth > 10) {
+    return output;
+  }
+
+  if (typeof value === 'string') {
+    const text = value.trim();
+    if (text.length > 0) {
+      output.push(text);
+    }
+    return output;
+  }
+
+  if (Array.isArray(value)) {
+    value.slice(0, 250).forEach((entry) => collectStringValues(entry, output, depth + 1));
+    return output;
+  }
+
+  if (!value || typeof value !== 'object') {
+    return output;
+  }
+
+  Object.values(value as Record<string, unknown>)
+    .slice(0, 250)
+    .forEach((entry) => collectStringValues(entry, output, depth + 1));
+  return output;
+}
+
+function buildSharedPhraseCandidates(sharedText: string) {
+  const normalized = String(sharedText || '').replace(/\s+/g, ' ').trim();
+  if (!normalized) {
+    return [] as string[];
+  }
+
+  const candidates = new Set<string>();
+  normalized
+    .split(/[\n\r.;:!?]+/g)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length >= 18)
+    .slice(0, 16)
+    .forEach((entry) => {
+      candidates.add(entry.length > 110 ? entry.slice(0, 110).trim() : entry);
+    });
+
+  const words = normalized.split(/\s+/g).filter(Boolean);
+  for (let index = 0; index + 4 < words.length && candidates.size < 32; index += 2) {
+    const phrase = words.slice(index, index + 5).join(' ').trim();
+    if (phrase.length >= 24) {
+      candidates.add(phrase);
+    }
+  }
+
+  return [...candidates].slice(0, 32);
+}
+
+function hasSharedPhraseReference(report: unknown, sharedText: string) {
+  const sharedCandidates = buildSharedPhraseCandidates(sharedText)
+    .map((entry) => normalizeForComparison(entry))
+    .filter(Boolean);
+  if (!sharedCandidates.length) {
+    return false;
+  }
+
+  const reportText = normalizeForComparison(collectStringValues(report).join(' '));
+  if (!reportText) {
+    return false;
+  }
+
+  return sharedCandidates.some((candidate) => reportText.includes(candidate));
+}
+
+function ensureDocumentComparisonSpecificity(report: ContractEvaluationReport, sharedText: string) {
+  const sharedLength = String(sharedText || '').trim().length;
+  if (sharedLength < 20) {
+    return;
+  }
+  if (hasSharedPhraseReference(report, sharedText)) {
+    return;
+  }
+  throw new ApiError(
+    502,
+    'insufficient_detail',
+    'Model output lacked references to shared input',
+    {
+      reasonCode: 'missing_shared_reference',
+      sharedLength,
+    },
+  );
+}
+
 function tokenize(input: string) {
   return new Set(
     String(input || '')
@@ -1501,6 +1599,7 @@ function buildDocumentComparisonPrompt(input: ComparisonInput, heuristics: Compa
     '- Treat doc_a_visible as confidential internal context for reasoning.',
     '- Do not quote or paraphrase unique confidential clauses from doc_a_visible in output text.',
     '- Prefer recipient-safe wording grounded in shared content and high-level alignment summaries.',
+    '- Include at least 2 short quoted phrases from doc_b_visible in report narratives so grounding is explicit.',
     'For document mode, use evidence_question_ids from doc_a_visible/doc_b_visible and optional evidence_anchors.',
     'Never quote hidden text. Hidden spans are confidential.',
     'INPUTS (JSON):',
@@ -2149,6 +2248,7 @@ export async function evaluateDocumentComparisonWithVertex(
     ...collectHiddenSpanSnippets(normalizedInput.docAText, normalizedInput.docASpans),
     ...collectHiddenSpanSnippets(normalizedInput.docBText, normalizedInput.docBSpans),
   ]);
+  ensureDocumentComparisonSpecificity(report, normalizedInput.docBText);
 
   return finalizeEvaluationResult(report, {
     provider,

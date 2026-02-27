@@ -1,4 +1,5 @@
 import { and, eq } from 'drizzle-orm';
+import { createHash } from 'node:crypto';
 import { ok } from '../../../_lib/api-response.js';
 import { requireUser } from '../../../_lib/auth.js';
 import { getDb, schema } from '../../../_lib/db/client.js';
@@ -19,15 +20,18 @@ import { assertDocumentComparisonWithinLimits } from '../_limits.js';
 const CONFIDENTIAL_LABEL = 'Confidential Information';
 const SHARED_LABEL = 'Shared Information';
 const MAX_EVALUATION_ATTEMPTS = 2;
+const MIN_EVALUATION_TEXT_LENGTH = 20;
 
 type EvaluationFailureCode =
   | 'not_configured'
+  | 'empty_inputs'
   | 'vertex_timeout'
   | 'vertex_rate_limited'
   | 'vertex_unavailable'
   | 'vertex_unauthorized'
   | 'vertex_bad_request'
   | 'vertex_invalid_response'
+  | 'vertex_generic_output'
   | 'vertex_internal_error'
   | 'db_write_failed'
   | 'unknown_error';
@@ -105,6 +109,104 @@ function firstRow<T = any>(value: unknown): T | null {
     return null;
   }
   return value[0] as T;
+}
+
+function countWords(value: string) {
+  return String(value || '')
+    .trim()
+    .split(/\s+/g)
+    .filter(Boolean).length;
+}
+
+function hashPrefix(value: string, length = 10) {
+  const normalized = String(value || '');
+  if (!normalized) {
+    return '';
+  }
+  return createHash('sha256').update(normalized).digest('hex').slice(0, Math.max(1, length));
+}
+
+function hasRequestInputOverride(body: Record<string, unknown>) {
+  const keys = [
+    'docAText',
+    'doc_a_text',
+    'docBText',
+    'doc_b_text',
+    'docAHtml',
+    'doc_a_html',
+    'docBHtml',
+    'doc_b_html',
+    'docAJson',
+    'doc_a_json',
+    'docBJson',
+    'doc_b_json',
+    'docASource',
+    'doc_a_source',
+    'docBSource',
+    'doc_b_source',
+    'docAFiles',
+    'doc_a_files',
+    'docBFiles',
+    'doc_b_files',
+    'docAUrl',
+    'doc_a_url',
+    'docBUrl',
+    'doc_b_url',
+  ];
+  return keys.some((key) => body[key] !== undefined);
+}
+
+function buildEvaluationInputTrace(params: {
+  comparisonId: string;
+  source: 'db' | 'request_body';
+  confidentialText: string;
+  sharedText: string;
+}) {
+  const confidentialText = String(params.confidentialText || '');
+  const sharedText = String(params.sharedText || '');
+  return {
+    comparison_id: params.comparisonId,
+    source: params.source,
+    confidential_length: confidentialText.length,
+    shared_length: sharedText.length,
+    confidential_words: countWords(confidentialText),
+    shared_words: countWords(sharedText),
+    confidential_hash: hashPrefix(confidentialText),
+    shared_hash: hashPrefix(sharedText),
+    generated_at: new Date().toISOString(),
+  };
+}
+
+function traceInputPreview(value: string, limit = 80) {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, Math.max(0, limit));
+}
+
+function logEvaluationInputTrace(params: {
+  requestId: string;
+  comparisonId: string;
+  source: 'db' | 'request_body';
+  confidentialText: string;
+  sharedText: string;
+  inputTrace: Record<string, unknown>;
+}) {
+  const payload: Record<string, unknown> = {
+    level: 'info',
+    route: '/api/document-comparisons/[id]/evaluate',
+    requestId: params.requestId,
+    comparisonId: params.comparisonId,
+    source: params.source,
+    inputTrace: params.inputTrace,
+  };
+  if (process.env.NODE_ENV !== 'production') {
+    payload.preview = {
+      confidential: traceInputPreview(params.confidentialText),
+      shared: traceInputPreview(params.sharedText),
+    };
+  }
+  console.info(JSON.stringify(payload));
 }
 
 function resolveEvaluationDraft(params: {
@@ -248,6 +350,18 @@ function classifyEvaluationFailure(error: any): ClassifiedEvaluationFailure {
   const loweredMessage = normalizedMessage.toLowerCase();
   const safeConfiguredMessage = normalizedMessage.slice(0, 200);
 
+  if (sourceCode === 'empty_inputs') {
+    return {
+      failureCode: 'empty_inputs',
+      failureStage: 'validation',
+      failureMessage: 'Nothing to evaluate. Please add content first.',
+      httpStatus: 400,
+      retryable: false,
+      sourceCode,
+      upstreamStatus: null,
+    };
+  }
+
   if (sourceCode === 'not_configured' || statusCode === 501) {
     return {
       failureCode: 'not_configured',
@@ -337,6 +451,18 @@ function classifyEvaluationFailure(error: any): ClassifiedEvaluationFailure {
       failureCode: 'vertex_invalid_response',
       failureStage: 'parse',
       failureMessage: 'Vertex returned an invalid response',
+      httpStatus: 502,
+      retryable: false,
+      sourceCode,
+      upstreamStatus: upstreamStatus || null,
+    };
+  }
+
+  if (sourceCode === 'insufficient_detail') {
+    return {
+      failureCode: 'vertex_generic_output',
+      failureStage: 'parse',
+      failureMessage: 'Vertex returned a generic report without shared-input references',
       httpStatus: 502,
       retryable: false,
       sourceCode,
@@ -436,6 +562,7 @@ function withAttemptMetadata(params: {
   attemptNumber: number;
   startedAt: Date;
   completedAt: Date;
+  inputTrace?: Record<string, unknown> | null;
 }) {
   const base =
     params.evaluation && typeof params.evaluation === 'object' && !Array.isArray(params.evaluation)
@@ -443,6 +570,10 @@ function withAttemptMetadata(params: {
       : {};
   return {
     ...base,
+    input_trace:
+      params.inputTrace && typeof params.inputTrace === 'object' && !Array.isArray(params.inputTrace)
+        ? params.inputTrace
+        : null,
     request_id: params.requestId,
     attempt: {
       number: params.attemptNumber,
@@ -542,10 +673,49 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       existing,
       body,
     });
+    const inputSource = hasRequestInputOverride(body) ? 'request_body' : 'db';
+    const evaluationInputTrace = buildEvaluationInputTrace({
+      comparisonId: existing.id,
+      source: inputSource,
+      confidentialText: draft.docAText,
+      sharedText: draft.docBText,
+    });
+    logEvaluationInputTrace({
+      requestId,
+      comparisonId: existing.id,
+      source: inputSource,
+      confidentialText: draft.docAText,
+      sharedText: draft.docBText,
+      inputTrace: evaluationInputTrace,
+    });
     assertDocumentComparisonWithinLimits({
       docAText: draft.docAText,
       docBText: draft.docBText,
     });
+    if (
+      Number(evaluationInputTrace.confidential_length || 0) < MIN_EVALUATION_TEXT_LENGTH &&
+      Number(evaluationInputTrace.shared_length || 0) < MIN_EVALUATION_TEXT_LENGTH
+    ) {
+      throw new ApiError(400, 'invalid_input', 'Nothing to evaluate. Please add content first.', {
+        requestId,
+      });
+    }
+    if (
+      Number(evaluationInputTrace.confidential_length || 0) >= MIN_EVALUATION_TEXT_LENGTH &&
+      Number(evaluationInputTrace.shared_length || 0) >= MIN_EVALUATION_TEXT_LENGTH &&
+      asText(evaluationInputTrace.confidential_hash) === asText(evaluationInputTrace.shared_hash)
+    ) {
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          route: '/api/document-comparisons/[id]/evaluate',
+          requestId,
+          comparisonId: existing.id,
+          message: 'confidential_and_shared_hash_match',
+          source: inputSource,
+        }),
+      );
+    }
 
     await withDbWriteGuard({
       requestId,
@@ -590,6 +760,14 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
           partyBLabel: SHARED_LABEL,
         });
         const attemptCompletedAt = new Date();
+        if (
+          Number(evaluationInputTrace.confidential_length || 0) < MIN_EVALUATION_TEXT_LENGTH &&
+          Number(evaluationInputTrace.shared_length || 0) < MIN_EVALUATION_TEXT_LENGTH
+        ) {
+          throw new ApiError(400, 'empty_inputs', 'Nothing to evaluate. Please add content first.', {
+            requestId,
+          });
+        }
 
         evaluation = withAttemptMetadata({
           evaluation: evaluated,
@@ -597,6 +775,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
           attemptNumber: attemptCount,
           startedAt: attemptStartedAt,
           completedAt: attemptCompletedAt,
+          inputTrace: evaluationInputTrace,
         });
         latestFailedResult = null;
         latestFailedClassification = null;

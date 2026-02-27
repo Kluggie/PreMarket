@@ -43,6 +43,11 @@ function asLower(value) {
   return asText(value).toLowerCase();
 }
 
+function toSafeNumber(value, fallback = 0) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
 function hasObjectContent(value) {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length > 0);
 }
@@ -106,8 +111,14 @@ function toFailureBannerMessage(failure) {
   if (code === 'vertex_bad_request') {
     return 'Invalid request. Adjust inputs and retry.';
   }
+  if (code === 'empty_inputs') {
+    return 'Nothing to evaluate. Please add content first.';
+  }
   if (code === 'vertex_invalid_response') {
     return 'Vertex returned an invalid response format. Please retry.';
+  }
+  if (code === 'vertex_generic_output') {
+    return 'Vertex returned a generic report. Please retry with richer shared content.';
   }
   if (code === 'db_write_failed') {
     return 'Evaluation could not be saved. Please retry.';
@@ -236,6 +247,7 @@ export default function DocumentComparisonDetail() {
   const [selectedShareToken, setSelectedShareToken] = useState('');
   const [evaluationPollDeadline, setEvaluationPollDeadline] = useState(null);
   const [selectedFailureEntry, setSelectedFailureEntry] = useState(null);
+  const [showInputPreview, setShowInputPreview] = useState(false);
 
   const comparisonQuery = useQuery({
     queryKey: ['document-comparison-detail', comparisonId],
@@ -256,6 +268,8 @@ export default function DocumentComparisonDetail() {
   });
 
   const comparison = comparisonQuery.data?.comparison || null;
+  const permissions = comparisonQuery.data?.permissions || null;
+  const isOwnerView = asLower(permissions?.access_mode) === 'owner';
   const proposal = comparisonQuery.data?.proposal || null;
   const confidentialWordCount = String(comparison?.doc_a_text || '')
     .trim()
@@ -355,6 +369,21 @@ export default function DocumentComparisonDetail() {
     comparisonStatus === 'evaluated' &&
     hasReportData;
   const hasReport = isEvaluationSucceeded;
+  const rawInputTrace =
+    comparison?.evaluation_result?.input_trace &&
+    typeof comparison?.evaluation_result?.input_trace === 'object' &&
+    !Array.isArray(comparison?.evaluation_result?.input_trace)
+      ? comparison.evaluation_result.input_trace
+      : null;
+  const evaluatedInputTrace = {
+    source: asText(rawInputTrace?.source) || 'unknown',
+    confidentialLength: toSafeNumber(rawInputTrace?.confidential_length, String(comparison?.doc_a_text || '').length),
+    sharedLength: toSafeNumber(rawInputTrace?.shared_length, String(comparison?.doc_b_text || '').length),
+    confidentialWords: toSafeNumber(rawInputTrace?.confidential_words, confidentialWordCount),
+    sharedWords: toSafeNumber(rawInputTrace?.shared_words, sharedWordCount),
+    confidentialHash: asText(rawInputTrace?.confidential_hash),
+    sharedHash: asText(rawInputTrace?.shared_hash),
+  };
   const isPollingTimedOut =
     isEvaluationRunning &&
     typeof evaluationPollDeadline === 'number' &&
@@ -873,6 +902,65 @@ export default function DocumentComparisonDetail() {
                         );
                       })}
                     </div>
+                  </CardContent>
+                </Card>
+              ) : null}
+
+              {hasReport && isOwnerView ? (
+                <Card className="border border-slate-200 shadow-sm">
+                  <CardHeader>
+                    <CardTitle>Inputs Used</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <p className="text-sm text-slate-600">
+                      Source: <span className="font-medium text-slate-900">{evaluatedInputTrace.source}</span>
+                    </p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                      <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                        <p className="font-semibold text-slate-800">{CONFIDENTIAL_LABEL}</p>
+                        <p className="text-slate-600">
+                          {evaluatedInputTrace.confidentialWords} words • {evaluatedInputTrace.confidentialLength} chars
+                        </p>
+                        <p className="text-slate-500 font-mono text-xs">
+                          hash: {evaluatedInputTrace.confidentialHash || '—'}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                        <p className="font-semibold text-slate-800">{SHARED_LABEL}</p>
+                        <p className="text-slate-600">
+                          {evaluatedInputTrace.sharedWords} words • {evaluatedInputTrace.sharedLength} chars
+                        </p>
+                        <p className="text-slate-500 font-mono text-xs">
+                          hash: {evaluatedInputTrace.sharedHash || '—'}
+                        </p>
+                      </div>
+                    </div>
+                    <div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setShowInputPreview((current) => !current)}
+                      >
+                        {showInputPreview ? 'Hide preview' : 'Reveal preview'}
+                      </Button>
+                    </div>
+                    {showInputPreview ? (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                        <div className="rounded-lg border border-slate-200 bg-white p-3">
+                          <p className="font-semibold text-slate-700 mb-1">{CONFIDENTIAL_LABEL} preview</p>
+                          <p className="text-slate-600 whitespace-pre-wrap">
+                            {String(comparison?.doc_a_text || '').slice(0, 120) || '—'}
+                          </p>
+                        </div>
+                        <div className="rounded-lg border border-slate-200 bg-white p-3">
+                          <p className="font-semibold text-slate-700 mb-1">{SHARED_LABEL} preview</p>
+                          <p className="text-slate-600 whitespace-pre-wrap">
+                            {String(comparison?.doc_b_text || '').slice(0, 120) || '—'}
+                          </p>
+                        </div>
+                      </div>
+                    ) : null}
                   </CardContent>
                 </Card>
               ) : null}
