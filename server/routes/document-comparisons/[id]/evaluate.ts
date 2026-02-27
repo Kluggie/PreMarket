@@ -118,6 +118,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
         .set({
           status: 'failed',
           evaluationResult: toFailedResult(error),
+          publicReport: {},
           updatedAt: new Date(),
         })
         .where(eq(schema.documentComparisons.id, existing.id));

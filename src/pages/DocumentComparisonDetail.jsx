@@ -39,6 +39,73 @@ function asText(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function asLower(value) {
+  return asText(value).toLowerCase();
+}
+
+function hasObjectContent(value) {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length > 0);
+}
+
+function isSuccessfulEvaluationStatus(value) {
+  const status = asLower(value);
+  return status === 'completed' || status === 'succeeded' || status === 'success' || status === 'evaluated';
+}
+
+function getEvaluationRowMeta(evaluation) {
+  const status = asLower(evaluation?.status);
+  const errorCode = asLower(evaluation?.result?.error?.code);
+
+  if (errorCode === 'not_configured') {
+    return {
+      label: 'Not configured',
+      badgeClassName: 'bg-amber-100 text-amber-800',
+      rowClassName: 'rounded-xl border border-amber-200 bg-amber-50 p-3',
+      scoreLabel: '—',
+      timelineTitle: 'AI Not Configured',
+    };
+  }
+
+  if (status === 'failed' || errorCode) {
+    return {
+      label: 'Failed',
+      badgeClassName: 'bg-red-100 text-red-700',
+      rowClassName: 'rounded-xl border border-red-200 bg-red-50 p-3',
+      scoreLabel: '—',
+      timelineTitle: 'Evaluation Failed',
+    };
+  }
+
+  if (status === 'running' || status === 'queued' || status === 'evaluating') {
+    return {
+      label: 'Running',
+      badgeClassName: 'bg-blue-100 text-blue-700',
+      rowClassName: 'rounded-xl border border-blue-200 bg-blue-50 p-3',
+      scoreLabel: '—',
+      timelineTitle: 'Evaluation Running',
+    };
+  }
+
+  if (isSuccessfulEvaluationStatus(status)) {
+    const numericScore = Number(evaluation?.score);
+    return {
+      label: 'Succeeded',
+      badgeClassName: 'bg-green-100 text-green-700',
+      rowClassName: 'rounded-xl border border-green-200 bg-green-50 p-3',
+      scoreLabel: Number.isFinite(numericScore) ? `${Math.max(0, Math.round(numericScore))}% confidence` : '—',
+      timelineTitle: 'Evaluation Complete',
+    };
+  }
+
+  return {
+    label: status || 'Unknown',
+    badgeClassName: 'bg-slate-100 text-slate-700',
+    rowClassName: 'rounded-xl border border-slate-200 bg-slate-50 p-3',
+    scoreLabel: '—',
+    timelineTitle: 'Evaluation Update',
+  };
+}
+
 function formatDateTime(dateValue) {
   if (!dateValue) return '—';
   const parsed = new Date(dateValue);
@@ -181,15 +248,31 @@ export default function DocumentComparisonDetail() {
   const report = comparison?.public_report || comparison?.evaluation_result?.report || {};
   const reportSections = Array.isArray(report?.sections) ? report.sections : [];
   const evaluationHistory = Array.isArray(evaluationsQuery.data) ? evaluationsQuery.data : [];
-  const comparisonStatus = asText(comparison?.status).toLowerCase();
+  const latestEvaluation = evaluationHistory[0] || null;
+  const latestEvaluationMeta = getEvaluationRowMeta(latestEvaluation);
+  const comparisonStatus = asLower(comparison?.status);
+  const comparisonErrorCode = asLower(comparison?.evaluation_result?.error?.code);
+  const latestHistoryErrorCode = asLower(latestEvaluation?.result?.error?.code);
+  const isEvaluationNotConfigured =
+    comparisonErrorCode === 'not_configured' || latestHistoryErrorCode === 'not_configured';
+  const hasLatestHistoryFailure = latestEvaluationMeta.label === 'Failed';
   const isEvaluationRunning =
     comparisonStatus === 'running' || comparisonStatus === 'queued' || comparisonStatus === 'evaluating';
   const isEvaluationFailed =
-    comparisonStatus === 'failed' ||
-    Boolean(comparison?.evaluation_result?.error && typeof comparison?.evaluation_result?.error === 'object');
-  const evaluationFailureMessage = asText(comparison?.evaluation_result?.error?.message);
-  const hasReportData = Boolean(report && typeof report === 'object' && Object.keys(report).length > 0);
-  const hasReport = Boolean(hasReportData || evaluationHistory.length > 0);
+    !isEvaluationNotConfigured &&
+    (comparisonStatus === 'failed' ||
+      Boolean(comparison?.evaluation_result?.error && typeof comparison?.evaluation_result?.error === 'object') ||
+      hasLatestHistoryFailure);
+  const evaluationFailureMessage =
+    asText(comparison?.evaluation_result?.error?.message) || asText(latestEvaluation?.result?.error?.message);
+  const hasReportData = hasObjectContent(report);
+  const isEvaluationSucceeded =
+    !isEvaluationRunning &&
+    !isEvaluationNotConfigured &&
+    !isEvaluationFailed &&
+    comparisonStatus === 'evaluated' &&
+    hasReportData;
+  const hasReport = isEvaluationSucceeded;
   const isPollingTimedOut =
     isEvaluationRunning &&
     typeof evaluationPollDeadline === 'number' &&
@@ -359,7 +442,6 @@ export default function DocumentComparisonDetail() {
     );
   }
 
-  const latestEvaluation = evaluationHistory[0] || null;
   const recommendation =
     asText(report?.recommendation) ||
     asText(comparison?.evaluation_result?.recommendation) ||
@@ -387,9 +469,9 @@ export default function DocumentComparisonDetail() {
 
     return collected.slice(0, 6);
   })();
-  const similarityScore = Number(
-    comparison?.evaluation_result?.score ?? report?.similarity_score ?? latestEvaluation?.score ?? 0,
-  );
+  const similarityScore = isEvaluationSucceeded
+    ? Number(comparison?.evaluation_result?.score ?? report?.similarity_score ?? latestEvaluation?.score ?? 0)
+    : null;
 
   return (
     <div className="min-h-screen bg-slate-50 py-6">
@@ -519,6 +601,14 @@ export default function DocumentComparisonDetail() {
                       </div>
                     ) : null}
 
+                    {isEvaluationNotConfigured ? (
+                      <Alert className="bg-amber-50 border-amber-200">
+                        <AlertDescription className="text-amber-900">
+                          Vertex AI integration is not configured.
+                        </AlertDescription>
+                      </Alert>
+                    ) : null}
+
                     {isEvaluationFailed ? (
                       <Alert className="bg-red-50 border-red-200">
                         <AlertDescription className="text-red-900">
@@ -527,7 +617,7 @@ export default function DocumentComparisonDetail() {
                       </Alert>
                     ) : null}
 
-                    {!isEvaluationRunning && !isEvaluationFailed && hasReport ? (
+                    {!isEvaluationRunning && !isEvaluationNotConfigured && !isEvaluationFailed && hasReport ? (
                       <>
                         <p className="text-slate-700">
                           Latest recommendation:{' '}
@@ -545,9 +635,9 @@ export default function DocumentComparisonDetail() {
                       </>
                     ) : null}
 
-                    {!isEvaluationRunning && !isEvaluationFailed && !hasReport ? (
+                    {!isEvaluationRunning && !isEvaluationNotConfigured && !isEvaluationFailed && !hasReport ? (
                       <p className="text-sm text-slate-600">
-                        No evaluation yet. Use Go to Comparison from the editor to generate it.
+                        No evaluation yet. Use Run Evaluation from the editor to generate it.
                       </p>
                     ) : null}
                   </CardContent>
@@ -578,11 +668,21 @@ export default function DocumentComparisonDetail() {
                     </div>
                     {latestEvaluation && (
                       <div className="flex items-start gap-3">
-                        <div className="w-9 h-9 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center">
+                        <div
+                          className={`w-9 h-9 rounded-full flex items-center justify-center ${
+                            latestEvaluationMeta.label === 'Succeeded'
+                              ? 'bg-purple-100 text-purple-700'
+                              : latestEvaluationMeta.label === 'Not configured'
+                                ? 'bg-amber-100 text-amber-700'
+                                : latestEvaluationMeta.label === 'Failed'
+                                  ? 'bg-red-100 text-red-700'
+                                  : 'bg-slate-100 text-slate-700'
+                          }`}
+                        >
                           <Sparkles className="w-4 h-4" />
                         </div>
                         <div>
-                          <p className="font-medium text-slate-900">Evaluation Complete</p>
+                          <p className="font-medium text-slate-900">{latestEvaluationMeta.timelineTitle}</p>
                           <p className="text-slate-500">{formatDateTime(latestEvaluation.created_date)}</p>
                         </div>
                       </div>
@@ -609,6 +709,14 @@ export default function DocumentComparisonDetail() {
                 </Card>
               ) : null}
 
+              {isEvaluationNotConfigured ? (
+                <Alert className="bg-amber-50 border-amber-200">
+                  <AlertDescription className="text-amber-900">
+                    Vertex AI integration is not configured. AI report not available (AI not configured).
+                  </AlertDescription>
+                </Alert>
+              ) : null}
+
               {isEvaluationFailed ? (
                 <Alert className="bg-red-50 border-red-200">
                   <AlertDescription className="text-red-900">
@@ -617,47 +725,50 @@ export default function DocumentComparisonDetail() {
                 </Alert>
               ) : null}
 
-              {!isEvaluationRunning && !isEvaluationFailed && !hasReport ? (
+              {!isEvaluationRunning && !isEvaluationNotConfigured && !isEvaluationFailed && !hasReport && evaluationHistory.length === 0 ? (
                 <Card className="border border-slate-200 shadow-sm">
                   <CardContent className="py-6 text-slate-600">
-                    No evaluation yet. Go to the editor and use Go to Comparison to run it.
+                    No evaluation yet. Go to the editor and use Run Evaluation to generate it.
+                  </CardContent>
+                </Card>
+              ) : null}
+
+              {evaluationHistory.length > 0 ? (
+                <Card className="border border-slate-200 shadow-sm">
+                  <CardHeader>
+                    <CardTitle>Evaluation History ({evaluationHistory.length})</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-3">
+                      {evaluationHistory.map((evaluation, index) => {
+                        const rowMeta = getEvaluationRowMeta(evaluation);
+                        return (
+                          <div
+                            key={evaluation.id || `evaluation-${index}`}
+                            className={`flex items-center justify-between ${rowMeta.rowClassName}`}
+                          >
+                            <div className="flex items-center gap-3">
+                              <Badge className={rowMeta.badgeClassName}>{rowMeta.label}</Badge>
+                              <span className="text-slate-700">{formatDateTime(evaluation.created_date)}</span>
+                              {index === 0 ? <Badge variant="outline">Latest</Badge> : null}
+                            </div>
+                            <span
+                              className={`font-semibold ${
+                                rowMeta.label === 'Succeeded' ? 'text-blue-600' : 'text-slate-600'
+                              }`}
+                            >
+                              {rowMeta.scoreLabel}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </CardContent>
                 </Card>
               ) : null}
 
               {hasReport ? (
                 <>
-                  <Card className="border border-slate-200 shadow-sm">
-                    <CardHeader>
-                      <CardTitle>Evaluation History ({evaluationHistory.length || 1})</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      {evaluationHistory.length > 0 ? (
-                        <div className="space-y-3">
-                          {evaluationHistory.map((evaluation, index) => (
-                            <div
-                              key={evaluation.id || `evaluation-${index}`}
-                              className="flex items-center justify-between rounded-xl border border-blue-200 bg-blue-50 p-3"
-                            >
-                              <div className="flex items-center gap-3">
-                                <Badge className="bg-green-100 text-green-700">succeeded</Badge>
-                                <span className="text-slate-700">{formatDateTime(evaluation.created_date)}</span>
-                                {index === 0 ? <Badge variant="outline">Latest</Badge> : null}
-                              </div>
-                              <span className="text-blue-600 font-semibold">
-                                {Number(evaluation.score || 0)}% confidence
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-slate-700">
-                          Report available for this comparison.
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-
                   <Card className="border border-slate-200 shadow-sm">
                     <CardHeader>
                       <CardTitle>Quality Assessment</CardTitle>
@@ -678,7 +789,7 @@ export default function DocumentComparisonDetail() {
                         <div className="h-3 bg-slate-200 rounded-full overflow-hidden">
                           <div
                             className="h-3 bg-slate-500 rounded-full"
-                            style={{ width: `${Math.max(0, Math.min(similarityScore, 100))}%` }}
+                            style={{ width: `${Math.max(0, Math.min(Number(similarityScore || 0), 100))}%` }}
                           />
                         </div>
                       </div>

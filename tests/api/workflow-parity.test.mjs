@@ -550,7 +550,10 @@ if (!hasDatabaseUrl()) {
     const createRes = createMockRes();
     await documentComparisonsHandler(createReq, createRes);
     assert.equal(createRes.statusCode, 201);
-    const comparisonId = createRes.jsonBody().comparison.id;
+    const comparison = createRes.jsonBody().comparison;
+    const comparisonId = comparison.id;
+    const proposalId = comparison.proposal_id;
+    assert.ok(proposalId);
 
     const originalMock = process.env.VERTEX_MOCK;
     const originalServiceAccount = process.env.GCP_SERVICE_ACCOUNT_JSON;
@@ -570,6 +573,39 @@ if (!hasDatabaseUrl()) {
       await documentComparisonsEvaluateHandler(evaluateReq, evaluateRes, comparisonId);
       assert.equal(evaluateRes.statusCode, 501);
       assert.equal(evaluateRes.jsonBody().error.code, 'not_configured');
+
+      const detailReq = createMockReq({
+        method: 'GET',
+        url: `/api/document-comparisons/${comparisonId}`,
+        headers: { cookie: ownerCookie },
+        query: { id: comparisonId },
+      });
+      const detailRes = createMockRes();
+      await documentComparisonsIdHandler(detailReq, detailRes, comparisonId);
+      assert.equal(detailRes.statusCode, 200);
+      assert.equal(detailRes.jsonBody().comparison.status, 'failed');
+      assert.equal(detailRes.jsonBody().comparison.evaluation_result?.error?.code, 'not_configured');
+      assert.deepEqual(detailRes.jsonBody().comparison.public_report || {}, {});
+
+      const evaluationsReq = createMockReq({
+        method: 'GET',
+        url: `/api/proposals/${proposalId}/evaluations`,
+        headers: { cookie: ownerCookie },
+        query: { id: proposalId },
+      });
+      const evaluationsRes = createMockRes();
+      await proposalEvaluationsHandler(evaluationsReq, evaluationsRes, proposalId);
+      assert.equal(evaluationsRes.statusCode, 200);
+      const evaluations = Array.isArray(evaluationsRes.jsonBody().evaluations)
+        ? evaluationsRes.jsonBody().evaluations
+        : [];
+      assert.equal(evaluations.length > 0, true);
+      assert.equal(String(evaluations[0]?.status || '').toLowerCase(), 'failed');
+      assert.equal(String(evaluations[0]?.result?.error?.code || ''), 'not_configured');
+      assert.equal(
+        evaluations.some((row) => String(row?.status || '').toLowerCase() === 'completed'),
+        false,
+      );
     } finally {
       if (originalMock === undefined) {
         delete process.env.VERTEX_MOCK;

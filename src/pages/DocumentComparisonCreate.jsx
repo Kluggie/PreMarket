@@ -458,6 +458,7 @@ export default function DocumentComparisonCreate() {
   const [coachResult, setCoachResult] = useState(null);
   const [coachLoading, setCoachLoading] = useState(false);
   const [coachError, setCoachError] = useState('');
+  const [coachNotConfigured, setCoachNotConfigured] = useState(false);
   const [coachCached, setCoachCached] = useState(false);
   const [coachWithheldCount, setCoachWithheldCount] = useState(0);
   const [coachRequestMeta, setCoachRequestMeta] = useState(null);
@@ -574,6 +575,7 @@ export default function DocumentComparisonCreate() {
   useEffect(() => {
     setCoachResult(null);
     setCoachError('');
+    setCoachNotConfigured(false);
     setCoachCached(false);
     setCoachWithheldCount(0);
     setCoachRequestMeta(null);
@@ -1048,6 +1050,10 @@ export default function DocumentComparisonCreate() {
     selectionRange = null,
     silent = false,
   } = {}) => {
+    if (coachNotConfigured) {
+      return null;
+    }
+
     const resolvedId = await ensureComparisonIdForCoach();
     if (!resolvedId) {
       return null;
@@ -1076,6 +1082,7 @@ export default function DocumentComparisonCreate() {
       setCoachResultHash(String(response?.cacheHash || ''));
       setCoachCached(Boolean(response?.cached));
       setCoachWithheldCount(Number(response?.withheldCount || 0));
+      setCoachNotConfigured(false);
       setCoachRequestMeta({
         mode,
         intent,
@@ -1093,11 +1100,29 @@ export default function DocumentComparisonCreate() {
       });
       setExpandedSuggestionIds([]);
       if (!silent) {
-        toast.success(response?.cached ? 'Loaded cached AI Coach suggestions' : 'AI Coach suggestions ready');
+        toast.success(response?.cached ? 'Loaded cached suggestions' : 'Suggestions ready');
       }
       return response;
     } catch (error) {
-      const message = error?.message || 'AI Coach request failed';
+      const status = Number(error?.status || 0);
+      const code = asText(error?.body?.error?.code || error?.body?.code || error?.code);
+      if (status === 501 || code === 'not_configured') {
+        const message = 'AI suggestions are unavailable because Vertex AI is not configured.';
+        setCoachResult(null);
+        setCoachResultHash('');
+        setCoachCached(false);
+        setCoachWithheldCount(0);
+        setCoachRequestMeta(null);
+        setExpandedSuggestionIds([]);
+        setCoachError(message);
+        setCoachNotConfigured(true);
+        if (!silent && !coachNotConfigured) {
+          toast.error(message);
+        }
+        return null;
+      }
+
+      const message = error?.message || 'Suggestion request failed';
       setCoachError(message);
       if (!silent) {
         toast.error(message);
@@ -1669,11 +1694,11 @@ export default function DocumentComparisonCreate() {
                   <CardHeader className="pb-2">
                     <CardTitle className="text-base flex items-center gap-2">
                       <Sparkles className="w-4 h-4 text-blue-600" />
-                      AI Coach (On demand)
+                      Ask for suggestions
                       {coachCached ? <Badge variant="outline">Cached</Badge> : null}
                     </CardTitle>
                     <CardDescription>
-                      Generate coaching suggestions only when you click an action. No live background requests.
+                      Generate suggestions only when you click an action. No background requests.
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-3">
@@ -1684,7 +1709,7 @@ export default function DocumentComparisonCreate() {
                           type="button"
                           variant="outline"
                           size="sm"
-                          disabled={coachLoading}
+                          disabled={coachLoading || coachNotConfigured}
                           onClick={() => {
                             const request = buildCoachActionRequest(option, selectionContext);
                             if (!request) {
@@ -1701,7 +1726,7 @@ export default function DocumentComparisonCreate() {
                         type="button"
                         variant="outline"
                         size="sm"
-                        disabled={coachLoading || !canRunRewriteSelection(selectionContext)}
+                        disabled={coachLoading || coachNotConfigured || !canRunRewriteSelection(selectionContext)}
                         onClick={() => {
                           const request = buildCoachActionRequest(
                             {
@@ -1730,7 +1755,16 @@ export default function DocumentComparisonCreate() {
                         : 'no selection'}
                     </p>
 
-                    {coachError ? (
+                    {coachNotConfigured ? (
+                      <Alert className="bg-amber-50 border-amber-200">
+                        <AlertTriangle className="h-4 w-4 text-amber-700" />
+                        <AlertDescription className="text-amber-800">
+                          AI suggestions are unavailable because Vertex AI is not configured.
+                        </AlertDescription>
+                      </Alert>
+                    ) : null}
+
+                    {!coachNotConfigured && coachError ? (
                       <Alert className="bg-red-50 border-red-200">
                         <AlertTriangle className="h-4 w-4 text-red-700" />
                         <AlertDescription className="text-red-800">{coachError}</AlertDescription>
@@ -1898,7 +1932,7 @@ export default function DocumentComparisonCreate() {
                             </>
                           ) : (
                             <>
-                              Go to Comparison
+                              Run Evaluation
                               <ArrowRight className="w-4 h-4 ml-2" />
                             </>
                           )}
