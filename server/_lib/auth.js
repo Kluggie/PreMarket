@@ -74,7 +74,7 @@ export async function requireUser(req, res) {
   }
 
   if (!hasDatabaseUrl()) {
-    throw new ApiError(500, 'server_not_configured', 'DATABASE_URL is required');
+    throw new ApiError(503, 'not_configured', 'DATABASE_URL is required for authenticated routes');
   }
 
   const config = getSessionConfig();

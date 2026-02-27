@@ -1,5 +1,6 @@
 import { fail } from '../server/_lib/api-response.js';
 import healthHandler from '../server/routes/health.js';
+import healthAuthHandler from '../server/routes/health/auth.js';
 import stripeWebhookHandler from '../server/routes/stripeWebhook.js';
 import authMeHandler from '../server/routes/auth/me.js';
 import authLogoutHandler from '../server/routes/auth/logout.js';
@@ -39,15 +40,6 @@ import betaApplyHandler from '../server/routes/beta/apply.js';
 import templatesHandler from '../server/routes/templates/index.js';
 import templatesUseHandler from '../server/routes/templates/[id]/use.js';
 import templatesViewHandler from '../server/routes/templates/[id]/view.js';
-import documentComparisonsHandler from '../server/routes/document-comparisons/index.js';
-import documentComparisonsExtractUrlHandler from '../server/routes/document-comparisons/extract-url.js';
-import documentComparisonsIdHandler from '../server/routes/document-comparisons/[id].js';
-import documentComparisonsEvaluateHandler from '../server/routes/document-comparisons/[id]/evaluate.js';
-import documentComparisonsCoachHandler from '../server/routes/document-comparisons/[id]/coach.js';
-import documentComparisonsDownloadJsonHandler from '../server/routes/document-comparisons/[id]/download-json.js';
-import documentComparisonsDownloadInputsHandler from '../server/routes/document-comparisons/[id]/download-inputs.js';
-import documentComparisonsDownloadPdfHandler from '../server/routes/document-comparisons/[id]/download-pdf.js';
-import documentComparisonsDownloadProposalPdfHandler from '../server/routes/document-comparisons/[id]/download-proposal-pdf.js';
 import documentsExtractHandler from '../server/routes/documents/extract.js';
 import accountProfileHandler from '../server/routes/account/profile.js';
 import accountOrganizationsHandler from '../server/routes/account/organizations.js';
@@ -99,6 +91,60 @@ function getPathname(req: VercelRequest) {
   return normalizePathname(pathname);
 }
 
+let documentComparisonRouteHandlersPromise:
+  | Promise<{
+      documentComparisonsHandler: any;
+      documentComparisonsExtractUrlHandler: any;
+      documentComparisonsIdHandler: any;
+      documentComparisonsEvaluateHandler: any;
+      documentComparisonsCoachHandler: any;
+      documentComparisonsDownloadJsonHandler: any;
+      documentComparisonsDownloadInputsHandler: any;
+      documentComparisonsDownloadPdfHandler: any;
+      documentComparisonsDownloadProposalPdfHandler: any;
+    }>
+  | null = null;
+
+async function getDocumentComparisonRouteHandlers() {
+  if (!documentComparisonRouteHandlersPromise) {
+    documentComparisonRouteHandlersPromise = Promise.all([
+      import('../server/routes/document-comparisons/index.js'),
+      import('../server/routes/document-comparisons/extract-url.js'),
+      import('../server/routes/document-comparisons/[id].js'),
+      import('../server/routes/document-comparisons/[id]/evaluate.js'),
+      import('../server/routes/document-comparisons/[id]/coach.js'),
+      import('../server/routes/document-comparisons/[id]/download-json.js'),
+      import('../server/routes/document-comparisons/[id]/download-inputs.js'),
+      import('../server/routes/document-comparisons/[id]/download-pdf.js'),
+      import('../server/routes/document-comparisons/[id]/download-proposal-pdf.js'),
+    ]).then(
+      ([
+        documentComparisonsModule,
+        extractUrlModule,
+        idModule,
+        evaluateModule,
+        coachModule,
+        downloadJsonModule,
+        downloadInputsModule,
+        downloadPdfModule,
+        downloadProposalPdfModule,
+      ]) => ({
+        documentComparisonsHandler: documentComparisonsModule.default,
+        documentComparisonsExtractUrlHandler: extractUrlModule.default,
+        documentComparisonsIdHandler: idModule.default,
+        documentComparisonsEvaluateHandler: evaluateModule.default,
+        documentComparisonsCoachHandler: coachModule.default,
+        documentComparisonsDownloadJsonHandler: downloadJsonModule.default,
+        documentComparisonsDownloadInputsHandler: downloadInputsModule.default,
+        documentComparisonsDownloadPdfHandler: downloadPdfModule.default,
+        documentComparisonsDownloadProposalPdfHandler: downloadProposalPdfModule.default,
+      }),
+    );
+  }
+
+  return documentComparisonRouteHandlersPromise;
+}
+
 export default async function handler(req: any, res: any) {
   const method = String(req.method || 'GET').toUpperCase();
   const pathname = getPathname(req);
@@ -107,6 +153,10 @@ export default async function handler(req: any, res: any) {
 
   if (pathname === '/api/health' && method === 'GET') {
     return healthHandler(req, res);
+  }
+
+  if (pathname === '/api/health/auth' && method === 'GET') {
+    return healthAuthHandler(req, res);
   }
 
   if (pathname === '/api/stripeWebhook' && method === 'POST') {
@@ -278,10 +328,12 @@ export default async function handler(req: any, res: any) {
   }
 
   if (pathname === '/api/document-comparisons' && (method === 'GET' || method === 'POST')) {
+    const { documentComparisonsHandler } = await getDocumentComparisonRouteHandlers();
     return documentComparisonsHandler(req, res);
   }
 
   if (pathname === '/api/document-comparisons/extract-url' && method === 'POST') {
+    const { documentComparisonsExtractUrlHandler } = await getDocumentComparisonRouteHandlers();
     return documentComparisonsExtractUrlHandler(req, res);
   }
 
@@ -294,6 +346,7 @@ export default async function handler(req: any, res: any) {
   );
   if (documentComparisonsEvaluateMatch && method === 'POST') {
     const id = decodeURIComponent(documentComparisonsEvaluateMatch[1]);
+    const { documentComparisonsEvaluateHandler } = await getDocumentComparisonRouteHandlers();
     return documentComparisonsEvaluateHandler(req, res, id);
   }
 
@@ -302,6 +355,7 @@ export default async function handler(req: any, res: any) {
   );
   if (documentComparisonsCoachMatch && method === 'POST') {
     const id = decodeURIComponent(documentComparisonsCoachMatch[1]);
+    const { documentComparisonsCoachHandler } = await getDocumentComparisonRouteHandlers();
     return documentComparisonsCoachHandler(req, res, id);
   }
 
@@ -310,6 +364,7 @@ export default async function handler(req: any, res: any) {
   );
   if (documentComparisonsDownloadJsonMatch && method === 'GET') {
     const id = decodeURIComponent(documentComparisonsDownloadJsonMatch[1]);
+    const { documentComparisonsDownloadJsonHandler } = await getDocumentComparisonRouteHandlers();
     return documentComparisonsDownloadJsonHandler(req, res, id);
   }
 
@@ -318,6 +373,7 @@ export default async function handler(req: any, res: any) {
   );
   if (documentComparisonsDownloadInputsMatch && method === 'GET') {
     const id = decodeURIComponent(documentComparisonsDownloadInputsMatch[1]);
+    const { documentComparisonsDownloadInputsHandler } = await getDocumentComparisonRouteHandlers();
     return documentComparisonsDownloadInputsHandler(req, res, id);
   }
 
@@ -326,6 +382,7 @@ export default async function handler(req: any, res: any) {
   );
   if (documentComparisonsDownloadPdfMatch && method === 'GET') {
     const id = decodeURIComponent(documentComparisonsDownloadPdfMatch[1]);
+    const { documentComparisonsDownloadPdfHandler } = await getDocumentComparisonRouteHandlers();
     return documentComparisonsDownloadPdfHandler(req, res, id);
   }
 
@@ -334,12 +391,14 @@ export default async function handler(req: any, res: any) {
   );
   if (documentComparisonsDownloadProposalPdfMatch && method === 'GET') {
     const id = decodeURIComponent(documentComparisonsDownloadProposalPdfMatch[1]);
+    const { documentComparisonsDownloadProposalPdfHandler } = await getDocumentComparisonRouteHandlers();
     return documentComparisonsDownloadProposalPdfHandler(req, res, id);
   }
 
   const documentComparisonsIdMatch = pathname.match(/^\/api\/document-comparisons\/([^/]+)$/);
   if (documentComparisonsIdMatch && (method === 'GET' || method === 'PATCH')) {
     const id = decodeURIComponent(documentComparisonsIdMatch[1]);
+    const { documentComparisonsIdHandler } = await getDocumentComparisonRouteHandlers();
     return documentComparisonsIdHandler(req, res, id);
   }
 

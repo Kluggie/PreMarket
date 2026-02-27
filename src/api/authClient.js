@@ -38,11 +38,16 @@ function normalizeReturnTo(returnTo) {
 }
 
 function toError(status, body, fallbackMessage) {
-  const error = new Error(
-    body?.error || body?.message || fallbackMessage || 'Request failed',
-  );
+  const rawError = body?.error;
+  const message =
+    (rawError && typeof rawError === 'object' ? rawError.message || rawError.code : rawError) ||
+    body?.message ||
+    fallbackMessage ||
+    'Request failed';
+  const error = new Error(String(message));
   error.status = status;
   error.body = body;
+  error.code = rawError && typeof rawError === 'object' ? rawError.code : undefined;
   return error;
 }
 

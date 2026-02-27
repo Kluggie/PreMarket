@@ -161,9 +161,13 @@ export function respondIfEnvMissing(res: any) {
     return false;
   }
 
-  json(res, 500, {
-    error: 'server_not_configured',
-    env: readiness,
+  json(res, 503, {
+    ok: false,
+    error: {
+      code: 'not_configured',
+      message: 'Server authentication is not fully configured',
+      env: readiness,
+    },
   });
 
   return true;
@@ -176,11 +180,15 @@ export function respondIfSessionEnvMissing(res: any) {
     return false;
   }
 
-  json(res, 500, {
-    error: 'server_not_configured',
-    env: {
-      APP_BASE_URL: readiness.APP_BASE_URL,
-      SESSION_SECRET: readiness.SESSION_SECRET,
+  json(res, 503, {
+    ok: false,
+    error: {
+      code: 'not_configured',
+      message: 'Session/CSRF configuration is missing',
+      env: {
+        APP_BASE_URL: readiness.APP_BASE_URL,
+        SESSION_SECRET: readiness.SESSION_SECRET,
+      },
     },
   });
 
