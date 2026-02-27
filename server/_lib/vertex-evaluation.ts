@@ -582,20 +582,27 @@ function hasSharedPhraseReference(report: unknown, sharedText: string) {
 function ensureDocumentComparisonSpecificity(report: ContractEvaluationReport, sharedText: string) {
   const sharedLength = String(sharedText || '').trim().length;
   if (sharedLength < 20) {
-    return;
+    return false;
   }
   if (hasSharedPhraseReference(report, sharedText)) {
-    return;
+    return true;
   }
-  throw new ApiError(
-    502,
-    'insufficient_detail',
-    'Model output lacked references to shared input',
-    {
-      reasonCode: 'missing_shared_reference',
-      sharedLength,
-    },
+  const sections = Array.isArray(report.sections) ? [...report.sections] : [];
+  const hasGroundingWarning = sections.some((section) =>
+    String(section?.key || '')
+      .trim()
+      .toLowerCase()
+      .includes('grounding_warning'),
   );
+  if (!hasGroundingWarning) {
+    sections.push({
+      key: 'grounding_warning',
+      heading: 'Grounding Warning',
+      bullets: ['Model output had limited direct shared-text references; treat as low-confidence guidance.'],
+    });
+  }
+  report.sections = sections;
+  return false;
 }
 
 function tokenize(input: string) {
