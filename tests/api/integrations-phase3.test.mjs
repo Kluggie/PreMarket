@@ -6,6 +6,8 @@ import stripeWebhookHandler from '../../server/routes/stripeWebhook.ts';
 import emailSendHandler from '../../server/routes/email/send.ts';
 import vertexSmokeHandler from '../../server/routes/vertex/smoke.ts';
 import healthHandler from '../../server/routes/health.ts';
+import healthVertexHandler from '../../server/routes/health/vertex.ts';
+import { parseVertexServiceAccountEnv } from '../../server/_lib/integrations.ts';
 import { ensureTestEnv, makeSessionCookie } from '../helpers/auth.mjs';
 import { ensureMigrated, getDb, hasDatabaseUrl, resetTables } from '../helpers/db.mjs';
 import { createMockReq, createMockRes } from '../helpers/httpMock.mjs';
@@ -67,6 +69,73 @@ test('stripe webhook accepts valid signatures', async () => {
   assert.equal(res.statusCode, 200);
   const payload = res.jsonBody();
   assert.equal(payload.ok, true);
+});
+
+test('vertex config parser supports base64 payloads and escaped private-key newlines', () => {
+  const original = process.env.GCP_SERVICE_ACCOUNT_JSON;
+  const originalGoogle = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+  const originalVertex = process.env.VERTEX_SERVICE_ACCOUNT_JSON;
+
+  try {
+    delete process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+    delete process.env.VERTEX_SERVICE_ACCOUNT_JSON;
+
+    const serviceAccount = {
+      type: 'service_account',
+      project_id: 'test-project',
+      private_key: '-----BEGIN PRIVATE KEY-----\\\\nline-1\\\\n-----END PRIVATE KEY-----\\\\n',
+      client_email: 'svc@test-project.iam.gserviceaccount.com',
+      token_uri: 'https://oauth2.googleapis.com/token',
+    };
+
+    process.env.GCP_SERVICE_ACCOUNT_JSON = Buffer.from(
+      JSON.stringify(serviceAccount),
+      'utf8',
+    ).toString('base64');
+
+    const parsed = parseVertexServiceAccountEnv();
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.serviceAccountJsonPresent, true);
+    assert.equal(parsed.sourceEnvKey, 'GCP_SERVICE_ACCOUNT_JSON');
+    assert.equal(parsed.credentials.private_key.includes('\\n'), false);
+    assert.equal(parsed.credentials.private_key.includes('\n'), true);
+  } finally {
+    if (original === undefined) {
+      delete process.env.GCP_SERVICE_ACCOUNT_JSON;
+    } else {
+      process.env.GCP_SERVICE_ACCOUNT_JSON = original;
+    }
+
+    if (originalGoogle === undefined) {
+      delete process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+    } else {
+      process.env.GOOGLE_SERVICE_ACCOUNT_JSON = originalGoogle;
+    }
+
+    if (originalVertex === undefined) {
+      delete process.env.VERTEX_SERVICE_ACCOUNT_JSON;
+    } else {
+      process.env.VERTEX_SERVICE_ACCOUNT_JSON = originalVertex;
+    }
+  }
+});
+
+test('health vertex endpoint exposes safe readiness snapshot', async () => {
+  const req = createMockReq({
+    method: 'GET',
+    url: '/api/health/vertex',
+  });
+  const res = createMockRes();
+  await healthVertexHandler(req, res);
+
+  assert.equal(res.statusCode, 200);
+  const payload = res.jsonBody();
+  assert.equal(typeof payload.vertexConfigured, 'boolean');
+  assert.equal(typeof payload.serviceAccountJsonPresent, 'boolean');
+  assert.equal(typeof payload.parsedServiceAccountOk, 'boolean');
+  assert.equal(typeof payload.projectIdPresent, 'boolean');
+  assert.equal(typeof payload.vertexRegionPresent, 'boolean');
+  assert.equal('private_key' in payload, false);
 });
 
 if (!hasDatabaseUrl()) {

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { json } from '../server/_lib/http.js';
 import healthHandler from '../server/routes/health.js';
 import healthAuthHandler from '../server/routes/health/auth.js';
+import healthVertexHandler from '../server/routes/health/vertex.js';
 import stripeWebhookHandler from '../server/routes/stripeWebhook.js';
 import authMeHandler from '../server/routes/auth/me.js';
 import authLogoutHandler from '../server/routes/auth/logout.js';
@@ -173,6 +174,10 @@ export default async function handler(req: any, res: any) {
 
   if (pathname === '/api/health/auth' && method === 'GET') {
     return healthAuthHandler(req, res);
+  }
+
+  if (pathname === '/api/health/vertex' && method === 'GET') {
+    return healthVertexHandler(req, res);
   }
 
   if (pathname === '/api/stripeWebhook' && method === 'POST') {
