@@ -94,6 +94,40 @@ function isLocalhostHost(host: string) {
   return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
 }
 
+function isApiRequest(req: any) {
+  const queryPath = req?.query?.path;
+  if (queryPath) {
+    return true;
+  }
+
+  const rawUrl = String(req?.url || '').trim();
+  if (!rawUrl) {
+    return false;
+  }
+
+  try {
+    const parsed = new URL(rawUrl, 'http://local');
+    if (parsed.pathname.startsWith('/api/')) {
+      return true;
+    }
+    if (parsed.pathname === '/api') {
+      return true;
+    }
+    if (parsed.searchParams.has('path')) {
+      return true;
+    }
+  } catch {
+    if (rawUrl.startsWith('/api/')) {
+      return true;
+    }
+    if (rawUrl === '/api') {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 export function shouldUseSecureCookies(req: any, appBaseUrl: string) {
   const requestHost = getRequestHost(req);
   if (isLocalhostHost(requestHost)) {
@@ -131,6 +165,11 @@ export function toCanonicalAppUrl(appBaseUrl: string, returnTo?: unknown) {
 
 export function enforceCanonicalRedirect(req: any, res: any, appBaseUrl: string) {
   if (!isProductionDeployment()) {
+    return false;
+  }
+
+  // API routes must stay same-origin for auth/bootstrap fetches and cookie semantics.
+  if (isApiRequest(req)) {
     return false;
   }
 

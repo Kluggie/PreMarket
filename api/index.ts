@@ -183,11 +183,19 @@ export default async function handler(req: any, res: any) {
     return authMeHandler(req, res);
   }
 
+  if (pathname === '/api/me' && method === 'GET') {
+    return authMeHandler(req, res);
+  }
+
   if (pathname === '/api/auth/logout' && method === 'POST') {
     return authLogoutHandler(req, res);
   }
 
   if (pathname === '/api/auth/csrf' && method === 'GET') {
+    return authCsrfHandler(req, res);
+  }
+
+  if (pathname === '/api/csrf' && method === 'GET') {
     return authCsrfHandler(req, res);
   }
 
