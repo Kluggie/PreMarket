@@ -421,25 +421,78 @@ function parseModelJson(text: string) {
   const raw = String(text || '').trim();
   if (!raw) return null;
 
+  const parseCandidates = new Set<string>();
+  parseCandidates.add(raw);
+
   const fencedMatch = raw.match(/```json\s*([\s\S]*?)```/i);
   if (fencedMatch?.[1]) {
-    try {
-      return JSON.parse(fencedMatch[1]);
-    } catch {
-      return null;
-    }
+    parseCandidates.add(String(fencedMatch[1] || '').trim());
   }
 
-  try {
-    return JSON.parse(raw);
-  } catch {
-    const firstBrace = raw.indexOf('{');
-    const lastBrace = raw.lastIndexOf('}');
-    if (firstBrace >= 0 && lastBrace > firstBrace) {
+  const extractBalancedJson = (input: string) => {
+    const source = String(input || '');
+    const firstBrace = source.search(/[\{\[]/);
+    if (firstBrace < 0) return '';
+
+    const stack: string[] = [];
+    let inString = false;
+    let escape = false;
+    for (let index = firstBrace; index < source.length; index += 1) {
+      const char = source[index];
+      if (inString) {
+        if (escape) {
+          escape = false;
+          continue;
+        }
+        if (char === '\\') {
+          escape = true;
+          continue;
+        }
+        if (char === '"') {
+          inString = false;
+        }
+        continue;
+      }
+      if (char === '"') {
+        inString = true;
+        continue;
+      }
+      if (char === '{' || char === '[') {
+        stack.push(char);
+        continue;
+      }
+      if (char === '}' || char === ']') {
+        const open = stack[stack.length - 1];
+        if ((open === '{' && char === '}') || (open === '[' && char === ']')) {
+          stack.pop();
+          if (stack.length === 0) {
+            return source.slice(firstBrace, index + 1).trim();
+          }
+        }
+      }
+    }
+
+    return '';
+  };
+
+  const balanced = extractBalancedJson(raw);
+  if (balanced) {
+    parseCandidates.add(balanced);
+  }
+
+  for (const candidate of parseCandidates) {
+    const normalized = String(candidate || '').trim();
+    if (!normalized) {
+      continue;
+    }
+    try {
+      return JSON.parse(normalized);
+    } catch {
+      const withoutTrailingCommas = normalized.replace(/,\s*([}\]])/g, '$1');
       try {
-        return JSON.parse(raw.slice(firstBrace, lastBrace + 1));
+        return JSON.parse(withoutTrailingCommas);
       } catch {
-        return null;
+        // Try next candidate.
       }
     }
   }
@@ -2219,28 +2272,28 @@ export async function evaluateDocumentComparisonWithVertex(
     const vertex = await callVertex(prompt);
     const parsed = parseModelJson(vertex.text);
     if (!parsed) {
-      throw invalidModelOutput('Model output was not valid JSON', {
-        model: vertex.model,
-        textLength: String(vertex.text || '').length,
-        responseKeys: Array.isArray((vertex as any).responseKeys) ? (vertex as any).responseKeys : [],
-        candidateCount: Number((vertex as any).candidateCount || 0),
-        firstCandidateKeys: Array.isArray((vertex as any).firstCandidateKeys)
-          ? (vertex as any).firstCandidateKeys
-          : [],
-        firstPartKeys: Array.isArray((vertex as any).firstPartKeys) ? (vertex as any).firstPartKeys : [],
+      report = buildMockComparisonReport(normalizedInput, heuristics);
+      report.sections = [
+        ...(Array.isArray(report.sections) ? report.sections : []),
+        {
+          key: 'parser_fallback',
+          heading: 'Parser Fallback',
+          bullets: ['Vertex returned unstructured output; report was generated from supplied inputs.'],
+        },
+      ];
+      model = `${vertex.model}-parser-fallback`;
+    } else {
+      report = normalizeContractReport(parsed, {
+        mode: 'document_comparison',
+        anchorContext: {
+          docAText: normalizedInput.docAText,
+          docBText: normalizedInput.docBText,
+          docASpans: normalizedInput.docASpans,
+          docBSpans: normalizedInput.docBSpans,
+        },
       });
+      model = vertex.model;
     }
-
-    report = normalizeContractReport(parsed, {
-      mode: 'document_comparison',
-      anchorContext: {
-        docAText: normalizedInput.docAText,
-        docBText: normalizedInput.docBText,
-        docASpans: normalizedInput.docASpans,
-        docBSpans: normalizedInput.docBSpans,
-      },
-    });
-    model = vertex.model;
   }
 
   report = applyComparisonHeuristics(report, heuristics);
