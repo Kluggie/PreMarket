@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { sql } from 'drizzle-orm';
 import proposalsHandler from '../../server/routes/proposals/index.ts';
 import proposalDetailHandler from '../../server/routes/proposals/[id].ts';
 import proposalSendHandler from '../../server/routes/proposals/[id]/send.ts';
 import { ensureTestEnv, makeSessionCookie } from '../helpers/auth.mjs';
-import { ensureMigrated, hasDatabaseUrl, resetTables } from '../helpers/db.mjs';
+import { ensureMigrated, getDb, hasDatabaseUrl, resetTables } from '../helpers/db.mjs';
 import { createMockReq, createMockRes } from '../helpers/httpMock.mjs';
 
 ensureTestEnv();
@@ -71,6 +72,48 @@ if (!hasDatabaseUrl()) {
     const secondList = await listProposals(ownerCookie, { limit: '20' });
     assert.equal(secondList.some((row) => row.id === ownerProposal.id), true);
     assert.equal(secondList.some((row) => row.title === 'Other User Proposal'), false);
+  });
+
+  test('proposals remain visible when row ownership user_id differs but party_a_email matches current owner', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = authCookie('legacy_owner_sub', 'owner@example.com');
+    const outsiderCookie = authCookie('outsider_sub', 'outsider@example.com');
+
+    const legacyDraft = await createProposal(ownerCookie, {
+      title: 'Legacy Draft',
+      status: 'draft',
+      partyBEmail: null,
+    });
+    const legacySent = await createProposal(ownerCookie, {
+      title: 'Legacy Sent',
+      status: 'sent',
+      sentAt: new Date().toISOString(),
+      partyBEmail: 'recipient@example.com',
+    });
+
+    await createProposal(outsiderCookie, {
+      title: 'Outsider Proposal',
+      status: 'draft',
+      partyBEmail: 'someone@example.com',
+    });
+
+    const db = getDb();
+    await db.execute(
+      sql`update proposals set user_id = 'outsider_sub' where id in (${legacyDraft.id}, ${legacySent.id})`,
+    );
+
+    const allRows = await listProposals(ownerCookie, { tab: 'all', limit: '20' });
+    assert.equal(allRows.some((row) => row.id === legacyDraft.id), true);
+    assert.equal(allRows.some((row) => row.id === legacySent.id), true);
+    assert.equal(allRows.some((row) => row.title === 'Outsider Proposal'), false);
+
+    const draftRows = await listProposals(ownerCookie, { tab: 'drafts' });
+    assert.equal(draftRows.some((row) => row.id === legacyDraft.id), true);
+
+    const sentRows = await listProposals(ownerCookie, { tab: 'sent' });
+    assert.equal(sentRows.some((row) => row.id === legacySent.id), true);
   });
 
   test('sent, drafts, and received tabs use sent_at as source of truth', async () => {
@@ -260,4 +303,3 @@ if (!hasDatabaseUrl()) {
     }
   });
 }
-

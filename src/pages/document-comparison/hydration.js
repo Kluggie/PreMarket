@@ -46,3 +46,26 @@ export function shouldHydrateComparisonDraft({
 
   return serverMs > localEditMs;
 }
+
+function clampStep(value, fallbackStep, maxStep) {
+  const fallback = Number.isFinite(Number(fallbackStep)) ? Number(fallbackStep) : 1;
+  const limit = Number.isFinite(Number(maxStep)) && Number(maxStep) > 0 ? Number(maxStep) : 2;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return Math.min(Math.max(Math.floor(fallback), 1), limit);
+  }
+  return Math.min(Math.max(Math.floor(numeric), 1), limit);
+}
+
+export function resolveHydratedDraftStep({
+  serverDraftStep,
+  routeStep,
+  hasRouteStepParam,
+  maxStep = 2,
+}) {
+  const serverStep = clampStep(serverDraftStep, 1, maxStep);
+  if (hasRouteStepParam) {
+    return clampStep(routeStep, serverStep, maxStep);
+  }
+  return serverStep;
+}

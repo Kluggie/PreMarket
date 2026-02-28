@@ -22,6 +22,9 @@ function mapProposalRow(proposal, ownerEmail, currentUser) {
   const recipientEmail = String(proposal.partyBEmail || '').trim().toLowerCase();
   const normalizedStatus = String(proposal.status || '').trim().toLowerCase();
   const isSent = Boolean(proposal.sentAt);
+  const isOwner =
+    String(proposal.userId || '').trim() === currentUserId ||
+    Boolean(currentEmail && senderEmail && senderEmail === currentEmail);
   const isDraft = !isSent && DRAFT_STATUSES.includes(normalizedStatus as (typeof DRAFT_STATUSES)[number]);
 
   let listType = 'sent';
@@ -31,15 +34,7 @@ function mapProposalRow(proposal, ownerEmail, currentUser) {
     isSent &&
     recipientEmail &&
     recipientEmail === currentEmail &&
-    proposal.userId !== currentUserId
-  ) {
-    listType = 'received';
-  } else if (
-    isSent &&
-    recipientEmail &&
-    recipientEmail === currentEmail &&
-    senderEmail &&
-    senderEmail !== currentEmail
+    !isOwner
   ) {
     listType = 'received';
   }
@@ -166,7 +161,12 @@ export default async function handler(req: any, res: any) {
       const hasUserEmail = typeof auth.user.email === 'string' && auth.user.email.trim().length > 0;
       const userEmail = hasUserEmail ? normalizeEmail(auth.user.email) : '';
       const dbIdentity = getDatabaseIdentitySnapshot();
-      const ownerScope = eq(schema.proposals.userId, auth.user.id);
+      const ownerScope = hasUserEmail
+        ? or(
+            eq(schema.proposals.userId, auth.user.id),
+            ilike(schema.proposals.partyAEmail, userEmail),
+          )
+        : eq(schema.proposals.userId, auth.user.id);
       const recipientScope = hasUserEmail
         ? ilike(schema.proposals.partyBEmail, userEmail)
         : eq(schema.proposals.userId, '__no_recipient_scope__');
@@ -174,10 +174,10 @@ export default async function handler(req: any, res: any) {
       const conditions = [] as any[];
       const listScope = hasUserEmail
         ? or(
-            eq(schema.proposals.userId, auth.user.id),
-            ilike(schema.proposals.partyBEmail, userEmail),
+            ownerScope,
+            recipientScope,
           )
-        : eq(schema.proposals.userId, auth.user.id);
+        : ownerScope;
       conditions.push(listScope);
 
       if (tab === 'drafts') {

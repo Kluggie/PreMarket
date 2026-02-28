@@ -30,6 +30,7 @@ import {
 import { sanitizeEditorHtml } from '@/components/document-comparison/editorSanitization';
 import {
   resolveComparisonUpdatedAtMs,
+  resolveHydratedDraftStep,
   shouldHydrateComparisonDraft,
 } from '@/pages/document-comparison/hydration';
 import { buildComparisonDraftSavePayload } from '@/pages/document-comparison/draftPayload';
@@ -451,12 +452,14 @@ function useRouteState() {
   const location = useLocation();
   return useMemo(() => {
     const params = new URLSearchParams(location.search || '');
+    const routeStep = params.get('step');
 
     return {
       draftId: params.get('draft') || '',
       proposalId: params.get('proposalId') || '',
       token: params.get('token') || params.get('sharedToken') || '',
-      step: clampStep(params.get('step') || 1),
+      step: clampStep(routeStep || 1),
+      hasStepParam: routeStep !== null,
     };
   }, [location.search]);
 }
@@ -531,6 +534,11 @@ export default function DocumentComparisonCreate() {
   const lastEditAtRef = useRef(0);
   const stepRef = useRef(routeState.step);
   const isDirtyRef = useRef(false);
+  const comparisonIdRef = useRef(routeState.draftId || '');
+  const linkedProposalIdRef = useRef(routeState.proposalId || '');
+  const routeProposalIdRef = useRef(routeState.proposalId || '');
+  const routeTokenRef = useRef(routeState.token || '');
+  const saveMutationPendingRef = useRef(false);
   const docASpansRef = useRef([]);
   const docBSpansRef = useRef([]);
   const metadataRef = useRef({});
@@ -554,6 +562,9 @@ export default function DocumentComparisonCreate() {
       Number.isFinite(numericTimestamp) && numericTimestamp > 0
         ? numericTimestamp
         : Date.now();
+    draftDirtyRef.current = true;
+    lastEditAtRef.current = resolvedTimestamp;
+    isDirtyRef.current = true;
     setDraftDirty(true);
     setLastEditAt(resolvedTimestamp);
   };
@@ -661,10 +672,12 @@ export default function DocumentComparisonCreate() {
     setDocAPreviewSnippet(previewSnippet(nextDocAText));
     setDocBPreviewSnippet(previewSnippet(nextDocBText));
 
-    const draftStep = Math.max(
-      clampStep(comparison.draft_step || 1),
-      clampStep(routeState.step || 1),
-    );
+    const draftStep = resolveHydratedDraftStep({
+      serverDraftStep: comparison.draft_step || 1,
+      routeStep: routeState.step || 1,
+      hasRouteStepParam: routeState.hasStepParam,
+      maxStep: TOTAL_EDITOR_STEPS,
+    });
     setStep(draftStep);
     setLastSavedHash(
       buildDraftStateHash({
@@ -691,6 +704,7 @@ export default function DocumentComparisonCreate() {
     ignoredRouteDraftId,
     resolvedDraftId,
     routeState.draftId,
+    routeState.hasStepParam,
     routeState.proposalId,
     routeState.step,
   ]);
@@ -1028,6 +1042,65 @@ export default function DocumentComparisonCreate() {
     },
   });
 
+  const persistLatestDraftSnapshot = useCallback(async ({ reason = 'component-unmount', stepToSave = 2 } = {}) => {
+    if (saveMutationPendingRef.current || !isDirtyRef.current) {
+      return null;
+    }
+
+    const savedStep = clampStep(stepToSave || stepRef.current || 1);
+    const snapshot = latestDraftStateRef.current || {};
+    const payload = buildComparisonDraftSavePayload({
+      snapshot,
+      fallback: snapshot,
+      stepToSave: savedStep,
+      linkedProposalId: linkedProposalIdRef.current,
+      routeProposalId: routeProposalIdRef.current,
+      token: routeTokenRef.current,
+      partyALabel: CONFIDENTIAL_LABEL,
+      partyBLabel: SHARED_LABEL,
+      docASpans: docASpansRef.current,
+      docBSpans: docBSpansRef.current,
+      metadata: metadataRef.current,
+      sanitizeHtml: sanitizeEditorHtml,
+    });
+
+    if (import.meta.env.DEV) {
+      console.info('[DocumentComparisonCreate] unmount saveDraft called', {
+        reason,
+        comparisonId: comparisonIdRef.current || null,
+        stepToSave: savedStep,
+        payloadKeys: Object.keys(payload).sort(),
+        payloadSizes: {
+          docATextLength: Number(String(payload.doc_a_text || '').length),
+          docBTextLength: Number(String(payload.doc_b_text || '').length),
+        },
+      });
+    }
+
+    try {
+      const response = await documentComparisonsClient.saveDraft(comparisonIdRef.current || null, payload);
+      const comparison = response?.comparison || response;
+      if (import.meta.env.DEV) {
+        console.info('[DocumentComparisonCreate] unmount saveDraft persisted', {
+          reason,
+          comparisonId: comparison?.id || comparisonIdRef.current || null,
+          updated_at:
+            comparison?.updated_at || comparison?.updated_date || comparison?.updatedAt || null,
+        });
+      }
+      return comparison?.id || null;
+    } catch (error) {
+      if (import.meta.env.DEV) {
+        console.warn('[DocumentComparisonCreate] unmount saveDraft failed', {
+          reason,
+          comparisonId: comparisonIdRef.current || null,
+          message: error?.message || 'unknown',
+        });
+      }
+      return null;
+    }
+  }, []);
+
   useEffect(() => {
     if (lastSavedHash) {
       return;
@@ -1167,6 +1240,23 @@ export default function DocumentComparisonCreate() {
     stepRef.current = step;
     isDirtyRef.current = isDirty;
   }, [isDirty, step]);
+
+  useEffect(() => {
+    comparisonIdRef.current = comparisonId;
+  }, [comparisonId]);
+
+  useEffect(() => {
+    linkedProposalIdRef.current = linkedProposalId;
+  }, [linkedProposalId]);
+
+  useEffect(() => {
+    routeProposalIdRef.current = routeState.proposalId;
+    routeTokenRef.current = routeState.token;
+  }, [routeState.proposalId, routeState.token]);
+
+  useEffect(() => {
+    saveMutationPendingRef.current = saveDraftMutation.isPending;
+  }, [saveDraftMutation.isPending]);
 
   const applyImportedContent = (side, file, extracted) => {
     const rawText = asText(extracted?.text) || htmlToText(extracted?.html || '');
@@ -1906,6 +1996,17 @@ export default function DocumentComparisonCreate() {
 
     return () => window.clearTimeout(timer);
   }, [bestEffortSaveDraft, draftDirty, saveDraftMutation.isPending, step, currentStateHash]);
+
+  useEffect(() => () => {
+    if (stepRef.current !== 2 || !isDirtyRef.current) {
+      return;
+    }
+
+    void persistLatestDraftSnapshot({
+      reason: 'component-unmount',
+      stepToSave: 2,
+    });
+  }, [persistLatestDraftSnapshot]);
 
   useEffect(() => {
     const handlePopState = () => {

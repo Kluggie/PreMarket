@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   resolveComparisonUpdatedAtMs,
+  resolveHydratedDraftStep,
   shouldHydrateComparisonDraft,
 } from '../../src/pages/document-comparison/hydration.js';
 
@@ -46,4 +47,26 @@ test('comparison updated timestamp resolves from snake_case and camelCase fields
   });
 
   assert.equal(resolved, Date.parse(updatedAt));
+});
+
+test('hydrated step respects explicit route step when provided', () => {
+  const resolved = resolveHydratedDraftStep({
+    serverDraftStep: 2,
+    routeStep: 1,
+    hasRouteStepParam: true,
+    maxStep: 2,
+  });
+
+  assert.equal(resolved, 1);
+});
+
+test('hydrated step falls back to server draft step when route step is absent', () => {
+  const resolved = resolveHydratedDraftStep({
+    serverDraftStep: 2,
+    routeStep: 1,
+    hasRouteStepParam: false,
+    maxStep: 2,
+  });
+
+  assert.equal(resolved, 2);
 });
