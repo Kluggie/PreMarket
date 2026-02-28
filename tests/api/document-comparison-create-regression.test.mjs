@@ -123,6 +123,118 @@ if (!hasDatabaseUrl()) {
     assert.equal(res.jsonBody().error?.code, 'proposal_not_found');
   });
 
+  test('Step 2 save payload persists through Step 3 failure and reloads after refresh', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const cookie = authCookie('doc_step2_owner', 'step2-owner@example.com');
+
+    const createReq = createApiRequest({
+      method: 'POST',
+      path: 'document-comparisons',
+      cookie,
+      body: {
+        title: 'Step 2 Persistence',
+        createProposal: true,
+      },
+    });
+    const createRes = createMockRes();
+    await apiHandler(createReq, createRes);
+    assert.equal(createRes.statusCode, 201);
+    const comparisonId = String(createRes.jsonBody().comparison?.id || '');
+    assert.equal(Boolean(comparisonId), true);
+
+    const latestDocAJson = {
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          content: [{ type: 'text', text: 'Latest confidential clause text.' }],
+        },
+      ],
+    };
+    const latestDocBJson = {
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          content: [{ type: 'text', text: 'Latest shared clause text.' }],
+        },
+      ],
+    };
+
+    const step2PatchReq = createApiRequest({
+      method: 'PATCH',
+      path: `document-comparisons/${comparisonId}`,
+      cookie,
+      query: { id: comparisonId },
+      body: {
+        title: 'Step 2 Persistence Updated',
+        draft_step: 2,
+        doc_a_text: 'Latest confidential clause text.',
+        doc_b_text: 'Latest shared clause text.',
+        doc_a_html: '<p>Latest confidential clause text.</p>',
+        doc_b_html: '<p>Latest shared clause text.</p>',
+        doc_a_json: latestDocAJson,
+        doc_b_json: latestDocBJson,
+        doc_a_source: 'typed',
+        doc_b_source: 'typed',
+        doc_a_files: [{ filename: 'confidential.docx', mimeType: 'application/docx', sizeBytes: 123 }],
+        doc_b_files: [{ filename: 'shared.docx', mimeType: 'application/docx', sizeBytes: 456 }],
+      },
+    });
+    const step2PatchRes = createMockRes();
+    await apiHandler(step2PatchReq, step2PatchRes);
+    assert.equal(step2PatchRes.statusCode, 200);
+    assert.equal(step2PatchRes.jsonBody().comparison.doc_a_text, 'Latest confidential clause text.');
+    assert.equal(step2PatchRes.jsonBody().comparison.doc_b_text, 'Latest shared clause text.');
+    assert.equal(step2PatchRes.jsonBody().comparison.draft_step, 2);
+
+    const failEvalReq = createApiRequest({
+      method: 'POST',
+      path: `document-comparisons/${comparisonId}/evaluate`,
+      cookie,
+      query: { id: comparisonId },
+      body: {
+        // Force deterministic validation failure to emulate Step 3 failure.
+        doc_a_text: 'a',
+        doc_b_text: 'b',
+      },
+    });
+    const failEvalRes = createMockRes();
+    await apiHandler(failEvalReq, failEvalRes);
+    assert.equal(failEvalRes.statusCode, 400);
+    assert.equal(failEvalRes.jsonBody().error?.code, 'invalid_input');
+
+    const backToStep2Req = createApiRequest({
+      method: 'GET',
+      path: `document-comparisons/${comparisonId}`,
+      cookie,
+      query: { id: comparisonId },
+    });
+    const backToStep2Res = createMockRes();
+    await apiHandler(backToStep2Req, backToStep2Res);
+    assert.equal(backToStep2Res.statusCode, 200);
+    assert.equal(backToStep2Res.jsonBody().comparison.doc_a_text, 'Latest confidential clause text.');
+    assert.equal(backToStep2Res.jsonBody().comparison.doc_b_text, 'Latest shared clause text.');
+    assert.equal(backToStep2Res.jsonBody().comparison.doc_a_html, '<p>Latest confidential clause text.</p>');
+    assert.equal(backToStep2Res.jsonBody().comparison.doc_b_html, '<p>Latest shared clause text.</p>');
+    assert.deepEqual(backToStep2Res.jsonBody().comparison.doc_a_json, latestDocAJson);
+    assert.deepEqual(backToStep2Res.jsonBody().comparison.doc_b_json, latestDocBJson);
+
+    const refreshReq = createApiRequest({
+      method: 'GET',
+      path: `document-comparisons/${comparisonId}`,
+      cookie,
+      query: { id: comparisonId },
+    });
+    const refreshRes = createMockRes();
+    await apiHandler(refreshReq, refreshRes);
+    assert.equal(refreshRes.statusCode, 200);
+    assert.equal(refreshRes.jsonBody().comparison.doc_a_text, 'Latest confidential clause text.');
+    assert.equal(refreshRes.jsonBody().comparison.doc_b_text, 'Latest shared clause text.');
+  });
+
   test('Template list/use routes return auth errors and success states without 500s', async () => {
     await ensureMigrated();
     await resetTables();

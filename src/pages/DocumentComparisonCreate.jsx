@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -28,6 +28,10 @@ import {
   DOCUMENT_COMPARISON_COACH_ACTIONS,
 } from '@/components/document-comparison/coachActions';
 import { sanitizeEditorHtml } from '@/components/document-comparison/editorSanitization';
+import {
+  resolveComparisonUpdatedAtMs,
+  shouldHydrateComparisonDraft,
+} from '@/pages/document-comparison/hydration';
 import { countWords, getDocumentComparisonTextLimits } from '@/config/aiLimits';
 import { toast } from 'sonner';
 import {
@@ -482,6 +486,8 @@ export default function DocumentComparisonCreate() {
   const [uiError, setUiError] = useState('');
   const [fullscreenSide, setFullscreenSide] = useState(null);
   const [lastSavedHash, setLastSavedHash] = useState('');
+  const [draftDirty, setDraftDirty] = useState(false);
+  const [lastEditAt, setLastEditAt] = useState(0);
   const [coachResult, setCoachResult] = useState(null);
   const [coachLoading, setCoachLoading] = useState(false);
   const [coachError, setCoachError] = useState('');
@@ -514,6 +520,10 @@ export default function DocumentComparisonCreate() {
   const docAInputFileRef = useRef(null);
   const docBInputFileRef = useRef(null);
   const recoveredMissingDraftIdRef = useRef('');
+  const draftDirtyRef = useRef(false);
+  const lastEditAtRef = useRef(0);
+  const stepRef = useRef(routeState.step);
+  const isDirtyRef = useRef(false);
   const latestDraftStateRef = useRef({
     title: '',
     docAText: '',
@@ -527,6 +537,16 @@ export default function DocumentComparisonCreate() {
     docAFiles: [],
     docBFiles: [],
   });
+
+  const markDraftEdited = (timestamp = Date.now()) => {
+    const numericTimestamp = Number(timestamp);
+    const resolvedTimestamp =
+      Number.isFinite(numericTimestamp) && numericTimestamp > 0
+        ? numericTimestamp
+        : Date.now();
+    setDraftDirty(true);
+    setLastEditAt(resolvedTimestamp);
+  };
 
   const proposalLookup = useQuery({
     queryKey: ['document-comparison-proposal-lookup', routeState.proposalId],
@@ -556,6 +576,24 @@ export default function DocumentComparisonCreate() {
     }
 
     const comparison = draftQuery.data.comparison;
+    const serverUpdatedAtMs = resolveComparisonUpdatedAtMs(comparison);
+    const canHydrateFromServer = shouldHydrateComparisonDraft({
+      hasLocalUnsavedEdit: draftDirtyRef.current,
+      localLastEditAt: lastEditAtRef.current,
+      serverUpdatedAtMs,
+    });
+
+    if (!canHydrateFromServer) {
+      if (import.meta.env.DEV) {
+        console.info('[DocumentComparisonCreate] skipped stale hydration', {
+          comparisonId: comparison.id || resolvedDraftId || '',
+          localLastEditAt: lastEditAtRef.current,
+          serverUpdatedAt:
+            comparison?.updated_at || comparison?.updated_date || comparison?.updatedAt || null,
+        });
+      }
+      return;
+    }
 
     recoveredMissingDraftIdRef.current = '';
     if (routeState.draftId && comparison.id === routeState.draftId && ignoredRouteDraftId) {
@@ -630,6 +668,8 @@ export default function DocumentComparisonCreate() {
         docBFiles: nextDocBFiles,
       }),
     );
+    setDraftDirty(false);
+    setLastEditAt(serverUpdatedAtMs || 0);
   }, [
     draftQuery.data,
     ignoredRouteDraftId,
@@ -780,7 +820,7 @@ export default function DocumentComparisonCreate() {
   );
 
   const saveDraftMutation = useMutation({
-    mutationFn: async ({ stepToSave, silent = false }) => {
+    mutationFn: async ({ stepToSave, silent = false, nonBlocking = false }) => {
       const savedStep = clampStep(stepToSave || step || 1);
       const snapshot = latestDraftStateRef.current || {};
       const nextTitle = asText(snapshot.title || title) || 'Untitled Comparison';
@@ -815,6 +855,15 @@ export default function DocumentComparisonCreate() {
         payload.token = routeState.token;
       }
 
+      if (import.meta.env.DEV) {
+        console.info('[DocumentComparisonCreate] saveDraft called', {
+          comparisonId: comparisonId || null,
+          stepToSave: savedStep,
+          nonBlocking: Boolean(nonBlocking),
+          payloadKeys: Object.keys(payload).sort(),
+        });
+      }
+
       let response;
       try {
         response = await documentComparisonsClient.saveDraft(comparisonId || null, payload);
@@ -837,6 +886,7 @@ export default function DocumentComparisonCreate() {
       }
 
       const persistedStep = clampStep(comparison.draft_step || savedStep);
+      const persistedUpdatedAtMs = resolveComparisonUpdatedAtMs(comparison);
       const persistedComparisonId = comparison.id;
       const persistedProposalId =
         comparison.proposal_id || linkedProposalId || routeState.proposalId || '';
@@ -870,6 +920,8 @@ export default function DocumentComparisonCreate() {
       setDocBFiles(persistedDocBFiles);
       setDocAPreviewSnippet(previewSnippet(persistedDocAText));
       setDocBPreviewSnippet(previewSnippet(persistedDocBText));
+      setDraftDirty(false);
+      setLastEditAt(persistedUpdatedAtMs || Date.now());
 
       setLastSavedHash(
         buildDraftStateHash({
@@ -891,6 +943,13 @@ export default function DocumentComparisonCreate() {
       );
       if (!silent) {
         toast.success('Draft saved');
+      }
+      if (import.meta.env.DEV) {
+        console.info('[DocumentComparisonCreate] saveDraft persisted', {
+          comparisonId: persistedComparisonId,
+          updated_at:
+            comparison?.updated_at || comparison?.updated_date || comparison?.updatedAt || null,
+        });
       }
 
       queryClient.invalidateQueries(['proposals']);
@@ -923,6 +982,7 @@ export default function DocumentComparisonCreate() {
     }
 
     setLastSavedHash(currentStateHash);
+    setDraftDirty(false);
   }, [
     currentStateHash,
     draftQuery.data?.comparison,
@@ -1004,7 +1064,7 @@ export default function DocumentComparisonCreate() {
   ]);
 
   const progress = (step / TOTAL_WORKFLOW_STEPS) * 100;
-  const isDirty = currentStateHash !== lastSavedHash;
+  const isDirty = draftDirty || currentStateHash !== lastSavedHash;
   const limits = useMemo(
     () => getDocumentComparisonTextLimits(import.meta.env?.VITE_VERTEX_MODEL || ''),
     [],
@@ -1035,6 +1095,19 @@ export default function DocumentComparisonCreate() {
     (suggestion, index) => !hiddenSuggestionIds.has(getNormalizedSuggestionId(suggestion, index)),
   );
 
+  useEffect(() => {
+    draftDirtyRef.current = draftDirty;
+  }, [draftDirty]);
+
+  useEffect(() => {
+    lastEditAtRef.current = lastEditAt;
+  }, [lastEditAt]);
+
+  useEffect(() => {
+    stepRef.current = step;
+    isDirtyRef.current = isDirty;
+  }, [isDirty, step]);
+
   const applyImportedContent = (side, file, extracted) => {
     const rawText = asText(extracted?.text) || htmlToText(extracted?.html || '');
     const html = sanitizeEditorHtml(asText(extracted?.html) || textToHtml(rawText));
@@ -1059,6 +1132,7 @@ export default function DocumentComparisonCreate() {
       setDocASource('uploaded');
       setDocAFiles([fileToMetadata(file)]);
       setDocAPreviewSnippet(previewSnippet(text || htmlToText(html)));
+      markDraftEdited();
       return;
     }
 
@@ -1076,6 +1150,7 @@ export default function DocumentComparisonCreate() {
     setDocBSource('uploaded');
     setDocBFiles([fileToMetadata(file)]);
     setDocBPreviewSnippet(previewSnippet(text || htmlToText(html)));
+    markDraftEdited();
   };
 
   const importForSide = async (side) => {
@@ -1101,9 +1176,49 @@ export default function DocumentComparisonCreate() {
     }
   };
 
+  const bestEffortSaveDraft = useCallback(
+    async ({ reason = 'navigation', stepToSave = step } = {}) => {
+      if (saveDraftMutation.isPending || !isDirty) {
+        return;
+      }
+
+      try {
+        await saveDraftMutation.mutateAsync({
+          stepToSave,
+          silent: true,
+          nonBlocking: true,
+        });
+        if (import.meta.env.DEV) {
+          console.info('[DocumentComparisonCreate] best-effort save completed', {
+            reason,
+            stepToSave,
+          });
+        }
+      } catch (error) {
+        if (import.meta.env.DEV) {
+          console.warn('[DocumentComparisonCreate] best-effort save failed', {
+            reason,
+            stepToSave,
+            message: error?.message || 'unknown',
+          });
+        }
+      }
+    },
+    [isDirty, saveDraftMutation, step],
+  );
+
   const jumpStep = async (nextStep) => {
     const bounded = clampStep(nextStep || 1);
     if (saveDraftMutation.isPending) {
+      return;
+    }
+
+    if (step === 2 && bounded !== 2) {
+      await bestEffortSaveDraft({
+        reason: 'step-navigation-leave-step-2',
+        stepToSave: 2,
+      });
+      setStep(bounded);
       return;
     }
 
@@ -1205,12 +1320,12 @@ export default function DocumentComparisonCreate() {
     setFinishStage('saving');
     setIsRunningEvaluation(false);
     try {
-      let resolvedId = asText(comparisonId);
+      let resolvedId = await saveDraftMutation.mutateAsync({
+        stepToSave: 2,
+        silent: true,
+      });
       if (!resolvedId) {
-        resolvedId = await saveDraftMutation.mutateAsync({
-          stepToSave: 2,
-          silent: true,
-        });
+        resolvedId = asText(comparisonId);
       }
 
       if (!resolvedId) {
@@ -1581,6 +1696,7 @@ export default function DocumentComparisonCreate() {
       setDocBJson(null);
       setDocBSource('typed');
     }
+    markDraftEdited();
 
     markSuggestionApplied(suggestionId, suggestionHash);
 
@@ -1625,6 +1741,37 @@ export default function DocumentComparisonCreate() {
     });
     setExpandedSuggestionIds((previous) => previous.filter((id) => id !== normalizedId));
   };
+
+  useEffect(() => {
+    if (step !== 2 || !draftDirty || saveDraftMutation.isPending) {
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => {
+      void bestEffortSaveDraft({
+        reason: 'step-2-debounced-autosave',
+        stepToSave: 2,
+      });
+    }, 1200);
+
+    return () => window.clearTimeout(timer);
+  }, [bestEffortSaveDraft, draftDirty, saveDraftMutation.isPending, step, currentStateHash]);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      if (stepRef.current !== 2 || !isDirtyRef.current || saveDraftMutation.isPending) {
+        return;
+      }
+
+      void bestEffortSaveDraft({
+        reason: 'browser-history-navigation',
+        stepToSave: 2,
+      });
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [bestEffortSaveDraft, saveDraftMutation.isPending]);
 
   useEffect(() => {
     if (!isDirty) {
@@ -1768,6 +1915,7 @@ export default function DocumentComparisonCreate() {
             });
           }}
           onChange={({ html, text, json }) => {
+            markDraftEdited();
             if (isA) {
               latestDraftStateRef.current = {
                 ...latestDraftStateRef.current,
@@ -1803,7 +1951,23 @@ export default function DocumentComparisonCreate() {
           <Link
             to={createPageUrl('Proposals')}
             className="inline-flex items-center text-slate-600 hover:text-slate-900 mb-2"
-            onClick={(event) => {
+            onClick={async (event) => {
+              if (step === 2) {
+                event.preventDefault();
+                if (isDirty) {
+                  const shouldLeave = window.confirm('You have unsaved changes. Leave this page?');
+                  if (!shouldLeave) {
+                    return;
+                  }
+                }
+                await bestEffortSaveDraft({
+                  reason: 'back-to-proposals-link',
+                  stepToSave: 2,
+                });
+                navigate(createPageUrl('Proposals'));
+                return;
+              }
+
               if (!isDirty) {
                 return;
               }
@@ -1878,6 +2042,7 @@ export default function DocumentComparisonCreate() {
                           title: nextTitle,
                         };
                         setTitle(nextTitle);
+                        markDraftEdited();
                       }}
                       placeholder="e.g., Mutual NDA comparison"
                     />
@@ -1951,7 +2116,7 @@ export default function DocumentComparisonCreate() {
           {step === 2 && (
             <DocumentComparisonEditorErrorBoundary
               onRetry={retryStep2Load}
-              onBackToStep1={() => setStep(1)}
+              onBackToStep1={() => jumpStep(1)}
             >
               <motion.div
                 key="doc-step-2"
@@ -2148,7 +2313,7 @@ export default function DocumentComparisonCreate() {
                       <Button onClick={retryStep2Load}>
                         Retry
                       </Button>
-                      <Button variant="outline" onClick={() => setStep(1)}>
+                      <Button variant="outline" onClick={() => jumpStep(1)}>
                         Back to Step 1
                       </Button>
                     </CardContent>
@@ -2170,7 +2335,7 @@ export default function DocumentComparisonCreate() {
                         ) : null}
                         Retry
                       </Button>
-                      <Button variant="outline" onClick={() => setStep(1)}>
+                      <Button variant="outline" onClick={() => jumpStep(1)}>
                         Back to Step 1
                       </Button>
                     </CardContent>
