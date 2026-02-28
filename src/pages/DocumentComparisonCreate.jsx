@@ -33,6 +33,12 @@ import {
   shouldHydrateComparisonDraft,
 } from '@/pages/document-comparison/hydration';
 import { buildComparisonDraftSavePayload } from '@/pages/document-comparison/draftPayload';
+import {
+  buildComparisonQueryPayload,
+  buildOptimisticEvaluationHistoryEntry,
+  defaultOwnerPermissions,
+  mergeEvaluationHistoryWithOptimistic,
+} from '@/pages/document-comparison/evaluationCache';
 import { countWords, getDocumentComparisonTextLimits } from '@/config/aiLimits';
 import { toast } from 'sonner';
 import {
@@ -980,6 +986,32 @@ export default function DocumentComparisonCreate() {
         });
       }
 
+      const cacheComparison = {
+        ...comparison,
+        id: persistedComparisonId,
+        proposal_id: persistedProposalId || comparison?.proposal_id || comparison?.proposalId || null,
+      };
+      const cachedDraftPayload = buildComparisonQueryPayload({
+        comparison: cacheComparison,
+        proposal:
+          response?.proposal ||
+          draftQuery.data?.proposal ||
+          (persistedProposalId
+            ? {
+                id: persistedProposalId,
+                document_comparison_id: persistedComparisonId,
+              }
+            : null),
+        permissions: response?.permissions || draftQuery.data?.permissions,
+      });
+      if (cachedDraftPayload) {
+        queryClient.setQueryData(
+          ['document-comparison-draft', persistedComparisonId, routeState.token],
+          cachedDraftPayload,
+        );
+        queryClient.setQueryData(['document-comparison-detail', persistedComparisonId], cachedDraftPayload);
+      }
+
       queryClient.invalidateQueries(['proposals']);
       queryClient.invalidateQueries({
         queryKey: ['document-comparison-draft', persistedComparisonId, routeState.token],
@@ -1392,10 +1424,11 @@ export default function DocumentComparisonCreate() {
       }
 
       const evaluationPayload = buildEvaluationPayload();
+      let evaluationResponse = null;
       setFinishStage('evaluating');
       setIsRunningEvaluation(true);
       try {
-        await documentComparisonsClient.evaluate(resolvedId, evaluationPayload);
+        evaluationResponse = await documentComparisonsClient.evaluate(resolvedId, evaluationPayload);
       } catch (error) {
         if (isDocumentComparisonNotFoundError(error)) {
           const recreatedId = await saveDraftMutation.mutateAsync({
@@ -1404,7 +1437,7 @@ export default function DocumentComparisonCreate() {
           });
           if (recreatedId) {
             resolvedId = recreatedId;
-            await documentComparisonsClient.evaluate(resolvedId, evaluationPayload);
+            evaluationResponse = await documentComparisonsClient.evaluate(resolvedId, evaluationPayload);
           } else {
             throw error;
           }
@@ -1413,6 +1446,64 @@ export default function DocumentComparisonCreate() {
         }
       } finally {
         setIsRunningEvaluation(false);
+      }
+
+      const evaluatedComparison = evaluationResponse?.comparison || null;
+      const evaluatedProposal = evaluationResponse?.proposal || null;
+      const evaluatedInputTrace = evaluationResponse?.evaluationInputTrace || null;
+      if (evaluatedComparison?.id) {
+        const cachedDetailPayload = buildComparisonQueryPayload({
+          comparison: evaluatedComparison,
+          proposal:
+            evaluatedProposal ||
+            draftQuery.data?.proposal ||
+            (asText(evaluatedComparison.proposal_id || linkedProposalId || routeState.proposalId)
+              ? {
+                  id: asText(
+                    evaluatedComparison.proposal_id || linkedProposalId || routeState.proposalId,
+                  ),
+                  document_comparison_id: evaluatedComparison.id,
+                }
+              : null),
+          permissions: draftQuery.data?.permissions || defaultOwnerPermissions(),
+        });
+        if (cachedDetailPayload) {
+          queryClient.setQueryData(
+            ['document-comparison-draft', evaluatedComparison.id, routeState.token],
+            cachedDetailPayload,
+          );
+          queryClient.setQueryData(
+            ['document-comparison-detail', evaluatedComparison.id],
+            cachedDetailPayload,
+          );
+        }
+
+        const proposalIdForHistory = asText(
+          evaluatedProposal?.id ||
+            evaluatedComparison.proposal_id ||
+            linkedProposalId ||
+            routeState.proposalId,
+        );
+        if (proposalIdForHistory) {
+          const optimisticEntry = buildOptimisticEvaluationHistoryEntry({
+            comparison: evaluatedComparison,
+            proposalId: proposalIdForHistory,
+            evaluationInputTrace: evaluatedInputTrace,
+          });
+          if (optimisticEntry) {
+            queryClient.setQueryData(
+              ['document-comparison-proposal-evaluations', evaluatedComparison.id, proposalIdForHistory],
+              (current) => mergeEvaluationHistoryWithOptimistic(current, optimisticEntry),
+            );
+          }
+          queryClient.invalidateQueries({
+            queryKey: ['document-comparison-proposal-evaluations', evaluatedComparison.id, proposalIdForHistory],
+          });
+        }
+
+        queryClient.invalidateQueries({
+          queryKey: ['document-comparison-detail', evaluatedComparison.id],
+        });
       }
 
       setShowFinishConfirmDialog(false);
@@ -2005,6 +2096,25 @@ export default function DocumentComparisonCreate() {
 
   return (
     <div className="min-h-screen bg-slate-50 py-6">
+      {(isFinishingComparison || isRunningEvaluation) ? (
+        <div className="fixed inset-0 z-[70] bg-slate-950/45 backdrop-blur-[1px] flex items-center justify-center">
+          <Card className="w-[min(92vw,420px)] border border-slate-300 shadow-xl">
+            <CardContent className="py-6 flex items-center gap-3">
+              <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
+              <div className="space-y-1">
+                <p className="text-sm font-semibold text-slate-900">
+                  {finishStage === 'evaluating' ? 'Evaluating...' : 'Saving...'}
+                </p>
+                <p className="text-xs text-slate-600">
+                  {finishStage === 'evaluating'
+                    ? 'Running AI evaluation on your latest saved inputs.'
+                    : 'Persisting your latest draft before evaluation.'}
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      ) : null}
       <div className="max-w-[1400px] mx-auto px-6 md:px-10 xl:px-12">
         <div className="mb-5">
           <Link

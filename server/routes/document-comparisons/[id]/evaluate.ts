@@ -20,7 +20,8 @@ import { assertDocumentComparisonWithinLimits } from '../_limits.js';
 const CONFIDENTIAL_LABEL = 'Confidential Information';
 const SHARED_LABEL = 'Shared Information';
 const MAX_EVALUATION_ATTEMPTS = 2;
-const MIN_EVALUATION_TEXT_LENGTH = 20;
+const MIN_SHARED_EVALUATION_TEXT_LENGTH = 40;
+const MIN_CONFIDENTIAL_EVALUATION_TEXT_LENGTH = 40;
 
 type EvaluationFailureCode =
   | 'not_configured'
@@ -118,7 +119,7 @@ function countWords(value: string) {
     .filter(Boolean).length;
 }
 
-function hashPrefix(value: string, length = 10) {
+function hashPrefix(value: string, length = 12) {
   const normalized = String(value || '');
   if (!normalized) {
     return '';
@@ -161,9 +162,11 @@ function buildEvaluationInputTrace(params: {
   source: 'db' | 'request_body';
   confidentialText: string;
   sharedText: string;
+  inputVersion: number | null;
 }) {
   const confidentialText = String(params.confidentialText || '');
   const sharedText = String(params.sharedText || '');
+  const inputVersion = Number(params.inputVersion);
   return {
     comparison_id: params.comparisonId,
     source: params.source,
@@ -173,7 +176,36 @@ function buildEvaluationInputTrace(params: {
     shared_words: countWords(sharedText),
     confidential_hash: hashPrefix(confidentialText),
     shared_hash: hashPrefix(sharedText),
+    input_version: Number.isFinite(inputVersion) && inputVersion > 0 ? Math.floor(inputVersion) : null,
     generated_at: new Date().toISOString(),
+  };
+}
+
+function getInputVersionFromMetadata(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  const raw = (value as Record<string, unknown>).input_version ?? (value as Record<string, unknown>).inputVersion;
+  const numeric = Number(raw);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return null;
+  }
+  return Math.floor(numeric);
+}
+
+function getEvaluationAttemptInputFields(inputTrace: Record<string, unknown>) {
+  const inputSharedHash = asText(inputTrace.shared_hash) || null;
+  const inputConfHash = asText(inputTrace.confidential_hash) || null;
+  const inputSharedLen = toSafeInteger(inputTrace.shared_length);
+  const inputConfLen = toSafeInteger(inputTrace.confidential_length);
+  const inputVersion = toSafeInteger(inputTrace.input_version);
+
+  return {
+    inputSharedHash,
+    inputConfHash,
+    inputSharedLen,
+    inputConfLen,
+    inputVersion,
   };
 }
 
@@ -624,8 +656,10 @@ async function persistFailedProposalEvaluationAttempt(params: {
   classifiedFailure: ClassifiedEvaluationFailure;
   failedResult: Record<string, unknown>;
   completedAt: Date;
+  inputTrace: Record<string, unknown>;
 }) {
   const now = params.completedAt;
+  const inputFields = getEvaluationAttemptInputFields(params.inputTrace);
   await params.db.insert(schema.proposalEvaluations).values({
     id: newId('eval'),
     proposalId: params.proposalId,
@@ -634,6 +668,11 @@ async function persistFailedProposalEvaluationAttempt(params: {
     status: 'failed',
     score: null,
     summary: params.classifiedFailure.failureMessage || 'Document comparison evaluation failed',
+    inputSharedHash: inputFields.inputSharedHash,
+    inputConfHash: inputFields.inputConfHash,
+    inputSharedLen: inputFields.inputSharedLen,
+    inputConfLen: inputFields.inputConfLen,
+    inputVersion: inputFields.inputVersion,
     result: {
       ...params.failedResult,
       request_id: params.requestId,
@@ -674,11 +713,13 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       body,
     });
     const inputSource = hasRequestInputOverride(body) ? 'request_body' : 'db';
+    const inputVersion = getInputVersionFromMetadata(existing?.metadata);
     const evaluationInputTrace = buildEvaluationInputTrace({
       comparisonId: existing.id,
       source: inputSource,
       confidentialText: draft.docAText,
       sharedText: draft.docBText,
+      inputVersion,
     });
     logEvaluationInputTrace({
       requestId,
@@ -692,17 +733,36 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       docAText: draft.docAText,
       docBText: draft.docBText,
     });
-    if (
-      Number(evaluationInputTrace.confidential_length || 0) < MIN_EVALUATION_TEXT_LENGTH &&
-      Number(evaluationInputTrace.shared_length || 0) < MIN_EVALUATION_TEXT_LENGTH
-    ) {
-      throw new ApiError(400, 'invalid_input', 'Nothing to evaluate. Please add content first.', {
-        requestId,
-      });
+    const sharedLength = Number(evaluationInputTrace.shared_length || 0);
+    const confidentialLength = Number(evaluationInputTrace.confidential_length || 0);
+    if (sharedLength < MIN_SHARED_EVALUATION_TEXT_LENGTH) {
+      throw new ApiError(
+        400,
+        'invalid_input',
+        `Shared information must be at least ${MIN_SHARED_EVALUATION_TEXT_LENGTH} characters before evaluation.`,
+        {
+          requestId,
+          input_shared_len: sharedLength,
+          input_conf_len: confidentialLength,
+        },
+      );
+    }
+    if (confidentialLength < MIN_CONFIDENTIAL_EVALUATION_TEXT_LENGTH) {
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          route: '/api/document-comparisons/[id]/evaluate',
+          requestId,
+          comparisonId: existing.id,
+          message: 'confidential_input_short',
+          inputConfidentialLength: confidentialLength,
+          minimumRecommendedLength: MIN_CONFIDENTIAL_EVALUATION_TEXT_LENGTH,
+        }),
+      );
     }
     if (
-      Number(evaluationInputTrace.confidential_length || 0) >= MIN_EVALUATION_TEXT_LENGTH &&
-      Number(evaluationInputTrace.shared_length || 0) >= MIN_EVALUATION_TEXT_LENGTH &&
+      confidentialLength >= MIN_CONFIDENTIAL_EVALUATION_TEXT_LENGTH &&
+      sharedLength >= MIN_SHARED_EVALUATION_TEXT_LENGTH &&
       asText(evaluationInputTrace.confidential_hash) === asText(evaluationInputTrace.shared_hash)
     ) {
       console.warn(
@@ -760,15 +820,6 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
           partyBLabel: SHARED_LABEL,
         });
         const attemptCompletedAt = new Date();
-        if (
-          Number(evaluationInputTrace.confidential_length || 0) < MIN_EVALUATION_TEXT_LENGTH &&
-          Number(evaluationInputTrace.shared_length || 0) < MIN_EVALUATION_TEXT_LENGTH
-        ) {
-          throw new ApiError(400, 'empty_inputs', 'Nothing to evaluate. Please add content first.', {
-            requestId,
-          });
-        }
-
         evaluation = withAttemptMetadata({
           evaluation: evaluated,
           requestId,
@@ -824,6 +875,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
                 classifiedFailure: classified,
                 failedResult,
                 completedAt: attemptCompletedAt,
+                inputTrace: evaluationInputTrace,
               }),
           });
         }
@@ -954,12 +1006,22 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
                 status: 'completed',
                 score: evaluation.score,
                 summary: evaluation.summary,
+                inputSharedHash: asText(evaluationInputTrace.shared_hash) || null,
+                inputConfHash: asText(evaluationInputTrace.confidential_hash) || null,
+                inputSharedLen: toSafeInteger(evaluationInputTrace.shared_length),
+                inputConfLen: toSafeInteger(evaluationInputTrace.confidential_length),
+                inputVersion: toSafeInteger(evaluationInputTrace.input_version),
                 result: evaluation,
                 createdAt: now,
                 updatedAt: now,
               })
               .returning({
                 id: schema.proposalEvaluations.id,
+                inputSharedHash: schema.proposalEvaluations.inputSharedHash,
+                inputConfHash: schema.proposalEvaluations.inputConfHash,
+                inputSharedLen: schema.proposalEvaluations.inputSharedLen,
+                inputConfLen: schema.proposalEvaluations.inputConfLen,
+                inputVersion: schema.proposalEvaluations.inputVersion,
               }),
         });
         const savedEvaluation = firstRow(savedEvaluationRows);
@@ -994,6 +1056,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       comparison: mapComparisonRow(updated),
       evaluation: evaluation.report,
       proposal: proposalSummary,
+      evaluation_input_trace: evaluationInputTrace,
       request_id: requestId,
       attempt_count: attemptCount,
     });

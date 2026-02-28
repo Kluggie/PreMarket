@@ -34,8 +34,8 @@ function authCookie(sub, email) {
   return makeSessionCookie({ sub, email });
 }
 
-function hashPrefix(value, length = 10) {
-  return createHash('sha256').update(String(value || '')).digest('hex').slice(0, length);
+function hashPrefix(value, length = 12) {
+  return createHash('sha256').update(String(value || '')).digest('hex').slice(0, Math.max(1, length));
 }
 
 function assertContractReportShape(report) {
@@ -398,6 +398,8 @@ if (!hasDatabaseUrl()) {
     await documentComparisonsHandler(createReq, createRes);
     assert.equal(createRes.statusCode, 201);
     const comparisonId = createRes.jsonBody().comparison.id;
+    const proposalId = createRes.jsonBody().comparison.proposal_id;
+    assert.ok(proposalId);
     assert.equal(createRes.jsonBody().comparison.draft_step, 1);
     assert.equal(createRes.jsonBody().comparison.doc_a_text, '');
     assert.equal(createRes.jsonBody().comparison.doc_b_text, '');
@@ -703,7 +705,7 @@ if (!hasDatabaseUrl()) {
       body: {
         title: 'Retryable Vertex Failure',
         doc_a_text: 'Confidential obligations and legal constraints.',
-        doc_b_text: 'Shared obligations and summary.',
+        doc_b_text: 'Shared obligations and summary terms with recipient review coverage.',
         createProposal: true,
       },
     });
@@ -789,8 +791,8 @@ if (!hasDatabaseUrl()) {
       headers: { cookie: ownerCookie },
       body: {
         title: 'Unauthorized Vertex Failure',
-        doc_a_text: 'Confidential baseline.',
-        doc_b_text: 'Shared baseline.',
+        doc_a_text: 'Confidential baseline obligations for internal legal review.',
+        doc_b_text: 'Shared baseline obligations with recipient-friendly service commitments.',
         createProposal: true,
       },
     });
@@ -1344,6 +1346,8 @@ if (!hasDatabaseUrl()) {
     await documentComparisonsHandler(createReq, createRes);
     assert.equal(createRes.statusCode, 201);
     const comparisonId = createRes.jsonBody().comparison.id;
+    const proposalId = createRes.jsonBody().comparison.proposal_id;
+    assert.ok(proposalId);
 
     const getInitialReq = createMockReq({
       method: 'GET',
@@ -1477,6 +1481,18 @@ if (!hasDatabaseUrl()) {
     assert.equal(Number(rows[0].evaluationResult?.input_trace?.shared_length || 0), updatedDocBText.length);
     assert.equal(Array.isArray(rows[0].publicReport?.sections), true);
     assert.equal(rows[0].publicReport.sections.length > 0, true);
+
+    const evaluationRows = await db
+      .select()
+      .from(schema.proposalEvaluations)
+      .where(eq(schema.proposalEvaluations.proposalId, proposalId))
+      .limit(5);
+    assert.equal(evaluationRows.length >= 1, true);
+    assert.equal(String(evaluationRows[0].status || '').toLowerCase(), 'completed');
+    assert.equal(String(evaluationRows[0].inputSharedHash || ''), hashPrefix(updatedDocBText));
+    assert.equal(String(evaluationRows[0].inputConfHash || ''), hashPrefix(updatedDocAText));
+    assert.equal(Number(evaluationRows[0].inputSharedLen || 0), updatedDocBText.length);
+    assert.equal(Number(evaluationRows[0].inputConfLen || 0), updatedDocAText.length);
   });
 
   test('document comparison evaluate rejects empty inputs and never records a succeeded history entry', async () => {
@@ -1544,6 +1560,64 @@ if (!hasDatabaseUrl()) {
     );
   });
 
+  test('document comparison evaluate rejects shared input shorter than minimum threshold', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = authCookie('doc_short_shared_owner', 'doc-short-shared@example.com');
+
+    const createReq = createMockReq({
+      method: 'POST',
+      url: '/api/document-comparisons',
+      headers: { cookie: ownerCookie },
+      body: {
+        title: 'Short Shared Input',
+        doc_a_text: 'Confidential obligations with enough content to exceed minimum length for evaluation.',
+        doc_b_text: 'Too short',
+        createProposal: true,
+      },
+    });
+    const createRes = createMockRes();
+    await documentComparisonsHandler(createReq, createRes);
+    assert.equal(createRes.statusCode, 201);
+    const comparisonId = createRes.jsonBody().comparison.id;
+    const proposalId = createRes.jsonBody().comparison.proposal_id;
+    assert.ok(proposalId);
+
+    const evalReq = createMockReq({
+      method: 'POST',
+      url: `/api/document-comparisons/${comparisonId}/evaluate`,
+      headers: { cookie: ownerCookie },
+      query: { id: comparisonId },
+      body: {},
+    });
+    const evalRes = createMockRes();
+    await documentComparisonsEvaluateHandler(evalReq, evalRes, comparisonId);
+    assert.equal(evalRes.statusCode, 400);
+    assert.equal(evalRes.jsonBody().error.code, 'invalid_input');
+    assert.equal(
+      String(evalRes.jsonBody().error.message || '').toLowerCase().includes('shared information must be at least 40'),
+      true,
+    );
+
+    const evaluationsReq = createMockReq({
+      method: 'GET',
+      url: `/api/proposals/${proposalId}/evaluations`,
+      headers: { cookie: ownerCookie },
+      query: { id: proposalId },
+    });
+    const evaluationsRes = createMockRes();
+    await proposalEvaluationsHandler(evaluationsReq, evaluationsRes, proposalId);
+    assert.equal(evaluationsRes.statusCode, 200);
+    const evaluations = Array.isArray(evaluationsRes.jsonBody().evaluations)
+      ? evaluationsRes.jsonBody().evaluations
+      : [];
+    assert.equal(
+      evaluations.some((entry) => String(entry?.status || '').toLowerCase() === 'completed'),
+      false,
+    );
+  });
+
   test('minimal document inputs keep completeness/confidence low', async () => {
     await ensureMigrated();
     await resetTables();
@@ -1557,8 +1631,8 @@ if (!hasDatabaseUrl()) {
         title: 'Tiny Comparison',
         party_a_label: 'A',
         party_b_label: 'B',
-        doc_a_text: 'confidential obligations only',
-        doc_b_text: 'shared obligations only',
+        doc_a_text: 'confidential obligations only with baseline disclosure requirements for legal clarity',
+        doc_b_text: 'shared obligations only with recipient-side expectations and support coverage details',
         createProposal: true,
       },
     });

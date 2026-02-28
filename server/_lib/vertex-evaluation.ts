@@ -2308,7 +2308,12 @@ export async function evaluateDocumentComparisonWithVertex(
     ...collectHiddenSpanSnippets(normalizedInput.docAText, normalizedInput.docASpans),
     ...collectHiddenSpanSnippets(normalizedInput.docBText, normalizedInput.docBSpans),
   ]);
-  ensureDocumentComparisonSpecificity(report, normalizedInput.docBText);
+  const hasSpecificGrounding = ensureDocumentComparisonSpecificity(report, normalizedInput.docBText);
+  if (!hasSpecificGrounding) {
+    throw new ApiError(502, 'insufficient_detail', 'Model output lacked references to shared input', {
+      reasonCode: 'missing_shared_reference',
+    });
+  }
 
   return finalizeEvaluationResult(report, {
     provider,

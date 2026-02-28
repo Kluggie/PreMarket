@@ -209,6 +209,37 @@ function toSummaryLines(value) {
     .filter(Boolean);
 }
 
+function toSafeInteger(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return null;
+  }
+  return Math.floor(numeric);
+}
+
+function getEvaluationInputMeta(evaluation) {
+  const trace =
+    evaluation?.result?.input_trace &&
+    typeof evaluation.result.input_trace === 'object' &&
+    !Array.isArray(evaluation.result.input_trace)
+      ? evaluation.result.input_trace
+      : {};
+
+  return {
+    inputSharedHash: asText(evaluation?.input_shared_hash || trace.shared_hash || trace.input_shared_hash),
+    inputConfHash: asText(evaluation?.input_conf_hash || trace.confidential_hash || trace.input_conf_hash),
+    inputSharedLen:
+      toSafeInteger(evaluation?.input_shared_len) ??
+      toSafeInteger(trace.shared_length) ??
+      toSafeInteger(trace.input_shared_len),
+    inputConfLen:
+      toSafeInteger(evaluation?.input_conf_len) ??
+      toSafeInteger(trace.confidential_length) ??
+      toSafeInteger(trace.input_conf_len),
+    inputVersion: toSafeInteger(evaluation?.input_version) ?? toSafeInteger(trace.input_version),
+  };
+}
+
 function renderDocumentReadOnly({ text, html }) {
   const safeText = String(text || '').trim();
   const safeHtml = asText(html);
@@ -253,6 +284,7 @@ export default function DocumentComparisonDetail() {
     queryKey: ['document-comparison-detail', comparisonId],
     enabled: Boolean(comparisonId),
     queryFn: () => documentComparisonsClient.getById(comparisonId),
+    placeholderData: undefined,
     refetchInterval: (query) => {
       const status = asText(query.state.data?.comparison?.status).toLowerCase();
       const isRunning = status === 'running' || status === 'queued' || status === 'evaluating';
@@ -268,6 +300,11 @@ export default function DocumentComparisonDetail() {
   });
 
   const comparison = comparisonQuery.data?.comparison || null;
+  const loadedComparisonId = asText(comparison?.id);
+  const hasMismatchedComparisonPayload =
+    Boolean(loadedComparisonId) &&
+    Boolean(comparisonId) &&
+    loadedComparisonId !== comparisonId;
   const permissions = comparisonQuery.data?.permissions || null;
   const isOwnerView = asLower(permissions?.access_mode) === 'owner';
   const proposal = comparisonQuery.data?.proposal || null;
@@ -281,9 +318,10 @@ export default function DocumentComparisonDetail() {
     .filter(Boolean).length;
 
   const evaluationsQuery = useQuery({
-    queryKey: ['document-comparison-proposal-evaluations', proposal?.id || 'none'],
-    enabled: Boolean(proposal?.id),
+    queryKey: ['document-comparison-proposal-evaluations', comparisonId, proposal?.id || 'none'],
+    enabled: Boolean(proposal?.id && comparison?.id === comparisonId),
     queryFn: () => proposalsClient.getEvaluations(proposal.id),
+    placeholderData: undefined,
   });
 
   const sharedReportsQuery = useQuery({
@@ -531,10 +569,17 @@ export default function DocumentComparisonDetail() {
     );
   }
 
-  if (comparisonQuery.isLoading) {
+  if (comparisonQuery.isLoading || hasMismatchedComparisonPayload) {
     return (
       <div className="min-h-screen bg-slate-50 py-8">
-        <div className="max-w-7xl mx-auto px-6 text-slate-500">Loading comparison...</div>
+        <div className="max-w-7xl mx-auto px-6">
+          <Card className="border border-slate-200 shadow-sm">
+            <CardContent className="py-8 flex items-center gap-2 text-slate-500">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Loading comparison...
+            </CardContent>
+          </Card>
+        </div>
       </div>
     );
   }
@@ -854,6 +899,12 @@ export default function DocumentComparisonDetail() {
                       {evaluationHistory.map((evaluation, index) => {
                         const rowMeta = getEvaluationRowMeta(evaluation);
                         const rowFailure = extractEvaluationFailureDetails(evaluation?.result?.error);
+                        const rowInputMeta = getEvaluationInputMeta(evaluation);
+                        const hasRowInputMeta =
+                          Boolean(rowInputMeta.inputSharedHash) ||
+                          Boolean(rowInputMeta.inputConfHash) ||
+                          Number.isFinite(Number(rowInputMeta.inputSharedLen)) ||
+                          Number.isFinite(Number(rowInputMeta.inputConfLen));
                         return (
                           <div
                             key={evaluation.id || `evaluation-${index}`}
@@ -870,6 +921,21 @@ export default function DocumentComparisonDetail() {
                                   <p className="text-xs text-slate-500">
                                     Failure code:{' '}
                                     <span className="font-mono text-slate-700">{rowFailure.failureCode}</span>
+                                  </p>
+                                ) : null}
+                                {isOwnerView && hasRowInputMeta ? (
+                                  <p className="text-xs text-slate-500">
+                                    Inputs:{' '}
+                                    <span className="font-mono text-slate-700">
+                                      shared[{rowInputMeta.inputSharedLen ?? '—'}|{rowInputMeta.inputSharedHash || '—'}]
+                                    </span>{' '}
+                                    ·{' '}
+                                    <span className="font-mono text-slate-700">
+                                      conf[{rowInputMeta.inputConfLen ?? '—'}|{rowInputMeta.inputConfHash || '—'}]
+                                    </span>
+                                    {Number.isFinite(Number(rowInputMeta.inputVersion))
+                                      ? ` · v${rowInputMeta.inputVersion}`
+                                      : ''}
                                   </p>
                                 ) : null}
                               </div>

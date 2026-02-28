@@ -18,6 +18,18 @@ function normalizeEmail(value: unknown) {
   return typeof value === 'string' ? value.trim().toLowerCase() : '';
 }
 
+function asText(value: unknown) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function toSafeInteger(value: unknown) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return null;
+  }
+  return Math.floor(numeric);
+}
+
 export default async function handler(req: any, res: any, proposalIdParam?: string) {
   await withApiRoute(req, res, '/api/proposals/[id]/evaluations', async (context) => {
     ensureMethod(req, ['GET']);
@@ -60,6 +72,19 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
 
     ok(res, 200, {
       evaluations: rows.map((row) => ({
+        ...(function mapEvaluationInputTrace() {
+          const trace =
+            row?.result?.input_trace && typeof row.result.input_trace === 'object' && !Array.isArray(row.result.input_trace)
+              ? row.result.input_trace
+              : {};
+          return {
+            input_shared_hash: row.inputSharedHash || asText(trace.shared_hash) || null,
+            input_conf_hash: row.inputConfHash || asText(trace.confidential_hash) || null,
+            input_shared_len: row.inputSharedLen ?? toSafeInteger(trace.shared_length),
+            input_conf_len: row.inputConfLen ?? toSafeInteger(trace.confidential_length),
+            input_version: row.inputVersion ?? toSafeInteger(trace.input_version),
+          };
+        })(),
         id: row.id,
         proposal_id: row.proposalId,
         source: row.source,
