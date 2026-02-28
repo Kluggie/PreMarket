@@ -473,6 +473,13 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
           action: 'patch_row_persisted',
           comparisonId: updated?.id || existing.id,
           updatedAt: updated?.updatedAt || null,
+          draftStep: updated?.draftStep || existing.draftStep,
+          stateChange: {
+            previousStatus: existing.status,
+            nextStatus: updated?.status || existing.status,
+            previousDraftStep: existing.draftStep,
+            nextDraftStep: updated?.draftStep || existing.draftStep,
+          },
           writeSummary: {
             docATextLength: Number(String(updated?.docAText || nextDocAText).length),
             docBTextLength: Number(String(updated?.docBText || nextDocBText).length),

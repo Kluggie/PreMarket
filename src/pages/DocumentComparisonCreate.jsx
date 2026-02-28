@@ -507,6 +507,10 @@ export default function DocumentComparisonCreate() {
   const [docBSource, setDocBSource] = useState('typed');
   const [docAFiles, setDocAFiles] = useState([]);
   const [docBFiles, setDocBFiles] = useState([]);
+  
+  // Hydration-reactive state: These track if we're loading draft data to avoid
+  // overwriting user edits with stale DB values
+  const [draftDataLoaded, setDraftDataLoaded] = useState(false);
 
   const [docASelectedFile, setDocASelectedFile] = useState(null);
   const [docBSelectedFile, setDocBSelectedFile] = useState(null);
@@ -725,6 +729,7 @@ export default function DocumentComparisonCreate() {
     );
     setDraftDirty(false);
     setLastEditAt(serverUpdatedAtMs || 0);
+    setDraftDataLoaded(true);
   }, [
     draftQuery.data,
     ignoredRouteDraftId,
@@ -1467,13 +1472,13 @@ export default function DocumentComparisonCreate() {
       await waitForActiveSave();
     }
 
-    if (step === 2 && bounded !== 2) {
+    // CRITICAL: Always attempt to save current step before navigating away
+    // This prevents Step 1, Step 2, and Step 3 data loss on navigation
+    if (isDirtyRef.current && step !== bounded) {
       await bestEffortSaveDraft({
-        reason: 'step-navigation-leave-step-2',
-        stepToSave: 2,
+        reason: `step-navigation-from-step-${step}`,
+        stepToSave: Math.max(2, step),
       });
-      setStep(bounded);
-      return;
     }
 
     if (bounded === 2 && !comparisonId) {
@@ -1496,17 +1501,6 @@ export default function DocumentComparisonCreate() {
       return;
     }
 
-    try {
-      await runSaveDraftMutation({
-        stepToSave: bounded,
-        silent: true,
-        nonBlocking: true,
-      });
-    } catch {
-      if (bounded === 2) {
-        toast("Couldn't save import step yet - your changes will be saved when you hit Save in the editor.");
-      }
-    }
     setStep(bounded);
   };
 

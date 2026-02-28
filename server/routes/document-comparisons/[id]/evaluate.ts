@@ -753,6 +753,26 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     });
     const sharedLength = Number(evaluationInputTrace.shared_length || 0);
     const confidentialLength = Number(evaluationInputTrace.confidential_length || 0);
+
+    // Dev logging: Track evaluation request
+    if (process.env.NODE_ENV !== 'production') {
+      console.info(
+        JSON.stringify({
+          level: 'info',
+          route: '/api/document-comparisons/[id]/evaluate',
+          event: 'evaluation_input_validated',
+          requestId,
+          comparisonId: existing.id,
+          inputSource,
+          inputSummary: {
+            confidentialLength,
+            sharedLength,
+            draftStep: draft.draftStep,
+          },
+        }),
+      );
+    }
+
     if (sharedLength < MIN_SHARED_EVALUATION_TEXT_LENGTH) {
       throw new ApiError(
         400,
@@ -972,6 +992,27 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
           .returning(),
     });
     const updated = firstRow(updatedRows);
+
+    // Dev logging: Track successful evaluation persistence
+    if (process.env.NODE_ENV !== 'production') {
+      console.info(
+        JSON.stringify({
+          level: 'info',
+          route: '/api/document-comparisons/[id]/evaluate',
+          event: 'evaluation_persisted_success',
+          requestId,
+          comparisonId: updated?.id || existing.id,
+          status: updated?.status || 'unknown',
+          draftStep: updated?.draftStep || 'unknown',
+          updatedAt: updated?.updatedAt || null,
+          evaluationSummary: {
+            hasEvaluationResult: Boolean(evaluation),
+            hasPublicReport: Boolean(evaluation?.report),
+          },
+        }),
+      );
+    }
+
     if (!updated) {
       throw new ApiError(500, 'db_write_failed', 'Failed to persist document comparison evaluation success', {
         requestId,
