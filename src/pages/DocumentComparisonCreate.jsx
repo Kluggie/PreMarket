@@ -675,6 +675,7 @@ export default function DocumentComparisonCreate() {
     const draftStep = resolveHydratedDraftStep({
       serverDraftStep: comparison.draft_step || 1,
       routeStep: routeState.step || 1,
+      localStep: stepRef.current,
       hasRouteStepParam: routeState.hasStepParam,
       maxStep: TOTAL_EDITOR_STEPS,
     });
@@ -1240,6 +1241,17 @@ export default function DocumentComparisonCreate() {
     stepRef.current = step;
     isDirtyRef.current = isDirty;
   }, [isDirty, step]);
+
+  useEffect(() => {
+    if (!routeState.hasStepParam) {
+      return;
+    }
+    const routedStep = clampStep(routeState.step || 1);
+    if (routedStep === stepRef.current) {
+      return;
+    }
+    setStep(routedStep);
+  }, [routeState.hasStepParam, routeState.step]);
 
   useEffect(() => {
     comparisonIdRef.current = comparisonId;

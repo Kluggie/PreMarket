@@ -53,6 +53,7 @@ test('hydrated step respects explicit route step when provided', () => {
   const resolved = resolveHydratedDraftStep({
     serverDraftStep: 2,
     routeStep: 1,
+    localStep: 1,
     hasRouteStepParam: true,
     maxStep: 2,
   });
@@ -64,7 +65,20 @@ test('hydrated step falls back to server draft step when route step is absent', 
   const resolved = resolveHydratedDraftStep({
     serverDraftStep: 2,
     routeStep: 1,
+    localStep: 1,
     hasRouteStepParam: false,
+    maxStep: 2,
+  });
+
+  assert.equal(resolved, 2);
+});
+
+test('hydrated step keeps in-flight local step when route step is stale', () => {
+  const resolved = resolveHydratedDraftStep({
+    serverDraftStep: 2,
+    routeStep: 1,
+    localStep: 2,
+    hasRouteStepParam: true,
     maxStep: 2,
   });
 

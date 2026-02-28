@@ -60,12 +60,19 @@ function clampStep(value, fallbackStep, maxStep) {
 export function resolveHydratedDraftStep({
   serverDraftStep,
   routeStep,
+  localStep,
   hasRouteStepParam,
   maxStep = 2,
 }) {
   const serverStep = clampStep(serverDraftStep, 1, maxStep);
   if (hasRouteStepParam) {
-    return clampStep(routeStep, serverStep, maxStep);
+    const routedStep = clampStep(routeStep, serverStep, maxStep);
+    const currentLocalStep = clampStep(localStep, routedStep, maxStep);
+    // Preserve in-flight local navigation while URL params are catching up.
+    if (currentLocalStep !== routedStep) {
+      return currentLocalStep;
+    }
+    return routedStep;
   }
   return serverStep;
 }
