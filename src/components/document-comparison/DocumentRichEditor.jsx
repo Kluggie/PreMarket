@@ -177,6 +177,8 @@ export default function DocumentRichEditor({
   shouldFocus = false,
   focusRequestId = 0,
   jumpToTextRequest = null,
+  'data-testid': testId = null,
+  editorRef = null,
 }) {
   const initialContent = useMemo(() => normalizeEditorContent(content), [content]);
 
@@ -277,6 +279,13 @@ export default function DocumentRichEditor({
       editor.commands.clearContent();
     }
   }, [content, editor]);
+
+  // Expose editor instance via ref for direct content capture
+  useEffect(() => {
+    if (editorRef) {
+      editorRef.current = editor;
+    }
+  }, [editor, editorRef]);
 
   useEffect(() => {
     if (!editor) {
@@ -826,7 +835,7 @@ export default function DocumentRichEditor({
       </div>
 
       <div className={`bg-white overflow-y-auto ${scrollContainerClassName}`} data-testid="doc-rich-editor-scroll">
-        <EditorContent editor={editor} data-testid="doc-rich-editor" />
+        <EditorContent editor={editor} data-testid={testId || 'doc-rich-editor'} />
       </div>
 
       {placeholder ? (

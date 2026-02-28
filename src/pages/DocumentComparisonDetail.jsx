@@ -655,7 +655,7 @@ export default function DocumentComparisonDetail() {
               onClick={() =>
                 navigate(
                   createPageUrl(
-                    `DocumentComparisonCreate?draft=${encodeURIComponent(comparison.id)}&step=1`,
+                    `DocumentComparisonCreate?draft=${encodeURIComponent(comparison.id)}&step=2`,
                   ),
                 )
               }

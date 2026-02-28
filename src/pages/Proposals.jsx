@@ -310,14 +310,32 @@ export default function Proposals() {
                   <div className="py-12 text-center text-slate-500">Loading proposals...</div>
                 ) : isError ? (
                   <div className="py-16 px-6 text-center space-y-3">
-                    <p className="text-red-600 font-medium">Failed to load proposals.</p>
-                    <p className="text-sm text-slate-500">{error?.message || 'Please try again.'}</p>
+                    <p className="text-red-600 font-medium">Failed to load proposals</p>
+                    <p className="text-sm text-slate-500">
+                      {error?.message === 'proposals_query_failed'
+                        ? 'Database connection error. Please refresh or contact support if this persists.'
+                        : error?.message || 'An unexpected error occurred.'}
+                    </p>
                     <Button variant="outline" onClick={() => refetch()}>
                       Retry
                     </Button>
                   </div>
                 ) : proposals.length === 0 ? (
-                  <div className="py-16 text-center text-slate-500">No proposals match this filter.</div>
+                  <div className="py-16 px-6 text-center space-y-3">
+                    <p className="text-slate-600 font-medium">No proposals found</p>
+                    <p className="text-sm text-slate-500">
+                      {activeTab === 'drafts' 
+                        ? 'Create your first proposal to get started.'
+                        : `No ${activeTab} proposals yet.`}
+                    </p>
+                    {activeTab === 'drafts' && (
+                      <Link to="/templates">
+                        <Button className="bg-blue-600 hover:bg-blue-700 mt-2">
+                          Create New Proposal
+                        </Button>
+                      </Link>
+                    )}
+                  </div>
                 ) : (
                   <div>
                     {proposals.map((proposal) => (

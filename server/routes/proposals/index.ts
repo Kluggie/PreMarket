@@ -270,6 +270,26 @@ export default async function handler(req: any, res: any) {
           .where(whereClause)
           .orderBy(desc(schema.proposals.createdAt), desc(schema.proposals.id))
           .limit(limit + 1);
+        
+        // Log empty results with context for debugging
+        if (rows.length === 0) {
+          console.warn(
+            JSON.stringify({
+              level: 'warn',
+              route: '/api/proposals',
+              event: 'proposals_list_empty_result',
+              requestId: context.requestId,
+              userId: auth.user.id,
+              userEmail: auth.user.email,
+              tab,
+              statusFilter,
+              vercelEnv: dbIdentity.vercelEnv,
+              dbHost: dbIdentity.dbHost,
+              dbName: dbIdentity.dbName,
+              dbSchema: dbIdentity.dbSchema,
+            }),
+          );
+        }
       } catch (error: any) {
         console.error(
           JSON.stringify({

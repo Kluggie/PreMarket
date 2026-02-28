@@ -550,6 +550,8 @@ export default function DocumentComparisonCreate() {
 
   const docAInputFileRef = useRef(null);
   const docBInputFileRef = useRef(null);
+  const docAEditorRef = useRef(null);
+  const docBEditorRef = useRef(null);
   const recoveredMissingDraftIdRef = useRef('');
   const draftDirtyRef = useRef(false);
   const lastEditAtRef = useRef(0);
@@ -933,6 +935,7 @@ export default function DocumentComparisonCreate() {
             docAHtmlLength: Number(String(payload.doc_a_html || '').length),
             docBHtmlLength: Number(String(payload.doc_b_html || '').length),
           },
+          timestamp: new Date().toISOString(),
         });
       }
 
@@ -1051,6 +1054,9 @@ export default function DocumentComparisonCreate() {
           comparisonId: persistedComparisonId,
           updated_at:
             comparison?.updated_at || comparison?.updated_date || comparison?.updatedAt || null,
+          persistedDocALength: Number(String(persistedDocAText || '').length),
+          persistedDocBLength: Number(String(persistedDocBText || '').length),
+          timestamp: new Date().toISOString(),
         });
       }
 
@@ -1528,33 +1534,64 @@ export default function DocumentComparisonCreate() {
   };
 
   const handleStep2SaveDraftClick = async () => {
-    // Capture the latest React state snapshot immediately before saving.
+    // Capture content directly from Tiptap editor instances for latest, most reliable state
+    const docAEditor = docAEditorRef.current;
+    const docBEditor = docBEditorRef.current;
+
+    const editorAText = docAEditor?.getText({ blockSeparator: '\n\n' }).trim() || '';
+    const editorAHtml = docAEditor?.getHTML() || '';
+    const editorAJson = docAEditor?.getJSON() || null;
+
+    const editorBText = docBEditor?.getText({ blockSeparator: '\n\n' }).trim() || '';
+    const editorBHtml = docBEditor?.getHTML() || '';
+    const editorBJson = docBEditor?.getJSON() || null;
+
+    // Update state ref with the latest content from editors
     latestDraftStateRef.current = {
       ...latestDraftStateRef.current,
       title,
-      docAText,
-      docBText,
-      docAHtml,
-      docBHtml,
-      docAJson,
-      docBJson,
+      docAText: editorAText,
+      docBText: editorBText,
+      docAHtml: editorAHtml,
+      docBHtml: editorBHtml,
+      docAJson: editorAJson,
+      docBJson: editorBJson,
       docASource,
       docBSource,
       docAFiles: Array.isArray(docAFiles) ? docAFiles : [],
       docBFiles: Array.isArray(docBFiles) ? docBFiles : [],
     };
+
+    // Validation: warn if both editors are completely empty when overwriting existing comparison
+    const hasDocAContent = Boolean(editorAText.trim());
+    const hasDocBContent = Boolean(editorBText.trim());
+    const isNewComparison = !comparisonId;
+
+    if (!hasDocAContent && !hasDocBContent && !isNewComparison) {
+      toast.warning('Cannot save: both documents are empty. Add content to at least one document.');
+      return;
+    }
+
+    // Allow saving empty drafts for new comparisons (user can fill in later)
+    // But warn if user tries to save completely empty when creating new
+    if (!hasDocAContent && !hasDocBContent && isNewComparison) {
+      toast.info('You are creating an empty draft. Add content before proceeding to evaluation.');
+    }
+
     if (import.meta.env.DEV) {
-      const snapshot = latestDraftStateRef.current || {};
-      console.info('[DocumentComparisonCreate] Step 2 Save Draft clicked', {
+      console.info('[DocumentComparisonCreate] Save Draft from Tiptap editors', {
         comparisonId: comparisonId || null,
-        payloadPreview: {
-          docATextLength: Number(String(snapshot.docAText || docAText || '').length),
-          docBTextLength: Number(String(snapshot.docBText || docBText || '').length),
-          hasDocAJson: Boolean(snapshot.docAJson || docAJson),
-          hasDocBJson: Boolean(snapshot.docBJson || docBJson),
+        isNewComparison,
+        capturedFromEditor: {
+          docATextLength: Number(editorAText.length),
+          docBTextLength: Number(editorBText.length),
+          hasDocAJson: Boolean(editorAJson),
+          hasDocBJson: Boolean(editorBJson),
         },
+        timestamp: new Date().toISOString(),
       });
     }
+
     await saveDraft(2);
   };
 
@@ -2263,6 +2300,8 @@ export default function DocumentComparisonCreate() {
                   : null,
             });
           }}
+          data-testid={isA ? 'doc-a-editor' : 'doc-b-editor'}
+          editorRef={isA ? docAEditorRef : docBEditorRef}
           onChange={({ html, text, json }) => {
             markDraftEdited();
             if (isA) {

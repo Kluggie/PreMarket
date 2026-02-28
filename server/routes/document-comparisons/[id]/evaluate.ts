@@ -9,6 +9,7 @@ import { newId } from '../../../_lib/ids.js';
 import { createNotificationEvent } from '../../../_lib/notifications.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 import { evaluateDocumentComparisonWithVertex } from '../../../_lib/vertex-evaluation.js';
+import { getVertexConfig } from '../../../_lib/integrations.js';
 import {
   htmlToEditorText,
   sanitizeEditorHtml,
@@ -697,6 +698,23 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     }
     context.userId = auth.user.id;
     const requestId = asText((context as any)?.requestId) || newId('request');
+
+    // Log evaluation start with Vertex config status
+    if (process.env.NODE_ENV !== 'production') {
+      const vertexConfig = getVertexConfig();
+      console.info(
+        JSON.stringify({
+          level: 'info',
+          route: '/api/document-comparisons/[id]/evaluate',
+          event: 'evaluation_request_start',
+          requestId,
+          comparisonId,
+          vertexConfigured: vertexConfig.ready,
+          vertexModel: vertexConfig.model,
+          configErrorCode: vertexConfig.configErrorCode || null,
+        }),
+      );
+    }
 
     const db = getDb();
     const existingRows = await db
