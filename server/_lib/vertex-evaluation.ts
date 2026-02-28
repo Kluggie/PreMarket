@@ -354,6 +354,10 @@ function invalidModelOutput(message: string, extra: Record<string, unknown> = {}
   return new ApiError(502, 'invalid_model_output', message, extra);
 }
 
+function isInvalidModelOutputError(error: unknown) {
+  return asLower((error as any)?.code) === 'invalid_model_output';
+}
+
 function requireObject(value: unknown, path: string): Record<string, any> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw invalidModelOutput(`${path} must be an object`);
@@ -603,6 +607,32 @@ function ensureDocumentComparisonSpecificity(report: ContractEvaluationReport, s
   }
   report.sections = sections;
   return false;
+}
+
+function appendParserFallbackSection(report: ContractEvaluationReport, message: string) {
+  const sections = Array.isArray(report.sections) ? [...report.sections] : [];
+  const normalizedMessage = asText(message) || 'Vertex output could not be parsed; report was generated from supplied inputs.';
+  const existing = sections.find(
+    (section) =>
+      asLower((section as any)?.key) === 'parser_fallback' ||
+      asLower((section as any)?.heading) === 'parser fallback',
+  ) as any;
+
+  if (existing) {
+    const nextBullets = Array.isArray(existing.bullets) ? [...existing.bullets] : [];
+    if (!nextBullets.includes(normalizedMessage)) {
+      nextBullets.push(normalizedMessage);
+    }
+    existing.bullets = nextBullets.slice(0, 4);
+  } else {
+    sections.push({
+      key: 'parser_fallback',
+      heading: 'Parser Fallback',
+      bullets: [normalizedMessage],
+    });
+  }
+
+  report.sections = sections;
 }
 
 function tokenize(input: string) {
@@ -2280,26 +2310,34 @@ export async function evaluateDocumentComparisonWithVertex(
     const parsed = parseModelJson(vertex.text);
     if (!parsed) {
       report = buildMockComparisonReport(normalizedInput, heuristics);
-      report.sections = [
-        ...(Array.isArray(report.sections) ? report.sections : []),
-        {
-          key: 'parser_fallback',
-          heading: 'Parser Fallback',
-          bullets: ['Vertex returned unstructured output; report was generated from supplied inputs.'],
-        },
-      ];
+      appendParserFallbackSection(
+        report,
+        'Vertex returned unstructured output; report was generated from supplied inputs.',
+      );
       model = `${vertex.model}-parser-fallback`;
     } else {
-      report = normalizeContractReport(parsed, {
-        mode: 'document_comparison',
-        anchorContext: {
-          docAText: normalizedInput.docAText,
-          docBText: normalizedInput.docBText,
-          docASpans: normalizedInput.docASpans,
-          docBSpans: normalizedInput.docBSpans,
-        },
-      });
-      model = vertex.model;
+      try {
+        report = normalizeContractReport(parsed, {
+          mode: 'document_comparison',
+          anchorContext: {
+            docAText: normalizedInput.docAText,
+            docBText: normalizedInput.docBText,
+            docASpans: normalizedInput.docASpans,
+            docBSpans: normalizedInput.docBSpans,
+          },
+        });
+        model = vertex.model;
+      } catch (error: any) {
+        if (!isInvalidModelOutputError(error)) {
+          throw error;
+        }
+        report = buildMockComparisonReport(normalizedInput, heuristics);
+        appendParserFallbackSection(
+          report,
+          'Vertex returned an unexpected schema; report was generated from supplied inputs.',
+        );
+        model = `${vertex.model}-schema-fallback`;
+      }
     }
   }
 
