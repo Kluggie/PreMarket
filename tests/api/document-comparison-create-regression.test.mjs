@@ -142,7 +142,9 @@ if (!hasDatabaseUrl()) {
     await apiHandler(createReq, createRes);
     assert.equal(createRes.statusCode, 201);
     const comparisonId = String(createRes.jsonBody().comparison?.id || '');
+    const createdUpdatedAtMs = Date.parse(String(createRes.jsonBody().comparison?.updated_date || ''));
     assert.equal(Boolean(comparisonId), true);
+    assert.equal(Number.isFinite(createdUpdatedAtMs), true);
 
     const latestDocAJson = {
       type: 'doc',
@@ -189,6 +191,9 @@ if (!hasDatabaseUrl()) {
     assert.equal(step2PatchRes.jsonBody().comparison.doc_a_text, 'Latest confidential clause text.');
     assert.equal(step2PatchRes.jsonBody().comparison.doc_b_text, 'Latest shared clause text.');
     assert.equal(step2PatchRes.jsonBody().comparison.draft_step, 2);
+    const savedUpdatedAtMs = Date.parse(String(step2PatchRes.jsonBody().comparison.updated_date || ''));
+    assert.equal(Number.isFinite(savedUpdatedAtMs), true);
+    assert.equal(savedUpdatedAtMs >= createdUpdatedAtMs, true);
 
     const failEvalReq = createApiRequest({
       method: 'POST',

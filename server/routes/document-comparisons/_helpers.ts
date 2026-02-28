@@ -96,8 +96,8 @@ export function mapComparisonRow(row: any) {
       typeof inputs.doc_b_url === 'string' && inputs.doc_b_url.trim().length > 0
         ? inputs.doc_b_url.trim()
         : null,
-    doc_a_spans: [],
-    doc_b_spans: [],
+    doc_a_spans: toSpanArray(row.docASpans),
+    doc_b_spans: toSpanArray(row.docBSpans),
     evaluation_result: row.evaluationResult || {},
     public_report: row.publicReport || {},
     inputs: row.inputs || {},
@@ -813,6 +813,28 @@ export function toJsonObject(value: unknown) {
 
 export function toArray(value: unknown) {
   return Array.isArray(value) ? value : [];
+}
+
+export function toSpanArray(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((entry) => {
+      const start = Number((entry as any)?.start);
+      const end = Number((entry as any)?.end);
+      const level = String((entry as any)?.level || 'confidential').trim() || 'confidential';
+      if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+        return null;
+      }
+      return {
+        start: Math.floor(start),
+        end: Math.floor(end),
+        level,
+      };
+    })
+    .filter(Boolean);
 }
 
 export function normalizeEmail(value: unknown) {

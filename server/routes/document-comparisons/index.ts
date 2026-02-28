@@ -19,6 +19,7 @@ import {
   normalizeEmail,
   parseStep,
   toArray,
+  toSpanArray,
   toJsonObject,
 } from './_helpers.js';
 import { assertDocumentComparisonWithinLimits } from './_limits.js';
@@ -97,6 +98,8 @@ export default async function handler(req: any, res: any) {
     );
     const draftStep = parseStep(body.draftStep || body.draft_step, 1);
     const metadata = toJsonObject(body.metadata);
+    const docASpans = toSpanArray(body.docASpans || body.doc_a_spans);
+    const docBSpans = toSpanArray(body.docBSpans || body.doc_b_spans);
     const rawInputs = toJsonObject(body.inputs);
     const docASource = asText(body.docASource || body.doc_a_source) || asText(rawInputs.doc_a_source) || 'typed';
     const docBSource = asText(body.docBSource || body.doc_b_source) || asText(rawInputs.doc_b_source) || 'typed';
@@ -131,6 +134,25 @@ export default async function handler(req: any, res: any) {
       confidential_doc_content: docAText,
       shared_doc_content: docBText,
     };
+
+    if (process.env.NODE_ENV !== 'production') {
+      console.info(
+        JSON.stringify({
+          level: 'info',
+          route: '/api/document-comparisons',
+          action: 'create_request_received',
+          userId: auth.user.id,
+          bodyKeys: Object.keys(body || {}).sort(),
+          writeSummary: {
+            docATextLength: Number(docAText.length),
+            docBTextLength: Number(docBText.length),
+            docASpanCount: Number(docASpans.length),
+            docBSpanCount: Number(docBSpans.length),
+            hasMetadata: Boolean(Object.keys(metadata || {}).length),
+          },
+        }),
+      );
+    }
 
     let linkedProposalId = proposalId;
     if (linkedProposalId) {
@@ -180,8 +202,8 @@ export default async function handler(req: any, res: any) {
         partyBLabel,
         docAText,
         docBText,
-        docASpans: [],
-        docBSpans: [],
+        docASpans,
+        docBSpans,
         evaluationResult: {},
         publicReport: {},
         inputs,
@@ -190,6 +212,24 @@ export default async function handler(req: any, res: any) {
         updatedAt: now,
       })
       .returning();
+
+    if (process.env.NODE_ENV !== 'production') {
+      console.info(
+        JSON.stringify({
+          level: 'info',
+          route: '/api/document-comparisons',
+          action: 'create_row_persisted',
+          comparisonId: created.id,
+          updatedAt: created.updatedAt,
+          writeSummary: {
+            docATextLength: Number(String(created.docAText || '').length),
+            docBTextLength: Number(String(created.docBText || '').length),
+            docASpanCount: Number(Array.isArray(created.docASpans) ? created.docASpans.length : 0),
+            docBSpanCount: Number(Array.isArray(created.docBSpans) ? created.docBSpans.length : 0),
+          },
+        }),
+      );
+    }
 
     if (linkedProposalId) {
       await db

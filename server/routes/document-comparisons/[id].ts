@@ -21,6 +21,7 @@ import {
   resolveEditableSide,
   parseStep,
   toArray,
+  toSpanArray,
   toJsonObject,
 } from './_helpers.js';
 import { assertDocumentComparisonWithinLimits } from './_limits.js';
@@ -126,6 +127,10 @@ function hasAnyWritablePatchField(body: Record<string, unknown>) {
     'doc_a_url',
     'docBUrl',
     'doc_b_url',
+    'docASpans',
+    'doc_a_spans',
+    'docBSpans',
+    'doc_b_spans',
     'evaluationResult',
     'evaluation_result',
     'publicReport',
@@ -303,6 +308,8 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     const hasDocBHtml = body.docBHtml !== undefined || body.doc_b_html !== undefined;
     const hasDocAJson = body.docAJson !== undefined || body.doc_a_json !== undefined;
     const hasDocBJson = body.docBJson !== undefined || body.doc_b_json !== undefined;
+    const hasDocASpans = body.docASpans !== undefined || body.doc_a_spans !== undefined;
+    const hasDocBSpans = body.docBSpans !== undefined || body.doc_b_spans !== undefined;
     const hasDocASource = body.docASource !== undefined || body.doc_a_source !== undefined;
     const hasDocAFiles = body.docAFiles !== undefined || body.doc_a_files !== undefined;
     const hasDocAUrl = body.docAUrl !== undefined || body.doc_a_url !== undefined;
@@ -325,6 +332,12 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     const nextDocBJson = hasDocBJson
       ? toOptionalJsonObject(body.docBJson || body.doc_b_json)
       : toOptionalJsonObject((existing.inputs || {}).doc_b_json);
+    const nextDocASpans = hasDocASpans
+      ? toSpanArray(body.docASpans || body.doc_a_spans)
+      : toSpanArray(existing.docASpans);
+    const nextDocBSpans = hasDocBSpans
+      ? toSpanArray(body.docBSpans || body.doc_b_spans)
+      : toSpanArray(existing.docBSpans);
 
     if (
       accessMode === 'token' &&
@@ -335,6 +348,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
         hasDocAText ||
         hasDocAHtml ||
         hasDocAJson ||
+        hasDocASpans ||
         hasDocASource ||
         hasDocAFiles ||
         hasDocAUrl ||
@@ -346,7 +360,16 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
 
     if (
       editableSide === 'b' &&
-      (hasDocAText || hasDocAHtml || hasDocAJson || hasDocASource || hasDocAFiles || hasDocAUrl || hasPartyALabel)
+      (
+        hasDocAText ||
+        hasDocAHtml ||
+        hasDocAJson ||
+        hasDocASpans ||
+        hasDocASource ||
+        hasDocAFiles ||
+        hasDocAUrl ||
+        hasPartyALabel
+      )
     ) {
       throw new ApiError(403, 'forbidden_side', 'Recipient can only update shared information content');
     }
@@ -377,8 +400,8 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       partyBLabel: SHARED_LABEL,
       docAText: nextDocAText,
       docBText: nextDocBText,
-      docASpans: [],
-      docBSpans: [],
+      docASpans: nextDocASpans,
+      docBSpans: nextDocBSpans,
       evaluationResult:
         body.evaluationResult && typeof body.evaluationResult === 'object'
           ? body.evaluationResult
@@ -411,11 +434,54 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       updatedAt: new Date(),
     };
 
+    if (process.env.NODE_ENV !== 'production') {
+      console.info(
+        JSON.stringify({
+          level: 'info',
+          route: '/api/document-comparisons/[id]',
+          action: 'patch_request_received',
+          comparisonId: existing.id,
+          accessMode,
+          editableSide,
+          bodyKeys: Object.keys(body || {}).sort(),
+          writeSummary: {
+            docATextLength: Number(nextDocAText.length),
+            docBTextLength: Number(nextDocBText.length),
+            docASpanCount: Number(nextDocASpans.length),
+            docBSpanCount: Number(nextDocBSpans.length),
+            hasMetadata: Boolean(
+              updateValues.metadata &&
+                typeof updateValues.metadata === 'object' &&
+                Object.keys(updateValues.metadata).length,
+            ),
+          },
+        }),
+      );
+    }
+
     const [updated] = await db
       .update(schema.documentComparisons)
       .set(updateValues)
       .where(eq(schema.documentComparisons.id, existing.id))
       .returning();
+
+    if (process.env.NODE_ENV !== 'production') {
+      console.info(
+        JSON.stringify({
+          level: 'info',
+          route: '/api/document-comparisons/[id]',
+          action: 'patch_row_persisted',
+          comparisonId: updated?.id || existing.id,
+          updatedAt: updated?.updatedAt || null,
+          writeSummary: {
+            docATextLength: Number(String(updated?.docAText || nextDocAText).length),
+            docBTextLength: Number(String(updated?.docBText || nextDocBText).length),
+            docASpanCount: Number(Array.isArray(updated?.docASpans) ? updated.docASpans.length : nextDocASpans.length),
+            docBSpanCount: Number(Array.isArray(updated?.docBSpans) ? updated.docBSpans.length : nextDocBSpans.length),
+          },
+        }),
+      );
+    }
 
     if (existing.proposalId) {
       await db
