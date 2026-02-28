@@ -175,7 +175,6 @@ function buildDraftStateHash(payload) {
   return JSON.stringify({
     comparisonId: payload.comparisonId || '',
     linkedProposalId: payload.linkedProposalId || '',
-    step: clampStep(payload.step || 1),
     title: payload.title || '',
     docAText: payload.docAText || '',
     docBText: payload.docBText || '',
@@ -187,6 +186,28 @@ function buildDraftStateHash(payload) {
     docBSource: payload.docBSource || 'typed',
     docAFiles: Array.isArray(payload.docAFiles) ? payload.docAFiles : [],
     docBFiles: Array.isArray(payload.docBFiles) ? payload.docBFiles : [],
+  });
+}
+
+function buildDraftStateHashFromSnapshot({
+  comparisonId = '',
+  linkedProposalId = '',
+  snapshot = {},
+}) {
+  return buildDraftStateHash({
+    comparisonId,
+    linkedProposalId,
+    title: snapshot.title || '',
+    docAText: snapshot.docAText || '',
+    docBText: snapshot.docBText || '',
+    docAHtml: snapshot.docAHtml || '<p></p>',
+    docBHtml: snapshot.docBHtml || '<p></p>',
+    docAJson: snapshot.docAJson || null,
+    docBJson: snapshot.docBJson || null,
+    docASource: snapshot.docASource || 'typed',
+    docBSource: snapshot.docBSource || 'typed',
+    docAFiles: Array.isArray(snapshot.docAFiles) ? snapshot.docAFiles : [],
+    docBFiles: Array.isArray(snapshot.docBFiles) ? snapshot.docBFiles : [],
   });
 }
 
@@ -539,6 +560,7 @@ export default function DocumentComparisonCreate() {
   const routeProposalIdRef = useRef(routeState.proposalId || '');
   const routeTokenRef = useRef(routeState.token || '');
   const saveMutationPendingRef = useRef(false);
+  const activeSavePromiseRef = useRef(null);
   const docASpansRef = useRef([]);
   const docBSpansRef = useRef([]);
   const metadataRef = useRef({});
@@ -681,21 +703,22 @@ export default function DocumentComparisonCreate() {
     });
     setStep(draftStep);
     setLastSavedHash(
-      buildDraftStateHash({
+      buildDraftStateHashFromSnapshot({
         comparisonId: comparison.id || resolvedDraftId || '',
         linkedProposalId: draftQuery.data.proposal?.id || routeState.proposalId || '',
-        step: draftStep,
-        title: comparison.title || '',
-        docAText: nextDocAText,
-        docBText: nextDocBText,
-        docAHtml: nextDocAHtml,
-        docBHtml: nextDocBHtml,
-        docAJson: nextDocAJson,
-        docBJson: nextDocBJson,
-        docASource: nextDocASource,
-        docBSource: nextDocBSource,
-        docAFiles: nextDocAFiles,
-        docBFiles: nextDocBFiles,
+        snapshot: {
+          title: comparison.title || '',
+          docAText: nextDocAText,
+          docBText: nextDocBText,
+          docAHtml: nextDocAHtml,
+          docBHtml: nextDocBHtml,
+          docAJson: nextDocAJson,
+          docBJson: nextDocBJson,
+          docASource: nextDocASource,
+          docBSource: nextDocBSource,
+          docAFiles: nextDocAFiles,
+          docBFiles: nextDocBFiles,
+        },
       }),
     );
     setDraftDirty(false);
@@ -819,26 +842,26 @@ export default function DocumentComparisonCreate() {
 
   const currentStateHash = useMemo(
     () =>
-      buildDraftStateHash({
+      buildDraftStateHashFromSnapshot({
         comparisonId,
         linkedProposalId,
-        step,
-        title,
-        docAText,
-        docBText,
-        docAHtml,
-        docBHtml,
-        docAJson,
-        docBJson,
-        docASource,
-        docBSource,
-        docAFiles,
-        docBFiles,
+        snapshot: {
+          title,
+          docAText,
+          docBText,
+          docAHtml,
+          docBHtml,
+          docAJson,
+          docBJson,
+          docASource,
+          docBSource,
+          docAFiles,
+          docBFiles,
+        },
       }),
     [
       comparisonId,
       linkedProposalId,
-      step,
       title,
       docAText,
       docBText,
@@ -855,6 +878,7 @@ export default function DocumentComparisonCreate() {
 
   const saveDraftMutation = useMutation({
     mutationFn: async ({ stepToSave, silent = false, nonBlocking = false }) => {
+      const saveStartedAtMs = Date.now();
       const savedStep = clampStep(stepToSave || step || 1);
       const snapshot = latestDraftStateRef.current || {};
       const payload = buildComparisonDraftSavePayload({
@@ -883,6 +907,19 @@ export default function DocumentComparisonCreate() {
         metadata: metadataRef.current,
         sanitizeHtml: sanitizeEditorHtml,
       });
+      const requestedSnapshot = {
+        title: asText(payload.title) || 'Untitled Comparison',
+        docAText: String(payload.doc_a_text || ''),
+        docBText: String(payload.doc_b_text || ''),
+        docAHtml: asText(payload.doc_a_html) || textToHtml(payload.doc_a_text || ''),
+        docBHtml: asText(payload.doc_b_html) || textToHtml(payload.doc_b_text || ''),
+        docAJson: parseDocJson(payload.doc_a_json),
+        docBJson: parseDocJson(payload.doc_b_json),
+        docASource: asText(payload.doc_a_source) || 'typed',
+        docBSource: asText(payload.doc_b_source) || 'typed',
+        docAFiles: Array.isArray(payload.doc_a_files) ? payload.doc_a_files : [],
+        docBFiles: Array.isArray(payload.doc_b_files) ? payload.doc_b_files : [],
+      };
 
       if (import.meta.env.DEV) {
         console.info('[DocumentComparisonCreate] saveDraft called', {
@@ -938,6 +975,19 @@ export default function DocumentComparisonCreate() {
       const persistedDocBSource = comparison.doc_b_source || docBSource || 'typed';
       const persistedDocAFiles = Array.isArray(comparison.doc_a_files) ? comparison.doc_a_files : docAFiles;
       const persistedDocBFiles = Array.isArray(comparison.doc_b_files) ? comparison.doc_b_files : docBFiles;
+      const persistedSnapshot = {
+        title: persistedTitle,
+        docAText: persistedDocAText,
+        docBText: persistedDocBText,
+        docAHtml: persistedDocAHtml,
+        docBHtml: persistedDocBHtml,
+        docAJson: persistedDocAJson,
+        docBJson: persistedDocBJson,
+        docASource: persistedDocASource,
+        docBSource: persistedDocBSource,
+        docAFiles: persistedDocAFiles,
+        docBFiles: persistedDocBFiles,
+      };
       docASpansRef.current = Array.isArray(comparison.doc_a_spans)
         ? comparison.doc_a_spans
         : Array.isArray(payload.doc_a_spans)
@@ -955,41 +1005,44 @@ export default function DocumentComparisonCreate() {
 
       setComparisonId(persistedComparisonId);
       setLinkedProposalId(persistedProposalId);
-      setStep(persistedStep);
-      setTitle(persistedTitle);
-      setDocAText(persistedDocAText);
-      setDocBText(persistedDocBText);
-      setDocAHtml(persistedDocAHtml);
-      setDocBHtml(persistedDocBHtml);
-      setDocAJson(persistedDocAJson);
-      setDocBJson(persistedDocBJson);
-      setDocASource(persistedDocASource);
-      setDocBSource(persistedDocBSource);
-      setDocAFiles(persistedDocAFiles);
-      setDocBFiles(persistedDocBFiles);
-      setDocAPreviewSnippet(previewSnippet(persistedDocAText));
-      setDocBPreviewSnippet(previewSnippet(persistedDocBText));
-      setDraftDirty(false);
-      setLastEditAt(persistedUpdatedAtMs || Date.now());
+      const hasNewerLocalEdits = lastEditAtRef.current > saveStartedAtMs;
 
-      setLastSavedHash(
-        buildDraftStateHash({
-          comparisonId: persistedComparisonId,
-          linkedProposalId: persistedProposalId,
-          step: persistedStep,
-          title: persistedTitle,
-          docAText: persistedDocAText,
-          docBText: persistedDocBText,
-          docAHtml: persistedDocAHtml,
-          docBHtml: persistedDocBHtml,
-          docAJson: persistedDocAJson,
-          docBJson: persistedDocBJson,
-          docASource: persistedDocASource,
-          docBSource: persistedDocBSource,
-          docAFiles: persistedDocAFiles,
-          docBFiles: persistedDocBFiles,
-        }),
-      );
+      if (!nonBlocking) {
+        latestDraftStateRef.current = persistedSnapshot;
+        setStep(persistedStep);
+        setTitle(persistedTitle);
+        setDocAText(persistedDocAText);
+        setDocBText(persistedDocBText);
+        setDocAHtml(persistedDocAHtml);
+        setDocBHtml(persistedDocBHtml);
+        setDocAJson(persistedDocAJson);
+        setDocBJson(persistedDocBJson);
+        setDocASource(persistedDocASource);
+        setDocBSource(persistedDocBSource);
+        setDocAFiles(persistedDocAFiles);
+        setDocBFiles(persistedDocBFiles);
+        setDocAPreviewSnippet(previewSnippet(persistedDocAText));
+        setDocBPreviewSnippet(previewSnippet(persistedDocBText));
+        setDraftDirty(false);
+        setLastEditAt(persistedUpdatedAtMs || Date.now());
+        setLastSavedHash(
+          buildDraftStateHashFromSnapshot({
+            comparisonId: persistedComparisonId,
+            linkedProposalId: persistedProposalId,
+            snapshot: persistedSnapshot,
+          }),
+        );
+      } else if (!hasNewerLocalEdits) {
+        setDraftDirty(false);
+        setLastEditAt(persistedUpdatedAtMs || Date.now());
+        setLastSavedHash(
+          buildDraftStateHashFromSnapshot({
+            comparisonId: persistedComparisonId,
+            linkedProposalId: persistedProposalId,
+            snapshot: requestedSnapshot,
+          }),
+        );
+      }
       if (!silent) {
         toast.success('Draft saved');
       }
@@ -1027,7 +1080,7 @@ export default function DocumentComparisonCreate() {
         queryClient.setQueryData(['document-comparison-detail', persistedComparisonId], cachedDraftPayload);
       }
 
-      queryClient.invalidateQueries(['proposals']);
+      queryClient.invalidateQueries({ queryKey: ['proposals'] });
       queryClient.invalidateQueries({
         queryKey: ['document-comparison-draft', persistedComparisonId, routeState.token],
       });
@@ -1042,6 +1095,32 @@ export default function DocumentComparisonCreate() {
       toast.error(message);
     },
   });
+
+  const runSaveDraftMutation = useCallback(
+    (variables) => {
+      const savePromise = saveDraftMutation.mutateAsync(variables);
+      activeSavePromiseRef.current = savePromise;
+      return savePromise.finally(() => {
+        if (activeSavePromiseRef.current === savePromise) {
+          activeSavePromiseRef.current = null;
+        }
+      });
+    },
+    [saveDraftMutation],
+  );
+
+  const waitForActiveSave = useCallback(async () => {
+    const pendingSave = activeSavePromiseRef.current;
+    if (!pendingSave) {
+      return;
+    }
+
+    try {
+      await pendingSave;
+    } catch {
+      // The original mutation already handled user-visible error messaging.
+    }
+  }, []);
 
   const persistLatestDraftSnapshot = useCallback(async ({ reason = 'component-unmount', stepToSave = 2 } = {}) => {
     if (saveMutationPendingRef.current || !isDirtyRef.current) {
@@ -1246,12 +1325,15 @@ export default function DocumentComparisonCreate() {
     if (!routeState.hasStepParam) {
       return;
     }
+    if (saveDraftMutation.isPending) {
+      return;
+    }
     const routedStep = clampStep(routeState.step || 1);
     if (routedStep === stepRef.current) {
       return;
     }
     setStep(routedStep);
-  }, [routeState.hasStepParam, routeState.step]);
+  }, [routeState.hasStepParam, routeState.step, saveDraftMutation.isPending]);
 
   useEffect(() => {
     comparisonIdRef.current = comparisonId;
@@ -1340,12 +1422,16 @@ export default function DocumentComparisonCreate() {
 
   const bestEffortSaveDraft = useCallback(
     async ({ reason = 'navigation', stepToSave = step } = {}) => {
-      if (saveDraftMutation.isPending || !isDirty) {
+      if (saveDraftMutation.isPending) {
+        await waitForActiveSave();
+        return;
+      }
+      if (!isDirty) {
         return;
       }
 
       try {
-        await saveDraftMutation.mutateAsync({
+        await runSaveDraftMutation({
           stepToSave,
           silent: true,
           nonBlocking: true,
@@ -1366,13 +1452,13 @@ export default function DocumentComparisonCreate() {
         }
       }
     },
-    [isDirty, saveDraftMutation, step],
+    [isDirty, runSaveDraftMutation, saveDraftMutation.isPending, step, waitForActiveSave],
   );
 
   const jumpStep = async (nextStep) => {
     const bounded = clampStep(nextStep || 1);
     if (saveDraftMutation.isPending) {
-      return;
+      await waitForActiveSave();
     }
 
     if (step === 2 && bounded !== 2) {
@@ -1386,7 +1472,7 @@ export default function DocumentComparisonCreate() {
 
     if (bounded === 2 && !comparisonId) {
       try {
-        const createdId = await saveDraftMutation.mutateAsync({
+        const createdId = await runSaveDraftMutation({
           stepToSave: bounded,
           silent: true,
         });
@@ -1405,7 +1491,7 @@ export default function DocumentComparisonCreate() {
     }
 
     try {
-      await saveDraftMutation.mutateAsync({
+      await runSaveDraftMutation({
         stepToSave: bounded,
         silent: true,
         nonBlocking: true,
@@ -1435,7 +1521,7 @@ export default function DocumentComparisonCreate() {
       return;
     }
     try {
-      await saveDraftMutation.mutateAsync({ stepToSave });
+      await runSaveDraftMutation({ stepToSave });
     } catch {
       // Error toast is handled by mutation onError.
     }
@@ -1513,7 +1599,7 @@ export default function DocumentComparisonCreate() {
     setFinishStage('saving');
     setIsRunningEvaluation(false);
     try {
-      let resolvedId = await saveDraftMutation.mutateAsync({
+      let resolvedId = await runSaveDraftMutation({
         stepToSave: 2,
         silent: true,
       });
@@ -1533,7 +1619,7 @@ export default function DocumentComparisonCreate() {
         evaluationResponse = await documentComparisonsClient.evaluate(resolvedId, evaluationPayload);
       } catch (error) {
         if (isDocumentComparisonNotFoundError(error)) {
-          const recreatedId = await saveDraftMutation.mutateAsync({
+          const recreatedId = await runSaveDraftMutation({
             stepToSave: 2,
             silent: true,
           });
@@ -1637,7 +1723,7 @@ export default function DocumentComparisonCreate() {
       return comparisonId;
     }
     try {
-      const createdId = await saveDraftMutation.mutateAsync({
+      const createdId = await runSaveDraftMutation({
         stepToSave: Math.max(2, clampStep(step || 2)),
         silent: true,
       });
