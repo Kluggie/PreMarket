@@ -67,6 +67,7 @@ export default async function handler(req: any, res: any) {
       .select({
         createdAt: schema.proposals.createdAt,
         status: schema.proposals.status,
+        sentAt: schema.proposals.sentAt,
         userId: schema.proposals.userId,
         partyBEmail: schema.proposals.partyBEmail,
       })
@@ -106,14 +107,15 @@ export default async function handler(req: any, res: any) {
       if (!point) return;
 
       const status = String(row.status || '').trim().toLowerCase();
+      const isSent = Boolean(row.sentAt);
       const isReceived = Boolean(
-        status !== 'draft' &&
-          currentEmail &&
-          normalizeEmail(row.partyBEmail) === currentEmail &&
-          row.userId !== auth.user.id,
+        isSent &&
+        currentEmail &&
+        normalizeEmail(row.partyBEmail) === currentEmail &&
+        row.userId !== auth.user.id,
       );
 
-      if (status !== 'draft') {
+      if (isSent) {
         if (isReceived) {
           point.received += 1;
         } else {

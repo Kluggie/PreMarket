@@ -140,7 +140,7 @@ export default function Proposals() {
     queryFn: () => dashboardClient.getSummary(),
   });
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['proposals-list', activeTab, statusFilter, normalizedSearch, cursor],
     queryFn: () =>
       proposalsClient.listWithMeta({
@@ -308,6 +308,14 @@ export default function Proposals() {
               <CardContent className="p-0">
                 {isLoading ? (
                   <div className="py-12 text-center text-slate-500">Loading proposals...</div>
+                ) : isError ? (
+                  <div className="py-16 px-6 text-center space-y-3">
+                    <p className="text-red-600 font-medium">Failed to load proposals.</p>
+                    <p className="text-sm text-slate-500">{error?.message || 'Please try again.'}</p>
+                    <Button variant="outline" onClick={() => refetch()}>
+                      Retry
+                    </Button>
+                  </div>
                 ) : proposals.length === 0 ? (
                   <div className="py-16 text-center text-slate-500">No proposals match this filter.</div>
                 ) : (

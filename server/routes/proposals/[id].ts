@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, ilike, or } from 'drizzle-orm';
 import { ok } from '../../_lib/api-response.js';
 import { assertProposalOwnership, requireUser } from '../../_lib/auth.js';
-import { getDb, schema } from '../../_lib/db/client.js';
+import { getDatabaseIdentitySnapshot, getDb, schema } from '../../_lib/db/client.js';
 import { ApiError } from '../../_lib/errors.js';
 import { readJsonBody } from '../../_lib/http.js';
 import { createNotificationEvent } from '../../_lib/notifications.js';
@@ -32,11 +32,15 @@ function mapProposalRow(proposal, ownerEmail) {
     party_b_email: proposal.partyBEmail,
     summary: proposal.summary,
     payload: proposal.payload || {},
+    recipient_email: proposal.partyBEmail || null,
+    owner_user_id: proposal.userId,
     sent_at: proposal.sentAt || null,
     received_at: proposal.receivedAt || null,
     evaluated_at: proposal.evaluatedAt || null,
     last_shared_at: proposal.lastSharedAt || null,
     user_id: proposal.userId,
+    created_at: proposal.createdAt,
+    updated_at: proposal.updatedAt,
     created_date: proposal.createdAt,
     updated_date: proposal.updatedAt,
   };
@@ -162,6 +166,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
     }
 
     const db = getDb();
+    const dbIdentity = getDatabaseIdentitySnapshot();
     const existing = await assertProposalOwnership(auth.user.id, proposalId);
 
     if (req.method === 'DELETE') {
@@ -256,6 +261,25 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
       .set(updateValues)
       .where(eq(schema.proposals.id, proposalId))
       .returning();
+
+    console.info(
+      JSON.stringify({
+        level: 'info',
+        route: '/api/proposals/[id]',
+        event: 'proposal_updated',
+        requestId: context.requestId,
+        userId: auth.user.id,
+        proposalId: updated.id,
+        previousStatus,
+        nextStatus,
+        sentAt: updated.sentAt ? new Date(updated.sentAt).toISOString() : null,
+        vercelEnv: dbIdentity.vercelEnv,
+        dbHost: dbIdentity.dbHost,
+        dbName: dbIdentity.dbName,
+        dbSchema: dbIdentity.dbSchema,
+        dbUrlHash: dbIdentity.dbUrlHash,
+      }),
+    );
 
     if (nextStatus && previousStatus !== nextStatus) {
       const eventMap = {

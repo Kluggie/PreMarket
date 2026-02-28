@@ -20,11 +20,19 @@ function getCookie(subject, email) {
 }
 
 async function createProposal(cookie, body) {
+  const normalizedStatus = String(body?.status || '').trim().toLowerCase();
+  const shouldDefaultSentAt =
+    normalizedStatus &&
+    !['draft', 'ready'].includes(normalizedStatus) &&
+    body?.sentAt === undefined &&
+    body?.sent_at === undefined;
+  const payload = shouldDefaultSentAt ? { ...body, sentAt: new Date().toISOString() } : body;
+
   const req = createMockReq({
     method: 'POST',
     url: '/api/proposals',
     headers: { cookie },
-    body,
+    body: payload,
   });
   const res = createMockRes();
   await proposalsHandler(req, res);

@@ -1,11 +1,12 @@
 import { and, eq, ilike, or } from 'drizzle-orm';
 import { ok } from '../../../_lib/api-response.js';
 import { requireUser } from '../../../_lib/auth.js';
-import { getDb, schema } from '../../../_lib/db/client.js';
+import { getDatabaseIdentitySnapshot, getDb, schema } from '../../../_lib/db/client.js';
 import { toCanonicalAppUrl } from '../../../_lib/env.js';
 import { ApiError } from '../../../_lib/errors.js';
 import { readJsonBody } from '../../../_lib/http.js';
 import { newId, newToken } from '../../../_lib/ids.js';
+import { getResendConfig } from '../../../_lib/integrations.js';
 import { createNotificationEvent } from '../../../_lib/notifications.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 
@@ -20,6 +21,14 @@ function getProposalId(req: any, proposalIdParam?: string) {
 
 function normalizeEmail(value: unknown) {
   return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+function asText(value: unknown) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function isLikelyEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
 function buildSharedReportUrl(token: string) {
@@ -49,14 +58,77 @@ function mapProposalRow(row) {
     party_b_email: row.partyBEmail,
     summary: row.summary,
     payload: row.payload || {},
+    recipient_email: row.partyBEmail || null,
+    owner_user_id: row.userId,
     sent_at: row.sentAt || null,
     received_at: row.receivedAt || null,
     evaluated_at: row.evaluatedAt || null,
     last_shared_at: row.lastSharedAt || null,
     user_id: row.userId,
+    created_at: row.createdAt,
+    updated_at: row.updatedAt,
     created_date: row.createdAt,
     updated_date: row.updatedAt,
   };
+}
+
+async function sendProposalEmail(params: {
+  recipientEmail: string;
+  senderEmail: string;
+  proposalTitle: string;
+}) {
+  const resend = getResendConfig();
+  if (!resend.ready) {
+    throw new ApiError(501, 'not_configured', 'Resend email delivery is not configured');
+  }
+
+  const sender = asText(params.senderEmail) || 'A PreMarket user';
+  const title = asText(params.proposalTitle) || 'Untitled proposal';
+  const subject = `${sender} sent you a proposal: ${title}`;
+  const text = [
+    `${sender} sent you a proposal on PreMarket.`,
+    '',
+    `Title: ${title}`,
+    '',
+    'Sign in to PreMarket to review and respond.',
+  ].join('\n');
+
+  const from = resend.fromName ? `${resend.fromName} <${resend.fromEmail}>` : resend.fromEmail;
+  const payload: Record<string, unknown> = {
+    from,
+    to: [params.recipientEmail],
+    subject,
+    text,
+  };
+
+  if (resend.replyTo) {
+    payload.reply_to = resend.replyTo;
+  }
+
+  let response: Response;
+  let responseBody: any = {};
+  try {
+    response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${resend.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+    responseBody = await response.json().catch(() => ({}));
+  } catch {
+    throw new ApiError(502, 'email_send_failed', 'Email provider is unavailable');
+  }
+
+  if (!response.ok) {
+    throw new ApiError(502, 'email_send_failed', 'Email provider rejected the request', {
+      providerStatus: response.status,
+      providerError: asText(responseBody?.message || responseBody?.error) || null,
+    });
+  }
+
+  return asText(responseBody?.id) || null;
 }
 
 export default async function handler(req: any, res: any, proposalIdParam?: string) {
@@ -75,6 +147,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
     context.userId = auth.user.id;
 
     const db = getDb();
+    const dbIdentity = getDatabaseIdentitySnapshot();
     const currentEmail = normalizeEmail(auth.user.email);
     const proposalScope = currentEmail
       ? and(
@@ -94,24 +167,34 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
     const body = await readJsonBody(req);
     const recipientEmail =
       normalizeEmail(body.recipientEmail || body.recipient_email || existing.partyBEmail || '') || null;
-    const createShareLink = body.createShareLink !== false;
-    const now = new Date();
 
+    if (!recipientEmail || !isLikelyEmail(recipientEmail)) {
+      throw new ApiError(400, 'invalid_input', 'A valid recipient_email is required before sending');
+    }
+
+    const createShareLink = body.createShareLink !== false;
+    const emailProviderMessageId = await sendProposalEmail({
+      recipientEmail,
+      senderEmail: auth.user.email,
+      proposalTitle: existing.title,
+    });
+
+    const sentAt = new Date();
     const [updatedProposal] = await db
       .update(schema.proposals)
       .set({
         status: 'sent',
         draftStep: 4,
         partyBEmail: recipientEmail,
-        sentAt: now,
-        updatedAt: now,
+        sentAt,
+        updatedAt: sentAt,
       })
       .where(eq(schema.proposals.id, existing.id))
       .returning();
 
     let sharedLink = null;
 
-    if (createShareLink && recipientEmail) {
+    if (createShareLink) {
       let created = null;
       for (let attempt = 0; attempt < 3; attempt += 1) {
         try {
@@ -134,8 +217,8 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
               expiresAt: null,
               idempotencyKey: null,
               reportMetadata: {},
-              createdAt: now,
-              updatedAt: now,
+              createdAt: sentAt,
+              updatedAt: sentAt,
             })
             .returning();
           created = rows[0];
@@ -155,8 +238,8 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
       await db
         .update(schema.proposals)
         .set({
-          lastSharedAt: now,
-          updatedAt: now,
+          lastSharedAt: sentAt,
+          updatedAt: sentAt,
         })
         .where(eq(schema.proposals.id, updatedProposal.id));
 
@@ -177,6 +260,25 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         created_date: created.createdAt,
       };
     }
+
+    console.info(
+      JSON.stringify({
+        level: 'info',
+        route: '/api/proposals/[id]/send',
+        event: 'proposal_sent',
+        requestId: context.requestId,
+        userId: auth.user.id,
+        proposalId: updatedProposal.id,
+        sentAt: sentAt.toISOString(),
+        hasSharedLink: Boolean(sharedLink?.token),
+        emailProviderMessageId,
+        vercelEnv: dbIdentity.vercelEnv,
+        dbHost: dbIdentity.dbHost,
+        dbName: dbIdentity.dbName,
+        dbSchema: dbIdentity.dbSchema,
+        dbUrlHash: dbIdentity.dbUrlHash,
+      }),
+    );
 
     if (recipientEmail) {
       try {

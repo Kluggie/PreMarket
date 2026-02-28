@@ -78,11 +78,19 @@ function assertContractReportShape(report) {
 }
 
 async function createProposal(cookie, body) {
+  const normalizedStatus = String(body?.status || '').trim().toLowerCase();
+  const shouldDefaultSentAt =
+    normalizedStatus &&
+    !['draft', 'ready'].includes(normalizedStatus) &&
+    body?.sentAt === undefined &&
+    body?.sent_at === undefined;
+  const payload = shouldDefaultSentAt ? { ...body, sentAt: new Date().toISOString() } : body;
+
   const req = createMockReq({
     method: 'POST',
     url: '/api/proposals',
     headers: { cookie },
-    body,
+    body: payload,
   });
   const res = createMockRes();
   await proposalsHandler(req, res);
@@ -105,21 +113,73 @@ if (!hasDatabaseUrl()) {
       summary: 'Baseline workflow test',
     });
 
-    const sendReq = createMockReq({
-      method: 'POST',
-      url: `/api/proposals/${created.id}/send`,
-      headers: { cookie: ownerCookie },
-      query: { id: created.id },
-      body: {
-        recipientEmail: 'recipient@example.com',
-        createShareLink: true,
-      },
-    });
-    const sendRes = createMockRes();
-    await proposalSendHandler(sendReq, sendRes, created.id);
-    assert.equal(sendRes.statusCode, 200);
-    assert.equal(sendRes.jsonBody().proposal.status, 'sent');
-    assert.equal(Boolean(sendRes.jsonBody().sharedLink?.token), true);
+    const originalFetch = globalThis.fetch;
+    const originalResendKey = process.env.RESEND_API_KEY;
+    const originalResendFrom = process.env.RESEND_FROM_EMAIL;
+    const originalResendName = process.env.RESEND_FROM_NAME;
+    const originalResendReplyTo = process.env.RESEND_REPLY_TO;
+
+    process.env.RESEND_API_KEY = 'test_resend_key';
+    process.env.RESEND_FROM_EMAIL = 'notifications@mail.getpremarket.com';
+    process.env.RESEND_FROM_NAME = 'PreMarket';
+    process.env.RESEND_REPLY_TO = 'support@getpremarket.com';
+
+    globalThis.fetch = async (url, init) => {
+      if (String(url).includes('api.resend.com')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ id: 'resend_workflow_test' }),
+        };
+      }
+
+      return originalFetch.call(globalThis, url, init);
+    };
+
+    try {
+      const sendReq = createMockReq({
+        method: 'POST',
+        url: `/api/proposals/${created.id}/send`,
+        headers: { cookie: ownerCookie },
+        query: { id: created.id },
+        body: {
+          recipientEmail: 'recipient@example.com',
+          createShareLink: true,
+        },
+      });
+      const sendRes = createMockRes();
+      await proposalSendHandler(sendReq, sendRes, created.id);
+      assert.equal(sendRes.statusCode, 200);
+      assert.equal(sendRes.jsonBody().proposal.status, 'sent');
+      assert.equal(Boolean(sendRes.jsonBody().proposal.sent_at), true);
+      assert.equal(Boolean(sendRes.jsonBody().sharedLink?.token), true);
+    } finally {
+      if (originalResendKey === undefined) {
+        delete process.env.RESEND_API_KEY;
+      } else {
+        process.env.RESEND_API_KEY = originalResendKey;
+      }
+
+      if (originalResendFrom === undefined) {
+        delete process.env.RESEND_FROM_EMAIL;
+      } else {
+        process.env.RESEND_FROM_EMAIL = originalResendFrom;
+      }
+
+      if (originalResendName === undefined) {
+        delete process.env.RESEND_FROM_NAME;
+      } else {
+        process.env.RESEND_FROM_NAME = originalResendName;
+      }
+
+      if (originalResendReplyTo === undefined) {
+        delete process.env.RESEND_REPLY_TO;
+      } else {
+        process.env.RESEND_REPLY_TO = originalResendReplyTo;
+      }
+
+      globalThis.fetch = originalFetch;
+    }
 
     const evaluateReq = createMockReq({
       method: 'POST',

@@ -33,11 +33,19 @@ async function callHandler(handler, reqOptions, ...args) {
 }
 
 async function createProposal(cookie, body) {
+  const normalizedStatus = String(body?.status || '').trim().toLowerCase();
+  const shouldDefaultSentAt =
+    normalizedStatus &&
+    !['draft', 'ready'].includes(normalizedStatus) &&
+    body?.sentAt === undefined &&
+    body?.sent_at === undefined;
+  const payload = shouldDefaultSentAt ? { ...body, sentAt: new Date().toISOString() } : body;
+
   const res = await callHandler(proposalsHandler, {
     method: 'POST',
     url: '/api/proposals',
     headers: { cookie },
-    body,
+    body: payload,
   });
   assert.equal(res.statusCode, 201);
   return res.jsonBody().proposal;
@@ -246,17 +254,39 @@ if (!hasDatabaseUrl()) {
 
     const ownerCookie = authCookie('notify_owner', 'owner@example.com');
     const recipientCookie = authCookie('notify_recipient', 'recipient@example.com');
+    const originalFetch = globalThis.fetch;
+    const originalResendKey = process.env.RESEND_API_KEY;
+    const originalResendFrom = process.env.RESEND_FROM_EMAIL;
+    const originalResendName = process.env.RESEND_FROM_NAME;
+    const originalResendReplyTo = process.env.RESEND_REPLY_TO;
 
-    await callHandler(profileHandler, {
-      method: 'GET',
-      url: '/api/account/profile',
-      headers: { cookie: ownerCookie },
-    });
-    await callHandler(profileHandler, {
-      method: 'GET',
-      url: '/api/account/profile',
-      headers: { cookie: recipientCookie },
-    });
+    process.env.RESEND_API_KEY = 'test_resend_key';
+    process.env.RESEND_FROM_EMAIL = 'notifications@mail.getpremarket.com';
+    process.env.RESEND_FROM_NAME = 'PreMarket';
+    process.env.RESEND_REPLY_TO = 'support@getpremarket.com';
+
+    globalThis.fetch = async (url, init) => {
+      if (String(url).includes('api.resend.com')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ id: 'resend_notify_test' }),
+        };
+      }
+      return originalFetch.call(globalThis, url, init);
+    };
+
+    try {
+      await callHandler(profileHandler, {
+        method: 'GET',
+        url: '/api/account/profile',
+        headers: { cookie: ownerCookie },
+      });
+      await callHandler(profileHandler, {
+        method: 'GET',
+        url: '/api/account/profile',
+        headers: { cookie: recipientCookie },
+      });
 
     const created = await createProposal(ownerCookie, {
       title: 'Notify Proposal',
@@ -420,9 +450,36 @@ if (!hasDatabaseUrl()) {
       headers: { cookie: ownerCookie },
     });
     assert.equal(ownerAfterDedupeRes.statusCode, 200);
-    const dedupeEntries = ownerAfterDedupeRes
-      .jsonBody()
-      .notifications.filter((entry) => entry.title === 'Dedupe Test');
-    assert.equal(dedupeEntries.length, 1);
+      const dedupeEntries = ownerAfterDedupeRes
+        .jsonBody()
+        .notifications.filter((entry) => entry.title === 'Dedupe Test');
+      assert.equal(dedupeEntries.length, 1);
+    } finally {
+      if (originalResendKey === undefined) {
+        delete process.env.RESEND_API_KEY;
+      } else {
+        process.env.RESEND_API_KEY = originalResendKey;
+      }
+
+      if (originalResendFrom === undefined) {
+        delete process.env.RESEND_FROM_EMAIL;
+      } else {
+        process.env.RESEND_FROM_EMAIL = originalResendFrom;
+      }
+
+      if (originalResendName === undefined) {
+        delete process.env.RESEND_FROM_NAME;
+      } else {
+        process.env.RESEND_FROM_NAME = originalResendName;
+      }
+
+      if (originalResendReplyTo === undefined) {
+        delete process.env.RESEND_REPLY_TO;
+      } else {
+        process.env.RESEND_REPLY_TO = originalResendReplyTo;
+      }
+
+      globalThis.fetch = originalFetch;
+    }
   });
 }

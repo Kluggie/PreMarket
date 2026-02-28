@@ -1,7 +1,7 @@
-import { and, desc, eq, ilike, lt, ne, or } from 'drizzle-orm';
+import { and, desc, eq, ilike, inArray, isNotNull, isNull, lt, ne, or } from 'drizzle-orm';
 import { ok } from '../../_lib/api-response.js';
 import { requireUser } from '../../_lib/auth.js';
-import { getDb, schema } from '../../_lib/db/client.js';
+import { getDatabaseIdentitySnapshot, getDb, schema } from '../../_lib/db/client.js';
 import { ApiError } from '../../_lib/errors.js';
 import { readJsonBody } from '../../_lib/http.js';
 import { newId } from '../../_lib/ids.js';
@@ -9,6 +9,7 @@ import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 
 const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 100;
+const DRAFT_STATUSES = ['draft', 'ready'] as const;
 
 function normalizeEmail(value: unknown) {
   return typeof value === 'string' ? value.trim().toLowerCase() : '';
@@ -19,17 +20,30 @@ function mapProposalRow(proposal, ownerEmail, currentUser) {
   const currentUserId = String(currentUser?.id || '').trim();
   const senderEmail = String(proposal.partyAEmail || ownerEmail || '').trim().toLowerCase();
   const recipientEmail = String(proposal.partyBEmail || '').trim().toLowerCase();
+  const normalizedStatus = String(proposal.status || '').trim().toLowerCase();
+  const isSent = Boolean(proposal.sentAt);
+  const isDraft = !isSent && DRAFT_STATUSES.includes(normalizedStatus as (typeof DRAFT_STATUSES)[number]);
 
   let listType = 'sent';
-  if (proposal.status === 'draft') {
+  if (isDraft) {
     listType = 'draft';
-  } else if (recipientEmail && recipientEmail === currentEmail && proposal.userId !== currentUserId) {
+  } else if (
+    isSent &&
+    recipientEmail &&
+    recipientEmail === currentEmail &&
+    proposal.userId !== currentUserId
+  ) {
     listType = 'received';
-  } else if (recipientEmail && recipientEmail === currentEmail && senderEmail && senderEmail !== currentEmail) {
+  } else if (
+    isSent &&
+    recipientEmail &&
+    recipientEmail === currentEmail &&
+    senderEmail &&
+    senderEmail !== currentEmail
+  ) {
     listType = 'received';
   }
 
-  const normalizedStatus = String(proposal.status || '').trim().toLowerCase();
   let directionalStatus = listType === 'draft' ? 'draft' : listType === 'received' ? 'received' : 'sent';
 
   if (normalizedStatus && normalizedStatus !== 'draft' && normalizedStatus !== 'sent') {
@@ -57,11 +71,15 @@ function mapProposalRow(proposal, ownerEmail, currentUser) {
     party_b_email: proposal.partyBEmail,
     summary: proposal.summary,
     payload: proposal.payload || {},
+    recipient_email: proposal.partyBEmail || null,
+    owner_user_id: proposal.userId,
     sent_at: proposal.sentAt || null,
     received_at: proposal.receivedAt || null,
     evaluated_at: proposal.evaluatedAt || null,
     last_shared_at: proposal.lastSharedAt || null,
     user_id: proposal.userId,
+    created_at: proposal.createdAt,
+    updated_at: proposal.updatedAt,
     created_date: proposal.createdAt,
     updated_date: proposal.updatedAt,
   };
@@ -147,10 +165,8 @@ export default async function handler(req: any, res: any) {
 
       const hasUserEmail = typeof auth.user.email === 'string' && auth.user.email.trim().length > 0;
       const userEmail = hasUserEmail ? normalizeEmail(auth.user.email) : '';
-
-      const ownerScope = hasUserEmail
-        ? or(eq(schema.proposals.userId, auth.user.id), ilike(schema.proposals.partyAEmail, userEmail))
-        : eq(schema.proposals.userId, auth.user.id);
+      const dbIdentity = getDatabaseIdentitySnapshot();
+      const ownerScope = eq(schema.proposals.userId, auth.user.id);
       const recipientScope = hasUserEmail
         ? ilike(schema.proposals.partyBEmail, userEmail)
         : eq(schema.proposals.userId, '__no_recipient_scope__');
@@ -159,18 +175,19 @@ export default async function handler(req: any, res: any) {
       const listScope = hasUserEmail
         ? or(
             eq(schema.proposals.userId, auth.user.id),
-            ilike(schema.proposals.partyAEmail, userEmail),
             ilike(schema.proposals.partyBEmail, userEmail),
           )
         : eq(schema.proposals.userId, auth.user.id);
       conditions.push(listScope);
 
       if (tab === 'drafts') {
-        conditions.push(and(ownerScope, eq(schema.proposals.status, 'draft')));
+        conditions.push(
+          and(ownerScope, isNull(schema.proposals.sentAt), inArray(schema.proposals.status, DRAFT_STATUSES)),
+        );
       } else if (tab === 'sent') {
-        conditions.push(and(ownerScope, ne(schema.proposals.status, 'draft')));
+        conditions.push(and(ownerScope, isNotNull(schema.proposals.sentAt)));
       } else if (tab === 'received') {
-        conditions.push(and(recipientScope, ne(schema.proposals.status, 'draft')));
+        conditions.push(and(recipientScope, isNotNull(schema.proposals.sentAt), ne(schema.proposals.userId, auth.user.id)));
       } else if (tab === 'mutual_interest') {
         conditions.push(
           and(
@@ -185,11 +202,13 @@ export default async function handler(req: any, res: any) {
 
       if (statusFilter && statusFilter !== 'all') {
         if (statusFilter === 'draft') {
-          conditions.push(eq(schema.proposals.status, 'draft'));
+          conditions.push(
+            and(ownerScope, isNull(schema.proposals.sentAt), inArray(schema.proposals.status, DRAFT_STATUSES)),
+          );
         } else if (statusFilter === 'sent') {
-          conditions.push(and(ownerScope, ne(schema.proposals.status, 'draft')));
+          conditions.push(and(ownerScope, isNotNull(schema.proposals.sentAt)));
         } else if (statusFilter === 'received') {
-          conditions.push(and(recipientScope, ne(schema.proposals.status, 'draft')));
+          conditions.push(and(recipientScope, isNotNull(schema.proposals.sentAt), ne(schema.proposals.userId, auth.user.id)));
         } else if (statusFilter === 'mutual_interest') {
           conditions.push(
             or(
@@ -225,17 +244,74 @@ export default async function handler(req: any, res: any) {
       }
 
       const whereClause = conditions.length === 1 ? conditions[0] : and(...conditions);
+      console.info(
+        JSON.stringify({
+          level: 'info',
+          route: '/api/proposals',
+          event: 'proposals_list_query_start',
+          requestId: context.requestId,
+          userId: auth.user.id,
+          tab,
+          statusFilter: statusFilter || 'all',
+          hasSearchQuery: Boolean(query),
+          vercelEnv: dbIdentity.vercelEnv,
+          dbHost: dbIdentity.dbHost,
+          dbName: dbIdentity.dbName,
+          dbSchema: dbIdentity.dbSchema,
+          dbUrlHash: dbIdentity.dbUrlHash,
+        }),
+      );
 
-      const rows = await db
-        .select()
-        .from(schema.proposals)
-        .where(whereClause)
-        .orderBy(desc(schema.proposals.createdAt), desc(schema.proposals.id))
-        .limit(limit + 1);
+      let rows;
+      try {
+        rows = await db
+          .select()
+          .from(schema.proposals)
+          .where(whereClause)
+          .orderBy(desc(schema.proposals.createdAt), desc(schema.proposals.id))
+          .limit(limit + 1);
+      } catch (error: any) {
+        console.error(
+          JSON.stringify({
+            level: 'error',
+            route: '/api/proposals',
+            event: 'proposals_list_query_failed',
+            requestId: context.requestId,
+            userId: auth.user.id,
+            vercelEnv: dbIdentity.vercelEnv,
+            dbHost: dbIdentity.dbHost,
+            dbName: dbIdentity.dbName,
+            dbSchema: dbIdentity.dbSchema,
+            dbUrlHash: dbIdentity.dbUrlHash,
+            errorMessage: error?.message || 'unknown_error',
+          }),
+        );
+        throw new ApiError(500, 'proposals_query_failed', 'Failed to load proposals from the database');
+      }
 
       const hasMore = rows.length > limit;
       const pageRows = hasMore ? rows.slice(0, limit) : rows;
       const nextCursor = hasMore ? encodeCursor(pageRows[pageRows.length - 1]) : null;
+
+      console.info(
+        JSON.stringify({
+          level: 'info',
+          route: '/api/proposals',
+          event: 'proposals_list_query_result',
+          requestId: context.requestId,
+          userId: auth.user.id,
+          tab,
+          statusFilter: statusFilter || 'all',
+          resultCount: pageRows.length,
+          fetchedCount: rows.length,
+          hasMore,
+          vercelEnv: dbIdentity.vercelEnv,
+          dbHost: dbIdentity.dbHost,
+          dbName: dbIdentity.dbName,
+          dbSchema: dbIdentity.dbSchema,
+          dbUrlHash: dbIdentity.dbUrlHash,
+        }),
+      );
 
       ok(res, 200, {
         proposals: pageRows.map((row) => mapProposalRow(row, auth.user.email, auth.user)),
@@ -280,33 +356,56 @@ export default async function handler(req: any, res: any) {
 
     const now = new Date();
     const proposalId = newId('proposal');
+    const dbIdentity = getDatabaseIdentitySnapshot();
 
-    const [created] = await db
-      .insert(schema.proposals)
-      .values({
-        id: proposalId,
+    let created;
+    try {
+      [created] = await db
+        .insert(schema.proposals)
+        .values({
+          id: proposalId,
+          userId: auth.user.id,
+          title,
+          status,
+          statusReason,
+          templateId,
+          templateName,
+          proposalType,
+          draftStep,
+          sourceProposalId,
+          documentComparisonId,
+          partyAEmail,
+          partyBEmail,
+          summary,
+          payload,
+          sentAt,
+          receivedAt,
+          evaluatedAt,
+          lastSharedAt,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .returning();
+    } catch {
+      throw new ApiError(500, 'proposal_create_failed', 'Failed to persist proposal to the database');
+    }
+
+    console.info(
+      JSON.stringify({
+        level: 'info',
+        route: '/api/proposals',
+        event: 'proposal_created',
+        requestId: context.requestId,
         userId: auth.user.id,
-        title,
-        status,
-        statusReason,
-        templateId,
-        templateName,
-        proposalType,
-        draftStep,
-        sourceProposalId,
-        documentComparisonId,
-        partyAEmail,
-        partyBEmail,
-        summary,
-        payload,
-        sentAt,
-        receivedAt,
-        evaluatedAt,
-        lastSharedAt,
-        createdAt: now,
-        updatedAt: now,
-      })
-      .returning();
+        proposalId: created.id,
+        status: created.status,
+        vercelEnv: dbIdentity.vercelEnv,
+        dbHost: dbIdentity.dbHost,
+        dbName: dbIdentity.dbName,
+        dbSchema: dbIdentity.dbSchema,
+        dbUrlHash: dbIdentity.dbUrlHash,
+      }),
+    );
 
     ok(res, 201, {
       proposal: mapProposalRow(created, auth.user.email, auth.user),

@@ -253,6 +253,9 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     await db
       .update(schema.proposals)
       .set({
+        status: 'sent',
+        sentAt: new Date(),
+        partyBEmail: recipientEmail,
         lastSharedAt: new Date(),
         updatedAt: new Date(),
       })

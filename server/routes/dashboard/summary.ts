@@ -4,6 +4,8 @@ import { requireUser } from '../../_lib/auth.js';
 import { getDb, schema } from '../../_lib/db/client.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 
+const DRAFT_STATUSES = new Set(['draft', 'ready']);
+
 function normalizeEmail(value: unknown) {
   return typeof value === 'string' ? value.trim().toLowerCase() : '';
 }
@@ -33,6 +35,7 @@ export default async function handler(req: any, res: any) {
       .select({
         id: schema.proposals.id,
         status: schema.proposals.status,
+        sentAt: schema.proposals.sentAt,
         userId: schema.proposals.userId,
         partyAEmail: schema.proposals.partyAEmail,
         partyBEmail: schema.proposals.partyBEmail,
@@ -49,20 +52,23 @@ export default async function handler(req: any, res: any) {
 
     rows.forEach((row) => {
       const status = String(row.status || '').trim().toLowerCase();
+      const isSent = Boolean(row.sentAt);
+      const isOwner = row.userId === auth.user.id;
       const partyBEmail = normalizeEmail(row.partyBEmail);
       const isReceived = Boolean(
-        status !== 'draft' &&
-          currentEmail &&
-          partyBEmail &&
-          partyBEmail === currentEmail &&
-          row.userId !== auth.user.id,
+        isSent &&
+        currentEmail &&
+        partyBEmail &&
+        partyBEmail === currentEmail &&
+        !isOwner,
       );
+      const isDraft = Boolean(isOwner && !isSent && DRAFT_STATUSES.has(status));
 
-      if (status === 'draft') {
+      if (isDraft) {
         draftsCount += 1;
       } else if (isReceived) {
         receivedCount += 1;
-      } else {
+      } else if (isOwner && isSent) {
         sentCount += 1;
       }
 
