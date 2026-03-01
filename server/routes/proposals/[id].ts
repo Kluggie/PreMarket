@@ -182,6 +182,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
           uses: row.uses,
           can_view: Boolean(row.canView),
           can_edit: Boolean(row.canEdit),
+          can_edit_confidential: Boolean(row.canEditConfidential),
           can_reevaluate: Boolean(row.canReevaluate),
           can_send_back: Boolean(row.canSendBack),
           expires_at: row.expiresAt,

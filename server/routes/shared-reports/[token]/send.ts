@@ -28,7 +28,7 @@ function getToken(req: any, tokenParam?: string) {
 
 function buildShareUrl(token: string) {
   const appBaseUrl = asText(process.env.APP_BASE_URL);
-  const returnPath = `/share/${encodeURIComponent(String(token || ''))}`;
+  const returnPath = `/shared-report/${encodeURIComponent(String(token || ''))}`;
   if (!appBaseUrl) {
     return returnPath;
   }

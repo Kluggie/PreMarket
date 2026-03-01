@@ -25,6 +25,11 @@ const LayoutWrapper = ({ children, currentPageName }) => Layout ?
 
 const SharedReportAliasRedirect = () => {
   const location = useLocation();
+  const params = new URLSearchParams(location.search || '');
+  const token = params.get('token');
+  if (token) {
+    return <Navigate to={`/shared-report/${encodeURIComponent(token)}`} replace />;
+  }
   return <Navigate to={`/SharedReport${location.search || ''}`} replace />;
 };
 
@@ -151,6 +156,14 @@ const PublicRoutes = () => {
           </LayoutWrapper>
         }
       />
+      <Route
+        path="/shared-report/:token"
+        element={
+          <LayoutWrapper currentPageName="SharedReport">
+            <Pages.SharedReport />
+          </LayoutWrapper>
+        }
+      />
       <Route path="/shared-report" element={<SharedReportAliasRedirect />} />
       <Route
         path="/proposals/:proposalId/recipient-edit"
@@ -239,6 +252,7 @@ const AppRoutes = () => {
     location.pathname.startsWith('/directory/') ||
     location.pathname === '/SharedReport' ||
     location.pathname === '/shared-report' ||
+    location.pathname.startsWith('/shared-report/') ||
     location.pathname === '/share' ||
     location.pathname.startsWith('/share/');
   return <AuthenticatedApp isPublicDirectoryRoute={isPublicDirectoryRoute} />;

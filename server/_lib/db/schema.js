@@ -508,6 +508,7 @@ export const sharedLinks = pgTable(
     mode: text('mode').notNull().default('standard'),
     canView: boolean('can_view').notNull().default(true),
     canEdit: boolean('can_edit').notNull().default(false),
+    canEditConfidential: boolean('can_edit_confidential').notNull().default(false),
     canReevaluate: boolean('can_reevaluate').notNull().default(false),
     canSendBack: boolean('can_send_back').notNull().default(false),
     maxUses: integer('max_uses').notNull().default(1),
@@ -528,6 +529,54 @@ export const sharedLinks = pgTable(
       table.userId,
       table.idempotencyKey,
     ),
+  }),
+);
+
+export const sharedReportRecipientRevisions = pgTable(
+  'shared_report_recipient_revisions',
+  {
+    id: text('id').primaryKey(),
+    sharedLinkId: text('shared_link_id')
+      .notNull()
+      .references(() => sharedLinks.id, { onDelete: 'cascade' }),
+    proposalId: text('proposal_id')
+      .notNull()
+      .references(() => proposals.id, { onDelete: 'cascade' }),
+    comparisonId: text('comparison_id'),
+    actorRole: text('actor_role').notNull().default('recipient'),
+    status: text('status').notNull().default('draft'),
+    sharedPayload: jsonb('shared_payload').notNull().default(sql`'{}'::jsonb`),
+    recipientConfidentialPayload: jsonb('recipient_confidential_payload')
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    previousRevisionId: text('previous_revision_id').references(
+      () => sharedReportRecipientRevisions.id,
+      {
+        onDelete: 'set null',
+      },
+    ),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    sharedReportRecipientRevisionsLinkIdx: index('shared_report_recipient_revisions_link_idx').on(
+      table.sharedLinkId,
+      table.createdAt,
+    ),
+    sharedReportRecipientRevisionsDraftIdx: index('shared_report_recipient_revisions_draft_idx').on(
+      table.sharedLinkId,
+      table.actorRole,
+      table.status,
+      table.updatedAt,
+    ),
+    sharedReportRecipientRevisionsUniqueDraft: uniqueIndex(
+      'shared_report_recipient_revisions_unique_draft',
+    )
+      .on(table.sharedLinkId, table.actorRole, table.status)
+      .where(sql`${table.status} = 'draft'`),
+    sharedReportRecipientRevisionsProposalIdx: index(
+      'shared_report_recipient_revisions_proposal_idx',
+    ).on(table.proposalId, table.createdAt),
   }),
 );
 

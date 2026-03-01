@@ -27,6 +27,8 @@ import sharedReportsTokenHandler from '../server/routes/shared-reports/[token].j
 import sharedReportsSendHandler from '../server/routes/shared-reports/[token]/send.js';
 import sharedReportsRevokeHandler from '../server/routes/shared-reports/[token]/revoke.js';
 import sharedReportsRespondHandler from '../server/routes/shared-reports/[token]/respond.js';
+import sharedReportTokenHandler from '../server/routes/shared-report/[token].js';
+import sharedReportDraftHandler from '../server/routes/shared-report/[token]/draft.js';
 import vertexSmokeHandler from '../server/routes/vertex/smoke.js';
 import billingHandler from '../server/routes/billing/index.js';
 import billingStatusHandler from '../server/routes/billing/status.js';
@@ -330,6 +332,18 @@ export default async function handler(req: any, res: any) {
   if (sharedReportsRespondMatch && method === 'POST') {
     const token = decodeURIComponent(sharedReportsRespondMatch[1]);
     return sharedReportsRespondHandler(req, res, token);
+  }
+
+  const sharedReportDraftMatch = pathname.match(/^\/api\/shared-report\/([^/]+)\/draft$/);
+  if (sharedReportDraftMatch && method === 'POST') {
+    const token = decodeURIComponent(sharedReportDraftMatch[1]);
+    return sharedReportDraftHandler(req, res, token);
+  }
+
+  const sharedReportMatch = pathname.match(/^\/api\/shared-report\/([^/]+)$/);
+  if (sharedReportMatch && method === 'GET') {
+    const token = decodeURIComponent(sharedReportMatch[1]);
+    return sharedReportTokenHandler(req, res, token);
   }
 
   const sharedLinksMatch = pathname.match(/^\/api\/shared-links\/([^/]+)$/);

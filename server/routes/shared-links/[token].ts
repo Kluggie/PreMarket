@@ -45,6 +45,7 @@ function mapLink(row, proposal) {
     recipientEmail: row.recipientEmail,
     canView: Boolean(row.canView),
     canEdit: Boolean(row.canEdit),
+    canEditConfidential: Boolean(row.canEditConfidential),
     canReevaluate: Boolean(row.canReevaluate),
     canSendBack: Boolean(row.canSendBack),
     expiresAt: row.expiresAt,

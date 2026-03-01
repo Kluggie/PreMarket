@@ -34,6 +34,7 @@ function mapLink(row, proposal) {
     recipientEmail: row.recipientEmail,
     canView: Boolean(row.canView),
     canEdit: Boolean(row.canEdit),
+    canEditConfidential: Boolean(row.canEditConfidential),
     canReevaluate: Boolean(row.canReevaluate),
     canSendBack: Boolean(row.canSendBack),
     expiresAt: row.expiresAt,
@@ -128,6 +129,10 @@ export default async function handler(req: any, res: any) {
     const mode = String(body.mode || 'workspace').trim().toLowerCase() || 'workspace';
     const canView = body.canView === undefined ? true : Boolean(body.canView);
     const canEdit = body.canEdit === undefined ? true : Boolean(body.canEdit);
+    const canEditConfidential =
+      body.canEditConfidential === undefined && body.can_edit_confidential === undefined
+        ? canEdit
+        : Boolean(body.canEditConfidential ?? body.can_edit_confidential);
     const canReevaluate = body.canReevaluate === undefined ? true : Boolean(body.canReevaluate);
     const canSendBack = body.canSendBack === undefined ? true : Boolean(body.canSendBack);
 
@@ -159,6 +164,7 @@ export default async function handler(req: any, res: any) {
             mode,
             canView,
             canEdit,
+            canEditConfidential,
             canReevaluate,
             canSendBack,
             maxUses,

@@ -67,6 +67,29 @@ export const sharedReportsClient = {
     };
   },
 
+  async getRecipientWorkspace(token) {
+    const response = await request(`/api/shared-report/${encodeToken(token)}`);
+    return {
+      share: response.share || null,
+      parent: response.parent || null,
+      latestReport: response.latestReport || {},
+      currentDraft: response.currentDraft || null,
+      defaults: response.defaults || {},
+    };
+  },
+
+  async saveRecipientDraft(token, input = {}) {
+    const response = await request(`/api/shared-report/${encodeToken(token)}/draft`, {
+      method: 'POST',
+      body: JSON.stringify(input || {}),
+    });
+    return {
+      ok: Boolean(response.ok),
+      draftId: response.draft_id || null,
+      updatedAt: response.updated_at || null,
+    };
+  },
+
   async respond(token, input = {}) {
     const response = await request(`/api/sharedReports/${encodeToken(token)}/respond`, {
       method: 'POST',

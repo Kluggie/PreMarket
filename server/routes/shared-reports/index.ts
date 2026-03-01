@@ -19,7 +19,7 @@ function normalizeEmail(value: unknown) {
 
 function buildSharedReportUrl(token: string) {
   const appBaseUrl = asText(process.env.APP_BASE_URL);
-  const returnPath = `/share/${encodeURIComponent(String(token || ''))}`;
+  const returnPath = `/shared-report/${encodeURIComponent(String(token || ''))}`;
 
   if (!appBaseUrl) {
     return returnPath;
@@ -73,6 +73,7 @@ function mapSharedReportLink(row: any, comparisonId: string | null, deliveries: 
     mode: row.mode,
     can_view: Boolean(row.canView),
     can_edit: Boolean(row.canEdit),
+    can_edit_confidential: Boolean(row.canEditConfidential),
     can_reevaluate: Boolean(row.canReevaluate),
     can_send_back: Boolean(row.canSendBack),
     max_uses: row.maxUses,
@@ -223,6 +224,22 @@ export default async function handler(req: any, res: any) {
     }
 
     const recipientEmail = normalizeEmail(body.recipientEmail || body.recipient_email || proposal.partyBEmail);
+    const canEditShared =
+      body.canEdit === undefined && body.can_edit_shared === undefined
+        ? true
+        : Boolean(body.canEdit ?? body.can_edit_shared);
+    const canEditConfidential =
+      body.canEditConfidential === undefined && body.can_edit_confidential === undefined
+        ? true
+        : Boolean(body.canEditConfidential ?? body.can_edit_confidential);
+    const canReevaluate =
+      body.canReevaluate === undefined && body.can_reevaluate === undefined
+        ? false
+        : Boolean(body.canReevaluate ?? body.can_reevaluate);
+    const canSendBack =
+      body.canSendBack === undefined && body.can_send_back === undefined
+        ? false
+        : Boolean(body.canSendBack ?? body.can_send_back);
 
     const maxUsesRaw = Number(body.maxUses || body.max_uses || 50);
     const maxUses = Number.isFinite(maxUsesRaw)
@@ -243,9 +260,10 @@ export default async function handler(req: any, res: any) {
         status: 'active',
         mode: 'shared_report',
         canView: true,
-        canEdit: false,
-        canReevaluate: false,
-        canSendBack: false,
+        canEdit: canEditShared,
+        canEditConfidential,
+        canReevaluate,
+        canSendBack,
         maxUses,
         uses: 0,
         lastUsedAt: null,
@@ -276,4 +294,3 @@ export default async function handler(req: any, res: any) {
     });
   });
 }
-
