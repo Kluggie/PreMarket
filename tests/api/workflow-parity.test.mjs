@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createHash } from 'node:crypto';
+import { createHash, generateKeyPairSync } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import proposalsHandler from '../../server/routes/proposals/index.ts';
 import proposalDetailHandler from '../../server/routes/proposals/[id].ts';
@@ -77,6 +77,162 @@ function assertContractReportShape(report) {
   assert.equal(Array.isArray(report.appendix?.field_digest), true);
 }
 
+function assertDocumentComparisonStructuredReportShape(report) {
+  assert.equal(Boolean(report && typeof report === 'object' && !Array.isArray(report)), true);
+  assert.equal(String(report.template_id), 'document_comparison_v1');
+  assert.equal(typeof report.template_name, 'string');
+  assert.equal(typeof report.generated_at_iso, 'string');
+  assert.equal(Boolean(report.quality && typeof report.quality === 'object' && !Array.isArray(report.quality)), true);
+  assert.equal(typeof report.quality?.confidence_overall, 'number');
+  assert.equal(Array.isArray(report.quality?.confidence_reasoning), true);
+  assert.equal(Array.isArray(report.quality?.missing_high_impact_evidence_ids), true);
+  assert.equal(Boolean(report.summary && typeof report.summary === 'object' && !Array.isArray(report.summary)), true);
+  assert.equal(Array.isArray(report.summary?.top_fit_reasons), true);
+  assert.equal(Array.isArray(report.summary?.top_blockers), true);
+  assert.equal(Array.isArray(report.summary?.next_actions), true);
+  assert.equal(Array.isArray(report.category_breakdown), true);
+  assert.equal(report.category_breakdown.length >= 5, true);
+  report.category_breakdown.forEach((entry) => {
+    assert.equal(Array.isArray(entry?.evidence_ids), true);
+    assert.equal(entry.evidence_ids.length > 0, true);
+    entry.evidence_ids.forEach((evidenceId) => assert.equal(typeof evidenceId, 'string'));
+  });
+  assert.equal(Array.isArray(report.contradictions), true);
+  assert.equal(Array.isArray(report.flags), true);
+  report.flags.forEach((entry) => {
+    assert.equal(Array.isArray(entry?.evidence_ids), true);
+    entry.evidence_ids.forEach((evidenceId) => assert.equal(typeof evidenceId, 'string'));
+  });
+  assert.equal(Array.isArray(report.followup_questions), true);
+  report.followup_questions.forEach((entry) => {
+    assert.equal(Array.isArray(entry?.targets?.evidence_ids), true);
+    entry.targets.evidence_ids.forEach((evidenceId) => assert.equal(typeof evidenceId, 'string'));
+  });
+  assert.equal(Boolean(report.appendix && typeof report.appendix === 'object' && !Array.isArray(report.appendix)), true);
+  assert.equal(Array.isArray(report.appendix?.evidence_digest), true);
+  report.appendix.evidence_digest.forEach((entry) => {
+    assert.equal(typeof entry?.evidence_id, 'string');
+    assert.equal(['shared', 'confidential'].includes(String(entry?.source || '')), true);
+  });
+}
+
+function buildStructuredVertexComparisonReport(sharedAnchorPhrase) {
+  const generatedAt = new Date().toISOString();
+  return {
+    template_id: 'document_comparison_v1',
+    template_name: 'Document Comparison Evaluation',
+    generated_at_iso: generatedAt,
+    quality: {
+      confidence_overall: 0.86,
+      confidence_reasoning: ['Shared content contains concrete contractual terms and obligations.'],
+      missing_high_impact_evidence_ids: [],
+    },
+    summary: {
+      fit_level: 'high',
+      top_fit_reasons: [
+        {
+          text: `Both documents align on ${sharedAnchorPhrase}.`,
+          evidence_ids: ['shared:line_001'],
+        },
+      ],
+      top_blockers: [
+        {
+          text: 'Some legal obligations require confirmation before execution.',
+          evidence_ids: ['shared:line_001'],
+        },
+      ],
+      next_actions: ['Validate final legal language against negotiated clauses.'],
+    },
+    category_breakdown: [
+      {
+        category_key: 'visible_text_similarity',
+        name: 'Visible Text Similarity',
+        score_0_100: null,
+        confidence_0_1: 0.85,
+        notes: ['High overlap in commercial and support obligations.'],
+        evidence_ids: ['shared:line_001'],
+      },
+      {
+        category_key: 'obligation_alignment',
+        name: 'Obligation Alignment',
+        score_0_100: null,
+        confidence_0_1: 0.82,
+        notes: ['Obligations are directionally aligned in shared sections.'],
+        evidence_ids: ['shared:line_001'],
+      },
+      {
+        category_key: 'risk_exposure',
+        name: 'Risk Exposure',
+        score_0_100: null,
+        confidence_0_1: 0.8,
+        notes: ['Residual risk exists due to confidential caveats.'],
+        evidence_ids: ['conf:line_001'],
+      },
+      {
+        category_key: 'commercial_fit',
+        name: 'Commercial Fit',
+        score_0_100: null,
+        confidence_0_1: 0.81,
+        notes: ['Commercial framing is broadly compatible.'],
+        evidence_ids: ['shared:line_001'],
+      },
+      {
+        category_key: 'operational_readiness',
+        name: 'Operational Readiness',
+        score_0_100: null,
+        confidence_0_1: 0.79,
+        notes: ['Operational sequencing is feasible with follow-up.'],
+        evidence_ids: ['shared:line_001'],
+      },
+    ],
+    contradictions: [
+      {
+        key: 'timeline_mismatch',
+        severity: 'med',
+        description: 'Timeline assumptions differ between visible sections.',
+        evidence_ids: ['shared:line_001'],
+      },
+    ],
+    flags: [
+      {
+        severity: 'med',
+        type: 'ops',
+        title: 'Operational uncertainty',
+        detail: 'Execution dependencies need explicit owner confirmation.',
+        detail_level: 'partial',
+        evidence_ids: ['shared:line_001'],
+      },
+    ],
+    followup_questions: [
+      {
+        priority: 'high',
+        to_party: 'both',
+        question_text: 'Can both parties confirm final operational handoff ownership?',
+        why_this_matters: 'Clarifies execution risk before signature.',
+        targets: { category_key: 'operational_readiness', evidence_ids: ['shared:line_001'] },
+      },
+    ],
+    appendix: {
+      evidence_digest: [
+        {
+          evidence_id: 'conf:line_001',
+          source: 'confidential',
+          label: 'Confidential line 001',
+          value_summary: 'Confidential context indicates negotiation sensitivity.',
+          visibility: 'hidden',
+        },
+        {
+          evidence_id: 'shared:line_001',
+          source: 'shared',
+          label: 'Shared line 001',
+          value_summary: `Shared phrase used for grounding: ${sharedAnchorPhrase}`.slice(0, 120),
+          visibility: 'full',
+        },
+      ],
+    },
+  };
+}
+
 async function createProposal(cookie, body) {
   const normalizedStatus = String(body?.status || '').trim().toLowerCase();
   const shouldDefaultSentAt =
@@ -96,6 +252,129 @@ async function createProposal(cookie, body) {
   await proposalsHandler(req, res);
   assert.equal(res.statusCode, 201);
   return res.jsonBody().proposal;
+}
+
+async function createDocumentComparisonForEvaluation(ownerCookie, bodyOverrides = {}) {
+  const createReq = createMockReq({
+    method: 'POST',
+    url: '/api/document-comparisons',
+    headers: { cookie: ownerCookie },
+    body: {
+      title: 'Evaluation Comparison',
+      doc_a_text:
+        'Confidential document includes internal pricing assumptions, governance controls, and legal constraints for planning.',
+      doc_b_text:
+        'Shared document includes onboarding milestones, support scope, acceptance criteria, and operational obligations.',
+      createProposal: true,
+      ...bodyOverrides,
+    },
+  });
+  const createRes = createMockRes();
+  await documentComparisonsHandler(createReq, createRes);
+  assert.equal(createRes.statusCode, 201);
+  return {
+    comparisonId: createRes.jsonBody().comparison.id,
+    proposalId: createRes.jsonBody().comparison.proposal_id,
+  };
+}
+
+async function withStubbedVertexGenerateContent(options, run) {
+  const originalMock = process.env.VERTEX_MOCK;
+  const originalServiceAccount = process.env.GCP_SERVICE_ACCOUNT_JSON;
+  const originalProjectId = process.env.GCP_PROJECT_ID;
+  const originalLocation = process.env.GCP_LOCATION;
+  const originalModel = process.env.VERTEX_MODEL;
+  const originalFetch = globalThis.fetch;
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const privateKeyPem = String(privateKey.export({ format: 'pem', type: 'pkcs8' }));
+  const serviceAccount = {
+    type: 'service_account',
+    project_id: 'vertex-integration-test',
+    private_key: privateKeyPem,
+    client_email: 'vertex-test@vertex-integration-test.iam.gserviceaccount.com',
+    token_uri: 'https://oauth2.googleapis.com/token',
+  };
+
+  let tokenCalls = 0;
+  let vertexCalls = 0;
+
+  process.env.VERTEX_MOCK = '';
+  process.env.GCP_SERVICE_ACCOUNT_JSON = JSON.stringify(serviceAccount);
+  process.env.GCP_PROJECT_ID = 'vertex-integration-test';
+  process.env.GCP_LOCATION = 'us-central1';
+  process.env.VERTEX_MODEL = options?.model || 'gemini-2.0-flash-001';
+
+  globalThis.fetch = async (input, init) => {
+    const url = String(input || '');
+    if (url === 'https://oauth2.googleapis.com/token') {
+      tokenCalls += 1;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ access_token: 'vertex-test-access-token' }),
+        text: async () => '',
+      };
+    }
+    if (url.includes('-aiplatform.googleapis.com') && url.includes(':generateContent')) {
+      vertexCalls += 1;
+      if (typeof options?.onGenerateContent === 'function') {
+        return options.onGenerateContent({ input, init, url, vertexCalls, tokenCalls });
+      }
+      const text = String(options?.text || '');
+      const finishReason = String(options?.finishReason || 'STOP');
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          candidates: [
+            {
+              finishReason,
+              content: {
+                parts: [
+                  {
+                    text,
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+        text: async () => '',
+      };
+    }
+    return originalFetch(input, init);
+  };
+
+  try {
+    return await run({ tokenCalls: () => tokenCalls, vertexCalls: () => vertexCalls });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalMock === undefined) {
+      delete process.env.VERTEX_MOCK;
+    } else {
+      process.env.VERTEX_MOCK = originalMock;
+    }
+    if (originalServiceAccount === undefined) {
+      delete process.env.GCP_SERVICE_ACCOUNT_JSON;
+    } else {
+      process.env.GCP_SERVICE_ACCOUNT_JSON = originalServiceAccount;
+    }
+    if (originalProjectId === undefined) {
+      delete process.env.GCP_PROJECT_ID;
+    } else {
+      process.env.GCP_PROJECT_ID = originalProjectId;
+    }
+    if (originalLocation === undefined) {
+      delete process.env.GCP_LOCATION;
+    } else {
+      process.env.GCP_LOCATION = originalLocation;
+    }
+    if (originalModel === undefined) {
+      delete process.env.VERTEX_MODEL;
+    } else {
+      process.env.VERTEX_MODEL = originalModel;
+    }
+  }
 }
 
 if (!hasDatabaseUrl()) {
@@ -688,6 +967,663 @@ if (!hasDatabaseUrl()) {
         delete process.env.GCP_SERVICE_ACCOUNT_JSON;
       } else {
         process.env.GCP_SERVICE_ACCOUNT_JSON = originalServiceAccount;
+      }
+    }
+  });
+
+  test('document comparison evaluate stores vertex provider metadata and structured scores on valid Vertex JSON', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = authCookie('doc_eval_vertex_owner', 'doc-eval-vertex@example.com');
+    const sharedAnchorPhrase = 'recipient review obligations and support levels';
+    const longConfidential = [
+      'Confidential obligations include payment schedules, renewal rights, and internal escalation plans.',
+      'Additional proprietary terms describe legal controls, compliance checkpoints, and audit readiness criteria.',
+      'Commercial clauses include milestone penalties, termination rights, and dispute escalation sequencing.',
+    ].join(' ');
+    const longShared = [
+      `Shared text confirms ${sharedAnchorPhrase}.`,
+      'It also contains service-level targets, acceptance milestones, warranty scope, and remediation timelines.',
+      'Shared obligations reference pricing terms, onboarding handoff expectations, and delivery responsibilities.',
+    ].join(' ');
+
+    const createReq = createMockReq({
+      method: 'POST',
+      url: '/api/document-comparisons',
+      headers: { cookie: ownerCookie },
+      body: {
+        title: 'Vertex Structured Evaluation',
+        doc_a_text: longConfidential,
+        doc_b_text: longShared,
+        createProposal: true,
+      },
+    });
+    const createRes = createMockRes();
+    await documentComparisonsHandler(createReq, createRes);
+    assert.equal(createRes.statusCode, 201);
+    const comparisonId = createRes.jsonBody().comparison.id;
+    const proposalId = createRes.jsonBody().comparison.proposal_id;
+    assert.ok(proposalId);
+
+    const originalMock = process.env.VERTEX_MOCK;
+    const originalServiceAccount = process.env.GCP_SERVICE_ACCOUNT_JSON;
+    const originalProjectId = process.env.GCP_PROJECT_ID;
+    const originalLocation = process.env.GCP_LOCATION;
+    const originalModel = process.env.VERTEX_MODEL;
+    const originalFetch = globalThis.fetch;
+    let tokenCalls = 0;
+    let vertexCalls = 0;
+
+    try {
+      const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+      const privateKeyPem = String(privateKey.export({ format: 'pem', type: 'pkcs8' }));
+      const serviceAccount = {
+        type: 'service_account',
+        project_id: 'vertex-integration-test',
+        private_key: privateKeyPem,
+        client_email: 'vertex-test@vertex-integration-test.iam.gserviceaccount.com',
+        token_uri: 'https://oauth2.googleapis.com/token',
+      };
+
+      process.env.VERTEX_MOCK = '';
+      process.env.GCP_SERVICE_ACCOUNT_JSON = JSON.stringify(serviceAccount);
+      process.env.GCP_PROJECT_ID = 'vertex-integration-test';
+      process.env.GCP_LOCATION = 'us-central1';
+      process.env.VERTEX_MODEL = 'gemini-2.0-flash-001';
+
+      const structuredReport = buildStructuredVertexComparisonReport(sharedAnchorPhrase);
+
+      globalThis.fetch = async (input, init) => {
+        const url = String(input || '');
+        if (url === 'https://oauth2.googleapis.com/token') {
+          tokenCalls += 1;
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ access_token: 'vertex-test-access-token' }),
+            text: async () => '',
+          };
+        }
+        if (url.includes('-aiplatform.googleapis.com') && url.includes(':generateContent')) {
+          vertexCalls += 1;
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              candidates: [
+                {
+                  content: {
+                    parts: [
+                      {
+                        text: JSON.stringify(structuredReport),
+                      },
+                    ],
+                  },
+                },
+              ],
+            }),
+            text: async () => '',
+          };
+        }
+        return originalFetch(input, init);
+      };
+
+      const evaluateReq = createMockReq({
+        method: 'POST',
+        url: `/api/document-comparisons/${comparisonId}/evaluate`,
+        headers: { cookie: ownerCookie },
+        query: { id: comparisonId },
+        body: {},
+      });
+      const evaluateRes = createMockRes();
+      await documentComparisonsEvaluateHandler(evaluateReq, evaluateRes, comparisonId);
+      assert.equal(evaluateRes.statusCode, 200);
+      assert.equal(tokenCalls > 0, true);
+      assert.equal(vertexCalls > 0, true);
+
+      const payload = evaluateRes.jsonBody();
+      assert.equal(payload.evaluation_provider, 'vertex');
+      assert.equal(typeof payload.evaluation_model, 'string');
+      assert.equal(payload.comparison.status, 'evaluated');
+      assert.equal(payload.comparison.evaluation_result?.evaluation_provider, 'vertex');
+      assert.equal(typeof payload.comparison.evaluation_result?.evaluation_model, 'string');
+      assertDocumentComparisonStructuredReportShape(payload.comparison.evaluation_result?.report || {});
+
+      const evaluationsReq = createMockReq({
+        method: 'GET',
+        url: `/api/proposals/${proposalId}/evaluations`,
+        headers: { cookie: ownerCookie },
+        query: { id: proposalId },
+      });
+      const evaluationsRes = createMockRes();
+      await proposalEvaluationsHandler(evaluationsReq, evaluationsRes, proposalId);
+      assert.equal(evaluationsRes.statusCode, 200);
+      const evaluations = Array.isArray(evaluationsRes.jsonBody().evaluations)
+        ? evaluationsRes.jsonBody().evaluations
+        : [];
+      assert.equal(evaluations.length > 0, true);
+      assert.equal(evaluations[0]?.evaluation_provider, 'vertex');
+      assert.equal(typeof evaluations[0]?.evaluation_model, 'string');
+      assert.equal(String(evaluations[0]?.status || '').toLowerCase(), 'completed');
+    } finally {
+      globalThis.fetch = originalFetch;
+
+      if (originalMock === undefined) {
+        delete process.env.VERTEX_MOCK;
+      } else {
+        process.env.VERTEX_MOCK = originalMock;
+      }
+      if (originalServiceAccount === undefined) {
+        delete process.env.GCP_SERVICE_ACCOUNT_JSON;
+      } else {
+        process.env.GCP_SERVICE_ACCOUNT_JSON = originalServiceAccount;
+      }
+      if (originalProjectId === undefined) {
+        delete process.env.GCP_PROJECT_ID;
+      } else {
+        process.env.GCP_PROJECT_ID = originalProjectId;
+      }
+      if (originalLocation === undefined) {
+        delete process.env.GCP_LOCATION;
+      } else {
+        process.env.GCP_LOCATION = originalLocation;
+      }
+      if (originalModel === undefined) {
+        delete process.env.VERTEX_MODEL;
+      } else {
+        process.env.VERTEX_MODEL = originalModel;
+      }
+    }
+  });
+
+  test('document comparison evaluate fails when shared report contains confidential planted token', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = authCookie('doc_eval_conf_leak_owner', 'doc-eval-conf-leak@example.com');
+    const confidentialToken = 'CONFIDENTIAL_PRICE_12345';
+    const sharedAnchorPhrase = 'shared onboarding milestones and support coverage details';
+
+    const { comparisonId, proposalId } = await createDocumentComparisonForEvaluation(ownerCookie, {
+      title: 'Vertex Confidential Leak Guard',
+      doc_a_text: [
+        `Internal baseline includes ${confidentialToken} for private pricing strategy.`,
+        'Confidential terms also include renewal assumptions and escalation policy notes.',
+      ].join(' '),
+      doc_b_text: [
+        `Shared draft references ${sharedAnchorPhrase}.`,
+        'Shared obligations include acceptance criteria, remediation windows, and service commitments.',
+      ].join(' '),
+    });
+    assert.ok(proposalId);
+
+    const leakyReport = buildStructuredVertexComparisonReport(sharedAnchorPhrase);
+    leakyReport.summary.top_fit_reasons = [
+      {
+        text: `Internal pricing at ${confidentialToken} appears aligned with ${sharedAnchorPhrase}.`,
+        evidence_ids: ['shared:line_001'],
+      },
+    ];
+
+    await withStubbedVertexGenerateContent(
+      {
+        text: JSON.stringify(leakyReport),
+      },
+      async ({ tokenCalls, vertexCalls }) => {
+        const evaluateReq = createMockReq({
+          method: 'POST',
+          url: `/api/document-comparisons/${comparisonId}/evaluate`,
+          headers: { cookie: ownerCookie },
+          query: { id: comparisonId },
+          body: {},
+        });
+        const evaluateRes = createMockRes();
+        await documentComparisonsEvaluateHandler(evaluateReq, evaluateRes, comparisonId);
+        assert.equal(evaluateRes.statusCode, 502);
+        assert.equal(evaluateRes.jsonBody().error.code, 'vertex_invalid_response');
+        assert.equal(Number(evaluateRes.jsonBody().error.attempt_count || 0), 1);
+        assert.equal(tokenCalls() > 0, true);
+        assert.equal(vertexCalls(), 1);
+
+        const detailReq = createMockReq({
+          method: 'GET',
+          url: `/api/document-comparisons/${comparisonId}`,
+          headers: { cookie: ownerCookie },
+          query: { id: comparisonId },
+        });
+        const detailRes = createMockRes();
+        await documentComparisonsIdHandler(detailReq, detailRes, comparisonId);
+        assert.equal(detailRes.statusCode, 200);
+        assert.equal(detailRes.jsonBody().comparison.status, 'failed');
+        assert.equal(
+          String(
+            detailRes.jsonBody().comparison.evaluation_result?.error?.details?.diagnostics?.reason_code || '',
+          ).toLowerCase(),
+          'confidential_leak_detected',
+        );
+        assert.equal(
+          JSON.stringify(detailRes.jsonBody().comparison.evaluation_result?.report || {}).includes(confidentialToken),
+          false,
+        );
+
+        const evaluationsReq = createMockReq({
+          method: 'GET',
+          url: `/api/proposals/${proposalId}/evaluations`,
+          headers: { cookie: ownerCookie },
+          query: { id: proposalId },
+        });
+        const evaluationsRes = createMockRes();
+        await proposalEvaluationsHandler(evaluationsReq, evaluationsRes, proposalId);
+        assert.equal(evaluationsRes.statusCode, 200);
+        const evaluations = Array.isArray(evaluationsRes.jsonBody().evaluations)
+          ? evaluationsRes.jsonBody().evaluations
+          : [];
+        assert.equal(
+          evaluations.some((row) => String(row?.status || '').toLowerCase() === 'completed'),
+          false,
+        );
+      },
+    );
+  });
+
+  test('document comparison evaluate allows derived shared insights without confidential token disclosure', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = authCookie('doc_eval_safe_insight_owner', 'doc-eval-safe-insight@example.com');
+    const confidentialToken = 'CONFIDENTIAL_PRICE_98765';
+    const sharedAnchorPhrase = 'shared onboarding milestones and support coverage details';
+
+    const { comparisonId, proposalId } = await createDocumentComparisonForEvaluation(ownerCookie, {
+      title: 'Vertex Safe Derived Insight',
+      doc_a_text: [
+        `Internal pricing guidance includes ${confidentialToken} and non-public margin constraints.`,
+        'Confidential legal terms also include escalation sequencing and renewal preferences.',
+      ].join(' '),
+      doc_b_text: [
+        `Shared text confirms ${sharedAnchorPhrase}.`,
+        'Shared commitments include acceptance windows, warranty periods, and remediation expectations.',
+      ].join(' '),
+    });
+    assert.ok(proposalId);
+
+    const safeReport = buildStructuredVertexComparisonReport(sharedAnchorPhrase);
+    safeReport.summary.top_fit_reasons = [
+      {
+        text: `Shared terms around ${sharedAnchorPhrase} suggest a pricing gap is likely and should be negotiated.`,
+        evidence_ids: ['shared:line_001'],
+      },
+    ];
+
+    await withStubbedVertexGenerateContent(
+      {
+        text: JSON.stringify(safeReport),
+      },
+      async ({ vertexCalls }) => {
+        const evaluateReq = createMockReq({
+          method: 'POST',
+          url: `/api/document-comparisons/${comparisonId}/evaluate`,
+          headers: { cookie: ownerCookie },
+          query: { id: comparisonId },
+          body: {},
+        });
+        const evaluateRes = createMockRes();
+        await documentComparisonsEvaluateHandler(evaluateReq, evaluateRes, comparisonId);
+
+        assert.equal(evaluateRes.statusCode, 200);
+        assert.equal(vertexCalls(), 1);
+        assert.equal(evaluateRes.jsonBody().comparison.status, 'evaluated');
+        assert.equal(evaluateRes.jsonBody().comparison.evaluation_result?.evaluation_provider, 'vertex');
+        assert.equal(
+          JSON.stringify(evaluateRes.jsonBody().comparison.evaluation_result?.report || {}).includes(confidentialToken),
+          false,
+        );
+
+        const evaluationsReq = createMockReq({
+          method: 'GET',
+          url: `/api/proposals/${proposalId}/evaluations`,
+          headers: { cookie: ownerCookie },
+          query: { id: proposalId },
+        });
+        const evaluationsRes = createMockRes();
+        await proposalEvaluationsHandler(evaluationsReq, evaluationsRes, proposalId);
+        assert.equal(evaluationsRes.statusCode, 200);
+        const evaluations = Array.isArray(evaluationsRes.jsonBody().evaluations)
+          ? evaluationsRes.jsonBody().evaluations
+          : [];
+        assert.equal(
+          evaluations.some((row) => String(row?.status || '').toLowerCase() === 'completed'),
+          true,
+        );
+      },
+    );
+  });
+
+  test('document comparison evaluate parses JSON fenced model output', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = authCookie('doc_eval_fenced_json_owner', 'doc-eval-fenced-json@example.com');
+    const sharedAnchorPhrase = 'shared onboarding milestones and support coverage details';
+    const { comparisonId } = await createDocumentComparisonForEvaluation(ownerCookie, {
+      title: 'Vertex Fenced JSON Parse',
+      doc_b_text: [
+        `Shared text confirms ${sharedAnchorPhrase}.`,
+        'Additional shared clauses cover warranty scope, support obligations, and SLA expectations.',
+      ].join(' '),
+    });
+
+    const structuredReport = buildStructuredVertexComparisonReport(sharedAnchorPhrase);
+    const fencedText = `\`\`\`json\n${JSON.stringify(structuredReport, null, 2)}\n\`\`\``;
+
+    await withStubbedVertexGenerateContent(
+      {
+        text: fencedText,
+      },
+      async ({ tokenCalls, vertexCalls }) => {
+        const evaluateReq = createMockReq({
+          method: 'POST',
+          url: `/api/document-comparisons/${comparisonId}/evaluate`,
+          headers: { cookie: ownerCookie },
+          query: { id: comparisonId },
+          body: {},
+        });
+        const evaluateRes = createMockRes();
+        await documentComparisonsEvaluateHandler(evaluateReq, evaluateRes, comparisonId);
+
+        assert.equal(evaluateRes.statusCode, 200);
+        assert.equal(tokenCalls() > 0, true);
+        assert.equal(vertexCalls(), 1);
+        assert.equal(evaluateRes.jsonBody().comparison.evaluation_result?.evaluation_provider, 'vertex');
+        assertDocumentComparisonStructuredReportShape(
+          evaluateRes.jsonBody().comparison.evaluation_result?.report || {},
+        );
+      },
+    );
+  });
+
+  test('document comparison evaluate parses JSON when preceded by a one-line preamble', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = authCookie('doc_eval_preamble_json_owner', 'doc-eval-preamble-json@example.com');
+    const sharedAnchorPhrase = 'shared onboarding milestones and support coverage details';
+    const { comparisonId } = await createDocumentComparisonForEvaluation(ownerCookie, {
+      title: 'Vertex Preamble JSON Parse',
+      doc_b_text: [
+        `Shared text confirms ${sharedAnchorPhrase}.`,
+        'Additional shared clauses cover warranty scope, support obligations, and SLA expectations.',
+      ].join(' '),
+    });
+
+    const structuredReport = buildStructuredVertexComparisonReport(sharedAnchorPhrase);
+    const preambleText = `Here is your requested JSON report:\n${JSON.stringify(structuredReport)}`;
+
+    await withStubbedVertexGenerateContent(
+      {
+        text: preambleText,
+      },
+      async ({ tokenCalls, vertexCalls }) => {
+        const evaluateReq = createMockReq({
+          method: 'POST',
+          url: `/api/document-comparisons/${comparisonId}/evaluate`,
+          headers: { cookie: ownerCookie },
+          query: { id: comparisonId },
+          body: {},
+        });
+        const evaluateRes = createMockRes();
+        await documentComparisonsEvaluateHandler(evaluateReq, evaluateRes, comparisonId);
+
+        assert.equal(evaluateRes.statusCode, 200);
+        assert.equal(tokenCalls() > 0, true);
+        assert.equal(vertexCalls(), 1);
+        assert.equal(evaluateRes.jsonBody().comparison.evaluation_result?.evaluation_provider, 'vertex');
+        assertDocumentComparisonStructuredReportShape(
+          evaluateRes.jsonBody().comparison.evaluation_result?.report || {},
+        );
+      },
+    );
+  });
+
+  test('document comparison evaluate retries once with repair prompt after schema validation failure', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = authCookie('doc_eval_schema_repair_owner', 'doc-eval-schema-repair@example.com');
+    const sharedAnchorPhrase = 'shared onboarding milestones and support coverage details';
+    const { comparisonId } = await createDocumentComparisonForEvaluation(ownerCookie, {
+      title: 'Vertex Schema Repair Retry',
+      doc_b_text: [
+        `Shared text confirms ${sharedAnchorPhrase}.`,
+        'Additional shared clauses cover warranty scope, support obligations, and SLA expectations.',
+      ].join(' '),
+    });
+
+    const validReport = buildStructuredVertexComparisonReport(sharedAnchorPhrase);
+    const invalidReport = { ...validReport };
+    delete invalidReport.followup_questions;
+
+    await withStubbedVertexGenerateContent(
+      {
+        onGenerateContent: ({ init, vertexCalls }) => {
+          const requestBody = JSON.parse(String(init?.body || '{}'));
+          const promptText = String(
+            requestBody?.contents?.[0]?.parts?.[0]?.text || '',
+          );
+          if (vertexCalls === 1) {
+            return {
+              ok: true,
+              status: 200,
+              json: async () => ({
+                candidates: [
+                  {
+                    finishReason: 'STOP',
+                    content: {
+                      parts: [{ text: JSON.stringify(invalidReport) }],
+                    },
+                  },
+                ],
+              }),
+              text: async () => '',
+            };
+          }
+          assert.equal(promptText.includes('REPAIR INSTRUCTION (highest priority):'), true);
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              candidates: [
+                {
+                  finishReason: 'STOP',
+                  content: {
+                    parts: [{ text: JSON.stringify(validReport) }],
+                  },
+                },
+              ],
+            }),
+            text: async () => '',
+          };
+        },
+      },
+      async ({ vertexCalls }) => {
+        const evaluateReq = createMockReq({
+          method: 'POST',
+          url: `/api/document-comparisons/${comparisonId}/evaluate`,
+          headers: { cookie: ownerCookie },
+          query: { id: comparisonId },
+          body: {},
+        });
+        const evaluateRes = createMockRes();
+        await documentComparisonsEvaluateHandler(evaluateReq, evaluateRes, comparisonId);
+
+        assert.equal(evaluateRes.statusCode, 200);
+        assert.equal(vertexCalls(), 2);
+        assert.equal(evaluateRes.jsonBody().comparison.evaluation_result?.evaluation_provider, 'vertex');
+        assertDocumentComparisonStructuredReportShape(
+          evaluateRes.jsonBody().comparison.evaluation_result?.report || {},
+        );
+      },
+    );
+  });
+
+  test('document comparison evaluate fails on truncated model output and does not mark success', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = authCookie('doc_eval_truncated_owner', 'doc-eval-truncated@example.com');
+    const { comparisonId, proposalId } = await createDocumentComparisonForEvaluation(ownerCookie, {
+      title: 'Vertex Truncated Output Failure',
+    });
+    assert.ok(proposalId);
+
+    await withStubbedVertexGenerateContent(
+      {
+        text: '{"template_id":"document_comparison_template"',
+        finishReason: 'MAX_TOKENS',
+      },
+      async ({ vertexCalls }) => {
+        const evaluateReq = createMockReq({
+          method: 'POST',
+          url: `/api/document-comparisons/${comparisonId}/evaluate`,
+          headers: { cookie: ownerCookie },
+          query: { id: comparisonId },
+          body: {},
+        });
+        const evaluateRes = createMockRes();
+        await documentComparisonsEvaluateHandler(evaluateReq, evaluateRes, comparisonId);
+        assert.equal(evaluateRes.statusCode, 502);
+        assert.equal(evaluateRes.jsonBody().error.code, 'vertex_invalid_response');
+        assert.equal(String(evaluateRes.jsonBody().error.parse_error_kind || ''), 'truncated_output');
+        assert.equal(Number(evaluateRes.jsonBody().error.raw_text_length || 0) > 0, true);
+        assert.equal(String(evaluateRes.jsonBody().error.finish_reason || '').toLowerCase(), 'max_tokens');
+        assert.equal(vertexCalls(), 2);
+
+        const detailReq = createMockReq({
+          method: 'GET',
+          url: `/api/document-comparisons/${comparisonId}`,
+          headers: { cookie: ownerCookie },
+          query: { id: comparisonId },
+        });
+        const detailRes = createMockRes();
+        await documentComparisonsIdHandler(detailReq, detailRes, comparisonId);
+        assert.equal(detailRes.statusCode, 200);
+        assert.equal(detailRes.jsonBody().comparison.status, 'failed');
+        assert.equal(
+          String(
+            detailRes.jsonBody().comparison.evaluation_result?.error?.details?.diagnostics?.reason_code || '',
+          ).toLowerCase(),
+          'truncated_output',
+        );
+        assert.equal(
+          String(
+            detailRes.jsonBody().comparison.evaluation_result?.error?.details?.diagnostics?.parse_error_name || '',
+          ).toLowerCase(),
+          'truncated_output',
+        );
+        assert.equal(
+          String(
+            detailRes.jsonBody().comparison.evaluation_result?.error?.details?.diagnostics?.parse_error_message || '',
+          ).includes('"parse_error_kind":"truncated_output"'),
+          true,
+        );
+        assert.equal(
+          String(
+            detailRes.jsonBody().comparison.evaluation_result?.error?.details?.diagnostics?.parse_error_message || '',
+          ).includes('"finish_reason":"max_tokens"'),
+          true,
+        );
+
+        const evaluationsReq = createMockReq({
+          method: 'GET',
+          url: `/api/proposals/${proposalId}/evaluations`,
+          headers: { cookie: ownerCookie },
+          query: { id: proposalId },
+        });
+        const evaluationsRes = createMockRes();
+        await proposalEvaluationsHandler(evaluationsReq, evaluationsRes, proposalId);
+        assert.equal(evaluationsRes.statusCode, 200);
+        const evaluations = Array.isArray(evaluationsRes.jsonBody().evaluations)
+          ? evaluationsRes.jsonBody().evaluations
+          : [];
+        assert.equal(
+          evaluations.some((row) => String(row?.status || '').toLowerCase() === 'completed'),
+          false,
+        );
+      },
+    );
+  });
+
+  test('document comparison evaluate retries once for json_parse_error failures and then succeeds', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = authCookie('doc_eval_parse_retry_owner', 'doc-eval-parse-retry@example.com');
+
+    const createReq = createMockReq({
+      method: 'POST',
+      url: '/api/document-comparisons',
+      headers: { cookie: ownerCookie },
+      body: {
+        title: 'JSON Parse Retry Failure',
+        doc_a_text:
+          'Confidential terms include private negotiation constraints, escalation controls, and governance requirements.',
+        doc_b_text:
+          'Shared terms include onboarding milestones, service obligations, and acceptance criteria for delivery.',
+        createProposal: true,
+      },
+    });
+    const createRes = createMockRes();
+    await documentComparisonsHandler(createReq, createRes);
+    assert.equal(createRes.statusCode, 201);
+    const comparisonId = createRes.jsonBody().comparison.id;
+
+    const originalEvaluator = globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
+    let calls = 0;
+
+    try {
+      globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = async (input) => {
+        calls += 1;
+        if (calls === 1) {
+          throw new ApiError(502, 'invalid_model_output', 'Model output was not valid JSON', {
+            reasonCode: 'json_parse_error',
+            parseErrorKind: 'json_parse_error',
+            parseErrorName: 'json_parse_error',
+            parseErrorMessage: JSON.stringify({
+              parse_error_kind: 'json_parse_error',
+              raw_text_length: 419,
+              had_json_fence: false,
+              finish_reason: 'stop',
+              schema_missing_keys: [],
+              category_count: null,
+            }),
+            rawTextLength: 419,
+            hadJsonFence: false,
+            finishReason: 'STOP',
+          });
+        }
+        return evaluateDocumentComparisonWithVertex(input);
+      };
+
+      const evaluateReq = createMockReq({
+        method: 'POST',
+        url: `/api/document-comparisons/${comparisonId}/evaluate`,
+        headers: { cookie: ownerCookie },
+        query: { id: comparisonId },
+        body: {},
+      });
+      const evaluateRes = createMockRes();
+      await documentComparisonsEvaluateHandler(evaluateReq, evaluateRes, comparisonId);
+
+      assert.equal(evaluateRes.statusCode, 200);
+      assert.equal(calls, 2);
+      assert.equal(Number(evaluateRes.jsonBody().attempt_count || 0), 2);
+      assert.equal(evaluateRes.jsonBody().comparison.status, 'evaluated');
+    } finally {
+      if (originalEvaluator === undefined) {
+        delete globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
+      } else {
+        globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = originalEvaluator;
       }
     }
   });
@@ -1406,6 +2342,11 @@ if (!hasDatabaseUrl()) {
     assert.equal(evalRes.jsonBody().comparison.status, 'evaluated');
     assert.equal(typeof evalRes.jsonBody().comparison.evaluation_result.score, 'number');
     assert.equal(evalRes.jsonBody().comparison.evaluation_result.provider, 'mock');
+    assert.equal(evalRes.jsonBody().comparison.evaluation_result.evaluation_provider, 'fallback');
+    assert.equal(
+      String(evalRes.jsonBody().comparison.evaluation_result.evaluation_provider_reason || ''),
+      'vertex_mock_enabled',
+    );
     assert.equal(evalRes.jsonBody().comparison.evaluation_result.input_trace?.source, 'db');
     assert.equal(
       Number(evalRes.jsonBody().comparison.evaluation_result.input_trace?.confidential_length),
@@ -1477,6 +2418,7 @@ if (!hasDatabaseUrl()) {
     assert.equal(rows.length, 1);
     assert.equal(rows[0].status, 'evaluated');
     assert.equal(rows[0].evaluationResult?.provider, 'mock');
+    assert.equal(rows[0].evaluationResult?.evaluation_provider, 'fallback');
     assert.equal(rows[0].evaluationResult?.input_trace?.source, 'db');
     assert.equal(Number(rows[0].evaluationResult?.input_trace?.shared_length || 0), updatedDocBText.length);
     assert.equal(Array.isArray(rows[0].publicReport?.sections), true);
@@ -1721,6 +2663,7 @@ if (!hasDatabaseUrl()) {
     assert.equal(proposalDetailRes.statusCode, 200);
     assert.equal(proposalDetailRes.jsonBody().evaluations.length >= 1, true);
     assert.equal(proposalDetailRes.jsonBody().evaluations[0].source, 'document_comparison_vertex');
+    assert.equal(proposalDetailRes.jsonBody().evaluations[0].evaluation_provider, 'fallback');
     assert.equal(
       Array.isArray(proposalDetailRes.jsonBody().evaluations[0]?.result?.report?.sections),
       true,
@@ -1737,6 +2680,7 @@ if (!hasDatabaseUrl()) {
     assert.equal(comparisonGetRes.statusCode, 200);
     assert.equal(comparisonGetRes.jsonBody().comparison.status, 'evaluated');
     assert.equal(comparisonGetRes.jsonBody().comparison.evaluation_result.provider, 'mock');
+    assert.equal(comparisonGetRes.jsonBody().comparison.evaluation_result.evaluation_provider, 'fallback');
     assert.equal(Array.isArray(comparisonGetRes.jsonBody().comparison.public_report.sections), true);
   });
 

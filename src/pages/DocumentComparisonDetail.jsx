@@ -240,6 +240,36 @@ function getEvaluationInputMeta(evaluation) {
   };
 }
 
+function getEvaluationProviderMeta(evaluation) {
+  const result =
+    evaluation?.result && typeof evaluation.result === 'object' && !Array.isArray(evaluation.result)
+      ? evaluation.result
+      : {};
+  const providerRaw = asText(
+    evaluation?.evaluation_provider ||
+      evaluation?.provider ||
+      result.evaluation_provider ||
+      result.provider,
+  );
+  const model = asText(
+    evaluation?.evaluation_model ||
+      evaluation?.evaluation_provider_model ||
+      result.evaluation_model ||
+      result.evaluation_provider_model ||
+      result.model,
+  );
+  const reason = asText(
+    evaluation?.evaluation_provider_reason ||
+      result.evaluation_provider_reason ||
+      result.fallbackReason,
+  );
+  return {
+    provider: asLower(providerRaw) === 'vertex' ? 'vertex' : providerRaw ? 'fallback' : 'unknown',
+    model: model || null,
+    reason: reason || null,
+  };
+}
+
 function renderDocumentReadOnly({ text, html }) {
   const safeText = String(text || '').trim();
   const safeHtml = asText(html);
@@ -369,6 +399,9 @@ export default function DocumentComparisonDetail() {
   const reportSections = Array.isArray(report?.sections) ? report.sections : [];
   const evaluationHistory = Array.isArray(evaluationsQuery.data) ? evaluationsQuery.data : [];
   const latestEvaluation = evaluationHistory[0] || null;
+  const latestProviderMeta = latestEvaluation
+    ? getEvaluationProviderMeta(latestEvaluation)
+    : getEvaluationProviderMeta({ result: comparison?.evaluation_result || {} });
   const latestHistoryFailure = extractEvaluationFailureDetails(latestEvaluation?.result?.error);
   const comparisonFailure = extractEvaluationFailureDetails(comparison?.evaluation_result?.error);
   const latestFailureDetails = latestHistoryFailure || comparisonFailure;
@@ -889,6 +922,21 @@ export default function DocumentComparisonDetail() {
                 </Card>
               ) : null}
 
+              {hasReport ? (
+                <Card className="border border-slate-200 shadow-sm">
+                  <CardContent className="py-4 text-sm text-slate-700">
+                    Provider:{' '}
+                    <span className="font-mono">
+                      {latestProviderMeta.provider}
+                      {latestProviderMeta.model ? ` · ${latestProviderMeta.model}` : ''}
+                    </span>
+                    {latestProviderMeta.provider !== 'vertex' && latestProviderMeta.reason ? (
+                      <span className="text-slate-500"> ({latestProviderMeta.reason})</span>
+                    ) : null}
+                  </CardContent>
+                </Card>
+              ) : null}
+
               {evaluationHistory.length > 0 ? (
                 <Card className="border border-slate-200 shadow-sm">
                   <CardHeader>
@@ -900,6 +948,7 @@ export default function DocumentComparisonDetail() {
                         const rowMeta = getEvaluationRowMeta(evaluation);
                         const rowFailure = extractEvaluationFailureDetails(evaluation?.result?.error);
                         const rowInputMeta = getEvaluationInputMeta(evaluation);
+                        const rowProviderMeta = getEvaluationProviderMeta(evaluation);
                         const hasRowInputMeta =
                           Boolean(rowInputMeta.inputSharedHash) ||
                           Boolean(rowInputMeta.inputConfHash) ||
@@ -923,6 +972,16 @@ export default function DocumentComparisonDetail() {
                                     <span className="font-mono text-slate-700">{rowFailure.failureCode}</span>
                                   </p>
                                 ) : null}
+                                <p className="text-xs text-slate-500">
+                                  Provider:{' '}
+                                  <span className="font-mono text-slate-700">
+                                    {rowProviderMeta.provider}
+                                    {rowProviderMeta.model ? ` · ${rowProviderMeta.model}` : ''}
+                                  </span>
+                                  {rowProviderMeta.provider !== 'vertex' && rowProviderMeta.reason ? (
+                                    <span className="text-slate-500"> ({rowProviderMeta.reason})</span>
+                                  ) : null}
+                                </p>
                                 {isOwnerView && hasRowInputMeta ? (
                                   <p className="text-xs text-slate-500">
                                     Inputs:{' '}

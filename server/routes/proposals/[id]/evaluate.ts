@@ -24,6 +24,10 @@ function asText(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function asLower(value: unknown) {
+  return asText(value).toLowerCase();
+}
+
 function normalizeEmail(value: unknown) {
   return typeof value === 'string' ? value.trim().toLowerCase() : '';
 }
@@ -172,6 +176,14 @@ function buildProposalInput(proposal: any, template: any, templateQuestions: any
 }
 
 function buildProposalResultFromEvaluation(proposal: any, evaluation: any, extras: Record<string, unknown> = {}) {
+  const provider = asText(evaluation?.provider) || 'unknown';
+  const model = asText(evaluation?.model) || null;
+  const evaluationProvider = asLower(evaluation?.evaluation_provider || provider) === 'vertex' ? 'vertex' : 'fallback';
+  const evaluationProviderReason =
+    evaluationProvider === 'fallback'
+      ? asText(evaluation?.evaluation_provider_reason || evaluation?.fallbackReason) ||
+        (asLower(provider) === 'mock' ? 'vertex_mock_enabled' : 'provider_not_vertex')
+      : null;
   return {
     score: evaluation.score,
     recommendation: evaluation.recommendation,
@@ -184,8 +196,12 @@ function buildProposalResultFromEvaluation(proposal: any, evaluation: any, extra
     quality: evaluation.report?.quality || {},
     sections: Array.isArray(evaluation?.report?.sections) ? evaluation.report.sections : [],
     report: evaluation.report || {},
-    provider: evaluation.provider,
-    model: evaluation.model,
+    provider,
+    model,
+    evaluation_provider: evaluationProvider,
+    evaluation_provider_model: model,
+    evaluation_provider_version: model,
+    evaluation_provider_reason: evaluationProviderReason,
     proposal: {
       id: proposal.id,
       title: proposal.title,
@@ -247,6 +263,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
       return;
     }
     context.userId = auth.user.id;
+    const requestId = asText((context as any)?.requestId) || newId('request');
 
     const db = getDb();
     const currentEmail = normalizeEmail(auth.user.email);
@@ -297,6 +314,19 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         }
 
         linkedComparison = comparison;
+        if (process.env.NODE_ENV !== 'production') {
+          console.info(
+            JSON.stringify({
+              level: 'info',
+              route: '/api/proposals/[id]/evaluate',
+              event: 'proposal_document_comparison_evaluation_start',
+              requestId,
+              proposalId: proposal.id,
+              comparisonId: comparison.id,
+              inputChars: String(comparison.docAText || '').length + String(comparison.docBText || '').length,
+            }),
+          );
+        }
         const comparisonEvaluation = await evaluateDocumentComparisonWithVertex({
           title: comparison.title || proposal.title || 'Document Comparison',
           docAText: comparison.docAText || '',
@@ -305,7 +335,27 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
           docBSpans: [],
           partyALabel: 'Confidential Information',
           partyBLabel: 'Shared Information',
+        }, {
+          correlationId: requestId,
+          routeName: '/api/proposals/[id]/evaluate',
+          entityId: comparison.id,
+          inputChars: String(comparison.docAText || '').length + String(comparison.docBText || '').length,
         });
+        if (process.env.NODE_ENV !== 'production') {
+          console.info(
+            JSON.stringify({
+              level: 'info',
+              route: '/api/proposals/[id]/evaluate',
+              event: 'proposal_document_comparison_evaluation_success',
+              requestId,
+              proposalId: proposal.id,
+              comparisonId: comparison.id,
+              provider:
+                asText(comparisonEvaluation?.evaluation_provider || comparisonEvaluation?.provider) || null,
+              model: asText(comparisonEvaluation?.evaluation_model || comparisonEvaluation?.model) || null,
+            }),
+          );
+        }
 
         result = buildProposalResultFromEvaluation(proposal, comparisonEvaluation, {
           document_comparison_id: comparison.id,
@@ -346,7 +396,37 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         ]);
 
         const proposalInput = buildProposalInput(proposal, template, templateQuestions, responses);
-        const proposalEvaluation = await evaluateProposalWithVertex(proposalInput);
+        if (process.env.NODE_ENV !== 'production') {
+          console.info(
+            JSON.stringify({
+              level: 'info',
+              route: '/api/proposals/[id]/evaluate',
+              event: 'proposal_vertex_evaluation_start',
+              requestId,
+              proposalId: proposal.id,
+              responseCount: proposalInput.responses.length,
+            }),
+          );
+        }
+        const proposalEvaluation = await evaluateProposalWithVertex(proposalInput, {
+          correlationId: requestId,
+          routeName: '/api/proposals/[id]/evaluate',
+          entityId: proposal.id,
+          inputChars: JSON.stringify(proposalInput.responses || []).length,
+        });
+        if (process.env.NODE_ENV !== 'production') {
+          console.info(
+            JSON.stringify({
+              level: 'info',
+              route: '/api/proposals/[id]/evaluate',
+              event: 'proposal_vertex_evaluation_success',
+              requestId,
+              proposalId: proposal.id,
+              provider: asText(proposalEvaluation?.evaluation_provider || proposalEvaluation?.provider) || null,
+              model: asText(proposalEvaluation?.evaluation_model || proposalEvaluation?.model) || null,
+            }),
+          );
+        }
         result = buildProposalResultFromEvaluation(proposal, proposalEvaluation, {
           response_count: responses.length,
           template_question_count: templateQuestions.length,
@@ -436,6 +516,13 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         status: saved.status,
         score: saved.score,
         summary: saved.summary,
+        evaluation_provider:
+          asLower((saved?.result as any)?.evaluation_provider || (saved?.result as any)?.provider) === 'vertex'
+            ? 'vertex'
+            : 'fallback',
+        evaluation_model: asText((saved?.result as any)?.evaluation_model || (saved?.result as any)?.model) || null,
+        evaluation_provider_reason:
+          asText((saved?.result as any)?.evaluation_provider_reason || (saved?.result as any)?.fallbackReason) || null,
         result: saved.result || {},
         created_date: saved.createdAt,
         updated_date: saved.updatedAt,

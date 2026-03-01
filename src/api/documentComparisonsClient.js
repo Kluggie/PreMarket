@@ -255,6 +255,14 @@ export const documentComparisonsClient = {
     return {
       comparison: response.comparison || null,
       evaluation: response.evaluation || null,
+      evaluationProvider:
+        typeof response.evaluation_provider === 'string' ? response.evaluation_provider : null,
+      evaluationModel:
+        typeof response.evaluation_model === 'string' ? response.evaluation_model : null,
+      evaluationProviderReason:
+        typeof response.evaluation_provider_reason === 'string'
+          ? response.evaluation_provider_reason
+          : null,
       proposal: response.proposal || null,
       evaluationInputTrace: response.evaluation_input_trace || null,
       requestId: response.request_id || null,

@@ -24,6 +24,40 @@ const MAX_EVALUATION_ATTEMPTS = 2;
 const MIN_SHARED_EVALUATION_TEXT_LENGTH = 40;
 const MIN_CONFIDENTIAL_EVALUATION_TEXT_LENGTH = 40;
 
+type ApiRouteContext = {
+  requestId?: string;
+  route?: string;
+  startMs?: number;
+  userId?: string | null;
+};
+
+type AuthedUser = {
+  id: string;
+  email?: string | null;
+};
+
+type DocumentComparisonRow = {
+  id: string;
+  userId: string;
+  proposalId: string | null;
+  title: string | null;
+  docAText: string | null;
+  docBText: string | null;
+  inputs: unknown;
+  metadata: unknown;
+  status: string | null;
+  draftStep: number | null;
+  updatedAt: Date | string | null;
+};
+
+type EvaluationDraft = {
+  title: string;
+  docAText: string;
+  docBText: string;
+  draftStep: number | null;
+  inputs: Record<string, unknown>;
+};
+
 type EvaluationFailureCode =
   | 'not_configured'
   | 'empty_inputs'
@@ -81,6 +115,22 @@ function toSafeInteger(value: unknown) {
     return null;
   }
   return Math.floor(numeric);
+}
+
+function parseJsonObject(value: unknown) {
+  const text = asText(value);
+  if (!text) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // ignore malformed diagnostics payloads
+  }
+  return null;
 }
 
 function toOptionalJsonObject(value: unknown) {
@@ -210,19 +260,10 @@ function getEvaluationAttemptInputFields(inputTrace: Record<string, unknown>) {
   };
 }
 
-function traceInputPreview(value: string, limit = 80) {
-  return String(value || '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, Math.max(0, limit));
-}
-
 function logEvaluationInputTrace(params: {
   requestId: string;
   comparisonId: string;
   source: 'db' | 'request_body';
-  confidentialText: string;
-  sharedText: string;
   inputTrace: Record<string, unknown>;
 }) {
   const payload: Record<string, unknown> = {
@@ -233,23 +274,17 @@ function logEvaluationInputTrace(params: {
     source: params.source,
     inputTrace: params.inputTrace,
   };
-  if (process.env.NODE_ENV !== 'production') {
-    payload.preview = {
-      confidential: traceInputPreview(params.confidentialText),
-      shared: traceInputPreview(params.sharedText),
-    };
-  }
   console.info(JSON.stringify(payload));
 }
 
 function resolveEvaluationDraft(params: {
-  existing: any;
+  existing: DocumentComparisonRow | null;
   body: Record<string, unknown>;
-}) {
+}): EvaluationDraft {
   const { existing, body } = params;
-  const existingInputs =
+  const existingInputs: Record<string, unknown> =
     existing?.inputs && typeof existing.inputs === 'object' && !Array.isArray(existing.inputs)
-      ? existing.inputs
+      ? (existing.inputs as Record<string, unknown>)
       : {};
 
   const title = asText(body.title) || asText(existing?.title) || 'Untitled Comparison';
@@ -288,6 +323,10 @@ function resolveEvaluationDraft(params: {
   const docBFiles = toStringArray(body.docBFiles || body.doc_b_files || existingInputs.doc_b_files);
   const docAUrl = asText(body.docAUrl || body.doc_a_url || existingInputs.doc_a_url) || null;
   const docBUrl = asText(body.docBUrl || body.doc_b_url || existingInputs.doc_b_url) || null;
+  const rawDraftStep = body.draftStep ?? body.draft_step ?? existing?.draftStep ?? null;
+  const parsedDraftStep = Number(rawDraftStep);
+  const draftStep =
+    Number.isFinite(parsedDraftStep) && parsedDraftStep > 0 ? Math.floor(parsedDraftStep) : null;
   const updatedInputs = {
     ...existingInputs,
     doc_a_source: docASource,
@@ -308,6 +347,7 @@ function resolveEvaluationDraft(params: {
     title,
     docAText,
     docBText,
+    draftStep,
     inputs: updatedInputs,
   };
 }
@@ -317,16 +357,35 @@ function sanitizeFailureDiagnostics(extra: unknown) {
     return null;
   }
   const source = extra as Record<string, unknown>;
+  const parsedParseErrorDetails = parseJsonObject(source.parseErrorMessage);
+  const parseErrorKindFromMessage = asText(parsedParseErrorDetails?.parse_error_kind);
+  const schemaMissingKeysFromMessage = Array.isArray(parsedParseErrorDetails?.schema_missing_keys)
+    ? parsedParseErrorDetails.schema_missing_keys
+    : [];
   const model = asText(source.model);
   const reasonCode = asText(source.reasonCode);
+  const parseErrorKind = asText(source.parseErrorKind) || parseErrorKindFromMessage || reasonCode;
   const parseErrorName = asText(source.parseErrorName);
   const parseErrorMessage = asText(source.parseErrorMessage);
   const sourceEnvKey = asText(source.sourceEnvKey);
   const diagnostics = {
     model: model || null,
     reason_code: reasonCode || null,
+    parse_error_kind: parseErrorKind || null,
     parse_error_name: parseErrorName || null,
     parse_error_message: parseErrorMessage || null,
+    raw_text_length: toSafeInteger(source.rawTextLength ?? parsedParseErrorDetails?.raw_text_length),
+    had_json_fence:
+      source.hadJsonFence !== undefined
+        ? Boolean(source.hadJsonFence)
+        : parsedParseErrorDetails?.had_json_fence !== undefined
+          ? Boolean(parsedParseErrorDetails.had_json_fence)
+          : null,
+    finish_reason: asText(source.finishReason || parsedParseErrorDetails?.finish_reason) || null,
+    schema_missing_keys: Array.isArray(source.schemaMissingKeys)
+      ? source.schemaMissingKeys.map((value) => asText(value)).filter(Boolean).slice(0, 40)
+      : schemaMissingKeysFromMessage.map((value) => asText(value)).filter(Boolean).slice(0, 40),
+    category_count: toSafeInteger(source.categoryCount ?? parsedParseErrorDetails?.category_count),
     source_env_key: sourceEnvKey || null,
     response_keys: Array.isArray(source.responseKeys)
       ? source.responseKeys.map((value) => asText(value)).filter(Boolean).slice(0, 20)
@@ -341,20 +400,40 @@ function sanitizeFailureDiagnostics(extra: unknown) {
     text_length: toSafeInteger(source.textLength),
     upstream_status: toSafeInteger(source.upstreamStatus),
     status: toSafeInteger(source.status),
+    raw_model_text:
+      process.env.NODE_ENV !== 'production' && String(process.env.EVAL_SAVE_RAW_MODEL_OUTPUT || '').trim() === '1'
+        ? asText(source.rawModelText).slice(0, 12000) || null
+        : null,
   };
   const hasAnyValue =
     Boolean(diagnostics.model) ||
     Boolean(diagnostics.reason_code) ||
+    Boolean(diagnostics.parse_error_kind) ||
     Boolean(diagnostics.parse_error_name) ||
     Boolean(diagnostics.parse_error_message) ||
+    Boolean(diagnostics.raw_text_length) ||
+    diagnostics.had_json_fence !== null ||
+    Boolean(diagnostics.finish_reason) ||
+    diagnostics.schema_missing_keys.length > 0 ||
+    Boolean(diagnostics.category_count) ||
     Boolean(diagnostics.source_env_key) ||
     diagnostics.response_keys.length > 0 ||
     diagnostics.first_candidate_keys.length > 0 ||
     diagnostics.first_part_keys.length > 0 ||
     Boolean(diagnostics.text_length) ||
     Boolean(diagnostics.upstream_status) ||
-    Boolean(diagnostics.status);
+    Boolean(diagnostics.status) ||
+    Boolean(diagnostics.raw_model_text);
   return hasAnyValue ? diagnostics : null;
+}
+
+function getParseErrorKind(error: any) {
+  const fromExtra = asLower(error?.extra?.parseErrorKind || error?.extra?.parseErrorName || error?.extra?.reasonCode);
+  if (fromExtra) {
+    return fromExtra;
+  }
+  const parsedMessage = parseJsonObject(error?.extra?.parseErrorMessage);
+  return asLower(parsedMessage?.parse_error_kind);
 }
 
 function getDocumentComparisonEvaluator() {
@@ -480,12 +559,16 @@ function classifyEvaluationFailure(error: any): ClassifiedEvaluationFailure {
   }
 
   if (sourceCode === 'invalid_model_output') {
+    const parseErrorKind = getParseErrorKind(error);
+    // The evaluator already retries empty/truncated/schema failures internally.
+    // Route-level retry is reserved for parser drift that still escapes extraction.
+    const shouldRetry = parseErrorKind === 'json_parse_error' || !parseErrorKind;
     return {
       failureCode: 'vertex_invalid_response',
       failureStage: 'parse',
       failureMessage: 'Vertex returned an invalid response',
       httpStatus: 502,
-      retryable: false,
+      retryable: shouldRetry,
       sourceCode,
       upstreamStatus: upstreamStatus || null,
     };
@@ -597,12 +680,30 @@ function withAttemptMetadata(params: {
   completedAt: Date;
   inputTrace?: Record<string, unknown> | null;
 }) {
-  const base =
+  const rawEvaluation =
     params.evaluation && typeof params.evaluation === 'object' && !Array.isArray(params.evaluation)
       ? params.evaluation
       : {};
+  const rawProvider = asLower(
+    (rawEvaluation as any).evaluation_provider || (rawEvaluation as any).provider,
+  );
+  const normalizedProvider: 'vertex' | 'fallback' = rawProvider === 'vertex' ? 'vertex' : 'fallback';
+  const normalizedModel =
+    asText((rawEvaluation as any).evaluation_model || (rawEvaluation as any).model) || null;
+  const normalizedProviderReason =
+    normalizedProvider === 'fallback'
+      ? asText((rawEvaluation as any).evaluation_provider_reason || (rawEvaluation as any).fallbackReason) ||
+        (rawProvider === 'mock' ? 'vertex_mock_enabled' : 'provider_not_vertex')
+      : null;
+  const base =
+    rawEvaluation && typeof rawEvaluation === 'object' && !Array.isArray(rawEvaluation) ? rawEvaluation : {};
   return {
     ...base,
+    evaluation_provider: normalizedProvider,
+    evaluation_model: normalizedModel,
+    evaluation_provider_model: normalizedModel,
+    evaluation_provider_version: normalizedModel,
+    evaluation_provider_reason: normalizedProviderReason,
     input_trace:
       params.inputTrace && typeof params.inputTrace === 'object' && !Array.isArray(params.inputTrace)
         ? params.inputTrace
@@ -621,7 +722,12 @@ function toApiFailureError(params: {
   classified: ClassifiedEvaluationFailure;
   requestId: string;
   attemptCount: number;
+  diagnostics?: Record<string, unknown> | null;
 }) {
+  const diagnostics =
+    params.diagnostics && typeof params.diagnostics === 'object' && !Array.isArray(params.diagnostics)
+      ? params.diagnostics
+      : null;
   return new ApiError(params.classified.httpStatus, params.classified.failureCode, params.classified.failureMessage, {
     requestId: params.requestId,
     failure_code: params.classified.failureCode,
@@ -629,6 +735,17 @@ function toApiFailureError(params: {
     http_status: params.classified.httpStatus,
     attempt_count: params.attemptCount,
     retryable: params.classified.retryable,
+    parse_error_kind: asText((diagnostics as any)?.parse_error_kind) || null,
+    raw_text_length: toSafeInteger((diagnostics as any)?.raw_text_length),
+    had_json_fence:
+      diagnostics && (diagnostics as any).had_json_fence !== undefined
+        ? Boolean((diagnostics as any).had_json_fence)
+        : null,
+    finish_reason: asText((diagnostics as any)?.finish_reason) || null,
+    schema_missing_keys: Array.isArray((diagnostics as any)?.schema_missing_keys)
+      ? (diagnostics as any).schema_missing_keys.map((value: unknown) => asText(value)).filter(Boolean).slice(0, 40)
+      : [],
+    category_count: toSafeInteger((diagnostics as any)?.category_count),
   });
 }
 
@@ -684,7 +801,7 @@ async function persistFailedProposalEvaluationAttempt(params: {
 }
 
 export default async function handler(req: any, res: any, comparisonIdParam?: string) {
-  await withApiRoute(req, res, '/api/document-comparisons/[id]/evaluate', async (context) => {
+  await withApiRoute(req, res, '/api/document-comparisons/[id]/evaluate', async (context: ApiRouteContext) => {
     ensureMethod(req, ['POST']);
 
     const comparisonId = getComparisonId(req, comparisonIdParam);
@@ -692,11 +809,18 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       throw new ApiError(400, 'invalid_input', 'Comparison id is required');
     }
 
-    const auth = await requireUser(req, res);
+    const auth = (await requireUser(req, res)) as {
+      ok: boolean;
+      user?: AuthedUser;
+    };
     if (!auth.ok) {
       return;
     }
-    context.userId = auth.user.id;
+    const user = auth.user;
+    if (!user?.id) {
+      throw new ApiError(401, 'unauthorized', 'Authentication required');
+    }
+    context.userId = user.id;
     const requestId = asText((context as any)?.requestId) || newId('request');
 
     // Log evaluation start with Vertex config status
@@ -720,11 +844,11 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     const existingRows = await db
       .select()
       .from(schema.documentComparisons)
-      .where(and(eq(schema.documentComparisons.id, comparisonId), eq(schema.documentComparisons.userId, auth.user.id)))
+      .where(and(eq(schema.documentComparisons.id, comparisonId), eq(schema.documentComparisons.userId, user.id)))
       .limit(1);
-    const existing = firstRow(existingRows);
-
-    ensureComparisonFound(existing);
+    const existingRow = firstRow<DocumentComparisonRow>(existingRows);
+    ensureComparisonFound(existingRow);
+    const existing = existingRow as DocumentComparisonRow;
     const body = (await readJsonBody(req)) as Record<string, unknown>;
     const draft = resolveEvaluationDraft({
       existing,
@@ -743,8 +867,6 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       requestId,
       comparisonId: existing.id,
       source: inputSource,
-      confidentialText: draft.docAText,
-      sharedText: draft.docBText,
       inputTrace: evaluationInputTrace,
     });
     assertDocumentComparisonWithinLimits({
@@ -786,16 +908,15 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       );
     }
     if (confidentialLength < MIN_CONFIDENTIAL_EVALUATION_TEXT_LENGTH) {
-      console.warn(
-        JSON.stringify({
-          level: 'warn',
-          route: '/api/document-comparisons/[id]/evaluate',
+      throw new ApiError(
+        400,
+        'invalid_input',
+        `Confidential information must be at least ${MIN_CONFIDENTIAL_EVALUATION_TEXT_LENGTH} characters before evaluation.`,
+        {
           requestId,
-          comparisonId: existing.id,
-          message: 'confidential_input_short',
-          inputConfidentialLength: confidentialLength,
-          minimumRecommendedLength: MIN_CONFIDENTIAL_EVALUATION_TEXT_LENGTH,
-        }),
+          input_shared_len: sharedLength,
+          input_conf_len: confidentialLength,
+        },
       );
     }
     if (
@@ -848,6 +969,24 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       const attemptStartedAt = new Date();
 
       try {
+        if (process.env.NODE_ENV !== 'production') {
+          const vertexConfig = getVertexConfig();
+          console.info(
+            JSON.stringify({
+              level: 'info',
+              route: '/api/document-comparisons/[id]/evaluate',
+              event: 'evaluation_vertex_call_start',
+              requestId,
+              comparisonId: existing.id,
+              attempt: attemptCount,
+              model: vertexConfig.model || process.env.VERTEX_MODEL || null,
+              region: vertexConfig.location || process.env.GCP_LOCATION || null,
+              prompt_length: null,
+              total_input_chars: confidentialLength + sharedLength,
+              safety_settings: 'platform_default',
+            }),
+          );
+        }
         const evaluated = await evaluateComparison({
           title: draft.title,
           docAText: draft.docAText,
@@ -856,8 +995,28 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
           docBSpans: [],
           partyALabel: CONFIDENTIAL_LABEL,
           partyBLabel: SHARED_LABEL,
+        }, {
+          correlationId: requestId,
+          routeName: '/api/document-comparisons/[id]/evaluate',
+          entityId: existing.id,
+          inputChars: confidentialLength + sharedLength,
         });
         const attemptCompletedAt = new Date();
+        if (process.env.NODE_ENV !== 'production') {
+          console.info(
+            JSON.stringify({
+              level: 'info',
+              route: '/api/document-comparisons/[id]/evaluate',
+              event: 'evaluation_vertex_call_success',
+              requestId,
+              comparisonId: existing.id,
+              attempt: attemptCount,
+              latency_ms: attemptCompletedAt.getTime() - attemptStartedAt.getTime(),
+              provider: asText(evaluated?.evaluation_provider || evaluated?.provider) || null,
+              model: asText(evaluated?.evaluation_model || evaluated?.model) || null,
+            }),
+          );
+        }
         evaluation = withAttemptMetadata({
           evaluation: evaluated,
           requestId,
@@ -900,15 +1059,16 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
         latestFailedResult = failedResult;
         latestFailedClassification = classified;
 
-        if (existing.proposalId) {
+        const proposalId = existing.proposalId;
+        if (proposalId) {
           await withDbWriteGuard({
             requestId,
             message: 'Failed to persist proposal evaluation failure history',
             operation: () =>
               persistFailedProposalEvaluationAttempt({
                 db,
-                proposalId: existing.proposalId,
-                userId: auth.user.id,
+                proposalId,
+                userId: user.id,
                 requestId,
                 classifiedFailure: classified,
                 failedResult,
@@ -969,6 +1129,10 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
         classified: fallbackFailure,
         requestId,
         attemptCount: Math.max(1, attemptCount),
+        diagnostics:
+          latestFailedResult && typeof latestFailedResult === 'object'
+            ? ((latestFailedResult as any)?.error?.details?.diagnostics as Record<string, unknown> | null)
+            : null,
       });
     }
 
@@ -1089,7 +1253,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
           await createNotificationEvent({
             db,
             userId: proposal.userId,
-            userEmail: proposal.partyAEmail || auth.user.email,
+            userEmail: proposal.partyAEmail || user.email,
             eventType: 'evaluation_update',
             emailCategory: 'evaluation_complete',
             dedupeKey: `evaluation_update:${proposal.id}:${existing.id}:${savedEvaluation?.id || 'document_comparison'}`,
@@ -1114,6 +1278,10 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     ok(res, 200, {
       comparison: mapComparisonRow(updated),
       evaluation: evaluation.report,
+      evaluation_provider:
+        asText(evaluation?.evaluation_provider) || (asLower(evaluation?.provider) === 'vertex' ? 'vertex' : 'fallback'),
+      evaluation_model: asText(evaluation?.evaluation_model || evaluation?.model) || null,
+      evaluation_provider_reason: asText(evaluation?.evaluation_provider_reason || evaluation?.fallbackReason) || null,
       proposal: proposalSummary,
       evaluation_input_trace: evaluationInputTrace,
       request_id: requestId,

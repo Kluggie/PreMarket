@@ -36,6 +36,8 @@ test('buildOptimisticEvaluationHistoryEntry includes persisted input fingerprint
       evaluation_result: {
         score: 88,
         summary: 'Grounded output',
+        provider: 'mock',
+        model: 'vertex-mock',
         input_trace: {
           shared_hash: 'old_shared',
           confidential_hash: 'old_conf',
@@ -62,6 +64,9 @@ test('buildOptimisticEvaluationHistoryEntry includes persisted input fingerprint
   assert.equal(entry.input_conf_len, 233);
   assert.equal(entry.input_version, 7);
   assert.equal(entry.result.input_trace.shared_hash, 'abc123shared');
+  assert.equal(entry.evaluation_provider, 'fallback');
+  assert.equal(entry.evaluation_model, 'vertex-mock');
+  assert.equal(entry.evaluation_provider_reason, 'vertex_mock_enabled');
 });
 
 test('mergeEvaluationHistoryWithOptimistic keeps newest optimistic entry at top', () => {

@@ -50,6 +50,14 @@ function normalizeEmail(value: unknown) {
   return typeof value === 'string' ? value.trim().toLowerCase() : '';
 }
 
+function asText(value: unknown) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function asLower(value: unknown) {
+  return asText(value).toLowerCase();
+}
+
 function parseDateOrNull(value: unknown) {
   if (!value) {
     return null;
@@ -135,6 +143,25 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
           updated_date: row.updatedAt,
         })),
         evaluations: evaluations.map((row) => ({
+          ...(function mapProviderMeta() {
+            const result = row?.result && typeof row.result === 'object' && !Array.isArray(row.result) ? row.result : {};
+            const provider = asText((result as any).provider);
+            const model = asText((result as any).model || (result as any).evaluation_model);
+            const evaluationProvider =
+              asLower((result as any).evaluation_provider || provider) === 'vertex' ? 'vertex' : 'fallback';
+            const evaluationProviderReason =
+              evaluationProvider === 'fallback'
+                ? asText((result as any).evaluation_provider_reason || (result as any).fallbackReason) ||
+                  (asLower(provider) === 'mock' ? 'vertex_mock_enabled' : 'provider_not_vertex')
+                : null;
+            return {
+              evaluation_provider: evaluationProvider,
+              evaluation_model: model || null,
+              evaluation_provider_model: model || null,
+              evaluation_provider_version: model || null,
+              evaluation_provider_reason: evaluationProviderReason,
+            };
+          })(),
           id: row.id,
           proposal_id: row.proposalId,
           source: row.source,

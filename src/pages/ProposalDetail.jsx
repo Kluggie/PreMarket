@@ -39,6 +39,10 @@ function asText(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function asLower(value) {
+  return asText(value).toLowerCase();
+}
+
 function formatDate(value) {
   if (!value) return '—';
   const parsed = new Date(value);
@@ -51,6 +55,36 @@ function formatDateTime(value) {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return '—';
   return parsed.toLocaleString();
+}
+
+function getEvaluationProviderMeta(evaluation) {
+  const result =
+    evaluation?.result && typeof evaluation.result === 'object' && !Array.isArray(evaluation.result)
+      ? evaluation.result
+      : {};
+  const providerRaw = asText(
+    evaluation?.evaluation_provider ||
+      evaluation?.provider ||
+      result.evaluation_provider ||
+      result.provider,
+  );
+  const model = asText(
+    evaluation?.evaluation_model ||
+      evaluation?.evaluation_provider_model ||
+      result.evaluation_model ||
+      result.evaluation_provider_model ||
+      result.model,
+  );
+  const reason = asText(
+    evaluation?.evaluation_provider_reason ||
+      result.evaluation_provider_reason ||
+      result.fallbackReason,
+  );
+  return {
+    provider: asLower(providerRaw) === 'vertex' ? 'vertex' : providerRaw ? 'fallback' : 'unknown',
+    model: model || null,
+    reason: reason || null,
+  };
 }
 
 function renderDocumentReadOnly({ text, html }) {
@@ -210,6 +244,7 @@ export default function ProposalDetail() {
     .split(/\s+/g)
     .filter(Boolean).length;
   const latestEvaluation = evaluations[0] || null;
+  const latestProviderMeta = getEvaluationProviderMeta(latestEvaluation);
   const latestResult = latestEvaluation?.result || {};
   const reportSections = Array.isArray(latestResult?.report?.sections)
     ? latestResult.report.sections
@@ -561,19 +596,34 @@ export default function ProposalDetail() {
                   <CardContent>
                     {evaluations.length > 0 ? (
                       <div className="space-y-3">
-                        {evaluations.map((evaluation, index) => (
-                          <div
-                            key={evaluation.id || `evaluation-${index}`}
-                            className="flex items-center justify-between rounded-xl border border-blue-200 bg-blue-50 p-3"
-                          >
-                            <div className="flex items-center gap-3">
-                              <Badge className="bg-green-100 text-green-700">succeeded</Badge>
-                              <span className="text-slate-700">{formatDateTime(evaluation.created_date)}</span>
-                              {index === 0 && <Badge variant="outline">Latest</Badge>}
+                        {evaluations.map((evaluation, index) => {
+                          const providerMeta = getEvaluationProviderMeta(evaluation);
+                          return (
+                            <div
+                              key={evaluation.id || `evaluation-${index}`}
+                              className="flex items-center justify-between rounded-xl border border-blue-200 bg-blue-50 p-3"
+                            >
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-3">
+                                  <Badge className="bg-green-100 text-green-700">succeeded</Badge>
+                                  <span className="text-slate-700">{formatDateTime(evaluation.created_date)}</span>
+                                  {index === 0 && <Badge variant="outline">Latest</Badge>}
+                                </div>
+                                <p className="text-xs text-slate-500">
+                                  Provider:{' '}
+                                  <span className="font-mono text-slate-700">
+                                    {providerMeta.provider}
+                                    {providerMeta.model ? ` · ${providerMeta.model}` : ''}
+                                  </span>
+                                  {providerMeta.provider !== 'vertex' && providerMeta.reason ? (
+                                    <span className="text-slate-500"> ({providerMeta.reason})</span>
+                                  ) : null}
+                                </p>
+                              </div>
+                              <span className="text-blue-600 font-semibold">{Number(evaluation.score || 0)}% confidence</span>
                             </div>
-                            <span className="text-blue-600 font-semibold">{Number(evaluation.score || 0)}% confidence</span>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     ) : (
                       <p className="text-slate-500">No evaluations recorded yet.</p>
@@ -618,6 +668,16 @@ export default function ProposalDetail() {
                     <Badge variant="outline" className="capitalize">
                       {latestResult?.recommendation || 'unknown fit'}
                     </Badge>
+                    <p className="text-sm text-slate-600">
+                      Provider:{' '}
+                      <span className="font-mono text-slate-800">
+                        {latestProviderMeta.provider}
+                        {latestProviderMeta.model ? ` · ${latestProviderMeta.model}` : ''}
+                      </span>
+                      {latestProviderMeta.provider !== 'vertex' && latestProviderMeta.reason ? (
+                        <span className="text-slate-500"> ({latestProviderMeta.reason})</span>
+                      ) : null}
+                    </p>
                     {asText(latestResult?.summary || latestEvaluation?.summary) ? (
                       <p className="text-slate-700">{latestResult?.summary || latestEvaluation?.summary}</p>
                     ) : (

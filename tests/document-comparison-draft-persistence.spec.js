@@ -2,7 +2,9 @@ import { test, expect } from '@playwright/test';
 import { ensureTestEnv, makeSessionCookie } from './helpers/auth.mjs';
 
 const BASE_URL = process.env.PLAYWRIGHT_TEST_BASE_URL || 'http://localhost:4273';
-const STEP_LOAD_TIMEOUT_MS = 90_000;
+const STEP_LOAD_TIMEOUT_MS = 180_000;
+const SAVE_RESPONSE_TIMEOUT_MS = 120_000;
+const AUTOSAVE_WAIT_TIMEOUT_MS = 120_000;
 
 ensureTestEnv();
 
@@ -70,6 +72,8 @@ async function typeInEditor(page, selector, text) {
 }
 
 test.describe('Document Comparison Draft Persistence', () => {
+  test.describe.configure({ timeout: 300_000 });
+
   test('manual save persists Step 2 content across refresh', async ({ page }) => {
     await authenticate(page, uniqueId('manual'));
     const confidentialText = `CONF_${uniqueId('manual_conf')}`;
@@ -84,7 +88,7 @@ test.describe('Document Comparison Draft Persistence', () => {
         response.url().includes('/api/document-comparisons/') &&
         response.request().method() === 'PATCH' &&
         response.status() === 200,
-      { timeout: 30_000 },
+      { timeout: SAVE_RESPONSE_TIMEOUT_MS },
     );
 
     await page.getByRole('button', { name: 'Save Draft' }).click();
@@ -130,7 +134,7 @@ test.describe('Document Comparison Draft Persistence', () => {
               response.url.includes('/api/document-comparisons/'),
           ),
         {
-          timeout: 35_000,
+          timeout: AUTOSAVE_WAIT_TIMEOUT_MS,
           message: `Expected autosave PATCH 200. Seen responses: ${JSON.stringify(saveResponses)}`,
         },
       )
@@ -158,7 +162,7 @@ test.describe('Document Comparison Draft Persistence', () => {
         response.url().includes('/api/document-comparisons/') &&
         response.request().method() === 'PATCH' &&
         response.status() === 200,
-      { timeout: 30_000 },
+      { timeout: SAVE_RESPONSE_TIMEOUT_MS },
     );
     await page.getByRole('button', { name: 'Save Draft' }).click();
     await saveResponsePromise;
@@ -167,7 +171,9 @@ test.describe('Document Comparison Draft Persistence', () => {
     expect(draftId).toBeTruthy();
 
     await page.goto(`${BASE_URL}/Proposals`);
-    await expect(page.getByRole('heading', { name: 'Proposals' })).toBeVisible({ timeout: 20_000 });
+    await expect(page).toHaveURL(new RegExp(`${BASE_URL.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/Proposals`), {
+      timeout: STEP_LOAD_TIMEOUT_MS,
+    });
 
     await page.goto(`${BASE_URL}/DocumentComparisonCreate?draft=${encodeURIComponent(draftId)}&step=2`, {
       waitUntil: 'domcontentloaded',

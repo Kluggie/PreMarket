@@ -22,6 +22,10 @@ function asText(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function asLower(value: unknown) {
+  return asText(value).toLowerCase();
+}
+
 function toSafeInteger(value: unknown) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) {
@@ -72,6 +76,25 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
 
     ok(res, 200, {
       evaluations: rows.map((row) => ({
+        ...(function mapProviderMeta() {
+          const result = row?.result && typeof row.result === 'object' && !Array.isArray(row.result) ? row.result : {};
+          const provider = asText((result as any).provider);
+          const model = asText((result as any).model || (result as any).evaluation_model);
+          const evaluationProvider =
+            asLower((result as any).evaluation_provider || provider) === 'vertex' ? 'vertex' : 'fallback';
+          const evaluationProviderReason =
+            evaluationProvider === 'fallback'
+              ? asText((result as any).evaluation_provider_reason || (result as any).fallbackReason) ||
+                (asLower(provider) === 'mock' ? 'vertex_mock_enabled' : 'provider_not_vertex')
+              : null;
+          return {
+            evaluation_provider: evaluationProvider,
+            evaluation_model: model || null,
+            evaluation_provider_model: model || null,
+            evaluation_provider_version: model || null,
+            evaluation_provider_reason: evaluationProviderReason,
+          };
+        })(),
         ...(function mapEvaluationInputTrace() {
           const trace =
             row?.result?.input_trace && typeof row.result.input_trace === 'object' && !Array.isArray(row.result.input_trace)

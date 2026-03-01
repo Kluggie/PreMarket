@@ -2,6 +2,10 @@ function asText(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function asLower(value) {
+  return asText(value).toLowerCase();
+}
+
 function toSafeInteger(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) {
@@ -93,6 +97,20 @@ export function buildOptimisticEvaluationHistoryEntry({
   const normalizedInputConfHash = asText(
     mergedInputTrace.confidential_hash || mergedInputTrace.input_conf_hash,
   );
+  const providerRaw = asText(
+    evaluationResult.evaluation_provider || evaluationResult.provider,
+  );
+  const modelRaw = asText(
+    evaluationResult.evaluation_model ||
+      evaluationResult.evaluation_provider_model ||
+      evaluationResult.model,
+  );
+  const evaluationProvider = asLower(providerRaw) === 'vertex' ? 'vertex' : providerRaw ? 'fallback' : 'unknown';
+  const evaluationProviderReason =
+    evaluationProvider === 'fallback'
+      ? asText(evaluationResult.evaluation_provider_reason || evaluationResult.fallbackReason) ||
+        (asLower(providerRaw) === 'mock' ? 'vertex_mock_enabled' : 'provider_not_vertex')
+      : null;
   const createdDate =
     comparison.updated_date ||
     comparison.updated_at ||
@@ -110,6 +128,11 @@ export function buildOptimisticEvaluationHistoryEntry({
       ...evaluationResult,
       input_trace: mergedInputTrace,
     },
+    evaluation_provider: evaluationProvider,
+    evaluation_model: modelRaw || null,
+    evaluation_provider_model: modelRaw || null,
+    evaluation_provider_version: modelRaw || null,
+    evaluation_provider_reason: evaluationProviderReason,
     created_date: createdDate,
     updated_date: createdDate,
     input_shared_hash: normalizedInputSharedHash || null,
