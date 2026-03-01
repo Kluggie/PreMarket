@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { EditorContent, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
@@ -180,6 +180,8 @@ export default function DocumentRichEditor({
   'data-testid': testId = null,
   editorRef = null,
 }) {
+  const onSelectionTextChangeRef = useRef(onSelectionTextChange);
+  const onSelectionChangeRef = useRef(onSelectionChange);
   const initialContent = useMemo(() => normalizeEditorContent(content), [content]);
 
   const editor = useEditor({
@@ -227,15 +229,6 @@ export default function DocumentRichEditor({
       transformPastedText(text) {
         return sanitizePastedText(text);
       },
-    },
-    onCreate: ({ editor: instance }) => {
-      onChange?.({
-        html: instance.getHTML(),
-        text: instance.getText({ blockSeparator: '\n\n' }).trim(),
-        json: instance.getJSON(),
-        characters: instance.storage.characterCount.characters(),
-        words: instance.storage.characterCount.words(),
-      });
     },
     onUpdate: ({ editor: instance }) => {
       onChange?.({
@@ -288,21 +281,32 @@ export default function DocumentRichEditor({
   }, [editor, editorRef]);
 
   useEffect(() => {
+    onSelectionTextChangeRef.current = onSelectionTextChange;
+    onSelectionChangeRef.current = onSelectionChange;
+  }, [onSelectionChange, onSelectionTextChange]);
+
+  useEffect(() => {
     if (!editor) {
-      return;
-    }
-    if (typeof onSelectionTextChange !== 'function' && typeof onSelectionChange !== 'function') {
       return;
     }
 
     const emitSelectionText = () => {
+      const selectionTextCallback = onSelectionTextChangeRef.current;
+      const selectionChangeCallback = onSelectionChangeRef.current;
+      if (
+        typeof selectionTextCallback !== 'function' &&
+        typeof selectionChangeCallback !== 'function'
+      ) {
+        return;
+      }
+
       const { from, to } = editor.state.selection;
       if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) {
-        if (typeof onSelectionTextChange === 'function') {
-          onSelectionTextChange('');
+        if (typeof selectionTextCallback === 'function') {
+          selectionTextCallback('');
         }
-        if (typeof onSelectionChange === 'function') {
-          onSelectionChange({
+        if (typeof selectionChangeCallback === 'function') {
+          selectionChangeCallback({
             text: '',
             range: null,
           });
@@ -310,11 +314,11 @@ export default function DocumentRichEditor({
         return;
       }
       const selected = editor.state.doc.textBetween(from, to, ' ').trim();
-      if (typeof onSelectionTextChange === 'function') {
-        onSelectionTextChange(selected);
+      if (typeof selectionTextCallback === 'function') {
+        selectionTextCallback(selected);
       }
-      if (typeof onSelectionChange === 'function') {
-        onSelectionChange({
+      if (typeof selectionChangeCallback === 'function') {
+        selectionChangeCallback({
           text: selected,
           range: { from, to },
         });
@@ -326,7 +330,7 @@ export default function DocumentRichEditor({
     return () => {
       editor.off('selectionUpdate', emitSelectionText);
     };
-  }, [editor, onSelectionChange, onSelectionTextChange]);
+  }, [editor]);
 
   useEffect(() => {
     if (!editor || !replaceSelectionRequest?.id) {

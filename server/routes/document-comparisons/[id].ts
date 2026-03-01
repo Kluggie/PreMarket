@@ -271,6 +271,26 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
 
     if (req.method === 'GET') {
       const mappedComparison = mapComparisonRow(existing);
+      if (process.env.NODE_ENV !== 'production') {
+        console.info(
+          JSON.stringify({
+            level: 'info',
+            route: '/api/document-comparisons/[id]',
+            action: 'get_draft_loaded',
+            comparisonId: existing.id,
+            accessMode,
+            editableSide,
+            readSummary: {
+              draftStep: Number(existing.draftStep || 1),
+              updatedAt: existing.updatedAt || null,
+              docATextLength: Number(String(existing.docAText || '').length),
+              docBTextLength: Number(String(existing.docBText || '').length),
+              docASpanCount: Number(Array.isArray(existing.docASpans) ? existing.docASpans.length : 0),
+              docBSpanCount: Number(Array.isArray(existing.docBSpans) ? existing.docBSpans.length : 0),
+            },
+          }),
+        );
+      }
       ok(res, 200, {
         comparison: accessMode === 'owner' ? mappedComparison : toRecipientSafeComparison(mappedComparison),
         proposal: proposal
