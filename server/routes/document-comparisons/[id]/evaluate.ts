@@ -9,6 +9,7 @@ import { newId } from '../../../_lib/ids.js';
 import { createNotificationEvent } from '../../../_lib/notifications.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 import { evaluateDocumentComparisonWithVertex } from '../../../_lib/vertex-evaluation.js';
+import { evaluateWithVertexV2 } from '../../../_lib/vertex-evaluation-v2.js';
 import { getVertexConfig } from '../../../_lib/integrations.js';
 import {
   htmlToEditorText,
@@ -444,6 +445,67 @@ function getDocumentComparisonEvaluator() {
   return evaluateDocumentComparisonWithVertex;
 }
 
+function shouldUseEvaluatorV2(req: any): boolean {
+  // Check env var
+  if (asLower(process.env.EVAL_ENGINE || '') === 'v2') {
+    return true;
+  }
+  // Check query param
+  if (asLower(req.query?.engine || '') === 'v2') {
+    return true;
+  }
+  return false;
+}
+
+function convertV2ResponseToEvaluation(v2Result: any): Record<string, unknown> {
+  const { data } = v2Result;
+  const confidence = Number(data?.confidence_0_1);
+  const normalizedConfidence = Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0;
+  const fitLevel = asLower(data?.fit_level);
+  const recommendation = fitLevel === 'high' ? 'High' : fitLevel === 'medium' ? 'Medium' : 'Low';
+  const why = Array.isArray(data?.why) ? data.why.map((entry: unknown) => asText(entry)).filter(Boolean) : [];
+  const missing = Array.isArray(data?.missing)
+    ? data.missing.map((entry: unknown) => asText(entry)).filter(Boolean)
+    : [];
+  const redactions = Array.isArray(data?.redactions)
+    ? data.redactions.map((entry: unknown) => asText(entry)).filter(Boolean)
+    : [];
+  const generatedAt = new Date().toISOString();
+  const report = {
+    fit_level: fitLevel === 'high' || fitLevel === 'medium' || fitLevel === 'low' ? fitLevel : 'unknown',
+    confidence_0_1: normalizedConfidence,
+    why,
+    missing,
+    redactions,
+    generated_at_iso: generatedAt,
+    summary: {
+      fit_level: fitLevel === 'high' || fitLevel === 'medium' || fitLevel === 'low' ? fitLevel : 'unknown',
+      top_fit_reasons: why.map((text: string) => ({ text })),
+      top_blockers: missing.map((text: string) => ({ text })),
+      next_actions: missing.length > 0 ? ['Resolve missing items and re-run evaluation.'] : [],
+    },
+    sections: [
+      { key: 'why', heading: 'Why', bullets: why },
+      { key: 'missing', heading: 'Missing', bullets: missing },
+      { key: 'redactions', heading: 'Redactions', bullets: redactions },
+    ],
+    recommendation,
+  };
+  return {
+    provider: 'vertex',
+    model: asText(v2Result?.model) || process.env.VERTEX_MODEL || 'gemini-2.0-flash-001',
+    generatedAt: generatedAt,
+    score: Math.round(normalizedConfidence * 100),
+    confidence: normalizedConfidence,
+    recommendation,
+    summary: why[0] || 'Evaluation complete',
+    report,
+    evaluation_provider: 'vertex',
+    evaluation_model: asText(v2Result?.model) || process.env.VERTEX_MODEL || 'gemini-2.0-flash-001',
+    evaluation_provider_reason: null,
+  };
+}
+
 function getRetryDelayMs(attemptNumber: number) {
   const baseMs = 500 * Math.max(1, Math.pow(2, Math.max(0, attemptNumber - 1)));
   const jitterMs = Math.floor(Math.random() * 1001);
@@ -560,9 +622,12 @@ function classifyEvaluationFailure(error: any): ClassifiedEvaluationFailure {
 
   if (sourceCode === 'invalid_model_output') {
     const parseErrorKind = getParseErrorKind(error);
-    // The evaluator already retries empty/truncated/schema failures internally.
-    // Route-level retry is reserved for parser drift that still escapes extraction.
-    const shouldRetry = parseErrorKind === 'json_parse_error' || !parseErrorKind;
+    const retryableFromError =
+      typeof (error as any)?.extra?.retryable === 'boolean' ? Boolean((error as any).extra.retryable) : null;
+    // The evaluator already retries most malformed output internally.
+    // Route-level retry is reserved for parser drift unless evaluator explicitly marks retryable.
+    const shouldRetry =
+      retryableFromError !== null ? retryableFromError : parseErrorKind === 'json_parse_error' || !parseErrorKind;
     return {
       failureCode: 'vertex_invalid_response',
       failureStage: 'parse',
@@ -958,7 +1023,8 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
           .where(eq(schema.documentComparisons.id, existing.id)),
     });
 
-    const evaluateComparison = getDocumentComparisonEvaluator();
+    const useV2 = shouldUseEvaluatorV2(req);
+    const evaluateComparison = useV2 ? null : getDocumentComparisonEvaluator();
     let attemptCount = 0;
     let evaluation: any = null;
     let latestFailedResult: Record<string, unknown> | null = null;
@@ -979,6 +1045,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
               requestId,
               comparisonId: existing.id,
               attempt: attemptCount,
+              engine: useV2 ? 'v2' : 'v1',
               model: vertexConfig.model || process.env.VERTEX_MODEL || null,
               region: vertexConfig.location || process.env.GCP_LOCATION || null,
               prompt_length: null,
@@ -987,20 +1054,76 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
             }),
           );
         }
-        const evaluated = await evaluateComparison({
-          title: draft.title,
-          docAText: draft.docAText,
-          docBText: draft.docBText,
-          docASpans: [],
-          docBSpans: [],
-          partyALabel: CONFIDENTIAL_LABEL,
-          partyBLabel: SHARED_LABEL,
-        }, {
-          correlationId: requestId,
-          routeName: '/api/document-comparisons/[id]/evaluate',
-          entityId: existing.id,
-          inputChars: confidentialLength + sharedLength,
-        });
+
+        let evaluated: any = null;
+        if (useV2) {
+          const v2Result = await evaluateWithVertexV2({
+            sharedText: draft.docBText || '',
+            confidentialText: draft.docAText || '',
+            requestId,
+          });
+          if (!v2Result.ok) {
+            const error = v2Result.error;
+            const parseKind = asLower(error.parse_error_kind);
+            const details =
+              error.details && typeof error.details === 'object' && !Array.isArray(error.details)
+                ? (error.details as Record<string, unknown>)
+                : {};
+            const upstreamStatus = toSafeInteger((details as any).status);
+            const statusCode =
+              parseKind === 'vertex_timeout'
+                ? 504
+                : Number.isFinite(Number(upstreamStatus)) && Number(upstreamStatus) > 0
+                  ? Number(upstreamStatus)
+                  : 502;
+            const errorCode =
+              parseKind === 'vertex_timeout'
+                ? 'vertex_timeout'
+                : parseKind === 'vertex_http_error' && Number(statusCode) === 501
+                  ? 'not_configured'
+                  : parseKind === 'vertex_http_error'
+                    ? 'vertex_request_failed'
+                    : 'invalid_model_output';
+            const v2Error = new ApiError(statusCode, errorCode, 'Vertex evaluation failed', {
+              reasonCode: parseKind,
+              parseErrorKind: parseKind,
+              parseErrorName: parseKind,
+              parseErrorMessage: JSON.stringify({
+                parse_error_kind: parseKind || null,
+                raw_text_length: toSafeInteger(error.raw_text_length) || 0,
+                had_json_fence: null,
+                finish_reason: asText(error.finish_reason) || null,
+                schema_missing_keys: Array.isArray((details as any).schema_missing_keys)
+                  ? (details as any).schema_missing_keys
+                  : [],
+                category_count: null,
+              }),
+              rawTextLength: toSafeInteger(error.raw_text_length) || 0,
+              finishReason: asText(error.finish_reason) || null,
+              retryable: Boolean(error.retryable),
+              upstreamStatus: Number.isFinite(Number(upstreamStatus)) ? Number(upstreamStatus) : null,
+              ...details,
+            });
+            throw v2Error;
+          }
+          evaluated = convertV2ResponseToEvaluation(v2Result);
+        } else {
+          evaluated = await evaluateComparison!({
+            title: draft.title,
+            docAText: draft.docAText,
+            docBText: draft.docBText,
+            docASpans: [],
+            docBSpans: [],
+            partyALabel: CONFIDENTIAL_LABEL,
+            partyBLabel: SHARED_LABEL,
+          }, {
+            correlationId: requestId,
+            routeName: '/api/document-comparisons/[id]/evaluate',
+            entityId: existing.id,
+            inputChars: confidentialLength + sharedLength,
+          });
+        }
+
         const attemptCompletedAt = new Date();
         if (process.env.NODE_ENV !== 'production') {
           console.info(
@@ -1011,6 +1134,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
               requestId,
               comparisonId: existing.id,
               attempt: attemptCount,
+              engine: useV2 ? 'v2' : 'v1',
               latency_ms: attemptCompletedAt.getTime() - attemptStartedAt.getTime(),
               provider: asText(evaluated?.evaluation_provider || evaluated?.provider) || null,
               model: asText(evaluated?.evaluation_model || evaluated?.model) || null,
@@ -1031,7 +1155,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       } catch (error: any) {
         const attemptCompletedAt = new Date();
         const classified = classifyEvaluationFailure(error);
-        const retryScheduled = classified.retryable && attemptCount < MAX_EVALUATION_ATTEMPTS;
+        const retryScheduled = !useV2 && classified.retryable && attemptCount < MAX_EVALUATION_ATTEMPTS;
         const diagnostics = sanitizeFailureDiagnostics(error?.extra);
         console.error(
           JSON.stringify({

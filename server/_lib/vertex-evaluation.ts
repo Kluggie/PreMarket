@@ -1007,7 +1007,7 @@ function normalizeSpans(spans: unknown, text: string): Span[] {
       if (start === null || end === null || end <= start || !level) return null;
       return { start, end, level };
     })
-    .filter(Boolean)
+    .filter((span): span is Span => Boolean(span))
     .sort((left, right) => left.start - right.start);
 
   const merged: Span[] = [];
@@ -2468,6 +2468,31 @@ function buildParseDiagnosticsMessage(params: {
   });
 }
 
+function buildProposalRepairPrompt(
+  basePrompt: string,
+  diagnostics: {
+    parseErrorKind: ParseErrorKind | null;
+    schemaMissingKeys: string[];
+  },
+) {
+  const missing = diagnostics.schemaMissingKeys.length
+    ? diagnostics.schemaMissingKeys.join(', ')
+    : 'unknown';
+
+  return [
+    basePrompt,
+    '',
+    'REPAIR INSTRUCTION (highest priority):',
+    '- Your previous output failed schema validation.',
+    `- parse_error_kind: ${diagnostics.parseErrorKind || 'schema_validation_error'}`,
+    `- schema_missing_keys: ${missing}`,
+    '- Return ONLY valid JSON that matches the full schema with all required keys present.',
+    '- Ensure all top-level keys are present (quality, summary, category_breakdown, gates, etc.)',
+    '- Arrays must exist even when empty.',
+    '- Do not include markdown or extra prose.',
+  ].join('\n');
+}
+
 function buildDocumentComparisonRepairPrompt(
   basePrompt: string,
   diagnostics: {
@@ -2900,8 +2925,8 @@ function extractModelText(payload: any) {
   const candidates = Array.isArray(payload?.candidates) ? payload.candidates : [];
   const parts = Array.isArray(candidates?.[0]?.content?.parts) ? candidates[0].content.parts : [];
   return parts
-    .map((part) => (typeof part?.text === 'string' ? part.text : ''))
-    .filter((text) => text.length > 0)
+    .map((part: any) => (typeof part?.text === 'string' ? part.text : ''))
+    .filter((text: string) => text.length > 0)
     .join('\n')
     .trim();
 }
@@ -3383,12 +3408,21 @@ function extractSensitiveConfidentialTokens(
 function assertMiddlemanConfidentiality(report: ContractEvaluationReport, params: {
   confidentialChunks: DocumentEvidenceChunk[];
   sharedChunks: DocumentEvidenceChunk[];
+  rawTextLength?: number;
 }) {
   const reportStrings = collectStringValues(report);
   const reportNormalized = normalizeForComparison(reportStrings.join(' '));
   const reportLower = reportStrings.join(' ').toLowerCase();
   if (!reportNormalized && !reportLower) {
     return;
+  }
+
+  // Only check for confidential leaks if there's meaningful shared content to compare against
+  // If shared is empty/minimal, the confidentiality check creates false positives
+  const sharedText = params.sharedChunks.map((chunk) => chunk.text).join(' ');
+  const sharedLength = normalizeForComparison(sharedText).length;
+  if (sharedLength < 100) {
+    return; // Not enough shared content to meaningfully detect leaks
   }
 
   const phraseCandidates = buildConfidentialPhraseCandidates(params.confidentialChunks, params.sharedChunks);
@@ -3398,6 +3432,7 @@ function assertMiddlemanConfidentiality(report: ContractEvaluationReport, params
       reasonCode: 'confidential_leak_detected',
       leakType: 'confidential_substring',
       leakSample: leakedPhrase.slice(0, 120),
+      rawTextLength: params.rawTextLength ?? 0,
     });
   }
 
@@ -3408,6 +3443,7 @@ function assertMiddlemanConfidentiality(report: ContractEvaluationReport, params
       reasonCode: 'confidential_leak_detected',
       leakType: 'confidential_token',
       leakSample: leakedToken.slice(0, 120),
+      rawTextLength: params.rawTextLength ?? 0,
     });
   }
 }
@@ -3477,6 +3513,7 @@ export async function evaluateProposalWithVertex(
   let provider: 'vertex' | 'mock' = 'vertex';
   let model = asText(process.env.VERTEX_MODEL) || 'gemini-2.0-flash-001';
   let fallbackReason: string | null = null;
+  const attemptHistory: ContractEvaluationResult['attempt_history'] = [];
   let debug:
     | {
         raw_model_text?: string;
@@ -3489,41 +3526,227 @@ export async function evaluateProposalWithVertex(
     model = 'vertex-mock';
     fallbackReason = 'vertex_mock_enabled';
     report = buildMockProposalReport(normalizedInput, heuristics);
-  } else {
-    const prompt = buildProposalPrompt(normalizedInput, heuristics);
-    const vertex = await callVertex(prompt, {
-      ...telemetry,
-      promptLabel: 'proposal',
-      inputChars: JSON.stringify({
-        templateId: normalizedInput.templateId,
-        templateName: normalizedInput.templateName,
-        responses: normalizedInput.responses,
-        rubric: normalizedInput.rubric || null,
-        computedSignals: normalizedInput.computedSignals || null,
-      }).length,
+    attemptHistory.push({
+      attempt: 1,
+      provider: 'mock',
+      model,
+      status: 'success',
+      retry_scheduled: false,
     });
-    if (shouldPersistRawModelOutput()) {
-      debug = {
-        raw_model_text_length: String(vertex.text || '').length,
-        raw_model_text: String(vertex.text || '').slice(0, 12000),
-      };
+  } else {
+    const basePrompt = buildProposalPrompt(normalizedInput, heuristics);
+    let prompt = basePrompt;
+    let transientRetryCount = 0;
+    let formatRetryCount = 0;
+    let schemaRepairRetryCount = 0;
+    let attempt = 0;
+    
+    while (true) {
+      attempt += 1;
+      try {
+        const vertex = await callVertex(prompt, {
+          ...telemetry,
+          promptLabel: 'proposal',
+          inputChars: JSON.stringify({
+            templateId: normalizedInput.templateId,
+            templateName: normalizedInput.templateName,
+            responses: normalizedInput.responses,
+            rubric: normalizedInput.rubric || null,
+            computedSignals: normalizedInput.computedSignals || null,
+          }).length,
+        });
+        model = vertex.model;
+        
+        if (shouldPersistRawModelOutput()) {
+          debug = {
+            raw_model_text_length: String(vertex.text || '').length,
+            raw_model_text: String(vertex.text || '').slice(0, 12000),
+          };
+        }
+
+        // Check for empty output
+        const rawText = String(vertex.text || '').trim();
+        if (!rawText) {
+          throw invalidModelOutput('Model returned empty output', {
+            model: vertex.model,
+            reasonCode: 'empty_output',
+            parseErrorKind: 'empty_output',
+            textLength: 0,
+            rawTextLength: 0,
+            hadJsonFence: false,
+            finishReason: asText((vertex as any)?.finishReason) || null,
+            parseErrorName: 'empty_output',
+            parseErrorMessage: buildParseDiagnosticsMessage({
+              parseErrorKind: 'empty_output',
+              rawTextLength: 0,
+              hadJsonFence: false,
+              finishReason: asText((vertex as any)?.finishReason) || null,
+            }),
+          });
+        }
+
+        // Check for truncated output
+        if (isLikelyTruncatedModelOutput(rawText)) {
+          throw invalidModelOutput('Model output appears truncated', {
+            model: vertex.model,
+            reasonCode: 'truncated_output',
+            parseErrorKind: 'truncated_output',
+            textLength: rawText.length,
+            rawTextLength: rawText.length,
+            hadJsonFence: hasJsonFence(rawText),
+            finishReason: asText((vertex as any)?.finishReason) || null,
+            parseErrorName: 'truncated_output',
+            parseErrorMessage: buildParseDiagnosticsMessage({
+              parseErrorKind: 'truncated_output',
+              rawTextLength: rawText.length,
+              hadJsonFence: hasJsonFence(rawText),
+              finishReason: asText((vertex as any)?.finishReason) || null,
+            }),
+          });
+        }
+
+        // Parse JSON with comprehensive diagnostics
+        const parsedResult = parseModelJsonWithDiagnostics(rawText);
+        const parsed = parsedResult.parsed;
+        
+        if (!parsed) {
+          const parseErrorKind = parsedResult.diagnostics.parseErrorKind || 'json_parse_error';
+          throw invalidModelOutput('Model output was not valid JSON', {
+            model: vertex.model,
+            reasonCode: parseErrorKind,
+            parseErrorKind,
+            textLength: parsedResult.diagnostics.rawTextLength,
+            rawTextLength: parsedResult.diagnostics.rawTextLength,
+            hadJsonFence: parsedResult.diagnostics.hadJsonFence,
+            finishReason: asText((vertex as any)?.finishReason) || null,
+            parseErrorName: parseErrorKind,
+            parseErrorMessage: buildParseDiagnosticsMessage({
+              parseErrorKind,
+              rawTextLength: parsedResult.diagnostics.rawTextLength,
+              hadJsonFence: parsedResult.diagnostics.hadJsonFence,
+              finishReason: asText((vertex as any)?.finishReason) || null,
+            }),
+          });
+        }
+
+        // Validate schema
+        try {
+          report = normalizeContractReport(parsed, { mode: 'proposal' });
+        } catch (error: any) {
+          if (!isInvalidModelOutputError(error)) {
+            throw error;
+          }
+          // Extract schema diagnostics
+          const schemaError = error as any;
+          const schemaMissingKeys = Array.isArray(schemaError?.extra?.schemaMissingKeys)
+            ? (schemaError.extra.schemaMissingKeys as unknown[]).map((entry) => asText(entry)).filter(Boolean)
+            : [];
+          
+          throw invalidModelOutput('Model output did not match required evaluation schema', {
+            model: vertex.model,
+            reasonCode: 'schema_validation_error',
+            parseErrorKind: 'schema_validation_error',
+            textLength: parsedResult.diagnostics.rawTextLength,
+            rawTextLength: parsedResult.diagnostics.rawTextLength,
+            hadJsonFence: parsedResult.diagnostics.hadJsonFence,
+            finishReason: asText((vertex as any)?.finishReason) || null,
+            schemaMissingKeys,
+            parseErrorName: 'schema_validation_error',
+            parseErrorMessage: buildParseDiagnosticsMessage({
+              parseErrorKind: 'schema_validation_error',
+              rawTextLength: parsedResult.diagnostics.rawTextLength,
+              hadJsonFence: parsedResult.diagnostics.hadJsonFence,
+              finishReason: asText((vertex as any)?.finishReason) || null,
+              schemaMissingKeys,
+            }),
+          });
+        }
+
+        attemptHistory.push({
+          attempt,
+          provider: 'vertex',
+          model: vertex.model,
+          status: 'success',
+          retry_scheduled: false,
+        });
+        break;
+      } catch (error: any) {
+        const errorCode = asLower(error?.code);
+        const parseErrorKind = asLower(error?.extra?.parseErrorKind || error?.extra?.reasonCode) || null;
+        const reasonCode = parseErrorKind || asText(error?.extra?.reasonCode) || null;
+        const transient = isTransientVertexFailure(error);
+        const malformed = isMalformedModelFailure(error);
+        
+        // Determine retry strategy
+        const shouldRetryTransient = transient && !malformed && transientRetryCount < MAX_TRANSIENT_RETRIES;
+        const shouldRetryFormat =
+          malformed &&
+          (parseErrorKind === 'truncated_output' || parseErrorKind === 'empty_output') &&
+          formatRetryCount < MAX_FORMAT_OUTPUT_RETRIES;
+        const shouldRetrySchemaRepair =
+          malformed &&
+          parseErrorKind === 'schema_validation_error' &&
+          schemaRepairRetryCount < MAX_SCHEMA_REPAIR_RETRIES;
+        const shouldRetryMalformed =
+          malformed &&
+          parseErrorKind !== 'confidential_leak_detected' &&
+          (shouldRetryFormat || shouldRetrySchemaRepair);
+        const shouldRetry = shouldRetryTransient || shouldRetryMalformed;
+
+        if (process.env.NODE_ENV !== 'production' && malformed) {
+          console.warn(
+            JSON.stringify({
+              level: 'warn',
+              event: 'vertex_parse_failure',
+              correlationId: asText(telemetry?.correlationId) || null,
+              routeName: asText(telemetry?.routeName) || null,
+              entityId: asText(telemetry?.entityId) || null,
+              attempt,
+              parse_error_kind: parseErrorKind || null,
+              raw_text_length: toNumber(error?.extra?.rawTextLength ?? error?.extra?.textLength, 0),
+              had_json_fence: Boolean(error?.extra?.hadJsonFence),
+              finish_reason: asText(error?.extra?.finishReason) || null,
+              schema_missing_keys: Array.isArray(error?.extra?.schemaMissingKeys)
+                ? (error.extra.schemaMissingKeys as unknown[]).map((entry) => asText(entry)).filter(Boolean).slice(0, 40)
+                : [],
+              retry_scheduled: shouldRetry,
+            }),
+          );
+        }
+
+        attemptHistory.push({
+          attempt,
+          provider: 'vertex',
+          model: asText(error?.extra?.model) || model || null,
+          status: 'failed',
+          error_code: errorCode || 'unknown_error',
+          reason_code: reasonCode,
+          retry_scheduled: shouldRetry,
+        });
+
+        if (!shouldRetry) {
+          throw withAttemptHistory(error, attemptHistory);
+        }
+
+        if (shouldRetryTransient) {
+          transientRetryCount += 1;
+        } else if (shouldRetrySchemaRepair) {
+          schemaRepairRetryCount += 1;
+          const missingKeys = Array.isArray(error?.extra?.schemaMissingKeys)
+            ? (error.extra.schemaMissingKeys as unknown[]).map((entry) => asText(entry)).filter(Boolean)
+            : [];
+          prompt = buildProposalRepairPrompt(basePrompt, {
+            parseErrorKind: 'schema_validation_error',
+            schemaMissingKeys: missingKeys,
+          });
+        } else if (shouldRetryFormat) {
+          formatRetryCount += 1;
+          prompt = basePrompt;
+        }
+        
+        await waitForRetryBackoff(attempt);
+      }
     }
-    const parsed = parseModelJson(vertex.text);
-    if (!parsed) {
-      throw invalidModelOutput('Model output was not valid JSON', {
-        model: vertex.model,
-        textLength: String(vertex.text || '').length,
-        responseKeys: Array.isArray((vertex as any).responseKeys) ? (vertex as any).responseKeys : [],
-        candidateCount: Number((vertex as any).candidateCount || 0),
-        firstCandidateKeys: Array.isArray((vertex as any).firstCandidateKeys)
-          ? (vertex as any).firstCandidateKeys
-          : [],
-        firstPartKeys: Array.isArray((vertex as any).firstPartKeys) ? (vertex as any).firstPartKeys : [],
-        rawModelText: shouldPersistRawModelOutput() ? String(vertex.text || '').slice(0, 12000) : undefined,
-      });
-    }
-    report = normalizeContractReport(parsed, { mode: 'proposal' });
-    model = vertex.model;
   }
 
   report = applyProposalHeuristics(report, heuristics);
@@ -3532,6 +3755,7 @@ export async function evaluateProposalWithVertex(
   return finalizeEvaluationResult(report, {
     provider,
     model,
+    attemptHistory,
     fallbackReason,
     debug,
   });
@@ -3557,6 +3781,7 @@ export async function evaluateDocumentComparisonWithVertex(
         raw_model_text_length: number;
       }
     | undefined;
+  let lastSuccessfulVertexTextLength = 0;
 
   if (String(process.env.VERTEX_MOCK || '').trim() === '1') {
     provider = 'mock';
@@ -3659,6 +3884,7 @@ export async function evaluateDocumentComparisonWithVertex(
               confidential_chunks: evidenceMap.confidential_chunks,
             },
           });
+          lastSuccessfulVertexTextLength = String(vertex.text || '').length;
         } catch (error: any) {
           if (!isInvalidModelOutputError(error)) {
             throw error;
@@ -3794,6 +4020,7 @@ export async function evaluateDocumentComparisonWithVertex(
   assertMiddlemanConfidentiality(report, {
     confidentialChunks: evidenceMap.confidential_chunks,
     sharedChunks: evidenceMap.shared_chunks,
+    rawTextLength: String(process.env.VERTEX_MOCK || '').trim() === '1' ? 0 : lastSuccessfulVertexTextLength,
   });
   const hasSpecificGrounding = ensureDocumentComparisonSpecificity(report, normalizedInput.docBText);
   if (!hasSpecificGrounding) {

@@ -79,6 +79,12 @@ function extractEvaluationFailureDetails(rawError) {
       details.requestId ||
       details.request_id,
   );
+  const parseErrorKind = asLower(
+    rawError.parse_error_kind ||
+      rawError.parseErrorKind ||
+      details.parse_error_kind ||
+      details.parseErrorKind,
+  );
   const httpStatus = Number(
     rawError.http_status ||
       rawError.statusCode ||
@@ -94,6 +100,7 @@ function extractEvaluationFailureDetails(rawError) {
   return {
     failureCode: failureCode || 'unknown_error',
     failureStage: failureStage || 'unknown',
+    parseErrorKind: parseErrorKind || '',
     message,
     requestId: requestId || '',
     httpStatus: Number.isFinite(httpStatus) && httpStatus > 0 ? httpStatus : null,
@@ -115,6 +122,28 @@ function toFailureBannerMessage(failure) {
     return 'Nothing to evaluate. Please add content first.';
   }
   if (code === 'vertex_invalid_response') {
+    const parseKind = asLower(failure?.parseErrorKind);
+    if (parseKind === 'truncated_output') {
+      return 'Vertex output was truncated. Please retry.';
+    }
+    if (parseKind === 'empty_output') {
+      return 'Vertex returned empty output. Please retry.';
+    }
+    if (parseKind === 'schema_validation_error') {
+      return 'Vertex output missed required report fields. Please retry.';
+    }
+    if (parseKind === 'json_parse_error') {
+      return 'Vertex output was not valid JSON. Please retry.';
+    }
+    if (parseKind === 'confidential_leak_detected') {
+      return 'Evaluation blocked due to confidentiality leak detection.';
+    }
+    if (parseKind === 'vertex_timeout') {
+      return 'Vertex request timed out. Please retry.';
+    }
+    if (parseKind === 'vertex_http_error') {
+      return 'Vertex request failed upstream. Please retry.';
+    }
     return 'Vertex returned an invalid response format. Please retry.';
   }
   if (code === 'vertex_generic_output') {

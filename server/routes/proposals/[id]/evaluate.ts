@@ -217,12 +217,45 @@ function toFailedResult(error: any) {
   const statusCode = Number(error?.statusCode || error?.status || 500);
   const code = asText(error?.code) || 'evaluation_failed';
   const message = asText(error?.message) || 'Evaluation failed';
+  const parseErrorKind = asText(error?.extra?.parseErrorKind || error?.extra?.reasonCode) || null;
+  const parseErrorMessage = error?.extra?.parseErrorMessage ? JSON.parse(String(error.extra.parseErrorMessage)) : null;
+  const attemptHistory = Array.isArray(error?.extra?.attempt_history) ? error.extra.attempt_history : null;
+  const attemptCount = Array.isArray(attemptHistory) ? attemptHistory.length : 0;
+  
+  // Build user-friendly error message
+  let userMessage = 'Evaluation failed. Please try again.';
+  let details_safe = parseErrorKind ? `${parseErrorKind}: ` : '';
+  
+  if (parseErrorKind === 'truncated_output') {
+    userMessage = 'AI response was cut off due to size limits. Please retry the evaluation.';
+    details_safe += 'The model output was truncated and incomplete.';
+  } else if (parseErrorKind === 'empty_output') {
+    userMessage = 'AI returned no content. Please retry the evaluation.';
+    details_safe += 'The model generated no output.';
+  } else if (parseErrorKind === 'json_parse_error') {
+    userMessage = 'AI output was not valid JSON. Please retry the evaluation.';
+    details_safe += 'The response could not be parsed as JSON.';
+  } else if (parseErrorKind === 'schema_validation_error') {
+    userMessage = 'AI response was incomplete (missing sections). Please retry the evaluation.';
+    details_safe += 'The response was missing required schema fields.';
+  } else if (parseErrorKind === 'confidential_leak_detected') {
+    userMessage = 'A confidentiality check failed. Please review your input and retry.';
+    details_safe += 'Confidential information was detected in the output.';
+  } else if (code === 'not_configured') {
+    userMessage = 'Vertex AI is not configured. Please contact support.';
+  }
 
   return {
     error: {
       statusCode,
       code,
       message,
+      parse_error_kind: parseErrorKind,
+      user_message: userMessage,
+      details_safe,
+      attempt_count: attemptCount,
+      attempt_history: attemptHistory,
+      parse_error_diagnostics: parseErrorMessage,
       details: error?.extra && typeof error.extra === 'object' ? error.extra : {},
     },
   };
