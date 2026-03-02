@@ -129,4 +129,26 @@ export const proposalsClient = {
     const response = await request(`/api/proposals/${encodeURIComponent(String(id || ''))}/evaluations`);
     return response.evaluations || [];
   },
+
+  async archive(id) {
+    const response = await request(`/api/proposals/${encodeURIComponent(String(id || ''))}/archive`, {
+      method: 'PATCH',
+    });
+    return response.proposal || null;
+  },
+
+  async unarchive(id) {
+    const response = await request(`/api/proposals/${encodeURIComponent(String(id || ''))}/unarchive`, {
+      method: 'PATCH',
+    });
+    return response.proposal || null;
+  },
+
+  async close(id, status) {
+    const response = await request(`/api/proposals/${encodeURIComponent(String(id || ''))}/close`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    });
+    return response.proposal || null;
+  },
 };

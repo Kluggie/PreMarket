@@ -92,6 +92,20 @@
       "when": 1772739600000,
       "tag": "0012_shared_report_recipient_evaluation_runs",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1772826000000,
+      "tag": "0013_notification_dismiss",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1772912400000,
+      "tag": "0014_proposals_archive_closed",
+      "breakpoints": true
     }
   ]
 }

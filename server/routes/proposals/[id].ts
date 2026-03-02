@@ -38,6 +38,8 @@ function mapProposalRow(proposal, ownerEmail) {
     received_at: proposal.receivedAt || null,
     evaluated_at: proposal.evaluatedAt || null,
     last_shared_at: proposal.lastSharedAt || null,
+    archived_at: proposal.archivedAt || null,
+    closed_at: proposal.closedAt || null,
     user_id: proposal.userId,
     created_at: proposal.createdAt,
     updated_at: proposal.updatedAt,
@@ -278,6 +280,15 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         body.lastSharedAt === undefined && body.last_shared_at === undefined
           ? existing.lastSharedAt
           : parseDateOrNull(body.lastSharedAt || body.last_shared_at),
+      // closedAt: set when status becomes won/lost; cleared when moving away from those statuses.
+      closedAt: (() => {
+        const incomingStatus = body.status === undefined ? null : String(body.status || '').trim().toLowerCase();
+        const CLOSED_STATUSES = new Set(['won', 'lost']);
+        if (incomingStatus === null) return existing.closedAt;
+        if (CLOSED_STATUSES.has(incomingStatus) && !existing.closedAt) return new Date();
+        if (!CLOSED_STATUSES.has(incomingStatus)) return null;
+        return existing.closedAt;
+      })(),
       updatedAt: new Date(),
     };
 

@@ -18,6 +18,9 @@ import proposalResponsesHandler from '../server/routes/proposals/[id]/responses.
 import proposalSendHandler from '../server/routes/proposals/[id]/send.js';
 import proposalEvaluateHandler from '../server/routes/proposals/[id]/evaluate.js';
 import proposalEvaluationsHandler from '../server/routes/proposals/[id]/evaluations.js';
+import proposalArchiveHandler from '../server/routes/proposals/[id]/archive.js';
+import proposalUnarchiveHandler from '../server/routes/proposals/[id]/unarchive.js';
+import proposalCloseHandler from '../server/routes/proposals/[id]/close.js';
 import sharedLinksHandler from '../server/routes/shared-links/index.js';
 import sharedLinksTokenHandler from '../server/routes/shared-links/[token].js';
 import sharedLinksConsumeHandler from '../server/routes/shared-links/[token]/consume.js';
@@ -291,6 +294,24 @@ export default async function handler(req: any, res: any) {
   if (proposalEvaluationsMatch && method === 'GET') {
     const id = decodeURIComponent(proposalEvaluationsMatch[1]);
     return proposalEvaluationsHandler(req, res, id);
+  }
+
+  const proposalArchiveMatch = pathname.match(/^\/api\/proposals\/([^/]+)\/archive$/);
+  if (proposalArchiveMatch && method === 'PATCH') {
+    const id = decodeURIComponent(proposalArchiveMatch[1]);
+    return proposalArchiveHandler(req, res, id);
+  }
+
+  const proposalUnarchiveMatch = pathname.match(/^\/api\/proposals\/([^/]+)\/unarchive$/);
+  if (proposalUnarchiveMatch && method === 'PATCH') {
+    const id = decodeURIComponent(proposalUnarchiveMatch[1]);
+    return proposalUnarchiveHandler(req, res, id);
+  }
+
+  const proposalCloseMatch = pathname.match(/^\/api\/proposals\/([^/]+)\/close$/);
+  if (proposalCloseMatch && method === 'PATCH') {
+    const id = decodeURIComponent(proposalCloseMatch[1]);
+    return proposalCloseHandler(req, res, id);
   }
 
   const templatesUseMatch = pathname.match(/^\/api\/templates\/([^/]+)\/use$/);

@@ -1,4 +1,4 @@
-import { and, eq, ilike, inArray, ne, or } from 'drizzle-orm';
+import { and, eq, ilike, inArray, isNull, ne, or } from 'drizzle-orm';
 import { ok } from '../../_lib/api-response.js';
 import { requireUser } from '../../_lib/auth.js';
 import { getDb, schema } from '../../_lib/db/client.js';
@@ -48,18 +48,27 @@ export default async function handler(req: any, res: any) {
 
     const whereClause = currentEmail
       ? sharedRecipientScope
-        ? or(
-            eq(schema.proposals.userId, auth.user.id),
-            ilike(schema.proposals.partyAEmail, currentEmail),
-            ilike(schema.proposals.partyBEmail, currentEmail),
-            sharedRecipientScope,
+        ? and(
+            isNull(schema.proposals.archivedAt),
+            or(
+              eq(schema.proposals.userId, auth.user.id),
+              ilike(schema.proposals.partyAEmail, currentEmail),
+              ilike(schema.proposals.partyBEmail, currentEmail),
+              sharedRecipientScope,
+            ),
           )
-        : or(
-            eq(schema.proposals.userId, auth.user.id),
-            ilike(schema.proposals.partyAEmail, currentEmail),
-            ilike(schema.proposals.partyBEmail, currentEmail),
+        : and(
+            isNull(schema.proposals.archivedAt),
+            or(
+              eq(schema.proposals.userId, auth.user.id),
+              ilike(schema.proposals.partyAEmail, currentEmail),
+              ilike(schema.proposals.partyBEmail, currentEmail),
+            ),
           )
-      : eq(schema.proposals.userId, auth.user.id);
+      : and(
+          isNull(schema.proposals.archivedAt),
+          eq(schema.proposals.userId, auth.user.id),
+        );
 
     const rows = await db
       .select({
@@ -126,6 +135,7 @@ export default async function handler(req: any, res: any) {
         mutualInterestCount,
         wonCount,
         lostCount,
+        closedCount: wonCount + lostCount,
         totalCount: rows.length,
       },
     });

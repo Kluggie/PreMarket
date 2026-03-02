@@ -192,6 +192,8 @@ export const proposals = pgTable(
     evaluatedAt: timestamp('evaluated_at', { withTimezone: true }),
     lastSharedAt: timestamp('last_shared_at', { withTimezone: true }),
     statusReason: text('status_reason'),
+    archivedAt: timestamp('archived_at', { withTimezone: true }),
+    closedAt: timestamp('closed_at', { withTimezone: true }),
     payload: jsonb('payload').notNull().default(sql`'{}'::jsonb`),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -210,6 +212,8 @@ export const proposals = pgTable(
     ),
     proposalsPartyAEmailIdx: index('proposals_party_a_email_idx').on(table.partyAEmail, table.createdAt),
     proposalsPartyBEmailIdx: index('proposals_party_b_email_idx').on(table.partyBEmail, table.createdAt),
+    proposalsArchivedAtIdx: index('proposals_archived_at_idx').on(table.archivedAt),
+    proposalsClosedAtIdx: index('proposals_closed_at_idx').on(table.closedAt),
   }),
 );
 

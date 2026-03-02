@@ -85,6 +85,8 @@ function mapProposalRow(proposal, currentUser, sharedReportLink = null) {
     received_at: proposal.receivedAt || null,
     evaluated_at: proposal.evaluatedAt || null,
     last_shared_at: proposal.lastSharedAt || null,
+    archived_at: proposal.archivedAt || null,
+    closed_at: proposal.closedAt || null,
     user_id: proposal.userId,
     created_at: proposal.createdAt,
     updated_at: proposal.updatedAt,
@@ -167,6 +169,8 @@ export default async function handler(req: any, res: any) {
     if (req.method === 'GET') {
       const limit = parseLimit(req.query?.limit);
       const tab = String(req.query?.tab || 'all').trim().toLowerCase();
+      const isArchivedTab = tab === 'archived';
+      const isClosedTab = tab === 'closed';
       const query = String(req.query?.query || req.query?.q || '').trim();
       const statusFilter = String(req.query?.status || '').trim().toLowerCase();
       const cursor = decodeCursor(String(req.query?.cursor || ''));
@@ -240,7 +244,24 @@ export default async function handler(req: any, res: any) {
         : ownerScope;
       conditions.push(listScope);
 
-      if (tab === 'drafts') {
+      // By default, exclude archived proposals unless the user is viewing the Archived tab.
+      if (isArchivedTab) {
+        conditions.push(isNotNull(schema.proposals.archivedAt));
+      } else {
+        conditions.push(isNull(schema.proposals.archivedAt));
+      }
+
+      if (isClosedTab) {
+        conditions.push(
+          and(
+            ownerScope,
+            or(
+              eq(schema.proposals.status, 'won'),
+              eq(schema.proposals.status, 'lost'),
+            ),
+          ),
+        );
+      } else if (tab === 'drafts') {
         // Any proposal you own where sent_at IS NULL is a draft, regardless of status.
         // This keeps under_verification, needs_changes, etc. in Drafts until email is sent.
         conditions.push(and(ownerScope, isNull(schema.proposals.sentAt)));

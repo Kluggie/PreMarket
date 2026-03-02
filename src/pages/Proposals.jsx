@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { createPageUrl } from '@/utils';
 import { useAuth } from '@/lib/AuthContext';
 import { proposalsClient } from '@/api/proposalsClient';
@@ -11,6 +12,12 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import {
   Plus,
   Search,
@@ -25,6 +32,10 @@ import {
   AlertCircle,
   CheckCircle2,
   BarChart3,
+  MoreHorizontal,
+  Archive,
+  ArchiveRestore,
+  Trophy,
 } from 'lucide-react';
 
 const statusConfig = {
@@ -38,9 +49,10 @@ const statusConfig = {
   lost: { color: 'bg-rose-100 text-rose-700', icon: AlertTriangle, label: 'Lost' },
   closed: { color: 'bg-slate-100 text-slate-600', icon: Clock, label: 'Closed' },
   withdrawn: { color: 'bg-red-100 text-red-700', icon: AlertTriangle, label: 'Withdrawn' },
+  archived: { color: 'bg-slate-100 text-slate-500', icon: Archive, label: 'Archived' },
 };
 
-const TAB_VALUES = new Set(['all', 'sent', 'received', 'drafts', 'mutual_interest']);
+const TAB_VALUES = new Set(['all', 'sent', 'received', 'drafts', 'mutual_interest', 'closed', 'archived']);
 
 function normalizeTabValue(value) {
   const nextValue = String(value || '').trim().toLowerCase();
@@ -63,7 +75,7 @@ function StatusBadge({ status }) {
   );
 }
 
-function ProposalRow({ proposal, onOpen }) {
+function ProposalRow({ proposal, onOpen, onArchive, onUnarchive }) {
   const listType = proposal.list_type || 'sent';
   const directional = proposal.directional_status || proposal.status || listType;
   const iconConfig = statusConfig[String(directional).toLowerCase()] || statusConfig.sent;
@@ -71,54 +83,95 @@ function ProposalRow({ proposal, onOpen }) {
   const hasSharedReportLink = Boolean(proposal.shared_report_token);
   const sharedReportStatus = String(proposal.shared_report_status || '').trim().toLowerCase();
   const sharedReportDate = proposal.shared_report_last_updated_at || proposal.shared_report_sent_at || null;
+  const isArchived = Boolean(proposal.archived_at);
+  const isOwner = listType !== 'received';
 
   return (
-    <button
-      type="button"
-      onClick={() => onOpen(proposal)}
-      className="w-full text-left p-4 border-b border-slate-100 flex items-center gap-4 hover:bg-slate-50 transition-colors"
-    >
-      <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center">
-        <Icon className="w-5 h-5 text-slate-600" />
-      </div>
-
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-1 flex-wrap">
-          <h3 className="font-medium text-slate-900 truncate">{proposal.title || 'Untitled Proposal'}</h3>
-          <StatusBadge status={directional} />
-          {hasSharedReportLink ? (
-            <Badge variant="outline" className="text-xs capitalize">
-              Link {sharedReportStatus || 'active'}
-            </Badge>
-          ) : null}
-          {proposal.status && proposal.status !== directional ? (
-            <Badge variant="outline" className="text-xs">
-              {proposal.status.replace(/_/g, ' ')}
-            </Badge>
-          ) : null}
+    <div className="w-full border-b border-slate-100 flex items-center hover:bg-slate-50 transition-colors">
+      <button
+        type="button"
+        onClick={() => onOpen(proposal)}
+        className="flex-1 text-left p-4 flex items-center gap-4 min-w-0"
+      >
+        <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center flex-shrink-0">
+          <Icon className="w-5 h-5 text-slate-600" />
         </div>
 
-        <div className="flex items-center gap-4 text-sm text-slate-500">
-          <span>{proposal.template_name || 'Custom Template'}</span>
-          {listType === 'received' ? (
-            <span>From: {proposal.party_a_email || 'Hidden'}</span>
-          ) : (
-            <span>To: {proposal.party_b_email || 'Not specified'}</span>
-          )}
-        </div>
-      </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
+            <h3 className="font-medium text-slate-900 truncate">{proposal.title || 'Untitled Proposal'}</h3>
+            <StatusBadge status={directional} />
+            {isArchived && (
+              <Badge variant="outline" className="text-xs text-slate-500">
+                <Archive className="w-3 h-3 mr-1" />
+                Archived
+              </Badge>
+            )}
+            {hasSharedReportLink ? (
+              <Badge variant="outline" className="text-xs capitalize">
+                Link {sharedReportStatus || 'active'}
+              </Badge>
+            ) : null}
+            {proposal.status && proposal.status !== directional ? (
+              <Badge variant="outline" className="text-xs">
+                {proposal.status.replace(/_/g, ' ')}
+              </Badge>
+            ) : null}
+          </div>
 
-      <div className="text-right">
-        <p className="text-xs text-slate-400">
-          {sharedReportDate
-            ? new Date(sharedReportDate).toLocaleDateString()
-            : proposal.created_date
-              ? new Date(proposal.created_date).toLocaleDateString()
-              : ''}
-        </p>
-        <ChevronRight className="w-4 h-4 text-slate-400 mt-2 ml-auto" />
-      </div>
-    </button>
+          <div className="flex items-center gap-4 text-sm text-slate-500">
+            <span>{proposal.template_name || 'Custom Template'}</span>
+            {listType === 'received' ? (
+              <span>From: {proposal.party_a_email || 'Hidden'}</span>
+            ) : (
+              <span>To: {proposal.party_b_email || 'Not specified'}</span>
+            )}
+          </div>
+        </div>
+
+        <div className="text-right flex-shrink-0">
+          <p className="text-xs text-slate-400">
+            {sharedReportDate
+              ? new Date(sharedReportDate).toLocaleDateString()
+              : proposal.created_date
+                ? new Date(proposal.created_date).toLocaleDateString()
+                : ''}
+          </p>
+          <ChevronRight className="w-4 h-4 text-slate-400 mt-2 ml-auto" />
+        </div>
+      </button>
+
+      {isOwner && (
+        <div className="pr-2 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                <MoreHorizontal className="w-4 h-4 text-slate-400" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-40">
+              {isArchived ? (
+                <DropdownMenuItem
+                  onClick={() => onUnarchive && onUnarchive(proposal)}
+                  className="gap-2 cursor-pointer"
+                >
+                  <ArchiveRestore className="w-4 h-4" />
+                  Unarchive
+                </DropdownMenuItem>
+              ) : (
+                <DropdownMenuItem
+                  onClick={() => onArchive && onArchive(proposal)}
+                  className="gap-2 cursor-pointer text-slate-600"
+                >
+                  <Archive className="w-4 h-4" />
+                  Archive
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -126,6 +179,7 @@ export default function Proposals() {
   const navigate = useNavigate();
   const location = useLocation();
   const { navigateToLogin } = useAuth();
+  const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState(() => {
     const params = new URLSearchParams(location.search || '');
     return normalizeTabValue(params.get('tab'));
@@ -168,6 +222,30 @@ export default function Proposals() {
     keepPreviousData: true,
   });
 
+  const archiveMutation = useMutation({
+    mutationFn: (proposal) => proposalsClient.archive(proposal.id),
+    onSuccess: () => {
+      toast.success('Archived');
+      queryClient.invalidateQueries(['proposals-list']);
+      queryClient.invalidateQueries(['dashboard-summary']);
+    },
+    onError: (err) => {
+      toast.error(err?.message || 'Failed to archive');
+    },
+  });
+
+  const unarchiveMutation = useMutation({
+    mutationFn: (proposal) => proposalsClient.unarchive(proposal.id),
+    onSuccess: () => {
+      toast.success('Restored');
+      queryClient.invalidateQueries(['proposals-list']);
+      queryClient.invalidateQueries(['dashboard-summary']);
+    },
+    onError: (err) => {
+      toast.error(err?.message || 'Failed to restore');
+    },
+  });
+
   const proposals = data?.proposals || [];
   const page = data?.page || { hasMore: false, nextCursor: null };
 
@@ -180,6 +258,7 @@ export default function Proposals() {
       received: summary.receivedCount || 0,
       drafts: summary.draftsCount || 0,
       mutual_interest: summary.mutualInterestCount || 0,
+      closed: summary.closedCount || 0,
     };
   }, [summary, summaryLoading]);
 
@@ -267,6 +346,14 @@ export default function Proposals() {
     setCursor(previousCursor);
   };
 
+  const handleArchive = (proposal) => {
+    archiveMutation.mutate(proposal);
+  };
+
+  const handleUnarchive = (proposal) => {
+    unarchiveMutation.mutate(proposal);
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 py-8">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -314,7 +401,7 @@ export default function Proposals() {
         </Card>
 
         <Tabs value={activeTab} onValueChange={handleTabChange}>
-          <TabsList className="bg-white border border-slate-200 p-1 mb-6 flex-wrap">
+          <TabsList className="bg-white border border-slate-200 p-1 mb-6 flex-wrap h-auto gap-1">
             <TabsTrigger value="all" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
               All ({tabCount('all')})
             </TabsTrigger>
@@ -329,6 +416,14 @@ export default function Proposals() {
             </TabsTrigger>
             <TabsTrigger value="mutual_interest" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
               Mutual Interest ({tabCount('mutual_interest')})
+            </TabsTrigger>
+            <TabsTrigger value="closed" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
+              <Trophy className="w-3 h-3 mr-1" />
+              Closed ({tabCount('closed')})
+            </TabsTrigger>
+            <TabsTrigger value="archived" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
+              <Archive className="w-3 h-3 mr-1" />
+              Archived
             </TabsTrigger>
           </TabsList>
 
@@ -369,9 +464,13 @@ export default function Proposals() {
                   <div className="py-16 px-6 text-center space-y-3">
                     <p className="text-slate-600 font-medium">No proposals found</p>
                     <p className="text-sm text-slate-500">
-                      {activeTab === 'drafts' 
+                      {activeTab === 'drafts'
                         ? 'Create your first proposal to get started.'
-                        : `No ${activeTab} proposals yet.`}
+                        : activeTab === 'archived'
+                          ? 'No archived proposals.'
+                          : activeTab === 'closed'
+                            ? 'No closed (Won/Lost) proposals yet.'
+                            : `No ${activeTab} proposals yet.`}
                     </p>
                     {activeTab === 'drafts' && (
                       <Link to="/templates">
@@ -384,7 +483,13 @@ export default function Proposals() {
                 ) : (
                   <div>
                     {proposals.map((proposal) => (
-                      <ProposalRow key={proposal.id} proposal={proposal} onOpen={handleOpenProposal} />
+                      <ProposalRow
+                        key={proposal.id}
+                        proposal={proposal}
+                        onOpen={handleOpenProposal}
+                        onArchive={handleArchive}
+                        onUnarchive={handleUnarchive}
+                      />
                     ))}
                   </div>
                 )}

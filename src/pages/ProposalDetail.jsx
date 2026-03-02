@@ -14,13 +14,16 @@ import {
   ArrowLeft,
   ArrowRight,
   BarChart3,
+  CheckCircle2,
   Clock,
   Download,
   FileText,
   MessageSquare,
   Send,
   Sparkles,
+  Trophy,
   Upload,
+  XCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -326,6 +329,20 @@ export default function ProposalDetail() {
     },
   });
 
+  const markOutcomeMutation = useMutation({
+    mutationFn: (status) => proposalsClient.close(proposalId, status),
+    onSuccess: (updatedProposal) => {
+      const label = String(updatedProposal?.status || '').toLowerCase() === 'won' ? 'Won' : 'Lost';
+      toast.success(`Marked as ${label}`);
+      queryClient.invalidateQueries(['proposal-detail', proposalId]);
+      queryClient.invalidateQueries(['proposals-list']);
+      queryClient.invalidateQueries(['dashboard-summary']);
+    },
+    onError: (error) => {
+      toast.error(error?.message || 'Failed to update outcome');
+    },
+  });
+
   if (!proposalId) {
     return (
       <div className="min-h-screen bg-slate-50 py-8">
@@ -493,6 +510,91 @@ export default function ProposalDetail() {
                         )}
                       </CardContent>
                     </Card>
+
+                    {/* Outcome panel: Step 3 - Mark Won / Lost */}
+                    {(() => {
+                      const currentStatus = String(proposal.status || '').toLowerCase();
+                      const isWon = currentStatus === 'won';
+                      const isLost = currentStatus === 'lost';
+                      const isClosed = isWon || isLost;
+                      const isOwner = proposal.user_id === proposal.owner_user_id;
+                      return (
+                        <Card className={`border shadow-sm ${
+                          isWon ? 'border-emerald-200 bg-emerald-50' :
+                          isLost ? 'border-rose-200 bg-rose-50' :
+                          'border-slate-200'
+                        }`}>
+                          <CardHeader className="pb-3">
+                            <CardTitle className="flex items-center gap-2 text-base">
+                              <Trophy className={`w-4 h-4 ${isWon ? 'text-emerald-600' : isLost ? 'text-rose-500' : 'text-slate-400'}`} />
+                              Outcome
+                            </CardTitle>
+                          </CardHeader>
+                          <CardContent className="space-y-3">
+                            {isClosed ? (
+                              <>
+                                <div className={`flex items-center gap-2 font-semibold ${
+                                  isWon ? 'text-emerald-700' : 'text-rose-600'
+                                }`}>
+                                  {isWon ? (
+                                    <CheckCircle2 className="w-5 h-5" />
+                                  ) : (
+                                    <XCircle className="w-5 h-5" />
+                                  )}
+                                  {isWon ? 'Won' : 'Lost'}
+                                </div>
+                                {proposal.closed_at && (
+                                  <p className="text-xs text-slate-500">Closed {formatDate(proposal.closed_at)}</p>
+                                )}
+                                <div className="flex gap-2 pt-1">
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="flex-1"
+                                    disabled={markOutcomeMutation.isPending || isWon}
+                                    onClick={() => markOutcomeMutation.mutate('won')}
+                                  >
+                                    <CheckCircle2 className="w-3 h-3 mr-1" />
+                                    Won
+                                  </Button>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="flex-1"
+                                    disabled={markOutcomeMutation.isPending || isLost}
+                                    onClick={() => markOutcomeMutation.mutate('lost')}
+                                  >
+                                    <XCircle className="w-3 h-3 mr-1" />
+                                    Lost
+                                  </Button>
+                                </div>
+                              </>
+                            ) : (
+                              <>
+                                <p className="text-sm text-slate-500">Mark the final outcome for this proposal.</p>
+                                <Button
+                                  className="w-full bg-emerald-600 hover:bg-emerald-700 text-white"
+                                  disabled={markOutcomeMutation.isPending}
+                                  onClick={() => markOutcomeMutation.mutate('won')}
+                                >
+                                  <CheckCircle2 className="w-4 h-4 mr-2" />
+                                  Mark as Won
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  className="w-full text-rose-600 border-rose-200 hover:bg-rose-50"
+                                  disabled={markOutcomeMutation.isPending}
+                                  onClick={() => markOutcomeMutation.mutate('lost')}
+                                >
+                                  <XCircle className="w-4 h-4 mr-2" />
+                                  Mark as Lost
+                                </Button>
+                              </>
+                            )}
+                          </CardContent>
+                        </Card>
+                      );
+                    })()}
 
                     <Card className="border border-slate-200 shadow-sm">
                       <CardHeader>
