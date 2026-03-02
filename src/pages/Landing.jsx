@@ -101,7 +101,7 @@ export default function Landing() {
               transition={{ duration: 0.6, delay: 0.2 }}
               className="text-xl text-slate-600 max-w-2xl mx-auto mb-10"
             >
-              PreMarket helps both sides compare positions, surface trade-offs, and propose next steps — while confidential information stays protected.
+              PreMarket helps both sides compare positions, surface trade-offs, and propose next steps - while confidential information stays protected.
             </motion.p>
 
             <motion.div

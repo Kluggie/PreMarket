@@ -210,9 +210,6 @@ export default function Pricing() {
                   Beta members get early access to workflow updates and a direct feedback loop with the product team.
                 </p>
               </div>
-              <Link to="/templates">
-                <Button variant="outline">Apply via Templates</Button>
-              </Link>
             </div>
             <div className="mt-5">
               <div className="flex items-center justify-between text-sm mb-2">
@@ -314,16 +311,24 @@ export default function Pricing() {
                 a: 'Yes. Upgrades apply immediately. Downgrades and cancellations apply at the end of your current period.',
               },
               {
-                q: 'How do re-evaluations work?',
-                a: 'Recipients can submit updates and run re-evaluation. Limits vary by plan.',
+                q: 'Do recipients need to pay or create an account?',
+                a: 'No. Recipients can view and respond via the share link. An account is only required to create proposals and manage negotiations.',
               },
               {
-                q: 'Does the report reveal confidential values?',
-                a: 'No. Confidential visibility settings are respected in generated outputs.',
+                q: 'What counts toward my plan limits?',
+                a: 'Only actions taken by the proposal owner count toward your plan (creating proposals and running AI evaluations). Recipient viewing/responding does not use the recipient’s plan.',
               },
               {
-                q: 'What is pseudonymous mode?',
-                a: 'It allows exploratory workflows before identities are explicitly revealed.',
+                q: 'How is confidential information protected?',
+                a: 'Confidential fields are hidden by default. They only become shared when you explicitly move them into Shared information.',
+              },
+              {
+                q: 'Is the AI giving legal/financial advice?',
+                a: 'No. PreMarket provides negotiation support and structured analysis — it isn’t legal, financial, or brokerage advice.',
+              },
+              {
+                q: 'Can I revoke a share link after sending it?',
+                a: 'Share links should be treated like forwarded emails: once sent, you can’t fully retract them. Only share with trusted recipients.',
               },
             ].map((faq) => (
               <Card key={faq.q} className="border-0 shadow-sm">
