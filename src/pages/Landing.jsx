@@ -21,28 +21,28 @@ export default function Landing() {
     },
     {
       icon: FileText,
-      title: 'Structured Templates',
-      description: 'Use industry-specific templates for M&A, recruiting, investment, and more.'
+      title: 'Two-Layer Disclosure',
+      description: 'Shared information is visible by default. Confidential information is always protected.'
     },
     {
       icon: BarChart3,
-      title: 'AI Evaluation',
-      description: 'Get compatibility scores, red flags, and recommendations powered by AI analysis.'
+      title: 'AI Confidentiality Analysis',
+      description: 'AI evaluates data without exposing confidential fields in the output'
     },
     {
       icon: RefreshCw,
-      title: 'Verify & Re-evaluate',
+      title: 'Recipient Verification',
       description: 'Recipients can verify claims, correct data, and trigger re-evaluation.'
     },
     {
       icon: Eye,
-      title: 'Progressive Reveal',
-      description: 'Three-gate system controls what information is visible at each stage.'
+      title: 'Secure Share Links',
+      description: 'Private links with access control so distribution stays contained.'
     },
     {
       icon: Lock,
-      title: 'Range & Tokens',
-      description: 'Share ranges instead of exact values. Use tokenized references for sensitive data.'
+      title: 'Audit Trail',
+      description: 'Every view, change, and reveal is recorded so both sides can trust the process.'
     }
   ];
 
@@ -78,7 +78,7 @@ export default function Landing() {
             >
               <span className="inline-flex items-center gap-2 px-4 py-2 bg-blue-50 border border-blue-100 rounded-full text-sm text-blue-700 font-medium mb-8">
                 <Shield className="w-4 h-4" />
-                Secure Data Handling
+                Built for Privacy
               </span>
             </motion.div>
 
@@ -88,10 +88,10 @@ export default function Landing() {
               transition={{ duration: 0.6, delay: 0.1 }}
               className="text-5xl sm:text-6xl lg:text-7xl font-bold text-slate-900 tracking-tight mb-6"
             >
-              Zero Consulting Fees
+              AI Negotiation
               <br />
               <span className="bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
-                AI Driven Negotiation
+                Zero Consulting Fees
               </span>
             </motion.h1>
 
@@ -101,7 +101,7 @@ export default function Landing() {
               transition={{ duration: 0.6, delay: 0.2 }}
               className="text-xl text-slate-600 max-w-2xl mx-auto mb-10"
             >
-              PreMarket is a software platform that helps both sides align on terms without leaking confidential details.
+              PreMarket helps both sides compare positions, surface trade-offs, and propose next steps — while confidential information stays protected.
             </motion.p>
 
             <motion.div
@@ -120,7 +120,7 @@ export default function Landing() {
               </Button>
               <Link to="/templates">
                 <Button variant="outline" size="lg" className="px-8 py-6 text-lg h-auto border-slate-200">
-                  Browse Templates
+                  Choose Templates
                 </Button>
               </Link>
             </motion.div>

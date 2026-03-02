@@ -248,7 +248,7 @@ export default function Layout({ children, currentPageName }) {
                   <span className="text-xl font-bold">PreMarket</span>
                 </div>
                 <p className="text-slate-400 text-sm max-w-md mb-6">
-                  Privacy-preserving pre-qualification platform. Exchange structured proposals and evaluate compatibility through AI-powered assessments.
+                  AI negotiation platform built for privacy. Share proposals, compare terms, and generate counter-offers with AI-assisted analysis.
                 </p>
                 <div className="flex items-center gap-4">
                   <span className="text-xs text-slate-500 px-3 py-1 bg-slate-800 rounded-full">
