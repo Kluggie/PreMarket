@@ -4,8 +4,6 @@ import { requireUser } from '../../_lib/auth.js';
 import { getDb, schema } from '../../_lib/db/client.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 
-const DRAFT_STATUSES = new Set(['draft', 'ready']);
-
 function normalizeEmail(value: unknown) {
   return typeof value === 'string' ? value.trim().toLowerCase() : '';
 }
@@ -94,7 +92,10 @@ export default async function handler(req: any, res: any) {
           sharedReceivedProposalIdSet.has(String(row.id || '').trim())
         ),
       );
-      const isDraft = Boolean(isOwner && !isSent && DRAFT_STATUSES.has(status));
+      // sent_at is the authoritative signal for "sent". Any unsent proposal you
+      // own stays in Drafts regardless of status (including under_verification,
+      // needs_changes, etc.) until an actual email is sent and sent_at is set.
+      const isDraft = Boolean(isOwner && !isSent);
 
       if (isDraft) {
         draftsCount += 1;

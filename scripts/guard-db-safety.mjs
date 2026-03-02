@@ -143,7 +143,25 @@ if (fs.existsSync('drizzle.config.js')) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// CHECK 5: Verify package.json build script doesn't call db:reset or db:seed
+// CHECK 5: DEBUG_TOKEN must be set in production (debug/db endpoint)
+// ──────────────────────────────────────────────────────────────────────────────
+// /api/debug/db is gated by x-debug-token header in production. If DEBUG_TOKEN
+// is not set, every production request to that route falls through to 404 which
+// is safe, but means the endpoint is unusable for operators. Warn so it gets set.
+
+const debugToken = (process.env.DEBUG_TOKEN || '').trim();
+if (isProduction) {
+  if (!debugToken) {
+    warnings.push('[WARNING] DEBUG_TOKEN is not set. The /api/debug/db endpoint will return 404 in production and will be unavailable for operators. Set DEBUG_TOKEN in Vercel env vars to enable it.');
+  } else if (debugToken.length < 16) {
+    warnings.push(`[WARNING] DEBUG_TOKEN is short (${debugToken.length} chars). Use at least 16 random characters.`);
+  } else {
+    console.log(`[OK] DEBUG_TOKEN is set (length=${debugToken.length})`);
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// CHECK 6: Verify package.json build script doesn't call db:reset or db:seed
 // ──────────────────────────────────────────────────────────────────────────────
 if (fs.existsSync('package.json')) {
   const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));

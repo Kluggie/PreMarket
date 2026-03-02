@@ -9,6 +9,9 @@ import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 
 const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 100;
+// Legacy status set kept for reference only. Tab membership is now controlled
+// exclusively by sent_at (NULL = unsent/draft, NOT NULL = sent). Status values
+// like 'under_verification' must not evict a proposal from Drafts.
 const DRAFT_STATUSES = ['draft', 'ready'] as const;
 
 function normalizeEmail(value: unknown) {
@@ -27,7 +30,8 @@ function mapProposalRow(proposal, currentUser, sharedReportLink = null) {
   const isOwner =
     String(proposal.userId || '').trim() === currentUserId ||
     Boolean(currentEmail && senderEmail && senderEmail === currentEmail);
-  const isDraft = !isSent && DRAFT_STATUSES.includes(normalizedStatus as (typeof DRAFT_STATUSES)[number]);
+  // sent_at IS NULL → still a draft; status alone does not determine tab membership.
+  const isDraft = !isSent;
 
   let listType = 'sent';
   if (hasSharedReportLink && !isOwner) {
@@ -237,9 +241,9 @@ export default async function handler(req: any, res: any) {
       conditions.push(listScope);
 
       if (tab === 'drafts') {
-        conditions.push(
-          and(ownerScope, isNull(schema.proposals.sentAt), inArray(schema.proposals.status, DRAFT_STATUSES)),
-        );
+        // Any proposal you own where sent_at IS NULL is a draft, regardless of status.
+        // This keeps under_verification, needs_changes, etc. in Drafts until email is sent.
+        conditions.push(and(ownerScope, isNull(schema.proposals.sentAt)));
       } else if (tab === 'sent') {
         conditions.push(and(ownerScope, isNotNull(schema.proposals.sentAt)));
       } else if (tab === 'received') {
@@ -262,9 +266,7 @@ export default async function handler(req: any, res: any) {
 
       if (statusFilter && statusFilter !== 'all') {
         if (statusFilter === 'draft') {
-          conditions.push(
-            and(ownerScope, isNull(schema.proposals.sentAt), inArray(schema.proposals.status, DRAFT_STATUSES)),
-          );
+          conditions.push(and(ownerScope, isNull(schema.proposals.sentAt)));
         } else if (statusFilter === 'sent') {
           conditions.push(and(ownerScope, isNotNull(schema.proposals.sentAt)));
         } else if (statusFilter === 'received') {

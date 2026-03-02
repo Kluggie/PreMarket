@@ -150,7 +150,7 @@ export default function Proposals() {
     setCursorHistory([]);
   }, [activeTab, statusFilter, normalizedSearch]);
 
-  const { data: summary } = useQuery({
+  const { data: summary, isLoading: summaryLoading } = useQuery({
     queryKey: ['dashboard-summary'],
     queryFn: () => dashboardClient.getSummary(),
   });
@@ -171,13 +171,22 @@ export default function Proposals() {
   const proposals = data?.proposals || [];
   const page = data?.page || { hasMore: false, nextCursor: null };
 
-  const tabCounts = {
-    all: (summary?.sentCount || 0) + (summary?.receivedCount || 0) + (summary?.draftsCount || 0),
-    sent: summary?.sentCount || 0,
-    received: summary?.receivedCount || 0,
-    drafts: summary?.draftsCount || 0,
-    mutual_interest: summary?.mutualInterestCount || 0,
-  };
+  // Counts are null while loading so we can show '…' instead of misleading '0'.
+  const tabCounts = useMemo(() => {
+    if (summaryLoading || !summary) return null;
+    return {
+      all: (summary.sentCount || 0) + (summary.receivedCount || 0) + (summary.draftsCount || 0),
+      sent: summary.sentCount || 0,
+      received: summary.receivedCount || 0,
+      drafts: summary.draftsCount || 0,
+      mutual_interest: summary.mutualInterestCount || 0,
+    };
+  }, [summary, summaryLoading]);
+
+  // Display helper: shows '…' while counts are loading, never shows stale 0.
+  function tabCount(key) {
+    return tabCounts == null ? '\u2026' : (tabCounts[key] ?? 0);
+  }
 
   const handleOpenProposal = (proposal) => {
     if (!proposal?.id) {
@@ -307,19 +316,19 @@ export default function Proposals() {
         <Tabs value={activeTab} onValueChange={handleTabChange}>
           <TabsList className="bg-white border border-slate-200 p-1 mb-6 flex-wrap">
             <TabsTrigger value="all" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
-              All ({tabCounts.all})
+              All ({tabCount('all')})
             </TabsTrigger>
             <TabsTrigger value="sent" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
-              Sent ({tabCounts.sent})
+              Sent ({tabCount('sent')})
             </TabsTrigger>
             <TabsTrigger value="received" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
-              Received ({tabCounts.received})
+              Received ({tabCount('received')})
             </TabsTrigger>
             <TabsTrigger value="drafts" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
-              Drafts ({tabCounts.drafts})
+              Drafts ({tabCount('drafts')})
             </TabsTrigger>
             <TabsTrigger value="mutual_interest" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
-              Mutual Interest ({tabCounts.mutual_interest})
+              Mutual Interest ({tabCount('mutual_interest')})
             </TabsTrigger>
           </TabsList>
 

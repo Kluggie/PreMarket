@@ -67,6 +67,21 @@ function tryGetSessionInfo(req: any): {
 }
 
 export default async function handler(req: any, res: any) {
+  // ── Production token gate ───────────────────────────────────────────────────
+  // In production the endpoint is not advertised. A missing/wrong token returns
+  // 404 (not 401) so we don't confirm the route exists to unauthenticated callers.
+  // Never log DEBUG_TOKEN value.
+  const vercelEnv = process.env.VERCEL_ENV || 'development';
+  if (vercelEnv === 'production') {
+    const debugToken = (process.env.DEBUG_TOKEN || '').trim();
+    const requestToken = String(req.headers?.['x-debug-token'] || '').trim();
+    if (!debugToken || !requestToken || requestToken !== debugToken) {
+      res.statusCode = 404;
+      res.end(JSON.stringify({ ok: false }));
+      return;
+    }
+  }
+
   await withApiRoute(req, res, '/api/debug/db', async (context) => {
     ensureMethod(req, ['GET']);
 
