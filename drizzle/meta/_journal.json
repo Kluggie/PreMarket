@@ -85,6 +85,13 @@
       "when": 1772658000000,
       "tag": "0011_shared_report_recipient_drafts",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1772739600000,
+      "tag": "0012_shared_report_recipient_evaluation_runs",
+      "breakpoints": true
     }
   ]
 }

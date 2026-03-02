@@ -545,10 +545,12 @@ export const sharedReportRecipientRevisions = pgTable(
     comparisonId: text('comparison_id'),
     actorRole: text('actor_role').notNull().default('recipient'),
     status: text('status').notNull().default('draft'),
+    workflowStep: integer('workflow_step').notNull().default(0),
     sharedPayload: jsonb('shared_payload').notNull().default(sql`'{}'::jsonb`),
     recipientConfidentialPayload: jsonb('recipient_confidential_payload')
       .notNull()
       .default(sql`'{}'::jsonb`),
+    editorState: jsonb('editor_state').notNull().default(sql`'{}'::jsonb`),
     previousRevisionId: text('previous_revision_id').references(
       () => sharedReportRecipientRevisions.id,
       {
@@ -577,6 +579,49 @@ export const sharedReportRecipientRevisions = pgTable(
     sharedReportRecipientRevisionsProposalIdx: index(
       'shared_report_recipient_revisions_proposal_idx',
     ).on(table.proposalId, table.createdAt),
+  }),
+);
+
+export const sharedReportEvaluationRuns = pgTable(
+  'shared_report_evaluation_runs',
+  {
+    id: text('id').primaryKey(),
+    sharedLinkId: text('shared_link_id')
+      .notNull()
+      .references(() => sharedLinks.id, { onDelete: 'cascade' }),
+    proposalId: text('proposal_id')
+      .notNull()
+      .references(() => proposals.id, { onDelete: 'cascade' }),
+    comparisonId: text('comparison_id'),
+    revisionId: text('revision_id')
+      .notNull()
+      .references(() => sharedReportRecipientRevisions.id, { onDelete: 'cascade' }),
+    actorRole: text('actor_role').notNull().default('recipient'),
+    status: text('status').notNull().default('pending'),
+    resultPublicReport: jsonb('result_public_report').notNull().default(sql`'{}'::jsonb`),
+    resultJson: jsonb('result_json').notNull().default(sql`'{}'::jsonb`),
+    errorCode: text('error_code'),
+    errorMessage: text('error_message'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    sharedReportEvaluationRunsLinkIdx: index('shared_report_evaluation_runs_link_idx').on(
+      table.sharedLinkId,
+      table.createdAt,
+    ),
+    sharedReportEvaluationRunsRevisionIdx: index('shared_report_evaluation_runs_revision_idx').on(
+      table.revisionId,
+      table.createdAt,
+    ),
+    sharedReportEvaluationRunsProposalIdx: index('shared_report_evaluation_runs_proposal_idx').on(
+      table.proposalId,
+      table.createdAt,
+    ),
+    sharedReportEvaluationRunsStatusIdx: index('shared_report_evaluation_runs_status_idx').on(
+      table.status,
+      table.createdAt,
+    ),
   }),
 );
 

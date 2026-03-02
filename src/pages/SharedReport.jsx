@@ -1,18 +1,134 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { sharedReportsClient } from '@/api/sharedReportsClient';
+import { documentComparisonsClient } from '@/api/documentComparisonsClient';
+import DocumentRichEditor from '@/components/document-comparison/DocumentRichEditor';
+import DocumentComparisonEditorErrorBoundary from '@/components/document-comparison/DocumentComparisonEditorErrorBoundary';
+import { sanitizeEditorHtml } from '@/components/document-comparison/editorSanitization';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { AlertTriangle, Loader2, Save } from 'lucide-react';
+import { Progress } from '@/components/ui/progress';
 import { toast } from 'sonner';
+import {
+  AlertTriangle,
+  ArrowLeft,
+  ArrowRight,
+  FileText,
+  Loader2,
+  Save,
+  Send,
+  Upload,
+} from 'lucide-react';
+
+const CONFIDENTIAL_LABEL = 'Confidential Information';
+const SHARED_LABEL = 'Shared Information';
+const MAX_PREVIEW_CHARS = 500;
+const TOTAL_WORKFLOW_STEPS = 3;
 
 function asText(value) {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function clampStep(value, fallback = 0) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.min(Math.max(Math.floor(numeric), 0), TOTAL_WORKFLOW_STEPS);
+}
+
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function htmlToText(value) {
+  return String(value || '')
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, ' ')
+    .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, ' ')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|section|article|h[1-6]|li|tr)>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/\r/g, '')
+    .replace(/[\t ]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+}
+
+function textToHtml(value) {
+  const normalized = String(value || '').replace(/\r/g, '').trim();
+  if (!normalized) {
+    return '<p></p>';
+  }
+
+  const paragraphs = normalized.split(/\n{2,}/g).filter(Boolean);
+  if (!paragraphs.length) {
+    return '<p></p>';
+  }
+
+  return paragraphs
+    .map((paragraph) => `<p>${escapeHtml(paragraph).replace(/\n/g, '<br/>')}</p>`)
+    .join('');
+}
+
+function previewSnippet(value) {
+  const text = String(value || '').trim();
+  if (!text) {
+    return '';
+  }
+  if (text.length <= MAX_PREVIEW_CHARS) {
+    return text;
+  }
+  return `${text.slice(0, MAX_PREVIEW_CHARS)}...`;
+}
+
+function formatFileSize(bytes) {
+  const numeric = Number(bytes || 0);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return '0 B';
+  }
+  if (numeric < 1024) {
+    return `${numeric} B`;
+  }
+  if (numeric < 1024 * 1024) {
+    return `${(numeric / 1024).toFixed(1)} KB`;
+  }
+  return `${(numeric / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function fileToMetadata(file) {
+  return {
+    filename: file.name,
+    mimeType: file.type || 'application/octet-stream',
+    sizeBytes: Number(file.size || 0),
+  };
+}
+
+function parseDocJson(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  if (String(value.type || '').trim().toLowerCase() !== 'doc') {
+    return null;
+  }
+  if (!Array.isArray(value.content)) {
+    return null;
+  }
+  return value;
 }
 
 function getTokenFromRoute(paramsToken, locationSearch) {
@@ -22,27 +138,54 @@ function getTokenFromRoute(paramsToken, locationSearch) {
   return asText(search.get('token'));
 }
 
-function stringifyJson(value) {
-  try {
-    return JSON.stringify(value || {}, null, 2);
-  } catch {
-    return '{}';
+function normalizePayload(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
   }
+  return value;
 }
 
-function parseJsonObject(value, fieldLabel) {
-  let parsed;
-  try {
-    parsed = JSON.parse(String(value || '{}'));
-  } catch {
-    throw new Error(`${fieldLabel} must be valid JSON`);
-  }
+function coercePayloadToDocument(payload, fallbackLabel, fallbackText = '') {
+  const safePayload = normalizePayload(payload);
+  const directText = asText(safePayload.text);
+  const notesText = asText(safePayload.notes);
+  const text = directText || notesText || asText(fallbackText) || htmlToText(asText(safePayload.html));
+  const html = sanitizeEditorHtml(asText(safePayload.html) || textToHtml(text));
+  const json = parseDocJson(safePayload.json);
+  const source = asText(safePayload.source) || 'typed';
+  const files = Array.isArray(safePayload.files) ? safePayload.files : [];
+  return {
+    label: asText(safePayload.label) || fallbackLabel,
+    text,
+    html,
+    json,
+    source,
+    files,
+  };
+}
 
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error(`${fieldLabel} must be a JSON object`);
-  }
+function buildSharedPayloadFromState(state) {
+  return {
+    label: SHARED_LABEL,
+    text: String(state.docBText || ''),
+    html: sanitizeEditorHtml(state.docBHtml || textToHtml(state.docBText || '')),
+    json: state.docBJson || null,
+    source: asText(state.docBSource) || 'typed',
+    files: Array.isArray(state.docBFiles) ? state.docBFiles : [],
+  };
+}
 
-  return parsed;
+function buildConfidentialPayloadFromState(state) {
+  const text = String(state.docAText || '');
+  return {
+    label: CONFIDENTIAL_LABEL,
+    text,
+    notes: text,
+    html: sanitizeEditorHtml(state.docAHtml || textToHtml(text)),
+    json: state.docAJson || null,
+    source: asText(state.docASource) || 'typed',
+    files: Array.isArray(state.docAFiles) ? state.docAFiles : [],
+  };
 }
 
 function formatDateTime(value) {
@@ -50,20 +193,6 @@ function formatDateTime(value) {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return 'Unknown';
   return parsed.toLocaleString();
-}
-
-function toStatusBadge(status) {
-  const normalized = asText(status).toLowerCase();
-  if (normalized === 'active') {
-    return { label: 'Active', className: 'bg-green-100 text-green-700 border-green-200' };
-  }
-  if (normalized === 'revoked' || normalized === 'inactive') {
-    return { label: 'Revoked', className: 'bg-red-100 text-red-700 border-red-200' };
-  }
-  if (normalized === 'expired') {
-    return { label: 'Expired', className: 'bg-amber-100 text-amber-700 border-amber-200' };
-  }
-  return { label: normalized || 'Unknown', className: 'bg-slate-100 text-slate-700 border-slate-200' };
 }
 
 function toFriendlyLoadError(error) {
@@ -86,6 +215,28 @@ function toFriendlySaveError(error) {
   }
   if (code === 'payload_too_large') return 'Draft is too large to save.';
   return error?.message || 'Unable to save draft.';
+}
+
+function toFriendlyEvaluateError(error) {
+  const code = asText(error?.code).toLowerCase();
+  if (code === 'reevaluation_not_allowed') {
+    return 'This link does not allow evaluation.';
+  }
+  if (code === 'not_configured') {
+    return 'Evaluation is not configured in this environment yet.';
+  }
+  return error?.message || 'Unable to run evaluation.';
+}
+
+function toFriendlySendBackError(error) {
+  const code = asText(error?.code).toLowerCase();
+  if (code === 'send_back_not_allowed') {
+    return 'This link does not allow sending updates back.';
+  }
+  if (code === 'draft_required') {
+    return 'Save a draft before sending back.';
+  }
+  return error?.message || 'Unable to send back updates.';
 }
 
 function renderAiReport(report) {
@@ -152,8 +303,29 @@ export default function SharedReport() {
     () => getTokenFromRoute(params.token, location.search),
     [params.token, location.search],
   );
-  const [sharedPayloadText, setSharedPayloadText] = useState('{}');
-  const [confidentialPayloadText, setConfidentialPayloadText] = useState('{}');
+
+  const [step, setStep] = useState(0);
+  const [title, setTitle] = useState('Shared Report');
+  const [docAText, setDocAText] = useState('');
+  const [docBText, setDocBText] = useState('');
+  const [docAHtml, setDocAHtml] = useState('<p></p>');
+  const [docBHtml, setDocBHtml] = useState('<p></p>');
+  const [docAJson, setDocAJson] = useState(null);
+  const [docBJson, setDocBJson] = useState(null);
+  const [docASource, setDocASource] = useState('typed');
+  const [docBSource, setDocBSource] = useState('typed');
+  const [docAFiles, setDocAFiles] = useState([]);
+  const [docBFiles, setDocBFiles] = useState([]);
+  const [docASelectedFile, setDocASelectedFile] = useState(null);
+  const [docBSelectedFile, setDocBSelectedFile] = useState(null);
+  const [docAPreviewSnippet, setDocAPreviewSnippet] = useState('');
+  const [docBPreviewSnippet, setDocBPreviewSnippet] = useState('');
+  const [importingSide, setImportingSide] = useState(null);
+  const [draftDirty, setDraftDirty] = useState(false);
+  const [latestEvaluatedReport, setLatestEvaluatedReport] = useState(null);
+
+  const docAInputFileRef = useRef(null);
+  const docBInputFileRef = useRef(null);
 
   const workspaceQuery = useQuery({
     queryKey: ['shared-report-recipient-workspace', token],
@@ -164,36 +336,99 @@ export default function SharedReport() {
 
   const share = workspaceQuery.data?.share || null;
   const parent = workspaceQuery.data?.parent || null;
-  const latestReport = workspaceQuery.data?.latestReport || {};
-  const currentDraft = workspaceQuery.data?.currentDraft || null;
+  const comparison = workspaceQuery.data?.comparison || null;
+  const baseline = workspaceQuery.data?.baseline || {};
   const defaults = workspaceQuery.data?.defaults || {};
+  const recipientDraft = workspaceQuery.data?.recipientDraft || workspaceQuery.data?.currentDraft || null;
+  const latestEvaluation = workspaceQuery.data?.latestEvaluation || null;
+  const latestSentRevision = workspaceQuery.data?.latestSentRevision || null;
+
   const canEditShared = Boolean(share?.permissions?.can_edit_shared);
   const canEditConfidential = Boolean(share?.permissions?.can_edit_confidential);
-  const canSave = canEditShared || canEditConfidential;
+  const canReevaluate = Boolean(share?.permissions?.can_reevaluate);
+  const canSendBack = Boolean(share?.permissions?.can_send_back);
+
+  const hasActiveDraft = Boolean(recipientDraft && asText(recipientDraft.status).toLowerCase() === 'draft');
+  const isSentToProposer =
+    Boolean(latestSentRevision && asText(latestSentRevision.status).toLowerCase() === 'sent') && !hasActiveDraft;
 
   useEffect(() => {
     if (!workspaceQuery.data) return;
-    const nextSharedPayload =
-      currentDraft?.shared_payload || defaults.shared_payload || { label: 'Shared Information', text: '' };
-    const nextConfidentialPayload =
-      currentDraft?.recipient_confidential_payload ||
-      defaults.recipient_confidential_payload ||
-      { label: 'Confidential Information', notes: '' };
-    setSharedPayloadText(stringifyJson(nextSharedPayload));
-    setConfidentialPayloadText(stringifyJson(nextConfidentialPayload));
-  }, [workspaceQuery.data, currentDraft, defaults.shared_payload, defaults.recipient_confidential_payload]);
+
+    const baselineSharedPayload = baseline?.shared_payload || workspaceQuery.data?.baselineShared || defaults.shared_payload || {};
+    const baselineConfidentialPayload = defaults.recipient_confidential_payload || {};
+
+    const sharedDocument = coercePayloadToDocument(
+      recipientDraft?.shared_payload || baselineSharedPayload,
+      SHARED_LABEL,
+      String(baselineSharedPayload?.text || ''),
+    );
+    const confidentialDocument = coercePayloadToDocument(
+      recipientDraft?.recipient_confidential_payload || baselineConfidentialPayload,
+      CONFIDENTIAL_LABEL,
+      String(baselineConfidentialPayload?.text || baselineConfidentialPayload?.notes || ''),
+    );
+
+    setTitle(asText(comparison?.title) || asText(parent?.title) || 'Shared Report');
+
+    setDocAText(confidentialDocument.text);
+    setDocAHtml(confidentialDocument.html);
+    setDocAJson(confidentialDocument.json);
+    setDocASource(confidentialDocument.source);
+    setDocAFiles(confidentialDocument.files);
+    setDocAPreviewSnippet(previewSnippet(confidentialDocument.text || htmlToText(confidentialDocument.html)));
+
+    setDocBText(sharedDocument.text);
+    setDocBHtml(sharedDocument.html);
+    setDocBJson(sharedDocument.json);
+    setDocBSource(sharedDocument.source);
+    setDocBFiles(sharedDocument.files);
+    setDocBPreviewSnippet(previewSnippet(sharedDocument.text || htmlToText(sharedDocument.html)));
+
+    setStep(clampStep(recipientDraft?.workflow_step, 0));
+    setDraftDirty(false);
+  }, [
+    workspaceQuery.data,
+    baseline?.shared_payload,
+    comparison?.title,
+    defaults.recipient_confidential_payload,
+    defaults.shared_payload,
+    parent?.title,
+    recipientDraft,
+  ]);
+
+  const buildDraftInput = (stepToSave = step) => ({
+    shared_payload: buildSharedPayloadFromState({
+      docBText,
+      docBHtml,
+      docBJson,
+      docBSource,
+      docBFiles,
+    }),
+    recipient_confidential_payload: buildConfidentialPayloadFromState({
+      docAText,
+      docAHtml,
+      docAJson,
+      docASource,
+      docAFiles,
+    }),
+    workflow_step: clampStep(stepToSave, 0),
+    editor_state: {
+      step: clampStep(stepToSave, 0),
+      mode: 'recipient_document_comparison_v1',
+      updated_at: new Date().toISOString(),
+    },
+  });
 
   const saveDraftMutation = useMutation({
-    mutationFn: async () => {
-      const sharedPayload = parseJsonObject(sharedPayloadText, 'Shared Information');
-      const confidentialPayload = parseJsonObject(confidentialPayloadText, 'Confidential Information');
-      return sharedReportsClient.saveRecipientDraft(token, {
-        shared_payload: sharedPayload,
-        recipient_confidential_payload: confidentialPayload,
-      });
+    mutationFn: async ({ stepToSave, silent: _silent = false } = {}) => {
+      return sharedReportsClient.saveRecipientDraft(token, buildDraftInput(stepToSave));
     },
-    onSuccess: async () => {
-      toast.success('Draft saved');
+    onSuccess: async (_data, variables) => {
+      setDraftDirty(false);
+      if (!variables?.silent) {
+        toast.success('Draft saved');
+      }
       await workspaceQuery.refetch();
     },
     onError: (error) => {
@@ -201,10 +436,115 @@ export default function SharedReport() {
     },
   });
 
+  const evaluateMutation = useMutation({
+    mutationFn: async () => {
+      if (draftDirty) {
+        await saveDraftMutation.mutateAsync({ stepToSave: 2, silent: true });
+      }
+      return sharedReportsClient.evaluateRecipient(token);
+    },
+    onSuccess: async (result) => {
+      setLatestEvaluatedReport(result?.evaluation?.public_report || null);
+      setStep(3);
+      toast.success('Evaluation complete');
+      await workspaceQuery.refetch();
+    },
+    onError: (error) => {
+      toast.error(toFriendlyEvaluateError(error));
+    },
+  });
+
+  const sendBackMutation = useMutation({
+    mutationFn: () => sharedReportsClient.sendBackRecipient(token),
+    onSuccess: async () => {
+      toast.success('Sent to proposer');
+      setDraftDirty(false);
+      setStep(3);
+      await workspaceQuery.refetch();
+    },
+    onError: (error) => {
+      toast.error(toFriendlySendBackError(error));
+    },
+  });
+
+  const applyImportedContent = (side, file, extracted) => {
+    const rawText = asText(extracted?.text) || htmlToText(extracted?.html || '');
+    const html = sanitizeEditorHtml(asText(extracted?.html) || textToHtml(rawText));
+    const text = rawText || htmlToText(html);
+
+    if (!text && !html) {
+      throw new Error('No readable content was extracted from the selected file');
+    }
+
+    if (side === 'a') {
+      setDocAText(text);
+      setDocAHtml(html);
+      setDocAJson(null);
+      setDocASource('uploaded');
+      setDocAFiles([fileToMetadata(file)]);
+      setDocAPreviewSnippet(previewSnippet(text || htmlToText(html)));
+    } else {
+      setDocBText(text);
+      setDocBHtml(html);
+      setDocBJson(null);
+      setDocBSource('uploaded');
+      setDocBFiles([fileToMetadata(file)]);
+      setDocBPreviewSnippet(previewSnippet(text || htmlToText(html)));
+    }
+
+    setDraftDirty(true);
+  };
+
+  const importForSide = async (side) => {
+    const selectedFile = side === 'a' ? docASelectedFile : docBSelectedFile;
+    if (!selectedFile) {
+      toast.error('Select a .docx or .pdf file first.');
+      return;
+    }
+
+    setImportingSide(side);
+    try {
+      const extracted = await documentComparisonsClient.extractDocumentFromFile(selectedFile);
+      applyImportedContent(side, selectedFile, extracted);
+      toast.success(`${selectedFile.name} imported`);
+    } catch (error) {
+      toast.error(error?.message || 'Failed to import file');
+    } finally {
+      setImportingSide(null);
+    }
+  };
+
+  const jumpStep = async (nextStep) => {
+    const bounded = clampStep(nextStep, step);
+    if (bounded === 2 && step < 2 && draftDirty) {
+      try {
+        await saveDraftMutation.mutateAsync({ stepToSave: 1, silent: true });
+      } catch {
+        return;
+      }
+    }
+    setStep(bounded);
+  };
+
+  const runEvaluationFromStep2 = async () => {
+    setStep(3);
+    await evaluateMutation.mutateAsync();
+  };
+
+  const progress = (clampStep(step, 0) / TOTAL_WORKFLOW_STEPS) * 100;
+
+  const activeReport =
+    latestEvaluatedReport ||
+    latestEvaluation?.public_report ||
+    workspaceQuery.data?.latestReport ||
+    baseline?.ai_report ||
+    workspaceQuery.data?.baselineAiReport ||
+    {};
+
   if (!token) {
     return (
       <div className="min-h-screen bg-slate-50 py-10">
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
           <Alert className="bg-amber-50 border-amber-200">
             <AlertTriangle className="h-4 w-4 text-amber-700" />
             <AlertDescription className="text-amber-800">Missing shared report token.</AlertDescription>
@@ -217,7 +557,7 @@ export default function SharedReport() {
   if (workspaceQuery.isLoading) {
     return (
       <div className="min-h-screen bg-slate-50 py-10">
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
           <Card>
             <CardContent className="py-16 text-center">
               <Loader2 className="w-8 h-8 animate-spin text-slate-600 mx-auto mb-3" />
@@ -232,7 +572,7 @@ export default function SharedReport() {
   if (workspaceQuery.error || !share || !parent) {
     return (
       <div className="min-h-screen bg-slate-50 py-10">
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
           <Alert className="bg-red-50 border-red-200">
             <AlertTriangle className="h-4 w-4 text-red-700" />
             <AlertDescription className="text-red-800">{toFriendlyLoadError(workspaceQuery.error)}</AlertDescription>
@@ -242,18 +582,92 @@ export default function SharedReport() {
     );
   }
 
-  const statusBadge = toStatusBadge(share.status);
+  const renderImportPanel = ({ side, label, selectedFile, setSelectedFile, preview, source, files, fileRef }) => {
+    const isImporting = importingSide === side;
+    const canEditSide = side === 'a' ? canEditConfidential : canEditShared;
+
+    return (
+      <Card className="border border-slate-200 shadow-sm">
+        <CardHeader>
+          <CardTitle className="text-base">{label} (Upload/Import)</CardTitle>
+          <CardDescription>Upload a DOCX or PDF and import extracted content into this document.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".docx,.pdf"
+            className="hidden"
+            onChange={(event) => {
+              const file = event.target.files?.[0] || null;
+              setSelectedFile(file);
+            }}
+          />
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => fileRef.current?.click()}
+              disabled={!canEditSide}
+            >
+              <Upload className="w-4 h-4 mr-2" />
+              Choose File
+            </Button>
+
+            <Button
+              type="button"
+              onClick={() => importForSide(side)}
+              disabled={!canEditSide || !selectedFile || isImporting}
+              className="bg-blue-600 hover:bg-blue-700"
+            >
+              {isImporting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <FileText className="w-4 h-4 mr-2" />}
+              Import
+            </Button>
+
+            <Badge variant="outline">{source || 'typed'}</Badge>
+          </div>
+
+          {selectedFile ? (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+              <p className="font-medium break-all">{selectedFile.name}</p>
+              <p className="text-xs text-slate-500">{formatFileSize(selectedFile.size)}</p>
+            </div>
+          ) : (
+            <p className="text-sm text-slate-500">No file selected.</p>
+          )}
+
+          {files.length > 0 ? (
+            <p className="text-xs text-slate-500">Last imported: {files[0]?.filename || 'Unknown file'}</p>
+          ) : null}
+
+          <div className="space-y-1">
+            <Label className="text-sm font-semibold">Preview</Label>
+            <div className="min-h-[130px] rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 whitespace-pre-wrap">
+              {preview || 'Imported content preview will appear here.'}
+            </div>
+          </div>
+          {!canEditSide ? <p className="text-xs text-amber-700">This section is read-only for this link.</p> : null}
+        </CardContent>
+      </Card>
+    );
+  };
 
   return (
-    <div className="min-h-screen bg-slate-50 py-8">
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
+    <div className="min-h-screen bg-slate-50 py-6">
+      <div className="max-w-[1400px] mx-auto px-6 md:px-10 xl:px-12 space-y-6">
+        <div className="space-y-2">
+          <h1 className="text-2xl font-bold text-slate-900">Document Comparison</h1>
+          <p className="text-slate-500">
+            Compare Shared Information and Confidential Information with recipient-safe reporting.
+          </p>
+        </div>
+
         <Card>
           <CardHeader>
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <CardTitle>{parent.title || 'Shared Report'}</CardTitle>
-              <Badge variant="outline" className={statusBadge.className}>
-                {statusBadge.label}
-              </Badge>
+              <CardTitle>{title || 'Shared Report'}</CardTitle>
+              <Badge variant="outline">{asText(share.status) || 'active'}</Badge>
             </div>
             <CardDescription>
               Created: {formatDateTime(parent.created_at)} • Expires: {formatDateTime(share.expires_at)}
@@ -261,65 +675,289 @@ export default function SharedReport() {
           </CardHeader>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Shared Information</CardTitle>
-            <CardDescription>
-              {canEditShared
-                ? 'Editable shared payload visible to both sides.'
-                : 'Read-only for this link.'}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Label className="text-xs text-slate-500 mb-2 block">JSON object</Label>
-            <Textarea
-              value={sharedPayloadText}
-              onChange={(event) => setSharedPayloadText(event.target.value)}
-              rows={14}
-              disabled={!canEditShared}
-              className="font-mono text-xs"
-            />
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>AI Report</CardTitle>
-            <CardDescription>Recipient-safe report view generated from shared content.</CardDescription>
-          </CardHeader>
-          <CardContent>{renderAiReport(latestReport)}</CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Confidential Information</CardTitle>
-            <CardDescription>
-              {canEditConfidential
-                ? 'Editable private payload stored server-side for analysis only.'
-                : 'Read-only for this link.'}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Label className="text-xs text-slate-500 mb-2 block">JSON object</Label>
-            <Textarea
-              value={confidentialPayloadText}
-              onChange={(event) => setConfidentialPayloadText(event.target.value)}
-              rows={12}
-              disabled={!canEditConfidential}
-              className="font-mono text-xs"
-            />
-          </CardContent>
-        </Card>
-
-        <div className="flex justify-end">
-          <Button
-            onClick={() => saveDraftMutation.mutate()}
-            disabled={saveDraftMutation.isPending || !canSave}
-          >
-            <Save className="w-4 h-4 mr-2" />
-            {saveDraftMutation.isPending ? 'Saving...' : 'Save Draft'}
-          </Button>
+        <div className="space-y-2">
+          <div className="flex items-center justify-between text-sm">
+            <span className="font-semibold text-slate-700">Step {step} of {TOTAL_WORKFLOW_STEPS}</span>
+            <span className="text-slate-500">{Math.round(progress)}% complete</span>
+          </div>
+          <Progress value={progress} className="h-3" />
         </div>
+
+        {isSentToProposer ? (
+          <Alert className="bg-emerald-50 border-emerald-200">
+            <AlertDescription className="text-emerald-800">
+              Sent to proposer on {formatDateTime(latestSentRevision?.updated_at)}.
+            </AlertDescription>
+          </Alert>
+        ) : null}
+
+        {step === 0 ? (
+          <div className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>Step 0: Overview</CardTitle>
+                <CardDescription>Review shared baseline information and latest report before editing.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="rounded-lg border border-slate-200 bg-white p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Shared Information</p>
+                  <pre className="text-sm whitespace-pre-wrap text-slate-700">{docBText || '(No shared information available)'}</pre>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>AI Report</CardTitle>
+                <CardDescription>Read-only latest recipient-safe report.</CardDescription>
+              </CardHeader>
+              <CardContent>{renderAiReport(activeReport)}</CardContent>
+            </Card>
+
+            <div className="flex justify-end">
+              <Button onClick={() => jumpStep(1)} className="bg-blue-600 hover:bg-blue-700">
+                Edit Proposal
+                <ArrowRight className="w-4 h-4 ml-2" />
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
+        {step === 1 ? (
+          <div className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>Step 1: Upload and Import</CardTitle>
+                <CardDescription>
+                  Upload DOCX or PDF files and import extracted content before editing.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                <div className="space-y-2 max-w-xl">
+                  <Label>Comparison Title</Label>
+                  <Input
+                    value={title}
+                    onChange={(event) => {
+                      setTitle(event.target.value);
+                      setDraftDirty(true);
+                    }}
+                    placeholder="e.g., Mutual NDA comparison"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                  {renderImportPanel({
+                    side: 'a',
+                    label: CONFIDENTIAL_LABEL,
+                    selectedFile: docASelectedFile,
+                    setSelectedFile: setDocASelectedFile,
+                    preview: docAPreviewSnippet,
+                    source: docASource,
+                    files: docAFiles,
+                    fileRef: docAInputFileRef,
+                  })}
+                  {renderImportPanel({
+                    side: 'b',
+                    label: SHARED_LABEL,
+                    selectedFile: docBSelectedFile,
+                    setSelectedFile: setDocBSelectedFile,
+                    preview: docBPreviewSnippet,
+                    source: docBSource,
+                    files: docBFiles,
+                    fileRef: docBInputFileRef,
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+
+            <div className="flex justify-between gap-2">
+              <Button variant="outline" onClick={() => setStep(0)}>
+                <ArrowLeft className="w-4 h-4 mr-2" />
+                Back to Overview
+              </Button>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => saveDraftMutation.mutate({ stepToSave: 1 })}
+                  disabled={saveDraftMutation.isPending}
+                >
+                  {saveDraftMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+                  {saveDraftMutation.isPending ? 'Saving...' : 'Save Draft'}
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => jumpStep(2)}
+                  disabled={saveDraftMutation.isPending}
+                  className="bg-blue-600 hover:bg-blue-700"
+                >
+                  Continue to Editor
+                  <ArrowRight className="w-4 h-4 ml-2" />
+                </Button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {step === 2 ? (
+          <DocumentComparisonEditorErrorBoundary
+            onRetry={() => setStep(2)}
+            onBackToStep1={() => setStep(1)}
+          >
+            <div className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Step 2: Editor</CardTitle>
+                  <CardDescription>Shared Information is prefilled from proposer baseline until you edit it.</CardDescription>
+                </CardHeader>
+              </Card>
+
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
+                <Card className="border border-slate-200 shadow-sm">
+                  <CardHeader>
+                    <CardTitle className="text-base">{CONFIDENTIAL_LABEL}</CardTitle>
+                    <CardDescription>Private to you and used in AI analysis.</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <DocumentRichEditor
+                      label={CONFIDENTIAL_LABEL}
+                      content={docAJson || docAHtml}
+                      placeholder={`Edit ${CONFIDENTIAL_LABEL}...`}
+                      minHeightClassName="min-h-[500px]"
+                      scrollContainerClassName="h-[500px]"
+                      maxCharacters={300000}
+                      data-testid="doc-a-editor"
+                      onChange={({ html, text, json }) => {
+                        if (!canEditConfidential) return;
+                        setDocAText(text);
+                        setDocAHtml(html);
+                        setDocAJson(json);
+                        setDocASource('typed');
+                        setDraftDirty(true);
+                      }}
+                    />
+                  </CardContent>
+                </Card>
+
+                <Card className="border border-slate-200 shadow-sm">
+                  <CardHeader>
+                    <CardTitle className="text-base">{SHARED_LABEL}</CardTitle>
+                    <CardDescription>Visible to both sides.</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <DocumentRichEditor
+                      label={SHARED_LABEL}
+                      content={docBJson || docBHtml}
+                      placeholder={`Edit ${SHARED_LABEL}...`}
+                      minHeightClassName="min-h-[500px]"
+                      scrollContainerClassName="h-[500px]"
+                      maxCharacters={300000}
+                      data-testid="doc-b-editor"
+                      onChange={({ html, text, json }) => {
+                        if (!canEditShared) return;
+                        setDocBText(text);
+                        setDocBHtml(html);
+                        setDocBJson(json);
+                        setDocBSource('typed');
+                        setDraftDirty(true);
+                      }}
+                    />
+                  </CardContent>
+                </Card>
+              </div>
+
+              <div className="flex justify-between pt-2">
+                <Button variant="outline" onClick={() => setStep(1)}>
+                  <ArrowLeft className="w-4 h-4 mr-2" />
+                  Back to Upload
+                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => saveDraftMutation.mutate({ stepToSave: 2 })}
+                    disabled={saveDraftMutation.isPending}
+                  >
+                    {saveDraftMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+                    {saveDraftMutation.isPending ? 'Saving...' : 'Save Draft'}
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={runEvaluationFromStep2}
+                    disabled={evaluateMutation.isPending || !canReevaluate}
+                    className="bg-blue-600 hover:bg-blue-700"
+                  >
+                    {evaluateMutation.isPending ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Evaluating...
+                      </>
+                    ) : (
+                      <>
+                        Run Evaluation
+                        <ArrowRight className="w-4 h-4 ml-2" />
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </DocumentComparisonEditorErrorBoundary>
+        ) : null}
+
+        {step === 3 ? (
+          <div className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>Step 3: Evaluation</CardTitle>
+                <CardDescription>Run and review the latest recipient-side evaluation.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    onClick={() => evaluateMutation.mutate()}
+                    disabled={evaluateMutation.isPending || !canReevaluate}
+                    className="bg-blue-600 hover:bg-blue-700"
+                  >
+                    {evaluateMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                    {evaluateMutation.isPending ? 'Evaluating...' : 'Re-run Evaluation'}
+                  </Button>
+
+                  <Button
+                    type="button"
+                    onClick={() => sendBackMutation.mutate()}
+                    disabled={sendBackMutation.isPending || !canSendBack || isSentToProposer}
+                  >
+                    {sendBackMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Send className="w-4 h-4 mr-2" />}
+                    {isSentToProposer ? 'Sent to proposer' : sendBackMutation.isPending ? 'Sending...' : 'Send back to proposer'}
+                  </Button>
+
+                  <Button type="button" variant="outline" onClick={() => setStep(2)}>
+                    Edit again
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>AI Report</CardTitle>
+                <CardDescription>Latest recipient-safe report.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {evaluateMutation.isPending ? (
+                  <div className="flex items-center gap-2 text-slate-700">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Running evaluation...
+                  </div>
+                ) : (
+                  renderAiReport(activeReport)
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        ) : null}
       </div>
     </div>
   );

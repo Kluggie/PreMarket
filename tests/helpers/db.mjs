@@ -62,6 +62,7 @@ export async function resetTables() {
       email_verification_tokens,
       shared_report_deliveries,
       shared_report_recipient_revisions,
+      shared_report_evaluation_runs,
       shared_link_responses,
       snapshot_access,
       proposal_snapshots,

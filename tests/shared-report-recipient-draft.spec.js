@@ -1,7 +1,9 @@
 import { test, expect } from '@playwright/test';
 import { ensureTestEnv, makeSessionCookie } from './helpers/auth.mjs';
+import { ensureMigrated } from './helpers/db.mjs';
 
 const BASE_URL = process.env.PLAYWRIGHT_TEST_BASE_URL || 'http://localhost:4273';
+const LOAD_TIMEOUT_MS = 120_000;
 
 ensureTestEnv();
 
@@ -36,7 +38,9 @@ async function createSharedReportLink(request, ownerCookie, comparisonId, recipi
       recipientEmail,
       canEdit: true,
       canEditConfidential: true,
-      maxUses: 10,
+      canReevaluate: true,
+      canSendBack: true,
+      maxUses: 25,
     },
   });
   expect(response.status()).toBe(201);
@@ -44,19 +48,30 @@ async function createSharedReportLink(request, ownerCookie, comparisonId, recipi
   return payload;
 }
 
+async function typeInEditor(page, selector, text) {
+  const editor = page.locator(selector);
+  await editor.click({ position: { x: 24, y: 24 } });
+  await page.keyboard.type(text, { delay: 6 });
+}
+
+test.beforeAll(async () => {
+  await ensureMigrated();
+});
+
 test.describe('Shared Report Recipient Draft', () => {
-  test('open link, save draft, reload keeps recipient changes', async ({ page, request }) => {
-    const ownerId = uniqueId('shared_report_owner');
+  test('Step 0 -> Step 1 -> Step 2 prefill + save draft + reload persistence', async ({ page, request }) => {
+    const ownerId = uniqueId('recipient_owner');
     const ownerCookie = makeSessionCookie({
       sub: ownerId,
       email: `${ownerId}@example.com`,
       name: 'Shared Owner',
     });
 
+    const proposerSharedMarker = `PROPOSER_SHARED_X_${uniqueId('baseline')}`;
     const comparison = await createComparison(request, ownerCookie, {
-      title: `Recipient Draft ${uniqueId('title')}`,
-      docAText: 'Confidential source details that must stay private.',
-      docBText: 'Shared source details that recipient can edit.',
+      title: `Recipient Step Flow ${uniqueId('title')}`,
+      docAText: 'Proposer confidential baseline text that must never be displayed to recipient.',
+      docBText: `Shared baseline visible to recipient. ${proposerSharedMarker}. Additional text to ensure realistic baseline.`,
     });
     const sharedLink = await createSharedReportLink(
       request,
@@ -70,123 +85,63 @@ test.describe('Shared Report Recipient Draft', () => {
 
     const sharedMarker = uniqueId('shared_marker');
     const confidentialMarker = uniqueId('confidential_marker');
-    const apiEvents = [];
-    const workspaceUrlFragment = `/api/shared-report/${encodeURIComponent(token)}`;
-
-    page.on('response', async (response) => {
-      const url = response.url();
-      if (!url.includes('/api/shared-report/')) return;
-      let bodyPreview = '';
-      try {
-        bodyPreview = (await response.text()).slice(0, 500);
-      } catch {
-        bodyPreview = '<unreadable>';
-      }
-      const event = {
-        method: response.request().method(),
-        status: response.status(),
-        url,
-        bodyPreview,
-      };
-      apiEvents.push(event);
-      console.log(`[shared-report-api] ${event.status} ${event.method} ${event.url} ${event.bodyPreview}`);
-    });
-    page.on('requestfailed', (requestEvent) => {
-      const url = requestEvent.url();
-      if (!url.includes('/api/shared-report/')) return;
-      const event = {
-        method: requestEvent.method(),
-        status: 'request_failed',
-        url,
-        bodyPreview: requestEvent.failure()?.errorText || 'unknown_request_failure',
-      };
-      apiEvents.push(event);
-      console.log(`[shared-report-api] request_failed ${event.method} ${event.url} ${event.bodyPreview}`);
-    });
+    const workspaceUrlFragment = `/api/shared-report/${encodeURIComponent(token)}/workspace`;
 
     await page.goto(`${BASE_URL}/shared-report/${encodeURIComponent(token)}`, {
       waitUntil: 'domcontentloaded',
     });
-    function findSuccessfulWorkspaceGetEvent() {
-      for (let i = apiEvents.length - 1; i >= 0; i -= 1) {
-        const event = apiEvents[i];
-        if (
-          event &&
-          event.method === 'GET' &&
-          event.status === 200 &&
-          typeof event.url === 'string' &&
-          event.url.includes(workspaceUrlFragment)
-        ) {
-          return event;
-        }
-      }
-      return null;
-    }
 
-    async function waitForWorkspaceGet(label) {
-      const existing = findSuccessfulWorkspaceGetEvent();
-      if (existing) {
-        return;
-      }
-      const workspaceResponse = await page
-        .waitForResponse(
-          (response) =>
-            response.url().includes(workspaceUrlFragment) &&
-            response.request().method() === 'GET',
-          { timeout: 30_000 },
-        )
-        .catch(() => null);
-      if (!workspaceResponse) {
-        throw new Error(`${label}: no workspace GET response observed. API events: ${JSON.stringify(apiEvents)}`);
-      }
-      if (workspaceResponse.status() !== 200) {
-        let bodyPreview = '';
-        try {
-          bodyPreview = (await workspaceResponse.text()).slice(0, 500);
-        } catch {
-          bodyPreview = '<unreadable>';
-        }
-        throw new Error(
-          `${label}: workspace GET failed ${workspaceResponse.status()} ${workspaceResponse.url()} ${bodyPreview}`,
-        );
-      }
-    }
+    const workspaceResponse = await page.waitForResponse(
+      (response) =>
+        response.url().includes(workspaceUrlFragment) &&
+        response.request().method() === 'GET',
+      { timeout: LOAD_TIMEOUT_MS },
+    );
+    expect(workspaceResponse.status()).toBe(200);
 
-    await waitForWorkspaceGet('initial load');
-    const textareas = page.locator('textarea');
-    await expect(textareas).toHaveCount(2, { timeout: 30_000 });
+    await expect(page.getByText('Step 0: Overview')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+    await expect(page.locator('pre')).toContainText(proposerSharedMarker, { timeout: LOAD_TIMEOUT_MS });
 
-    await expect(page.getByText('Shared Information').first()).toBeVisible();
-    await expect(page.getByText('Confidential Information').first()).toBeVisible();
-    await expect(page.getByText('AI Report').first()).toBeVisible();
+    await page.getByRole('button', { name: 'Edit Proposal' }).click();
+    await expect(page.getByText('Step 1: Upload and Import')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
 
-    await textareas
-      .nth(0)
-      .fill(JSON.stringify({ label: 'Shared Information', text: `Updated ${sharedMarker}` }, null, 2));
-    await textareas
-      .nth(1)
-      .fill(
-        JSON.stringify(
-          { label: 'Confidential Information', notes: `Private ${confidentialMarker}` },
-          null,
-          2,
-        ),
-      );
+    await page.getByRole('button', { name: 'Continue to Editor' }).click();
+    await expect(page.getByText('Step 2: Editor')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+    await expect(page.locator('[data-testid="doc-a-editor"]')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+    await expect(page.locator('[data-testid="doc-b-editor"]')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+
+    // Prompt 2 prefill requirement: shared editor defaults to proposer baseline when no draft exists.
+    await expect(page.locator('[data-testid="doc-b-editor"]')).toContainText(proposerSharedMarker, {
+      timeout: LOAD_TIMEOUT_MS,
+    });
+
+    await typeInEditor(page, '[data-testid="doc-b-editor"]', ` ${sharedMarker}`);
+    await typeInEditor(page, '[data-testid="doc-a-editor"]', ` ${confidentialMarker}`);
 
     const saveResponsePromise = page.waitForResponse(
       (response) =>
-        response.url().includes(`${workspaceUrlFragment}/draft`) &&
+        response.url().includes(`/api/shared-report/${encodeURIComponent(token)}/draft`) &&
         response.request().method() === 'POST' &&
         response.status() === 200,
+      { timeout: LOAD_TIMEOUT_MS },
     );
     await page.getByRole('button', { name: 'Save Draft' }).click();
     await saveResponsePromise;
 
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await waitForWorkspaceGet('reload');
-    const reloadedTextareas = page.locator('textarea');
-    await expect(reloadedTextareas).toHaveCount(2, { timeout: 30_000 });
-    await expect(reloadedTextareas.nth(0)).toContainText(sharedMarker, { timeout: 30_000 });
-    await expect(reloadedTextareas.nth(1)).toContainText(confidentialMarker, { timeout: 30_000 });
+    await page.waitForResponse(
+      (response) =>
+        response.url().includes(workspaceUrlFragment) &&
+        response.request().method() === 'GET' &&
+        response.status() === 200,
+      { timeout: LOAD_TIMEOUT_MS },
+    );
+
+    await expect(page.locator('[data-testid="doc-b-editor"]')).toContainText(sharedMarker, {
+      timeout: LOAD_TIMEOUT_MS,
+    });
+    await expect(page.locator('[data-testid="doc-a-editor"]')).toContainText(confidentialMarker, {
+      timeout: LOAD_TIMEOUT_MS,
+    });
   });
 });

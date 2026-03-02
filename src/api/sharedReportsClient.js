@@ -68,10 +68,17 @@ export const sharedReportsClient = {
   },
 
   async getRecipientWorkspace(token) {
-    const response = await request(`/api/shared-report/${encodeToken(token)}`);
+    const response = await request(`/api/shared-report/${encodeToken(token)}/workspace`);
     return {
       share: response.share || null,
       parent: response.parent || null,
+      comparison: response.comparison || null,
+      baseline: response.baseline || null,
+      baselineShared: response.baseline_shared || null,
+      baselineAiReport: response.baseline_ai_report || {},
+      recipientDraft: response.recipientDraft || null,
+      latestEvaluation: response.latestEvaluation || null,
+      latestSentRevision: response.latestSentRevision || null,
       latestReport: response.latestReport || {},
       currentDraft: response.currentDraft || null,
       defaults: response.defaults || {},
@@ -87,6 +94,32 @@ export const sharedReportsClient = {
       ok: Boolean(response.ok),
       draftId: response.draft_id || null,
       updatedAt: response.updated_at || null,
+    };
+  },
+
+  async evaluateRecipient(token) {
+    const response = await request(`/api/shared-report/${encodeToken(token)}/evaluate`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+    return {
+      ok: Boolean(response.ok),
+      evaluationId: response.evaluation_id || null,
+      evaluation: response.evaluation || null,
+    };
+  },
+
+  async sendBackRecipient(token) {
+    const response = await request(`/api/shared-report/${encodeToken(token)}/send-back`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+    return {
+      ok: Boolean(response.ok),
+      revisionId: response.revision_id || null,
+      status: response.status || null,
+      sentAt: response.sent_at || null,
+      evaluationId: response.evaluation_id || null,
     };
   },
 

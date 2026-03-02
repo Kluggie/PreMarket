@@ -28,7 +28,10 @@ import sharedReportsSendHandler from '../server/routes/shared-reports/[token]/se
 import sharedReportsRevokeHandler from '../server/routes/shared-reports/[token]/revoke.js';
 import sharedReportsRespondHandler from '../server/routes/shared-reports/[token]/respond.js';
 import sharedReportTokenHandler from '../server/routes/shared-report/[token].js';
+import sharedReportWorkspaceHandler from '../server/routes/shared-report/[token]/workspace.js';
 import sharedReportDraftHandler from '../server/routes/shared-report/[token]/draft.js';
+import sharedReportEvaluateHandler from '../server/routes/shared-report/[token]/evaluate.js';
+import sharedReportSendBackHandler from '../server/routes/shared-report/[token]/send-back.js';
 import vertexSmokeHandler from '../server/routes/vertex/smoke.js';
 import billingHandler from '../server/routes/billing/index.js';
 import billingStatusHandler from '../server/routes/billing/status.js';
@@ -334,10 +337,28 @@ export default async function handler(req: any, res: any) {
     return sharedReportsRespondHandler(req, res, token);
   }
 
+  const sharedReportWorkspaceMatch = pathname.match(/^\/api\/shared-report\/([^/]+)\/workspace$/);
+  if (sharedReportWorkspaceMatch && method === 'GET') {
+    const token = decodeURIComponent(sharedReportWorkspaceMatch[1]);
+    return sharedReportWorkspaceHandler(req, res, token);
+  }
+
   const sharedReportDraftMatch = pathname.match(/^\/api\/shared-report\/([^/]+)\/draft$/);
   if (sharedReportDraftMatch && method === 'POST') {
     const token = decodeURIComponent(sharedReportDraftMatch[1]);
     return sharedReportDraftHandler(req, res, token);
+  }
+
+  const sharedReportEvaluateMatch = pathname.match(/^\/api\/shared-report\/([^/]+)\/evaluate$/);
+  if (sharedReportEvaluateMatch && method === 'POST') {
+    const token = decodeURIComponent(sharedReportEvaluateMatch[1]);
+    return sharedReportEvaluateHandler(req, res, token);
+  }
+
+  const sharedReportSendBackMatch = pathname.match(/^\/api\/shared-report\/([^/]+)\/send-back$/);
+  if (sharedReportSendBackMatch && method === 'POST') {
+    const token = decodeURIComponent(sharedReportSendBackMatch[1]);
+    return sharedReportSendBackHandler(req, res, token);
   }
 
   const sharedReportMatch = pathname.match(/^\/api\/shared-report\/([^/]+)$/);

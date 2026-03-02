@@ -9,8 +9,11 @@ import {
   buildParentView,
   buildShareView,
   getCurrentRecipientDraft,
+  getLatestRecipientEvaluationRun,
+  getLatestRecipientSentRevision,
   getToken,
   logTokenEvent,
+  mapEvaluationRunView,
   mapDraftView,
   resolveSharedReportToken,
 } from './_shared.js';
@@ -34,11 +37,18 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     });
 
     const currentDraft = await getCurrentRecipientDraft(resolved.db, resolved.link.id);
+    const latestEvaluation = await getLatestRecipientEvaluationRun(resolved.db, resolved.link.id);
+    const latestSentRevision = await getLatestRecipientSentRevision(resolved.db, resolved.link.id);
+    const baselineSharedPayload = buildDefaultSharedPayload({
+      proposal: resolved.proposal,
+      comparison: resolved.comparison,
+    });
+    const baselineAiReport = buildLatestReport({
+      proposal: resolved.proposal,
+      comparison: resolved.comparison,
+    });
     const defaults = {
-      shared_payload: buildDefaultSharedPayload({
-        proposal: resolved.proposal,
-        comparison: resolved.comparison,
-      }),
+      shared_payload: baselineSharedPayload,
       recipient_confidential_payload: buildDefaultConfidentialPayload(),
     };
 
@@ -49,17 +59,34 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         comparison: resolved.comparison,
         owner: resolved.owner,
       }),
-      latestReport: buildLatestReport({
-        proposal: resolved.proposal,
-        comparison: resolved.comparison,
-      }),
+      comparison: {
+        id: resolved.comparison?.id || resolved.proposal.documentComparisonId || null,
+        title: resolved.comparison?.title || resolved.proposal.title || 'Shared Report',
+        status: resolved.comparison?.status || resolved.proposal.status || null,
+        created_at: resolved.comparison?.createdAt || resolved.proposal.createdAt || null,
+        updated_at: resolved.comparison?.updatedAt || resolved.proposal.updatedAt || null,
+      },
+      baseline: {
+        shared_payload: baselineSharedPayload,
+        ai_report: baselineAiReport,
+      },
+      baseline_shared: baselineSharedPayload,
+      baseline_ai_report: baselineAiReport,
+      latestEvaluation: mapEvaluationRunView(latestEvaluation),
+      latestReport:
+        latestEvaluation?.status === 'success' && latestEvaluation?.resultPublicReport
+          ? latestEvaluation.resultPublicReport
+          : baselineAiReport,
+      recipientDraft: mapDraftView(currentDraft),
       currentDraft: mapDraftView(currentDraft),
+      latestSentRevision: mapDraftView(latestSentRevision),
       defaults,
     });
 
     logTokenEvent(context, 'resolve_success', token, {
       linkId: resolved.link.id,
       hasDraft: Boolean(currentDraft),
+      hasEvaluation: Boolean(latestEvaluation),
     });
   });
 }

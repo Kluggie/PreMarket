@@ -6,6 +6,8 @@ import { buildRecipientSafeEvaluationProjection } from '../document-comparisons/
 export const SHARED_REPORT_ROUTE = '/api/shared-report/[token]';
 export const RECIPIENT_ROLE = 'recipient';
 export const DRAFT_STATUS = 'draft';
+export const SENT_STATUS = 'sent';
+export const SUPERSEDED_STATUS = 'superseded';
 export const MAX_PAYLOAD_BYTES = 200 * 1024;
 
 export function asText(value: unknown) {
@@ -163,6 +165,7 @@ export function buildShareView(link: any) {
       can_edit_shared: Boolean(link.canEdit),
       can_edit_confidential: Boolean(link.canEditConfidential),
       can_reevaluate: Boolean(link.canReevaluate),
+      can_send_back: Boolean(link.canSendBack),
     },
   };
 }
@@ -253,7 +256,93 @@ export function mapDraftView(row: any) {
     status: row.status,
     shared_payload: toObject(row.sharedPayload),
     recipient_confidential_payload: toObject(row.recipientConfidentialPayload),
+    workflow_step: Number.isFinite(Number(row.workflowStep)) ? Number(row.workflowStep) : 0,
+    editor_state: toObject(row.editorState),
     previous_revision_id: row.previousRevisionId || null,
+    created_at: row.createdAt,
+    updated_at: row.updatedAt,
+  };
+}
+
+export function clampWorkflowStep(value: unknown, fallback = 0) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+  return Math.min(Math.max(Math.floor(numeric), 0), 3);
+}
+
+export function coercePayloadObject(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {} as Record<string, unknown>;
+  }
+  return value as Record<string, unknown>;
+}
+
+export function getPayloadText(payload: unknown, fallback = '') {
+  const source = coercePayloadObject(payload);
+  const direct = source.text;
+  if (typeof direct === 'string' && direct.trim().length > 0) {
+    return direct.trim();
+  }
+  const notes = source.notes;
+  if (typeof notes === 'string' && notes.trim().length > 0) {
+    return notes.trim();
+  }
+  const content = source.content;
+  if (typeof content === 'string' && content.trim().length > 0) {
+    return content.trim();
+  }
+  return String(fallback || '').trim();
+}
+
+export async function getLatestRecipientEvaluationRun(db: any, linkId: string) {
+  const [run] = await db
+    .select()
+    .from(schema.sharedReportEvaluationRuns)
+    .where(
+      and(
+        eq(schema.sharedReportEvaluationRuns.sharedLinkId, linkId),
+        eq(schema.sharedReportEvaluationRuns.actorRole, RECIPIENT_ROLE),
+      ),
+    )
+    .orderBy(
+      desc(schema.sharedReportEvaluationRuns.createdAt),
+      desc(schema.sharedReportEvaluationRuns.updatedAt),
+    )
+    .limit(1);
+  return run || null;
+}
+
+export async function getLatestRecipientSentRevision(db: any, linkId: string) {
+  const [row] = await db
+    .select()
+    .from(schema.sharedReportRecipientRevisions)
+    .where(
+      and(
+        eq(schema.sharedReportRecipientRevisions.sharedLinkId, linkId),
+        eq(schema.sharedReportRecipientRevisions.actorRole, RECIPIENT_ROLE),
+        eq(schema.sharedReportRecipientRevisions.status, SENT_STATUS),
+      ),
+    )
+    .orderBy(desc(schema.sharedReportRecipientRevisions.updatedAt))
+    .limit(1);
+  return row || null;
+}
+
+export function mapEvaluationRunView(row: any) {
+  if (!row) {
+    return null;
+  }
+  return {
+    id: row.id,
+    revision_id: row.revisionId,
+    actor_role: row.actorRole,
+    status: row.status,
+    public_report: toObject(row.resultPublicReport),
+    result_json: toObject(row.resultJson),
+    error_code: asText(row.errorCode) || null,
+    error_message: asText(row.errorMessage) || null,
     created_at: row.createdAt,
     updated_at: row.updatedAt,
   };

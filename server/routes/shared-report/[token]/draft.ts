@@ -14,9 +14,11 @@ import {
   assertPayloadSize,
   buildDefaultSharedPayload,
   getCurrentRecipientDraft,
+  getLatestRecipientSentRevision,
   getToken,
   logTokenEvent,
   resolveSharedReportToken,
+  clampWorkflowStep,
   stableJsonEquals,
   toObject,
 } from '../_shared.js';
@@ -29,6 +31,14 @@ function pickSharedPayload(body: Record<string, unknown>) {
 
 function pickConfidentialPayload(body: Record<string, unknown>) {
   return body.recipient_confidential_payload ?? body.recipientConfidentialPayload ?? {};
+}
+
+function pickWorkflowStep(body: Record<string, unknown>) {
+  return body.workflow_step ?? body.workflowStep ?? body.step ?? body.draft_step ?? 0;
+}
+
+function pickEditorState(body: Record<string, unknown>) {
+  return body.editor_state ?? body.editorState ?? {};
 }
 
 export default async function handler(req: any, res: any, tokenParam?: string) {
@@ -52,13 +62,20 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     const body = await readJsonBody(req);
     const sharedPayload = pickSharedPayload(body);
     const confidentialPayload = pickConfidentialPayload(body);
+    const editorState = pickEditorState(body);
 
     assertJsonObjectField(sharedPayload, 'shared_payload');
     assertJsonObjectField(confidentialPayload, 'recipient_confidential_payload');
+    assertJsonObjectField(editorState, 'editor_state');
     assertPayloadSize(sharedPayload, 'shared_payload');
     assertPayloadSize(confidentialPayload, 'recipient_confidential_payload');
+    assertPayloadSize(editorState, 'editor_state');
 
     const currentDraft = await getCurrentRecipientDraft(resolved.db, resolved.link.id);
+    const workflowStep = clampWorkflowStep(
+      pickWorkflowStep(body),
+      currentDraft ? Number(currentDraft.workflowStep || 0) : 0,
+    );
     const baselineSharedPayload = currentDraft
       ? toObject(currentDraft.sharedPayload)
       : buildDefaultSharedPayload({
@@ -88,12 +105,15 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         .set({
           sharedPayload,
           recipientConfidentialPayload: confidentialPayload,
+          workflowStep,
+          editorState,
           updatedAt: now,
         })
         .where(eq(schema.sharedReportRecipientRevisions.id, currentDraft.id))
         .returning();
       savedDraft = updated || currentDraft;
     } else {
+      const latestSentRevision = await getLatestRecipientSentRevision(resolved.db, resolved.link.id);
       const [created] = await resolved.db
         .insert(schema.sharedReportRecipientRevisions)
         .values({
@@ -103,9 +123,11 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
           comparisonId: resolved.comparison?.id || null,
           actorRole: RECIPIENT_ROLE,
           status: DRAFT_STATUS,
+          workflowStep,
           sharedPayload,
           recipientConfidentialPayload: confidentialPayload,
-          previousRevisionId: null,
+          editorState,
+          previousRevisionId: latestSentRevision?.id || null,
           createdAt: now,
           updatedAt: now,
         })
