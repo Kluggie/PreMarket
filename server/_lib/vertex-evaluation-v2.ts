@@ -691,12 +691,18 @@ async function callVertexV2(params: {
 
   const projectId = asText(process.env.GCP_PROJECT_ID) || vertex.credentials.project_id;
   const location = asText(process.env.GCP_LOCATION) || vertex.location || 'us-central1';
-  const model = asText(process.env.VERTEX_MODEL) || vertex.model || 'gemini-2.0-flash-001';
+  const preferredModel = asText(process.env.VERTEX_MODEL) || vertex.model || 'gemini-2.0-flash-001';
+  const modelCandidates = [
+    preferredModel,
+    'gemini-2.0-flash-001',
+    'gemini-1.5-flash-001',
+    'gemini-1.5-flash',
+    'gemini-1.5-flash-002',
+  ]
+    .map((model) => asText(model))
+    .filter(Boolean)
+    .filter((model, index, values) => values.indexOf(model) === index);
   const accessToken = await fetchGoogleAccessToken(vertex.credentials);
-
-  const endpoint =
-    `https://${location}-aiplatform.googleapis.com/v1/projects/${encodeURIComponent(projectId)}` +
-    `/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(model)}:generateContent`;
 
   const generationConfig: Record<string, unknown> = {
     temperature: 0,
@@ -709,56 +715,89 @@ async function callVertexV2(params: {
     contents: [{ role: 'user', parts: [{ text: params.prompt }] }],
     generationConfig: config,
   });
+  let lastStatus = 0;
+  let lastMessage = '';
+  let lastModel = modelCandidates[modelCandidates.length - 1] || preferredModel;
+  const triedModels: string[] = [];
 
-  const send = async (body: Record<string, unknown>) =>
-    fetchWithTimeout(
-      endpoint,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-          'X-Request-Id': asText(params.requestId) || '',
+  for (const model of modelCandidates) {
+    triedModels.push(model);
+    lastModel = model;
+    const endpoint =
+      `https://${location}-aiplatform.googleapis.com/v1/projects/${encodeURIComponent(projectId)}` +
+      `/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(model)}:generateContent`;
+
+    const send = async (body: Record<string, unknown>) =>
+      fetchWithTimeout(
+        endpoint,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+            'X-Request-Id': asText(params.requestId) || '',
+          },
+          body: JSON.stringify(body),
         },
-        body: JSON.stringify(body),
-      },
-      VERTEX_TIMEOUT_MS,
-    );
+        VERTEX_TIMEOUT_MS,
+      );
 
-  let response = await send(buildBody(generationConfig));
-  let preloadedBody = '';
-  if (!response.ok && response.status === 400) {
-    const badBody = await response.text().catch(() => '');
-    const unsupportedMimeType =
-      badBody.toLowerCase().includes('responsemimetype') ||
-      badBody.toLowerCase().includes('response mime type');
-    if (unsupportedMimeType) {
-      const fallbackConfig = { ...generationConfig };
-      delete fallbackConfig.responseMimeType;
-      response = await send(buildBody(fallbackConfig));
-    } else {
-      preloadedBody = badBody;
+    let response = await send(buildBody(generationConfig));
+    let preloadedBody = '';
+    if (!response.ok && response.status === 400) {
+      const badBody = await response.text().catch(() => '');
+      const unsupportedMimeType =
+        badBody.toLowerCase().includes('responsemimetype') ||
+        badBody.toLowerCase().includes('response mime type');
+      if (unsupportedMimeType) {
+        const fallbackConfig = { ...generationConfig };
+        delete fallbackConfig.responseMimeType;
+        response = await send(buildBody(fallbackConfig));
+      } else {
+        preloadedBody = badBody;
+      }
     }
-  }
 
-  if (!response.ok) {
+    if (response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      return {
+        model,
+        text: extractModelText(payload),
+        finishReason: extractFinishReason(payload),
+        httpStatus: response.status,
+      };
+    }
+
     const body = preloadedBody || (await response.text().catch(() => ''));
+    const truncatedMessage = body.slice(0, 400);
+    lastStatus = response.status;
+    lastMessage = truncatedMessage;
+
+    const modelMissing = response.status === 404 && /publisher model/i.test(body);
+    const transientUpstream = response.status === 429 || (response.status >= 500 && response.status <= 599);
+    const hasNextModel = triedModels.length < modelCandidates.length;
+    if ((modelMissing || transientUpstream) && hasNextModel) {
+      continue;
+    }
+
     throw new ApiError(502, 'vertex_request_failed', 'Vertex AI request failed', {
       model,
+      triedModels,
       upstreamStatus: response.status,
-      upstreamMessage: body.slice(0, 400),
+      upstreamMessage: truncatedMessage || null,
       requestId: asText(params.requestId) || null,
       inputChars: params.inputChars,
     });
   }
 
-  const payload = await response.json().catch(() => ({}));
-  return {
-    model,
-    text: extractModelText(payload),
-    finishReason: extractFinishReason(payload),
-    httpStatus: response.status,
-  };
+  throw new ApiError(502, 'vertex_request_failed', 'Vertex AI request failed', {
+    model: lastModel,
+    triedModels,
+    upstreamStatus: lastStatus || 502,
+    upstreamMessage: lastMessage || null,
+    requestId: asText(params.requestId) || null,
+    inputChars: params.inputChars,
+  });
 }
 
 function getVertexCallImplementation(): VertexCallOverride {
@@ -919,6 +958,11 @@ export async function evaluateWithVertexV2(
           status: status || (isTimeout ? 504 : 502),
           code: code || (isTimeout ? 'vertex_timeout' : 'vertex_http_error'),
           message,
+          model: asText(error?.extra?.model) || null,
+          upstream_status: Number(error?.extra?.upstreamStatus || 0) || null,
+          tried_models: Array.isArray(error?.extra?.triedModels)
+            ? error.extra.triedModels.map((entry: unknown) => asText(entry)).filter(Boolean).slice(0, 8)
+            : [],
         },
       });
     }
