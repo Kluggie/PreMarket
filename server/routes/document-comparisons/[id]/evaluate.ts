@@ -445,16 +445,23 @@ function getDocumentComparisonEvaluator() {
   return evaluateDocumentComparisonWithVertex;
 }
 
-function shouldUseEvaluatorV2(req: any): boolean {
-  // Check env var
-  if (asLower(process.env.EVAL_ENGINE || '') === 'v2') {
-    return true;
+function resolveDocumentComparisonEngine(req: any): 'v1' | 'v2' {
+  const queryEngine = asLower(req.query?.engine || '');
+  if (queryEngine === 'v1' || queryEngine === 'v2') {
+    return queryEngine;
   }
-  // Check query param
-  if (asLower(req.query?.engine || '') === 'v2') {
-    return true;
+
+  const runtimeEnv = asLower(process.env.NODE_ENV || '');
+  const configuredEngine = asLower(process.env.EVAL_ENGINE || '');
+  if (runtimeEnv !== 'test' && (configuredEngine === 'v1' || configuredEngine === 'v2')) {
+    return configuredEngine;
   }
-  return false;
+
+  // Production defaults to v2 unless explicitly overridden.
+  if (runtimeEnv === 'production') {
+    return 'v2';
+  }
+  return 'v1';
 }
 
 function convertV2ResponseToEvaluation(v2Result: any): Record<string, unknown> {
@@ -1023,7 +1030,8 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
           .where(eq(schema.documentComparisons.id, existing.id)),
     });
 
-    const useV2 = shouldUseEvaluatorV2(req);
+    const engine = resolveDocumentComparisonEngine(req);
+    const useV2 = engine === 'v2';
     const evaluateComparison = useV2 ? null : getDocumentComparisonEvaluator();
     let attemptCount = 0;
     let evaluation: any = null;
@@ -1045,7 +1053,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
               requestId,
               comparisonId: existing.id,
               attempt: attemptCount,
-              engine: useV2 ? 'v2' : 'v1',
+              engine,
               model: vertexConfig.model || process.env.VERTEX_MODEL || null,
               region: vertexConfig.location || process.env.GCP_LOCATION || null,
               prompt_length: null,
@@ -1134,7 +1142,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
               requestId,
               comparisonId: existing.id,
               attempt: attemptCount,
-              engine: useV2 ? 'v2' : 'v1',
+              engine,
               latency_ms: attemptCompletedAt.getTime() - attemptStartedAt.getTime(),
               provider: asText(evaluated?.evaluation_provider || evaluated?.provider) || null,
               model: asText(evaluated?.evaluation_model || evaluated?.model) || null,

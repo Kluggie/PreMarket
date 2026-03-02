@@ -10,6 +10,7 @@ import {
   evaluateDocumentComparisonWithVertex,
   evaluateProposalWithVertex,
 } from '../../../_lib/vertex-evaluation.js';
+import { evaluateWithVertexV2 } from '../../../_lib/vertex-evaluation-v2.js';
 
 function getProposalId(req: any, proposalIdParam?: string) {
   if (proposalIdParam && proposalIdParam.trim().length > 0) {
@@ -26,6 +27,23 @@ function asText(value: unknown) {
 
 function asLower(value: unknown) {
   return asText(value).toLowerCase();
+}
+
+function resolveDocumentComparisonEngine(req: any): 'v1' | 'v2' {
+  const queryEngine = asLower(req.query?.engine || '');
+  if (queryEngine === 'v1' || queryEngine === 'v2') {
+    return queryEngine;
+  }
+
+  const runtimeEnv = asLower(process.env.NODE_ENV || '');
+  const configuredEngine = asLower(process.env.EVAL_ENGINE || '');
+  if (runtimeEnv !== 'test' && (configuredEngine === 'v1' || configuredEngine === 'v2')) {
+    return configuredEngine;
+  }
+  if (runtimeEnv === 'production') {
+    return 'v2';
+  }
+  return 'v1';
 }
 
 function normalizeEmail(value: unknown) {
@@ -213,6 +231,99 @@ function buildProposalResultFromEvaluation(proposal: any, evaluation: any, extra
   };
 }
 
+function convertV2ResponseToEvaluation(v2Result: any): Record<string, unknown> {
+  const data = v2Result?.data || {};
+  const confidence = Number(data?.confidence_0_1);
+  const normalizedConfidence = Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0;
+  const fitLevel = asLower(data?.fit_level);
+  const recommendation = fitLevel === 'high' ? 'High' : fitLevel === 'medium' ? 'Medium' : 'Low';
+  const why = Array.isArray(data?.why) ? data.why.map((entry: unknown) => asText(entry)).filter(Boolean) : [];
+  const missing = Array.isArray(data?.missing)
+    ? data.missing.map((entry: unknown) => asText(entry)).filter(Boolean)
+    : [];
+  const redactions = Array.isArray(data?.redactions)
+    ? data.redactions.map((entry: unknown) => asText(entry)).filter(Boolean)
+    : [];
+  const generatedAt = new Date().toISOString();
+
+  return {
+    provider: 'vertex',
+    model: asText(v2Result?.model) || process.env.VERTEX_MODEL || 'gemini-2.0-flash-001',
+    generatedAt,
+    score: Math.round(normalizedConfidence * 100),
+    confidence: normalizedConfidence,
+    recommendation,
+    summary: why[0] || 'Evaluation complete',
+    report: {
+      fit_level: fitLevel === 'high' || fitLevel === 'medium' || fitLevel === 'low' ? fitLevel : 'unknown',
+      confidence_0_1: normalizedConfidence,
+      why,
+      missing,
+      redactions,
+      generated_at_iso: generatedAt,
+      summary: {
+        fit_level: fitLevel === 'high' || fitLevel === 'medium' || fitLevel === 'low' ? fitLevel : 'unknown',
+        top_fit_reasons: why.map((text: string) => ({ text })),
+        top_blockers: missing.map((text: string) => ({ text })),
+        next_actions: missing.length > 0 ? ['Resolve missing items and re-run evaluation.'] : [],
+      },
+      sections: [
+        { key: 'why', heading: 'Why', bullets: why },
+        { key: 'missing', heading: 'Missing', bullets: missing },
+        { key: 'redactions', heading: 'Redactions', bullets: redactions },
+      ],
+      recommendation,
+    },
+    evaluation_provider: 'vertex',
+    evaluation_model: asText(v2Result?.model) || process.env.VERTEX_MODEL || 'gemini-2.0-flash-001',
+    evaluation_provider_reason: null,
+  };
+}
+
+function toV2ApiError(error: any) {
+  const parseKind = asLower(error?.parse_error_kind);
+  const details =
+    error?.details && typeof error.details === 'object' && !Array.isArray(error.details)
+      ? (error.details as Record<string, unknown>)
+      : {};
+  const upstreamStatus = Number((details as any).status || 0);
+  const statusCode =
+    parseKind === 'vertex_timeout'
+      ? 504
+      : Number.isFinite(upstreamStatus) && upstreamStatus > 0
+        ? upstreamStatus
+        : 502;
+  const code =
+    parseKind === 'vertex_timeout'
+      ? 'vertex_timeout'
+      : parseKind === 'vertex_http_error' && statusCode === 501
+        ? 'not_configured'
+        : parseKind === 'vertex_http_error'
+          ? 'vertex_request_failed'
+          : 'invalid_model_output';
+
+  return new ApiError(statusCode, code, 'Vertex evaluation failed', {
+    reasonCode: parseKind || null,
+    parseErrorKind: parseKind || null,
+    parseErrorName: parseKind || null,
+    parseErrorMessage: JSON.stringify({
+      parse_error_kind: parseKind || null,
+      raw_text_length: Number(error?.raw_text_length || 0) || 0,
+      had_json_fence: null,
+      finish_reason: asText(error?.finish_reason) || null,
+      schema_missing_keys: Array.isArray((details as any).schema_missing_keys)
+        ? (details as any).schema_missing_keys
+        : [],
+      category_count: null,
+    }),
+    rawTextLength: Number(error?.raw_text_length || 0) || 0,
+    finishReason: asText(error?.finish_reason) || null,
+    retryable: Boolean(error?.retryable),
+    upstreamStatus: Number.isFinite(upstreamStatus) && upstreamStatus > 0 ? upstreamStatus : null,
+    ...details,
+  });
+}
+
 function toFailedResult(error: any) {
   const statusCode = Number(error?.statusCode || error?.status || 500);
   const code = asText(error?.code) || 'evaluation_failed';
@@ -328,6 +439,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
     const isDocumentComparisonProposal =
       String(proposal.proposalType || '').toLowerCase() === 'document_comparison' &&
       String(proposal.documentComparisonId || '').trim().length > 0;
+    const docComparisonEngine = resolveDocumentComparisonEngine(req);
 
     try {
       if (isDocumentComparisonProposal) {
@@ -360,20 +472,36 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
             }),
           );
         }
-        const comparisonEvaluation = await evaluateDocumentComparisonWithVertex({
-          title: comparison.title || proposal.title || 'Document Comparison',
-          docAText: comparison.docAText || '',
-          docBText: comparison.docBText || '',
-          docASpans: [],
-          docBSpans: [],
-          partyALabel: 'Confidential Information',
-          partyBLabel: 'Shared Information',
-        }, {
-          correlationId: requestId,
-          routeName: '/api/proposals/[id]/evaluate',
-          entityId: comparison.id,
-          inputChars: String(comparison.docAText || '').length + String(comparison.docBText || '').length,
-        });
+        let comparisonEvaluation: any;
+        if (docComparisonEngine === 'v2') {
+          const v2Result = await evaluateWithVertexV2({
+            sharedText: String(comparison.docBText || ''),
+            confidentialText: String(comparison.docAText || ''),
+            requestId,
+          });
+          if (!v2Result.ok) {
+            throw toV2ApiError(v2Result.error);
+          }
+          comparisonEvaluation = convertV2ResponseToEvaluation(v2Result);
+        } else {
+          comparisonEvaluation = await evaluateDocumentComparisonWithVertex(
+            {
+              title: comparison.title || proposal.title || 'Document Comparison',
+              docAText: comparison.docAText || '',
+              docBText: comparison.docBText || '',
+              docASpans: [],
+              docBSpans: [],
+              partyALabel: 'Confidential Information',
+              partyBLabel: 'Shared Information',
+            },
+            {
+              correlationId: requestId,
+              routeName: '/api/proposals/[id]/evaluate',
+              entityId: comparison.id,
+              inputChars: String(comparison.docAText || '').length + String(comparison.docBText || '').length,
+            },
+          );
+        }
         if (process.env.NODE_ENV !== 'production') {
           console.info(
             JSON.stringify({
@@ -383,6 +511,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
               requestId,
               proposalId: proposal.id,
               comparisonId: comparison.id,
+              engine: docComparisonEngine,
               provider:
                 asText(comparisonEvaluation?.evaluation_provider || comparisonEvaluation?.provider) || null,
               model: asText(comparisonEvaluation?.evaluation_model || comparisonEvaluation?.model) || null,

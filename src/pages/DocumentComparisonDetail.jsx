@@ -66,6 +66,10 @@ function extractEvaluationFailureDetails(rawError) {
     rawError.details && typeof rawError.details === 'object' && !Array.isArray(rawError.details)
       ? rawError.details
       : {};
+  const diagnostics =
+    details.diagnostics && typeof details.diagnostics === 'object' && !Array.isArray(details.diagnostics)
+      ? details.diagnostics
+      : {};
   const failureCode = asLower(
     rawError.failure_code || details.failure_code || rawError.code || details.code,
   );
@@ -83,7 +87,10 @@ function extractEvaluationFailureDetails(rawError) {
     rawError.parse_error_kind ||
       rawError.parseErrorKind ||
       details.parse_error_kind ||
-      details.parseErrorKind,
+      details.parseErrorKind ||
+      diagnostics.parse_error_kind ||
+      diagnostics.parseErrorKind ||
+      diagnostics.reason_code,
   );
   const httpStatus = Number(
     rawError.http_status ||
