@@ -406,7 +406,7 @@ export default function ProposalDetail() {
                   if (proposal.proposal_type === 'document_comparison' && proposal.document_comparison_id) {
                     navigate(
                       createPageUrl(
-                        `DocumentComparisonCreate?draft=${encodeURIComponent(proposal.document_comparison_id)}&proposalId=${encodeURIComponent(proposal.id)}&step=${Number(proposal.draft_step || 1)}`,
+                        `DocumentComparisonCreate?draft=${encodeURIComponent(proposal.document_comparison_id)}&proposalId=${encodeURIComponent(proposal.id)}&step=2`,
                       ),
                     );
                     return;

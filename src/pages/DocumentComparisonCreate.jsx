@@ -623,6 +623,24 @@ export default function DocumentComparisonCreate() {
       !isDocumentComparisonNotFoundError(error) && failureCount < 2,
   });
 
+  // Compute initial step from loaded data if not explicitly provided via URL
+  useEffect(() => {
+    if (step !== null) {
+      // Step was already explicitly set via URL
+      return;
+    }
+
+    if (draftQuery.isLoading || proposalLookup.isLoading) {
+      // Still loading, wait
+      return;
+    }
+
+    const comparison = draftQuery.data?.comparison || null;
+    const proposal = proposalLookup.data || draftQuery.data?.proposal || null;
+    const computedStep = computeInitialStep(comparison, proposal);
+    setStep(clampStep(computedStep));
+  }, [step, draftQuery.isLoading, draftQuery.data, proposalLookup.isLoading, proposalLookup.data]);
+
   useEffect(() => {
     if (!draftQuery.data?.comparison) {
       return;
