@@ -72,6 +72,8 @@ export function mapNotificationRow(row) {
     action_url: row.actionUrl || null,
     read: Boolean(row.readAt),
     read_at: row.readAt || null,
+    dismissed: Boolean(row.dismissedAt),
+    dismissed_at: row.dismissedAt || null,
     metadata: row.metadata || {},
     created_date: row.createdAt,
     updated_date: row.updatedAt,

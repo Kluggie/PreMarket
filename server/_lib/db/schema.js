@@ -299,6 +299,7 @@ export const notifications = pgTable(
     actionUrl: text('action_url'),
     dedupeKey: text('dedupe_key'),
     readAt: timestamp('read_at', { withTimezone: true }),
+    dismissedAt: timestamp('dismissed_at', { withTimezone: true }),
     metadata: jsonb('metadata').notNull().default(sql`'{}'::jsonb`),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -309,6 +310,10 @@ export const notifications = pgTable(
       table.createdAt,
     ),
     notificationsUserReadIdx: index('notifications_user_read_idx').on(table.userId, table.readAt),
+    notificationsUserDismissedIdx: index('notifications_user_dismissed_idx').on(
+      table.userId,
+      table.dismissedAt,
+    ),
     notificationsEventTypeIdx: index('notifications_event_type_idx').on(
       table.eventType,
       table.createdAt,

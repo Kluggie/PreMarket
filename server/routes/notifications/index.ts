@@ -1,4 +1,4 @@
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq, isNull } from 'drizzle-orm';
 import { ok } from '../../_lib/api-response.js';
 import { requireUser } from '../../_lib/auth.js';
 import { getDb, schema } from '../../_lib/db/client.js';
@@ -32,7 +32,7 @@ export default async function handler(req: any, res: any) {
     const rows = await db
       .select()
       .from(schema.notifications)
-      .where(eq(schema.notifications.userId, auth.user.id))
+      .where(and(eq(schema.notifications.userId, auth.user.id), isNull(schema.notifications.dismissedAt)))
       .orderBy(desc(schema.notifications.createdAt))
       .limit(limit);
 

@@ -31,19 +31,37 @@ export default async function handler(req: any, res: any, notificationIdParam?: 
 
     context.userId = auth.user.id;
     const body = await readJsonBody(req);
-    const shouldMarkRead = body.read === undefined ? true : Boolean(body.read);
-    if (!shouldMarkRead) {
-      throw new ApiError(400, 'invalid_input', 'Only read=true is supported');
+    
+    const now = new Date();
+    const updates: any = { updatedAt: now };
+    
+    // Handle mark as read
+    if (body.read !== undefined) {
+      const shouldMarkRead = Boolean(body.read);
+      if (!shouldMarkRead) {
+        throw new ApiError(400, 'invalid_input', 'Only read=true is supported');
+      }
+      updates.readAt = now;
+    }
+    
+    // Handle dismiss
+    if (body.dismissed !== undefined) {
+      const shouldDismiss = Boolean(body.dismissed);
+      if (!shouldDismiss) {
+        throw new ApiError(400, 'invalid_input', 'Only dismissed=true is supported');
+      }
+      updates.dismissedAt = now;
+    }
+    
+    // Ensure at least one action is specified
+    if (!updates.readAt && !updates.dismissedAt) {
+      throw new ApiError(400, 'invalid_input', 'Either read=true or dismissed=true must be provided');
     }
 
-    const now = new Date();
     const db = getDb();
     const [updated] = await db
       .update(schema.notifications)
-      .set({
-        readAt: now,
-        updatedAt: now,
-      })
+      .set(updates)
       .where(
         and(
           eq(schema.notifications.id, notificationId),
@@ -61,7 +79,8 @@ export default async function handler(req: any, res: any, notificationIdParam?: 
     ok(res, 200, {
       notification: {
         id: updated.id,
-        read: true,
+        read: Boolean(updates.readAt),
+        dismissed: Boolean(updates.dismissedAt),
       },
     });
   });

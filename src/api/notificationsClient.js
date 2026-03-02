@@ -12,4 +12,11 @@ export const notificationsClient = {
       body: JSON.stringify({ read: true }),
     });
   },
+
+  async dismiss(id) {
+    await request(`/api/notifications/${encodeURIComponent(String(id || ''))}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ dismissed: true }),
+    });
+  },
 };
