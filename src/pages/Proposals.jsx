@@ -66,6 +66,9 @@ function ProposalRow({ proposal, onOpen }) {
   const directional = proposal.directional_status || proposal.status || listType;
   const iconConfig = statusConfig[String(directional).toLowerCase()] || statusConfig.sent;
   const Icon = iconConfig.icon;
+  const hasSharedReportLink = Boolean(proposal.shared_report_token);
+  const sharedReportStatus = String(proposal.shared_report_status || '').trim().toLowerCase();
+  const sharedReportDate = proposal.shared_report_last_updated_at || proposal.shared_report_sent_at || null;
 
   return (
     <button
@@ -81,6 +84,11 @@ function ProposalRow({ proposal, onOpen }) {
         <div className="flex items-center gap-2 mb-1 flex-wrap">
           <h3 className="font-medium text-slate-900 truncate">{proposal.title || 'Untitled Proposal'}</h3>
           <StatusBadge status={directional} />
+          {hasSharedReportLink ? (
+            <Badge variant="outline" className="text-xs capitalize">
+              Link {sharedReportStatus || 'active'}
+            </Badge>
+          ) : null}
           {proposal.status && proposal.status !== directional ? (
             <Badge variant="outline" className="text-xs">
               {proposal.status.replace(/_/g, ' ')}
@@ -100,7 +108,11 @@ function ProposalRow({ proposal, onOpen }) {
 
       <div className="text-right">
         <p className="text-xs text-slate-400">
-          {proposal.created_date ? new Date(proposal.created_date).toLocaleDateString() : ''}
+          {sharedReportDate
+            ? new Date(sharedReportDate).toLocaleDateString()
+            : proposal.created_date
+              ? new Date(proposal.created_date).toLocaleDateString()
+              : ''}
         </p>
         <ChevronRight className="w-4 h-4 text-slate-400 mt-2 ml-auto" />
       </div>
@@ -166,6 +178,11 @@ export default function Proposals() {
 
   const handleOpenProposal = (proposal) => {
     if (!proposal?.id) {
+      return;
+    }
+
+    if (proposal.shared_report_token) {
+      navigate(createPageUrl(`shared-report/${encodeURIComponent(proposal.shared_report_token)}`));
       return;
     }
 

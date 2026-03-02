@@ -4,6 +4,7 @@ import { sql } from 'drizzle-orm';
 import documentComparisonsHandler from '../../server/routes/document-comparisons/index.ts';
 import sharedLinksHandler from '../../server/routes/shared-links/index.ts';
 import sharedReportsHandler from '../../server/routes/shared-reports/index.ts';
+import proposalsHandler from '../../server/routes/proposals/index.ts';
 import sharedReportRecipientTokenHandler from '../../server/routes/shared-report/[token].ts';
 import sharedReportRecipientDraftHandler from '../../server/routes/shared-report/[token]/draft.ts';
 import sharedReportRecipientEvaluateHandler from '../../server/routes/shared-report/[token]/evaluate.ts';
@@ -18,6 +19,13 @@ function makeOwnerCookie(seed) {
   return makeSessionCookie({
     sub: `${seed}_owner`,
     email: `${seed}_owner@example.com`,
+  });
+}
+
+function makeRecipientCookie(seed, email = `${seed}_recipient@example.com`) {
+  return makeSessionCookie({
+    sub: `${seed}_recipient`,
+    email,
   });
 }
 
@@ -89,11 +97,12 @@ async function getRecipientWorkspace(token) {
   return res;
 }
 
-async function saveRecipientDraft(token, body) {
+async function saveRecipientDraft(token, body, cookie = null) {
   const req = createMockReq({
     method: 'POST',
     url: `/api/shared-report/${token}/draft`,
     query: { token },
+    headers: cookie ? { cookie } : {},
     body,
   });
   const res = createMockRes();
@@ -122,6 +131,18 @@ async function sendBackRecipientDraft(token, body = {}) {
   });
   const res = createMockRes();
   await sharedReportRecipientSendBackHandler(req, res, token);
+  return res;
+}
+
+async function listProposals(cookie, query = {}) {
+  const req = createMockReq({
+    method: 'GET',
+    url: '/api/proposals',
+    headers: { cookie },
+    query,
+  });
+  const res = createMockRes();
+  await proposalsHandler(req, res);
   return res;
 }
 
@@ -285,7 +306,7 @@ if (!hasDatabaseUrl()) {
       const saveRes = await saveRecipientDraft(link.token, {
         shared_payload: sharedPayload,
         recipient_confidential_payload: confidentialPayload,
-      });
+      }, ownerCookie);
       assert.equal(saveRes.statusCode, entry.expectedStatus, `${entry.label} unexpected status`);
 
       const saveBody = saveRes.jsonBody();
@@ -318,14 +339,14 @@ if (!hasDatabaseUrl()) {
     const invalidShared = await saveRecipientDraft(link.token, {
       shared_payload: 'not-an-object',
       recipient_confidential_payload: {},
-    });
+    }, ownerCookie);
     assert.equal(invalidShared.statusCode, 400);
     assert.equal(invalidShared.jsonBody().error.code, 'invalid_input');
 
     const invalidConfidential = await saveRecipientDraft(link.token, {
       shared_payload: {},
       recipient_confidential_payload: [],
-    });
+    }, ownerCookie);
     assert.equal(invalidConfidential.statusCode, 400);
     assert.equal(invalidConfidential.jsonBody().error.code, 'invalid_input');
 
@@ -333,9 +354,142 @@ if (!hasDatabaseUrl()) {
     const oversized = await saveRecipientDraft(link.token, {
       shared_payload: { text: hugeValue },
       recipient_confidential_payload: {},
-    });
+    }, ownerCookie);
     assert.equal(oversized.statusCode, 413);
     assert.equal(oversized.jsonBody().error.code, 'payload_too_large');
+  });
+
+  test('Prompt3 draft save requires auth while workspace read-only remains public', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = makeOwnerCookie('p3_draft_auth');
+    const recipientCookie = makeRecipientCookie('p3_draft_auth', 'recipient@example.com');
+    const comparison = await createComparison(ownerCookie, {
+      title: 'Draft Auth Guard',
+      docAText: 'Private baseline',
+      docBText: 'Shared baseline',
+    });
+    const link = await createSharedReportLink(ownerCookie, comparison.id, 'recipient@example.com', {
+      canEdit: true,
+      canEditConfidential: true,
+      maxUses: 20,
+    });
+
+    const workspaceRes = await getRecipientWorkspace(link.token);
+    assert.equal(workspaceRes.statusCode, 200);
+
+    const unauthenticatedSave = await saveRecipientDraft(link.token, {
+      shared_payload: { label: 'Shared Information', text: 'Unauthenticated update should fail.' },
+      recipient_confidential_payload: { label: 'Confidential Information', notes: '' },
+    });
+    assert.equal(unauthenticatedSave.statusCode, 401);
+    assert.equal(unauthenticatedSave.jsonBody().error.code, 'unauthorized');
+
+    const authenticatedSave = await saveRecipientDraft(link.token, {
+      shared_payload: { label: 'Shared Information', text: 'Authenticated update should pass.' },
+      recipient_confidential_payload: { label: 'Confidential Information', notes: 'Private note.' },
+    }, recipientCookie);
+    assert.equal(authenticatedSave.statusCode, 200);
+    assert.equal(authenticatedSave.jsonBody().ok, true);
+  });
+
+  test('Prompt3 recipient sees shared report in proposals received list', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = makeOwnerCookie('p3_received_owner');
+    const recipientEmail = 'recipient@example.com';
+    const recipientCookie = makeRecipientCookie('p3_received', recipientEmail);
+    const comparison = await createComparison(ownerCookie, {
+      title: 'Shared Report In Received',
+      docAText: 'Owner confidential baseline',
+      docBText: 'Shared baseline for recipient',
+    });
+
+    const link = await createSharedReportLink(ownerCookie, comparison.id, recipientEmail, {
+      canEdit: true,
+      canEditConfidential: true,
+      maxUses: 20,
+    });
+
+    const receivedRes = await listProposals(recipientCookie, { tab: 'received', limit: 20 });
+    assert.equal(receivedRes.statusCode, 200);
+    const receivedBody = receivedRes.jsonBody();
+    const matching = (receivedBody.proposals || []).find((row) => String(row.id || '') === String(comparison.proposal_id));
+    assert.equal(Boolean(matching), true);
+    assert.equal(String(matching.list_type || ''), 'received');
+    assert.equal(String(matching.shared_report_token || ''), String(link.token));
+    assert.equal(String(matching.directional_status || ''), 'received');
+  });
+
+  test('Prompt3 workspace Step 0 latest report falls back to baseline when no evaluation exists', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = makeOwnerCookie('p3_report_fallback');
+    const comparison = await createComparison(ownerCookie, {
+      title: 'Workspace Report Fallback',
+      docAText: 'Proposer private baseline.',
+      docBText: 'Shared baseline for fallback report checks.',
+    });
+    const link = await createSharedReportLink(ownerCookie, comparison.id, 'recipient@example.com', {
+      canReevaluate: true,
+    });
+
+    const workspaceRes = await getRecipientWorkspace(link.token);
+    assert.equal(workspaceRes.statusCode, 200);
+    const workspace = workspaceRes.jsonBody();
+
+    assert.equal(workspace.latestEvaluation, null);
+    const baselineReport = workspace.baseline_ai_report || workspace.baseline?.ai_report || {};
+    const latestReport = workspace.latestReport || {};
+    assert.equal(typeof latestReport, 'object');
+    assert.equal(Array.isArray(latestReport), false);
+    assert.deepEqual(latestReport, baselineReport);
+  });
+
+  test('Prompt3 workspace Step 0 latest report uses latest evaluation public report when available', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = makeOwnerCookie('p3_report_latest_eval');
+    const comparison = await createComparison(ownerCookie, {
+      title: 'Workspace Latest Evaluation',
+      docAText: 'Proposer private baseline for evaluation.',
+      docBText: 'Shared baseline for evaluation report override checks.',
+    });
+    const link = await createSharedReportLink(ownerCookie, comparison.id, 'recipient@example.com', {
+      canReevaluate: true,
+    });
+    const reportMarker = `LATEST_PUBLIC_REPORT_${Date.now()}`;
+
+    const previousEvaluator = globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
+    globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = async () => ({
+      report: {
+        recommendation: 'review',
+        executive_summary: `Marker ${reportMarker}`,
+        sections: [{ heading: 'Summary', bullets: ['Latest evaluated report should be shown on Step 0.'] }],
+      },
+      evaluation_provider: 'test',
+      similarity_score: 70,
+    });
+
+    try {
+      const evaluateRes = await evaluateRecipientDraft(link.token);
+      assert.equal(evaluateRes.statusCode, 200);
+
+      const workspaceRes = await getRecipientWorkspace(link.token);
+      assert.equal(workspaceRes.statusCode, 200);
+      const workspace = workspaceRes.jsonBody();
+      const latestEvalSummary = String(workspace.latestEvaluation?.public_report?.executive_summary || '');
+      const latestReportSummary = String(workspace.latestReport?.executive_summary || '');
+
+      assert.equal(latestEvalSummary.includes(reportMarker), true);
+      assert.equal(latestReportSummary.includes(reportMarker), true);
+    } finally {
+      globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = previousEvaluator;
+    }
   });
 
   test('Prompt2 evaluate is public and permission-gated by can_reevaluate', async () => {
@@ -419,7 +573,7 @@ if (!hasDatabaseUrl()) {
         notes: 'Recipient private terms for internal use.',
       },
       workflow_step: 2,
-    });
+    }, ownerCookie);
     assert.equal(saveRes.statusCode, 200);
 
     const sendRes = await sendBackRecipientDraft(link.token);
@@ -472,7 +626,7 @@ if (!hasDatabaseUrl()) {
         notes: `Do not leak ${recipientSecret} in any public report.`,
       },
       workflow_step: 2,
-    });
+    }, ownerCookie);
     assert.equal(saveRes.statusCode, 200);
 
     const previousEvaluator = globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
@@ -534,7 +688,7 @@ if (!hasDatabaseUrl()) {
       shared_payload: { label: 'Shared Information', text: 'Recipient shared v1' },
       recipient_confidential_payload: { label: 'Confidential Information', notes: 'Recipient private v1' },
       workflow_step: 2,
-    });
+    }, ownerCookie);
     assert.equal(save1.statusCode, 200);
 
     const send1 = await sendBackRecipientDraft(link.token);
@@ -547,7 +701,7 @@ if (!hasDatabaseUrl()) {
       shared_payload: { label: 'Shared Information', text: 'Recipient shared v2' },
       recipient_confidential_payload: { label: 'Confidential Information', notes: 'Recipient private v2' },
       workflow_step: 2,
-    });
+    }, ownerCookie);
     assert.equal(save2.statusCode, 200);
 
     const send2 = await sendBackRecipientDraft(link.token);
@@ -615,14 +769,14 @@ if (!hasDatabaseUrl()) {
     const rejectSharedEdit = await saveRecipientDraft(viewOnlyLink.token, {
       shared_payload: { label: 'Shared Information', text: 'mutated shared should fail' },
       recipient_confidential_payload: workspace.defaults?.recipient_confidential_payload || {},
-    });
+    }, ownerCookie);
     assert.equal(rejectSharedEdit.statusCode, 403);
     assert.equal(rejectSharedEdit.jsonBody().error.code, 'edit_not_allowed');
 
     const rejectConfidentialEdit = await saveRecipientDraft(viewOnlyLink.token, {
       shared_payload: workspace.defaults?.shared_payload || {},
       recipient_confidential_payload: { label: 'Confidential Information', notes: 'mutated private should fail' },
-    });
+    }, ownerCookie);
     assert.equal(rejectConfidentialEdit.statusCode, 403);
     assert.equal(rejectConfidentialEdit.jsonBody().error.code, 'confidential_edit_not_allowed');
 

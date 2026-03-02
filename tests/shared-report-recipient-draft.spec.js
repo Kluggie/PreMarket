@@ -11,6 +11,37 @@ function uniqueId(prefix) {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function makeStableEmailCookie(email, name = 'Recipient User') {
+  const normalized = String(email || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+
+  return makeSessionCookie({
+    sub: `e2e_${normalized || 'user'}`,
+    email,
+    name,
+  });
+}
+
+async function applySessionCookie(context, rawCookie) {
+  const separatorIndex = String(rawCookie || '').indexOf('=');
+  if (separatorIndex <= 0) {
+    throw new Error('Invalid session cookie format');
+  }
+
+  await context.addCookies([
+    {
+      name: rawCookie.slice(0, separatorIndex),
+      value: rawCookie.slice(separatorIndex + 1),
+      url: BASE_URL,
+      httpOnly: true,
+      sameSite: 'Lax',
+    },
+  ]);
+}
+
 async function createComparison(request, ownerCookie, input) {
   const response = await request.post(`${BASE_URL}/api/document-comparisons`, {
     headers: {
@@ -68,6 +99,7 @@ test.describe('Shared Report Recipient Draft', () => {
     });
 
     const proposerSharedMarker = `PROPOSER_SHARED_X_${uniqueId('baseline')}`;
+    const recipientEmail = `${uniqueId('recipient')}@example.com`;
     const comparison = await createComparison(request, ownerCookie, {
       title: `Recipient Step Flow ${uniqueId('title')}`,
       docAText: 'Proposer confidential baseline text that must never be displayed to recipient.',
@@ -77,11 +109,14 @@ test.describe('Shared Report Recipient Draft', () => {
       request,
       ownerCookie,
       comparison.id,
-      'recipient@example.com',
+      recipientEmail,
     );
 
     const token = sharedLink.token;
     expect(token).toBeTruthy();
+
+    const recipientCookie = makeStableEmailCookie(recipientEmail);
+    await applySessionCookie(page.context(), recipientCookie);
 
     const sharedMarker = uniqueId('shared_marker');
     const confidentialMarker = uniqueId('confidential_marker');
@@ -129,13 +164,6 @@ test.describe('Shared Report Recipient Draft', () => {
     await saveResponsePromise;
 
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await page.waitForResponse(
-      (response) =>
-        response.url().includes(workspaceUrlFragment) &&
-        response.request().method() === 'GET' &&
-        response.status() === 200,
-      { timeout: LOAD_TIMEOUT_MS },
-    );
 
     await expect(page.locator('[data-testid="doc-b-editor"]')).toContainText(sharedMarker, {
       timeout: LOAD_TIMEOUT_MS,
@@ -145,11 +173,9 @@ test.describe('Shared Report Recipient Draft', () => {
     });
   });
 
-  test('Run Evaluation transitions to Step 3 once and workspace refetch does not bounce back to Step 2', async ({
-    page,
-    request,
-  }) => {
-    const ownerId = uniqueId('recipient_eval_owner');
+  test('Anonymous recipient can view Step 0 but must sign in before editing', async ({ page, request }) => {
+    const ownerId = uniqueId('recipient_owner_gate');
+    const recipientEmail = `${uniqueId('recipient_gate')}@example.com`;
     const ownerCookie = makeSessionCookie({
       sub: ownerId,
       email: `${ownerId}@example.com`,
@@ -157,95 +183,92 @@ test.describe('Shared Report Recipient Draft', () => {
     });
 
     const comparison = await createComparison(request, ownerCookie, {
-      title: `Recipient Evaluate Flow ${uniqueId('title')}`,
-      docAText: 'Proposer confidential baseline for evaluate-step transition checks.',
-      docBText: `Shared baseline for evaluate transition checks ${uniqueId('shared')}.`,
+      title: `Recipient Auth Gate ${uniqueId('title')}`,
+      docAText: 'Proposer private baseline.',
+      docBText: 'Shared baseline visible publicly.',
     });
-    const sharedLink = await createSharedReportLink(
-      request,
-      ownerCookie,
-      comparison.id,
-      'recipient@example.com',
-    );
+    const sharedLink = await createSharedReportLink(request, ownerCookie, comparison.id, recipientEmail);
     const token = sharedLink.token;
     expect(token).toBeTruthy();
 
-    const encodedToken = encodeURIComponent(token);
-    const workspaceUrlFragment = `/api/shared-report/${encodedToken}/workspace`;
-    const evaluateUrlFragment = `/api/shared-report/${encodedToken}/evaluate`;
+    const sharedReportUrl = `${BASE_URL}/shared-report/${encodeURIComponent(token)}`;
+    await page.goto(sharedReportUrl, { waitUntil: 'domcontentloaded' });
 
-    await page.goto(`${BASE_URL}/shared-report/${encodedToken}`, { waitUntil: 'domcontentloaded' });
-    await page.waitForResponse(
-      (response) =>
-        response.url().includes(workspaceUrlFragment) &&
-        response.request().method() === 'GET' &&
-        response.status() === 200,
-      { timeout: LOAD_TIMEOUT_MS },
-    );
+    await expect(page.getByText('Step 0: Overview')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+    await expect(page.getByText('Sign in to edit and respond.')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
 
     await page.getByRole('button', { name: 'Edit Proposal' }).click();
-    await expect(page.getByText('Step 1: Upload and Import')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
-    await page.getByRole('button', { name: 'Continue to Editor' }).click();
-    await expect(page.getByText('Step 2: Editor')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+    await expect(page.getByText('Sign in to PreMarket')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
 
-    let evaluateCallCount = 0;
-    let workspaceRefetchCountAfterEvaluate = 0;
-    let evaluateStarted = false;
+    const recipientCookie = makeStableEmailCookie(recipientEmail);
+    await applySessionCookie(page.context(), recipientCookie);
 
-    page.on('response', (response) => {
-      if (
-        evaluateStarted &&
-        response.url().includes(workspaceUrlFragment) &&
-        response.request().method() === 'GET'
-      ) {
-        workspaceRefetchCountAfterEvaluate += 1;
-      }
-    });
-
-    await page.route(`**${evaluateUrlFragment}`, async (route) => {
-      evaluateCallCount += 1;
-      evaluateStarted = true;
-      await new Promise((resolve) => setTimeout(resolve, 600));
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          ok: true,
-          evaluation_id: `eval_${uniqueId('mock')}`,
-          evaluation: {
-            status: 'success',
-            public_report: {
-              recommendation: 'review',
-              executive_summary: 'Mock recipient-safe evaluation result.',
-              sections: [
-                {
-                  heading: 'Summary',
-                  bullets: ['Mock evaluation completed for transition test.'],
-                },
-              ],
-            },
-            evaluation_result: {},
-          },
-        }),
-      });
-    });
-
-    await page.getByRole('button', { name: 'Run Evaluation' }).click();
-
-    await expect(page.getByText('Step 3: Evaluation')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
-    await expect(page.getByRole('button', { name: 'Evaluating...' })).toBeDisabled({
+    await page.goto(sharedReportUrl, { waitUntil: 'domcontentloaded' });
+    await expect(page).toHaveURL(new RegExp(`/shared-report/${encodeURIComponent(token)}`), {
       timeout: LOAD_TIMEOUT_MS,
     });
-    await expect(page.getByRole('button', { name: 'Re-run Evaluation' })).toBeEnabled({
-      timeout: LOAD_TIMEOUT_MS,
+    await expect(page.getByRole('button', { name: 'Edit Proposal' })).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+  });
+
+  test('Deep link step query is clamped to Step 0 while logged out', async ({ page, request }) => {
+    const ownerId = uniqueId('recipient_owner_deeplink');
+    const recipientEmail = `${uniqueId('recipient_deeplink')}@example.com`;
+    const ownerCookie = makeSessionCookie({
+      sub: ownerId,
+      email: `${ownerId}@example.com`,
+      name: 'Shared Owner',
     });
 
-    await expect.poll(() => evaluateCallCount, { timeout: LOAD_TIMEOUT_MS }).toBe(1);
-    await expect.poll(() => workspaceRefetchCountAfterEvaluate, { timeout: LOAD_TIMEOUT_MS }).toBeGreaterThan(0);
+    const comparison = await createComparison(request, ownerCookie, {
+      title: `Recipient Deep Link Guard ${uniqueId('title')}`,
+      docAText: 'Proposer private baseline.',
+      docBText: 'Shared baseline visible publicly.',
+    });
+    const sharedLink = await createSharedReportLink(request, ownerCookie, comparison.id, recipientEmail);
+    const token = sharedLink.token;
+    expect(token).toBeTruthy();
 
-    await expect(page.getByText('Step 3: Evaluation')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
-    await expect(page.getByText('Step 2: Editor')).toHaveCount(0);
-    await expect(page.getByText('Mock recipient-safe evaluation result.')).toBeVisible({
+    await page.goto(`${BASE_URL}/shared-report/${encodeURIComponent(token)}?step=2`, {
+      waitUntil: 'domcontentloaded',
+    });
+
+    await expect(page.getByText('Step 0: Overview')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+    await expect(page.getByText('Sign in to edit and respond.')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+    await expect(page.getByText('Step 0 of 3')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+    await expect(page.locator('[data-testid="doc-a-editor"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="doc-b-editor"]')).toHaveCount(0);
+  });
+
+  test('Recipient proposals received tab shows shared report and opens token route', async ({ page, request }) => {
+    const ownerId = uniqueId('received_owner');
+    const recipientEmail = `${uniqueId('received_recipient')}@example.com`;
+    const ownerCookie = makeSessionCookie({
+      sub: ownerId,
+      email: `${ownerId}@example.com`,
+      name: 'Shared Owner',
+    });
+
+    const proposalTitle = `Received Shared Report ${uniqueId('title')}`;
+    const comparison = await createComparison(request, ownerCookie, {
+      title: proposalTitle,
+      docAText: 'Owner private baseline.',
+      docBText: 'Shared baseline for received list integration.',
+    });
+    const sharedLink = await createSharedReportLink(request, ownerCookie, comparison.id, recipientEmail);
+    const token = sharedLink.token;
+    expect(token).toBeTruthy();
+
+    const recipientCookie = makeStableEmailCookie(recipientEmail);
+    await applySessionCookie(page.context(), recipientCookie);
+
+    await page.goto(`${BASE_URL}/Proposals?tab=received`, {
+      waitUntil: 'domcontentloaded',
+    });
+    await page.getByRole('tab', { name: /^Received/ }).click();
+    await expect(page.getByText(proposalTitle)).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+
+    await page.getByRole('button', { name: new RegExp(proposalTitle) }).click();
+    await expect(page).toHaveURL(new RegExp(`/shared-report/${encodeURIComponent(token)}`), {
       timeout: LOAD_TIMEOUT_MS,
     });
   });

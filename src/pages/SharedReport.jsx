@@ -1,8 +1,9 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { sharedReportsClient } from '@/api/sharedReportsClient';
 import { documentComparisonsClient } from '@/api/documentComparisonsClient';
+import { useAuth } from '@/lib/AuthContext';
 import DocumentRichEditor from '@/components/document-comparison/DocumentRichEditor';
 import DocumentComparisonEditorErrorBoundary from '@/components/document-comparison/DocumentComparisonEditorErrorBoundary';
 import { sanitizeEditorHtml } from '@/components/document-comparison/editorSanitization';
@@ -219,15 +220,6 @@ function toFriendlySaveError(error) {
 
 function toFriendlyEvaluateError(error) {
   const code = asText(error?.code).toLowerCase();
-  if (code === 'token_expired') {
-    return 'This shared link has expired.';
-  }
-  if (code === 'token_inactive') {
-    return 'This shared link has been revoked.';
-  }
-  if (code === 'max_uses_reached') {
-    return 'This shared link has reached its usage limit.';
-  }
   if (code === 'reevaluation_not_allowed') {
     return 'This link does not allow evaluation.';
   }
@@ -239,15 +231,6 @@ function toFriendlyEvaluateError(error) {
 
 function toFriendlySendBackError(error) {
   const code = asText(error?.code).toLowerCase();
-  if (code === 'token_expired') {
-    return 'This shared link has expired.';
-  }
-  if (code === 'token_inactive') {
-    return 'This shared link has been revoked.';
-  }
-  if (code === 'max_uses_reached') {
-    return 'This shared link has reached its usage limit.';
-  }
   if (code === 'send_back_not_allowed') {
     return 'This link does not allow sending updates back.';
   }
@@ -293,7 +276,7 @@ function renderAiReport(report) {
   );
 }
 
-async function fetchWorkspaceWithTimeout(token, timeoutMs = 15000) {
+async function fetchWorkspaceWithTimeout(token, timeoutMs = 45000) {
   let timeoutId = null;
 
   try {
@@ -317,12 +300,13 @@ async function fetchWorkspaceWithTimeout(token, timeoutMs = 15000) {
 export default function SharedReport() {
   const params = useParams();
   const location = useLocation();
+  const { isAuthenticated, isLoadingAuth, navigateToLogin } = useAuth();
   const token = useMemo(
     () => getTokenFromRoute(params.token, location.search),
     [params.token, location.search],
   );
 
-  const [uiStep, setUiStep] = useState(null);
+  const [step, setStep] = useState(0);
   const [title, setTitle] = useState('Shared Report');
   const [docAText, setDocAText] = useState('');
   const [docBText, setDocBText] = useState('');
@@ -341,10 +325,10 @@ export default function SharedReport() {
   const [importingSide, setImportingSide] = useState(null);
   const [draftDirty, setDraftDirty] = useState(false);
   const [latestEvaluatedReport, setLatestEvaluatedReport] = useState(null);
+  const [stepHydrated, setStepHydrated] = useState(false);
 
   const docAInputFileRef = useRef(null);
   const docBInputFileRef = useRef(null);
-  const stepDebugEnabled = Boolean(import.meta?.env?.DEV);
 
   const workspaceQuery = useQuery({
     queryKey: ['shared-report-recipient-workspace', token],
@@ -366,35 +350,14 @@ export default function SharedReport() {
   const canEditConfidential = Boolean(share?.permissions?.can_edit_confidential);
   const canReevaluate = Boolean(share?.permissions?.can_reevaluate);
   const canSendBack = Boolean(share?.permissions?.can_send_back);
-  const step = clampStep(uiStep, 0);
-
-  const setUiStepWithReason = useCallback(
-    (nextStep, reason) => {
-      const bounded = clampStep(nextStep, 0);
-      setUiStep((current) => {
-        if (stepDebugEnabled) {
-          console.debug('[shared-report-step]', {
-            reason: reason || 'unknown',
-            from: current,
-            to: bounded,
-          });
-        }
-        if (current === bounded) {
-          return current;
-        }
-        return bounded;
-      });
-    },
-    [stepDebugEnabled],
-  );
 
   const hasActiveDraft = Boolean(recipientDraft && asText(recipientDraft.status).toLowerCase() === 'draft');
   const isSentToProposer =
     Boolean(latestSentRevision && asText(latestSentRevision.status).toLowerCase() === 'sent') && !hasActiveDraft;
 
   useEffect(() => {
-    setUiStep(null);
-    setLatestEvaluatedReport(null);
+    setStep(0);
+    setStepHydrated(false);
   }, [token]);
 
   useEffect(() => {
@@ -430,20 +393,13 @@ export default function SharedReport() {
     setDocBFiles(sharedDocument.files);
     setDocBPreviewSnippet(previewSnippet(sharedDocument.text || htmlToText(sharedDocument.html)));
 
-    setUiStep((current) => {
-      if (current !== null) {
-        return current;
-      }
-      const hydratedStep = clampStep(recipientDraft?.workflow_step, 0);
-      if (stepDebugEnabled) {
-        console.debug('[shared-report-step]', {
-          reason: 'initial_hydration',
-          from: current,
-          to: hydratedStep,
-        });
-      }
-      return hydratedStep;
-    });
+    const hydratedStep = isAuthenticated ? clampStep(recipientDraft?.workflow_step, 0) : 0;
+    if (!stepHydrated) {
+      setStep(hydratedStep);
+      setStepHydrated(true);
+    } else if (!isAuthenticated && step !== 0) {
+      setStep(0);
+    }
     setDraftDirty(false);
   }, [
     workspaceQuery.data,
@@ -451,9 +407,11 @@ export default function SharedReport() {
     comparison?.title,
     defaults.recipient_confidential_payload,
     defaults.shared_payload,
+    isAuthenticated,
     parent?.title,
     recipientDraft,
-    stepDebugEnabled,
+    step,
+    stepHydrated,
   ]);
 
   const buildDraftInput = (stepToSave = step) => ({
@@ -487,19 +445,22 @@ export default function SharedReport() {
       setDraftDirty(false);
       if (!variables?.silent) {
         toast.success('Draft saved');
-        await workspaceQuery.refetch();
       }
+      await workspaceQuery.refetch();
     },
     onError: (error) => {
+      if (Number(error?.status) === 401) {
+        const returnTo = `${location.pathname}${location.search || ''}${location.hash || ''}`;
+        toast.error('Please sign in to save your draft.');
+        navigateToLogin(returnTo);
+        return;
+      }
       toast.error(toFriendlySaveError(error));
     },
   });
 
   const evaluateMutation = useMutation({
     mutationFn: async () => {
-      if (stepDebugEnabled) {
-        console.debug('[shared-report-evaluate]', { phase: 'start', step, draftDirty });
-      }
       if (draftDirty) {
         await saveDraftMutation.mutateAsync({ stepToSave: 2, silent: true });
       }
@@ -507,17 +468,12 @@ export default function SharedReport() {
     },
     onSuccess: async (result) => {
       setLatestEvaluatedReport(result?.evaluation?.public_report || null);
-      setUiStepWithReason(3, 'evaluate_success');
+      setStep(3);
       toast.success('Evaluation complete');
       await workspaceQuery.refetch();
     },
     onError: (error) => {
       toast.error(toFriendlyEvaluateError(error));
-    },
-    onSettled: () => {
-      if (stepDebugEnabled) {
-        console.debug('[shared-report-evaluate]', { phase: 'end' });
-      }
     },
   });
 
@@ -526,7 +482,7 @@ export default function SharedReport() {
     onSuccess: async () => {
       toast.success('Sent to proposer');
       setDraftDirty(false);
-      setUiStepWithReason(3, 'send_back_success');
+      setStep(3);
       await workspaceQuery.refetch();
     },
     onError: (error) => {
@@ -581,8 +537,25 @@ export default function SharedReport() {
     }
   };
 
+  const requireSignInForEditing = () => {
+    if (isAuthenticated) {
+      return true;
+    }
+
+    if (isLoadingAuth) {
+      return false;
+    }
+
+    const returnTo = `${location.pathname}${location.search || ''}${location.hash || ''}`;
+    navigateToLogin(returnTo);
+    return false;
+  };
+
   const jumpStep = async (nextStep) => {
     const bounded = clampStep(nextStep, step);
+    if (bounded > 0 && !requireSignInForEditing()) {
+      return;
+    }
     if (bounded === 2 && step < 2 && draftDirty) {
       try {
         await saveDraftMutation.mutateAsync({ stepToSave: 1, silent: true });
@@ -590,22 +563,12 @@ export default function SharedReport() {
         return;
       }
     }
-    setUiStepWithReason(bounded, 'jump_step');
+    setStep(bounded);
   };
 
   const runEvaluationFromStep2 = async () => {
-    if (evaluateMutation.isPending) {
-      return;
-    }
-    if (stepDebugEnabled) {
-      console.debug('[shared-report-evaluate]', { phase: 'click', fromStep: step });
-    }
-    setUiStepWithReason(3, 'run_evaluation_click');
-    try {
-      await evaluateMutation.mutateAsync();
-    } catch {
-      // Mutation callbacks surface user-facing errors.
-    }
+    setStep(3);
+    await evaluateMutation.mutateAsync();
   };
 
   const progress = (clampStep(step, 0) / TOTAL_WORKFLOW_STEPS) * 100;
@@ -773,15 +736,15 @@ export default function SharedReport() {
             <Card>
               <CardHeader>
                 <CardTitle>Step 0: Overview</CardTitle>
-                <CardDescription>Review overview details and the latest recipient-safe report before editing.</CardDescription>
+                <CardDescription>Review shared baseline information and latest report before editing.</CardDescription>
               </CardHeader>
-              <CardContent className="space-y-4">
+              <CardContent>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                  <div className="rounded-lg border border-slate-200 bg-white p-3">
+                  <div className="rounded-lg border border-slate-200 bg-white p-4">
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">Comparison</p>
                     <p className="text-slate-800">{asText(comparison?.title) || title || 'Shared Report'}</p>
                   </div>
-                  <div className="rounded-lg border border-slate-200 bg-white p-3">
+                  <div className="rounded-lg border border-slate-200 bg-white p-4">
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">Last Updated</p>
                     <p className="text-slate-800">{formatDateTime(comparison?.updated_at || parent?.created_at)}</p>
                   </div>
@@ -795,27 +758,32 @@ export default function SharedReport() {
                 <CardDescription>Read-only baseline shared content from the proposer.</CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="rounded-lg border border-slate-200 bg-white p-4">
-                  <pre className="text-sm whitespace-pre-wrap text-slate-700">
-                    {docBText || '(No shared information available)'}
-                  </pre>
+                <div className="rounded-lg border border-slate-200 p-4 bg-white">
+                  <pre className="text-sm whitespace-pre-wrap text-slate-700">{docBText || '(No shared information available)'}</pre>
                 </div>
               </CardContent>
             </Card>
 
             <Card>
               <CardHeader>
-                <CardTitle>AI Report</CardTitle>
+                <CardTitle>Latest AI Report</CardTitle>
                 <CardDescription>Read-only latest recipient-safe report.</CardDescription>
               </CardHeader>
               <CardContent>{renderAiReport(activeReport)}</CardContent>
             </Card>
 
-            <div className="flex justify-end">
-              <Button onClick={() => jumpStep(1)} className="bg-blue-600 hover:bg-blue-700">
-                Edit Proposal
-                <ArrowRight className="w-4 h-4 ml-2" />
-              </Button>
+            <div className="space-y-3">
+              {!isAuthenticated ? (
+                <Alert className="bg-blue-50 border-blue-200">
+                  <AlertDescription className="text-blue-900">Sign in to edit and respond.</AlertDescription>
+                </Alert>
+              ) : null}
+              <div className="flex justify-end">
+                <Button onClick={() => jumpStep(1)} className="bg-blue-600 hover:bg-blue-700">
+                  Edit Proposal
+                  <ArrowRight className="w-4 h-4 ml-2" />
+                </Button>
+              </div>
             </div>
           </div>
         ) : null}
@@ -868,7 +836,7 @@ export default function SharedReport() {
             </Card>
 
             <div className="flex justify-between gap-2">
-              <Button variant="outline" onClick={() => setUiStepWithReason(0, 'back_to_overview')}>
+              <Button variant="outline" onClick={() => setStep(0)}>
                 <ArrowLeft className="w-4 h-4 mr-2" />
                 Back to Overview
               </Button>
@@ -898,8 +866,8 @@ export default function SharedReport() {
 
         {step === 2 ? (
           <DocumentComparisonEditorErrorBoundary
-            onRetry={() => setUiStepWithReason(2, 'editor_retry')}
-            onBackToStep1={() => setUiStepWithReason(1, 'editor_error_back')}
+            onRetry={() => setStep(2)}
+            onBackToStep1={() => setStep(1)}
           >
             <div className="space-y-6">
               <Card>
@@ -964,7 +932,7 @@ export default function SharedReport() {
               </div>
 
               <div className="flex justify-between pt-2">
-                <Button variant="outline" onClick={() => setUiStepWithReason(1, 'back_to_upload')}>
+                <Button variant="outline" onClick={() => setStep(1)}>
                   <ArrowLeft className="w-4 h-4 mr-2" />
                   Back to Upload
                 </Button>
@@ -1030,7 +998,7 @@ export default function SharedReport() {
                     {isSentToProposer ? 'Sent to proposer' : sendBackMutation.isPending ? 'Sending...' : 'Send back to proposer'}
                   </Button>
 
-                  <Button type="button" variant="outline" onClick={() => setUiStepWithReason(2, 'edit_again')}>
+                  <Button type="button" variant="outline" onClick={() => setStep(2)}>
                     Edit again
                   </Button>
                 </div>

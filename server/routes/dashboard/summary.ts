@@ -1,4 +1,4 @@
-import { eq, ilike, or } from 'drizzle-orm';
+import { and, eq, ilike, inArray, ne, or } from 'drizzle-orm';
 import { ok } from '../../_lib/api-response.js';
 import { requireUser } from '../../_lib/auth.js';
 import { getDb, schema } from '../../_lib/db/client.js';
@@ -22,13 +22,45 @@ export default async function handler(req: any, res: any) {
 
     const db = getDb();
     const currentEmail = normalizeEmail(auth.user.email);
+    const recipientSharedLinks = currentEmail
+      ? await db
+          .select({
+            proposalId: schema.sharedLinks.proposalId,
+          })
+          .from(schema.sharedLinks)
+          .where(
+            and(
+              eq(schema.sharedLinks.mode, 'shared_report'),
+              ilike(schema.sharedLinks.recipientEmail, currentEmail),
+              ne(schema.sharedLinks.userId, auth.user.id),
+            ),
+          )
+      : [];
+    const sharedReceivedProposalIds = Array.from(
+      new Set(
+        recipientSharedLinks
+          .map((row) => String(row.proposalId || '').trim())
+          .filter(Boolean),
+      ),
+    );
+    const sharedReceivedProposalIdSet = new Set(sharedReceivedProposalIds);
+    const sharedRecipientScope = sharedReceivedProposalIds.length > 0
+      ? inArray(schema.proposals.id, sharedReceivedProposalIds)
+      : null;
 
     const whereClause = currentEmail
-      ? or(
-          eq(schema.proposals.userId, auth.user.id),
-          ilike(schema.proposals.partyAEmail, currentEmail),
-          ilike(schema.proposals.partyBEmail, currentEmail),
-        )
+      ? sharedRecipientScope
+        ? or(
+            eq(schema.proposals.userId, auth.user.id),
+            ilike(schema.proposals.partyAEmail, currentEmail),
+            ilike(schema.proposals.partyBEmail, currentEmail),
+            sharedRecipientScope,
+          )
+        : or(
+            eq(schema.proposals.userId, auth.user.id),
+            ilike(schema.proposals.partyAEmail, currentEmail),
+            ilike(schema.proposals.partyBEmail, currentEmail),
+          )
       : eq(schema.proposals.userId, auth.user.id);
 
     const rows = await db
@@ -56,11 +88,11 @@ export default async function handler(req: any, res: any) {
       const isOwner = row.userId === auth.user.id;
       const partyBEmail = normalizeEmail(row.partyBEmail);
       const isReceived = Boolean(
-        isSent &&
-        currentEmail &&
-        partyBEmail &&
-        partyBEmail === currentEmail &&
-        !isOwner,
+        !isOwner &&
+        (
+          (isSent && currentEmail && partyBEmail && partyBEmail === currentEmail) ||
+          sharedReceivedProposalIdSet.has(String(row.id || '').trim())
+        ),
       );
       const isDraft = Boolean(isOwner && !isSent && DRAFT_STATUSES.has(status));
 

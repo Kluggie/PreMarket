@@ -1,5 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { ok } from '../../../_lib/api-response.js';
+import { requireUser } from '../../../_lib/auth.js';
 import { ApiError } from '../../../_lib/errors.js';
 import { readJsonBody } from '../../../_lib/http.js';
 import { newId } from '../../../_lib/ids.js';
@@ -44,6 +45,12 @@ function pickEditorState(body: Record<string, unknown>) {
 export default async function handler(req: any, res: any, tokenParam?: string) {
   await withApiRoute(req, res, SHARED_REPORT_DRAFT_ROUTE, async (context) => {
     ensureMethod(req, ['POST']);
+
+    const auth = await requireUser(req, res);
+    if (!auth.ok) {
+      return;
+    }
+    context.userId = auth.user.id;
 
     const token = getToken(req, tokenParam);
     if (!token) {
