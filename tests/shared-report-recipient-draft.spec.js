@@ -144,4 +144,109 @@ test.describe('Shared Report Recipient Draft', () => {
       timeout: LOAD_TIMEOUT_MS,
     });
   });
+
+  test('Run Evaluation transitions to Step 3 once and workspace refetch does not bounce back to Step 2', async ({
+    page,
+    request,
+  }) => {
+    const ownerId = uniqueId('recipient_eval_owner');
+    const ownerCookie = makeSessionCookie({
+      sub: ownerId,
+      email: `${ownerId}@example.com`,
+      name: 'Shared Owner',
+    });
+
+    const comparison = await createComparison(request, ownerCookie, {
+      title: `Recipient Evaluate Flow ${uniqueId('title')}`,
+      docAText: 'Proposer confidential baseline for evaluate-step transition checks.',
+      docBText: `Shared baseline for evaluate transition checks ${uniqueId('shared')}.`,
+    });
+    const sharedLink = await createSharedReportLink(
+      request,
+      ownerCookie,
+      comparison.id,
+      'recipient@example.com',
+    );
+    const token = sharedLink.token;
+    expect(token).toBeTruthy();
+
+    const encodedToken = encodeURIComponent(token);
+    const workspaceUrlFragment = `/api/shared-report/${encodedToken}/workspace`;
+    const evaluateUrlFragment = `/api/shared-report/${encodedToken}/evaluate`;
+
+    await page.goto(`${BASE_URL}/shared-report/${encodedToken}`, { waitUntil: 'domcontentloaded' });
+    await page.waitForResponse(
+      (response) =>
+        response.url().includes(workspaceUrlFragment) &&
+        response.request().method() === 'GET' &&
+        response.status() === 200,
+      { timeout: LOAD_TIMEOUT_MS },
+    );
+
+    await page.getByRole('button', { name: 'Edit Proposal' }).click();
+    await expect(page.getByText('Step 1: Upload and Import')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+    await page.getByRole('button', { name: 'Continue to Editor' }).click();
+    await expect(page.getByText('Step 2: Editor')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+
+    let evaluateCallCount = 0;
+    let workspaceRefetchCountAfterEvaluate = 0;
+    let evaluateStarted = false;
+
+    page.on('response', (response) => {
+      if (
+        evaluateStarted &&
+        response.url().includes(workspaceUrlFragment) &&
+        response.request().method() === 'GET'
+      ) {
+        workspaceRefetchCountAfterEvaluate += 1;
+      }
+    });
+
+    await page.route(`**${evaluateUrlFragment}`, async (route) => {
+      evaluateCallCount += 1;
+      evaluateStarted = true;
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          evaluation_id: `eval_${uniqueId('mock')}`,
+          evaluation: {
+            status: 'success',
+            public_report: {
+              recommendation: 'review',
+              executive_summary: 'Mock recipient-safe evaluation result.',
+              sections: [
+                {
+                  heading: 'Summary',
+                  bullets: ['Mock evaluation completed for transition test.'],
+                },
+              ],
+            },
+            evaluation_result: {},
+          },
+        }),
+      });
+    });
+
+    await page.getByRole('button', { name: 'Run Evaluation' }).click();
+
+    await expect(page.getByText('Step 3: Evaluation')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+    await expect(page.getByRole('button', { name: 'Evaluating...' })).toBeDisabled({
+      timeout: LOAD_TIMEOUT_MS,
+    });
+    await expect(page.getByRole('button', { name: 'Re-run Evaluation' })).toBeEnabled({
+      timeout: LOAD_TIMEOUT_MS,
+    });
+
+    await expect.poll(() => evaluateCallCount, { timeout: LOAD_TIMEOUT_MS }).toBe(1);
+    await expect.poll(() => workspaceRefetchCountAfterEvaluate, { timeout: LOAD_TIMEOUT_MS }).toBeGreaterThan(0);
+
+    await expect(page.getByText('Step 3: Evaluation')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+    await expect(page.getByText('Step 2: Editor')).toHaveCount(0);
+    await expect(page.getByText('Mock recipient-safe evaluation result.')).toBeVisible({
+      timeout: LOAD_TIMEOUT_MS,
+    });
+  });
 });
