@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "prebuild": "npm run guard:no-legacy",
+    "prebuild": "npm run guard:no-legacy && npm run guard:db-safety",
     "build": "vite build",
     "lint": "eslint . --quiet",
     "lint:fix": "eslint . --fix",
@@ -19,8 +19,10 @@
     "test:api:integration": "tsx --test --test-concurrency=1 tests/api/*.test.mjs",
     "guard:no-legacy": "node scripts/guard-no-legacy.mjs",
     "guard:no-base44": "node scripts/guard-no-base44.mjs",
+    "guard:db-safety": "node scripts/guard-db-safety.mjs",
     "check:no-legacy": "npm run guard:no-legacy",
-    "check:no-base44": "npm run guard:no-base44"
+    "check:no-base44": "npm run guard:no-base44",
+    "check:db-safety": "npm run guard:db-safety"
   },
   "dependencies": {
     "@hello-pangea/dnd": "^17.0.0",

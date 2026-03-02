@@ -140,13 +140,40 @@ export function hasDatabaseUrl() {
   }
 }
 
+/**
+ * Returns the canonical DATABASE_URL for all database operations.
+ * CRITICAL: This function MUST fail fast in production if DATABASE_URL is missing.
+ * This prevents silent fallback to ephemeral storage which causes data loss.
+ */
 export function getDatabaseUrl() {
   const databaseUrl = (process.env.DATABASE_URL || '').trim();
+  const vercelEnv = process.env.VERCEL_ENV || process.env.NODE_ENV || 'development';
+  const isProduction = vercelEnv === 'production';
+
   if (!hasDatabaseUrl()) {
-    throw new Error('Missing or invalid required environment variable: DATABASE_URL');
+    const errorMessage = isProduction
+      ? 'CRITICAL: DATABASE_URL is missing or invalid in production. ' +
+        'This will cause data loss. Set DATABASE_URL in Vercel Environment Variables.'
+      : 'Missing or invalid required environment variable: DATABASE_URL';
+
+    // Log the failure for observability
+    console.error(
+      JSON.stringify({
+        level: 'error',
+        route: 'db_client',
+        message: errorMessage,
+        vercelEnv,
+        envPresence: getDatabaseEnvPresence(),
+      }),
+    );
+
+    throw new Error(errorMessage);
   }
+
   return databaseUrl;
 }
+
+let dbInitLogged = false;
 
 export function getDb() {
   const globalKey = '__pm_drizzle_db';
@@ -156,6 +183,24 @@ export function getDb() {
 
   if (!globalStore[globalKey]) {
     globalStore[globalKey] = createDbClient(databaseUrl);
+
+    // Log database identity on first connection for deploy debugging
+    if (!dbInitLogged) {
+      dbInitLogged = true;
+      const identity = getDatabaseIdentitySnapshot();
+      console.log(
+        JSON.stringify({
+          level: 'info',
+          route: 'db_client',
+          message: 'Database client initialized',
+          vercelEnv: identity.vercelEnv,
+          gitCommit: (process.env.VERCEL_GIT_COMMIT_SHA || '').slice(0, 8) || null,
+          dbHost: identity.dbHost,
+          dbName: identity.dbName,
+          dbUrlHash: identity.dbUrlHash,
+        }),
+      );
+    }
   }
 
   return globalStore[globalKey];

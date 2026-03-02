@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { createPageUrl } from '@/utils';
+import { useAuth } from '@/lib/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -15,6 +16,7 @@ import {
   Trophy,
   XCircle,
   ChevronRight,
+  AlertCircle,
 } from 'lucide-react';
 import { proposalsClient } from '@/api/proposalsClient';
 import { dashboardClient } from '@/api/dashboardClient';
@@ -62,36 +64,74 @@ function ProposalCard({ proposal, onOpen }) {
   );
 }
 
+function isAuthError(error) {
+  return Number(error?.status) === 401 || error?.code === 'unauthorized';
+}
+
+function ProposalListError({ error, onRetry, onLogin }) {
+  if (isAuthError(error)) {
+    return (
+      <Card className="border-dashed border-2 border-amber-200 bg-amber-50">
+        <CardContent className="py-10 text-center space-y-3">
+          <AlertCircle className="w-8 h-8 text-amber-500 mx-auto" />
+          <p className="text-amber-800 font-medium">Session expired</p>
+          <p className="text-sm text-amber-700">Your session has expired or is invalid. Please sign in again to see your proposals.</p>
+          <Button variant="outline" size="sm" onClick={onLogin} className="mt-2">
+            Sign in again
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+  return (
+    <Card className="border-dashed border-2 border-red-200 bg-red-50">
+      <CardContent className="py-10 text-center space-y-3">
+        <AlertCircle className="w-8 h-8 text-red-500 mx-auto" />
+        <p className="text-red-700 font-medium">Failed to load proposals</p>
+        <p className="text-sm text-red-600">{error?.message || 'An unexpected error occurred.'}</p>
+        <Button variant="outline" size="sm" onClick={onRetry} className="mt-2">
+          Retry
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function Dashboard() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('sent');
+  const { navigateToLogin } = useAuth();
 
   const { data: summary, isLoading: summaryLoading } = useQuery({
     queryKey: ['dashboard-summary'],
     queryFn: () => dashboardClient.getSummary(),
   });
 
-  const { data: sentProposals = [], isLoading: loadingSent } = useQuery({
+  const { data: sentProposals, isLoading: loadingSent, isError: sentError, error: sentErrorObj, refetch: refetchSent } = useQuery({
     queryKey: ['dashboard-proposals', 'sent'],
     queryFn: () => proposalsClient.list({ tab: 'sent', limit: 10 }),
   });
 
-  const { data: receivedProposals = [], isLoading: loadingReceived } = useQuery({
+  const { data: receivedProposals, isLoading: loadingReceived, isError: receivedError, error: receivedErrorObj, refetch: refetchReceived } = useQuery({
     queryKey: ['dashboard-proposals', 'received'],
     queryFn: () => proposalsClient.list({ tab: 'received', limit: 10 }),
   });
+
+  // Use explicit empty arrays only if no error — never default to [] when isError
+  const safeSentProposals = sentError ? [] : (sentProposals || []);
+  const safeReceivedProposals = receivedError ? [] : (receivedProposals || []);
 
   const stats = useMemo(
     () => [
       {
         label: 'Proposals Sent',
-        value: summary?.sentCount ?? sentProposals.length,
+        value: summary?.sentCount ?? safeSentProposals.length,
         icon: Send,
         color: 'from-blue-500 to-blue-600',
       },
       {
         label: 'Proposals Received',
-        value: summary?.receivedCount ?? receivedProposals.length,
+        value: summary?.receivedCount ?? safeReceivedProposals.length,
         icon: Inbox,
         color: 'from-indigo-500 to-indigo-600',
       },
@@ -114,7 +154,7 @@ export default function Dashboard() {
         color: 'from-green-500 to-green-600',
       },
     ],
-    [summary, sentProposals.length, receivedProposals.length],
+    [summary, safeSentProposals.length, safeReceivedProposals.length],
   );
 
   const handleOpenProposal = (proposal) => {
@@ -197,24 +237,30 @@ export default function Dashboard() {
           <TabsList className="bg-white border border-slate-200 p-1">
             <TabsTrigger value="sent" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
               <Send className="w-4 h-4 mr-2" />
-              Sent ({sentProposals.length})
+              Sent ({sentError ? '?' : safeSentProposals.length})
             </TabsTrigger>
             <TabsTrigger value="received" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
               <Inbox className="w-4 h-4 mr-2" />
-              Received ({receivedProposals.length})
+              Received ({receivedError ? '?' : safeReceivedProposals.length})
             </TabsTrigger>
           </TabsList>
 
           <TabsContent value="sent">
             {loadingSent ? (
               <div className="text-sm text-slate-500">Loading sent proposals...</div>
-            ) : sentProposals.length === 0 ? (
+            ) : sentError ? (
+              <ProposalListError
+                error={sentErrorObj}
+                onRetry={refetchSent}
+                onLogin={() => navigateToLogin()}
+              />
+            ) : safeSentProposals.length === 0 ? (
               <Card className="border-dashed border-2 border-slate-200">
                 <CardContent className="py-12 text-center text-slate-500">No sent proposals yet.</CardContent>
               </Card>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {sentProposals.map((proposal) => (
+                {safeSentProposals.map((proposal) => (
                   <ProposalCard key={proposal.id} proposal={proposal} onOpen={handleOpenProposal} />
                 ))}
               </div>
@@ -224,13 +270,19 @@ export default function Dashboard() {
           <TabsContent value="received">
             {loadingReceived ? (
               <div className="text-sm text-slate-500">Loading received proposals...</div>
-            ) : receivedProposals.length === 0 ? (
+            ) : receivedError ? (
+              <ProposalListError
+                error={receivedErrorObj}
+                onRetry={refetchReceived}
+                onLogin={() => navigateToLogin()}
+              />
+            ) : safeReceivedProposals.length === 0 ? (
               <Card className="border-dashed border-2 border-slate-200">
                 <CardContent className="py-12 text-center text-slate-500">No received proposals yet.</CardContent>
               </Card>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {receivedProposals.map((proposal) => (
+                {safeReceivedProposals.map((proposal) => (
                   <ProposalCard key={proposal.id} proposal={proposal} onOpen={handleOpenProposal} />
                 ))}
               </div>

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { createPageUrl } from '@/utils';
+import { useAuth } from '@/lib/AuthContext';
 import { proposalsClient } from '@/api/proposalsClient';
 import { dashboardClient } from '@/api/dashboardClient';
 import { Button } from '@/components/ui/button';
@@ -21,6 +22,7 @@ import {
   Users,
   Eye,
   AlertTriangle,
+  AlertCircle,
   CheckCircle2,
   BarChart3,
 } from 'lucide-react';
@@ -123,6 +125,7 @@ function ProposalRow({ proposal, onOpen }) {
 export default function Proposals() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { navigateToLogin } = useAuth();
   const [activeTab, setActiveTab] = useState(() => {
     const params = new URLSearchParams(location.search || '');
     return normalizeTabValue(params.get('tab'));
@@ -327,15 +330,31 @@ export default function Proposals() {
                   <div className="py-12 text-center text-slate-500">Loading proposals...</div>
                 ) : isError ? (
                   <div className="py-16 px-6 text-center space-y-3">
-                    <p className="text-red-600 font-medium">Failed to load proposals</p>
-                    <p className="text-sm text-slate-500">
-                      {error?.message === 'proposals_query_failed'
-                        ? 'Database connection error. Please refresh or contact support if this persists.'
-                        : error?.message || 'An unexpected error occurred.'}
-                    </p>
-                    <Button variant="outline" onClick={() => refetch()}>
-                      Retry
-                    </Button>
+                    {(Number(error?.status) === 401 || error?.code === 'unauthorized') ? (
+                      <>
+                        <AlertCircle className="w-8 h-8 text-amber-500 mx-auto" />
+                        <p className="text-amber-800 font-medium">Session expired</p>
+                        <p className="text-sm text-slate-500">
+                          Your session has expired or is invalid. Please sign in again to see your proposals.
+                        </p>
+                        <Button variant="outline" onClick={() => navigateToLogin()}>
+                          Sign in again
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        <AlertCircle className="w-8 h-8 text-red-500 mx-auto" />
+                        <p className="text-red-600 font-medium">Failed to load proposals</p>
+                        <p className="text-sm text-slate-500">
+                          {error?.message === 'proposals_query_failed'
+                            ? 'Database connection error. Please refresh or contact support if this persists.'
+                            : error?.message || 'An unexpected error occurred.'}
+                        </p>
+                        <Button variant="outline" onClick={() => refetch()}>
+                          Retry
+                        </Button>
+                      </>
+                    )}
                   </div>
                 ) : proposals.length === 0 ? (
                   <div className="py-16 px-6 text-center space-y-3">
