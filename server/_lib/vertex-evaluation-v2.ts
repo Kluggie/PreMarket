@@ -4,6 +4,7 @@ import { getVertexConfig, getVertexNotConfiguredError, type VertexServiceAccount
 
 const VERTEX_TIMEOUT_MS = 90_000;
 const MAX_ATTEMPTS = 2;
+const RETRY_BASE_MS = 450;
 const MAX_SHARED_CHARS = 12_000;
 const MAX_CONFIDENTIAL_CHARS = 12_000;
 const MAX_CHUNKS_PER_SOURCE = 30;
@@ -795,6 +796,43 @@ function toRetryableForKind(kind: ParseErrorKind) {
   return kind === 'empty_output' || kind === 'truncated_output';
 }
 
+function waitMs(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
+}
+
+function getRetryDelayMs(attemptNumber: number) {
+  const base = RETRY_BASE_MS * Math.max(1, Math.pow(2, Math.max(0, attemptNumber - 1)));
+  const jitter = Math.floor(Math.random() * 251);
+  return Math.min(2200, base + jitter);
+}
+
+function isTransientVertexHttpFailure(params: {
+  code: string;
+  status: number;
+  message: string;
+}) {
+  const { code, status } = params;
+  const message = asLower(params.message);
+  if (status === 429) return true;
+  if (status >= 500 && status <= 599) return true;
+  if (
+    ['econnreset', 'econnrefused', 'enotfound', 'ehostunreach', 'etimedout', 'fetch_failed'].includes(code)
+  ) {
+    return true;
+  }
+  if (!status) {
+    if (
+      message.includes('fetch failed') ||
+      message.includes('network') ||
+      message.includes('temporarily unavailable') ||
+      message.includes('upstream')
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export async function evaluateWithVertexV2(
   input: VertexEvaluationV2Request,
 ): Promise<VertexEvaluationV2Outcome> {
@@ -832,21 +870,15 @@ export async function evaluateWithVertexV2(
       });
     } catch (error: any) {
       const code = asLower(error?.code);
-      const status = Number(error?.statusCode || error?.status || error?.extra?.upstreamStatus || 0);
-      if (code === 'vertex_timeout') {
-        return buildFailure({
-          kind: 'vertex_timeout',
-          requestId,
-          finishReason: null,
-          rawTextLength: 0,
-          retryable: false,
-          attemptCount: attempt,
-          details: {
-            status: status || 504,
-            code: code || 'vertex_timeout',
-          },
-        });
-      }
+      const status = Number(
+        error?.statusCode || error?.status || error?.extra?.upstreamStatus || error?.extra?.status || 0,
+      );
+      const message =
+        asText(error?.extra?.upstreamMessage) ||
+        asText(error?.extra?.message) ||
+        asText(error?.message) ||
+        'Vertex request failed';
+      const isTimeout = code === 'vertex_timeout';
       if (code === 'not_configured') {
         return buildFailure({
           kind: 'vertex_http_error',
@@ -861,17 +893,32 @@ export async function evaluateWithVertexV2(
           },
         });
       }
+
+      const retryable = isTimeout
+        ? true
+        : isTransientVertexHttpFailure({
+            code,
+            status,
+            message,
+          });
+      const kind: ParseErrorKind = isTimeout ? 'vertex_timeout' : 'vertex_http_error';
+
+      if (retryable && attempt < MAX_ATTEMPTS) {
+        await waitMs(getRetryDelayMs(attempt));
+        continue;
+      }
+
       return buildFailure({
-        kind: 'vertex_http_error',
+        kind,
         requestId,
         finishReason: null,
         rawTextLength: 0,
-        retryable: false,
+        retryable,
         attemptCount: attempt,
         details: {
-          status: status || 502,
-          code: code || 'vertex_http_error',
-          message: asText(error?.message) || 'Vertex request failed',
+          status: status || (isTimeout ? 504 : 502),
+          code: code || (isTimeout ? 'vertex_timeout' : 'vertex_http_error'),
+          message,
         },
       });
     }

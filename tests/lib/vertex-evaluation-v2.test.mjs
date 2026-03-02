@@ -187,6 +187,80 @@ test('v2 retries once then fails with truncated_output and retryable=true', asyn
   }
 });
 
+test('v2 retries transient vertex_http_error once and then succeeds', async () => {
+  const transientError = Object.assign(new Error('upstream 502'), {
+    code: 'vertex_request_failed',
+    statusCode: 502,
+    extra: {
+      upstreamStatus: 502,
+      upstreamMessage: 'Bad gateway',
+    },
+  });
+
+  const cleanup = setVertexV2MockSequence([
+    {
+      throw: transientError,
+    },
+    {
+      response: {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(validPayload({ fit_level: 'medium', confidence_0_1: 0.61 })),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+  ]);
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Shared text contains enough detail for retry resilience validation.',
+      confidentialText: 'Confidential text contains enough detail for retry resilience validation.',
+      requestId: 'req-http-retry-success-1',
+    });
+    assert.equal(outcome.ok, true);
+    if (!outcome.ok) return;
+    assert.equal(outcome.attempt_count, 2);
+    assert.equal(outcome.data.fit_level, 'medium');
+  } finally {
+    cleanup();
+  }
+});
+
+test('v2 fails after retry on persistent vertex_http_error and marks retryable=true', async () => {
+  const transientError = Object.assign(new Error('upstream 502'), {
+    code: 'vertex_request_failed',
+    statusCode: 502,
+    extra: {
+      upstreamStatus: 502,
+      upstreamMessage: 'Bad gateway',
+    },
+  });
+
+  const cleanup = setVertexV2MockSequence([
+    {
+      throw: transientError,
+    },
+    {
+      throw: transientError,
+    },
+  ]);
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Shared text contains enough detail for persistent upstream failure checks.',
+      confidentialText: 'Confidential text contains enough detail for persistent upstream failure checks.',
+      requestId: 'req-http-retry-fail-1',
+    });
+    assert.equal(outcome.ok, false);
+    if (outcome.ok) return;
+    assert.equal(outcome.attempt_count, 2);
+    assert.equal(outcome.error.parse_error_kind, 'vertex_http_error');
+    assert.equal(outcome.error.retryable, true);
+  } finally {
+    cleanup();
+  }
+});
+
 test('v2 fails on json_parse_error for non-JSON content', async () => {
   const cleanup = setVertexV2MockSequence([
     {

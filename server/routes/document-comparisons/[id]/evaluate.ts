@@ -1163,7 +1163,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       } catch (error: any) {
         const attemptCompletedAt = new Date();
         const classified = classifyEvaluationFailure(error);
-        const retryScheduled = !useV2 && classified.retryable && attemptCount < MAX_EVALUATION_ATTEMPTS;
+        const retryScheduled = classified.retryable && attemptCount < MAX_EVALUATION_ATTEMPTS;
         const diagnostics = sanitizeFailureDiagnostics(error?.extra);
         console.error(
           JSON.stringify({
