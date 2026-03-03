@@ -51,10 +51,13 @@ export async function resetTables() {
   const db = getDb();
   await db.execute(
     sql`truncate table
+      audit_events,
       audit_logs,
+      auth_sessions,
       memberships,
       organizations,
       user_profiles,
+      user_mfa,
       contact_requests,
       beta_applications,
       notifications,

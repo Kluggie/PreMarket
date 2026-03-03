@@ -217,6 +217,13 @@ export default async function handler(req: any, res: any) {
       envPresence: identity.envPresence,
       alternativeDbUrlHashes: identity.alternativeDbUrlHashes,
       dbSchemaVersion: schemaVersion,
+      // Legacy + structured persistence diagnostics for tests/ops dashboards.
+      dataCounts: {
+        proposalCountTotal,
+        proposalCountForUserId,
+        proposalCountSent,
+        proposalCountReceived,
+      },
       // Persistence diagnostics (no raw emails/IDs returned)
       proposalCountTotal,
       proposalCountForUserId,

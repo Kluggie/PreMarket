@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, ilike, or } from 'drizzle-orm';
 import { ok } from '../../_lib/api-response.js';
+import { logAuditEventBestEffort } from '../../_lib/audit-events.js';
 import { assertProposalOwnership, requireUser } from '../../_lib/auth.js';
 import { getDatabaseIdentitySnapshot, getDb, schema } from '../../_lib/db/client.js';
 import { ApiError } from '../../_lib/errors.js';
@@ -375,6 +376,41 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         } catch {
           // Best-effort notifications should not block status updates.
         }
+      }
+
+      if (nextStatus === 'revealed') {
+        await logAuditEventBestEffort({
+          eventType: 'share.reveal.requested',
+          userId: auth.user.id,
+          req,
+          metadata: {
+            proposal_id: updated.id,
+            previous_status: previousStatus || null,
+            next_status: nextStatus,
+          },
+        });
+      } else if (nextStatus === 'mutual_interest') {
+        await logAuditEventBestEffort({
+          eventType: 'share.reveal.approved',
+          userId: auth.user.id,
+          req,
+          metadata: {
+            proposal_id: updated.id,
+            previous_status: previousStatus || null,
+            next_status: nextStatus,
+          },
+        });
+      } else if (nextStatus === 'lost' && (previousStatus === 'revealed' || previousStatus === 'under_verification')) {
+        await logAuditEventBestEffort({
+          eventType: 'share.reveal.denied',
+          userId: auth.user.id,
+          req,
+          metadata: {
+            proposal_id: updated.id,
+            previous_status: previousStatus || null,
+            next_status: nextStatus,
+          },
+        });
       }
     }
 

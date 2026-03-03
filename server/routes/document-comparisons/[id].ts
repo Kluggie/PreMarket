@@ -176,7 +176,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
         context.userId = auth.user.id;
       }
     } catch (error: any) {
-      if (error instanceof ApiError && error.code === 'unauthorized') {
+      if (error instanceof ApiError && (error.code === 'unauthorized' || error.code === 'mfa_required')) {
         auth = null;
       } else {
         throw error;

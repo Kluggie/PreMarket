@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, sql } from 'drizzle-orm';
 import { ok } from '../../_lib/api-response.js';
+import { logAuditEventBestEffort } from '../../_lib/audit-events.js';
 import { getDb, schema } from '../../_lib/db/client.js';
 import { toCanonicalAppUrl } from '../../_lib/env.js';
 import { ApiError } from '../../_lib/errors.js';
@@ -181,6 +182,17 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
           title: comparison.title || proposal?.title || 'Document Comparison',
         })
       : null;
+
+    await logAuditEventBestEffort({
+      eventType: 'share.link.accessed',
+      userId: link.userId,
+      req,
+      metadata: {
+        share_id: link.id,
+        proposal_id: proposal?.id || link.proposalId || null,
+        consumed: shouldConsume,
+      },
+    });
 
     ok(res, 200, {
       sharedLink: mapLink(nextLink, proposal || null),

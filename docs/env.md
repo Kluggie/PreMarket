@@ -6,9 +6,11 @@ Set these in Vercel for **Development**, **Preview**, and **Production**:
 
 - `APP_BASE_URL`
 - `SESSION_SECRET`
+- `SESSION_IP_SALT`
 - `GOOGLE_CLIENT_ID`
 - `VITE_GOOGLE_CLIENT_ID`
 - `DATABASE_URL`
+- `MFA_ENCRYPTION_KEY`
 - `RESEND_API_KEY`
 - `RESEND_FROM_EMAIL`
 - `EMAIL_MODE` (`contact_only` | `transactional` | `disabled`; default `contact_only`)

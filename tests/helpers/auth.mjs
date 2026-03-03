@@ -12,7 +12,14 @@ function sign(value, secret) {
   return createHmac('sha256', secret).update(value).digest('base64url');
 }
 
-export function makeSessionCookie({ sub, email, name = 'Test User' }) {
+export function makeSessionCookie({
+  sub,
+  email,
+  name = 'Test User',
+  sid = undefined,
+  mfa_required = false,
+  mfa_passed = true,
+} = {}) {
   const secret = process.env.SESSION_SECRET;
   if (!secret) {
     throw new Error('SESSION_SECRET is required for tests');
@@ -23,6 +30,9 @@ export function makeSessionCookie({ sub, email, name = 'Test User' }) {
     sub,
     email,
     name,
+    sid,
+    mfa_required: Boolean(mfa_required),
+    mfa_passed: Boolean(mfa_required ? mfa_passed : true),
     iat: issuedAt,
     exp: issuedAt + 60 * 60,
   };
@@ -43,5 +53,9 @@ export function ensureTestEnv() {
 
   if (!process.env.GOOGLE_CLIENT_ID) {
     process.env.GOOGLE_CLIENT_ID = 'test-client-id';
+  }
+
+  if (!process.env.MFA_ENCRYPTION_KEY) {
+    process.env.MFA_ENCRYPTION_KEY = 'test-mfa-encryption-key-change-me';
   }
 }

@@ -137,6 +137,13 @@ if (!hasDatabaseUrl()) {
       partyBEmail: 'recipient@example.com',
     });
 
+    await createProposal(ownerCookie, {
+      title: 'Under Review Unemailed',
+      status: 'under_verification',
+      sentAt: null,
+      partyBEmail: 'recipient@example.com',
+    });
+
     const emailed = await createProposal(ownerCookie, {
       title: 'Actually Emailed',
       status: 'sent',
@@ -157,7 +164,8 @@ if (!hasDatabaseUrl()) {
 
     const draftRows = await listProposals(ownerCookie, { tab: 'drafts' });
     assert.equal(draftRows.some((row) => row.title === 'Ready Draft'), true);
-    assert.equal(draftRows.some((row) => row.title === 'Status Sent But Unemailed'), false);
+    assert.equal(draftRows.some((row) => row.title === 'Status Sent But Unemailed'), true);
+    assert.equal(draftRows.some((row) => row.title === 'Under Review Unemailed'), true);
 
     const receivedRows = await listProposals(ownerCookie, { tab: 'received' });
     assert.equal(receivedRows.some((row) => row.title === 'Inbound Emailed'), true);

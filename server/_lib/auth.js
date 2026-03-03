@@ -1,7 +1,13 @@
 import { and, eq } from 'drizzle-orm';
+import { createAuthSession, getAuthSessionForUser, maybeTouchAuthSessionLastSeen } from './auth-sessions.js';
 import { ApiError } from './errors.js';
-import { enforceCanonicalRedirect, getSessionConfig, respondIfSessionEnvMissing } from './env.js';
-import { getSessionFromRequest } from './session.js';
+import {
+  enforceCanonicalRedirect,
+  getSessionConfig,
+  respondIfSessionEnvMissing,
+  shouldUseSecureCookies,
+} from './env.js';
+import { createSessionToken, getSessionFromRequest, setSessionCookie } from './session.js';
 import { getDb, hasDatabaseUrl, schema } from './db/client.js';
 
 function mapDatabaseUser(userRow, billingRow) {
@@ -23,9 +29,20 @@ function mapDatabaseUser(userRow, billingRow) {
   };
 }
 
-async function upsertAuthUserFromSession(session) {
+export async function upsertAuthUserFromSession(session, options = {}) {
   const db = getDb();
   const now = new Date();
+  const updateLastLogin = options.updateLastLogin !== false;
+
+  const upsertValues = {
+    email: session.email,
+    fullName: session.name || null,
+    picture: session.picture || null,
+    updatedAt: now,
+  };
+  if (updateLastLogin) {
+    upsertValues.lastLoginAt = now;
+  }
 
   await db
     .insert(schema.users)
@@ -34,18 +51,12 @@ async function upsertAuthUserFromSession(session) {
       email: session.email,
       fullName: session.name || null,
       picture: session.picture || null,
-      lastLoginAt: now,
+      lastLoginAt: updateLastLogin ? now : null,
       updatedAt: now,
     })
     .onConflictDoUpdate({
       target: schema.users.id,
-      set: {
-        email: session.email,
-        fullName: session.name || null,
-        picture: session.picture || null,
-        lastLoginAt: now,
-        updatedAt: now,
-      },
+      set: upsertValues,
     });
 
   const [joinedRow] = await db
@@ -68,7 +79,55 @@ async function upsertAuthUserFromSession(session) {
   return mapDatabaseUser(joinedRow.user, joinedRow.billing || null);
 }
 
-export async function requireUser(req, res) {
+function toSessionIdentity(session) {
+  return {
+    sub: session.sub,
+    email: session.email,
+    name: session.name,
+    picture: session.picture,
+    hd: session.hd,
+  };
+}
+
+async function ensurePersistedSession(req, res, config, session) {
+  let sessionId = typeof session.sid === 'string' ? session.sid.trim() : '';
+
+  if (!sessionId) {
+    // auth_sessions.user_id has an FK to users.id, so ensure a user row exists
+    // before creating a persisted session for first-request cookies.
+    await upsertAuthUserFromSession(session, { updateLastLogin: false });
+
+    const created = await createAuthSession({
+      userId: session.sub,
+      req,
+      mfaPassed: Boolean(session.mfa_passed),
+    });
+
+    if (!created?.id) {
+      throw new ApiError(500, 'session_persist_failed', 'Unable to initialize session');
+    }
+
+    sessionId = created.id;
+    session.sid = sessionId;
+
+    const rotatedToken = createSessionToken(toSessionIdentity(session), config.sessionSecret, undefined, {
+      sessionId,
+      mfaRequired: Boolean(session.mfa_required),
+      mfaPassed: Boolean(session.mfa_passed),
+    });
+    setSessionCookie(res, rotatedToken, shouldUseSecureCookies(req, config.appBaseUrl));
+    return created;
+  }
+
+  const existing = await getAuthSessionForUser(sessionId, session.sub);
+  if (!existing || existing.revokedAt) {
+    throw new ApiError(401, 'unauthorized', 'Authentication required');
+  }
+
+  return maybeTouchAuthSessionLastSeen(existing);
+}
+
+export async function requireUser(req, res, options = {}) {
   if (respondIfSessionEnvMissing(res)) {
     return { ok: false, handled: true };
   }
@@ -89,11 +148,24 @@ export async function requireUser(req, res) {
     throw new ApiError(401, 'unauthorized', 'Authentication required');
   }
 
+  const persistedSession = await ensurePersistedSession(req, res, config, session);
+
+  const mfaRequired = Boolean(session.mfa_required);
+  const mfaPassed = mfaRequired ? Boolean(session.mfa_passed) : true;
+  const allowPendingMfa = Boolean(options.allowPendingMfa);
+
+  if (mfaRequired && !mfaPassed && !allowPendingMfa) {
+    throw new ApiError(401, 'mfa_required', 'Two-factor authentication required');
+  }
+
   const user = await upsertAuthUserFromSession(session);
   return {
     ok: true,
     user,
     session,
+    sessionId: session.sid || null,
+    sessionRecord: persistedSession,
+    mfaPending: mfaRequired && !mfaPassed,
     config,
   };
 }

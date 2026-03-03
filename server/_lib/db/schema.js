@@ -167,6 +167,66 @@ export const auditLogs = pgTable(
   }),
 );
 
+export const authSessions = pgTable(
+  'auth_sessions',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    ipHash: text('ip_hash'),
+    userAgent: text('user_agent'),
+    deviceLabel: text('device_label'),
+    mfaPassedAt: timestamp('mfa_passed_at', { withTimezone: true }),
+  },
+  (table) => ({
+    authSessionsUserIdx: index('auth_sessions_user_idx').on(table.userId, table.lastSeenAt),
+    authSessionsActiveIdx: index('auth_sessions_active_idx').on(table.userId, table.revokedAt, table.lastSeenAt),
+    authSessionsRevokedIdx: index('auth_sessions_revoked_idx').on(table.revokedAt),
+  }),
+);
+
+export const auditEvents = pgTable(
+  'audit_events',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id').references(() => users.id, { onDelete: 'set null' }),
+    orgId: text('org_id').references(() => organizations.id, { onDelete: 'set null' }),
+    eventType: text('event_type').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    ipHash: text('ip_hash'),
+    userAgent: text('user_agent'),
+    metadata: jsonb('metadata').notNull().default(sql`'{}'::jsonb`),
+  },
+  (table) => ({
+    auditEventsUserIdx: index('audit_events_user_idx').on(table.userId, table.createdAt),
+    auditEventsOrgIdx: index('audit_events_org_idx').on(table.orgId, table.createdAt),
+    auditEventsTypeIdx: index('audit_events_type_idx').on(table.eventType, table.createdAt),
+  }),
+);
+
+export const userMfa = pgTable(
+  'user_mfa',
+  {
+    userId: text('user_id')
+      .primaryKey()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    totpSecretEncrypted: text('totp_secret_encrypted'),
+    enabledAt: timestamp('enabled_at', { withTimezone: true }),
+    backupCodesHashed: jsonb('backup_codes_hashed').notNull().default(sql`'[]'::jsonb`),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    userMfaEnabledIdx: index('user_mfa_enabled_idx').on(table.enabledAt),
+    userMfaUpdatedIdx: index('user_mfa_updated_idx').on(table.updatedAt),
+  }),
+);
+
 export const proposals = pgTable(
   'proposals',
   {

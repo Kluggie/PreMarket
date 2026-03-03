@@ -62,6 +62,16 @@ import accountEmailConfigStatusHandler from '../server/routes/account/email-conf
 import accountVerificationStatusHandler from '../server/routes/account/verification/status.js';
 import accountVerificationSendHandler from '../server/routes/account/verification/send.js';
 import accountVerificationConfirmHandler from '../server/routes/account/verification/confirm.js';
+import securitySessionsHandler from '../server/routes/security/sessions.js';
+import securitySessionsRevokeHandler from '../server/routes/security/sessions/revoke.js';
+import securitySessionsRevokeAllHandler from '../server/routes/security/sessions/revoke-all.js';
+import securityActivityHandler from '../server/routes/security/activity.js';
+import securityMfaStatusHandler from '../server/routes/security/mfa/status.js';
+import securityMfaEnrollStartHandler from '../server/routes/security/mfa/enroll/start.js';
+import securityMfaEnrollConfirmHandler from '../server/routes/security/mfa/enroll/confirm.js';
+import securityMfaChallengeHandler from '../server/routes/security/mfa/challenge.js';
+import securityMfaDisableHandler from '../server/routes/security/mfa/disable.js';
+import securityMfaBackupRegenerateHandler from '../server/routes/security/mfa/backup/regenerate.js';
 import directorySearchHandler from '../server/routes/directory/search.js';
 import directoryDetailHandler from '../server/routes/directory/detail.js';
 
@@ -550,6 +560,46 @@ export default async function handler(req: any, res: any) {
 
   if (pathname === '/api/account/verification/confirm' && method === 'POST') {
     return accountVerificationConfirmHandler(req, res);
+  }
+
+  if (pathname === '/api/security/sessions' && method === 'GET') {
+    return securitySessionsHandler(req, res);
+  }
+
+  if (pathname === '/api/security/sessions/revoke' && method === 'POST') {
+    return securitySessionsRevokeHandler(req, res);
+  }
+
+  if (pathname === '/api/security/sessions/revoke-all' && method === 'POST') {
+    return securitySessionsRevokeAllHandler(req, res);
+  }
+
+  if (pathname === '/api/security/activity' && method === 'GET') {
+    return securityActivityHandler(req, res);
+  }
+
+  if (pathname === '/api/security/mfa/status' && method === 'GET') {
+    return securityMfaStatusHandler(req, res);
+  }
+
+  if (pathname === '/api/security/mfa/enroll/start' && method === 'POST') {
+    return securityMfaEnrollStartHandler(req, res);
+  }
+
+  if (pathname === '/api/security/mfa/enroll/confirm' && method === 'POST') {
+    return securityMfaEnrollConfirmHandler(req, res);
+  }
+
+  if (pathname === '/api/security/mfa/challenge' && method === 'POST') {
+    return securityMfaChallengeHandler(req, res);
+  }
+
+  if (pathname === '/api/security/mfa/disable' && method === 'POST') {
+    return securityMfaDisableHandler(req, res);
+  }
+
+  if (pathname === '/api/security/mfa/backup/regenerate' && method === 'POST') {
+    return securityMfaBackupRegenerateHandler(req, res);
   }
 
   if (pathname === '/api/directory/search' && method === 'GET') {

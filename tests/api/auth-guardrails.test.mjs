@@ -159,16 +159,36 @@ test('api route aliases for csrf and me resolve correctly', async () => {
 });
 
 test('debug db endpoint is protected and returns safe identity fields', async () => {
-  const unauthorizedReq = createMockReq({
+  const nonProdReq = createMockReq({
     method: 'GET',
     url: '/api/index?path=debug%2Fdb',
     query: {
       path: 'debug/db',
     },
   });
-  const unauthorizedRes = createMockRes();
-  await apiHandler(unauthorizedReq, unauthorizedRes);
-  assert.equal([401, 503].includes(unauthorizedRes.statusCode), true);
+  const nonProdRes = createMockRes();
+  await apiHandler(nonProdReq, nonProdRes);
+  assert.equal(nonProdRes.statusCode, 200);
+  assert.equal(Boolean(nonProdRes.jsonBody().authPresent), false);
+
+  await withEnvOverride(
+    {
+      VERCEL_ENV: 'production',
+      DEBUG_TOKEN: 'debug-token-test',
+    },
+    async () => {
+      const prodNoTokenReq = createMockReq({
+        method: 'GET',
+        url: '/api/index?path=debug%2Fdb',
+        query: {
+          path: 'debug/db',
+        },
+      });
+      const prodNoTokenRes = createMockRes();
+      await apiHandler(prodNoTokenReq, prodNoTokenRes);
+      assert.equal(prodNoTokenRes.statusCode, 404);
+    },
+  );
 
   if (!hasDatabaseUrl()) {
     return;
@@ -204,4 +224,10 @@ test('debug db endpoint is protected and returns safe identity fields', async ()
   assert.equal(typeof body.envPresence?.DATABASE_URL, 'boolean');
   assert.equal(typeof body.envPresence?.POSTGRES_URL, 'boolean');
   assert.equal(typeof body.envPresence?.NEON_DATABASE_URL, 'boolean');
+
+  // Regression guard: response must remain recipient-safe.
+  assert.equal('currentUserId' in body, false);
+  assert.equal('currentUserEmail' in body, false);
+  assert.equal('dbUrl' in body, false);
+  assert.equal(JSON.stringify(body).includes('debug_db_tester'), false);
 });

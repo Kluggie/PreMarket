@@ -134,6 +134,27 @@ export const authClient = {
     return body;
   },
 
+  async completeMfaChallenge(codeOrBackup) {
+    const response = await fetch('/api/security/mfa/challenge', {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        codeOrBackup: String(codeOrBackup || ''),
+      }),
+    });
+
+    const body = await parseJsonResponse(response);
+
+    if (!response.ok) {
+      throw toError(response.status, body, 'MFA challenge failed');
+    }
+
+    return body;
+  },
+
   async me() {
     const response = await fetch('/api/auth/me', {
       method: 'GET',

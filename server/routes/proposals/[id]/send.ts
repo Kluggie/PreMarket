@@ -1,6 +1,7 @@
 import { and, eq, ilike, or } from 'drizzle-orm';
 import { ok } from '../../../_lib/api-response.js';
 import { requireUser } from '../../../_lib/auth.js';
+import { logAuditEventBestEffort } from '../../../_lib/audit-events.js';
 import { getDatabaseIdentitySnapshot, getDb, schema } from '../../../_lib/db/client.js';
 import { toCanonicalAppUrl } from '../../../_lib/env.js';
 import { ApiError } from '../../../_lib/errors.js';
@@ -261,6 +262,17 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         expires_at: created.expiresAt,
         created_date: created.createdAt,
       };
+
+      await logAuditEventBestEffort({
+        eventType: 'share.link.created',
+        userId: auth.user.id,
+        req,
+        metadata: {
+          share_id: created.id,
+          proposal_id: updatedProposal.id,
+          mode: created.mode,
+        },
+      });
     }
 
     console.info(

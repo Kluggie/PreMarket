@@ -1,3 +1,8 @@
+import { eq } from 'drizzle-orm';
+import { createAuthSession } from '../../../_lib/auth-sessions.js';
+import { upsertAuthUserFromSession } from '../../../_lib/auth.js';
+import { logAuditEventBestEffort } from '../../../_lib/audit-events.js';
+import { getDb, schema } from '../../../_lib/db/client.js';
 import {
   enforceCanonicalRedirect,
   getRuntimeConfig,
@@ -105,15 +110,60 @@ export default async function handler(req: any, res: any) {
 
   try {
     const googleUser = await verifyGoogleIdToken(idToken, config.googleClientId);
-    const sessionToken = createSessionToken(googleUser, config.sessionSecret);
+    const user = await upsertAuthUserFromSession(googleUser, { updateLastLogin: true });
+    const db = getDb();
+    const [userMfa] = await db
+      .select({
+        enabledAt: schema.userMfa.enabledAt,
+      })
+      .from(schema.userMfa)
+      .where(eq(schema.userMfa.userId, googleUser.sub))
+      .limit(1);
+
+    const mfaEnabled = Boolean(userMfa?.enabledAt);
+    const persistedSession = await createAuthSession({
+      userId: googleUser.sub,
+      req,
+      mfaPassed: !mfaEnabled,
+    });
+
+    const sessionToken = createSessionToken(googleUser, config.sessionSecret, undefined, {
+      sessionId: persistedSession?.id || undefined,
+      mfaRequired: mfaEnabled,
+      mfaPassed: !mfaEnabled,
+    });
     const secure = shouldUseSecureCookies(req, config.appBaseUrl);
     const redirectTo = toCanonicalAppUrl(config.appBaseUrl, body.returnTo);
 
     setSessionCookie(res, sessionToken, secure);
 
+    if (mfaEnabled) {
+      json(res, 200, {
+        ok: true,
+        mfa_required: true,
+        mfaRequired: true,
+        mfa: {
+          required: true,
+          type: 'totp',
+        },
+        redirectTo,
+      });
+      return;
+    }
+
+    await logAuditEventBestEffort({
+      eventType: 'auth.login.success',
+      userId: user.id,
+      req,
+      metadata: {
+        session_id: persistedSession?.id || null,
+        provider: 'google',
+      },
+    });
+
     json(res, 200, {
       ok: true,
-      user: googleUser,
+      user,
       redirectTo,
     });
   } catch {

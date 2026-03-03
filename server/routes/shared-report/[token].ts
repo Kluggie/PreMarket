@@ -1,5 +1,6 @@
 import { ok } from '../../_lib/api-response.js';
 import { requireUser } from '../../_lib/auth.js';
+import { logAuditEventBestEffort } from '../../_lib/audit-events.js';
 import { ApiError } from '../../_lib/errors.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 import {
@@ -36,7 +37,10 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         currentUser = auth.user;
       }
     } catch (error: any) {
-      if (!(error instanceof ApiError) || error.code !== 'unauthorized') {
+      if (
+        !(error instanceof ApiError) ||
+        (error.code !== 'unauthorized' && error.code !== 'mfa_required')
+      ) {
         throw error;
       }
     }
@@ -69,6 +73,17 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     const shareView: any = buildShareView(resolved.link);
     const isAuthenticated = Boolean(currentUser);
     const canViewAuthorizationDetails = Boolean(isAuthenticated && recipientAuthorization.aliasVerifiedMatch);
+
+    await logAuditEventBestEffort({
+      eventType: 'share.link.accessed',
+      userId: resolved.link.userId,
+      req,
+      metadata: {
+        share_id: resolved.link.id,
+        proposal_id: resolved.proposal?.id || null,
+        authenticated: isAuthenticated,
+      },
+    });
 
     if (!isAuthenticated) {
       shareView.invited_email = null;

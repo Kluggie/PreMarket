@@ -10,6 +10,9 @@ type SessionPayload = {
   name?: string;
   picture?: string;
   hd?: string;
+  sid?: string;
+  mfa_required?: boolean;
+  mfa_passed?: boolean;
   iat: number;
   exp: number;
 };
@@ -20,6 +23,12 @@ type SessionUser = {
   name?: string;
   picture?: string;
   hd?: string;
+};
+
+type SessionTokenOptions = {
+  sessionId?: string;
+  mfaRequired?: boolean;
+  mfaPassed?: boolean;
 };
 
 function base64UrlEncode(value: string) {
@@ -34,7 +43,12 @@ function sign(input: string, secret: string) {
   return createHmac('sha256', secret).update(input).digest('base64url');
 }
 
-export function createSessionToken(user: SessionUser, secret: string, maxAgeSeconds = SESSION_MAX_AGE_SECONDS) {
+export function createSessionToken(
+  user: SessionUser,
+  secret: string,
+  maxAgeSeconds = SESSION_MAX_AGE_SECONDS,
+  options: SessionTokenOptions = {},
+) {
   const issuedAt = Math.floor(Date.now() / 1000);
   const payload: SessionPayload = {
     sub: user.sub,
@@ -42,6 +56,9 @@ export function createSessionToken(user: SessionUser, secret: string, maxAgeSeco
     name: user.name,
     picture: user.picture,
     hd: user.hd,
+    sid: options.sessionId,
+    mfa_required: Boolean(options.mfaRequired),
+    mfa_passed: options.mfaRequired ? Boolean(options.mfaPassed) : true,
     iat: issuedAt,
     exp: issuedAt + maxAgeSeconds,
   };
@@ -74,6 +91,10 @@ export function verifySessionToken(token: string, secret: string): SessionPayloa
     if (!payload?.sub || !payload?.email || !payload?.exp || payload.exp < Math.floor(Date.now() / 1000)) {
       return null;
     }
+
+    payload.sid = typeof payload.sid === 'string' ? payload.sid : undefined;
+    payload.mfa_required = Boolean(payload.mfa_required);
+    payload.mfa_passed = payload.mfa_required ? Boolean(payload.mfa_passed) : true;
 
     return payload;
   } catch {

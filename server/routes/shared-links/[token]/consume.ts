@@ -1,5 +1,6 @@
 import { eq, sql } from 'drizzle-orm';
 import { ok } from '../../../_lib/api-response.js';
+import { logAuditEventBestEffort } from '../../../_lib/audit-events.js';
 import { getDb, schema } from '../../../_lib/db/client.js';
 import { ApiError } from '../../../_lib/errors.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
@@ -63,6 +64,17 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       })
       .where(eq(schema.sharedLinks.id, link.id))
       .returning();
+
+    await logAuditEventBestEffort({
+      eventType: 'share.link.accessed',
+      userId: link.userId,
+      req,
+      metadata: {
+        share_id: link.id,
+        proposal_id: link.proposalId || null,
+        consumed: true,
+      },
+    });
 
     ok(res, 200, {
       sharedLink: {

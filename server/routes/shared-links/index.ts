@@ -1,6 +1,7 @@
 import { and, desc, eq } from 'drizzle-orm';
 import { ok } from '../../_lib/api-response.js';
 import { assertProposalOwnership, requireUser } from '../../_lib/auth.js';
+import { logAuditEventBestEffort } from '../../_lib/audit-events.js';
 import { getDb, schema } from '../../_lib/db/client.js';
 import { toCanonicalAppUrl } from '../../_lib/env.js';
 import { ApiError } from '../../_lib/errors.js';
@@ -198,6 +199,17 @@ export default async function handler(req: any, res: any) {
         updatedAt: now,
       })
       .where(eq(schema.proposals.id, proposalId));
+
+    await logAuditEventBestEffort({
+      eventType: 'share.link.created',
+      userId: auth.user.id,
+      req,
+      metadata: {
+        share_id: created.id,
+        proposal_id: proposalId,
+        mode: mode || 'workspace',
+      },
+    });
 
     ok(res, 201, {
       sharedLink: mapLink(created, proposal),
