@@ -253,7 +253,7 @@ export default function Proposals() {
   const tabCounts = useMemo(() => {
     if (summaryLoading || !summary) return null;
     return {
-      all: (summary.sentCount || 0) + (summary.receivedCount || 0) + (summary.draftsCount || 0),
+      all: summary.totalCount || 0,
       sent: summary.sentCount || 0,
       received: summary.receivedCount || 0,
       drafts: summary.draftsCount || 0,

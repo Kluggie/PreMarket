@@ -212,12 +212,29 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
       throw new ApiError(400, 'invalid_input', 'Proposal title is required');
     }
 
+    // Canonical status values accepted by this endpoint.
+    const ALLOWED_STATUSES = new Set([
+      'draft', 'sent', 'received', 'mutual_interest', 'revealed',
+      'won', 'lost', 'under_verification', 're_evaluated', 'evaluated',
+    ]);
+    const CLOSED_STATUSES = new Set(['won', 'lost']);
+
+    const incomingStatus = body.status === undefined
+      ? null
+      : (String(body.status || '').trim().toLowerCase() || null);
+
+    if (incomingStatus !== null && !ALLOWED_STATUSES.has(incomingStatus)) {
+      throw new ApiError(400, 'invalid_status', `Invalid status "${incomingStatus}". Allowed: ${Array.from(ALLOWED_STATUSES).join(', ')}`);
+    }
+
+    const currentStatusNorm = String(existing.status || '').trim().toLowerCase();
+    if (CLOSED_STATUSES.has(currentStatusNorm) && incomingStatus !== null && !CLOSED_STATUSES.has(incomingStatus)) {
+      throw new ApiError(400, 'invalid_status_transition', `Cannot change status from "${currentStatusNorm}" to "${incomingStatus}". Use the archive action or contact support to reopen a closed proposal.`);
+    }
+
     const updateValues = {
       title: nextTitle,
-      status:
-        body.status === undefined
-          ? existing.status
-          : String(body.status || '').trim().toLowerCase() || existing.status,
+      status: incomingStatus ?? existing.status,
       statusReason:
         body.statusReason === undefined && body.status_reason === undefined
           ? existing.statusReason
@@ -280,13 +297,10 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         body.lastSharedAt === undefined && body.last_shared_at === undefined
           ? existing.lastSharedAt
           : parseDateOrNull(body.lastSharedAt || body.last_shared_at),
-      // closedAt: set when status becomes won/lost; cleared when moving away from those statuses.
+      // closedAt: timestamp when the proposal first became won/lost. Never cleared once set.
       closedAt: (() => {
-        const incomingStatus = body.status === undefined ? null : String(body.status || '').trim().toLowerCase();
-        const CLOSED_STATUSES = new Set(['won', 'lost']);
         if (incomingStatus === null) return existing.closedAt;
         if (CLOSED_STATUSES.has(incomingStatus) && !existing.closedAt) return new Date();
-        if (!CLOSED_STATUSES.has(incomingStatus)) return null;
         return existing.closedAt;
       })(),
       updatedAt: new Date(),
@@ -336,20 +350,6 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
           message: `Mutual interest was marked for "${updated.title || 'your proposal'}".`,
           emailSubject: 'Mutual interest update',
         },
-        won: {
-          eventType: 'status_won',
-          emailCategory: 'shared_link_activity',
-          title: 'Proposal marked Won',
-          message: `"${updated.title || 'Your proposal'}" was marked as Won.`,
-          emailSubject: 'Proposal marked Won',
-        },
-        lost: {
-          eventType: 'status_lost',
-          emailCategory: 'shared_link_activity',
-          title: 'Proposal marked Lost',
-          message: `"${updated.title || 'Your proposal'}" was marked as Lost.`,
-          emailSubject: 'Proposal marked Lost',
-        },
       } as const;
 
       const eventConfig = eventMap[nextStatus as keyof typeof eventMap];
@@ -361,7 +361,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
             userEmail: updated.partyAEmail || auth.user.email,
             eventType: eventConfig.eventType,
             emailCategory: eventConfig.emailCategory,
-            dedupeKey: `${eventConfig.eventType}:${updated.id}:${nextStatus}`,
+            dedupeKey: `proposal:${updated.id}:event:${eventConfig.eventType}:status:${nextStatus}`,
             title: eventConfig.title,
             message: eventConfig.message,
             actionUrl: `/ProposalDetail?id=${encodeURIComponent(updated.id)}`,

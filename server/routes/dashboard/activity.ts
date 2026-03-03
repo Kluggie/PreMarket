@@ -1,4 +1,4 @@
-import { and, eq, gte, ilike, or } from 'drizzle-orm';
+import { and, eq, gte, ilike, isNull, or } from 'drizzle-orm';
 import { ok } from '../../_lib/api-response.js';
 import { requireUser } from '../../_lib/auth.js';
 import { getDb, schema } from '../../_lib/db/client.js';
@@ -60,8 +60,11 @@ export default async function handler(req: any, res: any) {
       : eq(schema.proposals.userId, auth.user.id);
 
     const rangeStart = days === null ? null : startOfDay(addDays(now, -(days - 1)));
+    const notArchived = isNull(schema.proposals.archivedAt);
     const whereClause =
-      rangeStart == null ? scopeClause : and(scopeClause, gte(schema.proposals.createdAt, rangeStart));
+      rangeStart == null
+        ? and(scopeClause, notArchived)
+        : and(scopeClause, gte(schema.proposals.createdAt, rangeStart), notArchived);
 
     const rows = await db
       .select({

@@ -145,10 +145,7 @@ export const proposalsClient = {
   },
 
   async close(id, status) {
-    const response = await request(`/api/proposals/${encodeURIComponent(String(id || ''))}/close`, {
-      method: 'PATCH',
-      body: JSON.stringify({ status }),
-    });
-    return response.proposal || null;
+    // Redirects to the canonical PATCH /api/proposals/:id endpoint (no dedicated /close route)
+    return this.update(id, { status });
   },
 };

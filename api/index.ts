@@ -20,7 +20,6 @@ import proposalEvaluateHandler from '../server/routes/proposals/[id]/evaluate.js
 import proposalEvaluationsHandler from '../server/routes/proposals/[id]/evaluations.js';
 import proposalArchiveHandler from '../server/routes/proposals/[id]/archive.js';
 import proposalUnarchiveHandler from '../server/routes/proposals/[id]/unarchive.js';
-import proposalCloseHandler from '../server/routes/proposals/[id]/close.js';
 import sharedLinksHandler from '../server/routes/shared-links/index.js';
 import sharedLinksTokenHandler from '../server/routes/shared-links/[token].js';
 import sharedLinksConsumeHandler from '../server/routes/shared-links/[token]/consume.js';
@@ -306,12 +305,6 @@ export default async function handler(req: any, res: any) {
   if (proposalUnarchiveMatch && method === 'PATCH') {
     const id = decodeURIComponent(proposalUnarchiveMatch[1]);
     return proposalUnarchiveHandler(req, res, id);
-  }
-
-  const proposalCloseMatch = pathname.match(/^\/api\/proposals\/([^/]+)\/close$/);
-  if (proposalCloseMatch && method === 'PATCH') {
-    const id = decodeURIComponent(proposalCloseMatch[1]);
-    return proposalCloseHandler(req, res, id);
   }
 
   const templatesUseMatch = pathname.match(/^\/api\/templates\/([^/]+)\/use$/);
