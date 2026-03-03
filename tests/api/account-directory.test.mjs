@@ -154,6 +154,14 @@ if (!hasDatabaseUrl()) {
           type: 'startup',
           industry: 'Technology',
           location: 'SF',
+          website: 'acme.com',
+          tagline: 'Enterprise onboarding automation for regulated teams',
+          social_links: {
+            linkedin: 'linkedin.com/company/acme',
+            github: 'github.com/acme',
+            twitter: 'x.com/acme',
+            crunchbase: 'crunchbase.com/organization/acme',
+          },
           is_public_directory: false,
         },
       },
@@ -162,6 +170,9 @@ if (!hasDatabaseUrl()) {
     assert.equal(createRes.statusCode, 201);
     const createdOrg = createRes.jsonBody().organization;
     assert.equal(createdOrg.name, 'Acme Corp');
+    assert.equal(createdOrg.website, 'https://acme.com');
+    assert.equal(createdOrg.tagline, 'Enterprise onboarding automation for regulated teams');
+    assert.equal(createdOrg.social_links.github, 'https://github.com/acme');
 
     const listRes = await callHandler(organizationsHandler, {
       method: 'GET',
@@ -193,6 +204,14 @@ if (!hasDatabaseUrl()) {
       body: {
         organization: {
           name: 'Acme Corp Updated',
+          website: 'http://acme-updated.com',
+          tagline: 'Trusted partner for enterprise readiness',
+          social_links: {
+            linkedin: 'https://linkedin.com/company/acme-updated',
+            github: 'https://github.com/acme-updated',
+            twitter: 'https://x.com/acme-updated',
+            crunchbase: 'https://crunchbase.com/organization/acme-updated',
+          },
           is_public_directory: true,
         },
       },
@@ -200,7 +219,26 @@ if (!hasDatabaseUrl()) {
 
     assert.equal(updateRes.statusCode, 200);
     assert.equal(updateRes.jsonBody().organization.name, 'Acme Corp Updated');
+    assert.equal(updateRes.jsonBody().organization.website, 'https://acme-updated.com');
+    assert.equal(updateRes.jsonBody().organization.tagline, 'Trusted partner for enterprise readiness');
+    assert.equal(updateRes.jsonBody().organization.social_links.github, 'https://github.com/acme-updated');
     assert.equal(updateRes.jsonBody().organization.is_public_directory, true);
+
+    const invalidLinkUpdateRes = await callHandler(organizationByIdHandler, {
+      method: 'PATCH',
+      url: `/api/account/organizations/${createdOrg.id}`,
+      query: { id: createdOrg.id },
+      headers: { cookie: ownerCookie },
+      body: {
+        organization: {
+          social_links: {
+            linkedin: 'not a valid url',
+          },
+        },
+      },
+    });
+    assert.equal(invalidLinkUpdateRes.statusCode, 400);
+    assert.equal(invalidLinkUpdateRes.jsonBody().error?.field, 'social_links.linkedin');
   });
 
   test('directory search/detail returns public people/org entries and hides private profiles', async () => {
@@ -254,12 +292,30 @@ if (!hasDatabaseUrl()) {
           name: 'Public Org',
           industry: 'Technology',
           location: 'NYC',
+          tagline: 'Fast enterprise onboarding for partner ecosystems',
           is_public_directory: true,
         },
       },
     });
     assert.equal(createOrgRes.statusCode, 201);
     const publicOrgId = createOrgRes.jsonBody().organization.id;
+
+    const createPrivateOrgRes = await callHandler(organizationsHandler, {
+      method: 'POST',
+      url: '/api/account/organizations',
+      headers: { cookie: publicCookie },
+      body: {
+        organization: {
+          name: 'Private Org',
+          industry: 'Technology',
+          location: 'NYC',
+          tagline: 'Internal only listing',
+          is_public_directory: false,
+        },
+      },
+    });
+    assert.equal(createPrivateOrgRes.statusCode, 201);
+    const privateOrgId = createPrivateOrgRes.jsonBody().organization.id;
 
     const searchRes = await callHandler(directorySearchHandler, {
       method: 'GET',
@@ -271,8 +327,11 @@ if (!hasDatabaseUrl()) {
     const searchPayload = searchRes.jsonBody();
     assert.equal(searchPayload.items.some((item) => item.kind === 'person' && item.id === publicProfileId), true);
     assert.equal(searchPayload.items.some((item) => item.kind === 'org' && item.id === publicOrgId), true);
+    assert.equal(searchPayload.items.some((item) => item.kind === 'org' && item.id === privateOrgId), false);
     const publicPerson = searchPayload.items.find((item) => item.kind === 'person' && item.id === publicProfileId);
     assert.equal(publicPerson?.tagline, 'Helping founders secure better pilot partners');
+    const publicOrg = searchPayload.items.find((item) => item.kind === 'org' && item.id === publicOrgId);
+    assert.equal(publicOrg?.tagline, 'Fast enterprise onboarding for partner ecosystems');
 
     const personDetailRes = await callHandler(directoryDetailHandler, {
       method: 'GET',
@@ -290,6 +349,7 @@ if (!hasDatabaseUrl()) {
     });
     assert.equal(orgDetailRes.statusCode, 200);
     assert.equal(orgDetailRes.jsonBody().item.kind, 'org');
+    assert.equal(orgDetailRes.jsonBody().item.tagline, 'Fast enterprise onboarding for partner ecosystems');
 
     const privateDetailRes = await callHandler(directoryDetailHandler, {
       method: 'GET',
@@ -297,6 +357,13 @@ if (!hasDatabaseUrl()) {
       query: { kind: 'person', id: privateProfileId },
     });
     assert.equal(privateDetailRes.statusCode, 404);
+
+    const privateOrgDetailRes = await callHandler(directoryDetailHandler, {
+      method: 'GET',
+      url: '/api/directory/detail',
+      query: { kind: 'org', id: privateOrgId },
+    });
+    assert.equal(privateOrgDetailRes.statusCode, 404);
   });
 
   test('email config status requires admin role and returns config details for admins', async () => {

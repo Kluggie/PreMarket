@@ -99,6 +99,7 @@ export default async function handler(req: any, res: any) {
           type: organization.type || undefined,
           industry: organization.industry || undefined,
           location: organization.location || undefined,
+          tagline: organization.tagline || undefined,
           bio: organization.bio || undefined,
           website: organization.website || undefined,
         },

@@ -104,6 +104,7 @@ export const organizations = pgTable(
     name: text('name').notNull(),
     pseudonym: text('pseudonym'),
     type: text('type').notNull().default('startup'),
+    tagline: text('tagline'),
     industry: text('industry'),
     location: text('location'),
     website: text('website'),

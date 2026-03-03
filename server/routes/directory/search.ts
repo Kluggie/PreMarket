@@ -211,6 +211,7 @@ export default async function handler(req: any, res: any) {
         type: org.type || undefined,
         industry: org.industry || undefined,
         location: org.location || undefined,
+        tagline: org.tagline || undefined,
         bio: org.bio || undefined,
         website: org.website || undefined,
         verified: isVerifiedStatus(org.verificationStatus),
@@ -242,6 +243,7 @@ export default async function handler(req: any, res: any) {
         org.name,
         org.pseudonym,
         org.type,
+        org.tagline,
         org.bio,
         org.industry,
       ]);
