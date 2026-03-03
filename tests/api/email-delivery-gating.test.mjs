@@ -10,14 +10,25 @@ test('email gating in contact_only mode allows contact categories and blocks tra
   assert.equal(isCategoryAllowedByMode('contact_only', 'proposal_reevaluation_complete'), false);
 });
 
-test('email gating in disabled mode blocks all categories', async () => {
+test('email gating in disabled mode blocks policy-scoped categories but allows security-purpose categories', async () => {
   const originalMode = process.env.EMAIL_MODE;
+  const originalResendKey = process.env.RESEND_API_KEY;
+  const originalResendFrom = process.env.RESEND_FROM_EMAIL;
   const originalFetch = globalThis.fetch;
   let fetchCalls = 0;
 
   process.env.EMAIL_MODE = 'disabled';
+  process.env.RESEND_API_KEY = 'test_resend_key';
+  process.env.RESEND_FROM_EMAIL = 'notifications@mail.getpremarket.com';
   globalThis.fetch = async (url, init) => {
-    fetchCalls += 1;
+    if (String(url).includes('api.resend.com/emails')) {
+      fetchCalls += 1;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+      };
+    }
     return originalFetch.call(globalThis, url, init);
   };
 
@@ -37,14 +48,27 @@ test('email gating in disabled mode blocks all categories', async () => {
       dedupeKey: 'evaluation_complete:proposal_1:eval_1',
     });
 
+    const allowedVerification = await sendCategorizedEmail({
+      category: 'account_verification',
+      purpose: 'security',
+      to: 'owner@example.com',
+      subject: 'Verify your email',
+      text: 'verification link',
+    });
+
     assert.equal(blockedContact.status, 'blocked');
     assert.equal(blockedContact.reason, 'blocked_disabled');
     assert.equal(blockedEvaluation.status, 'blocked');
     assert.equal(blockedEvaluation.reason, 'blocked_disabled');
-    assert.equal(fetchCalls, 0);
+    assert.equal(allowedVerification.status, 'sent');
+    assert.equal(fetchCalls, 1);
   } finally {
     if (originalMode === undefined) delete process.env.EMAIL_MODE;
     else process.env.EMAIL_MODE = originalMode;
+    if (originalResendKey === undefined) delete process.env.RESEND_API_KEY;
+    else process.env.RESEND_API_KEY = originalResendKey;
+    if (originalResendFrom === undefined) delete process.env.RESEND_FROM_EMAIL;
+    else process.env.RESEND_FROM_EMAIL = originalResendFrom;
     globalThis.fetch = originalFetch;
   }
 });

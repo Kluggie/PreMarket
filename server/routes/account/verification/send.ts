@@ -134,6 +134,7 @@ export default async function handler(req: any, res: any) {
 
     const delivery = await sendCategorizedEmail({
       category: 'account_verification',
+      purpose: 'security',
       to: normalizeEmail(auth.user.email),
       dedupeKey: `account_verification:${auth.user.id}:${tokenHash}`,
       subject: 'Verify your email for PreMarket',
@@ -141,14 +142,11 @@ export default async function handler(req: any, res: any) {
     });
 
     if (delivery.status === 'not_configured') {
-      throw new ApiError(501, 'not_configured', 'Email integration is not configured');
+      throw new ApiError(501, 'not_configured', 'Email service not configured');
     }
 
     if (delivery.status === 'failed') {
-      if (delivery.reason === 'provider_rejected') {
-        throw new ApiError(400, 'email_send_failed', 'Email provider rejected the request');
-      }
-      throw new ApiError(502, 'email_send_failed', 'Email provider is unavailable');
+      throw new ApiError(502, 'email_send_failed', 'Unable to send verification email right now');
     }
 
     if (delivery.status === 'invalid_input') {
@@ -156,7 +154,7 @@ export default async function handler(req: any, res: any) {
     }
 
     if (delivery.status === 'blocked') {
-      throw new ApiError(403, 'email_blocked_by_policy', 'Verification emails are disabled by current email policy');
+      throw new ApiError(502, 'email_send_failed', 'Unable to send verification email right now');
     }
 
     ok(res, 200, {

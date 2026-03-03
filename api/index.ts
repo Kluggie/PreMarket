@@ -532,7 +532,7 @@ export default async function handler(req: any, res: any) {
     return verificationItemsHandler(req, res);
   }
 
-  if (pathname === '/api/account/profile' && (method === 'GET' || method === 'PUT')) {
+  if (pathname === '/api/account/profile' && (method === 'GET' || method === 'PUT' || method === 'PATCH')) {
     return accountProfileHandler(req, res);
   }
 

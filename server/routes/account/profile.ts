@@ -10,15 +10,25 @@ import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 
 const VALID_PRIVACY_MODES = new Set(['public', 'pseudonymous', 'private']);
 const VALID_USER_TYPES = new Set(['individual', 'business']);
+const MAX_PSEUDONYM_LENGTH = 80;
+const MAX_TITLE_LENGTH = 120;
+const MAX_TAGLINE_LENGTH = 80;
+const MAX_INDUSTRY_LENGTH = 80;
+const MAX_LOCATION_LENGTH = 120;
+const MAX_BIO_LENGTH = 2000;
+const MAX_WEBSITE_LENGTH = 280;
 
 function normalizeEmail(value: unknown) {
   return typeof value === 'string' ? value.trim().toLowerCase() : '';
 }
 
-function toOptionalText(value: unknown) {
+function toOptionalText(value: unknown, maxLength = 2000) {
   if (value == null) return null;
   const textValue = String(value).trim();
-  return textValue.length > 0 ? textValue : null;
+  if (!textValue.length) {
+    return null;
+  }
+  return textValue.slice(0, maxLength);
 }
 
 function toBoolean(value: unknown) {
@@ -51,6 +61,7 @@ function mapProfileRow(profile) {
     pseudonym: profile.pseudonym || '',
     user_type: profile.userType || 'individual',
     title: profile.title || '',
+    tagline: profile.tagline || '',
     industry: profile.industry || '',
     location: profile.location || '',
     bio: profile.bio || '',
@@ -76,7 +87,7 @@ function buildProfilePatch(source) {
   const patch: Record<string, unknown> = {};
 
   if (Object.prototype.hasOwnProperty.call(source, 'pseudonym')) {
-    patch.pseudonym = toOptionalText(source.pseudonym);
+    patch.pseudonym = toOptionalText(source.pseudonym, MAX_PSEUDONYM_LENGTH);
   }
 
   if (Object.prototype.hasOwnProperty.call(source, 'user_type')) {
@@ -85,23 +96,27 @@ function buildProfilePatch(source) {
   }
 
   if (Object.prototype.hasOwnProperty.call(source, 'title')) {
-    patch.title = toOptionalText(source.title);
+    patch.title = toOptionalText(source.title, MAX_TITLE_LENGTH);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(source, 'tagline')) {
+    patch.tagline = toOptionalText(source.tagline, MAX_TAGLINE_LENGTH);
   }
 
   if (Object.prototype.hasOwnProperty.call(source, 'industry')) {
-    patch.industry = toOptionalText(source.industry);
+    patch.industry = toOptionalText(source.industry, MAX_INDUSTRY_LENGTH);
   }
 
   if (Object.prototype.hasOwnProperty.call(source, 'location')) {
-    patch.location = toOptionalText(source.location);
+    patch.location = toOptionalText(source.location, MAX_LOCATION_LENGTH);
   }
 
   if (Object.prototype.hasOwnProperty.call(source, 'bio')) {
-    patch.bio = toOptionalText(source.bio);
+    patch.bio = toOptionalText(source.bio, MAX_BIO_LENGTH);
   }
 
   if (Object.prototype.hasOwnProperty.call(source, 'website')) {
-    patch.website = toOptionalText(source.website);
+    patch.website = toOptionalText(source.website, MAX_WEBSITE_LENGTH);
   }
 
   if (Object.prototype.hasOwnProperty.call(source, 'privacy_mode')) {
@@ -138,7 +153,7 @@ function buildProfilePatch(source) {
 
 export default async function handler(req: any, res: any) {
   await withApiRoute(req, res, '/api/account/profile', async (context) => {
-    ensureMethod(req, ['GET', 'PUT']);
+    ensureMethod(req, ['GET', 'PUT', 'PATCH']);
 
     const auth = await requireUser(req, res);
     if (!auth.ok) {
@@ -178,6 +193,7 @@ export default async function handler(req: any, res: any) {
           pseudonym: null,
           userType: 'individual',
           title: null,
+          tagline: null,
           industry: null,
           location: null,
           bio: null,

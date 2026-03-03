@@ -5,6 +5,7 @@ import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 
 const MAX_PAGE_SIZE = 100;
 const DEFAULT_PAGE_SIZE = 20;
+type DirectorySort = 'relevance' | 'recently_active' | 'newest' | 'az';
 
 function normalize(value: unknown) {
   return String(value ?? '').trim().toLowerCase();
@@ -13,6 +14,43 @@ function normalize(value: unknown) {
 function includesIgnoreCase(haystack: unknown, needle: string) {
   if (!needle) return true;
   return normalize(haystack).includes(needle);
+}
+
+function matchesQueryAcrossFields(query: string, values: unknown[]) {
+  if (!query) return true;
+  return values.some((value) => includesIgnoreCase(value, query));
+}
+
+function toDirectorySort(value: unknown): DirectorySort {
+  const normalized = normalize(value);
+
+  if (
+    normalized === 'recently_active' ||
+    normalized === 'recently-active' ||
+    normalized === 'recentlyactive' ||
+    normalized === 'recent'
+  ) {
+    return 'recently_active';
+  }
+
+  if (normalized === 'newest') {
+    return 'newest';
+  }
+
+  if (
+    normalized === 'az' ||
+    normalized === 'a-z' ||
+    normalized === 'name_asc' ||
+    normalized === 'alphabetical'
+  ) {
+    return 'az';
+  }
+
+  return 'relevance';
+}
+
+function isVerifiedStatus(value: unknown) {
+  return normalize(value) === 'verified';
 }
 
 function normalizeDateForSort(value: unknown) {
@@ -50,7 +88,8 @@ export default async function handler(req: any, res: any) {
 
     const modeRaw = normalize(toQueryValue(req.query?.mode));
     const mode = modeRaw === 'people' || modeRaw === 'orgs' ? modeRaw : 'both';
-    const q = normalize(toQueryValue(req.query?.q || req.query?.query));
+    const q = normalize(toQueryValue(req.query?.q || req.query?.query || req.query?.name));
+    const sort = toDirectorySort(toQueryValue(req.query?.sort || req.query?.orderBy || req.query?.order_by));
 
     const filters = {
       user_type: toQueryValue(req.query?.user_type),
@@ -139,11 +178,24 @@ export default async function handler(req: any, res: any) {
         industry: profile.industry || undefined,
         location: profile.location || undefined,
         title: profile.title || undefined,
+        tagline: profile.tagline || undefined,
         bio: profile.bio || undefined,
         website: profile.website || undefined,
+        verified:
+          Boolean(profile.emailVerified) ||
+          Boolean(profile.documentVerified) ||
+          isVerifiedStatus(profile.verificationStatus),
+        lastActiveAt: row.user?.lastLoginAt || profile.updatedAt || profile.createdAt || undefined,
+        updatedAt: profile.updatedAt || undefined,
+        createdAt: profile.createdAt || undefined,
         _sortDate:
           normalizeDateForSort(profile.updatedAt) ||
           normalizeDateForSort(profile.createdAt),
+        _sortRecentlyActive:
+          normalizeDateForSort(row.user?.lastLoginAt) ||
+          normalizeDateForSort(profile.updatedAt) ||
+          normalizeDateForSort(profile.createdAt),
+        _sortNewest: normalizeDateForSort(profile.createdAt),
         _sortName: normalize(displayName),
       };
     });
@@ -161,27 +213,65 @@ export default async function handler(req: any, res: any) {
         location: org.location || undefined,
         bio: org.bio || undefined,
         website: org.website || undefined,
+        verified: isVerifiedStatus(org.verificationStatus),
+        lastActiveAt: org.updatedAt || org.createdAt || undefined,
+        updatedAt: org.updatedAt || undefined,
+        createdAt: org.createdAt || undefined,
         _sortDate: normalizeDateForSort(org.updatedAt) || normalizeDateForSort(org.createdAt),
+        _sortRecentlyActive: normalizeDateForSort(org.updatedAt) || normalizeDateForSort(org.createdAt),
+        _sortNewest: normalizeDateForSort(org.createdAt),
         _sortName: normalize(displayName),
       };
     });
 
     const visiblePeople = publicPeople.filter((person) => {
-      return includesIgnoreCase(person.displayName, q) || includesIgnoreCase(person.pseudonym, q);
+      return matchesQueryAcrossFields(q, [
+        person.displayName,
+        person.pseudonym,
+        person.title,
+        person.tagline,
+        person.bio,
+        person.industry,
+        person.user_type,
+      ]);
     });
 
     const visibleOrgs = publicOrgs.filter((org) => {
-      return includesIgnoreCase(org.name, q) || includesIgnoreCase(org.pseudonym, q);
+      return matchesQueryAcrossFields(q, [
+        org.displayName,
+        org.name,
+        org.pseudonym,
+        org.type,
+        org.bio,
+        org.industry,
+      ]);
     });
 
     const items = [...visiblePeople, ...visibleOrgs].sort((a, b) => {
+      if (sort === 'recently_active') {
+        if (b._sortRecentlyActive !== a._sortRecentlyActive) {
+          return b._sortRecentlyActive - a._sortRecentlyActive;
+        }
+      } else if (sort === 'newest') {
+        if (b._sortNewest !== a._sortNewest) {
+          return b._sortNewest - a._sortNewest;
+        }
+      } else if (sort === 'az') {
+        const nameDiff = a._sortName.localeCompare(b._sortName);
+        if (nameDiff !== 0) return nameDiff;
+      } else if (b._sortDate !== a._sortDate) {
+        return b._sortDate - a._sortDate;
+      }
+
       if (b._sortDate !== a._sortDate) return b._sortDate - a._sortDate;
       return a._sortName.localeCompare(b._sortName);
     });
 
     const totalCount = items.length;
     const start = (page - 1) * pageSize;
-    const pagedItems = items.slice(start, start + pageSize).map(({ _sortDate, _sortName, ...item }) => item);
+    const pagedItems = items
+      .slice(start, start + pageSize)
+      .map(({ _sortDate, _sortRecentlyActive, _sortNewest, _sortName, ...item }) => item);
 
     const facets = {
       industries: compactUnique([

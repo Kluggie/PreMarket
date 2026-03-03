@@ -39,6 +39,7 @@ export const userProfiles = pgTable(
     pseudonym: text('pseudonym'),
     userType: text('user_type').notNull().default('individual'),
     title: text('title'),
+    tagline: text('tagline'),
     industry: text('industry'),
     location: text('location'),
     bio: text('bio'),

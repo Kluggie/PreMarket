@@ -65,6 +65,7 @@ export default async function handler(req: any, res: any) {
           industry: row.profile.industry || undefined,
           location: row.profile.location || undefined,
           title: row.profile.title || undefined,
+          tagline: row.profile.tagline || undefined,
           bio: row.profile.bio || undefined,
           website: row.profile.website || undefined,
         },

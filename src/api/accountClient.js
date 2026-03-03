@@ -8,7 +8,7 @@ export const accountClient = {
 
   async saveProfile(profile = {}) {
     const response = await request('/api/account/profile', {
-      method: 'PUT',
+      method: 'PATCH',
       body: JSON.stringify({
         profile,
       }),

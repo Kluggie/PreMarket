@@ -218,11 +218,11 @@ if (!hasDatabaseUrl()) {
     }
   });
 
-  test('verification email route returns policy error when account_verification is blocked in contact_only mode', async () => {
+  test('verification email route bypasses policy gating when email mode is disabled', async () => {
     await ensureMigrated();
     await resetTables();
 
-    const cookie = authCookie('verify_blocked_user', 'verify-blocked@example.com');
+    const cookie = authCookie('verify_policy_bypass_user', 'verify-policy-bypass@example.com');
     await callHandler(profileHandler, {
       method: 'GET',
       url: '/api/account/profile',
@@ -230,7 +230,26 @@ if (!hasDatabaseUrl()) {
     });
 
     const originalMode = process.env.EMAIL_MODE;
-    process.env.EMAIL_MODE = 'contact_only';
+    const originalResendKey = process.env.RESEND_API_KEY;
+    const originalResendFrom = process.env.RESEND_FROM_EMAIL;
+    const originalFetch = globalThis.fetch;
+    let resendCalls = 0;
+
+    process.env.EMAIL_MODE = 'disabled';
+    process.env.RESEND_API_KEY = 'test_resend_key';
+    process.env.RESEND_FROM_EMAIL = 'notifications@mail.getpremarket.com';
+
+    globalThis.fetch = async (url, init) => {
+      if (String(url).includes('api.resend.com/emails')) {
+        resendCalls += 1;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ id: 'resend_verify_policy_bypass' }),
+        };
+      }
+      return originalFetch.call(globalThis, url, init);
+    };
 
     try {
       const sendRes = await callHandler(verificationSendHandler, {
@@ -240,11 +259,59 @@ if (!hasDatabaseUrl()) {
         body: {},
       });
 
-      assert.equal(sendRes.statusCode, 403);
-      assert.equal(sendRes.jsonBody().error?.code, 'email_blocked_by_policy');
+      assert.equal(sendRes.statusCode, 200);
+      assert.equal(sendRes.jsonBody().sent, true);
+      assert.equal(sendRes.jsonBody().blocked, false);
+      assert.equal(resendCalls, 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalMode === undefined) delete process.env.EMAIL_MODE;
+      else process.env.EMAIL_MODE = originalMode;
+      if (originalResendKey === undefined) delete process.env.RESEND_API_KEY;
+      else process.env.RESEND_API_KEY = originalResendKey;
+      if (originalResendFrom === undefined) delete process.env.RESEND_FROM_EMAIL;
+      else process.env.RESEND_FROM_EMAIL = originalResendFrom;
+    }
+  });
+
+  test('verification email route returns provider-config error when disabled mode has no email credentials', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const cookie = authCookie('verify_not_config_user', 'verify-not-config@example.com');
+    await callHandler(profileHandler, {
+      method: 'GET',
+      url: '/api/account/profile',
+      headers: { cookie },
+    });
+
+    const originalMode = process.env.EMAIL_MODE;
+    const originalResendKey = process.env.RESEND_API_KEY;
+    const originalResendFrom = process.env.RESEND_FROM_EMAIL;
+
+    process.env.EMAIL_MODE = 'disabled';
+    delete process.env.RESEND_API_KEY;
+    delete process.env.RESEND_FROM_EMAIL;
+
+    try {
+      const sendRes = await callHandler(verificationSendHandler, {
+        method: 'POST',
+        url: '/api/account/verification/send',
+        headers: { cookie },
+        body: {},
+      });
+
+      assert.equal(sendRes.statusCode, 501);
+      assert.equal(sendRes.jsonBody().error?.code, 'not_configured');
+      assert.equal(sendRes.jsonBody().error?.message, 'Email service not configured');
+      assert.notEqual(sendRes.jsonBody().error?.code, 'email_blocked_by_policy');
     } finally {
       if (originalMode === undefined) delete process.env.EMAIL_MODE;
       else process.env.EMAIL_MODE = originalMode;
+      if (originalResendKey === undefined) delete process.env.RESEND_API_KEY;
+      else process.env.RESEND_API_KEY = originalResendKey;
+      if (originalResendFrom === undefined) delete process.env.RESEND_FROM_EMAIL;
+      else process.env.RESEND_FROM_EMAIL = originalResendFrom;
     }
   });
 

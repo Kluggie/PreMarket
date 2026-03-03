@@ -11,53 +11,105 @@ import { Badge } from '@/components/ui/badge';
 import { Search, MapPin } from 'lucide-react';
 
 const PAGE_SIZE = 20;
+const DEFAULT_MODE = 'both';
+const DEFAULT_SORT = 'relevance';
+const DEFAULT_FILTERS = {
+  industry: '',
+  location: '',
+};
+const SORT_OPTIONS = [
+  { value: 'relevance', label: 'Relevance' },
+  { value: 'recently_active', label: 'Recently active' },
+  { value: 'newest', label: 'Newest' },
+  { value: 'az', label: 'A-Z' },
+];
+
+function parseDateValue(value) {
+  const parsed = Date.parse(String(value ?? ''));
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function normalizeText(value) {
+  return String(value ?? '').trim().toLowerCase();
+}
+
+function formatLabel(value) {
+  return String(value ?? '')
+    .trim()
+    .replace(/[_-]+/g, ' ');
+}
+
+function getDisplayName(item) {
+  return String(item?.displayName || item?.name || 'Unnamed');
+}
+
+function compareByName(a, b) {
+  return normalizeText(getDisplayName(a)).localeCompare(normalizeText(getDisplayName(b)));
+}
+
+function getRecentlyActiveSortValue(item) {
+  return (
+    parseDateValue(item?.lastActiveAt) ||
+    parseDateValue(item?.updatedAt) ||
+    parseDateValue(item?.createdAt)
+  );
+}
+
+function getNewestSortValue(item) {
+  return parseDateValue(item?.createdAt);
+}
 
 function DirectoryCard({ item }) {
   const isPerson = item.kind === 'person';
   const href = isPerson ? `/directory/people/${item.id}` : `/directory/orgs/${item.id}`;
-  const subtitle = isPerson ? item.title || item.user_type : item.type;
+  const companyName = item.companyName || item.organizationName || item.company || item.orgName;
+  const secondary = isPerson
+    ? (item.title ? `${item.title}${companyName ? ` at ${companyName}` : ''}` : formatLabel(item.user_type))
+    : (formatLabel(item.type) || item.industry || '');
+  const tagline = String(item.tagline || item.bio || '').trim() || 'No tagline provided.';
+  const kindLabel = isPerson ? 'Person' : 'Company';
 
   return (
-    <Card className="border-0 shadow-sm hover:shadow-md transition-shadow">
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between gap-2">
-          <CardTitle className="text-lg truncate">{item.displayName}</CardTitle>
-          <Badge variant="secondary" className="whitespace-nowrap">
-            {isPerson ? 'Individual' : 'Organization'}
-          </Badge>
-        </div>
-        {subtitle && <CardDescription className="capitalize">{String(subtitle).replace(/_/g, ' ')}</CardDescription>}
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <div className="flex flex-wrap gap-2 text-xs">
-          {item.industry && <Badge variant="outline">{item.industry}</Badge>}
-          {item.location && (
-            <Badge variant="outline" className="flex items-center gap-1">
-              <MapPin className="w-3 h-3" />
-              {item.location}
-            </Badge>
-          )}
-        </div>
-        {item.bio && <p className="text-sm text-slate-600 line-clamp-3">{item.bio}</p>}
-        <Link to={href}>
-          <Button variant="outline" size="sm" className="w-full">
-            View Profile
-          </Button>
-        </Link>
-      </CardContent>
-    </Card>
+    <Link to={href} className="block h-full">
+      <Card className="h-full border-0 shadow-sm hover:shadow-md transition-shadow">
+        <CardHeader className="pb-3">
+          <div className="flex items-start justify-between gap-2">
+            <CardTitle className="text-lg leading-tight line-clamp-1">{getDisplayName(item)}</CardTitle>
+            <div className="flex items-center gap-2 shrink-0">
+              {item.verified ? (
+                <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100">Verified</Badge>
+              ) : null}
+              <Badge variant="secondary" className="whitespace-nowrap">
+                {kindLabel}
+              </Badge>
+            </div>
+          </div>
+          {secondary && <CardDescription className="line-clamp-1">{secondary}</CardDescription>}
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap gap-2 text-xs">
+            {item.industry && <Badge variant="outline">{item.industry}</Badge>}
+            {item.location && (
+              <Badge variant="outline" className="flex items-center gap-1">
+                <MapPin className="w-3 h-3" />
+                {item.location}
+              </Badge>
+            )}
+          </div>
+          <p className="text-sm text-slate-600 line-clamp-1">{tagline}</p>
+        </CardContent>
+      </Card>
+    </Link>
   );
 }
 
 export default function Directory() {
-  const [mode, setMode] = useState('both');
+  const [mode, setMode] = useState(DEFAULT_MODE);
+  const [sort, setSort] = useState(DEFAULT_SORT);
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [page, setPage] = useState(1);
-  const [filters, setFilters] = useState({
-    industry: '',
-    location: '',
-  });
+  const [filters, setFilters] = useState(() => ({ ...DEFAULT_FILTERS }));
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedQuery(query.trim()), 300);
@@ -66,22 +118,23 @@ export default function Directory() {
 
   useEffect(() => {
     setPage(1);
-  }, [mode, debouncedQuery, filters.industry, filters.location]);
+  }, [mode, debouncedQuery, filters.industry, filters.location, sort]);
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['publicDirectorySearch', mode, debouncedQuery, filters, page, PAGE_SIZE],
+    queryKey: ['publicDirectorySearch', mode, debouncedQuery, filters.industry, filters.location, sort, page, PAGE_SIZE],
     queryFn: () =>
       directoryClient.search({
         mode,
         q: debouncedQuery,
         filters,
+        sort,
         page,
         pageSize: PAGE_SIZE,
       }),
   });
 
   const totalCount = data?.totalCount || 0;
-  const items = data?.items || [];
+  const rawItems = data?.items || [];
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
   const facets = useMemo(
@@ -91,6 +144,55 @@ export default function Directory() {
     }),
     [data],
   );
+
+  const items = useMemo(() => {
+    if (sort === 'relevance') {
+      return rawItems;
+    }
+
+    const sorted = [...rawItems];
+
+    if (sort === 'recently_active') {
+      sorted.sort((a, b) => {
+        const diff = getRecentlyActiveSortValue(b) - getRecentlyActiveSortValue(a);
+        if (diff !== 0) return diff;
+        return compareByName(a, b);
+      });
+      return sorted;
+    }
+
+    if (sort === 'newest') {
+      sorted.sort((a, b) => {
+        const diff = getNewestSortValue(b) - getNewestSortValue(a);
+        if (diff !== 0) return diff;
+        return compareByName(a, b);
+      });
+      return sorted;
+    }
+
+    sorted.sort((a, b) => {
+      const nameDiff = compareByName(a, b);
+      if (nameDiff !== 0) return nameDiff;
+      return getRecentlyActiveSortValue(b) - getRecentlyActiveSortValue(a);
+    });
+    return sorted;
+  }, [rawItems, sort]);
+
+  const hasDirtyFilters =
+    mode !== DEFAULT_MODE ||
+    query.trim().length > 0 ||
+    Boolean(filters.industry) ||
+    Boolean(filters.location) ||
+    sort !== DEFAULT_SORT;
+
+  const clearFilters = () => {
+    setMode(DEFAULT_MODE);
+    setSort(DEFAULT_SORT);
+    setQuery('');
+    setDebouncedQuery('');
+    setFilters({ ...DEFAULT_FILTERS });
+    setPage(1);
+  };
 
   return (
     <div className="min-h-screen bg-slate-50 py-8">
@@ -104,9 +206,9 @@ export default function Directory() {
           <CardContent className="pt-6 space-y-4">
             <Tabs value={mode} onValueChange={setMode}>
               <TabsList>
-                <TabsTrigger value="both">Both</TabsTrigger>
-                <TabsTrigger value="people">Individuals</TabsTrigger>
-                <TabsTrigger value="orgs">Organizations</TabsTrigger>
+                <TabsTrigger value="both">All</TabsTrigger>
+                <TabsTrigger value="people">People</TabsTrigger>
+                <TabsTrigger value="orgs">Companies</TabsTrigger>
               </TabsList>
             </Tabs>
 
@@ -115,7 +217,7 @@ export default function Directory() {
               <Input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search by name..."
+                placeholder="Search by name or keywords..."
                 className="pl-9"
               />
             </div>
@@ -149,6 +251,31 @@ export default function Directory() {
                 </SelectContent>
               </Select>
             </div>
+
+            <div className="border-t border-slate-100 pt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-sm text-slate-600">
+                Showing {totalCount} result{totalCount === 1 ? '' : 's'}
+              </p>
+              <div className="flex items-center gap-2 self-start sm:self-auto">
+                {hasDirtyFilters && (
+                  <Button variant="ghost" size="sm" onClick={clearFilters}>
+                    Clear filters
+                  </Button>
+                )}
+                <Select value={sort} onValueChange={setSort}>
+                  <SelectTrigger className="w-[180px]">
+                    <SelectValue placeholder="Sort by" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {SORT_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
           </CardContent>
         </Card>
 
@@ -168,12 +295,6 @@ export default function Directory() {
           </Card>
         ) : (
           <>
-            <div className="flex items-center justify-between">
-              <p className="text-sm text-slate-600">{totalCount} result{totalCount === 1 ? '' : 's'}</p>
-              <div className="text-sm text-slate-500">
-                {page} / {totalPages}
-              </div>
-            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {items.map((item) => (
                 <DirectoryCard key={`${item.kind}-${item.id}`} item={item} />
@@ -183,6 +304,9 @@ export default function Directory() {
               <Button variant="outline" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
                 Previous
               </Button>
+              <div className="text-sm text-slate-500 px-1">
+                {page} / {totalPages}
+              </div>
               <Button variant="outline" onClick={() => setPage((p) => p + 1)} disabled={page >= totalPages}>
                 Next
               </Button>

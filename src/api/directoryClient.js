@@ -3,13 +3,14 @@ import { request } from '@/api/httpClient';
 export const directoryClient = {
   buildQuery(params = {}) {
     const searchParams = new URLSearchParams();
+    const queryTerm = params.q ?? params.query;
 
     if (params.mode) {
       searchParams.set('mode', String(params.mode));
     }
 
-    if (params.q) {
-      searchParams.set('q', String(params.q));
+    if (queryTerm) {
+      searchParams.set('q', String(queryTerm));
     }
 
     if (params.page) {
@@ -18,6 +19,10 @@ export const directoryClient = {
 
     if (params.pageSize) {
       searchParams.set('pageSize', String(params.pageSize));
+    }
+
+    if (params.sort) {
+      searchParams.set('sort', String(params.sort));
     }
 
     const filters = params.filters && typeof params.filters === 'object' ? params.filters : {};

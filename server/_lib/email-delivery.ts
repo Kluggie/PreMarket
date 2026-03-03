@@ -5,6 +5,8 @@ import { newId } from './ids.js';
 
 export const EMAIL_MODE_VALUES = ['contact_only', 'transactional', 'disabled'] as const;
 export type EmailMode = (typeof EMAIL_MODE_VALUES)[number];
+export const EMAIL_PURPOSE_VALUES = ['general', 'security'] as const;
+export type EmailPurpose = (typeof EMAIL_PURPOSE_VALUES)[number];
 
 export const EMAIL_CATEGORIES = [
   'contact_support',
@@ -22,6 +24,7 @@ const CONTACT_ONLY_CATEGORIES = new Set<EmailCategory>(['contact_support', 'cont
 
 const EMAIL_CATEGORY_SET = new Set<EmailCategory>(EMAIL_CATEGORIES);
 const EMAIL_MODE_SET = new Set<EmailMode>(EMAIL_MODE_VALUES);
+const EMAIL_PURPOSE_SET = new Set<EmailPurpose>(EMAIL_PURPOSE_VALUES);
 
 function asText(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
@@ -83,6 +86,11 @@ export function normalizeEmailCategory(value: unknown): EmailCategory | null {
   }
 
   return null;
+}
+
+function normalizeEmailPurpose(value: unknown): EmailPurpose {
+  const normalized = asText(value).toLowerCase();
+  return EMAIL_PURPOSE_SET.has(normalized as EmailPurpose) ? (normalized as EmailPurpose) : 'general';
 }
 
 export function isCategoryAllowedByMode(mode: EmailMode, category: EmailCategory) {
@@ -219,6 +227,7 @@ export type SendCategorizedEmailResult =
 
 export async function sendCategorizedEmail(input: {
   category: EmailCategory;
+  purpose?: EmailPurpose;
   to: string | string[];
   cc?: string | string[] | null;
   bcc?: string | string[] | null;
@@ -230,6 +239,7 @@ export async function sendCategorizedEmail(input: {
   db?: any;
 }) {
   const mode = getEmailMode();
+  const purpose = normalizeEmailPurpose(input.purpose);
   const rawRecipientsTo = normalizeEmails(input.to);
   const rawRecipientsCc = normalizeOptionalEmails(input.cc);
   const rawRecipientsBcc = normalizeOptionalEmails(input.bcc);
@@ -239,6 +249,7 @@ export async function sendCategorizedEmail(input: {
   const html = asText(input.html);
   const replyTo = asText(input.replyTo).toLowerCase();
   const transactionalCategory = isTransactionalCategory(input.category);
+  const bypassPolicyMode = purpose === 'security';
   const devSink = shouldUseDevEmailSink(mode) ? resolveDevEmailSink() : '';
   const recipientsTo = devSink ? [devSink] : rawRecipientsTo;
   const recipientsCc = devSink ? [] : rawRecipientsCc;
@@ -267,7 +278,7 @@ export async function sendCategorizedEmail(input: {
     } satisfies SendCategorizedEmailResult;
   }
 
-  if (mode === 'disabled') {
+  if (!bypassPolicyMode && mode === 'disabled') {
     logBlockedEmail({
       category: input.category,
       mode,
@@ -286,7 +297,7 @@ export async function sendCategorizedEmail(input: {
     } satisfies SendCategorizedEmailResult;
   }
 
-  if (!isCategoryAllowedByMode(mode, input.category)) {
+  if (!bypassPolicyMode && !isCategoryAllowedByMode(mode, input.category)) {
     logBlockedEmail({
       category: input.category,
       mode,

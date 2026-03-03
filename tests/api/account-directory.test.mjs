@@ -27,7 +27,7 @@ async function callHandler(handler, reqOptions) {
 if (!hasDatabaseUrl()) {
   test('account + directory API parity (skipped: DATABASE_URL missing)', { skip: true }, () => {});
 } else {
-  test('profile GET/PUT persists profile + notification settings and writes consent audit logs', async () => {
+  test('profile GET/PUT persists profile (including tagline) + notification settings and writes consent audit logs', async () => {
     await ensureMigrated();
     await resetTables();
 
@@ -50,6 +50,7 @@ if (!hasDatabaseUrl()) {
           pseudonym: 'FounderOne',
           user_type: 'business',
           title: 'CEO',
+          tagline: 'Helping growth-stage teams validate enterprise demand',
           industry: 'Technology',
           location: 'New York',
           bio: 'Building in public.',
@@ -70,6 +71,7 @@ if (!hasDatabaseUrl()) {
     const savedProfile = putRes.jsonBody().profile;
     assert.equal(savedProfile.pseudonym, 'FounderOne');
     assert.equal(savedProfile.user_type, 'business');
+    assert.equal(savedProfile.tagline, 'Helping growth-stage teams validate enterprise demand');
     assert.equal(savedProfile.privacy_mode, 'public');
     assert.equal(savedProfile.social_links_ai_consent, true);
 
@@ -101,6 +103,20 @@ if (!hasDatabaseUrl()) {
     const profile = getAfterRes.jsonBody().profile;
     assert.equal(profile.notification_settings.email_proposals, false);
     assert.equal(profile.notification_settings.email_marketing, true);
+    assert.equal(profile.tagline, 'Helping growth-stage teams validate enterprise demand');
+
+    const oversizeTaglineRes = await callHandler(profileHandler, {
+      method: 'PUT',
+      url: '/api/account/profile',
+      headers: { cookie },
+      body: {
+        profile: {
+          tagline: 'x'.repeat(140),
+        },
+      },
+    });
+    assert.equal(oversizeTaglineRes.statusCode, 200);
+    assert.equal(oversizeTaglineRes.jsonBody().profile.tagline.length, 80);
 
     const toggleConsentRes = await callHandler(profileHandler, {
       method: 'PUT',
@@ -205,6 +221,7 @@ if (!hasDatabaseUrl()) {
           industry: 'Technology',
           location: 'NYC',
           title: 'Founder',
+          tagline: 'Helping founders secure better pilot partners',
           bio: 'Public bio',
           website: 'https://public.example.com',
           privacy_mode: 'public',
@@ -254,6 +271,8 @@ if (!hasDatabaseUrl()) {
     const searchPayload = searchRes.jsonBody();
     assert.equal(searchPayload.items.some((item) => item.kind === 'person' && item.id === publicProfileId), true);
     assert.equal(searchPayload.items.some((item) => item.kind === 'org' && item.id === publicOrgId), true);
+    const publicPerson = searchPayload.items.find((item) => item.kind === 'person' && item.id === publicProfileId);
+    assert.equal(publicPerson?.tagline, 'Helping founders secure better pilot partners');
 
     const personDetailRes = await callHandler(directoryDetailHandler, {
       method: 'GET',
@@ -262,6 +281,7 @@ if (!hasDatabaseUrl()) {
     });
     assert.equal(personDetailRes.statusCode, 200);
     assert.equal(personDetailRes.jsonBody().item.kind, 'person');
+    assert.equal(personDetailRes.jsonBody().item.tagline, 'Helping founders secure better pilot partners');
 
     const orgDetailRes = await callHandler(directoryDetailHandler, {
       method: 'GET',
