@@ -123,6 +123,32 @@ export const sharedReportsClient = {
     };
   },
 
+  async startRecipientVerification(token) {
+    const response = await request(`/api/shared-report/${encodeToken(token)}/verify/start`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+    return {
+      started: Boolean(response.started),
+      message: response.message || 'If permitted, a verification code was sent.',
+    };
+  },
+
+  async confirmRecipientVerification(token, code) {
+    const response = await request(`/api/shared-report/${encodeToken(token)}/verify/confirm`, {
+      method: 'POST',
+      body: JSON.stringify({
+        code: String(code || ''),
+      }),
+    });
+    return {
+      verified: Boolean(response.verified),
+      invitedEmail: response.invited_email || null,
+      authorizedEmail: response.authorized_email || null,
+      authorizedAt: response.authorized_at || null,
+    };
+  },
+
   async respond(token, input = {}) {
     const response = await request(`/api/sharedReports/${encodeToken(token)}/respond`, {
       method: 'POST',

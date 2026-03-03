@@ -1,5 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { ok } from '../../../_lib/api-response.js';
+import { requireUser } from '../../../_lib/auth.js';
 import { schema } from '../../../_lib/db/client.js';
 import {
   htmlToEditorText,
@@ -28,6 +29,7 @@ import {
   getPayloadText,
   getToken,
   logTokenEvent,
+  requireRecipientAuthorization,
   resolveSharedReportToken,
   toObject,
 } from '../_shared.js';
@@ -207,6 +209,12 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
   await withApiRoute(req, res, SHARED_REPORT_EVALUATE_ROUTE, async (context) => {
     ensureMethod(req, ['POST']);
 
+    const auth = await requireUser(req, res);
+    if (!auth.ok) {
+      return;
+    }
+    context.userId = auth.user.id;
+
     const token = getToken(req, tokenParam);
     if (!token) {
       throw new ApiError(400, 'invalid_input', 'Token is required');
@@ -220,6 +228,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       consumeView: false,
       enforceMaxUses: false,
     });
+    requireRecipientAuthorization(resolved.link, auth.user);
 
     if (!resolved.link.canReevaluate) {
       throw new ApiError(403, 'reevaluation_not_allowed', 'Re-evaluation is disabled for this link');

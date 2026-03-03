@@ -9,6 +9,8 @@ import sharedReportRecipientTokenHandler from '../../server/routes/shared-report
 import sharedReportRecipientDraftHandler from '../../server/routes/shared-report/[token]/draft.ts';
 import sharedReportRecipientEvaluateHandler from '../../server/routes/shared-report/[token]/evaluate.ts';
 import sharedReportRecipientSendBackHandler from '../../server/routes/shared-report/[token]/send-back.ts';
+import sharedReportVerifyStartHandler from '../../server/routes/shared-report/[token]/verify/start.ts';
+import sharedReportVerifyConfirmHandler from '../../server/routes/shared-report/[token]/verify/confirm.ts';
 import { ensureTestEnv, makeSessionCookie } from '../helpers/auth.mjs';
 import { ensureMigrated, getDb, hasDatabaseUrl, resetTables } from '../helpers/db.mjs';
 import { createMockReq, createMockRes } from '../helpers/httpMock.mjs';
@@ -110,11 +112,12 @@ async function saveRecipientDraft(token, body, cookie = null) {
   return res;
 }
 
-async function evaluateRecipientDraft(token, body = {}) {
+async function evaluateRecipientDraft(token, body = {}, cookie = null) {
   const req = createMockReq({
     method: 'POST',
     url: `/api/shared-report/${token}/evaluate`,
     query: { token },
+    headers: cookie ? { cookie } : {},
     body,
   });
   const res = createMockRes();
@@ -122,15 +125,42 @@ async function evaluateRecipientDraft(token, body = {}) {
   return res;
 }
 
-async function sendBackRecipientDraft(token, body = {}) {
+async function sendBackRecipientDraft(token, body = {}, cookie = null) {
   const req = createMockReq({
     method: 'POST',
     url: `/api/shared-report/${token}/send-back`,
     query: { token },
+    headers: cookie ? { cookie } : {},
     body,
   });
   const res = createMockRes();
   await sharedReportRecipientSendBackHandler(req, res, token);
+  return res;
+}
+
+async function startRecipientVerification(token, cookie) {
+  const req = createMockReq({
+    method: 'POST',
+    url: `/api/shared-report/${token}/verify/start`,
+    query: { token },
+    headers: cookie ? { cookie } : {},
+    body: {},
+  });
+  const res = createMockRes();
+  await sharedReportVerifyStartHandler(req, res, token);
+  return res;
+}
+
+async function confirmRecipientVerification(token, code, cookie) {
+  const req = createMockReq({
+    method: 'POST',
+    url: `/api/shared-report/${token}/verify/confirm`,
+    query: { token },
+    headers: cookie ? { cookie } : {},
+    body: { code },
+  });
+  const res = createMockRes();
+  await sharedReportVerifyConfirmHandler(req, res, token);
   return res;
 }
 
@@ -275,16 +305,18 @@ if (!hasDatabaseUrl()) {
     ];
 
     for (const [index, entry] of matrix.entries()) {
+      const recipientEmail = `recipient${index}@example.com`;
       const link = await createSharedReportLink(
         ownerCookie,
         comparison.id,
-        `recipient${index}@example.com`,
+        recipientEmail,
         {
           canEdit: entry.canEdit,
           canEditConfidential: entry.canEditConfidential,
           maxUses: 20,
         },
       );
+      const recipientCookie = makeRecipientCookie(`a4_matrix_${index}`, recipientEmail);
 
       const readRes = await getRecipientWorkspace(link.token);
       assert.equal(readRes.statusCode, 200, `${entry.label} should load workspace`);
@@ -306,7 +338,7 @@ if (!hasDatabaseUrl()) {
       const saveRes = await saveRecipientDraft(link.token, {
         shared_payload: sharedPayload,
         recipient_confidential_payload: confidentialPayload,
-      }, ownerCookie);
+      }, recipientCookie);
       assert.equal(saveRes.statusCode, entry.expectedStatus, `${entry.label} unexpected status`);
 
       const saveBody = saveRes.jsonBody();
@@ -335,18 +367,19 @@ if (!hasDatabaseUrl()) {
       canEditConfidential: true,
       maxUses: 20,
     });
+    const recipientCookie = makeRecipientCookie('a5_recipient', 'recipient@example.com');
 
     const invalidShared = await saveRecipientDraft(link.token, {
       shared_payload: 'not-an-object',
       recipient_confidential_payload: {},
-    }, ownerCookie);
+    }, recipientCookie);
     assert.equal(invalidShared.statusCode, 400);
     assert.equal(invalidShared.jsonBody().error.code, 'invalid_input');
 
     const invalidConfidential = await saveRecipientDraft(link.token, {
       shared_payload: {},
       recipient_confidential_payload: [],
-    }, ownerCookie);
+    }, recipientCookie);
     assert.equal(invalidConfidential.statusCode, 400);
     assert.equal(invalidConfidential.jsonBody().error.code, 'invalid_input');
 
@@ -354,7 +387,7 @@ if (!hasDatabaseUrl()) {
     const oversized = await saveRecipientDraft(link.token, {
       shared_payload: { text: hugeValue },
       recipient_confidential_payload: {},
-    }, ownerCookie);
+    }, recipientCookie);
     assert.equal(oversized.statusCode, 413);
     assert.equal(oversized.jsonBody().error.code, 'payload_too_large');
   });
@@ -392,6 +425,308 @@ if (!hasDatabaseUrl()) {
     }, recipientCookie);
     assert.equal(authenticatedSave.statusCode, 200);
     assert.equal(authenticatedSave.jsonBody().ok, true);
+  });
+
+  test('recipient write endpoints enforce invited email or verified alias authorization', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = makeOwnerCookie('recipient_authz_matrix');
+    const invitedEmail = 'invited@example.com';
+    const invitedCookie = makeRecipientCookie('recipient_authz_invited', invitedEmail);
+    const alternateCookie = makeRecipientCookie('recipient_authz_alt', 'alternate@example.com');
+    const comparison = await createComparison(ownerCookie, {
+      title: 'Recipient Authorization Matrix',
+      docAText: 'Private baseline text',
+      docBText: 'Shared baseline text long enough for evaluation checks.',
+    });
+
+    const link = await createSharedReportLink(ownerCookie, comparison.id, invitedEmail, {
+      canEdit: true,
+      canEditConfidential: true,
+      canReevaluate: true,
+      canSendBack: true,
+      maxUses: 20,
+    });
+
+    const invitedSave = await saveRecipientDraft(link.token, {
+      shared_payload: { label: 'Shared Information', text: 'Invited recipient can save draft.' },
+      recipient_confidential_payload: { label: 'Confidential Information', notes: 'Invited note.' },
+      workflow_step: 2,
+    }, invitedCookie);
+    assert.equal(invitedSave.statusCode, 200);
+    assert.equal(invitedSave.jsonBody().ok, true);
+
+    const mismatchSave = await saveRecipientDraft(link.token, {
+      shared_payload: { label: 'Shared Information', text: 'Alternate account should be blocked.' },
+      recipient_confidential_payload: { label: 'Confidential Information', notes: '' },
+      workflow_step: 2,
+    }, alternateCookie);
+    assert.equal(mismatchSave.statusCode, 403);
+    assert.equal(mismatchSave.jsonBody().error.code, 'recipient_email_mismatch');
+    assert.equal(String(mismatchSave.jsonBody().error.invitedEmail || ''), invitedEmail);
+
+    const mismatchEvaluate = await evaluateRecipientDraft(link.token, {}, alternateCookie);
+    assert.equal(mismatchEvaluate.statusCode, 403);
+    assert.equal(mismatchEvaluate.jsonBody().error.code, 'recipient_email_mismatch');
+    assert.equal(String(mismatchEvaluate.jsonBody().error.invitedEmail || ''), invitedEmail);
+  });
+
+  test('verify start/confirm authorizes an alternate signed-in email for the specific shared token', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = makeOwnerCookie('recipient_verify_flow');
+    const invitedEmail = 'invited-verify@example.com';
+    const alternateEmail = 'alias-verify@example.com';
+    const alternateUserSub = 'recipient_verify_flow_alias_recipient';
+    const alternateCookie = makeSessionCookie({
+      sub: alternateUserSub,
+      email: alternateEmail,
+    });
+    const comparison = await createComparison(ownerCookie, {
+      title: 'Recipient Verify Flow',
+      docAText: 'Private baseline for verification flow.',
+      docBText: 'Shared baseline text for verification workflow coverage.',
+    });
+
+    const link = await createSharedReportLink(ownerCookie, comparison.id, invitedEmail, {
+      canEdit: true,
+      canEditConfidential: true,
+      canReevaluate: true,
+      canSendBack: true,
+      maxUses: 20,
+    });
+
+    const beforeVerifySave = await saveRecipientDraft(link.token, {
+      shared_payload: { label: 'Shared Information', text: 'blocked before verification' },
+      recipient_confidential_payload: { label: 'Confidential Information', notes: '' },
+    }, alternateCookie);
+    assert.equal(beforeVerifySave.statusCode, 403);
+    assert.equal(beforeVerifySave.jsonBody().error.code, 'recipient_email_mismatch');
+
+    const previousEmailMode = process.env.EMAIL_MODE;
+    const previousResendApiKey = process.env.RESEND_API_KEY;
+    const previousResendFromEmail = process.env.RESEND_FROM_EMAIL;
+    const previousFetch = globalThis.fetch;
+    const sentPayloads = [];
+    process.env.EMAIL_MODE = 'transactional';
+    process.env.RESEND_API_KEY = 'test-resend-key';
+    process.env.RESEND_FROM_EMAIL = 'notifications@mail.getpremarket.com';
+    globalThis.fetch = async (url, init = {}) => {
+      if (String(url).includes('api.resend.com/emails')) {
+        const payload = JSON.parse(String(init.body || '{}'));
+        sentPayloads.push(payload);
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ id: 'email_verify_test' }),
+        };
+      }
+      return previousFetch(url, init);
+    };
+
+    try {
+      const startRes = await startRecipientVerification(link.token, alternateCookie);
+      assert.equal(startRes.statusCode, 200);
+      assert.equal(startRes.jsonBody().started, true);
+      assert.equal(sentPayloads.length, 1);
+
+      const otpText = String(sentPayloads[0]?.text || '');
+      const otpMatch = otpText.match(/\b(\d{6})\b/);
+      assert.equal(Boolean(otpMatch), true);
+      const code = String(otpMatch?.[1] || '');
+
+      const db = getDb();
+      const verificationRows = await db.execute(
+        sql`select token, invited_email, code_hash, attempt_count
+            from shared_link_verifications
+            where token = ${link.token}
+            limit 1`,
+      );
+      assert.equal(verificationRows.rows.length, 1);
+      assert.equal(String(verificationRows.rows[0].invited_email || ''), invitedEmail);
+      assert.equal(String(verificationRows.rows[0].code_hash || '').length > 0, true);
+      assert.equal(String(verificationRows.rows[0].code_hash || '') === code, false);
+      assert.equal(Number(verificationRows.rows[0].attempt_count || 0), 0);
+
+      const confirmRes = await confirmRecipientVerification(link.token, code, alternateCookie);
+      assert.equal(confirmRes.statusCode, 200);
+      assert.equal(confirmRes.jsonBody().verified, true);
+      assert.equal(String(confirmRes.jsonBody().invited_email || ''), invitedEmail);
+      assert.equal(String(confirmRes.jsonBody().authorized_email || ''), alternateEmail);
+
+      const linkRows = await db.execute(
+        sql`select authorized_user_id, authorized_email, authorized_at
+            from shared_links
+            where token = ${link.token}
+            limit 1`,
+      );
+      assert.equal(linkRows.rows.length, 1);
+      assert.equal(String(linkRows.rows[0].authorized_user_id || ''), alternateUserSub);
+      assert.equal(String(linkRows.rows[0].authorized_email || ''), alternateEmail);
+      assert.notEqual(linkRows.rows[0].authorized_at, null);
+
+      const verificationAfterConfirm = await db.execute(
+        sql`select count(*)::int as count from shared_link_verifications where token = ${link.token}`,
+      );
+      assert.equal(Number(verificationAfterConfirm.rows[0]?.count || 0), 0);
+    } finally {
+      globalThis.fetch = previousFetch;
+      if (previousEmailMode === undefined) {
+        delete process.env.EMAIL_MODE;
+      } else {
+        process.env.EMAIL_MODE = previousEmailMode;
+      }
+      if (previousResendApiKey === undefined) {
+        delete process.env.RESEND_API_KEY;
+      } else {
+        process.env.RESEND_API_KEY = previousResendApiKey;
+      }
+      if (previousResendFromEmail === undefined) {
+        delete process.env.RESEND_FROM_EMAIL;
+      } else {
+        process.env.RESEND_FROM_EMAIL = previousResendFromEmail;
+      }
+    }
+
+    const afterVerifySave = await saveRecipientDraft(link.token, {
+      shared_payload: { label: 'Shared Information', text: 'Allowed after verify confirm.' },
+      recipient_confidential_payload: { label: 'Confidential Information', notes: 'Alias account note.' },
+      workflow_step: 2,
+    }, alternateCookie);
+    assert.equal(afterVerifySave.statusCode, 200);
+    assert.equal(afterVerifySave.jsonBody().ok, true);
+  });
+
+  test('once alias authorization is set for user A, user B cannot take over authorization or write', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = makeOwnerCookie('recipient_verify_lock');
+    const invitedEmail = 'verify-lock-invited@example.com';
+    const aliasA = {
+      sub: 'recipient_verify_lock_alias_a',
+      email: 'verify-lock-alias-a@example.com',
+      cookie: makeSessionCookie({
+        sub: 'recipient_verify_lock_alias_a',
+        email: 'verify-lock-alias-a@example.com',
+      }),
+    };
+    const aliasB = {
+      sub: 'recipient_verify_lock_alias_b',
+      email: 'verify-lock-alias-b@example.com',
+      cookie: makeSessionCookie({
+        sub: 'recipient_verify_lock_alias_b',
+        email: 'verify-lock-alias-b@example.com',
+      }),
+    };
+
+    const comparison = await createComparison(ownerCookie, {
+      title: 'Recipient Verify Lock',
+      docAText: 'Private baseline text for verify lock coverage.',
+      docBText: 'Shared baseline text long enough for save flow coverage after verification.',
+    });
+
+    const link = await createSharedReportLink(ownerCookie, comparison.id, invitedEmail, {
+      canEdit: true,
+      canEditConfidential: true,
+      canReevaluate: true,
+      canSendBack: true,
+      maxUses: 20,
+    });
+
+    const previousEmailMode = process.env.EMAIL_MODE;
+    const previousResendApiKey = process.env.RESEND_API_KEY;
+    const previousResendFromEmail = process.env.RESEND_FROM_EMAIL;
+    const previousFetch = globalThis.fetch;
+    const sentPayloads = [];
+    process.env.EMAIL_MODE = 'transactional';
+    process.env.RESEND_API_KEY = 'test-resend-key';
+    process.env.RESEND_FROM_EMAIL = 'notifications@mail.getpremarket.com';
+    globalThis.fetch = async (url, init = {}) => {
+      if (String(url).includes('api.resend.com/emails')) {
+        const payload = JSON.parse(String(init.body || '{}'));
+        sentPayloads.push(payload);
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ id: `email_verify_lock_${sentPayloads.length}` }),
+        };
+      }
+      return previousFetch(url, init);
+    };
+
+    const extractOtp = (payload) => {
+      const text = String(payload?.text || '');
+      const match = text.match(/\b(\d{6})\b/);
+      assert.equal(Boolean(match), true);
+      return String(match?.[1] || '');
+    };
+
+    try {
+      const startA = await startRecipientVerification(link.token, aliasA.cookie);
+      assert.equal(startA.statusCode, 200);
+      assert.equal(startA.jsonBody().started, true);
+      assert.equal(sentPayloads.length >= 1, true);
+      const codeA = extractOtp(sentPayloads[0]);
+
+      const confirmA = await confirmRecipientVerification(link.token, codeA, aliasA.cookie);
+      assert.equal(confirmA.statusCode, 200);
+      assert.equal(confirmA.jsonBody().verified, true);
+      assert.equal(String(confirmA.jsonBody().authorized_email || ''), aliasA.email);
+
+      const startB = await startRecipientVerification(link.token, aliasB.cookie);
+      assert.equal(startB.statusCode, 409);
+      assert.equal(startB.jsonBody().error.code, 'recipient_authorization_locked');
+      assert.equal(sentPayloads.length, 1);
+
+      const confirmB = await confirmRecipientVerification(link.token, codeA, aliasB.cookie);
+      assert.equal(confirmB.statusCode, 409);
+      assert.equal(confirmB.jsonBody().error.code, 'recipient_authorization_locked');
+    } finally {
+      globalThis.fetch = previousFetch;
+      if (previousEmailMode === undefined) {
+        delete process.env.EMAIL_MODE;
+      } else {
+        process.env.EMAIL_MODE = previousEmailMode;
+      }
+      if (previousResendApiKey === undefined) {
+        delete process.env.RESEND_API_KEY;
+      } else {
+        process.env.RESEND_API_KEY = previousResendApiKey;
+      }
+      if (previousResendFromEmail === undefined) {
+        delete process.env.RESEND_FROM_EMAIL;
+      } else {
+        process.env.RESEND_FROM_EMAIL = previousResendFromEmail;
+      }
+    }
+
+    const db = getDb();
+    const linkRows = await db.execute(
+      sql`select authorized_user_id, authorized_email
+          from shared_links
+          where token = ${link.token}
+          limit 1`,
+    );
+    assert.equal(linkRows.rows.length, 1);
+    assert.equal(String(linkRows.rows[0].authorized_user_id || ''), aliasA.sub);
+    assert.equal(String(linkRows.rows[0].authorized_email || ''), aliasA.email);
+
+    const writeB = await saveRecipientDraft(link.token, {
+      shared_payload: { label: 'Shared Information', text: 'Alias B should be blocked after Alias A is authorized.' },
+      recipient_confidential_payload: { label: 'Confidential Information', notes: '' },
+    }, aliasB.cookie);
+    assert.equal(writeB.statusCode, 403);
+    assert.equal(writeB.jsonBody().error.code, 'recipient_email_mismatch');
+
+    const writeA = await saveRecipientDraft(link.token, {
+      shared_payload: { label: 'Shared Information', text: 'Alias A remains authorized for writes.' },
+      recipient_confidential_payload: { label: 'Confidential Information', notes: 'Alias A note.' },
+    }, aliasA.cookie);
+    assert.equal(writeA.statusCode, 200);
+    assert.equal(writeA.jsonBody().ok, true);
   });
 
   test('Prompt3 recipient sees shared report in proposals received list', async () => {
@@ -462,6 +797,7 @@ if (!hasDatabaseUrl()) {
     const link = await createSharedReportLink(ownerCookie, comparison.id, 'recipient@example.com', {
       canReevaluate: true,
     });
+    const recipientCookie = makeRecipientCookie('p3_report_latest_eval_recipient', 'recipient@example.com');
     const reportMarker = `LATEST_PUBLIC_REPORT_${Date.now()}`;
 
     const previousEvaluator = globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
@@ -476,7 +812,7 @@ if (!hasDatabaseUrl()) {
     });
 
     try {
-      const evaluateRes = await evaluateRecipientDraft(link.token);
+      const evaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
       assert.equal(evaluateRes.statusCode, 200);
 
       const workspaceRes = await getRecipientWorkspace(link.token);
@@ -492,7 +828,7 @@ if (!hasDatabaseUrl()) {
     }
   });
 
-  test('Prompt2 evaluate is public and permission-gated by can_reevaluate', async () => {
+  test('Prompt2 evaluate is auth-protected and permission-gated by can_reevaluate', async () => {
     await ensureMigrated();
     await resetTables();
 
@@ -508,8 +844,9 @@ if (!hasDatabaseUrl()) {
       canEditConfidential: true,
       canReevaluate: false,
     });
+    const disallowedRecipientCookie = makeRecipientCookie('p2_eval_disallowed', 'recipient@example.com');
 
-    const disallowedRes = await evaluateRecipientDraft(disallowed.token);
+    const disallowedRes = await evaluateRecipientDraft(disallowed.token, {}, disallowedRecipientCookie);
     assert.equal(disallowedRes.statusCode, 403);
     assert.equal(disallowedRes.jsonBody().error.code, 'reevaluation_not_allowed');
 
@@ -518,6 +855,7 @@ if (!hasDatabaseUrl()) {
       canEditConfidential: true,
       canReevaluate: true,
     });
+    const allowedRecipientCookie = makeRecipientCookie('p2_eval_allowed', 'recipient2@example.com');
 
     // Stub evaluator in-process so test does not depend on external Vertex config.
     // This suite is run serially in CI (`--test-concurrency=1`) and always restores in finally.
@@ -533,7 +871,7 @@ if (!hasDatabaseUrl()) {
     });
 
     try {
-      const allowedRes = await evaluateRecipientDraft(allowed.token);
+      const allowedRes = await evaluateRecipientDraft(allowed.token, {}, allowedRecipientCookie);
       assert.equal(allowedRes.statusCode, 200);
       const body = allowedRes.jsonBody();
       assert.equal(body.ok, true);
@@ -561,8 +899,9 @@ if (!hasDatabaseUrl()) {
       canReevaluate: true,
       canSendBack: true,
     });
+    const recipientCookie = makeRecipientCookie('p2_send_recipient', 'recipient@example.com');
 
-    const noDraftRes = await sendBackRecipientDraft(link.token);
+    const noDraftRes = await sendBackRecipientDraft(link.token, {}, recipientCookie);
     assert.equal(noDraftRes.statusCode, 400);
     assert.equal(noDraftRes.jsonBody().error.code, 'draft_required');
 
@@ -573,10 +912,10 @@ if (!hasDatabaseUrl()) {
         notes: 'Recipient private terms for internal use.',
       },
       workflow_step: 2,
-    }, ownerCookie);
+    }, recipientCookie);
     assert.equal(saveRes.statusCode, 200);
 
-    const sendRes = await sendBackRecipientDraft(link.token);
+    const sendRes = await sendBackRecipientDraft(link.token, {}, recipientCookie);
     assert.equal(sendRes.statusCode, 200);
     assert.equal(sendRes.jsonBody().status, 'sent');
 
@@ -615,6 +954,7 @@ if (!hasDatabaseUrl()) {
       canEditConfidential: true,
       canReevaluate: true,
     });
+    const recipientCookie = makeRecipientCookie('p2_leak_recipient', 'recipient@example.com');
 
     const saveRes = await saveRecipientDraft(link.token, {
       shared_payload: {
@@ -626,7 +966,7 @@ if (!hasDatabaseUrl()) {
         notes: `Do not leak ${recipientSecret} in any public report.`,
       },
       workflow_step: 2,
-    }, ownerCookie);
+    }, recipientCookie);
     assert.equal(saveRes.statusCode, 200);
 
     const previousEvaluator = globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
@@ -650,7 +990,7 @@ if (!hasDatabaseUrl()) {
     });
 
     try {
-      const evaluateRes = await evaluateRecipientDraft(link.token);
+      const evaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
       assert.equal(evaluateRes.statusCode, 200);
 
       const body = evaluateRes.jsonBody();
@@ -683,15 +1023,16 @@ if (!hasDatabaseUrl()) {
       canReevaluate: false,
       canSendBack: true,
     });
+    const recipientCookie = makeRecipientCookie('p2_send_supersede_recipient', 'recipient@example.com');
 
     const save1 = await saveRecipientDraft(link.token, {
       shared_payload: { label: 'Shared Information', text: 'Recipient shared v1' },
       recipient_confidential_payload: { label: 'Confidential Information', notes: 'Recipient private v1' },
       workflow_step: 2,
-    }, ownerCookie);
+    }, recipientCookie);
     assert.equal(save1.statusCode, 200);
 
-    const send1 = await sendBackRecipientDraft(link.token);
+    const send1 = await sendBackRecipientDraft(link.token, {}, recipientCookie);
     assert.equal(send1.statusCode, 200);
     const firstRevisionId = String(send1.jsonBody().revision_id || '');
     assert.notEqual(firstRevisionId, '');
@@ -701,10 +1042,10 @@ if (!hasDatabaseUrl()) {
       shared_payload: { label: 'Shared Information', text: 'Recipient shared v2' },
       recipient_confidential_payload: { label: 'Confidential Information', notes: 'Recipient private v2' },
       workflow_step: 2,
-    }, ownerCookie);
+    }, recipientCookie);
     assert.equal(save2.statusCode, 200);
 
-    const send2 = await sendBackRecipientDraft(link.token);
+    const send2 = await sendBackRecipientDraft(link.token, {}, recipientCookie);
     assert.equal(send2.statusCode, 200);
     const secondRevisionId = String(send2.jsonBody().revision_id || '');
     assert.notEqual(secondRevisionId, '');
@@ -756,6 +1097,7 @@ if (!hasDatabaseUrl()) {
       canSendBack: false,
       maxUses: 20,
     });
+    const recipientCookie = makeRecipientCookie('p2_perm_matrix_recipient', 'recipient@example.com');
 
     const workspaceRes = await getRecipientWorkspace(viewOnlyLink.token);
     assert.equal(workspaceRes.statusCode, 200);
@@ -769,22 +1111,22 @@ if (!hasDatabaseUrl()) {
     const rejectSharedEdit = await saveRecipientDraft(viewOnlyLink.token, {
       shared_payload: { label: 'Shared Information', text: 'mutated shared should fail' },
       recipient_confidential_payload: workspace.defaults?.recipient_confidential_payload || {},
-    }, ownerCookie);
+    }, recipientCookie);
     assert.equal(rejectSharedEdit.statusCode, 403);
     assert.equal(rejectSharedEdit.jsonBody().error.code, 'edit_not_allowed');
 
     const rejectConfidentialEdit = await saveRecipientDraft(viewOnlyLink.token, {
       shared_payload: workspace.defaults?.shared_payload || {},
       recipient_confidential_payload: { label: 'Confidential Information', notes: 'mutated private should fail' },
-    }, ownerCookie);
+    }, recipientCookie);
     assert.equal(rejectConfidentialEdit.statusCode, 403);
     assert.equal(rejectConfidentialEdit.jsonBody().error.code, 'confidential_edit_not_allowed');
 
-    const evaluateRes = await evaluateRecipientDraft(viewOnlyLink.token);
+    const evaluateRes = await evaluateRecipientDraft(viewOnlyLink.token, {}, recipientCookie);
     assert.equal(evaluateRes.statusCode, 403);
     assert.equal(evaluateRes.jsonBody().error.code, 'reevaluation_not_allowed');
 
-    const sendBackRes = await sendBackRecipientDraft(viewOnlyLink.token);
+    const sendBackRes = await sendBackRecipientDraft(viewOnlyLink.token, {}, recipientCookie);
     assert.equal(sendBackRes.statusCode, 403);
     assert.equal(sendBackRes.jsonBody().error.code, 'send_back_not_allowed');
   });

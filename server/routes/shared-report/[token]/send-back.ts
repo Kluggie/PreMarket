@@ -1,5 +1,6 @@
 import { and, desc, eq } from 'drizzle-orm';
 import { ok } from '../../../_lib/api-response.js';
+import { requireUser } from '../../../_lib/auth.js';
 import { schema } from '../../../_lib/db/client.js';
 import { ApiError } from '../../../_lib/errors.js';
 import { newId } from '../../../_lib/ids.js';
@@ -14,6 +15,7 @@ import {
   getCurrentRecipientDraft,
   getToken,
   logTokenEvent,
+  requireRecipientAuthorization,
   resolveSharedReportToken,
   toObject,
 } from '../_shared.js';
@@ -41,6 +43,12 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
   await withApiRoute(req, res, SHARED_REPORT_SEND_BACK_ROUTE, async (context) => {
     ensureMethod(req, ['POST']);
 
+    const auth = await requireUser(req, res);
+    if (!auth.ok) {
+      return;
+    }
+    context.userId = auth.user.id;
+
     const token = getToken(req, tokenParam);
     if (!token) {
       throw new ApiError(400, 'invalid_input', 'Token is required');
@@ -54,6 +62,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       consumeView: false,
       enforceMaxUses: false,
     });
+    requireRecipientAuthorization(resolved.link, auth.user);
 
     if (!resolved.link.canSendBack) {
       throw new ApiError(403, 'send_back_not_allowed', 'Send back is disabled for this link');

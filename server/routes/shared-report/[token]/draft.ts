@@ -20,6 +20,7 @@ import {
   logTokenEvent,
   resolveSharedReportToken,
   clampWorkflowStep,
+  requireRecipientAuthorization,
   stableJsonEquals,
   toObject,
 } from '../_shared.js';
@@ -65,6 +66,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       consumeView: false,
       enforceMaxUses: false,
     });
+    requireRecipientAuthorization(resolved.link, auth.user);
 
     const body = await readJsonBody(req);
     const sharedPayload = pickSharedPayload(body);

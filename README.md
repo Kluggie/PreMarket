@@ -72,6 +72,58 @@ npm run test:api
 npm run guard:no-legacy
 ```
 
+## Recipient Auth Deploy Runbook
+
+The invited-recipient + alias verification flow depends on migration
+`drizzle/0015_shared_link_recipient_authorization.sql` and the matching journal entry in
+`drizzle/meta/_journal.json` (`tag: 0015_shared_link_recipient_authorization`).
+
+Local:
+```bash
+npm run db:migrate
+npm run db:smoke
+curl -s http://localhost:3000/api/health
+```
+
+Preview:
+```bash
+vercel env pull .env.preview --environment=preview
+set -a; source .env.preview; set +a
+npm run db:migrate
+npm run db:smoke
+```
+
+Production:
+```bash
+vercel env pull .env.production --environment=production
+set -a; source .env.production; set +a
+npm run db:migrate
+npm run db:smoke
+```
+
+Schema verification query:
+```sql
+select
+  exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'shared_links' and column_name = 'authorized_user_id'
+  ) as has_authorized_user_id,
+  exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'shared_links' and column_name = 'authorized_email'
+  ) as has_authorized_email,
+  exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'shared_links' and column_name = 'authorized_at'
+  ) as has_authorized_at,
+  exists (
+    select 1 from information_schema.tables
+    where table_schema = 'public' and table_name = 'shared_link_verifications'
+  ) as has_shared_link_verifications_table;
+```
+
+`/api/health` now returns `500` with `internalError: "schema_missing"` when these schema requirements are missing.
+
 ## Docs
 - Auth migration: `docs/auth-migration.md`
 - Data migration + schema + backfill: `docs/data-migration.md`

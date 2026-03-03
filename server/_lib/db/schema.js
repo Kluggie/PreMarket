@@ -526,6 +526,11 @@ export const sharedLinks = pgTable(
     expiresAt: timestamp('expires_at', { withTimezone: true }),
     idempotencyKey: text('idempotency_key'),
     reportMetadata: jsonb('report_metadata').notNull().default(sql`'{}'::jsonb`),
+    authorizedUserId: text('authorized_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    authorizedEmail: text('authorized_email'),
+    authorizedAt: timestamp('authorized_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -534,10 +539,33 @@ export const sharedLinks = pgTable(
     sharedLinksProposalIdx: index('shared_links_proposal_idx').on(table.proposalId, table.createdAt),
     sharedLinksUserIdx: index('shared_links_user_idx').on(table.userId, table.createdAt),
     sharedLinksRecipientIdx: index('shared_links_recipient_idx').on(table.recipientEmail, table.createdAt),
+    sharedLinksAuthorizedUserIdx: index('shared_links_authorized_user_idx').on(
+      table.authorizedUserId,
+      table.createdAt,
+    ),
     sharedLinksIdempotencyUnique: uniqueIndex('shared_links_idempotency_unique').on(
       table.userId,
       table.idempotencyKey,
     ),
+  }),
+);
+
+export const sharedLinkVerifications = pgTable(
+  'shared_link_verifications',
+  {
+    id: text('id').primaryKey(),
+    token: text('token').notNull(),
+    invitedEmail: text('invited_email').notNull(),
+    codeHash: text('code_hash').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    attemptCount: integer('attempt_count').notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    sharedLinkVerificationsTokenUnique: uniqueIndex('shared_link_verifications_token_unique').on(
+      table.token,
+    ),
+    sharedLinkVerificationsExpiryIdx: index('shared_link_verifications_expiry_idx').on(table.expiresAt),
   }),
 );
 

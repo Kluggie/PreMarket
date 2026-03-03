@@ -106,6 +106,13 @@
       "when": 1772912400000,
       "tag": "0014_proposals_archive_closed",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1772998800000,
+      "tag": "0015_shared_link_recipient_authorization",
+      "breakpoints": true
     }
   ]
 }

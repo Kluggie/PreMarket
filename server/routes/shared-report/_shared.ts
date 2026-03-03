@@ -1,6 +1,8 @@
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { createHash } from 'node:crypto';
+import { and, desc, eq, gt, sql } from 'drizzle-orm';
 import { ApiError } from '../../_lib/errors.js';
 import { getDb, schema } from '../../_lib/db/client.js';
+import { newId } from '../../_lib/ids.js';
 import { buildRecipientSafeEvaluationProjection } from '../document-comparisons/_helpers.js';
 
 export const SHARED_REPORT_ROUTE = '/api/shared-report/[token]';
@@ -9,9 +11,14 @@ export const DRAFT_STATUS = 'draft';
 export const SENT_STATUS = 'sent';
 export const SUPERSEDED_STATUS = 'superseded';
 export const MAX_PAYLOAD_BYTES = 200 * 1024;
+const VERIFY_RATE_LIMIT_ENTITY_TYPE = 'shared_report_verify_rate_limit';
 
 export function asText(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+export function normalizeEmail(value: unknown) {
+  return asText(value).toLowerCase();
 }
 
 export function getToken(req: any, tokenParam?: string) {
@@ -34,6 +41,45 @@ export function toObject(value: unknown): Record<string, unknown> {
     return {};
   }
   return value as Record<string, unknown>;
+}
+
+function getCurrentUserId(currentUser: any) {
+  return asText(currentUser?.id || currentUser?.sub || '');
+}
+
+export function getRecipientAuthorizationState(link: any, currentUser: any) {
+  const invitedEmail = normalizeEmail(link?.recipientEmail);
+  const authorizedUserId = asText(link?.authorizedUserId);
+  const currentUserId = getCurrentUserId(currentUser);
+  const currentEmail = normalizeEmail(currentUser?.email);
+  const directEmailMatch = Boolean(invitedEmail && currentEmail && invitedEmail === currentEmail);
+  const aliasVerifiedMatch = Boolean(authorizedUserId && currentUserId && authorizedUserId === currentUserId);
+  const authorized = !invitedEmail || directEmailMatch || aliasVerifiedMatch;
+  const hasCurrentUser = Boolean(currentUserId || currentEmail);
+
+  return {
+    invitedEmail: invitedEmail || null,
+    currentEmail: currentEmail || null,
+    authorized,
+    directEmailMatch,
+    aliasVerifiedMatch,
+    requiresVerification: Boolean(invitedEmail && hasCurrentUser && !authorized),
+  };
+}
+
+export function requireRecipientAuthorization(link: any, currentUser: any) {
+  const state = getRecipientAuthorizationState(link, currentUser);
+  if (!state.authorized) {
+    throw new ApiError(
+      403,
+      'recipient_email_mismatch',
+      'This link was sent to a different recipient email',
+      {
+        invitedEmail: state.invitedEmail,
+      },
+    );
+  }
+  return state;
 }
 
 export function maskTokenForLog(token: string) {
@@ -154,12 +200,19 @@ export async function resolveSharedReportToken(params: ResolveParams) {
 }
 
 export function buildShareView(link: any) {
+  const invitedEmail = normalizeEmail(link.recipientEmail) || null;
+  const authorizedEmail = normalizeEmail(link.authorizedEmail) || null;
   return {
     id: link.id,
     status: asText(link.status) || 'active',
     expires_at: link.expiresAt || null,
     max_uses: Number(link.maxUses || 0),
     use_count: Number(link.uses || 0),
+    invited_email: invitedEmail,
+    authorization: {
+      authorized_email: authorizedEmail,
+      authorized_at: link.authorizedAt || null,
+    },
     permissions: {
       can_view: Boolean(link.canView),
       can_edit_shared: Boolean(link.canEdit),
@@ -380,4 +433,61 @@ function stableSort(value: unknown): unknown {
 
 export function stableJsonEquals(left: unknown, right: unknown) {
   return JSON.stringify(stableSort(left ?? {})) === JSON.stringify(stableSort(right ?? {}));
+}
+
+function normalizeClientIp(req: any) {
+  const forwarded = asText(req?.headers?.['x-forwarded-for']);
+  if (forwarded) {
+    return forwarded.split(',')[0]?.trim() || 'unknown';
+  }
+  return asText(req?.socket?.remoteAddress) || 'unknown';
+}
+
+function hashRateLimitKey(input: string) {
+  return createHash('sha256').update(input).digest('hex');
+}
+
+export async function assertSharedReportVerifyRateLimit(params: {
+  req: any;
+  token: string;
+  action: 'start' | 'confirm';
+  limit: number;
+  windowMs: number;
+}) {
+  const db = getDb();
+  const ip = normalizeClientIp(params.req);
+  const now = new Date();
+  const windowStart = new Date(now.getTime() - params.windowMs);
+  const rateLimitKey = hashRateLimitKey(`${params.action}:${params.token}:${ip}`);
+  const [counter] = await db
+    .select({
+      count: sql<number>`count(*)::int`,
+    })
+    .from(schema.auditLogs)
+    .where(
+      and(
+        eq(schema.auditLogs.entityType, VERIFY_RATE_LIMIT_ENTITY_TYPE),
+        eq(schema.auditLogs.entityId, rateLimitKey),
+        gt(schema.auditLogs.createdAt, windowStart),
+      ),
+    );
+
+  const attemptsInWindow = Number(counter?.count || 0);
+  if (attemptsInWindow >= params.limit) {
+    throw new ApiError(429, 'rate_limited', 'Too many verification attempts. Please try again shortly.');
+  }
+
+  await db.insert(schema.auditLogs).values({
+    id: newId('audit'),
+    entityType: VERIFY_RATE_LIMIT_ENTITY_TYPE,
+    entityId: rateLimitKey,
+    userId: null,
+    userEmail: null,
+    action: `shared_report_verify_${params.action}`,
+    details: {
+      action: params.action,
+      window_ms: params.windowMs,
+    },
+    createdAt: now,
+  });
 }

@@ -34,6 +34,8 @@ import sharedReportWorkspaceHandler from '../server/routes/shared-report/[token]
 import sharedReportDraftHandler from '../server/routes/shared-report/[token]/draft.js';
 import sharedReportEvaluateHandler from '../server/routes/shared-report/[token]/evaluate.js';
 import sharedReportSendBackHandler from '../server/routes/shared-report/[token]/send-back.js';
+import sharedReportVerifyStartHandler from '../server/routes/shared-report/[token]/verify/start.js';
+import sharedReportVerifyConfirmHandler from '../server/routes/shared-report/[token]/verify/confirm.js';
 import vertexSmokeHandler from '../server/routes/vertex/smoke.js';
 import billingHandler from '../server/routes/billing/index.js';
 import billingStatusHandler from '../server/routes/billing/status.js';
@@ -373,6 +375,18 @@ export default async function handler(req: any, res: any) {
   if (sharedReportSendBackMatch && method === 'POST') {
     const token = decodeURIComponent(sharedReportSendBackMatch[1]);
     return sharedReportSendBackHandler(req, res, token);
+  }
+
+  const sharedReportVerifyStartMatch = pathname.match(/^\/api\/shared-report\/([^/]+)\/verify\/start$/);
+  if (sharedReportVerifyStartMatch && method === 'POST') {
+    const token = decodeURIComponent(sharedReportVerifyStartMatch[1]);
+    return sharedReportVerifyStartHandler(req, res, token);
+  }
+
+  const sharedReportVerifyConfirmMatch = pathname.match(/^\/api\/shared-report\/([^/]+)\/verify\/confirm$/);
+  if (sharedReportVerifyConfirmMatch && method === 'POST') {
+    const token = decodeURIComponent(sharedReportVerifyConfirmMatch[1]);
+    return sharedReportVerifyConfirmHandler(req, res, token);
   }
 
   const sharedReportMatch = pathname.match(/^\/api\/shared-report\/([^/]+)$/);

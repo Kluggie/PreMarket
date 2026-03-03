@@ -240,6 +240,26 @@ function toFriendlySendBackError(error) {
   return error?.message || 'Unable to send back updates.';
 }
 
+function toFriendlyVerifyError(error) {
+  const code = asText(error?.code).toLowerCase();
+  if (code === 'rate_limited') {
+    return 'Too many verification requests. Please wait and try again.';
+  }
+  if (code === 'invalid_verification_code') {
+    return 'That code is invalid. Try again.';
+  }
+  if (code === 'verification_code_expired') {
+    return 'That code expired. Request a new one.';
+  }
+  if (code === 'verification_attempts_exceeded') {
+    return 'Too many incorrect attempts. Request a new code.';
+  }
+  if (code === 'recipient_authorization_locked') {
+    return 'This link has already been verified by another account. Switch to the verified account or ask the sender to issue a new link.';
+  }
+  return error?.message || 'Unable to verify access.';
+}
+
 function renderAiReport(report) {
   const recommendation = asText(report?.recommendation);
   const executiveSummary = asText(report?.executive_summary);
@@ -300,7 +320,7 @@ async function fetchWorkspaceWithTimeout(token, timeoutMs = 45000) {
 export default function SharedReport() {
   const params = useParams();
   const location = useLocation();
-  const { isAuthenticated, isLoadingAuth, navigateToLogin } = useAuth();
+  const { user, isAuthenticated, isLoadingAuth, navigateToLogin, logout } = useAuth();
   const token = useMemo(
     () => getTokenFromRoute(params.token, location.search),
     [params.token, location.search],
@@ -326,6 +346,9 @@ export default function SharedReport() {
   const [draftDirty, setDraftDirty] = useState(false);
   const [latestEvaluatedReport, setLatestEvaluatedReport] = useState(null);
   const [stepHydrated, setStepHydrated] = useState(false);
+  const [verificationCode, setVerificationCode] = useState('');
+  const [verificationRequested, setVerificationRequested] = useState(false);
+  const [forcedMismatchInvitedEmail, setForcedMismatchInvitedEmail] = useState('');
 
   const docAInputFileRef = useRef(null);
   const docBInputFileRef = useRef(null);
@@ -345,6 +368,12 @@ export default function SharedReport() {
   const recipientDraft = workspaceQuery.data?.recipientDraft || workspaceQuery.data?.currentDraft || null;
   const latestEvaluation = workspaceQuery.data?.latestEvaluation || null;
   const latestSentRevision = workspaceQuery.data?.latestSentRevision || null;
+  const currentUserEmail = asText(user?.email).toLowerCase();
+  const invitedEmail =
+    asText(share?.invited_email || forcedMismatchInvitedEmail).toLowerCase() || '';
+  const authorizedForCurrentUser = Boolean(share?.authorization?.authorized_for_current_user);
+  const requiresRecipientVerification =
+    Boolean(isAuthenticated && invitedEmail) && !authorizedForCurrentUser;
 
   const canEditShared = Boolean(share?.permissions?.can_edit_shared);
   const canEditConfidential = Boolean(share?.permissions?.can_edit_confidential);
@@ -358,6 +387,9 @@ export default function SharedReport() {
   useEffect(() => {
     setStep(0);
     setStepHydrated(false);
+    setVerificationCode('');
+    setVerificationRequested(false);
+    setForcedMismatchInvitedEmail('');
   }, [token]);
 
   useEffect(() => {
@@ -414,6 +446,34 @@ export default function SharedReport() {
     stepHydrated,
   ]);
 
+  useEffect(() => {
+    if (requiresRecipientVerification && step !== 0) {
+      setStep(0);
+    }
+  }, [requiresRecipientVerification, step]);
+
+  const getMismatchInvitedEmail = (error) => {
+    const fromBody = asText(error?.body?.error?.invitedEmail).toLowerCase();
+    if (fromBody) return fromBody;
+    return invitedEmail || '';
+  };
+
+  const isRecipientMismatchError = (error) =>
+    asText(error?.code).toLowerCase() === 'recipient_email_mismatch';
+
+  const handleRecipientMismatch = (error) => {
+    const mismatchInvitedEmail = getMismatchInvitedEmail(error);
+    if (mismatchInvitedEmail) {
+      setForcedMismatchInvitedEmail(mismatchInvitedEmail);
+    }
+    setStep(0);
+    toast.error(
+      mismatchInvitedEmail
+        ? `This link was sent to ${mismatchInvitedEmail}. Verify access or switch accounts.`
+        : 'This link was sent to a different recipient email.',
+    );
+  };
+
   const buildDraftInput = (stepToSave = step) => ({
     shared_payload: buildSharedPayloadFromState({
       docBText,
@@ -455,6 +515,10 @@ export default function SharedReport() {
         navigateToLogin(returnTo);
         return;
       }
+      if (isRecipientMismatchError(error)) {
+        handleRecipientMismatch(error);
+        return;
+      }
       toast.error(toFriendlySaveError(error));
     },
   });
@@ -473,6 +537,10 @@ export default function SharedReport() {
       await workspaceQuery.refetch();
     },
     onError: (error) => {
+      if (isRecipientMismatchError(error)) {
+        handleRecipientMismatch(error);
+        return;
+      }
       toast.error(toFriendlyEvaluateError(error));
     },
   });
@@ -486,7 +554,35 @@ export default function SharedReport() {
       await workspaceQuery.refetch();
     },
     onError: (error) => {
+      if (isRecipientMismatchError(error)) {
+        handleRecipientMismatch(error);
+        return;
+      }
       toast.error(toFriendlySendBackError(error));
+    },
+  });
+
+  const verifyStartMutation = useMutation({
+    mutationFn: () => sharedReportsClient.startRecipientVerification(token),
+    onSuccess: () => {
+      setVerificationRequested(true);
+      toast.success(`Verification code sent to ${invitedEmail || 'the invited recipient email'}.`);
+    },
+    onError: (error) => {
+      toast.error(toFriendlyVerifyError(error));
+    },
+  });
+
+  const verifyConfirmMutation = useMutation({
+    mutationFn: () => sharedReportsClient.confirmRecipientVerification(token, verificationCode),
+    onSuccess: async () => {
+      setVerificationCode('');
+      setForcedMismatchInvitedEmail('');
+      toast.success('Access verified. You can now continue with this signed-in account.');
+      await workspaceQuery.refetch();
+    },
+    onError: (error) => {
+      toast.error(toFriendlyVerifyError(error));
     },
   });
 
@@ -551,9 +647,24 @@ export default function SharedReport() {
     return false;
   };
 
+  const switchAccount = async () => {
+    const returnTo = `${location.pathname}${location.search || ''}${location.hash || ''}`;
+    try {
+      await logout(false);
+    } catch {
+      // Best effort sign-out before opening login.
+    }
+    navigateToLogin(returnTo);
+  };
+
   const jumpStep = async (nextStep) => {
     const bounded = clampStep(nextStep, step);
     if (bounded > 0 && !requireSignInForEditing()) {
+      return;
+    }
+    if (bounded > 0 && requiresRecipientVerification) {
+      toast.error('Verify access before editing this shared report.');
+      setStep(0);
       return;
     }
     if (bounded === 2 && step < 2 && draftDirty) {
@@ -567,6 +678,11 @@ export default function SharedReport() {
   };
 
   const runEvaluationFromStep2 = async () => {
+    if (requiresRecipientVerification) {
+      toast.error('Verify access before running evaluation.');
+      setStep(0);
+      return;
+    }
     setStep(3);
     await evaluateMutation.mutateAsync();
   };
@@ -624,7 +740,7 @@ export default function SharedReport() {
 
   const renderImportPanel = ({ side, label, selectedFile, setSelectedFile, preview, source, files, fileRef }) => {
     const isImporting = importingSide === side;
-    const canEditSide = side === 'a' ? canEditConfidential : canEditShared;
+    const canEditSide = (side === 'a' ? canEditConfidential : canEditShared) && !requiresRecipientVerification;
 
     return (
       <Card className="border border-slate-200 shadow-sm">
@@ -687,7 +803,13 @@ export default function SharedReport() {
               {preview || 'Imported content preview will appear here.'}
             </div>
           </div>
-          {!canEditSide ? <p className="text-xs text-amber-700">This section is read-only for this link.</p> : null}
+          {!canEditSide ? (
+            <p className="text-xs text-amber-700">
+              {requiresRecipientVerification
+                ? 'Verify access to edit this section.'
+                : 'This section is read-only for this link.'}
+            </p>
+          ) : null}
         </CardContent>
       </Card>
     );
@@ -722,6 +844,70 @@ export default function SharedReport() {
           </div>
           <Progress value={progress} className="h-3" />
         </div>
+
+        {isAuthenticated &&
+        authorizedForCurrentUser &&
+        asText(share?.authorization?.authorized_email) &&
+        invitedEmail &&
+        asText(share.authorization.authorized_email).toLowerCase() !== invitedEmail ? (
+          <Alert className="bg-slate-50 border-slate-200">
+            <AlertDescription className="text-slate-700">
+              Responding as: <span className="font-semibold">{share.authorization.authorized_email}</span>{' '}
+              (verified for {invitedEmail})
+            </AlertDescription>
+          </Alert>
+        ) : null}
+
+        {requiresRecipientVerification ? (
+          <Alert className="bg-amber-50 border-amber-200">
+            <AlertDescription className="text-amber-900 space-y-3">
+              <p>
+                This link was sent to <span className="font-semibold">{invitedEmail}</span>.
+                {currentUserEmail
+                  ? ` You are currently signed in as ${currentUserEmail}.`
+                  : ''}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" variant="outline" onClick={switchAccount}>
+                  Switch account
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => verifyStartMutation.mutate()}
+                  disabled={verifyStartMutation.isPending}
+                  className="bg-blue-600 hover:bg-blue-700"
+                >
+                  {verifyStartMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                  Verify access
+                </Button>
+              </div>
+              {verificationRequested ? (
+                <div className="flex flex-wrap items-end gap-2">
+                  <div className="space-y-1">
+                    <Label htmlFor="shared-report-verify-code">Verification code</Label>
+                    <Input
+                      id="shared-report-verify-code"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      placeholder="6-digit code"
+                      value={verificationCode}
+                      onChange={(event) => setVerificationCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
+                      className="w-[180px]"
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    onClick={() => verifyConfirmMutation.mutate()}
+                    disabled={verifyConfirmMutation.isPending || verificationCode.length !== 6}
+                  >
+                    {verifyConfirmMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                    Confirm
+                  </Button>
+                </div>
+              ) : null}
+            </AlertDescription>
+          </Alert>
+        ) : null}
 
         {isSentToProposer ? (
           <Alert className="bg-emerald-50 border-emerald-200">
@@ -779,8 +965,12 @@ export default function SharedReport() {
                 </Alert>
               ) : null}
               <div className="flex justify-end">
-                <Button onClick={() => jumpStep(1)} className="bg-blue-600 hover:bg-blue-700">
-                  Edit Proposal
+                <Button
+                  onClick={() => jumpStep(1)}
+                  disabled={requiresRecipientVerification}
+                  className="bg-blue-600 hover:bg-blue-700"
+                >
+                  {requiresRecipientVerification ? 'Verify access to continue' : 'Edit Proposal'}
                   <ArrowRight className="w-4 h-4 ml-2" />
                 </Button>
               </div>
@@ -807,6 +997,7 @@ export default function SharedReport() {
                       setDraftDirty(true);
                     }}
                     placeholder="e.g., Mutual NDA comparison"
+                    disabled={requiresRecipientVerification}
                   />
                 </div>
 
@@ -845,7 +1036,7 @@ export default function SharedReport() {
                   type="button"
                   variant="outline"
                   onClick={() => saveDraftMutation.mutate({ stepToSave: 1 })}
-                  disabled={saveDraftMutation.isPending}
+                  disabled={saveDraftMutation.isPending || requiresRecipientVerification}
                 >
                   {saveDraftMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
                   {saveDraftMutation.isPending ? 'Saving...' : 'Save Draft'}
@@ -853,7 +1044,7 @@ export default function SharedReport() {
                 <Button
                   type="button"
                   onClick={() => jumpStep(2)}
-                  disabled={saveDraftMutation.isPending}
+                  disabled={saveDraftMutation.isPending || requiresRecipientVerification}
                   className="bg-blue-600 hover:bg-blue-700"
                 >
                   Continue to Editor
@@ -893,7 +1084,7 @@ export default function SharedReport() {
                       maxCharacters={300000}
                       data-testid="doc-a-editor"
                       onChange={({ html, text, json }) => {
-                        if (!canEditConfidential) return;
+                        if (!canEditConfidential || requiresRecipientVerification) return;
                         setDocAText(text);
                         setDocAHtml(html);
                         setDocAJson(json);
@@ -919,7 +1110,7 @@ export default function SharedReport() {
                       maxCharacters={300000}
                       data-testid="doc-b-editor"
                       onChange={({ html, text, json }) => {
-                        if (!canEditShared) return;
+                        if (!canEditShared || requiresRecipientVerification) return;
                         setDocBText(text);
                         setDocBHtml(html);
                         setDocBJson(json);
@@ -941,7 +1132,7 @@ export default function SharedReport() {
                     type="button"
                     variant="outline"
                     onClick={() => saveDraftMutation.mutate({ stepToSave: 2 })}
-                    disabled={saveDraftMutation.isPending}
+                    disabled={saveDraftMutation.isPending || requiresRecipientVerification}
                   >
                     {saveDraftMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
                     {saveDraftMutation.isPending ? 'Saving...' : 'Save Draft'}
@@ -949,7 +1140,7 @@ export default function SharedReport() {
                   <Button
                     type="button"
                     onClick={runEvaluationFromStep2}
-                    disabled={evaluateMutation.isPending || !canReevaluate}
+                    disabled={evaluateMutation.isPending || !canReevaluate || requiresRecipientVerification}
                     className="bg-blue-600 hover:bg-blue-700"
                   >
                     {evaluateMutation.isPending ? (
@@ -982,7 +1173,7 @@ export default function SharedReport() {
                   <Button
                     type="button"
                     onClick={() => evaluateMutation.mutate()}
-                    disabled={evaluateMutation.isPending || !canReevaluate}
+                    disabled={evaluateMutation.isPending || !canReevaluate || requiresRecipientVerification}
                     className="bg-blue-600 hover:bg-blue-700"
                   >
                     {evaluateMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
@@ -992,13 +1183,18 @@ export default function SharedReport() {
                   <Button
                     type="button"
                     onClick={() => sendBackMutation.mutate()}
-                    disabled={sendBackMutation.isPending || !canSendBack || isSentToProposer}
+                    disabled={sendBackMutation.isPending || !canSendBack || isSentToProposer || requiresRecipientVerification}
                   >
                     {sendBackMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Send className="w-4 h-4 mr-2" />}
                     {isSentToProposer ? 'Sent to proposer' : sendBackMutation.isPending ? 'Sending...' : 'Send back to proposer'}
                   </Button>
 
-                  <Button type="button" variant="outline" onClick={() => setStep(2)}>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setStep(2)}
+                    disabled={requiresRecipientVerification}
+                  >
                     Edit again
                   </Button>
                 </div>

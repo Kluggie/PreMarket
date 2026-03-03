@@ -1,10 +1,12 @@
 import { eq, sql } from 'drizzle-orm';
 import { ok } from '../../../_lib/api-response.js';
+import { requireUser } from '../../../_lib/auth.js';
 import { getDb, schema } from '../../../_lib/db/client.js';
 import { ApiError } from '../../../_lib/errors.js';
 import { readJsonBody } from '../../../_lib/http.js';
 import { newId } from '../../../_lib/ids.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
+import { normalizeEmail, requireRecipientAuthorization } from '../../shared-report/_shared.js';
 
 function getToken(req: any, tokenParam?: string) {
   if (tokenParam && tokenParam.trim().length > 0) {
@@ -17,10 +19,6 @@ function getToken(req: any, tokenParam?: string) {
 
 function asText(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
-}
-
-function normalizeEmail(value: unknown) {
-  return asText(value).toLowerCase();
 }
 
 function normalizeVisibility(value: unknown) {
@@ -98,6 +96,12 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
   await withApiRoute(req, res, '/api/sharedReports/[token]/respond', async (context) => {
     ensureMethod(req, ['POST']);
 
+    const auth = await requireUser(req, res);
+    if (!auth.ok) {
+      return;
+    }
+    context.userId = auth.user.id;
+
     const token = getToken(req, tokenParam);
     if (!token) {
       throw new ApiError(400, 'invalid_input', 'Token is required');
@@ -114,7 +118,8 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       throw new ApiError(404, 'token_not_found', 'Shared report link not found');
     }
 
-    context.userId = link.userId;
+    requireRecipientAuthorization(link, auth.user);
+
     if (link.mode !== 'shared_report') {
       throw new ApiError(404, 'token_not_found', 'Shared report link not found');
     }
@@ -133,12 +138,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     }
 
     const body = await readJsonBody(req);
-    const responderEmail = normalizeEmail(
-      body.responderEmail || body.responder_email || body.email || link.recipientEmail,
-    );
-    if (link.recipientEmail && responderEmail && normalizeEmail(link.recipientEmail) !== responderEmail) {
-      throw new ApiError(403, 'recipient_mismatch', 'This link belongs to a different recipient');
-    }
+    const responderEmail = normalizeEmail(auth.user.email || body.responderEmail || body.responder_email || body.email);
 
     const feedbackMessage = asText(body.message || body.feedback || body.response || '');
     const responseRows = parseResponseRows(body.responses);

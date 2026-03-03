@@ -58,6 +58,10 @@ function firstLikelyEmail(values: Array<string | null | undefined>) {
   return '';
 }
 
+function redactOtpLikeCode(value: string) {
+  return asText(value).replace(/\b\d{6}\b/g, '[redacted-code]');
+}
+
 export function getEmailMode(): EmailMode {
   const configured = asText(process.env.EMAIL_MODE).toLowerCase();
   if (EMAIL_MODE_SET.has(configured as EmailMode)) {
@@ -128,7 +132,7 @@ function logBlockedEmail(input: {
     mode: input.mode,
     reason: input.reason,
     to: input.recipients,
-    subject: input.subject,
+    subject: redactOtpLikeCode(input.subject),
     dedupeKey: input.dedupeKey,
   });
 }
@@ -142,7 +146,7 @@ function logDedupedEmail(input: {
   console.info('[email-delivery] deduped', {
     category: input.category,
     to: input.recipients,
-    subject: input.subject,
+    subject: redactOtpLikeCode(input.subject),
     dedupeKey: input.dedupeKey,
   });
 }
@@ -156,7 +160,7 @@ function logSentEmail(input: {
   console.info('[email-delivery] sent', {
     category: input.category,
     to: input.recipients,
-    subject: input.subject,
+    subject: redactOtpLikeCode(input.subject),
     dedupeKey: input.dedupeKey,
     status: 'sent',
   });

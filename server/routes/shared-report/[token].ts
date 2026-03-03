@@ -1,4 +1,5 @@
 import { ok } from '../../_lib/api-response.js';
+import { requireUser } from '../../_lib/auth.js';
 import { ApiError } from '../../_lib/errors.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 import {
@@ -15,6 +16,7 @@ import {
   logTokenEvent,
   mapEvaluationRunView,
   mapDraftView,
+  getRecipientAuthorizationState,
   resolveSharedReportToken,
 } from './_shared.js';
 
@@ -25,6 +27,18 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     const token = getToken(req, tokenParam);
     if (!token) {
       throw new ApiError(400, 'invalid_input', 'Token is required');
+    }
+
+    let currentUser: any = null;
+    try {
+      const auth = await requireUser(req, res);
+      if (auth.ok) {
+        currentUser = auth.user;
+      }
+    } catch (error: any) {
+      if (!(error instanceof ApiError) || error.code !== 'unauthorized') {
+        throw error;
+      }
     }
 
     logTokenEvent(context, 'resolve_start', token);
@@ -51,9 +65,31 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       shared_payload: baselineSharedPayload,
       recipient_confidential_payload: buildDefaultConfidentialPayload(),
     };
+    const recipientAuthorization = getRecipientAuthorizationState(resolved.link, currentUser);
+    const shareView: any = buildShareView(resolved.link);
+    const isAuthenticated = Boolean(currentUser);
+    const canViewAuthorizationDetails = Boolean(isAuthenticated && recipientAuthorization.aliasVerifiedMatch);
+
+    if (!isAuthenticated) {
+      shareView.invited_email = null;
+    }
+    if (!canViewAuthorizationDetails) {
+      shareView.authorization = {
+        ...(shareView.authorization || {}),
+        authorized_email: null,
+        authorized_at: null,
+      };
+    }
+    shareView.authorization = {
+      ...(shareView.authorization || {}),
+      authorized_for_current_user: recipientAuthorization.authorized,
+      direct_email_match: recipientAuthorization.directEmailMatch,
+      alias_verified_match: recipientAuthorization.aliasVerifiedMatch,
+      requires_verification: recipientAuthorization.requiresVerification,
+    };
 
     ok(res, 200, {
-      share: buildShareView(resolved.link),
+      share: shareView,
       parent: buildParentView({
         proposal: resolved.proposal,
         comparison: resolved.comparison,
