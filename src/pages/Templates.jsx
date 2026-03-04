@@ -7,6 +7,7 @@ import { templatesClient } from '@/api/templatesClient';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
 import {
   Building2,
   Users,
@@ -50,15 +51,105 @@ function normalizeStatus(value) {
   return String(value || '').trim().toLowerCase();
 }
 
+const TEMPLATE_DESCRIPTION_OVERRIDES = {
+  universal_enterprise_onboarding:
+    'Assess onboarding readiness across security, privacy, operations, and commercial requirements.',
+  'universal enterprise onboarding':
+    'Assess onboarding readiness across security, privacy, operations, and commercial requirements.',
+  universal_finance_deal_prequal:
+    'Evaluate deal fit across investor criteria, M&A diligence, and lending requirements.',
+  'universal finance deal pre-qual':
+    'Evaluate deal fit across investor criteria, M&A diligence, and lending requirements.',
+};
+
+function getTemplateDescription(template) {
+  const candidates = [
+    template?.template_key,
+    template?.slug,
+    template?.id,
+    String(template?.id || '').split(':').pop(),
+    template?.name,
+  ]
+    .map((value) => String(value || '').trim().toLowerCase())
+    .filter((value) => value.length > 0);
+
+  for (const candidate of candidates) {
+    const override = TEMPLATE_DESCRIPTION_OVERRIDES[candidate];
+    if (override) {
+      return override;
+    }
+  }
+
+  return String(template?.description || '').trim();
+}
+
+function TemplateCardSkeleton() {
+  return (
+    <Card className="h-full border-0 shadow-sm flex flex-col" data-testid="products-templates-skeleton-card">
+      <CardContent className="p-6 flex flex-col flex-1">
+        <div className="flex items-start justify-between mb-4">
+          <Skeleton className="w-12 h-12 rounded-xl" />
+          <Skeleton className="h-6 w-24 rounded-full" />
+        </div>
+        <Skeleton className="h-6 w-4/5 mb-3" />
+        <Skeleton className="h-4 w-full mb-2" />
+        <Skeleton className="h-4 w-4/5 mb-4" />
+        <div className="mt-auto">
+          <Skeleton className="h-10 w-full rounded-md" />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function Templates() {
   const [showCustomRequest, setShowCustomRequest] = useState(false);
   const [customFormData, setCustomFormData] = useState({ name: '', email: '', message: '' });
   const [submitted, setSubmitted] = useState(false);
+  const isDev = import.meta.env.DEV;
 
-  const { data: templates = [] } = useQuery({
+  const {
+    data: templatesData,
+    isPending: isLoadingTemplates,
+    isFetching: isFetchingTemplates,
+    isError: hasTemplatesError,
+    error: templatesError,
+    refetch: refetchTemplates,
+  } = useQuery({
     queryKey: ['templates'],
-    queryFn: () => templatesClient.list(),
+    placeholderData: (previousData) => previousData,
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    queryFn: async () => {
+      const startedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      if (isDev) {
+        console.debug('[ProductsPage] templates fetch start');
+      }
+
+      try {
+        const templates = await templatesClient.list();
+        if (isDev) {
+          const endedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
+          console.debug('[ProductsPage] templates fetch success', {
+            durationMs: Math.round(endedAt - startedAt),
+            count: templates.length,
+          });
+        }
+        return templates;
+      } catch (error) {
+        if (isDev) {
+          const endedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
+          console.debug('[ProductsPage] templates fetch error', {
+            durationMs: Math.round(endedAt - startedAt),
+            status: error?.status || null,
+            code: error?.code || null,
+          });
+        }
+        throw error;
+      }
+    },
   });
+  const templates = templatesData || [];
 
   const customTemplateMutation = useMutation({
     mutationFn: (payload) => templatesClient.submitCustomRequest(payload),
@@ -93,14 +184,16 @@ export default function Templates() {
     const status = normalizeStatus(template.status);
     return status === 'published' || status === 'active';
   });
+  const showTemplatesSkeleton =
+    !hasTemplatesError && (isLoadingTemplates || (isFetchingTemplates && templates.length === 0));
 
   return (
     <div className="min-h-screen bg-slate-50 py-8">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="text-center mb-12">
-          <h1 className="text-3xl font-bold text-slate-900 mb-4">Templates & Tools</h1>
+          <h1 className="text-3xl font-bold text-slate-900 mb-4">Products</h1>
           <p className="text-lg text-slate-600 max-w-2xl mx-auto">
-            Choose from templates and tools for your pre-qualification needs.
+            Explore tools and templates for your business needs.
           </p>
         </div>
 
@@ -113,11 +206,10 @@ export default function Templates() {
                   <div className="w-12 h-12 rounded-lg bg-purple-100 flex items-center justify-center mb-4">
                     <FileText className="w-6 h-6 text-purple-600" />
                   </div>
-                  <h3 className="font-semibold text-lg mb-2">Document Comparison</h3>
+                  <h3 className="font-semibold text-lg mb-2">AI Deal Mediator</h3>
                   <p className="text-sm text-slate-500 mb-4">
                     Compare two documents with AI evaluation and confidentiality controls
                   </p>
-                  <Badge className="bg-purple-100 text-purple-700">Tool</Badge>
                 </CardContent>
               </Card>
             </Link>
@@ -125,9 +217,41 @@ export default function Templates() {
         </div>
 
         <div>
-          <h2 className="text-xl font-semibold text-slate-900 mb-4">Proposal Templates</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {displayTemplates.length === 0 ? (
+          <h2 className="text-xl font-semibold text-slate-900 mb-4">Templates</h2>
+          <div
+            className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 ${
+              showTemplatesSkeleton ? 'min-h-[28rem]' : ''
+            }`}
+            data-testid="products-templates-grid"
+          >
+            {showTemplatesSkeleton ? (
+              <>
+                <div className="col-span-full sr-only" data-testid="products-templates-skeleton">
+                  Loading templates
+                </div>
+                {Array.from({ length: 6 }).map((_, index) => (
+                  <TemplateCardSkeleton key={`template-skeleton-${index}`} />
+                ))}
+              </>
+            ) : hasTemplatesError ? (
+              <div className="col-span-full">
+                <Card className="border border-red-200 bg-red-50 shadow-sm">
+                  <CardContent className="py-10 text-center">
+                    <p className="text-sm font-medium text-red-700">Unable to load templates right now.</p>
+                    <p className="text-xs text-red-600 mt-2">
+                      {templatesError?.message || 'Please try again in a moment.'}
+                    </p>
+                    <Button
+                      variant="outline"
+                      className="mt-4 border-red-300 text-red-700 hover:bg-red-100"
+                      onClick={() => refetchTemplates()}
+                    >
+                      Retry
+                    </Button>
+                  </CardContent>
+                </Card>
+              </div>
+            ) : displayTemplates.length === 0 ? (
               <div className="col-span-full">
                 <Card className="border-0 shadow-sm text-center py-16">
                   <CardContent>
@@ -146,7 +270,7 @@ export default function Templates() {
                 </Card>
               </div>
             ) : (
-              displayTemplates.map((template, index) => {
+              displayTemplates.map((template) => {
                 const Icon = iconMap[template.category] || FileText;
                 const isComingSoon = normalizeStatus(template.status) === 'coming_soon';
 
@@ -155,7 +279,7 @@ export default function Templates() {
                     key={template.id}
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: index * 0.1 }}
+                    transition={{ duration: 0.2 }}
                   >
                     <Card
                       className={`h-full border-0 shadow-sm hover:shadow-lg transition-all duration-300 flex flex-col ${
@@ -176,26 +300,11 @@ export default function Templates() {
                               <Clock className="w-3 h-3 mr-1" />
                               Coming Soon
                             </Badge>
-                          ) : (
-                            <Badge className="bg-green-100 text-green-700">
-                              <CheckCircle2 className="w-3 h-3 mr-1" />
-                              Active
-                            </Badge>
-                          )}
+                          ) : null}
                         </div>
 
                         <h3 className="text-lg font-semibold text-slate-900 mb-2">{template.name}</h3>
-                        <p className="text-slate-600 text-sm mb-4 line-clamp-3 flex-1">{template.description}</p>
-
-                        <div className="flex items-center gap-3 mb-4 text-xs text-slate-500">
-                          <span className="px-2 py-1 bg-slate-100 rounded">
-                            {template.party_a_label || 'Party A'}
-                          </span>
-                          <ArrowRight className="w-3 h-3" />
-                          <span className="px-2 py-1 bg-slate-100 rounded">
-                            {template.party_b_label || 'Party B'}
-                          </span>
-                        </div>
+                        <p className="text-slate-600 text-sm mb-4 flex-1">{getTemplateDescription(template)}</p>
 
                         <div className="mt-auto">
                           {isComingSoon ? (

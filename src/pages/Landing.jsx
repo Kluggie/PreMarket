@@ -123,7 +123,7 @@ export default function Landing() {
               </Button>
               <Link to="/templates">
                 <Button variant="outline" size="lg" className="px-8 py-6 text-lg h-auto border-slate-200">
-                  Choose Templates
+                  Browse Products
                 </Button>
               </Link>
             </motion.div>

@@ -5,7 +5,7 @@ import { Link } from 'react-router-dom';
 import { createPageUrl } from './utils';
 import { 
   Menu, X, ChevronDown, User, LogOut, Settings, Building2, 
-  FileText, LayoutDashboard, Shield, Globe, FolderOpen
+  FileText, LayoutDashboard, Shield, Globe, FolderOpen, Home, Package, CircleDollarSign
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -54,17 +54,17 @@ export default function Layout({ children, currentPageName }) {
   const displayName = user?.full_name || user?.name || user?.email || 'User';
 
   const navLinks = user ? [
-    { name: 'Home', href: createPageUrl('Landing'), icon: LayoutDashboard },
-    { name: 'Dashboard', href: createPageUrl('Dashboard'), icon: LayoutDashboard },
-    { name: 'Proposals', href: createPageUrl('Proposals'), icon: FileText },
-    { name: 'Templates', href: createPageUrl('Templates'), icon: FileText },
-    { name: 'Pricing', href: createPageUrl('Pricing'), icon: FileText }
+    { label: 'Home', pageKey: 'Landing', href: createPageUrl('Landing'), icon: Home },
+    { label: 'Dashboard', pageKey: 'Dashboard', href: createPageUrl('Dashboard'), icon: LayoutDashboard },
+    { label: 'Proposals', pageKey: 'Proposals', href: createPageUrl('Proposals'), icon: FileText },
+    { label: 'Products', pageKey: 'Templates', href: createPageUrl('Templates'), icon: Package },
+    { label: 'Pricing', pageKey: 'Pricing', href: createPageUrl('Pricing'), icon: CircleDollarSign }
   ] : [];
 
   const publicNavLinks = [
-    { name: 'Home', href: createPageUrl('Landing'), icon: LayoutDashboard },
-    { name: 'Templates', href: createPageUrl('Templates'), icon: FileText },
-    { name: 'Pricing', href: createPageUrl('Pricing'), icon: FileText }
+    { label: 'Home', pageKey: 'Landing', href: createPageUrl('Landing'), icon: Home },
+    { label: 'Products', pageKey: 'Templates', href: createPageUrl('Templates'), icon: Package },
+    { label: 'Pricing', pageKey: 'Pricing', href: createPageUrl('Pricing'), icon: CircleDollarSign }
   ];
 
   if (isAuthPage) {
@@ -104,27 +104,18 @@ export default function Layout({ children, currentPageName }) {
 
             {/* Desktop Nav */}
             <nav className="hidden md:flex items-center gap-1">
-              {!user && (
-                <>
-                  {publicNavLinks.map(link => (
-                    <Link key={link.name} to={link.href} className="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors">
-                      {link.name}
-                    </Link>
-                  ))}
-                </>
-              )}
-              {navLinks.map(link => (
+              {(user ? navLinks : publicNavLinks).map(link => (
                 <Link 
-                  key={link.name}
+                  key={link.pageKey}
                   to={link.href} 
                   className={`px-4 py-2 text-sm font-medium transition-colors flex items-center gap-2 ${
-                    currentPageName === link.name 
+                    currentPageName === link.pageKey 
                       ? 'text-blue-600' 
                       : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
                   {link.icon ? <link.icon className="w-4 h-4" /> : <Globe className="w-4 h-4" />}
-                  {link.name}
+                  {link.label}
                 </Link>
               ))}
             </nav>
@@ -237,13 +228,13 @@ export default function Layout({ children, currentPageName }) {
             <div className="px-4 py-4 space-y-1">
               {(user ? navLinks : publicNavLinks).map(link => (
                 <Link 
-                  key={link.name}
+                  key={link.pageKey}
                   to={link.href}
                   onClick={() => setIsMenuOpen(false)}
                   className="flex items-center gap-3 px-4 py-3 text-slate-600 hover:bg-slate-50 rounded-lg transition-colors"
                 >
                   {link.icon ? <link.icon className="w-5 h-5" /> : <Globe className="w-5 h-5" />}
-                  {link.name}
+                  {link.label}
                 </Link>
               ))}
             </div>
@@ -280,7 +271,7 @@ export default function Layout({ children, currentPageName }) {
               <div>
                 <h4 className="font-semibold mb-4">Platform</h4>
                 <ul className="space-y-2 text-sm text-slate-400">
-                  <li><Link to="/templates" className="hover:text-white transition-colors">Templates</Link></li>
+                  <li><Link to="/templates" className="hover:text-white transition-colors">Products</Link></li>
                   <li><Link to={createPageUrl('Pricing')} className="hover:text-white transition-colors">Pricing</Link></li>
                 </ul>
               </div>

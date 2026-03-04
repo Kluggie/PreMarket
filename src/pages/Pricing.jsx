@@ -101,7 +101,7 @@ export default function Pricing() {
       color: 'from-slate-500 to-slate-600',
       features: [
         { text: '3 proposals per month', included: true },
-        { text: 'Full template library', included: true },
+        { text: 'Full products library', included: true },
         { text: 'AI evaluation report', included: true },
         { text: '1 AI re-evaluation per proposal', included: true },
         { text: 'Pseudonymous mode', included: true },
@@ -121,7 +121,7 @@ export default function Pricing() {
       color: 'from-blue-500 to-indigo-600',
       features: [
         { text: 'Unlimited proposals', included: true },
-        { text: 'Full template library', included: true },
+        { text: 'Full products library', included: true },
         { text: 'AI evaluation report', included: true },
         { text: '3 AI re-evaluations per proposal', included: true },
         { text: 'Pseudonymous mode', included: true },

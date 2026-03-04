@@ -6,7 +6,7 @@ export const CANONICAL_TEMPLATE_DEFINITIONS = [
     category: 'saas_procurement',
     name: 'Universal Enterprise Onboarding',
     description:
-      'Enterprise onboarding pre-qualification for security, privacy, operations, and commercial readiness.',
+      'Assess onboarding readiness across security, privacy, operations, and commercial requirements.',
     partyALabel: 'Proposer',
     partyBLabel: 'Recipient',
     status: 'active',
@@ -195,7 +195,7 @@ export const CANONICAL_TEMPLATE_DEFINITIONS = [
     templateKey: 'universal_finance_deal_prequal',
     category: 'investment',
     name: 'Universal Finance Deal Pre-Qual',
-    description: 'Shared pre-qualification for Investor Fit, M&A Fit, and Lending Fit workflows.',
+    description: 'Evaluate deal fit across investor criteria, M&A diligence, and lending requirements.',
     partyALabel: 'Proposer',
     partyBLabel: 'Party B (Recipient)',
     status: 'active',

@@ -16,7 +16,7 @@ export default function Documentation() {
       items: [
         { title: 'What is PreMarket?', desc: 'Understanding the platform and its purpose' },
         { title: 'Creating Your First Proposal', desc: 'Step-by-step guide to getting started' },
-        { title: 'Choosing Templates', desc: 'Selecting the right template for your needs' },
+        { title: 'Browsing Products', desc: 'Finding the right template or tool for your needs' },
         { title: 'Guest vs. Account Mode', desc: 'Understanding the differences' }
       ]
     },
@@ -97,7 +97,7 @@ export default function Documentation() {
                 <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center mb-3">
                   <span className="font-bold">1</span>
                 </div>
-                <h3 className="font-semibold mb-2">Select Template</h3>
+                <h3 className="font-semibold mb-2">Select Product</h3>
                 <p className="text-blue-100 text-sm">Choose from M&A, Recruiting, Investment, or custom templates</p>
               </div>
               <div>
