@@ -46,11 +46,14 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
+  Check,
+  Copy,
   FileText,
   Loader2,
   Save,
   Sparkles,
   Upload,
+  X,
 } from 'lucide-react';
 
 const CONFIDENTIAL_LABEL = 'Confidential Information';
@@ -61,9 +64,154 @@ const TOTAL_WORKFLOW_STEPS = 3;
 const DIFF_CONTEXT_CHARS = 220;
 const STEP2_AUTOSAVE_DEBOUNCE_MS = 2500;
 const STEP2_AUTOSAVE_MIN_INTERVAL_MS = 5000;
+const COACH_INTENT_LABELS = {
+  improve_shared: 'Improve shared writing',
+  negotiate: 'Negotiation strategy',
+  risks: 'Risks & Gaps',
+  rewrite_selection: 'Rewrite selection',
+  general: 'General improvements',
+  custom_prompt: 'Custom prompt',
+};
 
 function asText(value) {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function parseCoachResponseBlocks(value) {
+  const lines = String(value || '')
+    .replace(/\r/g, '')
+    .split('\n');
+  const blocks = [];
+
+  let index = 0;
+  while (index < lines.length) {
+    const rawLine = lines[index] || '';
+    const line = rawLine.trim();
+    if (!line) {
+      index += 1;
+      continue;
+    }
+
+    const headingMatch = line.match(/^#{1,6}\s+(.*)$/);
+    if (headingMatch) {
+      blocks.push({
+        type: 'heading',
+        text: headingMatch[1].trim(),
+      });
+      index += 1;
+      continue;
+    }
+
+    const orderedItemMatch = line.match(/^\d+[.)]\s+(.*)$/);
+    if (orderedItemMatch) {
+      const items = [];
+      while (index < lines.length) {
+        const orderedLine = String(lines[index] || '').trim();
+        const match = orderedLine.match(/^\d+[.)]\s+(.*)$/);
+        if (!match) {
+          break;
+        }
+        const itemText = String(match[1] || '').trim();
+        if (itemText) {
+          items.push(itemText);
+        }
+        index += 1;
+      }
+      if (items.length) {
+        blocks.push({ type: 'ordered', items });
+      }
+      continue;
+    }
+
+    const bulletItemMatch = line.match(/^[-*]\s+(.*)$/);
+    if (bulletItemMatch) {
+      const items = [];
+      while (index < lines.length) {
+        const bulletLine = String(lines[index] || '').trim();
+        const match = bulletLine.match(/^[-*]\s+(.*)$/);
+        if (!match) {
+          break;
+        }
+        const itemText = String(match[1] || '').trim();
+        if (itemText) {
+          items.push(itemText);
+        }
+        index += 1;
+      }
+      if (items.length) {
+        blocks.push({ type: 'unordered', items });
+      }
+      continue;
+    }
+
+    const paragraphLines = [];
+    while (index < lines.length) {
+      const paragraphLine = String(lines[index] || '');
+      const paragraphLineTrimmed = paragraphLine.trim();
+      if (!paragraphLineTrimmed) {
+        break;
+      }
+      if (/^#{1,6}\s+/.test(paragraphLineTrimmed) || /^\d+[.)]\s+/.test(paragraphLineTrimmed) || /^[-*]\s+/.test(paragraphLineTrimmed)) {
+        break;
+      }
+      paragraphLines.push(paragraphLine);
+      index += 1;
+    }
+    if (paragraphLines.length) {
+      blocks.push({
+        type: 'paragraph',
+        text: paragraphLines.join('\n').trim(),
+      });
+    } else {
+      index += 1;
+    }
+  }
+
+  return blocks;
+}
+
+function CoachResponseText({ text = '' }) {
+  const blocks = parseCoachResponseBlocks(text);
+  if (!blocks.length) {
+    return <p className="text-sm leading-6 text-slate-700 whitespace-pre-wrap">{String(text || '').trim()}</p>;
+  }
+
+  return (
+    <div className="space-y-3">
+      {blocks.map((block, index) => {
+        if (block.type === 'heading') {
+          return (
+            <h4 key={`coach-response-heading-${index}`} className="text-sm font-semibold text-slate-900">
+              {block.text}
+            </h4>
+          );
+        }
+        if (block.type === 'unordered') {
+          return (
+            <ul key={`coach-response-unordered-${index}`} className="list-disc space-y-1 pl-5 text-sm leading-6 text-slate-700">
+              {block.items.map((item, itemIndex) => (
+                <li key={`coach-response-unordered-item-${index}-${itemIndex}`}>{item}</li>
+              ))}
+            </ul>
+          );
+        }
+        if (block.type === 'ordered') {
+          return (
+            <ol key={`coach-response-ordered-${index}`} className="list-decimal space-y-1 pl-5 text-sm leading-6 text-slate-700">
+              {block.items.map((item, itemIndex) => (
+                <li key={`coach-response-ordered-item-${index}-${itemIndex}`}>{item}</li>
+              ))}
+            </ol>
+          );
+        }
+        return (
+          <p key={`coach-response-paragraph-${index}`} className="text-sm leading-6 text-slate-700 whitespace-pre-wrap">
+            {block.text}
+          </p>
+        );
+      })}
+    </div>
+  );
 }
 
 function clampStep(value) {
@@ -531,6 +679,7 @@ export default function DocumentComparisonCreate() {
   const [coachCached, setCoachCached] = useState(false);
   const [coachWithheldCount, setCoachWithheldCount] = useState(0);
   const [customPromptText, setCustomPromptText] = useState('');
+  const [isCoachResponseCopied, setIsCoachResponseCopied] = useState(false);
   const [coachRequestMeta, setCoachRequestMeta] = useState(null);
   const [coachResultHash, setCoachResultHash] = useState('');
   const [appliedSuggestionIdsByHash, setAppliedSuggestionIdsByHash] = useState({});
@@ -1405,8 +1554,21 @@ export default function DocumentComparisonCreate() {
   const visibleCoachSuggestions = coachSuggestions.filter(
     (suggestion, index) => !hiddenSuggestionIds.has(getNormalizedSuggestionId(suggestion, index)),
   );
-  const customPromptFeedbackText = asText(coachResult?.custom_feedback || coachResult?.summary?.overall || '');
-  const isCustomPromptResponse = String(coachRequestMeta?.intent || '').toLowerCase() === 'custom_prompt';
+  const coachResponseText = asText(coachResult?.custom_feedback || coachResult?.summary?.overall || '');
+  const coachIntentKey = String(coachRequestMeta?.intent || '').toLowerCase();
+  const isCustomPromptResponse = coachIntentKey === 'custom_prompt';
+  const coachResponseLabel = COACH_INTENT_LABELS[coachIntentKey] || 'Suggestion feedback';
+  const coachResponseMetaParts = [];
+  if (visibleCoachSuggestions.length > 0) {
+    coachResponseMetaParts.push(`${visibleCoachSuggestions.length} suggestion${visibleCoachSuggestions.length === 1 ? '' : 's'}`);
+  }
+  if (Array.isArray(coachResult?.concerns) && coachResult.concerns.length > 0) {
+    coachResponseMetaParts.push(`${coachResult.concerns.length} risk flag${coachResult.concerns.length === 1 ? '' : 's'}`);
+  }
+  if (coachWithheldCount > 0) {
+    coachResponseMetaParts.push(`${coachWithheldCount} shared suggestion${coachWithheldCount === 1 ? '' : 's'} withheld for safety`);
+  }
+  const coachResponseMeta = coachResponseMetaParts.join(' · ');
 
   useEffect(() => {
     draftDirtyRef.current = draftDirty;
@@ -1943,6 +2105,7 @@ export default function DocumentComparisonCreate() {
 
     setCoachLoading(true);
     setCoachError('');
+    setIsCoachResponseCopied(false);
 
     try {
       const normalizedAction = String(action || intent || '').trim().toLowerCase();
@@ -2065,6 +2228,35 @@ export default function DocumentComparisonCreate() {
       event.preventDefault();
       runCustomPromptCoach();
     }
+  };
+
+  const copyCoachResponse = async () => {
+    if (!coachResponseText) {
+      toast.error('No response to copy.');
+      return;
+    }
+    if (!navigator.clipboard?.writeText) {
+      toast.error('Clipboard is unavailable in this browser.');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(coachResponseText);
+      setIsCoachResponseCopied(true);
+      toast.success('Response copied.');
+    } catch {
+      toast.error('Could not copy response.');
+    }
+  };
+
+  const clearCoachResponse = () => {
+    setCoachResult(null);
+    setCoachResultHash('');
+    setCoachCached(false);
+    setCoachWithheldCount(0);
+    setCoachRequestMeta(null);
+    setExpandedSuggestionIds([]);
+    setCoachError('');
+    setIsCoachResponseCopied(false);
   };
 
   const openCoachSuggestionReview = (suggestion, suggestionIdOverride = '') => {
@@ -2767,18 +2959,18 @@ export default function DocumentComparisonCreate() {
                       <Alert className={exceedsAnySizeLimit ? 'bg-red-50 border-red-200' : 'bg-amber-50 border-amber-200'}>
                         <AlertTriangle className={`h-4 w-4 ${exceedsAnySizeLimit ? 'text-red-700' : 'text-amber-700'}`} />
                         <AlertDescription className={exceedsAnySizeLimit ? 'text-red-800' : 'text-amber-800'}>
-                          {exceedsAnySizeLimit
-                            ? `Editor content is over the ${limits.model} safety limit. Reduce text before saving or evaluating.`
-                            : `Approaching the ${limits.model} input limit. Keep each document under ${limits.perDocumentCharacterLimit.toLocaleString()} characters.`}
-                        </AlertDescription>
-                      </Alert>
-                    </CardContent>
+	                          {exceedsAnySizeLimit
+	                            ? 'Editor content is over the safety limit. Reduce text before saving or evaluating.'
+	                            : `Approaching the input limit. Keep each document under ${limits.perDocumentCharacterLimit.toLocaleString()} characters.`}
+	                        </AlertDescription>
+	                      </Alert>
+	                    </CardContent>
                   </Card>
                 ) : null}
 
                 {canUseOwnerCoach ? (
                 <Card>
-                  <CardHeader className="pb-2">
+		                  <CardHeader className="pb-2">
                     <CardTitle className="text-base flex items-center gap-2">
                       <Sparkles className="w-4 h-4 text-blue-600" />
                       Ask for suggestions
@@ -2788,65 +2980,76 @@ export default function DocumentComparisonCreate() {
                       Generate suggestions only when you click an action. No background requests.
                     </CardDescription>
 	                  </CardHeader>
-	                  <CardContent className="space-y-3">
-	                    <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_320px]">
-	                      <div className="flex flex-wrap gap-2">
-	                        {DOCUMENT_COMPARISON_COACH_ACTIONS.map((option) => (
-	                          <Button
-	                            key={option.id}
-	                            type="button"
-	                            variant="outline"
-	                            size="sm"
-	                            disabled={coachLoading || coachNotConfigured}
-	                            onClick={() => {
-	                              const request = buildCoachActionRequest(option, selectionContext);
-	                              if (!request) {
-	                                return;
-	                              }
-	                              runCoach(request);
-	                            }}
-	                          >
-	                            {coachLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
-	                            {option.label}
-	                          </Button>
-	                        ))}
-	                      </div>
-	                      <div
-	                        className="rounded-md border border-slate-200 bg-slate-50/60 p-3 space-y-2"
-	                        data-testid="coach-custom-prompt-panel"
-	                      >
-	                        <Label htmlFor="coach-custom-prompt-input" className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-	                          Custom prompt
-	                        </Label>
-	                        <Textarea
-	                          id="coach-custom-prompt-input"
-	                          data-testid="coach-custom-prompt-input"
-	                          rows={3}
-	                          placeholder="Ask for feedback, risks, gaps, strategy…"
-	                          value={customPromptText}
-	                          onChange={(event) => setCustomPromptText(event.target.value)}
-	                          onKeyDown={handleCustomPromptKeyDown}
-	                          disabled={coachLoading || coachNotConfigured}
-	                        />
-	                        <Button
-	                          type="button"
-	                          data-testid="coach-custom-prompt-run"
-	                          onClick={runCustomPromptCoach}
-	                          disabled={coachLoading || coachNotConfigured || !asText(customPromptText)}
-	                        >
-	                          {coachLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-	                          {coachLoading ? 'Running...' : 'Run'}
-	                        </Button>
-	                      </div>
-	                    </div>
-
-                    <p className="text-xs text-slate-500">
-                      Selection source: {selectionContext.side === 'a' ? CONFIDENTIAL_LABEL : SHARED_LABEL}
-                      {' · '}
-                      {selectionContext.text
-                        ? `"${selectionContext.text.slice(0, 120)}${selectionContext.text.length > 120 ? '…' : ''}"`
-                        : 'no selection'}
-                    </p>
+		                  <CardContent className="space-y-4">
+		                    <div className="grid gap-4 lg:grid-cols-2">
+		                      <div className="h-full rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+		                        <div className="space-y-3">
+		                          <div className="flex flex-wrap gap-2">
+		                            {DOCUMENT_COMPARISON_COACH_ACTIONS.map((option) => (
+		                              <Button
+		                                key={option.id}
+		                                type="button"
+		                                variant="outline"
+		                                size="sm"
+		                                disabled={coachLoading || coachNotConfigured}
+		                                onClick={() => {
+		                                  const request = buildCoachActionRequest(option, selectionContext);
+		                                  if (!request) {
+		                                    return;
+		                                  }
+		                                  runCoach(request);
+		                                }}
+		                              >
+		                                {coachLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
+		                                {option.label}
+		                              </Button>
+		                            ))}
+		                          </div>
+		                          <p className="text-xs leading-relaxed text-slate-500">
+		                            Selection source: {selectionContext.side === 'a' ? CONFIDENTIAL_LABEL : SHARED_LABEL}
+		                            {' · '}
+		                            {selectionContext.text
+		                              ? `"${selectionContext.text.slice(0, 120)}${selectionContext.text.length > 120 ? '…' : ''}"`
+		                              : 'no selection'}
+		                          </p>
+		                        </div>
+		                      </div>
+		                      <div
+		                        className="h-full rounded-lg border border-slate-200 bg-slate-50/60 p-4 shadow-sm"
+		                        data-testid="coach-custom-prompt-panel"
+		                      >
+		                        <div className="flex h-full flex-col gap-3">
+		                          <div className="space-y-1">
+		                            <Label htmlFor="coach-custom-prompt-input" className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+		                              Custom prompt
+		                            </Label>
+		                            <p className="text-xs text-slate-500">Ask for feedback, risks, gaps, strategy…</p>
+		                          </div>
+		                          <Textarea
+		                            id="coach-custom-prompt-input"
+		                            data-testid="coach-custom-prompt-input"
+		                            rows={5}
+		                            className="min-h-[140px] w-full resize-y bg-white"
+		                            placeholder="Ask for feedback, risks, gaps, strategy…"
+		                            value={customPromptText}
+		                            onChange={(event) => setCustomPromptText(event.target.value)}
+		                            onKeyDown={handleCustomPromptKeyDown}
+		                            disabled={coachLoading || coachNotConfigured}
+		                          />
+		                          <div className="flex justify-end">
+		                            <Button
+		                              type="button"
+		                              data-testid="coach-custom-prompt-run"
+		                              onClick={runCustomPromptCoach}
+		                              disabled={coachLoading || coachNotConfigured || !asText(customPromptText)}
+		                            >
+		                              {coachLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+		                              {coachLoading ? 'Running...' : 'Run'}
+		                            </Button>
+		                          </div>
+		                        </div>
+		                      </div>
+		                    </div>
 
                     {coachNotConfigured ? (
                       <Alert className="bg-amber-50 border-amber-200">
@@ -2864,23 +3067,31 @@ export default function DocumentComparisonCreate() {
                       </Alert>
                     ) : null}
 
-	                    {coachRequestMeta?.model ? (
-	                      <p className="text-xs text-slate-500">
-	                        Model: {coachRequestMeta.model}
-	                        {coachRequestMeta.provider ? ` (${coachRequestMeta.provider})` : ''}
-	                        {coachWithheldCount > 0 ? ` · ${coachWithheldCount} unsafe shared suggestion(s) withheld` : ''}
-	                      </p>
-	                    ) : null}
-
-	                    {isCustomPromptResponse && customPromptFeedbackText ? (
-	                      <div
-	                        className="rounded-md border border-slate-200 bg-white p-3 space-y-1"
-	                        data-testid="coach-custom-prompt-feedback"
-	                      >
-	                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Custom prompt</p>
-	                        <p className="text-sm text-slate-700 whitespace-pre-wrap">{customPromptFeedbackText}</p>
-	                      </div>
-	                    ) : null}
+		                    {coachResponseText ? (
+		                      <div
+		                        className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm transition-all duration-200"
+		                        data-testid={isCustomPromptResponse ? 'coach-custom-prompt-feedback' : 'coach-response-feedback'}
+		                      >
+		                        <div className="flex items-start justify-between gap-3 border-b border-slate-200 bg-slate-50/70 px-4 py-3">
+		                          <div className="space-y-1">
+		                            <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">{coachResponseLabel}</p>
+		                            {coachResponseMeta ? <p className="text-xs text-slate-500">{coachResponseMeta}</p> : null}
+		                          </div>
+		                          <div className="flex items-center gap-1">
+		                            <Button type="button" size="sm" variant="outline" onClick={copyCoachResponse} disabled={!coachResponseText}>
+		                              {isCoachResponseCopied ? <Check className="mr-2 h-4 w-4" /> : <Copy className="mr-2 h-4 w-4" />}
+		                              {isCoachResponseCopied ? 'Copied' : 'Copy'}
+		                            </Button>
+		                            <Button type="button" size="icon" variant="ghost" aria-label="Clear response" onClick={clearCoachResponse}>
+		                              <X className="h-4 w-4" />
+		                            </Button>
+		                          </div>
+		                        </div>
+		                        <div className="min-h-[132px] px-4 py-4">
+		                          <CoachResponseText text={coachResponseText} />
+		                        </div>
+		                      </div>
+		                    ) : null}
 
 	                    {visibleCoachSuggestions.length > 0 ? (
 	                      <div className="space-y-2">
