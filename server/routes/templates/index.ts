@@ -256,19 +256,27 @@ async function ensureDefaultTemplatesForUser(db: any, userId: string) {
     .select({
       id: schema.templates.id,
       slug: schema.templates.slug,
+      viewCount: schema.templates.viewCount,
     })
     .from(schema.templates)
     .where(eq(schema.templates.userId, userId));
 
-  const bySlug = new Map(
+  const bySlug = new Map<string, { id: string; viewCount: number }>(
     existingRows
-      .map((row) => [String(row.slug || '').trim().toLowerCase(), row.id])
+      .map((row) => [
+        String(row.slug || '').trim().toLowerCase(),
+        {
+          id: row.id,
+          viewCount: Number(row.viewCount || 0),
+        },
+      ])
       .filter(([slug]) => slug.length > 0),
   );
 
   for (const templateDef of DEFAULT_TEMPLATE_DEFINITIONS) {
     const slugKey = templateDef.slug.toLowerCase();
-    let templateId = bySlug.get(slugKey) || null;
+    let templateRecord = bySlug.get(slugKey) || null;
+    let templateId = templateRecord?.id || null;
     const now = new Date();
 
     if (!templateId) {
@@ -292,16 +300,64 @@ async function ensureDefaultTemplatesForUser(db: any, userId: string) {
         createdAt: now,
         updatedAt: now,
       });
-      bySlug.set(slugKey, templateId);
+      templateRecord = { id: templateId, viewCount: 0 };
+      bySlug.set(slugKey, templateRecord);
+    } else {
+      await db
+        .update(schema.templates)
+        .set({
+          name: templateDef.name,
+          description: templateDef.description,
+          category: templateDef.category,
+          status: templateDef.status || 'active',
+          partyALabel: templateDef.partyALabel,
+          partyBLabel: templateDef.partyBLabel,
+          isTool: false,
+          sortOrder: templateDef.sortOrder,
+          metadata: {
+            template_key: templateDef.templateKey || templateDef.slug,
+          },
+          updatedAt: now,
+        })
+        .where(and(eq(schema.templates.id, templateId), eq(schema.templates.userId, userId)));
     }
 
-    const [existingQuestion] = await db
-      .select({ id: schema.templateQuestions.id })
+    const existingQuestionRows = await db
+      .select({ questionKey: schema.templateQuestions.questionKey })
       .from(schema.templateQuestions)
       .where(and(eq(schema.templateQuestions.templateId, templateId), eq(schema.templateQuestions.userId, userId)))
-      .limit(1);
+      .orderBy(asc(schema.templateQuestions.sortOrder), asc(schema.templateQuestions.createdAt));
 
-    if (existingQuestion) {
+    const existingSectionRows = await db
+      .select({ sectionKey: schema.templateSections.sectionKey })
+      .from(schema.templateSections)
+      .where(and(eq(schema.templateSections.templateId, templateId), eq(schema.templateSections.userId, userId)))
+      .orderBy(asc(schema.templateSections.sortOrder), asc(schema.templateSections.createdAt));
+
+    const expectedQuestionKeys = templateDef.sections.flatMap((sectionDef) =>
+      sectionDef.questions.map((questionDef) => questionDef.key),
+    );
+    const expectedSectionKeys = templateDef.sections.map((sectionDef) => sectionDef.key);
+
+    const existingQuestionKeys = new Set(
+      existingQuestionRows
+        .map((row) => String(row.questionKey || '').trim())
+        .filter((questionKey) => questionKey.length > 0),
+    );
+    const existingSectionKeys = new Set(
+      existingSectionRows
+        .map((row) => String(row.sectionKey || '').trim())
+        .filter((sectionKey) => sectionKey.length > 0),
+    );
+
+    const needsQuestionSync =
+      existingQuestionRows.length !== expectedQuestionKeys.length ||
+      expectedQuestionKeys.some((questionKey) => !existingQuestionKeys.has(questionKey));
+    const needsSectionSync =
+      existingSectionRows.length !== expectedSectionKeys.length ||
+      expectedSectionKeys.some((sectionKey) => !existingSectionKeys.has(sectionKey));
+
+    if (!needsQuestionSync && !needsSectionSync) {
       continue;
     }
 

@@ -14,7 +14,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Progress } from '@/components/ui/progress';
-import { Switch } from '@/components/ui/switch';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -34,6 +33,12 @@ import {
 } from 'lucide-react';
 import { proposalsClient } from '@/api/proposalsClient';
 import { templatesClient } from '@/api/templatesClient';
+import {
+  TEMPLATE_ONBOARDING_CONFIG,
+  getEnabledModules,
+  getModeOption,
+  resolveTemplateKey,
+} from '@/lib/templateOnboardingConfig';
 
 const iconMap = {
   m_and_a: Building2,
@@ -110,7 +115,6 @@ export default function CreateProposalWithDrafts() {
   const [visibilitySettings, setVisibilitySettings] = useState({});
   const [validationErrors, setValidationErrors] = useState({});
   const [presetKey, setPresetKey] = useState('');
-  const [enabledModules, setEnabledModules] = useState([]);
   const [draftProposalId, setDraftProposalId] = useState(null);
   const [autoSaving, setAutoSaving] = useState(false);
   const [isSavingDraft, setIsSavingDraft] = useState(false);
@@ -127,24 +131,6 @@ export default function CreateProposalWithDrafts() {
     queryKey: ['templates'],
     queryFn: () => templatesClient.list(),
   });
-
-  const getModulesForPreset = (preset) => {
-    const baseModules = [
-      'org_profile',
-      'security_compliance',
-      'privacy_data_handling',
-      'operations_sla',
-      'implementation_it',
-      'legal_commercial',
-      'references',
-    ];
-
-    if (preset === 'api_data_provider') {
-      return [...baseModules, 'api_data'];
-    }
-
-    return baseModules;
-  };
 
   const getNormalizedParty = (question) => {
     if (question?.party) return question.party;
@@ -172,90 +158,59 @@ export default function CreateProposalWithDrafts() {
     return responses[question.id];
   };
 
-  const isUniversalTemplate =
-    selectedTemplate?.slug === 'universal_enterprise_onboarding' ||
-    selectedTemplate?.template_key === 'universal_enterprise_onboarding' ||
-    selectedTemplate?.name === 'Universal Enterprise Onboarding';
+  const selectedTemplateKey = resolveTemplateKey(selectedTemplate);
+  const selectedTemplateConfig = selectedTemplateKey
+    ? TEMPLATE_ONBOARDING_CONFIG[selectedTemplateKey] || null
+    : null;
+  const isUniversalTemplate = selectedTemplateKey === 'universal_enterprise_onboarding';
+  const isFinanceTemplate = selectedTemplateKey === 'universal_finance_deal_prequal';
+  const isProfileMatchingTemplate = selectedTemplateKey === 'universal_profile_matching';
 
-  const isFinanceTemplate =
-    selectedTemplate?.slug === 'universal_finance_deal_prequal' ||
-    selectedTemplate?.template_key === 'universal_finance_deal_prequal';
+  const selectedModeOption = useMemo(() => {
+    if (!selectedTemplateConfig || selectedTemplateConfig.valueSource !== 'mode') {
+      return null;
+    }
+    return getModeOption(selectedTemplateKey, responses.mode);
+  }, [selectedTemplateConfig, selectedTemplateKey, responses.mode]);
 
-  const isProfileMatchingTemplate =
-    selectedTemplate?.slug === 'universal_profile_matching' ||
-    selectedTemplate?.template_key === 'universal_profile_matching';
+  const selectedVariantKey =
+    selectedTemplateConfig?.valueSource === 'preset'
+      ? presetKey
+      : selectedModeOption?.key || '';
+
+  const enabledModules = useMemo(() => {
+    return getEnabledModules(selectedTemplateKey, selectedVariantKey);
+  }, [selectedTemplateKey, selectedVariantKey]);
 
   const shouldIncludeQuestion = (question) => {
-    if (isUniversalTemplate) {
-      if (!presetKey || enabledModules.length === 0) return false;
-      if (question?.module_key) {
-        return enabledModules.includes(question.module_key);
+    if (!selectedTemplateConfig) return true;
+    if (!question?.module_key) return false;
+
+    const presetVisible =
+      question?.preset_visible && typeof question.preset_visible === 'object'
+        ? question.preset_visible
+        : null;
+    if (presetVisible && Object.keys(presetVisible).length > 0) {
+      if (!selectedVariantKey) {
+        return question.module_key === 'mode_selector';
+      }
+      if (presetVisible[selectedVariantKey] !== undefined) {
+        return Boolean(presetVisible[selectedVariantKey]);
       }
       return false;
     }
 
-    if (isFinanceTemplate) {
-      const selectedMode = responses.mode;
-      if (question.module_key === 'mode_selector') return true;
-      if (!selectedMode) return false;
-      if (question.module_key === 'common_core') return true;
-      if (selectedMode === 'Investor Fit' && question.module_key === 'investor_fit') return true;
-      if (selectedMode === 'M&A Fit' && question.module_key === 'm_and_a_fit') return true;
-      if (selectedMode === 'Lending Fit' && question.module_key === 'lending_fit') return true;
-      return false;
+    if (selectedTemplateConfig.valueSource === 'mode' && !selectedVariantKey) {
+      return question.module_key === 'mode_selector';
     }
 
-    if (isProfileMatchingTemplate) {
-      const selectedMode = responses.mode;
-      if (question.module_key === 'mode_selector') return true;
-      if (!selectedMode) return false;
-      if (question.module_key === 'shared_core') return true;
-      if (selectedMode === 'Job Fit' && question.module_key === 'job_fit') return true;
-      if (selectedMode === 'Beta Access Fit' && question.module_key === 'beta_access_fit') return true;
-      if (selectedMode === 'Program/Accelerator Fit' && question.module_key === 'program_fit') return true;
-      if (selectedMode === 'Grant/Scholarship Fit' && question.module_key === 'grant_fit') return true;
-      return false;
-    }
-
-    return true;
+    return enabledModules.includes(question.module_key);
   };
 
   const getEffectiveRequired = (question) => {
-    if (isUniversalTemplate && presetKey && question?.preset_required) {
-      return question.preset_required[presetKey] !== undefined
-        ? Boolean(question.preset_required[presetKey])
-        : Boolean(question.required);
-    }
-
-    if (isFinanceTemplate && question?.preset_required) {
-      const selectedMode = responses.mode;
-      const modeKey =
-        selectedMode === 'Investor Fit'
-          ? 'investor_fit'
-          : selectedMode === 'M&A Fit'
-            ? 'm_and_a_fit'
-            : selectedMode === 'Lending Fit'
-              ? 'lending_fit'
-              : null;
-      if (modeKey && question.preset_required[modeKey] !== undefined) {
-        return Boolean(question.preset_required[modeKey]);
-      }
-    }
-
-    if (isProfileMatchingTemplate && question?.preset_required) {
-      const selectedMode = responses.mode;
-      const modeKey =
-        selectedMode === 'Job Fit'
-          ? 'job_fit'
-          : selectedMode === 'Beta Access Fit'
-            ? 'beta_access_fit'
-            : selectedMode === 'Program/Accelerator Fit'
-              ? 'program_fit'
-              : selectedMode === 'Grant/Scholarship Fit'
-                ? 'grant_fit'
-                : null;
-      if (modeKey && question.preset_required[modeKey] !== undefined) {
-        return Boolean(question.preset_required[modeKey]);
+    if (selectedVariantKey && question?.preset_required && typeof question.preset_required === 'object') {
+      if (question.preset_required[selectedVariantKey] !== undefined) {
+        return Boolean(question.preset_required[selectedVariantKey]);
       }
     }
 
@@ -271,7 +226,7 @@ export default function CreateProposalWithDrafts() {
         const normalized = getNormalizedParty(question);
         return (normalized === 'a' || normalized === 'both') && shouldIncludeQuestion(question);
       }) || [],
-    [selectedTemplate, step, presetKey, enabledModules, responses.mode],
+    [selectedTemplate, selectedTemplateConfig, selectedVariantKey, enabledModules],
   );
 
   const partyBQuestions = useMemo(
@@ -284,7 +239,7 @@ export default function CreateProposalWithDrafts() {
         const normalized = getNormalizedParty(question);
         return (normalized === 'b' || normalized === 'both') && shouldIncludeQuestion(question);
       }) || [],
-    [selectedTemplate, step, presetKey, enabledModules, responses.mode],
+    [selectedTemplate, selectedTemplateConfig, selectedVariantKey, enabledModules],
   );
 
   const isValueEmpty = (question, value) => {
@@ -317,18 +272,11 @@ export default function CreateProposalWithDrafts() {
     if (payload.preset_key) {
       setPresetKey(String(payload.preset_key));
     }
-    if (Array.isArray(payload.enabled_modules)) {
-      setEnabledModules(payload.enabled_modules.map((entry) => String(entry)));
-    }
 
     const nextResponses = {};
     if (payload.mode) nextResponses.mode = payload.mode;
     if (payload._profile_url) nextResponses._profile_url = payload._profile_url;
     if (payload._target_url) nextResponses._target_url = payload._target_url;
-    if (payload._include_profile !== undefined) nextResponses._include_profile = Boolean(payload._include_profile);
-    if (payload._include_organisation !== undefined) {
-      nextResponses._include_organisation = Boolean(payload._include_organisation);
-    }
 
     const responseRows = await proposalsClient.getResponses(proposalId);
     const loadedResponses = {};
@@ -497,8 +445,8 @@ export default function CreateProposalWithDrafts() {
       enabled_modules: enabledModules,
       _profile_url: responses._profile_url || null,
       _target_url: responses._target_url || null,
-      _include_profile: Boolean(responses._include_profile),
-      _include_organisation: Boolean(responses._include_organisation),
+      _include_profile: false,
+      _include_organisation: false,
     };
 
     await proposalsClient.update(proposalId, {
@@ -538,7 +486,6 @@ export default function CreateProposalWithDrafts() {
     responses,
     visibilitySettings,
     presetKey,
-    enabledModules,
     step,
   ]);
 
@@ -969,67 +916,19 @@ export default function CreateProposalWithDrafts() {
                     )}
                   </div>
 
-                  <div className="space-y-3 p-4 border border-slate-200 bg-slate-50 rounded-xl">
-                    <Label className="text-sm font-semibold text-slate-900">Additional Context for AI Evaluation</Label>
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm font-medium text-slate-700">Include my Profile</p>
-                          <p className="text-xs text-slate-500">Use your profile information in the AI assessment</p>
-                        </div>
-                        <Switch
-                          checked={Boolean(responses._include_profile)}
-                          onCheckedChange={(checked) => handleResponseChange('_include_profile', checked)}
-                        />
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm font-medium text-slate-700">Include my Organisation</p>
-                          <p className="text-xs text-slate-500">Use your organisation details in the AI assessment</p>
-                        </div>
-                        <Switch
-                          checked={Boolean(responses._include_organisation)}
-                          onCheckedChange={(checked) => handleResponseChange('_include_organisation', checked)}
-                        />
-                      </div>
-                    </div>
-                  </div>
-
                   {isUniversalTemplate && (
                     <div className="space-y-3 p-4 border-2 border-blue-200 bg-blue-50 rounded-xl">
                       <Label className="text-sm font-semibold text-blue-900">Onboarding Type *</Label>
-                      <RadioGroup
-                        value={presetKey}
-                        onValueChange={(value) => {
-                          setPresetKey(value);
-                          setEnabledModules(getModulesForPreset(value));
-                        }}
-                      >
+                      <RadioGroup value={presetKey} onValueChange={(value) => setPresetKey(value)}>
                         <div className="space-y-2">
-                          <div className="flex items-center space-x-2">
-                            <RadioGroupItem value="vendor_prequal" id="preset-vendor" />
-                            <Label htmlFor="preset-vendor" className="font-normal cursor-pointer">
-                              Vendor Pre-Qualification
-                            </Label>
-                          </div>
-                          <div className="flex items-center space-x-2">
-                            <RadioGroupItem value="saas_procurement" id="preset-saas" />
-                            <Label htmlFor="preset-saas" className="font-normal cursor-pointer">
-                              SaaS Procurement
-                            </Label>
-                          </div>
-                          <div className="flex items-center space-x-2">
-                            <RadioGroupItem value="private_rfp_prequal" id="preset-rfp" />
-                            <Label htmlFor="preset-rfp" className="font-normal cursor-pointer">
-                              Private RFP Pre-Qualification
-                            </Label>
-                          </div>
-                          <div className="flex items-center space-x-2">
-                            <RadioGroupItem value="api_data_provider" id="preset-api" />
-                            <Label htmlFor="preset-api" className="font-normal cursor-pointer">
-                              API / Data Provider Matching
-                            </Label>
-                          </div>
+                          {TEMPLATE_ONBOARDING_CONFIG.universal_enterprise_onboarding.options.map((option) => (
+                            <div key={option.key} className="flex items-center space-x-2">
+                              <RadioGroupItem value={option.key} id={`preset-${option.key}`} />
+                              <Label htmlFor={`preset-${option.key}`} className="font-normal cursor-pointer">
+                                {option.label}
+                              </Label>
+                            </div>
+                          ))}
                         </div>
                       </RadioGroup>
                       <p className="text-xs text-blue-700 mt-2">
@@ -1043,24 +942,14 @@ export default function CreateProposalWithDrafts() {
                       <Label className="text-sm font-semibold text-emerald-900">Deal Mode *</Label>
                       <RadioGroup value={responses.mode || ''} onValueChange={(value) => handleResponseChange('mode', value)}>
                         <div className="space-y-2">
-                          <div className="flex items-center space-x-2">
-                            <RadioGroupItem value="Investor Fit" id="mode-investor" />
-                            <Label htmlFor="mode-investor" className="font-normal cursor-pointer">
-                              Investor Fit
-                            </Label>
-                          </div>
-                          <div className="flex items-center space-x-2">
-                            <RadioGroupItem value="M&A Fit" id="mode-ma" />
-                            <Label htmlFor="mode-ma" className="font-normal cursor-pointer">
-                              M&A Fit
-                            </Label>
-                          </div>
-                          <div className="flex items-center space-x-2">
-                            <RadioGroupItem value="Lending Fit" id="mode-lending" />
-                            <Label htmlFor="mode-lending" className="font-normal cursor-pointer">
-                              Lending Fit
-                            </Label>
-                          </div>
+                          {TEMPLATE_ONBOARDING_CONFIG.universal_finance_deal_prequal.options.map((option) => (
+                            <div key={option.key} className="flex items-center space-x-2">
+                              <RadioGroupItem value={option.value} id={`mode-${option.key}`} />
+                              <Label htmlFor={`mode-${option.key}`} className="font-normal cursor-pointer">
+                                {option.label}
+                              </Label>
+                            </div>
+                          ))}
                         </div>
                       </RadioGroup>
                       <p className="text-xs text-emerald-700 mt-2">
@@ -1074,30 +963,14 @@ export default function CreateProposalWithDrafts() {
                       <Label className="text-sm font-semibold text-purple-900">Profile Matching Mode *</Label>
                       <RadioGroup value={responses.mode || ''} onValueChange={(value) => handleResponseChange('mode', value)}>
                         <div className="space-y-2">
-                          <div className="flex items-center space-x-2">
-                            <RadioGroupItem value="Job Fit" id="mode-job" />
-                            <Label htmlFor="mode-job" className="font-normal cursor-pointer">
-                              Job Match
-                            </Label>
-                          </div>
-                          <div className="flex items-center space-x-2">
-                            <RadioGroupItem value="Beta Access Fit" id="mode-beta" />
-                            <Label htmlFor="mode-beta" className="font-normal cursor-pointer">
-                              Beta Access Match
-                            </Label>
-                          </div>
-                          <div className="flex items-center space-x-2">
-                            <RadioGroupItem value="Program/Accelerator Fit" id="mode-program" />
-                            <Label htmlFor="mode-program" className="font-normal cursor-pointer">
-                              Program/Accelerator Match
-                            </Label>
-                          </div>
-                          <div className="flex items-center space-x-2">
-                            <RadioGroupItem value="Grant/Scholarship Fit" id="mode-grant" />
-                            <Label htmlFor="mode-grant" className="font-normal cursor-pointer">
-                              Grant/Scholarship Match
-                            </Label>
-                          </div>
+                          {TEMPLATE_ONBOARDING_CONFIG.universal_profile_matching.options.map((option) => (
+                            <div key={option.key} className="flex items-center space-x-2">
+                              <RadioGroupItem value={option.value} id={`mode-${option.key}`} />
+                              <Label htmlFor={`mode-${option.key}`} className="font-normal cursor-pointer">
+                                {option.label}
+                              </Label>
+                            </div>
+                          ))}
                         </div>
                       </RadioGroup>
                       <p className="text-xs text-purple-700 mt-2">
