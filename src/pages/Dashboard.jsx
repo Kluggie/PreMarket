@@ -40,7 +40,7 @@ function StatusBadge({ status }) {
   const Icon = config.icon;
 
   return (
-    <Badge className={`${config.color} text-[11px] px-2 py-0.5 h-5 font-medium`}>
+    <Badge className={`${config.color} text-[0.6875rem] px-2 py-0.5 h-5 font-medium`}>
       {Icon ? <Icon className="w-3 h-3 mr-1" /> : null}
       {config.label}
     </Badge>

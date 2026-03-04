@@ -82,6 +82,17 @@
     @apply border-border outline-ring/50;
   }
 
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  @media (min-width: 1024px) {
+    html {
+      font-size: 90%;
+    }
+  }
+
   body {
     @apply bg-background text-foreground;
   }

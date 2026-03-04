@@ -18,6 +18,8 @@ import {
 import NotificationDropdown from './components/NotificationDropdown';
 import GoogleSignInButton from '@/components/auth/GoogleSignInButton';
 
+const DESKTOP_GOOGLE_SIGNIN_WIDTH = 189;
+
 export default function Layout({ children, currentPageName }) {
   const { user, logout, navigateToLogin, checkAppState } = useAuth();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -203,7 +205,7 @@ export default function Layout({ children, currentPageName }) {
                   <div className="hidden sm:block">
                     <GoogleSignInButton
                       returnTo={createPageUrl('Dashboard')}
-                      width={210}
+                      width={DESKTOP_GOOGLE_SIGNIN_WIDTH}
                       onSuccess={handleGoogleSignInSuccess}
                     />
                   </div>

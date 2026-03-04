@@ -5,6 +5,8 @@ import { Input } from '@/components/ui/input';
 import GoogleSignInButton from '@/components/auth/GoogleSignInButton';
 import { authClient } from '@/api/authClient';
 
+const LOGIN_DIALOG_GOOGLE_SIGNIN_WIDTH = 306;
+
 export default function LoginDialog({
   open,
   onOpenChange,
@@ -100,7 +102,11 @@ export default function LoginDialog({
               </div>
             </div>
           ) : (
-            <GoogleSignInButton returnTo={returnTo} width={340} onSuccess={handleGoogleSuccess} />
+            <GoogleSignInButton
+              returnTo={returnTo}
+              width={LOGIN_DIALOG_GOOGLE_SIGNIN_WIDTH}
+              onSuccess={handleGoogleSuccess}
+            />
           )}
         </div>
       </DialogContent>

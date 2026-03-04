@@ -66,7 +66,10 @@ export default function Landing() {
         
         {/* Grid pattern */}
         <div className="absolute inset-0 opacity-[0.015]" 
-          style={{ backgroundImage: 'radial-gradient(circle, #000 1px, transparent 1px)', backgroundSize: '24px 24px' }} 
+          style={{
+            backgroundImage: 'radial-gradient(circle, #000 0.0625rem, transparent 0.0625rem)',
+            backgroundSize: '1.5rem 1.5rem',
+          }}
         />
 
         <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-32 pb-20">
