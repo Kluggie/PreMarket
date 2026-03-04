@@ -19,7 +19,7 @@ import NotificationDropdown from './components/NotificationDropdown';
 import GoogleSignInButton from '@/components/auth/GoogleSignInButton';
 
 export default function Layout({ children, currentPageName }) {
-  const { user, logout, navigateToLogin } = useAuth();
+  const { user, logout, navigateToLogin, checkAppState } = useAuth();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
 
@@ -38,6 +38,15 @@ export default function Layout({ children, currentPageName }) {
     } catch {
       await authClient.logout('/');
     }
+  };
+
+  const handleGoogleSignInSuccess = async (result) => {
+    if (result?.mfa_required || result?.mfaRequired) {
+      navigateToLogin(createPageUrl('Dashboard'));
+      return;
+    }
+
+    await checkAppState();
   };
 
   const displayName = user?.full_name || user?.name || user?.email || 'User';
@@ -192,7 +201,11 @@ export default function Layout({ children, currentPageName }) {
               ) : (
                 <>
                   <div className="hidden sm:block">
-                    <GoogleSignInButton returnTo={createPageUrl('Dashboard')} width={210} />
+                    <GoogleSignInButton
+                      returnTo={createPageUrl('Dashboard')}
+                      width={210}
+                      onSuccess={handleGoogleSignInSuccess}
+                    />
                   </div>
                   <Button
                     onClick={() => navigateToLogin(createPageUrl('Dashboard'))}

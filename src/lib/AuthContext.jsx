@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { authClient } from '@/api/authClient';
 import LoginDialog from '@/components/auth/LoginDialog';
+import { queryClientInstance } from '@/lib/query-client';
 
 const LOGIN_EVENT_NAME = 'pm:auth:open-login';
 const AuthContext = createContext();
@@ -15,8 +16,10 @@ export const AuthProvider = ({ children }) => {
   const [isLoginOpen, setIsLoginOpen] = useState(false);
   const [loginReturnTo, setLoginReturnTo] = useState('/');
 
-  const refreshAuthState = useCallback(async () => {
-    setIsLoadingAuth(true);
+  const refreshAuthState = useCallback(async ({ showLoading = true } = {}) => {
+    if (showLoading) {
+      setIsLoadingAuth(true);
+    }
 
     try {
       const currentUser = await authClient.me();
@@ -36,7 +39,9 @@ export const AuthProvider = ({ children }) => {
         setAuthError(null);
       }
     } finally {
-      setIsLoadingAuth(false);
+      if (showLoading) {
+        setIsLoadingAuth(false);
+      }
     }
   }, []);
 
@@ -71,7 +76,8 @@ export const AuthProvider = ({ children }) => {
         message: error?.message || 'Failed to initialize CSRF protection',
       });
     });
-    await refreshAuthState();
+    await refreshAuthState({ showLoading: false });
+    await queryClientInstance.invalidateQueries();
   }, [refreshAuthState]);
 
   const logout = useCallback(
@@ -81,6 +87,7 @@ export const AuthProvider = ({ children }) => {
       } finally {
         setUser(null);
         setIsAuthenticated(false);
+        queryClientInstance.clear();
       }
 
       if (shouldRedirect) {
@@ -103,13 +110,14 @@ export const AuthProvider = ({ children }) => {
       setIsAuthenticated(Boolean(authenticatedUser));
       setAuthError(null);
       setIsLoginOpen(false);
+      void queryClientInstance.invalidateQueries();
 
       if (redirectTo) {
         window.location.assign(redirectTo);
         return;
       }
 
-      await refreshAuthState();
+      await refreshAuthState({ showLoading: false });
     },
     [refreshAuthState],
   );
