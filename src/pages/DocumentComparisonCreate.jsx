@@ -2415,7 +2415,9 @@ export default function DocumentComparisonCreate() {
           )}
 
           {files.length > 0 ? (
-            <p className="text-xs text-slate-500">Last imported: {files[0]?.filename || 'Unknown file'}</p>
+            <p className="text-xs text-slate-500" data-testid={`last-imported-${side}`}>
+              Last imported: {files[0]?.filename || 'Unknown file'}
+            </p>
           ) : null}
 
           <div className="space-y-1">
@@ -2593,8 +2595,13 @@ export default function DocumentComparisonCreate() {
         <div className="mb-5">
           <div className="flex items-center justify-between text-sm mb-3">
             <div className="flex items-center gap-3">
-              <span className={`font-semibold ${step === 1 ? 'text-blue-600' : 'text-slate-400'}`}>Step {step} of {TOTAL_WORKFLOW_STEPS}</span>
-              <span className={`text-xs ${saveStatusClassName}`}>
+              <span
+                className={`font-semibold ${step === 1 ? 'text-blue-600' : 'text-slate-400'}`}
+                data-testid="doc-comparison-step-indicator"
+              >
+                Step {step} of {TOTAL_WORKFLOW_STEPS}
+              </span>
+              <span className={`text-xs ${saveStatusClassName}`} data-testid="doc-comparison-save-status">
                 {saveStatusLabel}
               </span>
             </div>
@@ -2624,6 +2631,7 @@ export default function DocumentComparisonCreate() {
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -20 }}
               className="space-y-6"
+              data-testid="doc-comparison-step-1"
             >
               <Card>
                 <CardHeader>
@@ -2649,6 +2657,7 @@ export default function DocumentComparisonCreate() {
                         markDraftEdited();
                       }}
                       placeholder="e.g., Mutual NDA comparison"
+                      data-testid="comparison-title-input"
                     />
                     {!asText(title) ? (
                       <p className="text-xs text-slate-500">
@@ -2689,6 +2698,7 @@ export default function DocumentComparisonCreate() {
                   variant="outline"
                   onClick={() => saveDraft(1)}
                   disabled={saveDraftMutation.isPending || exceedsAnySizeLimit}
+                  data-testid="step1-save-draft-button"
                 >
                   {saveDraftMutation.isPending ? (
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />
@@ -2702,6 +2712,7 @@ export default function DocumentComparisonCreate() {
                   onClick={() => jumpStep(2)}
                   disabled={saveDraftMutation.isPending}
                   className="bg-blue-600 hover:bg-blue-700"
+                  data-testid="step1-continue-button"
                 >
                   {saveDraftMutation.isPending ? (
                     <>
@@ -2730,6 +2741,7 @@ export default function DocumentComparisonCreate() {
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -20 }}
                 className="space-y-6"
+                data-testid="doc-comparison-step-2"
               >
                 <Card>
                   <CardContent className="py-4 space-y-3">
@@ -2965,7 +2977,7 @@ export default function DocumentComparisonCreate() {
                     </div>
 
                     <div className="flex justify-between pt-2">
-                      <Button variant="outline" onClick={() => jumpStep(1)}>
+                      <Button variant="outline" onClick={() => jumpStep(1)} data-testid="step2-back-button">
                         <ArrowLeft className="w-4 h-4 mr-2" />
                         Back to Upload
                       </Button>
@@ -2975,6 +2987,7 @@ export default function DocumentComparisonCreate() {
                           variant="outline"
                           onClick={handleStep2SaveDraftClick}
                           disabled={saveDraftMutation.isPending || exceedsAnySizeLimit}
+                          data-testid="step2-save-draft-button"
                         >
                           {saveDraftMutation.isPending ? (
                             <Loader2 className="w-4 h-4 mr-2 animate-spin" />
@@ -2988,6 +3001,7 @@ export default function DocumentComparisonCreate() {
                           onClick={handleFinishClick}
                           disabled={saveDraftMutation.isPending || isFinishingComparison || isRunningEvaluation}
                           className="bg-blue-600 hover:bg-blue-700"
+                          data-testid="step2-run-evaluation-button"
                         >
                           {isFinishingComparison ? (
                             <>
