@@ -8,12 +8,11 @@ import {
 
 test('coach actions expose distinct intent/mode combinations including general improvements', () => {
   assert.equal(Array.isArray(DOCUMENT_COMPARISON_COACH_ACTIONS), true);
-  assert.equal(DOCUMENT_COMPARISON_COACH_ACTIONS.length, 4);
+  assert.equal(DOCUMENT_COMPARISON_COACH_ACTIONS.length, 3);
 
   const pairs = DOCUMENT_COMPARISON_COACH_ACTIONS.map((action) => `${action.intent}:${action.mode}`);
   assert.deepEqual(pairs.sort(), [
     'general:full',
-    'improve_shared:shared_only',
     'negotiate:full',
     'risks:full',
   ]);
@@ -45,4 +44,3 @@ test('buildCoachActionRequest returns rewrite_selection payload with selection d
   assert.equal(payload.selectionText, 'Selected confidential snippet');
   assert.deepEqual(payload.selectionRange, { from: 25, to: 52 });
 });
-

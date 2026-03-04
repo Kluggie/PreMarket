@@ -24,7 +24,6 @@ import DocumentRichEditor from '@/components/document-comparison/DocumentRichEdi
 import DocumentComparisonEditorErrorBoundary from '@/components/document-comparison/DocumentComparisonEditorErrorBoundary';
 import {
   buildCoachActionRequest,
-  canRunRewriteSelection,
   DOCUMENT_COMPARISON_COACH_ACTIONS,
 } from '@/components/document-comparison/coachActions';
 import { sanitizeEditorHtml } from '@/components/document-comparison/editorSanitization';
@@ -2721,14 +2720,9 @@ export default function DocumentComparisonCreate() {
                 className="space-y-6"
                 data-testid="doc-comparison-step-2"
               >
-                <Card>
-                  <CardContent className="py-4 space-y-3">
-                    <div className="flex justify-end">
-                      <div className={`text-xs ${exceedsAnySizeLimit ? 'text-red-700' : totalNearLimit ? 'text-amber-700' : 'text-slate-500'}`}>
-                        Total: {totalCharacters.toLocaleString()} / {limits.totalCharacterLimit.toLocaleString()} chars ({limits.model})
-                      </div>
-                    </div>
-                    {(docANearLimit || docBNearLimit || totalNearLimit) ? (
+                {(docANearLimit || docBNearLimit || totalNearLimit) ? (
+                  <Card>
+                    <CardContent className="py-4">
                       <Alert className={exceedsAnySizeLimit ? 'bg-red-50 border-red-200' : 'bg-amber-50 border-amber-200'}>
                         <AlertTriangle className={`h-4 w-4 ${exceedsAnySizeLimit ? 'text-red-700' : 'text-amber-700'}`} />
                         <AlertDescription className={exceedsAnySizeLimit ? 'text-red-800' : 'text-amber-800'}>
@@ -2737,9 +2731,9 @@ export default function DocumentComparisonCreate() {
                             : `Approaching the ${limits.model} input limit. Keep each document under ${limits.perDocumentCharacterLimit.toLocaleString()} characters.`}
                         </AlertDescription>
                       </Alert>
-                    ) : null}
-                  </CardContent>
-                </Card>
+                    </CardContent>
+                  </Card>
+                ) : null}
 
                 {canUseOwnerCoach ? (
                 <Card>
@@ -2774,29 +2768,6 @@ export default function DocumentComparisonCreate() {
                           {option.label}
                         </Button>
                       ))}
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        disabled={coachLoading || coachNotConfigured || !canRunRewriteSelection(selectionContext)}
-                        onClick={() => {
-                          const request = buildCoachActionRequest(
-                            {
-                              id: 'rewrite_selection',
-                              mode: 'selection',
-                              intent: 'rewrite_selection',
-                            },
-                            selectionContext,
-                          );
-                          if (!request) {
-                            return;
-                          }
-                          runCoach(request);
-                        }}
-                      >
-                        {coachLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
-                        Rewrite Selection
-                      </Button>
                     </div>
 
                     <p className="text-xs text-slate-500">

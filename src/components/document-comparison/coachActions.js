@@ -1,11 +1,5 @@
 export const DOCUMENT_COMPARISON_COACH_ACTIONS = [
   {
-    id: 'improve_shared',
-    label: 'Improve Shared Writing',
-    mode: 'shared_only',
-    intent: 'improve_shared',
-  },
-  {
     id: 'negotiate_full',
     label: 'Negotiation Strategy',
     mode: 'full',
@@ -65,4 +59,3 @@ export function buildCoachActionRequest(action, selectionContext) {
         : undefined,
   };
 }
-
