@@ -39,3 +39,6 @@ csrf.json
 .vercel
 vercel.local.json
 
+
+# Local document storage (dev only)
+data/documents/

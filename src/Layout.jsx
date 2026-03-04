@@ -5,7 +5,7 @@ import { Link } from 'react-router-dom';
 import { createPageUrl } from './utils';
 import { 
   Menu, X, ChevronDown, User, LogOut, Settings, Building2, 
-  FileText, LayoutDashboard, Shield, Globe
+  FileText, LayoutDashboard, Shield, Globe, FolderOpen
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -150,6 +150,12 @@ export default function Layout({ children, currentPageName }) {
                         <Link to="/organization" className="flex items-center gap-2 cursor-pointer">
                           <Building2 className="w-4 h-4" />
                           Organization
+                        </Link>
+                      </DropdownMenuItem>
+                      <DropdownMenuItem asChild>
+                        <Link to="/documents" className="flex items-center gap-2 cursor-pointer">
+                          <FolderOpen className="w-4 h-4" />
+                          Documents
                         </Link>
                       </DropdownMenuItem>
                       <DropdownMenuItem asChild>

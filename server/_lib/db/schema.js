@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
 import {
   boolean,
+  customType,
   index,
   integer,
   jsonb,
@@ -9,6 +10,9 @@ import {
   timestamp,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
+
+// bytea column type for storing binary file content in Postgres
+const bytea = customType({ dataType() { return 'bytea'; } });
 
 export const users = pgTable(
   'users',
@@ -911,6 +915,36 @@ export const documentComparisonCoachCache = pgTable(
       table.userId,
       table.createdAt,
     ),
+  }),
+);
+
+export const userDocuments = pgTable(
+  'user_documents',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    uploaderUserId: text('uploader_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    filename: text('filename').notNull(),
+    mimeType: text('mime_type').notNull(),
+    sizeBytes: integer('size_bytes').notNull(),
+    // Nullable: legacy rows may still have disk storage_key; new rows use content_bytes
+    storageKey: text('storage_key'),
+    // File bytes stored directly in Postgres (bytea); null for legacy disk-stored rows
+    contentBytes: bytea('content_bytes'),
+    status: text('status').notNull().default('processing'),
+    extractedText: text('extracted_text'),
+    summaryText: text('summary_text'),
+    summaryUpdatedAt: timestamp('summary_updated_at', { withTimezone: true }),
+    errorMessage: text('error_message'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    userDocumentsUserIdx: index('user_documents_user_idx').on(table.userId, table.createdAt),
   }),
 );
 

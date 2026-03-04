@@ -134,6 +134,27 @@
       "when": 1773261600000,
       "tag": "0018_organizations_tagline",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1772000000000,
+      "tag": "0019_user_documents",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1772500000000,
+      "tag": "0020_user_documents_v2",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1774000000000,
+      "tag": "0021_user_documents_repair",
+      "breakpoints": true
     }
   ]
 }

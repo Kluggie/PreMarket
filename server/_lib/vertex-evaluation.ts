@@ -29,6 +29,8 @@ type ProposalInput = {
   responses: ProposalResponseInput[];
   rubric: unknown;
   computedSignals: unknown;
+  /** Optional supplementary context from user-uploaded documents. Injected at end of prompt. */
+  supplementaryContext?: string | null;
 };
 
 type ComparisonInput = {
@@ -2307,6 +2309,14 @@ function buildProposalPrompt(input: ProposalInput, heuristics: ProposalHeuristic
     '- Max flags: 8. Max follow-up questions: 10.',
     'INPUTS (JSON):',
     JSON.stringify(payload, null, 2),
+    ...(input.supplementaryContext
+      ? [
+          'SUPPLEMENTARY CONTEXT (user-provided documents – treat as background reference only):',
+          'IMPORTANT: Missing documents must NOT be treated as negatives.',
+          'Prioritise proposal content and objective evidence over this context.',
+          input.supplementaryContext,
+        ]
+      : []),
     'Return valid JSON only. No markdown.',
   ].join('\n');
 }
@@ -3294,6 +3304,7 @@ function normalizeProposalInput(input: ProposalInput): ProposalInput {
     responses: normalizedResponses,
     rubric: input.rubric || null,
     computedSignals: input.computedSignals || null,
+    supplementaryContext: input.supplementaryContext || null,
   };
 }
 

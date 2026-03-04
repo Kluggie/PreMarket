@@ -49,6 +49,7 @@ export async function ensureMigrated() {
 
 export async function resetTables() {
   const db = getDb();
+  // Core tables that always exist (from early migrations)
   await db.execute(
     sql`truncate table
       audit_events,
@@ -83,4 +84,12 @@ export async function resetTables() {
       users
       restart identity cascade`,
   );
+  // user_documents only exists after migration 0021; skip gracefully if absent
+  const exists = await db.execute(
+    sql`select to_regclass('public.user_documents') as oid`,
+  );
+  const oid = exists?.rows?.[0]?.oid ?? exists?.[0]?.oid ?? null;
+  if (oid) {
+    await db.execute(sql`truncate table user_documents restart identity cascade`);
+  }
 }

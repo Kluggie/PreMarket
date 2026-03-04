@@ -55,6 +55,8 @@ import templatesHandler from '../server/routes/templates/index.js';
 import templatesUseHandler from '../server/routes/templates/[id]/use.js';
 import templatesViewHandler from '../server/routes/templates/[id]/view.js';
 import documentsExtractHandler from '../server/routes/documents/extract.js';
+import documentsIndexHandler from '../server/routes/documents/index.js';
+import documentsIdHandler from '../server/routes/documents/[id].js';
 import accountProfileHandler from '../server/routes/account/profile.js';
 import accountOrganizationsHandler from '../server/routes/account/organizations.js';
 import accountOrganizationsIdHandler from '../server/routes/account/organizations/[id].js';
@@ -451,6 +453,26 @@ export default async function handler(req: any, res: any) {
 
   if (pathname === '/api/documents/extract' && method === 'POST') {
     return documentsExtractHandler(req, res);
+  }
+
+  if (pathname === '/api/documents' && method === 'GET') {
+    return documentsIndexHandler(req, res);
+  }
+
+  if (pathname === '/api/documents/upload' && method === 'POST') {
+    return documentsIndexHandler(req, res);
+  }
+
+  const documentsDownloadMatch = pathname.match(/^\/api\/documents\/([^/]+)\/download$/);
+  if (documentsDownloadMatch && method === 'GET') {
+    const id = decodeURIComponent(documentsDownloadMatch[1]);
+    return documentsIdHandler(req, res, id);
+  }
+
+  const documentsIdMatch = pathname.match(/^\/api\/documents\/([^/]+)$/);
+  if (documentsIdMatch && method === 'DELETE') {
+    const id = decodeURIComponent(documentsIdMatch[1]);
+    return documentsIdHandler(req, res, id);
   }
 
   const documentComparisonsEvaluateMatch = pathname.match(

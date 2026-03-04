@@ -77,6 +77,14 @@ const PublicRoutes = () => {
         }
       />
       <Route
+        path="/documents"
+        element={
+          <LayoutWrapper currentPageName="Documents">
+            <Pages.Documents />
+          </LayoutWrapper>
+        }
+      />
+      <Route
         path="/settings"
         element={
           <LayoutWrapper currentPageName="Settings">

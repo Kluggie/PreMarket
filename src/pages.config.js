@@ -60,6 +60,7 @@ import DirectoryPersonDetail from './pages/DirectoryPersonDetail';
 import DocumentComparisonCreate from './pages/DocumentComparisonCreate';
 import DocumentComparisonDetail from './pages/DocumentComparisonDetail';
 import Documentation from './pages/Documentation';
+import Documents from './pages/Documents';
 import GeminiTest from './pages/GeminiTest';
 import Landing from './pages/Landing';
 import Organization from './pages/Organization';
@@ -93,6 +94,7 @@ export const PAGES = {
     "DocumentComparisonCreate": DocumentComparisonCreate,
     "DocumentComparisonDetail": DocumentComparisonDetail,
     "Documentation": Documentation,
+    "Documents": Documents,
     "GeminiTest": GeminiTest,
     "Landing": Landing,
     "Organization": Organization,

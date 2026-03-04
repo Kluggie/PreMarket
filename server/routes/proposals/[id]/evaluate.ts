@@ -11,6 +11,7 @@ import {
   evaluateProposalWithVertex,
 } from '../../../_lib/vertex-evaluation.js';
 import { evaluateWithVertexV2 } from '../../../_lib/vertex-evaluation-v2.js';
+import { selectRelevantDocuments } from '../../../_lib/user-documents-context.js';
 
 function getProposalId(req: any, proposalIdParam?: string) {
   if (proposalIdParam && proposalIdParam.trim().length > 0) {
@@ -558,6 +559,27 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         ]);
 
         const proposalInput = buildProposalInput(proposal, template, templateQuestions, responses);
+
+        // Build a short context string from the proposal to drive relevance selection.
+        // Use templateName + first few visible non-empty response labels/values.
+        const contextParts: string[] = [
+          String(proposal.title || '').trim(),
+          String(proposalInput.templateName || '').trim(),
+        ];
+        const visibleResponses = proposalInput.responses
+          .filter((r: any) => r.visibility !== 'hidden' && r.value != null && String(r.value).trim())
+          .slice(0, 8);
+        for (const r of visibleResponses) {
+          contextParts.push(`${r.label}: ${String(r.value).slice(0, 120)}`);
+        }
+        const proposalContext = contextParts.filter(Boolean).join('\n');
+
+        // Relevance-based document context — only included when docs match proposal context
+        const docCtx = await selectRelevantDocuments(auth.user.id, proposalContext).catch(() => null);
+        const enrichedProposalInput = docCtx
+          ? { ...proposalInput, supplementaryContext: docCtx.contextBlock }
+          : proposalInput;
+
         if (process.env.NODE_ENV !== 'production') {
           console.info(
             JSON.stringify({
@@ -570,7 +592,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
             }),
           );
         }
-        const proposalEvaluation = await evaluateProposalWithVertex(proposalInput, {
+        const proposalEvaluation = await evaluateProposalWithVertex(enrichedProposalInput, {
           correlationId: requestId,
           routeName: '/api/proposals/[id]/evaluate',
           entityId: proposal.id,
