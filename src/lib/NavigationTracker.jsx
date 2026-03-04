@@ -24,11 +24,11 @@ export default function NavigationTracker() {
     }
 
     if (isAuthenticated && pageName) {
-      appLogsClient.logUserInApp(pageName).catch(() => {
+      appLogsClient.logUserInApp(pageName, { trigger: 'navigation', pathname }).catch(() => {
         // Logging is best-effort.
       });
     }
-  }, [location, isAuthenticated, Pages, mainPageKey]);
+  }, [location.pathname, isAuthenticated, Pages, mainPageKey]);
 
   return null;
 }

@@ -497,7 +497,7 @@ export default function DocumentComparisonCreate() {
   const routeState = useRouteState();
   const queryClient = useQueryClient();
 
-  const [step, setStep] = useState(routeState.step);
+  const step = routeState.step;
   const [comparisonId, setComparisonId] = useState(routeState.draftId);
   const [linkedProposalId, setLinkedProposalId] = useState(routeState.proposalId);
 
@@ -513,11 +513,6 @@ export default function DocumentComparisonCreate() {
   const [docBSource, setDocBSource] = useState('typed');
   const [docAFiles, setDocAFiles] = useState([]);
   const [docBFiles, setDocBFiles] = useState([]);
-  
-  // Hydration-reactive state: These track if we're loading draft data to avoid
-  // overwriting user edits with stale DB values
-  const [draftDataLoaded, setDraftDataLoaded] = useState(false);
-
   const [docASelectedFile, setDocASelectedFile] = useState(null);
   const [docBSelectedFile, setDocBSelectedFile] = useState(null);
   const [docAPreviewSnippet, setDocAPreviewSnippet] = useState('');
@@ -573,7 +568,6 @@ export default function DocumentComparisonCreate() {
   const routeTokenRef = useRef(routeState.token || '');
   const saveMutationPendingRef = useRef(false);
   const activeSavePromiseRef = useRef(null);
-  const pendingRouteStepRef = useRef(null);
   const lastStep2AutosaveAtRef = useRef(0);
   const docASpansRef = useRef([]);
   const docBSpansRef = useRef([]);
@@ -606,6 +600,77 @@ export default function DocumentComparisonCreate() {
     setLastEditAt(resolvedTimestamp);
   };
 
+  const updateRouteParams = useCallback(
+    ({
+      nextStep,
+      nextDraftId,
+      nextProposalId,
+      nextToken,
+      replace = true,
+    } = {}) => {
+      const params = new URLSearchParams(location.search || '');
+      let changed = false;
+
+      if (nextStep !== undefined) {
+        const normalizedStep = String(clampStep(nextStep || 1));
+        if (params.get('step') !== normalizedStep) {
+          params.set('step', normalizedStep);
+          changed = true;
+        }
+      }
+
+      if (nextDraftId !== undefined) {
+        const normalizedDraftId = asText(nextDraftId);
+        if (normalizedDraftId) {
+          if (params.get('draft') !== normalizedDraftId) {
+            params.set('draft', normalizedDraftId);
+            changed = true;
+          }
+        } else if (params.has('draft')) {
+          params.delete('draft');
+          changed = true;
+        }
+      }
+
+      if (nextProposalId !== undefined) {
+        const normalizedProposalId = asText(nextProposalId);
+        if (normalizedProposalId) {
+          if (params.get('proposalId') !== normalizedProposalId) {
+            params.set('proposalId', normalizedProposalId);
+            changed = true;
+          }
+        } else if (params.has('proposalId')) {
+          params.delete('proposalId');
+          changed = true;
+        }
+      }
+
+      if (nextToken !== undefined) {
+        const normalizedToken = asText(nextToken);
+        if (normalizedToken) {
+          if (params.get('token') !== normalizedToken) {
+            params.set('token', normalizedToken);
+            changed = true;
+          }
+        } else if (params.has('token')) {
+          params.delete('token');
+          changed = true;
+        }
+      }
+
+      if (!changed) {
+        return false;
+      }
+
+      navigate(
+        `${location.pathname}${params.toString() ? `?${params.toString()}` : ''}`,
+        { replace },
+      );
+      return true;
+    },
+    [location.pathname, location.search, navigate],
+  );
+
   const proposalLookup = useQuery({
     queryKey: ['document-comparison-proposal-lookup', routeState.proposalId],
     enabled: Boolean(routeState.proposalId),
@@ -627,24 +692,6 @@ export default function DocumentComparisonCreate() {
     retry: (failureCount, error) =>
       !isDocumentComparisonNotFoundError(error) && failureCount < 2,
   });
-
-  // Compute initial step from loaded data if not explicitly provided via URL
-  useEffect(() => {
-    if (step !== null) {
-      // Step was already explicitly set via URL
-      return;
-    }
-
-    if (draftQuery.isLoading || proposalLookup.isLoading) {
-      // Still loading, wait
-      return;
-    }
-
-    const comparison = draftQuery.data?.comparison || null;
-    const proposal = proposalLookup.data || draftQuery.data?.proposal || null;
-    const computedStep = computeInitialStep(comparison, proposal);
-    setStep(clampStep(computedStep));
-  }, [step, draftQuery.isLoading, draftQuery.data, proposalLookup.isLoading, proposalLookup.data]);
 
   useEffect(() => {
     if (!draftQuery.data?.comparison) {
@@ -734,7 +781,9 @@ export default function DocumentComparisonCreate() {
       hasRouteStepParam: routeState.hasStepParam,
       maxStep: TOTAL_EDITOR_STEPS,
     });
-    setStep(draftStep);
+    if (!routeState.hasStepParam) {
+      updateRouteParams({ nextStep: draftStep, replace: true });
+    }
     setLastSavedHash(
       buildDraftStateHashFromSnapshot({
         comparisonId: comparison.id || resolvedDraftId || '',
@@ -756,7 +805,6 @@ export default function DocumentComparisonCreate() {
     );
     setDraftDirty(false);
     setLastEditAt(serverUpdatedAtMs || 0);
-    setDraftDataLoaded(true);
     if (import.meta.env.DEV) {
       console.info('[DocumentComparisonCreate] hydrated draft from server', {
         comparisonId: comparison.id || resolvedDraftId || '',
@@ -786,6 +834,7 @@ export default function DocumentComparisonCreate() {
     routeState.hasStepParam,
     routeState.proposalId,
     routeState.step,
+    updateRouteParams,
   ]);
 
   useEffect(() => {
@@ -1022,7 +1071,6 @@ export default function DocumentComparisonCreate() {
         throw new Error('Failed to save draft');
       }
 
-      const persistedStep = clampStep(comparison.draft_step || savedStep);
       const persistedUpdatedAtMs = resolveComparisonUpdatedAtMs(comparison);
       const persistedComparisonId = comparison.id;
       const persistedProposalId =
@@ -1076,8 +1124,6 @@ export default function DocumentComparisonCreate() {
 
       if (!nonBlocking) {
         latestDraftStateRef.current = persistedSnapshot;
-        pendingRouteStepRef.current = persistedStep;
-        setStep(persistedStep);
         setTitle(persistedTitle);
         setDocAText(persistedDocAText);
         setDocBText(persistedDocBText);
@@ -1289,72 +1335,28 @@ export default function DocumentComparisonCreate() {
   useEffect(() => {
     const draftParam = comparisonId || resolvedDraftId || '';
     const proposalParam = linkedProposalId || routeState.proposalId || '';
-    const params = new URLSearchParams(location.search || '');
     if (
       !draftParam &&
       !proposalParam &&
       !routeState.token &&
-      !params.has('draft') &&
-      !params.has('proposalId') &&
-      !params.has('token') &&
-      !params.has('sharedToken')
+      !location.search
     ) {
       return;
     }
-
-    const nextStep = String(clampStep(step || 1));
-    let changed = false;
-
-    if (draftParam) {
-      if (params.get('draft') !== draftParam) {
-        params.set('draft', draftParam);
-        changed = true;
-      }
-    } else if (params.has('draft')) {
-      params.delete('draft');
-      changed = true;
-    }
-
-    if (proposalParam) {
-      if (params.get('proposalId') !== proposalParam) {
-        params.set('proposalId', proposalParam);
-        changed = true;
-      }
-    } else if (params.has('proposalId')) {
-      params.delete('proposalId');
-      changed = true;
-    }
-
-    if (routeState.token) {
-      if (params.get('token') !== routeState.token) {
-        params.set('token', routeState.token);
-        changed = true;
-      }
-    }
-
-    if (params.get('step') !== nextStep) {
-      params.set('step', nextStep);
-      changed = true;
-    }
-
-    if (!changed) {
-      return;
-    }
-
-    navigate(
-      `${location.pathname}${params.toString() ? `?${params.toString()}` : ''}`,
-      { replace: true },
-    );
+    updateRouteParams({
+      nextDraftId: draftParam,
+      nextProposalId: proposalParam,
+      nextToken: routeState.token || '',
+      replace: true,
+    });
   }, [
     comparisonId,
     linkedProposalId,
-    location.pathname,
     location.search,
-    navigate,
     resolvedDraftId,
     routeState.proposalId,
     routeState.token,
-    step,
+    updateRouteParams,
   ]);
 
   const progress = (step / TOTAL_WORKFLOW_STEPS) * 100;
@@ -1415,28 +1417,6 @@ export default function DocumentComparisonCreate() {
     stepRef.current = step;
     isDirtyRef.current = isDirty;
   }, [isDirty, step]);
-
-  useEffect(() => {
-    if (!routeState.hasStepParam) {
-      pendingRouteStepRef.current = null;
-      return;
-    }
-    const routedStep = clampStep(routeState.step || 1);
-    if (pendingRouteStepRef.current !== null) {
-      const pendingStep = clampStep(pendingRouteStepRef.current, routedStep, TOTAL_EDITOR_STEPS);
-      if (routedStep !== pendingStep) {
-        return;
-      }
-      pendingRouteStepRef.current = null;
-    }
-    if (saveDraftMutation.isPending) {
-      return;
-    }
-    if (routedStep === stepRef.current) {
-      return;
-    }
-    setStep(routedStep);
-  }, [routeState.hasStepParam, routeState.step, saveDraftMutation.isPending]);
 
   useEffect(() => {
     comparisonIdRef.current = comparisonId;
@@ -1673,15 +1653,13 @@ export default function DocumentComparisonCreate() {
       });
     }
 
-    pendingRouteStepRef.current = bounded;
-    setStep(bounded);
+    updateRouteParams({ nextStep: bounded, replace: true });
   };
 
   const retryStep2Load = () => {
     setUiError('');
     setFullscreenSide(null);
-    pendingRouteStepRef.current = 2;
-    setStep(2);
+    updateRouteParams({ nextStep: 2, replace: true });
     if (resolvedDraftId) {
       queryClient.invalidateQueries({ queryKey: ['document-comparison-draft', resolvedDraftId, routeState.token] });
     }
@@ -2159,7 +2137,7 @@ export default function DocumentComparisonCreate() {
     markSuggestionApplied(pendingSelectionApply.suggestionId, pendingSelectionApply.suggestionHash);
     setPendingSelectionApply(null);
     setPendingReviewSuggestion(null);
-    setStep(2);
+    updateRouteParams({ nextStep: 2, replace: true });
     setIsApplyingReviewSuggestion(false);
     setFocusEditorRequest({
       side: pendingSelectionApply.target,
@@ -2244,7 +2222,7 @@ export default function DocumentComparisonCreate() {
     markSuggestionApplied(suggestionId, suggestionHash);
 
     setPendingReviewSuggestion(null);
-    setStep(2);
+    updateRouteParams({ nextStep: 2, replace: true });
     setFocusEditorRequest({
       side: target,
       id: Date.now(),

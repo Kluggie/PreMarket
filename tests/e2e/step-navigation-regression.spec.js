@@ -692,4 +692,58 @@ test.describe('Step Navigation Torture Test - Document Comparison Wizard', () =>
     assertNoConsoleErrors(issues);
     assertNoNetwork500s(issues);
   });
+
+  test('I) changing uploads after Back does not flicker or spam app-logs', async ({ page }) => {
+    const issues = setupRuntimeGuards(page);
+    await authenticate(page, uniqueId('flicker_guard'));
+    await stubExtractRoute(page, { defaultDelayMs: 300 });
+
+    let appLogsRequestCount = 0;
+    page.on('request', (request) => {
+      if (request.url().includes('/api/app-logs')) {
+        appLogsRequestCount += 1;
+      }
+    });
+
+    await page.goto(`${BASE_URL}/DocumentComparisonCreate`, { waitUntil: 'domcontentloaded' });
+    await assertNoReactErrorOverlay(page);
+    await assertStep(page, 1);
+
+    await uploadAndImport(page, SAMPLE_DOCX_PATH, 'a');
+    await assertPreviewContains(page, 'EXTRACTED_CONTENT_sample.docx', 'a');
+    await assertLastImported(page, 'sample.docx', 'a');
+
+    await uploadAndImport(page, SAMPLE_PDF_PATH, 'b');
+    await assertPreviewContains(page, 'EXTRACTED_CONTENT_sample.pdf', 'b');
+    await assertLastImported(page, 'sample.pdf', 'b');
+
+    await next(page);
+    await assertStep(page, 2);
+    await waitForEditors(page);
+
+    await back(page);
+    await assertStep(page, 1);
+
+    await uploadAndImport(page, SAMPLE_PDF_PATH, 'a');
+    await assertPreviewContains(page, 'EXTRACTED_CONTENT_sample.pdf', 'a');
+    await assertLastImported(page, 'sample.pdf', 'a');
+
+    await uploadAndImport(page, SAMPLE_DOCX_PATH, 'b');
+    await assertPreviewContains(page, 'EXTRACTED_CONTENT_sample.docx', 'b');
+    await assertLastImported(page, 'sample.docx', 'b');
+
+    await next(page);
+    await assertStep(page, 2);
+    await waitForEditors(page);
+    await expect(page.getByTestId('doc-comparison-step-2')).toHaveCount(1, {
+      timeout: STEP_TIMEOUT_MS,
+    });
+    await expect(page.getByTestId('doc-comparison-step-1')).toHaveCount(0, {
+      timeout: STEP_TIMEOUT_MS,
+    });
+
+    expect(appLogsRequestCount).toBeLessThanOrEqual(3);
+    assertNoConsoleErrors(issues);
+    assertNoNetwork500s(issues);
+  });
 });
