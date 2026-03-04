@@ -29,9 +29,11 @@ const ALLOWED_INTENTS = new Set([
   'risks',
   'rewrite_selection',
   'general',
+  'custom_prompt',
 ]);
 const ALLOWED_SELECTION_TARGETS = new Set(['confidential', 'shared']);
 const COACH_DEBUG_ENABLED = String(process.env.DEBUG_DOCUMENT_COMPARISON_COACH || '').trim() === '1';
+const MAX_CUSTOM_PROMPT_CHARS = 4000;
 
 type CoachRouteContext = {
   userId?: string | null;
@@ -61,10 +63,16 @@ function parseIntent(value: unknown) {
     throw new ApiError(
       400,
       'invalid_input',
-      'intent must be one of: improve_shared, negotiate, risks, rewrite_selection, general',
+      'intent must be one of: improve_shared, negotiate, risks, rewrite_selection, general, custom_prompt',
     );
   }
-  return intent as 'improve_shared' | 'negotiate' | 'risks' | 'rewrite_selection' | 'general';
+  return intent as
+    | 'improve_shared'
+    | 'negotiate'
+    | 'risks'
+    | 'rewrite_selection'
+    | 'general'
+    | 'custom_prompt';
 }
 
 function parseSelectionTarget(value: unknown) {
@@ -79,12 +87,13 @@ function parseSelectionTarget(value: unknown) {
 }
 
 function validateIntentMode(params: {
-  intent: 'improve_shared' | 'negotiate' | 'risks' | 'rewrite_selection' | 'general';
+  intent: 'improve_shared' | 'negotiate' | 'risks' | 'rewrite_selection' | 'general' | 'custom_prompt';
   mode: 'full' | 'shared_only' | 'selection';
   selectionText: string;
   selectionTarget: 'confidential' | 'shared' | null;
+  promptText: string;
 }) {
-  const { intent, mode, selectionText, selectionTarget } = params;
+  const { intent, mode, selectionText, selectionTarget, promptText } = params;
 
   if (intent === 'improve_shared' && mode !== 'shared_only') {
     throw new ApiError(400, 'invalid_input', 'improve_shared requires mode=shared_only');
@@ -109,6 +118,15 @@ function validateIntentMode(params: {
 
   if ((intent === 'negotiate' || intent === 'risks' || intent === 'general') && mode !== 'full') {
     throw new ApiError(400, 'invalid_input', `${intent} requires mode=full`);
+  }
+
+  if (intent === 'custom_prompt') {
+    if (mode !== 'full') {
+      throw new ApiError(400, 'invalid_input', 'custom_prompt requires mode=full');
+    }
+    if (!promptText) {
+      throw new ApiError(400, 'invalid_input', 'promptText is required for custom_prompt');
+    }
   }
 }
 
@@ -171,6 +189,43 @@ function resolveCoachDocumentSide(params: {
   };
 }
 
+function toStringArray(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [] as string[];
+  }
+
+  const unique = new Set<string>();
+  value.forEach((entry) => {
+    const token = String(entry || '').trim();
+    if (!token) {
+      return;
+    }
+    unique.add(token);
+  });
+  return [...unique];
+}
+
+function resolveOtherPartyCanaryTokens(existing: any, existingInputs: Record<string, unknown>) {
+  const metadata =
+    existing?.metadata && typeof existing.metadata === 'object' && !Array.isArray(existing.metadata)
+      ? existing.metadata
+      : {};
+  const metadataTokenCandidates = [
+    metadata.other_party_confidential_canary_tokens,
+    metadata.otherPartyConfidentialCanaryTokens,
+    metadata.other_party_canary_tokens,
+    metadata.otherPartyCanaryTokens,
+  ];
+  const inputTokenCandidates = [
+    existingInputs.other_party_confidential_canary_tokens,
+    existingInputs.otherPartyConfidentialCanaryTokens,
+    existingInputs.other_party_canary_tokens,
+    existingInputs.otherPartyCanaryTokens,
+  ];
+
+  return [...metadataTokenCandidates, ...inputTokenCandidates].flatMap((candidate) => toStringArray(candidate));
+}
+
 export default async function handler(req: any, res: any, comparisonIdParam?: string) {
   await withApiRoute(
     req,
@@ -193,14 +248,17 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
 
     const body = await readJsonBody(req);
     const mode = parseMode(body.mode);
-    const intent = parseIntent(body.intent);
+    const action = asText(body.action).toLowerCase();
+    const intent = parseIntent(body.intent || action);
     const selectionTarget = parseSelectionTarget(body.selectionTarget || body.selection_target);
     const selectionText = sanitizeEditorText(body.selectionText || body.selection_text || '').slice(0, 20000);
+    const promptText = asText(body.promptText || body.prompt_text || '').slice(0, MAX_CUSTOM_PROMPT_CHARS);
     validateIntentMode({
       intent,
       mode,
       selectionTarget,
       selectionText,
+      promptText,
     });
 
     const db = getDb();
@@ -221,16 +279,17 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       existing.inputs && typeof existing.inputs === 'object' && !Array.isArray(existing.inputs)
         ? existing.inputs
         : {};
+    const useRequestDocumentOverrides = intent !== 'custom_prompt';
     const resolvedDocA = resolveCoachDocumentSide({
-      requestText: body.docAText ?? body.doc_a_text,
-      requestHtml: body.docAHtml ?? body.doc_a_html,
+      requestText: useRequestDocumentOverrides ? body.docAText ?? body.doc_a_text : undefined,
+      requestHtml: useRequestDocumentOverrides ? body.docAHtml ?? body.doc_a_html : undefined,
       dbText: existing.docAText,
       dbHtml: existingInputs.doc_a_html,
       dbLegacyText: existingInputs.confidential_doc_content,
     });
     const resolvedDocB = resolveCoachDocumentSide({
-      requestText: body.docBText ?? body.doc_b_text,
-      requestHtml: body.docBHtml ?? body.doc_b_html,
+      requestText: useRequestDocumentOverrides ? body.docBText ?? body.doc_b_text : undefined,
+      requestHtml: useRequestDocumentOverrides ? body.docBHtml ?? body.doc_b_html : undefined,
       dbText: existing.docBText,
       dbHtml: existingInputs.doc_b_html,
       dbLegacyText: existingInputs.shared_doc_content,
@@ -264,6 +323,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       intent,
       selectionTarget: selectionTarget || undefined,
       selectionText: selectionText || undefined,
+      promptText: promptText || undefined,
     });
     const cacheHashPrefix = cacheHash.slice(0, 12);
 
@@ -307,6 +367,8 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       intent,
       selectionTarget: selectionTarget || undefined,
       selectionText: selectionText || undefined,
+      promptText: promptText || undefined,
+      otherPartyCanaryTokens: resolveOtherPartyCanaryTokens(existing, existingInputs),
     });
     const relevanceGuarded = applyCoachRelevanceGuard({
       coachResult: generated.result,
@@ -331,7 +393,11 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
         mode,
         intent,
         selectionTarget: selectionTarget || null,
-        selectionTextHash: selectionText ? buildSelectionTextHash(selectionText) : null,
+        selectionTextHash: selectionText
+          ? buildSelectionTextHash(selectionText)
+          : promptText
+            ? buildSelectionTextHash(promptText)
+            : null,
         promptVersion: COACH_PROMPT_VERSION,
         provider: generated.provider,
         model: generated.model,
@@ -345,7 +411,11 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
           mode,
           intent,
           selectionTarget: selectionTarget || null,
-          selectionTextHash: selectionText ? buildSelectionTextHash(selectionText) : null,
+          selectionTextHash: selectionText
+            ? buildSelectionTextHash(selectionText)
+            : promptText
+              ? buildSelectionTextHash(promptText)
+              : null,
           promptVersion: COACH_PROMPT_VERSION,
           provider: generated.provider,
           model: generated.model,

@@ -8,6 +8,7 @@ import { proposalsClient } from '@/api/proposalsClient';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -529,6 +530,7 @@ export default function DocumentComparisonCreate() {
   const [coachNotConfigured, setCoachNotConfigured] = useState(false);
   const [coachCached, setCoachCached] = useState(false);
   const [coachWithheldCount, setCoachWithheldCount] = useState(0);
+  const [customPromptText, setCustomPromptText] = useState('');
   const [coachRequestMeta, setCoachRequestMeta] = useState(null);
   const [coachResultHash, setCoachResultHash] = useState('');
   const [appliedSuggestionIdsByHash, setAppliedSuggestionIdsByHash] = useState({});
@@ -1403,6 +1405,8 @@ export default function DocumentComparisonCreate() {
   const visibleCoachSuggestions = coachSuggestions.filter(
     (suggestion, index) => !hiddenSuggestionIds.has(getNormalizedSuggestionId(suggestion, index)),
   );
+  const customPromptFeedbackText = asText(coachResult?.custom_feedback || coachResult?.summary?.overall || '');
+  const isCustomPromptResponse = String(coachRequestMeta?.intent || '').toLowerCase() === 'custom_prompt';
 
   useEffect(() => {
     draftDirtyRef.current = draftDirty;
@@ -1919,8 +1923,10 @@ export default function DocumentComparisonCreate() {
   };
 
   const runCoach = async ({
+    action = '',
     mode = 'full',
     intent = 'general',
+    promptText = '',
     selectionText = '',
     selectionTarget = null,
     selectionRange = null,
@@ -1939,20 +1945,27 @@ export default function DocumentComparisonCreate() {
     setCoachError('');
 
     try {
-      const sanitizedDocAHtml = sanitizeEditorHtml(docAHtml || textToHtml(docAText));
-      const sanitizedDocBHtml = sanitizeEditorHtml(docBHtml || textToHtml(docBText));
-      const normalizedDocAText = asText(docAText) || htmlToText(sanitizedDocAHtml);
-      const normalizedDocBText = asText(docBText) || htmlToText(sanitizedDocBHtml);
-      const response = await documentComparisonsClient.coach(resolvedId, {
+      const normalizedAction = String(action || intent || '').trim().toLowerCase();
+      const isCustomPromptRequest = normalizedAction === 'custom_prompt';
+      const payload = {
+        action: action || undefined,
         mode,
         intent,
+        promptText: isCustomPromptRequest ? String(promptText || '').trim() : undefined,
         selectionText: selectionText || undefined,
         selectionTarget: selectionTarget || undefined,
-        doc_a_text: normalizedDocAText,
-        doc_b_text: normalizedDocBText,
-        doc_a_html: sanitizedDocAHtml,
-        doc_b_html: sanitizedDocBHtml,
-      });
+      };
+      if (!isCustomPromptRequest) {
+        const sanitizedDocAHtml = sanitizeEditorHtml(docAHtml || textToHtml(docAText));
+        const sanitizedDocBHtml = sanitizeEditorHtml(docBHtml || textToHtml(docBText));
+        const normalizedDocAText = asText(docAText) || htmlToText(sanitizedDocAHtml);
+        const normalizedDocBText = asText(docBText) || htmlToText(sanitizedDocBHtml);
+        payload.doc_a_text = normalizedDocAText;
+        payload.doc_b_text = normalizedDocBText;
+        payload.doc_a_html = sanitizedDocAHtml;
+        payload.doc_b_html = sanitizedDocBHtml;
+      }
+      const response = await documentComparisonsClient.coach(resolvedId, payload);
       const coach = response?.coach || null;
       setCoachResult(coach);
       setCoachResultHash(String(response?.cacheHash || ''));
@@ -1960,8 +1973,10 @@ export default function DocumentComparisonCreate() {
       setCoachWithheldCount(Number(response?.withheldCount || 0));
       setCoachNotConfigured(false);
       setCoachRequestMeta({
+        action: action || '',
         mode,
         intent,
+        promptText: isCustomPromptRequest ? String(promptText || '').trim() : '',
         model: response?.model || 'unknown',
         provider: response?.provider || 'vertex',
         selectionText: selectionText || '',
@@ -2023,6 +2038,32 @@ export default function DocumentComparisonCreate() {
       return null;
     } finally {
       setCoachLoading(false);
+    }
+  };
+
+  const runCustomPromptCoach = () => {
+    const promptText = asText(customPromptText);
+    if (!promptText || coachLoading || coachNotConfigured) {
+      return;
+    }
+    runCoach({
+      action: 'custom_prompt',
+      mode: 'full',
+      intent: 'custom_prompt',
+      promptText,
+    });
+  };
+
+  const handleCustomPromptKeyDown = (event) => {
+    if (coachLoading || coachNotConfigured) {
+      return;
+    }
+    const key = String(event?.key || '').toLowerCase();
+    const usesMeta = Boolean(event?.metaKey);
+    const usesCtrl = Boolean(event?.ctrlKey);
+    if (key === 'enter' && (usesMeta || usesCtrl)) {
+      event.preventDefault();
+      runCustomPromptCoach();
     }
   };
 
@@ -2746,29 +2787,58 @@ export default function DocumentComparisonCreate() {
                     <CardDescription>
                       Generate suggestions only when you click an action. No background requests.
                     </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <div className="flex flex-wrap gap-2">
-                      {DOCUMENT_COMPARISON_COACH_ACTIONS.map((option) => (
-                        <Button
-                          key={option.id}
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          disabled={coachLoading || coachNotConfigured}
-                          onClick={() => {
-                            const request = buildCoachActionRequest(option, selectionContext);
-                            if (!request) {
-                              return;
-                            }
-                            runCoach(request);
-                          }}
-                        >
-                          {coachLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
-                          {option.label}
-                        </Button>
-                      ))}
-                    </div>
+	                  </CardHeader>
+	                  <CardContent className="space-y-3">
+	                    <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_320px]">
+	                      <div className="flex flex-wrap gap-2">
+	                        {DOCUMENT_COMPARISON_COACH_ACTIONS.map((option) => (
+	                          <Button
+	                            key={option.id}
+	                            type="button"
+	                            variant="outline"
+	                            size="sm"
+	                            disabled={coachLoading || coachNotConfigured}
+	                            onClick={() => {
+	                              const request = buildCoachActionRequest(option, selectionContext);
+	                              if (!request) {
+	                                return;
+	                              }
+	                              runCoach(request);
+	                            }}
+	                          >
+	                            {coachLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
+	                            {option.label}
+	                          </Button>
+	                        ))}
+	                      </div>
+	                      <div
+	                        className="rounded-md border border-slate-200 bg-slate-50/60 p-3 space-y-2"
+	                        data-testid="coach-custom-prompt-panel"
+	                      >
+	                        <Label htmlFor="coach-custom-prompt-input" className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+	                          Custom prompt
+	                        </Label>
+	                        <Textarea
+	                          id="coach-custom-prompt-input"
+	                          data-testid="coach-custom-prompt-input"
+	                          rows={3}
+	                          placeholder="Ask for feedback, risks, gaps, strategy…"
+	                          value={customPromptText}
+	                          onChange={(event) => setCustomPromptText(event.target.value)}
+	                          onKeyDown={handleCustomPromptKeyDown}
+	                          disabled={coachLoading || coachNotConfigured}
+	                        />
+	                        <Button
+	                          type="button"
+	                          data-testid="coach-custom-prompt-run"
+	                          onClick={runCustomPromptCoach}
+	                          disabled={coachLoading || coachNotConfigured || !asText(customPromptText)}
+	                        >
+	                          {coachLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+	                          {coachLoading ? 'Running...' : 'Run'}
+	                        </Button>
+	                      </div>
+	                    </div>
 
                     <p className="text-xs text-slate-500">
                       Selection source: {selectionContext.side === 'a' ? CONFIDENTIAL_LABEL : SHARED_LABEL}
@@ -2794,16 +2864,26 @@ export default function DocumentComparisonCreate() {
                       </Alert>
                     ) : null}
 
-                    {coachRequestMeta?.model ? (
-                      <p className="text-xs text-slate-500">
-                        Model: {coachRequestMeta.model}
-                        {coachRequestMeta.provider ? ` (${coachRequestMeta.provider})` : ''}
-                        {coachWithheldCount > 0 ? ` · ${coachWithheldCount} unsafe shared suggestion(s) withheld` : ''}
-                      </p>
-                    ) : null}
+	                    {coachRequestMeta?.model ? (
+	                      <p className="text-xs text-slate-500">
+	                        Model: {coachRequestMeta.model}
+	                        {coachRequestMeta.provider ? ` (${coachRequestMeta.provider})` : ''}
+	                        {coachWithheldCount > 0 ? ` · ${coachWithheldCount} unsafe shared suggestion(s) withheld` : ''}
+	                      </p>
+	                    ) : null}
 
-                    {visibleCoachSuggestions.length > 0 ? (
-                      <div className="space-y-2">
+	                    {isCustomPromptResponse && customPromptFeedbackText ? (
+	                      <div
+	                        className="rounded-md border border-slate-200 bg-white p-3 space-y-1"
+	                        data-testid="coach-custom-prompt-feedback"
+	                      >
+	                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Custom prompt</p>
+	                        <p className="text-sm text-slate-700 whitespace-pre-wrap">{customPromptFeedbackText}</p>
+	                      </div>
+	                    ) : null}
+
+	                    {visibleCoachSuggestions.length > 0 ? (
+	                      <div className="space-y-2">
                         {visibleCoachSuggestions.slice(0, 12).map((suggestion, index) => {
                           const suggestionId = getNormalizedSuggestionId(suggestion, index);
                           const expanded = expandedSuggestionIds.includes(suggestionId);

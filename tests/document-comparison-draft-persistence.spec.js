@@ -301,4 +301,75 @@ test.describe('Document Comparison Draft Persistence', () => {
     });
     expect(readDraftIdFromUrl(page.url())).toBe('');
   });
+
+  test('custom prompt panel runs coach request with loading state and keyboard submit', async ({ page }) => {
+    await authenticate(page, uniqueId('custom_prompt'));
+    await openStep2FromStep1(page, `Custom Prompt ${uniqueId('title')}`);
+
+    const coachRequests = [];
+    await page.route('**/api/document-comparisons/**/coach', async (route) => {
+      const payload = JSON.parse(route.request().postData() || '{}');
+      coachRequests.push(payload);
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 700));
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          comparison_id: payload.comparison_id || readDraftIdFromUrl(page.url()) || 'comparison_test',
+          cache_hash: `coach_hash_${coachRequests.length}`,
+          cached: false,
+          provider: 'mock',
+          model: 'custom-prompt-e2e-mock',
+          prompt_version: 'coach-v1',
+          coach: {
+            version: 'coach-v1',
+            summary: {
+              overall: 'Custom feedback from test route.',
+              top_priorities: [],
+            },
+            suggestions: [],
+            concerns: [],
+            questions: [],
+            negotiation_moves: [],
+            custom_feedback: 'Custom feedback from test route.',
+          },
+          created_at: new Date().toISOString(),
+          withheld_count: 0,
+        }),
+      });
+    });
+
+    const panel = page.getByTestId('coach-custom-prompt-panel');
+    const input = page.getByTestId('coach-custom-prompt-input');
+    const runButton = page.getByTestId('coach-custom-prompt-run');
+
+    await expect(panel).toBeVisible({ timeout: STEP_LOAD_TIMEOUT_MS });
+    await expect(runButton).toBeDisabled();
+
+    await input.fill('Highlight risks and negotiation gaps.');
+    await expect(runButton).toBeEnabled();
+
+    await runButton.click();
+    await expect(runButton).toBeDisabled();
+    await expect(runButton).toContainText('Running...');
+    await expect
+      .poll(() => coachRequests.length, { timeout: STEP_LOAD_TIMEOUT_MS })
+      .toBe(1);
+    expect(coachRequests[0]?.action).toBe('custom_prompt');
+    expect(coachRequests[0]?.intent).toBe('custom_prompt');
+    expect(coachRequests[0]?.promptText).toBe('Highlight risks and negotiation gaps.');
+    expect(coachRequests[0]?.doc_a_text).toBeUndefined();
+    expect(coachRequests[0]?.doc_b_text).toBeUndefined();
+    await expect(page.getByTestId('coach-custom-prompt-feedback')).toContainText('Custom feedback from test route.', {
+      timeout: STEP_LOAD_TIMEOUT_MS,
+    });
+
+    await input.fill('Run from keyboard');
+    await input.press('Control+Enter');
+    await expect
+      .poll(() => coachRequests.length, { timeout: STEP_LOAD_TIMEOUT_MS })
+      .toBe(2);
+    expect(coachRequests[1]?.promptText).toBe('Run from keyboard');
+  });
 });
