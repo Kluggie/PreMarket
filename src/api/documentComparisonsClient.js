@@ -55,7 +55,21 @@ function createImportError(message, code, status, body = null) {
   return error;
 }
 
+function createAbortError() {
+  try {
+    return new DOMException('The operation was aborted.', 'AbortError');
+  } catch {
+    const error = new Error('The operation was aborted.');
+    error.name = 'AbortError';
+    return error;
+  }
+}
+
 function toFriendlyImportError(error) {
+  if (error?.name === 'AbortError') {
+    return error;
+  }
+
   const code = String(error?.code || '').trim();
   const status = Number(error?.status || 0);
 
@@ -337,7 +351,7 @@ export const documentComparisonsClient = {
     return normalizeExtractedText(extracted?.text || '');
   },
 
-  async extractDocumentFromFile(file) {
+  validateImportFile(file) {
     if (!file || typeof file.arrayBuffer !== 'function') {
       const error = new Error('A valid file is required for extraction');
       error.code = 'invalid_input';
@@ -357,11 +371,27 @@ export const documentComparisonsClient = {
     if (Number(file.size || 0) > MAX_IMPORT_FILE_BYTES) {
       throw createImportError('File is too large. Maximum supported size is 5MB.', 'payload_too_large', 413);
     }
+    return { mimeType };
+  },
+
+  async extractDocumentFromFile(file, options = {}) {
+    const { mimeType } = this.validateImportFile(file);
+    const signal = options?.signal;
+
+    if (signal?.aborted) {
+      throw createAbortError();
+    }
 
     try {
       const fileBase64 = await arrayBufferToBase64(await file.arrayBuffer());
+
+      if (signal?.aborted) {
+        throw createAbortError();
+      }
+
       const response = await request('/api/documents/extract', {
         method: 'POST',
+        signal,
         body: JSON.stringify({
           filename: String(file.name || 'document'),
           mimeType,
@@ -377,6 +407,9 @@ export const documentComparisonsClient = {
         mimeType: typeof response.mimeType === 'string' ? response.mimeType : mimeType,
       };
     } catch (error) {
+      if (error?.name === 'AbortError') {
+        throw error;
+      }
       throw toFriendlyImportError(error);
     }
   },

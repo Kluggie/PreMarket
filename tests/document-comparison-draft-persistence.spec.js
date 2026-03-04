@@ -1,10 +1,13 @@
 import { test, expect } from '@playwright/test';
+import { resolve } from 'node:path';
 import { ensureTestEnv, makeSessionCookie } from './helpers/auth.mjs';
 
 const BASE_URL = process.env.PLAYWRIGHT_TEST_BASE_URL || 'http://localhost:4273';
 const STEP_LOAD_TIMEOUT_MS = 180_000;
 const SAVE_RESPONSE_TIMEOUT_MS = 120_000;
 const AUTOSAVE_WAIT_TIMEOUT_MS = 120_000;
+const SAMPLE_PDF_PATH = resolve(process.cwd(), 'tests/fixtures/documents/sample.pdf');
+const SAMPLE_DOCX_PATH = resolve(process.cwd(), 'tests/fixtures/documents/sample.docx');
 
 ensureTestEnv();
 
@@ -73,6 +76,84 @@ async function typeInEditor(page, selector, text) {
 
 test.describe('Document Comparison Draft Persistence', () => {
   test.describe.configure({ timeout: 300_000 });
+
+  test('Step 1 auto-imports selected files without requiring Import click', async ({ page }) => {
+    await authenticate(page, uniqueId('auto_import'));
+    await page.goto(`${BASE_URL}/DocumentComparisonCreate`, { waitUntil: 'domcontentloaded' });
+    await expect(page.getByPlaceholder('e.g., Mutual NDA comparison')).toBeVisible({
+      timeout: STEP_LOAD_TIMEOUT_MS,
+    });
+
+    const extractRequests = [];
+    await page.route('**/api/documents/extract', async (route) => {
+      const payload = JSON.parse(route.request().postData() || '{}');
+      extractRequests.push(payload?.filename || 'unknown');
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 600));
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          text: `AUTO_IMPORT_${payload?.filename || 'unknown'}`,
+          html: `<p>AUTO_IMPORT_${payload?.filename || 'unknown'}</p>`,
+          filename: payload?.filename || 'unknown',
+          mimeType: payload?.mimeType || 'application/pdf',
+        }),
+      });
+    });
+
+    const importButton = page.locator('[data-testid="import-button-a"]');
+    const preview = page.locator('[data-testid="import-preview-a"]');
+
+    await page.locator('[data-testid="import-file-input-a"]').setInputFiles(SAMPLE_PDF_PATH);
+    await expect(importButton).toContainText('Importing...', { timeout: 20_000 });
+    await expect(preview).toContainText('AUTO_IMPORT_sample.pdf', { timeout: STEP_LOAD_TIMEOUT_MS });
+    await expect(page.getByText('Last imported: sample.pdf')).toBeVisible({ timeout: STEP_LOAD_TIMEOUT_MS });
+    await expect(importButton).not.toContainText('Importing...', { timeout: STEP_LOAD_TIMEOUT_MS });
+    expect(extractRequests).toHaveLength(1);
+  });
+
+  test('Step 1 keeps the latest selected file when selection changes mid-import', async ({ page }) => {
+    await authenticate(page, uniqueId('auto_import_switch'));
+    await page.goto(`${BASE_URL}/DocumentComparisonCreate`, { waitUntil: 'domcontentloaded' });
+    await expect(page.getByPlaceholder('e.g., Mutual NDA comparison')).toBeVisible({
+      timeout: STEP_LOAD_TIMEOUT_MS,
+    });
+
+    const extractRequests = [];
+    await page.route('**/api/documents/extract', async (route) => {
+      const payload = JSON.parse(route.request().postData() || '{}');
+      const filename = payload?.filename || 'unknown';
+      extractRequests.push(filename);
+      const delayMs = filename.endsWith('.pdf') ? 1200 : 150;
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs));
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          text: `AUTO_IMPORT_${filename}`,
+          html: `<p>AUTO_IMPORT_${filename}</p>`,
+          filename,
+          mimeType: payload?.mimeType || 'application/pdf',
+        }),
+      });
+    });
+
+    const fileInput = page.locator('[data-testid="import-file-input-a"]');
+    const preview = page.locator('[data-testid="import-preview-a"]');
+
+    await fileInput.setInputFiles(SAMPLE_PDF_PATH);
+    await expect(page.locator('[data-testid="import-button-a"]')).toContainText('Importing...', { timeout: 20_000 });
+    await fileInput.setInputFiles(SAMPLE_DOCX_PATH);
+
+    await expect(preview).toContainText('AUTO_IMPORT_sample.docx', { timeout: STEP_LOAD_TIMEOUT_MS });
+    await page.waitForTimeout(1600);
+    await expect(preview).toContainText('AUTO_IMPORT_sample.docx');
+    await expect(preview).not.toContainText('AUTO_IMPORT_sample.pdf');
+    await expect(page.getByText('Last imported: sample.docx')).toBeVisible({ timeout: STEP_LOAD_TIMEOUT_MS });
+    expect(extractRequests).toEqual(['sample.pdf', 'sample.docx']);
+  });
 
   test('manual save persists Step 2 content across refresh', async ({ page }) => {
     await authenticate(page, uniqueId('manual'));

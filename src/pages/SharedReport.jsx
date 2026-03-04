@@ -196,6 +196,10 @@ function formatDateTime(value) {
   return parsed.toLocaleString();
 }
 
+function isAbortError(error) {
+  return error?.name === 'AbortError';
+}
+
 function toFriendlyLoadError(error) {
   const code = asText(error?.code).toLowerCase();
   if (code === 'token_expired') return 'This shared link has expired.';
@@ -352,6 +356,7 @@ export default function SharedReport() {
 
   const docAInputFileRef = useRef(null);
   const docBInputFileRef = useRef(null);
+  const activeImportRequestRef = useRef({ id: 0, controller: null });
 
   const workspaceQuery = useQuery({
     queryKey: ['shared-report-recipient-workspace', token],
@@ -391,6 +396,16 @@ export default function SharedReport() {
     setVerificationRequested(false);
     setForcedMismatchInvitedEmail('');
   }, [token]);
+
+  useEffect(
+    () => () => {
+      if (activeImportRequestRef.current.controller) {
+        activeImportRequestRef.current.controller.abort();
+        activeImportRequestRef.current.controller = null;
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!workspaceQuery.data) return;
@@ -614,22 +629,62 @@ export default function SharedReport() {
     setDraftDirty(true);
   };
 
-  const importForSide = async (side) => {
-    const selectedFile = side === 'a' ? docASelectedFile : docBSelectedFile;
+  const importForSide = async (side, fileOverride = null) => {
+    const selectedFile = fileOverride || (side === 'a' ? docASelectedFile : docBSelectedFile);
     if (!selectedFile) {
       toast.error('Select a .docx or .pdf file first.');
       return;
     }
 
+    try {
+      documentComparisonsClient.validateImportFile(selectedFile);
+    } catch (error) {
+      toast.error(error?.message || 'Failed to import file');
+      return;
+    }
+
+    if (activeImportRequestRef.current.controller) {
+      activeImportRequestRef.current.controller.abort();
+    }
+    const nextController = new AbortController();
+    const nextRequestId = activeImportRequestRef.current.id + 1;
+    activeImportRequestRef.current = {
+      id: nextRequestId,
+      controller: nextController,
+    };
+
     setImportingSide(side);
     try {
-      const extracted = await documentComparisonsClient.extractDocumentFromFile(selectedFile);
+      const extracted = await documentComparisonsClient.extractDocumentFromFile(selectedFile, {
+        signal: nextController.signal,
+      });
+
+      if (
+        nextController.signal.aborted ||
+        activeImportRequestRef.current.id !== nextRequestId
+      ) {
+        return;
+      }
+
       applyImportedContent(side, selectedFile, extracted);
       toast.success(`${selectedFile.name} imported`);
     } catch (error) {
+      if (
+        nextController.signal.aborted ||
+        activeImportRequestRef.current.id !== nextRequestId ||
+        isAbortError(error)
+      ) {
+        return;
+      }
       toast.error(error?.message || 'Failed to import file');
     } finally {
-      setImportingSide(null);
+      if (activeImportRequestRef.current.id === nextRequestId) {
+        activeImportRequestRef.current = {
+          id: nextRequestId,
+          controller: null,
+        };
+        setImportingSide(null);
+      }
     }
   };
 
@@ -740,6 +795,7 @@ export default function SharedReport() {
 
   const renderImportPanel = ({ side, label, selectedFile, setSelectedFile, preview, source, files, fileRef }) => {
     const isImporting = importingSide === side;
+    const isAnyImporting = Boolean(importingSide);
     const canEditSide = (side === 'a' ? canEditConfidential : canEditShared) && !requiresRecipientVerification;
 
     return (
@@ -754,9 +810,15 @@ export default function SharedReport() {
             type="file"
             accept=".docx,.pdf"
             className="hidden"
+            data-testid={`import-file-input-${side}`}
             onChange={(event) => {
               const file = event.target.files?.[0] || null;
+              event.target.value = '';
               setSelectedFile(file);
+              if (!file || !canEditSide) {
+                return;
+              }
+              void importForSide(side, file);
             }}
           />
 
@@ -774,11 +836,12 @@ export default function SharedReport() {
             <Button
               type="button"
               onClick={() => importForSide(side)}
-              disabled={!canEditSide || !selectedFile || isImporting}
+              disabled={!canEditSide || !selectedFile || isAnyImporting}
+              data-testid={`import-button-${side}`}
               className="bg-blue-600 hover:bg-blue-700"
             >
               {isImporting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <FileText className="w-4 h-4 mr-2" />}
-              Import
+              {isImporting ? 'Importing...' : 'Import'}
             </Button>
 
             <Badge variant="outline">{source || 'typed'}</Badge>
@@ -799,9 +862,13 @@ export default function SharedReport() {
 
           <div className="space-y-1">
             <Label className="text-sm font-semibold">Preview</Label>
-            <div className="min-h-[130px] rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 whitespace-pre-wrap">
+            <div
+              className="min-h-[130px] rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 whitespace-pre-wrap"
+              data-testid={`import-preview-${side}`}
+            >
               {preview || 'Imported content preview will appear here.'}
             </div>
+            {isImporting ? <p className="text-xs text-slate-500">Importing...</p> : null}
           </div>
           {!canEditSide ? (
             <p className="text-xs text-amber-700">
