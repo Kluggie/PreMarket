@@ -24,7 +24,6 @@ import {
   FileText,
   Handshake,
   Lock,
-  Save,
   Sparkles,
   TrendingUp,
   User,
@@ -116,9 +115,9 @@ export default function CreateProposalWithDrafts() {
   const [validationErrors, setValidationErrors] = useState({});
   const [presetKey, setPresetKey] = useState('');
   const [draftProposalId, setDraftProposalId] = useState(null);
-  const [autoSaving, setAutoSaving] = useState(false);
   const [isSavingDraft, setIsSavingDraft] = useState(false);
   const [isSubmittingEvaluation, setIsSubmittingEvaluation] = useState(false);
+  const [saveError, setSaveError] = useState('');
   const [evaluationError, setEvaluationError] = useState('');
 
   const routeParams = asSearchParams();
@@ -157,6 +156,8 @@ export default function CreateProposalWithDrafts() {
     if (responses[responseKey] !== undefined) return responses[responseKey];
     return responses[question.id];
   };
+  const isModeSelectorQuestion = (question) =>
+    String(question?.module_key || '') === 'mode_selector' || String(question?.id || '') === 'mode';
 
   const selectedTemplateKey = resolveTemplateKey(selectedTemplate);
   const selectedTemplateConfig = selectedTemplateKey
@@ -207,21 +208,19 @@ export default function CreateProposalWithDrafts() {
     return enabledModules.includes(question.module_key);
   };
 
-  const getEffectiveRequired = (question) => {
-    if (selectedVariantKey && question?.preset_required && typeof question.preset_required === 'object') {
-      if (question.preset_required[selectedVariantKey] !== undefined) {
-        return Boolean(question.preset_required[selectedVariantKey]);
-      }
-    }
-
-    return Boolean(question.required);
-  };
+  const getEffectiveRequired = () => false;
 
   const partyAQuestions = useMemo(
     () =>
       selectedTemplate?.questions?.filter((question) => {
         const roleType = question?.role_type || 'party_attribute';
-        if (roleType === 'shared_fact') return true;
+        if (roleType === 'shared_fact') {
+          // Mode is selected in Step 1; do not duplicate it as a question card in Step 2.
+          if (selectedTemplateConfig?.valueSource === 'mode' && isModeSelectorQuestion(question)) {
+            return false;
+          }
+          return true;
+        }
 
         const normalized = getNormalizedParty(question);
         return (normalized === 'a' || normalized === 'both') && shouldIncludeQuestion(question);
@@ -241,17 +240,6 @@ export default function CreateProposalWithDrafts() {
       }) || [],
     [selectedTemplate, selectedTemplateConfig, selectedVariantKey, enabledModules],
   );
-
-  const isValueEmpty = (question, value) => {
-    if (value === null || value === undefined || value === '') return true;
-    if (question.field_type === 'multi_select') {
-      return !Array.isArray(value) || value.length === 0;
-    }
-    if (question.field_type === 'boolean' || question.field_type === 'select') {
-      return value === '' || value === null || value === undefined;
-    }
-    return false;
-  };
 
   const hydrateDraft = async (proposalId) => {
     const proposal = await proposalsClient.getById(proposalId);
@@ -278,6 +266,12 @@ export default function CreateProposalWithDrafts() {
     if (payload._profile_url) nextResponses._profile_url = payload._profile_url;
     if (payload._target_url) nextResponses._target_url = payload._target_url;
 
+    const templateQuestionsById = new Map(
+      Array.isArray(template?.questions)
+        ? template.questions.map((question) => [question.id, question])
+        : [],
+    );
+
     const responseRows = await proposalsClient.getResponses(proposalId);
     const loadedResponses = {};
     const loadedVisibility = {};
@@ -298,7 +292,10 @@ export default function CreateProposalWithDrafts() {
         loadedResponses[responseKey] = parseValue(responseRow.value);
       }
 
-      loadedVisibility[responseKey] = normalizeVisibilitySetting(responseRow.visibility);
+      const matchingQuestion = templateQuestionsById.get(responseRow.question_id);
+      const roleType = matchingQuestion?.role_type || 'party_attribute';
+      loadedVisibility[responseKey] =
+        roleType === 'shared_fact' ? 'full' : normalizeVisibilitySetting(responseRow.visibility);
       if (subjectParty === 'a' && loadedResponses[responseRow.question_id] === undefined) {
         loadedResponses[responseRow.question_id] = loadedResponses[responseKey];
       }
@@ -375,7 +372,7 @@ export default function CreateProposalWithDrafts() {
           value_type: 'text',
           range_min: null,
           range_max: null,
-          visibility: enteredByParty === 'b'
+          visibility: enteredByParty === 'b' || roleType === 'shared_fact'
             ? 'full'
             : normalizeVisibilitySetting(
                 visibilitySettings[responseKey] || visibilitySettings[questionId] || question.visibility_default,
@@ -423,6 +420,7 @@ export default function CreateProposalWithDrafts() {
   const persistDraft = async ({
     status = 'draft',
     createIfMissing = false,
+    draftStepOverride = step,
   } = {}) => {
     if (!selectedTemplate) {
       return null;
@@ -439,7 +437,7 @@ export default function CreateProposalWithDrafts() {
     }
 
     const payload = {
-      draft_step: step,
+      draft_step: draftStepOverride,
       mode: responses.mode || null,
       preset_key: presetKey || null,
       enabled_modules: enabledModules,
@@ -463,66 +461,13 @@ export default function CreateProposalWithDrafts() {
     return proposalId;
   };
 
-  useEffect(() => {
-    if (!selectedTemplate || !draftProposalId) {
-      return;
-    }
-
-    const timer = setTimeout(() => {
-      setAutoSaving(true);
-      persistDraft({ status: 'draft', createIfMissing: false })
-        .catch(() => {
-          // Auto-save intentionally does not block the wizard flow.
-        })
-        .finally(() => setAutoSaving(false));
-    }, 1000);
-
-    return () => clearTimeout(timer);
-  }, [
-    selectedTemplate,
-    draftProposalId,
-    proposalTitle,
-    recipientEmail,
-    responses,
-    visibilitySettings,
-    presetKey,
-    step,
-  ]);
-
   const validateCurrentStep = () => {
-    const errors = {};
-    const questions = step === 2 ? partyAQuestions : step === 3 ? partyBQuestions : [];
-
-    for (const question of questions) {
-      const required = getEffectiveRequired(question);
-      const value = getQuestionResponseValue(question, step === 3 ? 3 : 2);
-      if (required && isValueEmpty(question, value)) {
-        errors[question.id] = 'This field is required';
-      }
-    }
-
-    setValidationErrors(errors);
-    return Object.keys(errors).length === 0;
+    setValidationErrors({});
+    return true;
   };
 
   const validateAll = () => {
     const errors = {};
-
-    for (const question of partyAQuestions) {
-      const required = getEffectiveRequired(question);
-      const value = getQuestionResponseValue(question, 2);
-      if (required && isValueEmpty(question, value)) {
-        errors[question.id] = 'This field is required';
-      }
-    }
-
-    for (const question of partyBQuestions) {
-      const required = getEffectiveRequired(question);
-      const value = getQuestionResponseValue(question, 3);
-      if (required && isValueEmpty(question, value)) {
-        errors[question.id] = 'This field is required';
-      }
-    }
 
     const trimmedRecipientEmail = recipientEmail.trim();
     if (!trimmedRecipientEmail) {
@@ -553,12 +498,14 @@ export default function CreateProposalWithDrafts() {
       delete next._recipient_email;
       return next;
     });
+    setSaveError('');
 
     return true;
   };
 
   const handleResponseChange = (questionId, value) => {
     setResponses((prev) => ({ ...prev, [questionId]: value }));
+    setSaveError('');
 
     const [baseQuestionId] = String(questionId).split('__');
     if (validationErrors[questionId] || validationErrors[baseQuestionId]) {
@@ -571,7 +518,13 @@ export default function CreateProposalWithDrafts() {
     }
   };
 
-  const handleVisibilityChange = (questionId, visibility) => {
+  const handleVisibilityChange = (question, questionId, visibility) => {
+    const roleType = question?.role_type || 'party_attribute';
+    if (roleType === 'shared_fact') {
+      setVisibilitySettings((prev) => ({ ...prev, [questionId]: 'full' }));
+      return;
+    }
+
     setVisibilitySettings((prev) => ({ ...prev, [questionId]: normalizeVisibilitySetting(visibility) }));
   };
 
@@ -579,15 +532,25 @@ export default function CreateProposalWithDrafts() {
     if (!validateStep1RecipientEmail()) {
       return;
     }
+    if (isUniversalTemplate && !presetKey) {
+      setSaveError('Select an onboarding type to continue.');
+      return;
+    }
+    if ((isFinanceTemplate || isProfileMatchingTemplate) && !responses.mode) {
+      setSaveError('Select a mode to continue.');
+      return;
+    }
 
     setIsSavingDraft(true);
+    setSaveError('');
     setEvaluationError('');
 
     try {
-      await ensureDraftExists();
-      await persistDraft({ status: 'draft', createIfMissing: true });
+      await persistDraft({ status: 'draft', createIfMissing: true, draftStepOverride: 2 });
       setStep(2);
       setValidationErrors({});
+    } catch (error) {
+      setSaveError(error?.message || 'Failed to save draft. Please try again.');
     } finally {
       setIsSavingDraft(false);
     }
@@ -599,19 +562,31 @@ export default function CreateProposalWithDrafts() {
     }
 
     setValidationErrors({});
+    setSaveError('');
 
     const nextStep = step + 1;
-    setStep(nextStep);
-
-    await persistDraft({ status: 'draft', createIfMissing: true });
+    setIsSavingDraft(true);
+    try {
+      await persistDraft({ status: 'draft', createIfMissing: true, draftStepOverride: nextStep });
+      setStep(nextStep);
+    } catch (error) {
+      setSaveError(error?.message || 'Failed to save draft. Please try again.');
+    } finally {
+      setIsSavingDraft(false);
+    }
   };
 
   const handleBack = async (targetStep) => {
     setValidationErrors({});
+    setSaveError('');
     setStep(targetStep);
 
     if (draftProposalId) {
-      await persistDraft({ status: 'draft', createIfMissing: false });
+      try {
+        await persistDraft({ status: 'draft', createIfMissing: false, draftStepOverride: targetStep });
+      } catch (error) {
+        setSaveError(error?.message || 'Failed to save draft. Please try again.');
+      }
     }
   };
 
@@ -659,7 +634,7 @@ export default function CreateProposalWithDrafts() {
     const responseKey = getQuestionResponseKey(question, step);
     const value = getQuestionResponseValue(question, step) || '';
     const visibility =
-      step === 3
+      isSharedFact || step === 3
         ? 'full'
         : normalizeVisibilitySetting(
             visibilitySettings[responseKey] || visibilitySettings[question.id] || question.visibility_default || 'full',
@@ -674,31 +649,36 @@ export default function CreateProposalWithDrafts() {
             <Label className="text-sm font-medium text-slate-900">
               {question.label}
               {effectiveRequired && <span className="text-red-500 ml-1">*</span>}
-              {isSharedFact && <Badge className="ml-2 text-xs bg-blue-100 text-blue-700">Shared</Badge>}
               {isCounterpartyObs && <Badge className="ml-2 text-xs bg-purple-100 text-purple-700">Your observation</Badge>}
             </Label>
             {question.description && <p className="text-sm text-slate-600 mt-1">{question.description}</p>}
           </div>
           {step !== 3 && (
-            <Select value={visibility} onValueChange={(nextVisibility) => handleVisibilityChange(responseKey, nextVisibility)}>
-              <SelectTrigger className="w-32 h-8 text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="full">
-                  <span className="flex items-center gap-1">
-                    <Eye className="w-3 h-3" />
-                    Visible
-                  </span>
-                </SelectItem>
-                <SelectItem value="hidden">
-                  <span className="flex items-center gap-1">
-                    <Lock className="w-3 h-3" />
-                    Hidden
-                  </span>
-                </SelectItem>
-              </SelectContent>
-            </Select>
+            isSharedFact ? (
+              <Badge variant="outline" className="h-8 px-3 text-xs bg-blue-50 text-blue-700 border-blue-200">
+                Shared
+              </Badge>
+            ) : (
+              <Select value={visibility} onValueChange={(nextVisibility) => handleVisibilityChange(question, responseKey, nextVisibility)}>
+                <SelectTrigger className="w-32 h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="full">
+                    <span className="flex items-center gap-1">
+                      <Eye className="w-3 h-3" />
+                      Visible
+                    </span>
+                  </SelectItem>
+                  <SelectItem value="hidden">
+                    <span className="flex items-center gap-1">
+                      <Lock className="w-3 h-3" />
+                      Hidden
+                    </span>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            )
           )}
         </div>
 
@@ -804,12 +784,6 @@ export default function CreateProposalWithDrafts() {
               <h1 className="text-2xl font-bold text-slate-900">Create Proposal</h1>
               <p className="text-slate-500 mt-1">Fill out the template to create a pre-qualification proposal.</p>
             </div>
-            {(autoSaving || isSavingDraft) && (
-              <Badge variant="outline" className="text-blue-600">
-                <Save className="w-3 h-3 mr-1 animate-pulse" />
-                Auto-saving...
-              </Badge>
-            )}
           </div>
         </div>
 
@@ -822,6 +796,13 @@ export default function CreateProposalWithDrafts() {
           </div>
           <Progress value={progress} className="h-2" />
         </div>
+
+        {saveError && (
+          <Alert variant="destructive" className="mb-6">
+            <AlertTriangle className="w-4 h-4" />
+            <AlertDescription>{saveError}</AlertDescription>
+          </Alert>
+        )}
 
         <AnimatePresence mode="wait">
           {step === 1 && !selectedTemplate && (
@@ -1037,7 +1018,7 @@ export default function CreateProposalWithDrafts() {
                   <ArrowLeft className="w-4 h-4 mr-2" />
                   Back
                 </Button>
-                <Button onClick={handleNext} className="bg-blue-600 hover:bg-blue-700">
+                <Button onClick={handleNext} disabled={isSavingDraft} className="bg-blue-600 hover:bg-blue-700">
                   Continue
                   <ArrowRight className="w-4 h-4 ml-2" />
                 </Button>
@@ -1077,7 +1058,7 @@ export default function CreateProposalWithDrafts() {
                   <ArrowLeft className="w-4 h-4 mr-2" />
                   Back
                 </Button>
-                <Button onClick={handleNext} className="bg-blue-600 hover:bg-blue-700">
+                <Button onClick={handleNext} disabled={isSavingDraft} className="bg-blue-600 hover:bg-blue-700">
                   Review
                   <ArrowRight className="w-4 h-4 ml-2" />
                 </Button>

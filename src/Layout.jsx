@@ -5,7 +5,7 @@ import { Link } from 'react-router-dom';
 import { createPageUrl } from './utils';
 import { 
   Menu, X, ChevronDown, User, LogOut, Settings, Building2, 
-  FileText, LayoutDashboard, Shield, Globe, FolderOpen, Home, Package, CircleDollarSign
+  FileText, LayoutDashboard, Shield, Globe, FolderOpen, Home, Package
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -19,6 +19,26 @@ import NotificationDropdown from './components/NotificationDropdown';
 import GoogleSignInButton from '@/components/auth/GoogleSignInButton';
 
 const DESKTOP_GOOGLE_SIGNIN_WIDTH = 189;
+
+function CoinSideIcon({ className = '', ...props }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.9"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      {...props}
+    >
+      <ellipse cx="11.25" cy="12" rx="7.4" ry="8.6" />
+      <path d="M14.7 4.5c3.1 1.2 5.2 4.2 5.2 7.5s-2.1 6.3-5.2 7.5" />
+      <path d="M11.2 8.1v7.8" />
+      <path d="M8.9 10.1c0-1.1 0.9-2 2.2-2h0.4c1.3 0 2.2 0.9 2.2 2s-0.9 2-2.2 2h-0.4c-1.3 0-2.2 0.9-2.2 2s0.9 2 2.2 2h0.4c1.3 0 2.2-0.9 2.2-2" />
+    </svg>
+  );
+}
 
 export default function Layout({ children, currentPageName }) {
   const { user, logout, navigateToLogin, checkAppState } = useAuth();
@@ -58,13 +78,13 @@ export default function Layout({ children, currentPageName }) {
     { label: 'Dashboard', pageKey: 'Dashboard', href: createPageUrl('Dashboard'), icon: LayoutDashboard },
     { label: 'Proposals', pageKey: 'Proposals', href: createPageUrl('Proposals'), icon: FileText },
     { label: 'Products', pageKey: 'Templates', href: createPageUrl('Templates'), icon: Package },
-    { label: 'Pricing', pageKey: 'Pricing', href: createPageUrl('Pricing'), icon: CircleDollarSign }
+    { label: 'Pricing', pageKey: 'Pricing', href: createPageUrl('Pricing'), icon: CoinSideIcon }
   ] : [];
 
   const publicNavLinks = [
     { label: 'Home', pageKey: 'Landing', href: createPageUrl('Landing'), icon: Home },
     { label: 'Products', pageKey: 'Templates', href: createPageUrl('Templates'), icon: Package },
-    { label: 'Pricing', pageKey: 'Pricing', href: createPageUrl('Pricing'), icon: CircleDollarSign }
+    { label: 'Pricing', pageKey: 'Pricing', href: createPageUrl('Pricing'), icon: CoinSideIcon }
   ];
 
   if (isAuthPage) {
