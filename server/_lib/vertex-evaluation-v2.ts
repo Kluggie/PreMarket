@@ -107,6 +107,52 @@ interface ProposalFactSheet {
   source_coverage: ProposalFactSheetCoverage;
 }
 
+// ─── Report style (deterministic consultant voice selection) ───────────────
+
+type StyleId = 'analytical' | 'direct' | 'collaborative';
+type Ordering = 'risks_first' | 'strengths_first' | 'balanced';
+type Verbosity = 'tight' | 'standard' | 'deep';
+
+interface ReportStyle {
+  style_id: StyleId;
+  ordering: Ordering;
+  verbosity: Verbosity;
+  seed: number;
+}
+
+const STYLE_IDS: StyleId[] = ['analytical', 'direct', 'collaborative'];
+const ORDERINGS: Ordering[] = ['risks_first', 'strengths_first', 'balanced'];
+const VERBOSITIES: Verbosity[] = ['tight', 'standard', 'deep'];
+
+/**
+ * djb2-variant hash → integer 0-9999.
+ * Stable: same input always produces the same seed.
+ * Prefers proposalId/token when available so the style is proposal-scoped.
+ */
+export function computeReportStyleSeed(params: {
+  proposalTextExcerpt: string;
+  proposalId?: string;
+  token?: string;
+}): number {
+  const input = params.proposalId || params.token || params.proposalTextExcerpt;
+  let hash = 5381;
+  for (let i = 0; i < input.length; i++) {
+    // djb2: hash * 33 XOR char
+    hash = (((hash << 5) + hash) ^ input.charCodeAt(i)) >>> 0;
+  }
+  return hash % 10_000;
+}
+
+/** Pure, deterministic: same seed → same style. */
+export function selectReportStyle(seed: number): ReportStyle {
+  return {
+    style_id: STYLE_IDS[seed % 3],
+    ordering: ORDERINGS[Math.floor(seed / 3) % 3],
+    verbosity: VERBOSITIES[Math.floor(seed / 9) % 3],
+    seed,
+  };
+}
+
 // Internal debug metadata — attached to VertexEvaluationV2Result for
 // server-side logging; never serialised to the client response.
 export interface VertexEvaluationV2Internal {
@@ -115,6 +161,7 @@ export interface VertexEvaluationV2Internal {
   caps_applied: string[];
   pass_a_parse_error: boolean;
   pass_b_attempt_count: number;
+  report_style: ReportStyle;
 }
 
 export interface VertexEvaluationV2Result {
@@ -407,22 +454,93 @@ async function extractProposalFactsV2(params: {
 
 // ─── Pass B: Final evaluation prompt ─────────────────────────────────────────
 
+/** Returns true if any entry in arr contains any of the given keywords (case-insensitive). */
+function containsAny(arr: string[], keywords: string[]): boolean {
+  const lower = arr.map((s) => s.toLowerCase());
+  return keywords.some((kw) => lower.some((s) => s.includes(kw)));
+}
+
 function buildEvalPromptFromFactSheet(params: {
   factSheet: ProposalFactSheet;
   chunks: EvaluationChunks;
+  reportStyle: ReportStyle;
 }) {
+  const { factSheet, chunks, reportStyle } = params;
+  const sc = factSheet.source_coverage;
+  const coverageCount = computeCoverageCount(sc);
+
+  // ── Conditional module detection (deterministic from fact sheet) ─────────
+  const hasTimeline = sc.has_timeline;
+  const hasVendorPrefs = factSheet.vendor_preferences.length > 0;
+  const hasCommercialSignals = containsAny(factSheet.constraints, [
+    'budget', 'cost', 'price', 'pricing', 'commercial', 'contract', 'payment', 'billing', '$',
+  ]);
+  const hasDataSecurity = containsAny(factSheet.scope_deliverables, [
+    'data', 'api', 'system', 'database', 'integration', 'security', 'cloud', 'storage', 'pipeline',
+  ]);
+
+  // ── Required headings (always) ───────────────────────────────────────────
+  const firstStrengthOrRisk =
+    reportStyle.ordering === 'risks_first' ? 'Key Risks' : 'Key Strengths';
+  const secondStrengthOrRisk =
+    reportStyle.ordering === 'risks_first' ? 'Key Strengths' : 'Key Risks';
+  const requiredHeadings = [
+    'Executive Summary',
+    firstStrengthOrRisk,
+    secondStrengthOrRisk,
+    'Decision Readiness',
+    'Recommendations',
+  ];
+
+  // ── Optional headings (conditional on fact sheet content) ───────────────
+  const optionalHeadings: string[] = [];
+  if (hasTimeline) optionalHeadings.push('Implementation Notes');
+  if (hasCommercialSignals) optionalHeadings.push('Commercial Notes');
+  if (hasDataSecurity) optionalHeadings.push('Data & Security Notes');
+  if (hasVendorPrefs) optionalHeadings.push('Vendor Fit Notes');
+
+  // ── Voice + depth guidance ───────────────────────────────────────────────
+  const voiceGuide =
+    reportStyle.style_id === 'analytical'
+      ? 'Voice: formal and structured. Use precise language; cite specific fact_sheet fields.'
+      : reportStyle.style_id === 'direct'
+      ? 'Voice: blunt and direct. Short sentences. Minimal hedging. State conclusions plainly.'
+      : 'Voice: constructive and collaborative. Forward-looking language. Frame gaps as opportunities.';
+
+  // If coverage is weak, force tight regardless of selected verbosity.
+  const effectiveVerbosity: Verbosity = coverageCount < 3 ? 'tight' : reportStyle.verbosity;
+  const depthGuide =
+    effectiveVerbosity === 'tight'
+      ? 'Depth: concise. 1-2 sentences per section. Push detail to missing[].'
+      : effectiveVerbosity === 'deep'
+      ? 'Depth: detailed. 3-5 sentences per section. Reference specific fact_sheet fields by name.'
+      : 'Depth: standard. 2-3 sentences per section.';
+
+  const orderingGuide =
+    reportStyle.ordering === 'risks_first'
+      ? 'Ordering: lead with risks, then follow with strengths.'
+      : reportStyle.ordering === 'strengths_first'
+      ? 'Ordering: lead with strengths, then follow with risks.'
+      : 'Ordering: balance strengths and risks throughout.';
+
   const payload = {
     // Chunk lists kept intact — leak-guard depends on them.
-    shared_chunks: params.chunks.sharedChunks,
-    confidential_chunks: params.chunks.confidentialChunks,
+    shared_chunks: chunks.sharedChunks,
+    confidential_chunks: chunks.confidentialChunks,
     // Primary input: structured Fact Sheet extracted in Pass A.
-    fact_sheet: params.factSheet,
+    fact_sheet: factSheet,
     constraints: {
       evaluate_proposal_quality_not_alignment: true,
       confidentiality_middleman_rule: true,
       no_confidential_verbatim: true,
       no_confidential_numbers_or_identifiers: true,
       allow_safe_derived_conclusions: true,
+      report_style: {
+        style_id: reportStyle.style_id,
+        ordering: reportStyle.ordering,
+        verbosity: effectiveVerbosity,
+        seed: reportStyle.seed,
+      },
     },
   };
 
@@ -450,13 +568,36 @@ function buildEvalPromptFromFactSheet(params: {
     '4. Risks & assumptions: risks array — key risks identified with impact/likelihood?',
     '5. Decision-readiness: sufficient information for a confident go / no-go decision?',
     '',
+    'REPORT STYLE:',
+    voiceGuide,
+    depthGuide,
+    orderingGuide,
+    '',
+    'WHY FIELD — FORMAT INSTRUCTIONS:',
+    '- The "why" array must contain one element per heading below, in the order listed.',
+    '- Each element must start with its heading name followed by a colon and a space',
+    '  (e.g., "Key Strengths: The proposal defines three concrete deliverables...").',
+    `- Required headings (always include, in this order): ${requiredHeadings.join(', ')}.`,
+    optionalHeadings.length > 0
+      ? `- Conditional headings (relevant to this proposal — include after required ones): ${optionalHeadings.join(', ')}.`
+      : '- No conditional headings apply to this proposal.',
+    '',
+    'MISSING FIELD — QUALITY RULES:',
+    '- Include ONLY items that materially change feasibility, cost, timeline, or risk assessment.',
+    '- Phrase each item as an actionable question (e.g., "What is the confirmed go-live deadline?").',
+    '- Rank most-critical items first.',
+    '- Do not include trivial or cosmetic gaps.',
+    '- Incorporate all items from fact_sheet.missing_info and fact_sheet.open_questions (paraphrase as questions).',
+    coverageCount < 3
+      ? '- Coverage is weak: missing[] must contain substantive, decision-blocking questions (minimum 3).'
+      : '',
+    '',
     'OUTPUT FIELD SEMANTICS:',
     '- fit_level: Overall proposal quality / readiness.',
     '  high = decision-ready; medium = promising but gaps exist; low = major gaps; unknown = insufficient info.',
     '- confidence_0_1: Your confidence in the assessment (0 = no basis, 1 = very confident).',
-    '- why: Array of strings — key strengths AND concerns, written safely for public sharing.',
-    '- missing: Array of strings — specific gaps or questions blocking confident decision-making.',
-    '  Incorporate fact_sheet.missing_info and fact_sheet.open_questions.',
+    '- why: Consultant-style narrative per heading, as described in WHY FIELD instructions above.',
+    '- missing: Actionable questions ranked by criticality, per quality rules above.',
     '- redactions: Array of strings — topics that must remain confidential.',
     '',
     'HARD GUARDRAILS — follow these without exception:',
@@ -490,7 +631,9 @@ function buildEvalPromptFromFactSheet(params: {
     'INPUT JSON:',
     JSON.stringify(payload, null, 2),
     'Return JSON only.',
-  ].join('\n');
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 // ─── Post-processing coverage clamps ─────────────────────────────────────────
@@ -1276,6 +1419,13 @@ export async function evaluateWithVertexV2(
     '[CONFIDENTIAL PORTION — internal context only, do NOT reproduce verbatim in output]\n' +
     confidentialText.slice(0, MAX_CONFIDENTIAL_CHARS);
 
+  // ── Deterministic report style selection ─────────────────────────────────
+  const reportStyleSeed = computeReportStyleSeed({
+    proposalTextExcerpt,
+    proposalId: requestId,
+  });
+  const reportStyle = selectReportStyle(reportStyleSeed);
+
   const { sheet: factSheet, parseError: passAParseError } = await extractProposalFactsV2({
     proposalTextExcerpt,
     requestId,
@@ -1283,7 +1433,7 @@ export async function evaluateWithVertexV2(
   });
 
   // ── Pass B: final evaluation using Fact Sheet ────────────────────────────
-  const prompt = buildEvalPromptFromFactSheet({ factSheet, chunks });
+  const prompt = buildEvalPromptFromFactSheet({ factSheet, chunks, reportStyle });
 
   let attempt = 0;
   while (attempt < MAX_ATTEMPTS) {
@@ -1462,6 +1612,7 @@ export async function evaluateWithVertexV2(
         caps_applied: clamped.capsApplied,
         pass_a_parse_error: passAParseError,
         pass_b_attempt_count: attempt,
+        report_style: reportStyle,
       },
     };
   }

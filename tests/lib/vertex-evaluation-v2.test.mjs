@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { evaluateWithVertexV2, validateResponseSchema } from '../../server/_lib/vertex-evaluation-v2.ts';
+import {
+  evaluateWithVertexV2,
+  validateResponseSchema,
+  computeReportStyleSeed,
+  selectReportStyle,
+} from '../../server/_lib/vertex-evaluation-v2.ts';
 
 // ─── Mock helpers ─────────────────────────────────────────────────────────────
 
@@ -785,3 +790,222 @@ test('2-pass clamps: full coverage + detailed proposal → high/medium preserved
   }
 });
 
+// ─── Report style: determinism + conditional modules (Prompt 3) ───────────────
+
+test('style: computeReportStyleSeed + selectReportStyle are deterministic', () => {
+  // Same input → same seed and same style every time.
+  const text = 'We will deliver an analytics dashboard with defined KPIs and a 6-month timeline.';
+  const seed1 = computeReportStyleSeed({ proposalTextExcerpt: text });
+  const seed2 = computeReportStyleSeed({ proposalTextExcerpt: text });
+  assert.equal(seed1, seed2, 'Same text must produce the same seed');
+  assert.equal(seed1 >= 0 && seed1 < 10000, true, 'Seed must be in 0-9999 range');
+
+  const style1 = selectReportStyle(seed1);
+  const style2 = selectReportStyle(seed1);
+  assert.equal(style1.style_id, style2.style_id, 'Same seed must produce same style_id');
+  assert.equal(style1.ordering, style2.ordering, 'Same seed must produce same ordering');
+  assert.equal(style1.verbosity, style2.verbosity, 'Same seed must produce same verbosity');
+  assert.equal(style1.seed, seed1, 'style.seed must equal the input seed');
+
+  // Valid enum values.
+  assert.equal(
+    ['analytical', 'direct', 'collaborative'].includes(style1.style_id),
+    true,
+    'style_id must be a valid enum value',
+  );
+  assert.equal(
+    ['risks_first', 'strengths_first', 'balanced'].includes(style1.ordering),
+    true,
+    'ordering must be a valid enum value',
+  );
+  assert.equal(
+    ['tight', 'standard', 'deep'].includes(style1.verbosity),
+    true,
+    'verbosity must be a valid enum value',
+  );
+
+  // proposalId takes precedence over text — seeding by ID must be stable.
+  const seedById1 = computeReportStyleSeed({ proposalTextExcerpt: text, proposalId: 'prop-abc-123' });
+  const seedById2 = computeReportStyleSeed({ proposalTextExcerpt: 'DIFFERENT TEXT', proposalId: 'prop-abc-123' });
+  assert.equal(seedById1, seedById2, 'proposalId must take precedence over text for seeding');
+});
+
+test('style: report_style appears in Pass B prompt payload and _internal', async () => {
+  let passBPrompt = '';
+  let callCount = 0;
+
+  globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__ = async ({ prompt }) => {
+    callCount += 1;
+    if (callCount === 1) {
+      return {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(validFactSheetPayload()),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      };
+    }
+    passBPrompt = prompt;
+    return {
+      model: 'gemini-2.0-flash-001',
+      text: JSON.stringify(validPayload({ fit_level: 'medium', confidence_0_1: 0.7 })),
+      finishReason: 'STOP',
+      httpStatus: 200,
+    };
+  };
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Deliver analytics module with 6-month timeline, KPIs, risks, and constraints documented.',
+      confidentialText: 'Confidential: budget is fixed at approved level, vendor review has occurred.',
+      requestId: 'req-style-prompt-1',
+    });
+
+    assert.equal(outcome.ok, true, 'Should succeed');
+    assert.equal(callCount, 2, 'Two Vertex calls must be made');
+
+    // Pass B prompt must contain report_style in the INPUT JSON payload.
+    assert.equal(
+      passBPrompt.includes('report_style'),
+      true,
+      'Pass B prompt must include report_style in constraints payload',
+    );
+    assert.equal(
+      passBPrompt.includes('style_id'),
+      true,
+      'Pass B prompt must include style_id',
+    );
+    assert.equal(
+      passBPrompt.includes('ordering'),
+      true,
+      'Pass B prompt must include ordering in payload',
+    );
+    assert.equal(
+      passBPrompt.includes('verbosity'),
+      true,
+      'Pass B prompt must include verbosity in payload',
+    );
+
+    // _internal must expose report_style.
+    if (outcome.ok) {
+      const rs = outcome._internal?.report_style;
+      assert.equal(typeof rs, 'object', '_internal.report_style must be an object');
+      assert.equal(
+        ['analytical', 'direct', 'collaborative'].includes(rs?.style_id),
+        true,
+        '_internal.report_style.style_id must be a valid enum value',
+      );
+      assert.equal(
+        ['risks_first', 'strengths_first', 'balanced'].includes(rs?.ordering),
+        true,
+        '_internal.report_style.ordering must be a valid enum value',
+      );
+      assert.equal(typeof rs?.seed, 'number', '_internal.report_style.seed must be a number');
+    }
+  } finally {
+    delete globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__;
+  }
+});
+
+test('style: has_timeline=false → "Implementation Notes" not instructed; has_timeline=true → it is', async () => {
+  async function capturePassBPrompt(factSheetOverrides) {
+    let passBPrompt = '';
+    let callCount = 0;
+    globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__ = async ({ prompt }) => {
+      callCount += 1;
+      if (callCount === 1) {
+        return {
+          model: 'gemini-2.0-flash-001',
+          text: JSON.stringify(validFactSheetPayload(factSheetOverrides)),
+          finishReason: 'STOP',
+          httpStatus: 200,
+        };
+      }
+      passBPrompt = prompt;
+      return {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(validPayload({ fit_level: 'medium', confidence_0_1: 0.7 })),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      };
+    };
+    await evaluateWithVertexV2({
+      sharedText: 'Deliver analytics module with specified KPIs, risks, and constraints.',
+      confidentialText: 'Confidential: budget and governance details provided.',
+      requestId: 'req-style-modules-1',
+    });
+    delete globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__;
+    return passBPrompt;
+  }
+
+  // has_timeline=false → Implementation Notes must NOT be instructed
+  const promptNoTimeline = await capturePassBPrompt({
+    source_coverage: { has_scope: true, has_timeline: false, has_kpis: true, has_constraints: true, has_risks: true },
+    vendor_preferences: [],
+  });
+  assert.equal(
+    promptNoTimeline.includes('Implementation Notes'),
+    false,
+    'Implementation Notes must not appear in Pass B prompt when has_timeline=false',
+  );
+
+  // has_timeline=true → Implementation Notes must be instructed
+  const promptWithTimeline = await capturePassBPrompt({
+    source_coverage: { has_scope: true, has_timeline: true, has_kpis: true, has_constraints: true, has_risks: true },
+    vendor_preferences: [],
+  });
+  assert.equal(
+    promptWithTimeline.includes('Implementation Notes'),
+    true,
+    'Implementation Notes must appear in Pass B prompt when has_timeline=true',
+  );
+});
+
+test('style: vendor_preferences empty → "Vendor Fit Notes" absent; non-empty → present', async () => {
+  async function capturePassBPrompt(factSheetOverrides) {
+    let passBPrompt = '';
+    let callCount = 0;
+    globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__ = async ({ prompt }) => {
+      callCount += 1;
+      if (callCount === 1) {
+        return {
+          model: 'gemini-2.0-flash-001',
+          text: JSON.stringify(validFactSheetPayload(factSheetOverrides)),
+          finishReason: 'STOP',
+          httpStatus: 200,
+        };
+      }
+      passBPrompt = prompt;
+      return {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(validPayload({ fit_level: 'medium', confidence_0_1: 0.7 })),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      };
+    };
+    await evaluateWithVertexV2({
+      sharedText: 'Deliver analytics module with KPIs, timeline, risks, and constraints defined.',
+      confidentialText: 'Confidential: budget and governance details provided.',
+      requestId: 'req-style-vendor-1',
+    });
+    delete globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__;
+    return passBPrompt;
+  }
+
+  // No vendor preferences → Vendor Fit Notes must NOT be instructed
+  const promptNoVendor = await capturePassBPrompt({ vendor_preferences: [] });
+  assert.equal(
+    promptNoVendor.includes('Vendor Fit Notes'),
+    false,
+    'Vendor Fit Notes must not appear when vendor_preferences is empty',
+  );
+
+  // Vendor preferences present → Vendor Fit Notes must be instructed
+  const promptWithVendor = await capturePassBPrompt({
+    vendor_preferences: ['Preferred: AWS', 'Excluded: on-premise only vendors'],
+  });
+  assert.equal(
+    promptWithVendor.includes('Vendor Fit Notes'),
+    true,
+    'Vendor Fit Notes must appear in Pass B prompt when vendor_preferences is non-empty',
+  );
+});
