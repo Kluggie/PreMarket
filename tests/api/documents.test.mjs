@@ -3,6 +3,7 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { sql } from 'drizzle-orm';
+import apiHandler from '../../api/index.ts';
 import documentsIndexHandler from '../../server/routes/documents/index.ts';
 import documentsIdHandler from '../../server/routes/documents/[id].ts';
 import { ensureTestEnv, makeSessionCookie } from '../helpers/auth.mjs';
@@ -86,6 +87,7 @@ if (!hasDatabaseUrl()) {
     assert.equal(body.document.visibility, 'confidential');
     // Status is 'ready' or 'processing' depending on AI availability
     assert.ok(['ready', 'not_supported', 'failed'].includes(body.document.status));
+    assert.ok(['usable', 'not_usable', 'processing'].includes(body.document.ai_status));
   });
 
   // -------------------------------------------------------------------------
@@ -367,6 +369,82 @@ if (!hasDatabaseUrl()) {
     assert.equal(listRes.statusCode, 200);
     const listBody = listRes.jsonBody();
     assert.equal(listBody.documents[0].visibility, 'shared');
+  });
+
+  // -------------------------------------------------------------------------
+  test('documents API router: PATCH /api/documents/:id is registered via /api/index', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const userId = 'doc_patch_router_owner';
+    const email = 'docpatchrouter@example.com';
+    const authCookie = makeAuthCookie(userId, email);
+    const db = getDb();
+    await seedUser(db, userId, email);
+    await seedDocuments(db, userId, 1, 1024);
+
+    const rows = await db.execute(
+      sql`SELECT id FROM user_documents WHERE user_id = ${userId} LIMIT 1`,
+    );
+    const docId = rows.rows?.[0]?.id || rows[0]?.id;
+    assert.ok(docId, 'Expected a document to exist for router patch test');
+
+    const req = createMockReq({
+      method: 'PATCH',
+      url: `/api/index?path=documents%2F${encodeURIComponent(docId)}`,
+      query: {
+        path: `documents/${docId}`,
+      },
+      headers: { cookie: authCookie },
+      body: { visibility: 'shared' },
+    });
+    const res = createMockRes();
+    await apiHandler(req, res);
+
+    assert.equal(res.statusCode, 200, `Expected 200 but got ${res.statusCode}: ${res.body}`);
+    const body = res.jsonBody();
+    assert.equal(body.ok, true);
+    assert.equal(body.document.visibility, 'shared');
+  });
+
+  // -------------------------------------------------------------------------
+  test('documents API: reprocess converts failed row with text PDF to usable', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const userId = 'doc_reprocess_owner';
+    const email = 'docreprocess@example.com';
+    const authCookie = makeAuthCookie(userId, email);
+    const db = getDb();
+    await seedUser(db, userId, email);
+
+    const docId = 'doc_reprocess_target';
+    const now = new Date().toISOString();
+    const pdfBuffer = readFileSync(resolve('tests/fixtures/documents/sample.pdf'));
+    await db.execute(
+      sql`INSERT INTO user_documents
+          (id, user_id, uploader_user_id, filename, mime_type, size_bytes,
+           storage_key, content_bytes, status, status_reason, error_message, created_at, updated_at)
+          VALUES
+          (${docId}, ${userId}, ${userId},
+           ${'sample.pdf'}, ${'application/pdf'}, ${pdfBuffer.length},
+           NULL, ${pdfBuffer}, ${'failed'}, ${'processing_timeout'}, ${'Timed out'}, ${now}, ${now})`,
+    );
+
+    const req = createMockReq({
+      method: 'POST',
+      url: `/api/documents/${docId}/reprocess`,
+      headers: { cookie: authCookie },
+    });
+    const res = createMockRes();
+    await documentsIdHandler(req, res, docId);
+
+    assert.equal(res.statusCode, 200, `Expected 200 but got ${res.statusCode}: ${res.body}`);
+    const body = res.jsonBody();
+    assert.equal(body.ok, true);
+    assert.equal(body.document.status, 'ready');
+    assert.equal(body.document.ai_status, 'usable');
+    assert.equal(body.document.extracted_text_chars > 0, true);
   });
 
   // -------------------------------------------------------------------------

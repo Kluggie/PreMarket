@@ -488,8 +488,14 @@ export default async function handler(req: any, res: any) {
   }
 
   const documentsIdMatch = pathname.match(/^\/api\/documents\/([^/]+)$/);
-  if (documentsIdMatch && method === 'DELETE') {
+  if (documentsIdMatch && ['DELETE', 'PATCH'].includes(method)) {
     const id = decodeURIComponent(documentsIdMatch[1]);
+    return documentsIdHandler(req, res, id);
+  }
+
+  const documentsReprocessMatch = pathname.match(/^\/api\/documents\/([^/]+)\/reprocess$/);
+  if (documentsReprocessMatch && method === 'POST') {
+    const id = decodeURIComponent(documentsReprocessMatch[1]);
     return documentsIdHandler(req, res, id);
   }
 

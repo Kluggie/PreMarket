@@ -1,5 +1,6 @@
 /**
  * GET    /api/documents/:id/download  – serve the file to the client
+ * POST   /api/documents/:id/reprocess – re-run extraction for existing documents
  * PATCH  /api/documents/:id           – update document metadata owned by the current user
  * DELETE /api/documents/:id           – delete a document owned by the current user
  *
@@ -16,6 +17,10 @@ import { getDb, schema } from '../../_lib/db/client.js';
 import { ApiError } from '../../_lib/errors.js';
 import { readJsonBody } from '../../_lib/http.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
+import {
+  deriveDocumentAiState,
+  processDocumentWithTimeout,
+} from './processing.js';
 import { deleteFileFromDisk, readFileFromDisk } from './storage.js';
 
 async function resolveFileBytes(doc: any): Promise<Buffer> {
@@ -51,15 +56,47 @@ function normalizeVisibility(value: unknown): 'confidential' | 'shared' | null {
   return null;
 }
 
+function mapDocumentResponse(row: any) {
+  const aiState = deriveDocumentAiState({
+    status: row.status,
+    statusReason: row.statusReason,
+    extractedText: row.extractedText,
+  });
+
+  return {
+    id: row.id,
+    filename: row.filename,
+    mime_type: row.mimeType,
+    size_bytes: row.sizeBytes,
+    status: row.status,
+    visibility: row.visibility || 'confidential',
+    status_reason: row.statusReason || null,
+    summary_text: row.summaryText || null,
+    error_message: row.errorMessage || null,
+    ai_status: aiState.aiStatus,
+    ai_reason: aiState.aiReason,
+    extracted_text_chars: aiState.extractedTextChars,
+    created_at: row.createdAt,
+    updated_at: row.updatedAt,
+  };
+}
+
 export default async function handler(req: any, res: any, docId?: string) {
   const rawId = docId || String(req.query?.id || '').trim();
 
   const isDownload = String(req.url || '').includes('/download');
-  const routeName = isDownload ? `/api/documents/${rawId}/download` : `/api/documents/${rawId}`;
+  const isReprocess = String(req.url || '').includes('/reprocess');
+  const routeName = isDownload
+    ? `/api/documents/${rawId}/download`
+    : isReprocess
+      ? `/api/documents/${rawId}/reprocess`
+      : `/api/documents/${rawId}`;
 
   await withApiRoute(req, res, routeName, async (context) => {
     if (isDownload) {
       ensureMethod(req, ['GET']);
+    } else if (isReprocess) {
+      ensureMethod(req, ['POST']);
     } else {
       ensureMethod(req, ['DELETE', 'PATCH']);
     }
@@ -74,7 +111,7 @@ export default async function handler(req: any, res: any, docId?: string) {
       throw new ApiError(400, 'invalid_input', 'Document ID is required');
     }
 
-    // Fetch and enforce ownership (exclude content_bytes from list queries – include it only for download)
+    // Fetch and enforce ownership (exclude content_bytes from list queries – include it only when needed)
     const baseSelect = {
       id: schema.userDocuments.id,
       filename: schema.userDocuments.filename,
@@ -85,11 +122,12 @@ export default async function handler(req: any, res: any, docId?: string) {
       status: schema.userDocuments.status,
       statusReason: schema.userDocuments.statusReason,
       summaryText: schema.userDocuments.summaryText,
+      extractedText: schema.userDocuments.extractedText,
       errorMessage: schema.userDocuments.errorMessage,
       createdAt: schema.userDocuments.createdAt,
       updatedAt: schema.userDocuments.updatedAt,
     };
-    const selectFields = isDownload
+    const selectFields = isDownload || isReprocess
       ? { ...baseSelect, contentBytes: schema.userDocuments.contentBytes }
       : baseSelect;
     const rows = await db
@@ -130,6 +168,81 @@ export default async function handler(req: any, res: any, docId?: string) {
     }
 
     // -----------------------------------------------------------------------
+    // POST /api/documents/:id/reprocess
+    // -----------------------------------------------------------------------
+    if (isReprocess) {
+      let fileBuffer: Buffer;
+      try {
+        fileBuffer = await resolveFileBytes(doc);
+      } catch {
+        throw new ApiError(500, 'storage_error', 'File could not be retrieved from storage');
+      }
+
+      await db
+        .update(schema.userDocuments)
+        .set({
+          status: 'processing',
+          statusReason: null,
+          errorMessage: null,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(schema.userDocuments.id, rawId),
+            eq(schema.userDocuments.userId, userId),
+          ),
+        );
+
+      const processResult = await processDocumentWithTimeout({
+        buffer: fileBuffer,
+        filename: doc.filename,
+        mimeType: doc.mimeType,
+      });
+
+      const updatedRows = await db
+        .update(schema.userDocuments)
+        .set({
+          status: processResult.status,
+          statusReason: processResult.statusReason,
+          extractedText: processResult.extractedText,
+          summaryText: processResult.summaryText,
+          summaryUpdatedAt: processResult.summaryText ? new Date() : null,
+          errorMessage: processResult.errorMessage,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(schema.userDocuments.id, rawId),
+            eq(schema.userDocuments.userId, userId),
+          ),
+        )
+        .returning({
+          id: schema.userDocuments.id,
+          filename: schema.userDocuments.filename,
+          mimeType: schema.userDocuments.mimeType,
+          sizeBytes: schema.userDocuments.sizeBytes,
+          status: schema.userDocuments.status,
+          visibility: schema.userDocuments.visibility,
+          statusReason: schema.userDocuments.statusReason,
+          extractedText: schema.userDocuments.extractedText,
+          summaryText: schema.userDocuments.summaryText,
+          errorMessage: schema.userDocuments.errorMessage,
+          createdAt: schema.userDocuments.createdAt,
+          updatedAt: schema.userDocuments.updatedAt,
+        });
+
+      const updated = updatedRows[0];
+      if (!updated) {
+        throw new ApiError(404, 'not_found', 'Document not found');
+      }
+
+      ok(res, 200, {
+        document: mapDocumentResponse(updated),
+      });
+      return;
+    }
+
+    // -----------------------------------------------------------------------
     // PATCH /api/documents/:id
     // -----------------------------------------------------------------------
     if (req.method === 'PATCH') {
@@ -159,6 +272,7 @@ export default async function handler(req: any, res: any, docId?: string) {
           status: schema.userDocuments.status,
           visibility: schema.userDocuments.visibility,
           statusReason: schema.userDocuments.statusReason,
+          extractedText: schema.userDocuments.extractedText,
           summaryText: schema.userDocuments.summaryText,
           errorMessage: schema.userDocuments.errorMessage,
           createdAt: schema.userDocuments.createdAt,
@@ -170,19 +284,7 @@ export default async function handler(req: any, res: any, docId?: string) {
       }
 
       ok(res, 200, {
-        document: {
-          id: updated.id,
-          filename: updated.filename,
-          mime_type: updated.mimeType,
-          size_bytes: updated.sizeBytes,
-          status: updated.status,
-          visibility: updated.visibility || 'confidential',
-          status_reason: updated.statusReason || null,
-          summary_text: updated.summaryText || null,
-          error_message: updated.errorMessage || null,
-          created_at: updated.createdAt,
-          updated_at: updated.updatedAt,
-        },
+        document: mapDocumentResponse(updated),
       });
       return;
     }

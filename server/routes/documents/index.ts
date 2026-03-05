@@ -26,7 +26,10 @@ import {
   getStorageProvider,
   storeFileToDisk,
 } from './storage.js';
-import { extractDocumentText, generateSummary } from './text-extraction.js';
+import {
+  deriveDocumentAiState,
+  processDocumentWithTimeout,
+} from './processing.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -34,8 +37,6 @@ import { extractDocumentText, generateSummary } from './text-extraction.js';
 const MAX_FILES = 5;
 const MAX_TOTAL_BYTES = 10 * 1024 * 1024;   // 10 MB
 const MAX_FILE_BYTES  = 5 * 1024 * 1024;    // 5 MB
-const EXTRACTED_TEXT_CAP = 200 * 1024;       // 200 KB (approx chars for UTF-8)
-const PROCESSING_TIMEOUT_MS = 15_000;        // 15 s hard limit for extraction
 
 // Accepted MIME types *and* extensions — both must be present and valid.
 const ALLOWED_MIME_TYPES = new Set([
@@ -84,6 +85,12 @@ function getExtension(filename: string) {
 }
 
 function mapDocRow(row: any) {
+  const aiState = deriveDocumentAiState({
+    status: row.status,
+    statusReason: row.statusReason,
+    extractedText: row.extractedText,
+  });
+
   return {
     id: row.id,
     filename: row.filename,
@@ -94,6 +101,9 @@ function mapDocRow(row: any) {
     status_reason: row.statusReason || null,
     summary_text: row.summaryText || null,
     error_message: row.errorMessage || null,
+    ai_status: aiState.aiStatus,
+    ai_reason: aiState.aiReason,
+    extracted_text_chars: aiState.extractedTextChars,
     created_at: row.createdAt,
     updated_at: row.updatedAt,
   };
@@ -113,69 +123,6 @@ async function getCurrentUsage(db: any, userId: string) {
     fileCount: Number(row.fileCount || 0),
     totalBytes: Number(row.totalBytes || 0),
   };
-}
-
-// ---------------------------------------------------------------------------
-// Synchronous document processing (extraction + summarization)
-// Returns { status, extractedText, summaryText, errorMessage }
-// ---------------------------------------------------------------------------
-type ProcessResult = {
-  status: 'ready' | 'not_supported' | 'failed';
-  statusReason: string | null;
-  extractedText: string | null;
-  summaryText: string | null;
-  errorMessage: string | null;
-};
-
-function mapNoTextReasonToError(reason: string | null, fallback: string | null) {
-  if (reason === 'encrypted_pdf') {
-    return 'PDF is encrypted and cannot be processed';
-  }
-  if (reason === 'no_text_found') {
-    return 'No extractable text was found (the file may be image-only or empty)';
-  }
-  if (reason === 'unsupported_type') {
-    return 'This file type is not supported for text extraction';
-  }
-  return fallback || 'Text extraction failed';
-}
-
-async function processDocumentSync(
-  buffer: Buffer,
-  filename: string,
-  mimeType: string,
-): Promise<ProcessResult> {
-  const extraction = await extractDocumentText(buffer, mimeType, filename);
-
-  if (!extraction.supported) {
-    return {
-      status: 'not_supported',
-      statusReason: extraction.reason || 'unsupported_type',
-      extractedText: null,
-      summaryText: null,
-      errorMessage: mapNoTextReasonToError(extraction.reason, extraction.errorMessage),
-    };
-  }
-
-  const rawText = extraction.text;
-  if (!rawText) {
-    const reason = extraction.reason || 'no_text_found';
-    return {
-      status: reason === 'extraction_failed' ? 'failed' : 'not_supported',
-      statusReason: reason,
-      extractedText: null,
-      summaryText: null,
-      errorMessage: mapNoTextReasonToError(reason, extraction.errorMessage),
-    };
-  }
-
-  // Cap extracted text at 200 KB
-  const extractedText = rawText.slice(0, EXTRACTED_TEXT_CAP);
-
-  // Best-effort summarization; returns null if AI is unavailable
-  const summaryText = await generateSummary(rawText, filename).catch(() => null);
-
-  return { status: 'ready', statusReason: null, extractedText, summaryText, errorMessage: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -211,6 +158,7 @@ export default async function handler(req: any, res: any) {
           status: schema.userDocuments.status,
           visibility: schema.userDocuments.visibility,
           statusReason: schema.userDocuments.statusReason,
+          extractedText: schema.userDocuments.extractedText,
           summaryText: schema.userDocuments.summaryText,
           errorMessage: schema.userDocuments.errorMessage,
           createdAt: schema.userDocuments.createdAt,
@@ -355,57 +303,30 @@ export default async function handler(req: any, res: any) {
       updatedAt: new Date(),
     });
 
-    // ---------------------------------------------------------------------------
-    // Best-effort synchronous processing within PROCESSING_TIMEOUT_MS
-    // If extraction/summarization completes in time → status=ready
-    // If it times out                               → status=failed with processing_timeout
-    // ---------------------------------------------------------------------------
-    const timeoutPromise = new Promise<null>((resolve) =>
-      setTimeout(() => resolve(null), PROCESSING_TIMEOUT_MS),
-    );
+    const processResult = await processDocumentWithTimeout({
+      buffer,
+      filename,
+      mimeType: resolvedMime,
+    });
 
-    const processResult = await Promise.race([
-      processDocumentSync(buffer, filename, resolvedMime).catch((err: any) => ({
-        status: 'failed' as const,
-        statusReason: 'extraction_failed',
-        extractedText: null,
-        summaryText: null,
-        errorMessage: String(err?.message || 'Processing failed').slice(0, 500),
-      })),
-      timeoutPromise,
-    ]);
+    await db
+      .update(schema.userDocuments)
+      .set({
+        status: processResult.status,
+        statusReason: processResult.statusReason,
+        extractedText: processResult.extractedText,
+        summaryText: processResult.summaryText,
+        summaryUpdatedAt: processResult.summaryText ? new Date() : null,
+        errorMessage: processResult.errorMessage,
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.userDocuments.id, docId));
 
-    let finalStatus = 'processing';
-    let summaryText: string | null = null;
-
-    if (processResult !== null) {
-      // Processing finished within the time limit
-      finalStatus = processResult.status;
-      summaryText = processResult.summaryText;
-      await db
-        .update(schema.userDocuments)
-        .set({
-          status: processResult.status,
-          statusReason: processResult.statusReason,
-          extractedText: processResult.extractedText,
-          summaryText: processResult.summaryText,
-          summaryUpdatedAt: processResult.summaryText ? new Date() : null,
-          errorMessage: processResult.errorMessage,
-          updatedAt: new Date(),
-        })
-        .where(eq(schema.userDocuments.id, docId));
-    } else {
-      finalStatus = 'failed';
-      await db
-        .update(schema.userDocuments)
-        .set({
-          status: 'failed',
-          statusReason: 'processing_timeout',
-          errorMessage: 'Document processing timed out. Please retry upload.',
-          updatedAt: new Date(),
-        })
-        .where(eq(schema.userDocuments.id, docId));
-    }
+    const aiState = deriveDocumentAiState({
+      status: processResult.status,
+      statusReason: processResult.statusReason,
+      extractedText: processResult.extractedText,
+    });
 
     ok(res, 201, {
       document: {
@@ -413,11 +334,14 @@ export default async function handler(req: any, res: any) {
         filename,
         mime_type: resolvedMime,
         size_bytes: buffer.length,
-        status: finalStatus,
+        status: processResult.status,
         visibility: 'confidential',
-        status_reason: processResult ? processResult.statusReason : 'processing_timeout',
-        summary_text: summaryText,
-        error_message: processResult ? processResult.errorMessage : 'Document processing timed out. Please retry upload.',
+        status_reason: processResult.statusReason,
+        summary_text: processResult.summaryText,
+        error_message: processResult.errorMessage,
+        ai_status: aiState.aiStatus,
+        ai_reason: aiState.aiReason,
+        extracted_text_chars: aiState.extractedTextChars,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       },

@@ -100,4 +100,11 @@ export const documentsClient = {
     });
     return response.document;
   },
+
+  async reprocess(id) {
+    const response = await request(`/api/documents/${encodeURIComponent(id)}/reprocess`, {
+      method: 'POST',
+    });
+    return response.document;
+  },
 };

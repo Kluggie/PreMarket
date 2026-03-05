@@ -25,7 +25,7 @@ const STATUS_REASON_LABELS = {
   encrypted_pdf: 'This PDF is encrypted and cannot be processed.',
   extraction_failed: 'Text extraction failed for this file.',
   unsupported_type: 'This file type is not supported for AI extraction.',
-  processing_timeout: 'Processing timed out. Try uploading again.',
+  processing_timeout: 'Processing timed out. Try again.',
 };
 const VISIBILITY_HELP = {
   confidential: 'Used for internal AI evaluation and never shown to the other party.',
@@ -58,15 +58,15 @@ function getFileTypeLabel(filename) {
   return labelMap[ext] || ext.toUpperCase() || 'File';
 }
 
-function StatusBadge({ status, statusReason, errorMessage }) {
-  if (status === 'ready') {
+function StatusBadge({ aiStatus, aiReason, errorMessage }) {
+  if (aiStatus === 'usable') {
     return (
       <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 gap-1">
         <CheckCircle2 className="w-3 h-3" /> Usable for AI
       </Badge>
     );
   }
-  if (status === 'processing') {
+  if (aiStatus === 'processing') {
     return (
       <Badge className="bg-amber-50 text-amber-700 border-amber-200 gap-1">
         <Clock className="w-3 h-3" /> Processing...
@@ -74,19 +74,15 @@ function StatusBadge({ status, statusReason, errorMessage }) {
     );
   }
 
-  if (status === 'not_supported' || status === 'failed') {
+  if (aiStatus === 'not_usable') {
     const reasonText =
-      STATUS_REASON_LABELS[statusReason] ||
+      STATUS_REASON_LABELS[aiReason] ||
       (typeof errorMessage === 'string' && errorMessage.trim()) ||
       'This file is not usable for AI analysis.';
-    const toneClass =
-      status === 'failed'
-        ? 'bg-red-50 text-red-700 border-red-200'
-        : 'bg-slate-100 text-slate-600 border-slate-200';
     return (
       <Tooltip>
         <TooltipTrigger asChild>
-          <Badge className={`${toneClass} gap-1 cursor-help`}>
+          <Badge className="bg-slate-100 text-slate-600 border-slate-200 gap-1 cursor-help">
             <XCircle className="w-3 h-3" /> Not usable for AI
           </Badge>
         </TooltipTrigger>
@@ -97,7 +93,7 @@ function StatusBadge({ status, statusReason, errorMessage }) {
     );
   }
 
-  return <Badge variant="outline">{status}</Badge>;
+  return <Badge variant="outline">AI status unknown</Badge>;
 }
 
 function StorageBar({ used, max }) {
@@ -123,6 +119,7 @@ export default function Documents() {
   const [deletingId, setDeletingId] = useState(null);
   const [downloadingId, setDownloadingId] = useState(null);
   const [updatingVisibilityId, setUpdatingVisibilityId] = useState(null);
+  const [reprocessingId, setReprocessingId] = useState(null);
 
   useEffect(() => {
     if (!isLoadingAuth && !user) {
@@ -137,7 +134,7 @@ export default function Documents() {
     refetchInterval: (data) => {
       // Poll while any document is still processing
       const docs = data?.documents || [];
-      return docs.some((d) => d.status === 'processing') ? 4000 : false;
+      return docs.some((d) => d.ai_status === 'processing' || d.status === 'processing') ? 4000 : false;
     },
   });
 
@@ -191,7 +188,7 @@ export default function Documents() {
       if (context?.previousData) {
         queryClient.setQueryData(['userDocuments'], context.previousData);
       }
-      setUploadError(err?.message || 'Failed to update document visibility.');
+      setUploadError(err?.message || "Couldn't update visibility. Please try again.");
     },
     onSuccess: (updatedDoc) => {
       queryClient.setQueryData(['userDocuments'], (current) => {
@@ -203,6 +200,24 @@ export default function Documents() {
           ),
         };
       });
+    },
+  });
+
+  const reprocessMutation = useMutation({
+    mutationFn: (id) => documentsClient.reprocess(id),
+    onSuccess: (updatedDoc) => {
+      queryClient.setQueryData(['userDocuments'], (current) => {
+        if (!current) return current;
+        return {
+          ...current,
+          documents: (current.documents || []).map((doc) =>
+            doc.id === updatedDoc.id ? { ...doc, ...updatedDoc } : doc,
+          ),
+        };
+      });
+    },
+    onError: (err) => {
+      setUploadError(err?.message || "Couldn't process this file for AI. Please try again.");
     },
   });
 
@@ -287,6 +302,17 @@ export default function Documents() {
       });
     } finally {
       setUpdatingVisibilityId(null);
+    }
+  };
+
+  const handleReprocess = async (doc) => {
+    if (!doc?.id) return;
+    setUploadError(null);
+    setReprocessingId(doc.id);
+    try {
+      await reprocessMutation.mutateAsync(doc.id);
+    } finally {
+      setReprocessingId(null);
     }
   };
 
@@ -439,8 +465,8 @@ export default function Documents() {
                           <span className="text-xs text-slate-400">{formatDate(doc.created_at)}</span>
                           <span className="text-slate-200">·</span>
                           <StatusBadge
-                            status={doc.status}
-                            statusReason={doc.status_reason}
+                            aiStatus={doc.ai_status}
+                            aiReason={doc.ai_reason}
                             errorMessage={doc.error_message}
                           />
                         </div>
@@ -493,6 +519,25 @@ export default function Documents() {
                               <Loader2 className="w-3 h-3 animate-spin" />
                               Saving...
                             </span>
+                          ) : null}
+                          {doc.ai_status === 'not_usable' ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-7 px-2.5 text-xs text-slate-600"
+                              onClick={() => handleReprocess(doc)}
+                              disabled={reprocessingId === doc.id}
+                            >
+                              {reprocessingId === doc.id ? (
+                                <>
+                                  <Loader2 className="w-3 h-3 animate-spin mr-1" />
+                                  Processing...
+                                </>
+                              ) : (
+                                'Process for AI'
+                              )}
+                            </Button>
                           ) : null}
                         </div>
                       </div>
