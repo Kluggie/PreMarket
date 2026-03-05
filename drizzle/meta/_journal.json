@@ -169,6 +169,13 @@
       "when": 1777683600000,
       "tag": "0023_beta_signups",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1777690800000,
+      "tag": "0024_user_documents_visibility_status_reason",
+      "breakpoints": true
     }
   ]
 }

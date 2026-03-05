@@ -959,6 +959,8 @@ export const userDocuments = pgTable(
     // File bytes stored directly in Postgres (bytea); null for legacy disk-stored rows
     contentBytes: bytea('content_bytes'),
     status: text('status').notNull().default('processing'),
+    visibility: text('visibility').notNull().default('confidential'),
+    statusReason: text('status_reason'),
     extractedText: text('extracted_text'),
     summaryText: text('summary_text'),
     summaryUpdatedAt: timestamp('summary_updated_at', { withTimezone: true }),

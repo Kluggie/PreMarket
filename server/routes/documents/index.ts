@@ -90,6 +90,8 @@ function mapDocRow(row: any) {
     mime_type: row.mimeType,
     size_bytes: row.sizeBytes,
     status: row.status,
+    visibility: row.visibility || 'confidential',
+    status_reason: row.statusReason || null,
     summary_text: row.summaryText || null,
     error_message: row.errorMessage || null,
     created_at: row.createdAt,
@@ -119,10 +121,24 @@ async function getCurrentUsage(db: any, userId: string) {
 // ---------------------------------------------------------------------------
 type ProcessResult = {
   status: 'ready' | 'not_supported' | 'failed';
+  statusReason: string | null;
   extractedText: string | null;
   summaryText: string | null;
   errorMessage: string | null;
 };
+
+function mapNoTextReasonToError(reason: string | null, fallback: string | null) {
+  if (reason === 'encrypted_pdf') {
+    return 'PDF is encrypted and cannot be processed';
+  }
+  if (reason === 'no_text_found') {
+    return 'No extractable text was found (the file may be image-only or empty)';
+  }
+  if (reason === 'unsupported_type') {
+    return 'This file type is not supported for text extraction';
+  }
+  return fallback || 'Text extraction failed';
+}
 
 async function processDocumentSync(
   buffer: Buffer,
@@ -132,16 +148,24 @@ async function processDocumentSync(
   const extraction = await extractDocumentText(buffer, mimeType, filename);
 
   if (!extraction.supported) {
-    return { status: 'not_supported', extractedText: null, summaryText: null, errorMessage: null };
+    return {
+      status: 'not_supported',
+      statusReason: extraction.reason || 'unsupported_type',
+      extractedText: null,
+      summaryText: null,
+      errorMessage: mapNoTextReasonToError(extraction.reason, extraction.errorMessage),
+    };
   }
 
   const rawText = extraction.text;
   if (!rawText) {
+    const reason = extraction.reason || 'no_text_found';
     return {
-      status: 'not_supported',
+      status: reason === 'extraction_failed' ? 'failed' : 'not_supported',
+      statusReason: reason,
       extractedText: null,
       summaryText: null,
-      errorMessage: 'Text extraction produced no content',
+      errorMessage: mapNoTextReasonToError(reason, extraction.errorMessage),
     };
   }
 
@@ -151,7 +175,7 @@ async function processDocumentSync(
   // Best-effort summarization; returns null if AI is unavailable
   const summaryText = await generateSummary(rawText, filename).catch(() => null);
 
-  return { status: 'ready', extractedText, summaryText, errorMessage: null };
+  return { status: 'ready', statusReason: null, extractedText, summaryText, errorMessage: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -185,6 +209,8 @@ export default async function handler(req: any, res: any) {
           mimeType: schema.userDocuments.mimeType,
           sizeBytes: schema.userDocuments.sizeBytes,
           status: schema.userDocuments.status,
+          visibility: schema.userDocuments.visibility,
+          statusReason: schema.userDocuments.statusReason,
           summaryText: schema.userDocuments.summaryText,
           errorMessage: schema.userDocuments.errorMessage,
           createdAt: schema.userDocuments.createdAt,
@@ -324,6 +350,7 @@ export default async function handler(req: any, res: any) {
       storageKey,
       contentBytes: getStorageProvider() === 'db' ? buffer : null,
       status: 'processing',
+      visibility: 'confidential',
       createdAt: new Date(),
       updatedAt: new Date(),
     });
@@ -331,7 +358,7 @@ export default async function handler(req: any, res: any) {
     // ---------------------------------------------------------------------------
     // Best-effort synchronous processing within PROCESSING_TIMEOUT_MS
     // If extraction/summarization completes in time → status=ready
-    // If it times out                               → status remains 'processing'
+    // If it times out                               → status=failed with processing_timeout
     // ---------------------------------------------------------------------------
     const timeoutPromise = new Promise<null>((resolve) =>
       setTimeout(() => resolve(null), PROCESSING_TIMEOUT_MS),
@@ -340,6 +367,7 @@ export default async function handler(req: any, res: any) {
     const processResult = await Promise.race([
       processDocumentSync(buffer, filename, resolvedMime).catch((err: any) => ({
         status: 'failed' as const,
+        statusReason: 'extraction_failed',
         extractedText: null,
         summaryText: null,
         errorMessage: String(err?.message || 'Processing failed').slice(0, 500),
@@ -358,6 +386,7 @@ export default async function handler(req: any, res: any) {
         .update(schema.userDocuments)
         .set({
           status: processResult.status,
+          statusReason: processResult.statusReason,
           extractedText: processResult.extractedText,
           summaryText: processResult.summaryText,
           summaryUpdatedAt: processResult.summaryText ? new Date() : null,
@@ -365,8 +394,18 @@ export default async function handler(req: any, res: any) {
           updatedAt: new Date(),
         })
         .where(eq(schema.userDocuments.id, docId));
+    } else {
+      finalStatus = 'failed';
+      await db
+        .update(schema.userDocuments)
+        .set({
+          status: 'failed',
+          statusReason: 'processing_timeout',
+          errorMessage: 'Document processing timed out. Please retry upload.',
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.userDocuments.id, docId));
     }
-    // else: timed out — row stays as 'processing'; no further update needed
 
     ok(res, 201, {
       document: {
@@ -375,8 +414,10 @@ export default async function handler(req: any, res: any) {
         mime_type: resolvedMime,
         size_bytes: buffer.length,
         status: finalStatus,
+        visibility: 'confidential',
+        status_reason: processResult ? processResult.statusReason : 'processing_timeout',
         summary_text: summaryText,
-        error_message: null,
+        error_message: processResult ? processResult.errorMessage : 'Document processing timed out. Please retry upload.',
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       },

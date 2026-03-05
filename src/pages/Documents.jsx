@@ -5,6 +5,7 @@ import { useAuth } from '@/lib/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   AlertCircle,
   CheckCircle2,
@@ -19,6 +20,17 @@ import {
 
 const ALLOWED_LABEL = 'PDF, DOCX, XLSX, PPTX, TXT, MD';
 const ALLOWED_ACCEPT = '.pdf,.docx,.xlsx,.pptx,.txt,.md,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain,text/markdown';
+const STATUS_REASON_LABELS = {
+  no_text_found: 'No extractable text was found in this file.',
+  encrypted_pdf: 'This PDF is encrypted and cannot be processed.',
+  extraction_failed: 'Text extraction failed for this file.',
+  unsupported_type: 'This file type is not supported for AI extraction.',
+  processing_timeout: 'Processing timed out. Try uploading again.',
+};
+const VISIBILITY_HELP = {
+  confidential: 'Used for internal AI evaluation and never shown to the other party.',
+  shared: 'May be shown to the other party when attached to a proposal.',
+};
 
 function formatBytes(bytes) {
   if (bytes === 0) return '0 B';
@@ -40,41 +52,51 @@ function formatDate(iso) {
   }
 }
 
-function getFileTypeLabel(filename, mimeType) {
+function getFileTypeLabel(filename) {
   const ext = String(filename || '').toLowerCase().split('.').pop() || '';
   const labelMap = { pdf: 'PDF', docx: 'DOCX', xlsx: 'XLSX', pptx: 'PPTX', txt: 'TXT', md: 'MD' };
   return labelMap[ext] || ext.toUpperCase() || 'File';
 }
 
-function StatusBadge({ status }) {
+function StatusBadge({ status, statusReason, errorMessage }) {
   if (status === 'ready') {
     return (
       <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 gap-1">
-        <CheckCircle2 className="w-3 h-3" /> Ready for AI
+        <CheckCircle2 className="w-3 h-3" /> Usable for AI
       </Badge>
     );
   }
   if (status === 'processing') {
     return (
       <Badge className="bg-amber-50 text-amber-700 border-amber-200 gap-1">
-        <Clock className="w-3 h-3" /> Processing
+        <Clock className="w-3 h-3" /> Processing...
       </Badge>
     );
   }
-  if (status === 'not_supported') {
+
+  if (status === 'not_supported' || status === 'failed') {
+    const reasonText =
+      STATUS_REASON_LABELS[statusReason] ||
+      (typeof errorMessage === 'string' && errorMessage.trim()) ||
+      'This file is not usable for AI analysis.';
+    const toneClass =
+      status === 'failed'
+        ? 'bg-red-50 text-red-700 border-red-200'
+        : 'bg-slate-100 text-slate-600 border-slate-200';
     return (
-      <Badge className="bg-slate-100 text-slate-600 border-slate-200 gap-1">
-        <XCircle className="w-3 h-3" /> Not usable for AI
-      </Badge>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Badge className={`${toneClass} gap-1 cursor-help`}>
+            <XCircle className="w-3 h-3" /> Not usable for AI
+          </Badge>
+        </TooltipTrigger>
+        <TooltipContent>
+          <p className="max-w-64 text-xs">{reasonText}</p>
+        </TooltipContent>
+      </Tooltip>
     );
   }
-  if (status === 'failed') {
-    return (
-      <Badge className="bg-red-50 text-red-700 border-red-200 gap-1">
-        <AlertCircle className="w-3 h-3" /> Failed
-      </Badge>
-    );
-  }
+
   return <Badge variant="outline">{status}</Badge>;
 }
 
@@ -100,6 +122,7 @@ export default function Documents() {
   const [uploadError, setUploadError] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
   const [downloadingId, setDownloadingId] = useState(null);
+  const [updatingVisibilityId, setUpdatingVisibilityId] = useState(null);
 
   useEffect(() => {
     if (!isLoadingAuth && !user) {
@@ -145,6 +168,41 @@ export default function Documents() {
     },
     onError: (err) => {
       setUploadError(err?.message || 'Delete failed. Please try again.');
+    },
+  });
+
+  const updateVisibilityMutation = useMutation({
+    mutationFn: ({ id, visibility }) => documentsClient.updateVisibility(id, visibility),
+    onMutate: async ({ id, visibility }) => {
+      await queryClient.cancelQueries({ queryKey: ['userDocuments'] });
+      const previousData = queryClient.getQueryData(['userDocuments']);
+      queryClient.setQueryData(['userDocuments'], (current) => {
+        if (!current) return current;
+        return {
+          ...current,
+          documents: (current.documents || []).map((doc) =>
+            doc.id === id ? { ...doc, visibility } : doc,
+          ),
+        };
+      });
+      return { previousData };
+    },
+    onError: (err, _variables, context) => {
+      if (context?.previousData) {
+        queryClient.setQueryData(['userDocuments'], context.previousData);
+      }
+      setUploadError(err?.message || 'Failed to update document visibility.');
+    },
+    onSuccess: (updatedDoc) => {
+      queryClient.setQueryData(['userDocuments'], (current) => {
+        if (!current) return current;
+        return {
+          ...current,
+          documents: (current.documents || []).map((doc) =>
+            doc.id === updatedDoc.id ? { ...doc, ...updatedDoc } : doc,
+          ),
+        };
+      });
     },
   });
 
@@ -217,6 +275,21 @@ export default function Documents() {
     }
   };
 
+  const handleVisibilityChange = async (doc, nextVisibility) => {
+    const currentVisibility = doc?.visibility || 'confidential';
+    if (!doc?.id || currentVisibility === nextVisibility) return;
+
+    setUpdatingVisibilityId(doc.id);
+    try {
+      await updateVisibilityMutation.mutateAsync({
+        id: doc.id,
+        visibility: nextVisibility,
+      });
+    } finally {
+      setUpdatingVisibilityId(null);
+    }
+  };
+
   if (isLoadingAuth) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
@@ -228,55 +301,56 @@ export default function Documents() {
   if (!user) return null;
 
   return (
-    <div className="min-h-screen bg-slate-50 py-8">
-      <div className="max-w-4xl mx-auto px-4 sm:px-6">
+    <TooltipProvider>
+      <div className="min-h-screen bg-slate-50 py-8">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6">
 
-        {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-2xl font-bold text-slate-900">Documents</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Upload supporting materials to provide extra context for evaluations.
-          </p>
-        </div>
+          {/* Header */}
+          <div className="mb-8">
+            <h1 className="text-2xl font-bold text-slate-900">Documents</h1>
+            <p className="mt-1 text-sm text-slate-500">
+              Upload supporting materials to provide extra context for evaluations.
+            </p>
+          </div>
 
-        {/* Storage indicator */}
-        <Card className="mb-6">
-          <CardContent className="pt-5 pb-4">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-              <div className="flex-1 min-w-0">
-                <p className="text-xs font-medium text-slate-500 mb-1.5">Storage usage</p>
-                <StorageBar used={usage.total_bytes} max={usage.max_total_bytes} />
-                <p className="mt-1.5 text-xs text-slate-600">
-                  {formatBytes(usage.total_bytes)} / {formatBytes(usage.max_total_bytes)} used
-                  &nbsp;·&nbsp;
-                  {usage.file_count} / {usage.max_files} files
-                </p>
+          {/* Storage indicator */}
+          <Card className="mb-6">
+            <CardContent className="pt-5 pb-4">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium text-slate-500 mb-1.5">Storage usage</p>
+                  <StorageBar used={usage.total_bytes} max={usage.max_total_bytes} />
+                  <p className="mt-1.5 text-xs text-slate-600">
+                    {formatBytes(usage.total_bytes)} / {formatBytes(usage.max_total_bytes)} used
+                    &nbsp;·&nbsp;
+                    {usage.file_count} / {usage.max_files} files
+                  </p>
+                </div>
+                <div className="shrink-0">
+                  <Button
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={uploadMutation.isPending}
+                    className="bg-blue-600 hover:bg-blue-700 text-white gap-2"
+                    size="sm"
+                  >
+                    {uploadMutation.isPending ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Upload className="w-4 h-4" />
+                    )}
+                    Upload file
+                  </Button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept={ALLOWED_ACCEPT}
+                    className="hidden"
+                    onChange={handleFileChange}
+                  />
+                </div>
               </div>
-              <div className="shrink-0">
-                <Button
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={uploadMutation.isPending}
-                  className="bg-blue-600 hover:bg-blue-700 text-white gap-2"
-                  size="sm"
-                >
-                  {uploadMutation.isPending ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Upload className="w-4 h-4" />
-                  )}
-                  Upload file
-                </Button>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept={ALLOWED_ACCEPT}
-                  className="hidden"
-                  onChange={handleFileChange}
-                />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
 
         {/* Upload drop zone */}
         <div
@@ -357,14 +431,69 @@ export default function Documents() {
                         </p>
                         <div className="flex flex-wrap gap-2 mt-1.5 items-center">
                           <span className="text-xs font-medium text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
-                            {getFileTypeLabel(doc.filename, doc.mime_type)}
+                            {getFileTypeLabel(doc.filename)}
                           </span>
                           <span className="text-slate-200">·</span>
                           <span className="text-xs text-slate-400">{formatBytes(doc.size_bytes)}</span>
                           <span className="text-slate-200">·</span>
                           <span className="text-xs text-slate-400">{formatDate(doc.created_at)}</span>
                           <span className="text-slate-200">·</span>
-                          <StatusBadge status={doc.status} />
+                          <StatusBadge
+                            status={doc.status}
+                            statusReason={doc.status_reason}
+                            errorMessage={doc.error_message}
+                          />
+                        </div>
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <span className="text-xs text-slate-500">Visibility</span>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant={(doc.visibility || 'confidential') === 'confidential' ? 'default' : 'outline'}
+                                className={
+                                  (doc.visibility || 'confidential') === 'confidential'
+                                    ? 'h-7 px-2.5 text-xs bg-slate-800 hover:bg-slate-700'
+                                    : 'h-7 px-2.5 text-xs text-slate-600'
+                                }
+                                onClick={() => handleVisibilityChange(doc, 'confidential')}
+                                disabled={updatingVisibilityId === doc.id}
+                              >
+                                Confidential
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p className="max-w-64 text-xs">{VISIBILITY_HELP.confidential}</p>
+                            </TooltipContent>
+                          </Tooltip>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant={(doc.visibility || 'confidential') === 'shared' ? 'default' : 'outline'}
+                                className={
+                                  (doc.visibility || 'confidential') === 'shared'
+                                    ? 'h-7 px-2.5 text-xs bg-blue-600 hover:bg-blue-700'
+                                    : 'h-7 px-2.5 text-xs text-slate-600'
+                                }
+                                onClick={() => handleVisibilityChange(doc, 'shared')}
+                                disabled={updatingVisibilityId === doc.id}
+                              >
+                                Shared
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p className="max-w-64 text-xs">{VISIBILITY_HELP.shared}</p>
+                            </TooltipContent>
+                          </Tooltip>
+                          {updatingVisibilityId === doc.id ? (
+                            <span className="text-xs text-slate-400 inline-flex items-center gap-1">
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                              Saving...
+                            </span>
+                          ) : null}
                         </div>
                       </div>
                     </div>
@@ -416,7 +545,8 @@ export default function Documents() {
             <p className="text-sm text-blue-700">Uploading and processing…</p>
           </div>
         )}
+        </div>
       </div>
-    </div>
+    </TooltipProvider>
   );
 }
