@@ -61,6 +61,10 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     const evaluationResult = asObject(comparison.evaluationResult);
     const publicReport = asObject(comparison.publicReport);
     const report = asObject(publicReport && Object.keys(publicReport).length > 0 ? publicReport : evaluationResult.report);
+
+    // Detect V2 report: has a non-empty `why[]` array of narrative strings.
+    const isV2 = Array.isArray(report.why) && (report.why as unknown[]).length > 0;
+
     const sections = Array.isArray(report.sections)
       ? report.sections
       : Array.isArray(evaluationResult.sections)
@@ -70,17 +74,54 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       asText(report.summary) || asText(evaluationResult.summary) || 'No AI summary is available yet.';
     const recommendation =
       asText(report.recommendation) || asText(evaluationResult.recommendation) || 'unknown fit';
-    const confidence = toScore(
-      evaluationResult.score ?? report.similarity_score ?? report.score ?? 0,
-    );
 
-    const reportSections = [];
-    reportSections.push({
-      heading: 'Summary',
-      paragraphs: [summary, `Recommendation: ${recommendation}`, `Confidence Score: ${confidence}%`],
-    });
+    // Prefer V2 confidence_0_1 (0–1 float) over legacy score (0–100 integer).
+    const confidenceRaw =
+      typeof report.confidence_0_1 === 'number'
+        ? report.confidence_0_1 * 100
+        : (evaluationResult.score ?? report.similarity_score ?? report.score ?? 0);
+    const confidence = toScore(confidenceRaw);
 
-    if (sections.length > 0) {
+    // V2 fit_level: 'high' | 'medium' | 'low' | 'unknown'
+    const fitLevel = asText(report.fit_level) || '';
+    const fitLevelLine =
+      fitLevel && fitLevel !== 'unknown'
+        ? `Fit Level: ${fitLevel.charAt(0).toUpperCase() + fitLevel.slice(1)}`
+        : null;
+
+    const summaryLines = (
+      [summary, fitLevelLine, `Recommendation: ${recommendation}`, `Confidence Score: ${confidence}%`] as (string | null)[]
+    ).filter((l): l is string => Boolean(l));
+
+    const reportSections: Array<{ heading: string; paragraphs?: string[]; bullets?: string[] }> = [];
+    reportSections.push({ heading: 'Summary', paragraphs: summaryLines });
+
+    if (isV2) {
+      // V2: render each `why` entry as its own paragraph (entries take the form "Heading: body").
+      const whyEntries = (report.why as unknown[]).map((e) => asText(e)).filter(Boolean);
+      reportSections.push({ heading: 'AI Analysis', paragraphs: whyEntries });
+
+      // Render missing[] as a bullet-list section.
+      const missing = Array.isArray(report.missing)
+        ? (report.missing as unknown[]).map((e) => asText(e)).filter(Boolean)
+        : [];
+      if (missing.length > 0) {
+        reportSections.push({ heading: 'Key Missing Information', bullets: missing });
+      }
+
+      // Any additional legacy-compat sections (skip 'why' / 'missing' already rendered above).
+      sections.forEach((section: any, sectionIndex: number) => {
+        const key = asText(section?.key) || '';
+        if (key === 'why' || key === 'missing') return;
+        const heading =
+          asText(section?.heading) || asText(section?.title) || key || `Finding ${sectionIndex + 1}`;
+        const bullets = (Array.isArray(section?.bullets) ? section.bullets : [])
+          .map((b: unknown) => asText(b))
+          .filter(Boolean);
+        const paragraphs = toParagraphs(section?.summary || section?.text);
+        reportSections.push({ heading, bullets, paragraphs });
+      });
+    } else if (sections.length > 0) {
       sections.forEach((section: any, sectionIndex: number) => {
         const heading =
           asText(section?.heading) ||
@@ -91,12 +132,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
           .map((bullet) => asText(bullet))
           .filter(Boolean);
         const paragraphs = toParagraphs(section?.summary || section?.text);
-
-        reportSections.push({
-          heading,
-          bullets,
-          paragraphs,
-        });
+        reportSections.push({ heading, bullets, paragraphs });
       });
     } else {
       reportSections.push({

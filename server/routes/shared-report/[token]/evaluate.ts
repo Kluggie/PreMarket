@@ -67,6 +67,12 @@ function resolveDocumentComparisonEngine(req: any): 'v1' | 'v2' {
   if (runtimeEnv === 'production') {
     return 'v2';
   }
+  // Default to v2 for any explicitly-named non-test environment (development, staging,
+  // preview, etc.). Unset NODE_ENV (empty string) and NODE_ENV=test keep v1 for
+  // test/CI isolation; use EVAL_ENGINE=v2 or ?engine=v2 to override in those envs.
+  if (runtimeEnv !== '' && runtimeEnv !== 'test') {
+    return 'v2';
+  }
   return 'v1';
 }
 
@@ -319,13 +325,84 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       const engine = resolveDocumentComparisonEngine(req);
       let evaluated: any;
       if (engine === 'v2') {
-        const v2Result = await evaluateWithVertexV2({
-          sharedText,
-          confidentialText: confidentialBundle,
-          requestId: context?.requestId || undefined,
-        });
+        // Hard try-catch so any unexpected evaluator throw produces a valid
+        // completed_with_warnings result rather than a 502.
+        let v2Result: any;
+        try {
+          v2Result = await evaluateWithVertexV2({
+            sharedText,
+            confidentialText: confidentialBundle,
+            requestId: context?.requestId || undefined,
+          });
+        } catch (unexpectedError: any) {
+          v2Result = {
+            ok: true,
+            data: {
+              fit_level: 'unknown',
+              confidence_0_1: 0.2,
+              why: [
+                'Executive Summary: AI report could not be generated due to an unexpected internal error.',
+                'Key Strengths: Unable to assess — model call failed unexpectedly.',
+                'Key Risks: Unable to assess — insufficient data.',
+                'Decision Readiness: Incomplete. Please address missing items and retry.',
+                'Recommendations: Review missing items below and re-run evaluation.',
+              ],
+              missing: [
+                'What is the confirmed scope and set of deliverables?',
+                'What is the confirmed timeline and go-live date?',
+                'What are the measurable success criteria (KPIs)?',
+              ],
+              redactions: [],
+            },
+            attempt_count: 1,
+            model: null,
+            _internal: {
+              warnings: ['vertex_unexpected_error_fallback_used'],
+              failure_kind: 'unexpected_error',
+            },
+          };
+        }
+
         if (!v2Result.ok) {
-          throw toV2ApiError(v2Result.error);
+          const error = v2Result.error;
+          const parseKind = asLower(error?.parse_error_kind || error?.code || '');
+
+          // Confidential leak is a security hard failure — never return
+          // a partially-generated result that might contain leaked data.
+          if (parseKind === 'confidential_leak_detected') {
+            throw toV2ApiError(v2Result.error);
+          }
+
+          // For all other ok:false cases (e.g. not_configured) — use a
+          // completed_with_warnings fallback so the API returns 200, not 502.
+          v2Result = {
+            ok: true,
+            data: {
+              fit_level: 'unknown',
+              confidence_0_1: 0.2,
+              why: [
+                'Executive Summary: AI report could not be generated. This evaluation is incomplete.',
+                'Key Strengths: Unable to assess due to model configuration or availability issue.',
+                'Key Risks: Unable to assess — please retry or contact support if issue persists.',
+                'Decision Readiness: Incomplete. Address missing items below.',
+                'Recommendations: Retry evaluation once the underlying issue is resolved.',
+              ],
+              missing: [
+                'What is the confirmed scope and set of deliverables?',
+                'What is the confirmed timeline and go-live date?',
+                'What are the measurable success criteria (KPIs)?',
+                'What budget and resource constraints apply?',
+                'What are the key risks and their mitigations?',
+              ],
+              redactions: [],
+            },
+            attempt_count: 1,
+            model: null,
+            _internal: {
+              warnings: ['vertex_not_configured_fallback_used'],
+              failure_kind: parseKind,
+            },
+          };
         }
         evaluated = convertV2ResponseToEvaluation(v2Result);
       } else {

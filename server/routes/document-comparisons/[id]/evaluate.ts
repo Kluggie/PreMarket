@@ -759,6 +759,12 @@ function resolveDocumentComparisonEngine(req: any): 'v1' | 'v2' {
   if (runtimeEnv === 'production') {
     return 'v2';
   }
+  // Default to v2 for any explicitly-named non-test environment (development, staging,
+  // preview, etc.). Unset NODE_ENV (empty string) and NODE_ENV=test keep v1 for
+  // test/CI isolation; use EVAL_ENGINE=v2 or ?engine=v2 to override in those envs.
+  if (runtimeEnv !== '' && runtimeEnv !== 'test') {
+    return 'v2';
+  }
   return 'v1';
 }
 
