@@ -374,17 +374,32 @@ function useComparisonId() {
   }, [location.search]);
 }
 
+function parseDetailTab(search) {
+  const params = new URLSearchParams(search || '');
+  const requested = asLower(params.get('tab'));
+  if (requested === 'report' || requested === 'details' || requested === 'overview') {
+    return requested;
+  }
+  return 'overview';
+}
+
 export default function DocumentComparisonDetail() {
+  const location = useLocation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const comparisonId = useComparisonId();
-  const [activeTab, setActiveTab] = useState('overview');
+  const initialTab = useMemo(() => parseDetailTab(location.search), [location.search]);
+  const [activeTab, setActiveTab] = useState(initialTab);
   const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
   const [shareRecipientEmail, setShareRecipientEmail] = useState('');
   const [selectedShareToken, setSelectedShareToken] = useState('');
   const [evaluationPollDeadline, setEvaluationPollDeadline] = useState(null);
   const [selectedFailureEntry, setSelectedFailureEntry] = useState(null);
   const [showInputPreview, setShowInputPreview] = useState(false);
+
+  useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab, comparisonId]);
 
   const comparisonQuery = useQuery({
     queryKey: ['document-comparison-detail', comparisonId],

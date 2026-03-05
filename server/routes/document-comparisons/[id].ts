@@ -58,6 +58,100 @@ function toTokenSafeInputs(value: unknown) {
   };
 }
 
+function clampResumeStep(value: unknown, fallback = 1) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+  return Math.min(Math.max(Math.floor(numeric), 1), 3);
+}
+
+function hasStep2DraftContent(comparison: any) {
+  if (!comparison || typeof comparison !== 'object') {
+    return false;
+  }
+
+  if (asText(comparison.docAText).length > 0 || asText(comparison.docBText).length > 0) {
+    return true;
+  }
+
+  const inputs =
+    comparison.inputs && typeof comparison.inputs === 'object' && !Array.isArray(comparison.inputs)
+      ? (comparison.inputs as Record<string, unknown>)
+      : {};
+  const inputTextFields = [
+    inputs.doc_a_html,
+    inputs.doc_b_html,
+    inputs.doc_a_url,
+    inputs.doc_b_url,
+    inputs.shared_doc_content,
+  ];
+  if (inputTextFields.some((value) => asText(value).length > 0)) {
+    return true;
+  }
+  if (inputs.doc_a_json && typeof inputs.doc_a_json === 'object' && !Array.isArray(inputs.doc_a_json)) {
+    return true;
+  }
+  if (inputs.doc_b_json && typeof inputs.doc_b_json === 'object' && !Array.isArray(inputs.doc_b_json)) {
+    return true;
+  }
+  return (
+    (Array.isArray(inputs.doc_a_files) && inputs.doc_a_files.length > 0) ||
+    (Array.isArray(inputs.doc_b_files) && inputs.doc_b_files.length > 0)
+  );
+}
+
+function hasEvaluationProjection(comparison: any) {
+  if (!comparison || typeof comparison !== 'object') {
+    return false;
+  }
+  const evaluationResult =
+    comparison.evaluationResult &&
+    typeof comparison.evaluationResult === 'object' &&
+    !Array.isArray(comparison.evaluationResult)
+      ? comparison.evaluationResult
+      : {};
+  const publicReport =
+    comparison.publicReport &&
+    typeof comparison.publicReport === 'object' &&
+    !Array.isArray(comparison.publicReport)
+      ? comparison.publicReport
+      : {};
+  return Object.keys(evaluationResult).length > 0 || Object.keys(publicReport).length > 0;
+}
+
+function hasEvaluationStatus(comparison: any) {
+  const status = asText(comparison?.status).toLowerCase();
+  return (
+    status === 'running' ||
+    status === 'queued' ||
+    status === 'evaluating' ||
+    status === 'evaluated' ||
+    status === 'failed'
+  );
+}
+
+function resolveComparisonResumeStep(params: {
+  comparison: any;
+  proposalDraftStep: unknown;
+  hasEvaluationAttempt: boolean;
+}) {
+  const fallbackStep = clampResumeStep(params.proposalDraftStep, 1);
+  const comparisonDraftStep = clampResumeStep(params.comparison?.draftStep, 1);
+  if (
+    params.hasEvaluationAttempt ||
+    comparisonDraftStep >= 3 ||
+    hasEvaluationStatus(params.comparison) ||
+    hasEvaluationProjection(params.comparison)
+  ) {
+    return 3;
+  }
+  if (comparisonDraftStep >= 2 || hasStep2DraftContent(params.comparison) || fallbackStep >= 2) {
+    return 2;
+  }
+  return 1;
+}
+
 function toRecipientSafeComparison(mappedComparison: any) {
   const projection = buildRecipientSafeEvaluationProjection({
     evaluationResult: mappedComparison?.evaluation_result,
@@ -270,7 +364,23 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     }
 
     if (req.method === 'GET') {
-      const mappedComparison = mapComparisonRow(existing);
+      const hasEvaluationAttempt = proposal?.id
+        ? await db
+            .select({ id: schema.proposalEvaluations.id })
+            .from(schema.proposalEvaluations)
+            .where(eq(schema.proposalEvaluations.proposalId, proposal.id))
+            .limit(1)
+            .then((rows) => rows.length > 0)
+        : false;
+      const resumeStep = resolveComparisonResumeStep({
+        comparison: existing,
+        proposalDraftStep: proposal?.draftStep,
+        hasEvaluationAttempt,
+      });
+      const mappedComparison = {
+        ...mapComparisonRow(existing),
+        resume_step: resumeStep,
+      };
       if (process.env.NODE_ENV !== 'production') {
         console.info(
           JSON.stringify({
@@ -300,6 +410,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
               status: proposal.status,
               proposal_type: proposal.proposalType,
               draft_step: proposal.draftStep,
+              resume_step: resumeStep,
               document_comparison_id: proposal.documentComparisonId,
               party_a_email: proposal.partyAEmail,
               party_b_email: proposal.partyBEmail,

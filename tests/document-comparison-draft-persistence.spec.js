@@ -264,6 +264,40 @@ test.describe('Document Comparison Draft Persistence', () => {
     });
   });
 
+  test('opening from Proposals resumes Step 3 after evaluation is triggered', async ({ page }) => {
+    await authenticate(page, uniqueId('resume_step3'));
+    const title = `Resume Step 3 ${uniqueId('title')}`;
+    const confidentialText =
+      'Confidential constraints include staffing capacity, pricing strategy, and launch windows that must remain private.';
+    const sharedText =
+      'Shared scope covers implementation milestones, SLA expectations, and incident response responsibilities.';
+
+    await openStep2FromStep1(page, title);
+    await typeInEditor(page, '[data-testid="doc-a-editor"]', confidentialText);
+    await typeInEditor(page, '[data-testid="doc-b-editor"]', sharedText);
+
+    await page.getByTestId('step2-run-evaluation-button').click();
+    await expect(page.getByRole('button', { name: 'Save and run evaluation' })).toBeVisible({
+      timeout: STEP_LOAD_TIMEOUT_MS,
+    });
+    await page.getByRole('button', { name: 'Save and run evaluation' }).click();
+
+    await expect(page).toHaveURL(/\/DocumentComparisonDetail\?id=/, {
+      timeout: STEP_LOAD_TIMEOUT_MS,
+    });
+
+    await page.goto(`${BASE_URL}/Proposals?tab=drafts`, { waitUntil: 'domcontentloaded' });
+    await expect(page.getByText(title)).toBeVisible({ timeout: STEP_LOAD_TIMEOUT_MS });
+    await page.getByText(title).click();
+
+    await expect(page).toHaveURL(/\/DocumentComparisonDetail\?id=.*tab=report/, {
+      timeout: STEP_LOAD_TIMEOUT_MS,
+    });
+    await expect(page.getByRole('heading', { name: /Evaluation History/i })).toBeVisible({
+      timeout: STEP_LOAD_TIMEOUT_MS,
+    });
+  });
+
   test('Step 1 blocks transition to Step 2 when draft create fails', async ({ page }) => {
     await authenticate(page, uniqueId('create_fail'));
     await page.goto(`${BASE_URL}/DocumentComparisonCreate`, { waitUntil: 'domcontentloaded' });

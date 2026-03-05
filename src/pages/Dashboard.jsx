@@ -208,13 +208,29 @@ export default function Dashboard() {
       String(proposal.proposal_type || '').toLowerCase() === 'document_comparison' &&
       proposal.document_comparison_id
     ) {
+      const resumeStep = Number(proposal.resume_step || proposal.draft_step || 1);
+      const normalizedResumeStep = Number.isFinite(resumeStep)
+        ? Math.max(1, Math.min(3, Math.floor(resumeStep)))
+        : 1;
+
+      if (normalizedResumeStep >= 3) {
+        navigate(
+          createPageUrl(
+            `DocumentComparisonDetail?id=${encodeURIComponent(
+              proposal.document_comparison_id,
+            )}&tab=report`,
+          ),
+        );
+        return;
+      }
+
       if ((proposal.list_type || '').toLowerCase() === 'draft') {
         navigate(
           createPageUrl(
             `DocumentComparisonCreate?draft=${encodeURIComponent(
               proposal.document_comparison_id,
             )}&proposalId=${encodeURIComponent(proposal.id)}&step=${encodeURIComponent(
-              proposal.draft_step || 1,
+              normalizedResumeStep,
             )}`,
           ),
         );

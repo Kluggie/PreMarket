@@ -950,8 +950,21 @@ export default function DocumentComparisonCreate() {
     setDocAPreviewSnippet(previewSnippet(nextDocAText));
     setDocBPreviewSnippet(previewSnippet(nextDocBText));
 
+    const serverResumeStepRaw = Number(comparison.resume_step || comparison.draft_step || 1);
+    const serverResumeStep = Number.isFinite(serverResumeStepRaw)
+      ? Math.max(1, Math.min(TOTAL_WORKFLOW_STEPS, Math.floor(serverResumeStepRaw)))
+      : 1;
+
+    if (!routeState.hasStepParam && !routeState.token && serverResumeStep >= 3) {
+      navigate(
+        createPageUrl(`DocumentComparisonDetail?id=${encodeURIComponent(comparison.id || resolvedDraftId)}`),
+        { replace: true },
+      );
+      return;
+    }
+
     const draftStep = resolveHydratedDraftStep({
-      serverDraftStep: comparison.draft_step || 1,
+      serverDraftStep: comparison.draft_step || serverResumeStep || 1,
       routeStep: routeState.step || 1,
       localStep: stepRef.current,
       hasRouteStepParam: routeState.hasStepParam,
@@ -1010,6 +1023,8 @@ export default function DocumentComparisonCreate() {
     routeState.hasStepParam,
     routeState.proposalId,
     routeState.step,
+    routeState.token,
+    navigate,
     updateRouteParams,
   ]);
 

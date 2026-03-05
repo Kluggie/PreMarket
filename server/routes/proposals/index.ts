@@ -18,7 +18,116 @@ function normalizeEmail(value: unknown) {
   return typeof value === 'string' ? value.trim().toLowerCase() : '';
 }
 
-function mapProposalRow(proposal, currentUser, sharedReportLink = null) {
+function asText(value: unknown) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function asLower(value: unknown) {
+  return asText(value).toLowerCase();
+}
+
+function clampResumeStep(value: unknown, fallback = 1) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+  return Math.min(Math.max(Math.floor(numeric), 1), 3);
+}
+
+function hasStep2DraftContent(comparison: any) {
+  if (!comparison || typeof comparison !== 'object') {
+    return false;
+  }
+
+  if (asText(comparison.docAText).length > 0 || asText(comparison.docBText).length > 0) {
+    return true;
+  }
+
+  const inputs =
+    comparison.inputs && typeof comparison.inputs === 'object' && !Array.isArray(comparison.inputs)
+      ? (comparison.inputs as Record<string, unknown>)
+      : {};
+
+  const inputTextFields = [
+    inputs.doc_a_html,
+    inputs.doc_b_html,
+    inputs.doc_a_url,
+    inputs.doc_b_url,
+    inputs.shared_doc_content,
+  ];
+  if (inputTextFields.some((value) => asText(value).length > 0)) {
+    return true;
+  }
+
+  const hasDocAJson = Boolean(inputs.doc_a_json && typeof inputs.doc_a_json === 'object' && !Array.isArray(inputs.doc_a_json));
+  const hasDocBJson = Boolean(inputs.doc_b_json && typeof inputs.doc_b_json === 'object' && !Array.isArray(inputs.doc_b_json));
+  if (hasDocAJson || hasDocBJson) {
+    return true;
+  }
+
+  return (
+    (Array.isArray(inputs.doc_a_files) && inputs.doc_a_files.length > 0) ||
+    (Array.isArray(inputs.doc_b_files) && inputs.doc_b_files.length > 0)
+  );
+}
+
+function hasEvaluationProjection(comparison: any) {
+  if (!comparison || typeof comparison !== 'object') {
+    return false;
+  }
+
+  const evaluationResult =
+    comparison.evaluationResult &&
+    typeof comparison.evaluationResult === 'object' &&
+    !Array.isArray(comparison.evaluationResult)
+      ? comparison.evaluationResult
+      : {};
+  const publicReport =
+    comparison.publicReport &&
+    typeof comparison.publicReport === 'object' &&
+    !Array.isArray(comparison.publicReport)
+      ? comparison.publicReport
+      : {};
+
+  return Object.keys(evaluationResult).length > 0 || Object.keys(publicReport).length > 0;
+}
+
+function hasEvaluationStatus(comparison: any) {
+  const status = asLower(comparison?.status);
+  return (
+    status === 'running' ||
+    status === 'queued' ||
+    status === 'evaluating' ||
+    status === 'evaluated' ||
+    status === 'failed'
+  );
+}
+
+function resolveDocumentComparisonResumeStep(params: {
+  comparison: any;
+  hasEvaluationAttempt: boolean;
+  proposalDraftStep: unknown;
+}) {
+  const fallbackStep = clampResumeStep(params.proposalDraftStep, 1);
+  const comparisonDraftStep = clampResumeStep(params.comparison?.draftStep, 1);
+
+  if (
+    params.hasEvaluationAttempt ||
+    comparisonDraftStep >= 3 ||
+    hasEvaluationStatus(params.comparison) ||
+    hasEvaluationProjection(params.comparison)
+  ) {
+    return 3;
+  }
+
+  if (comparisonDraftStep >= 2 || hasStep2DraftContent(params.comparison) || fallbackStep >= 2) {
+    return 2;
+  }
+
+  return 1;
+}
+
+function mapProposalRow(proposal, currentUser, sharedReportLink = null, resumeStepOverride: unknown = null) {
   const currentEmail = String(currentUser?.email || '').trim().toLowerCase();
   const currentUserId = String(currentUser?.id || '').trim();
   const senderEmail = String(proposal.partyAEmail || '').trim().toLowerCase();
@@ -57,6 +166,9 @@ function mapProposalRow(proposal, currentUser, sharedReportLink = null) {
     directionalStatus = 'received';
   }
 
+  const normalizedDraftStep = clampResumeStep(proposal.draftStep || 1, 1);
+  const resolvedResumeStep = clampResumeStep(resumeStepOverride, normalizedDraftStep);
+
   return {
     id: proposal.id,
     title: proposal.title,
@@ -72,7 +184,8 @@ function mapProposalRow(proposal, currentUser, sharedReportLink = null) {
     template_id: proposal.templateId,
     template_name: proposal.templateName,
     proposal_type: proposal.proposalType || 'standard',
-    draft_step: Number(proposal.draftStep || 1),
+    draft_step: normalizedDraftStep,
+    resume_step: resolvedResumeStep,
     source_proposal_id: proposal.sourceProposalId || null,
     document_comparison_id: proposal.documentComparisonId || null,
     party_a_email: proposal.partyAEmail || null,
@@ -400,6 +513,85 @@ export default async function handler(req: any, res: any) {
       const pageRows = hasMore ? rows.slice(0, limit) : rows;
       const nextCursor = hasMore ? encodeCursor(pageRows[pageRows.length - 1]) : null;
 
+      const documentComparisonProposals = pageRows.filter(
+        (row) =>
+          asLower(row?.proposalType) === 'document_comparison' &&
+          asText(row?.documentComparisonId).length > 0 &&
+          asText(row?.id).length > 0,
+      );
+      const documentComparisonIds = Array.from(
+        new Set(
+          documentComparisonProposals
+            .map((row) => asText(row.documentComparisonId))
+            .filter(Boolean),
+        ),
+      );
+      const documentComparisonProposalIds = Array.from(
+        new Set(
+          documentComparisonProposals
+            .map((row) => asText(row.id))
+            .filter(Boolean),
+        ),
+      );
+
+      const [documentComparisonRows, documentComparisonEvaluationRows] = await Promise.all([
+        documentComparisonIds.length > 0
+          ? db
+              .select({
+                id: schema.documentComparisons.id,
+                status: schema.documentComparisons.status,
+                draftStep: schema.documentComparisons.draftStep,
+                docAText: schema.documentComparisons.docAText,
+                docBText: schema.documentComparisons.docBText,
+                inputs: schema.documentComparisons.inputs,
+                evaluationResult: schema.documentComparisons.evaluationResult,
+                publicReport: schema.documentComparisons.publicReport,
+              })
+              .from(schema.documentComparisons)
+              .where(inArray(schema.documentComparisons.id, documentComparisonIds))
+          : Promise.resolve([]),
+        documentComparisonProposalIds.length > 0
+          ? db
+              .select({
+                proposalId: schema.proposalEvaluations.proposalId,
+              })
+              .from(schema.proposalEvaluations)
+              .where(inArray(schema.proposalEvaluations.proposalId, documentComparisonProposalIds))
+          : Promise.resolve([]),
+      ]);
+
+      const documentComparisonById = new Map<string, any>();
+      documentComparisonRows.forEach((row) => {
+        const id = asText(row?.id);
+        if (id) {
+          documentComparisonById.set(id, row);
+        }
+      });
+
+      const hasEvaluationByProposalId = new Set<string>();
+      documentComparisonEvaluationRows.forEach((row) => {
+        const proposalId = asText(row?.proposalId);
+        if (proposalId) {
+          hasEvaluationByProposalId.add(proposalId);
+        }
+      });
+
+      const resumeStepByProposalId = new Map<string, number>();
+      documentComparisonProposals.forEach((proposalRow) => {
+        const proposalId = asText(proposalRow?.id);
+        const comparisonId = asText(proposalRow?.documentComparisonId);
+        if (!proposalId || !comparisonId) {
+          return;
+        }
+        const comparisonRow = documentComparisonById.get(comparisonId) || null;
+        const resumeStep = resolveDocumentComparisonResumeStep({
+          comparison: comparisonRow,
+          hasEvaluationAttempt: hasEvaluationByProposalId.has(proposalId),
+          proposalDraftStep: proposalRow?.draftStep,
+        });
+        resumeStepByProposalId.set(proposalId, resumeStep);
+      });
+
       console.info(
         JSON.stringify({
           level: 'info',
@@ -422,7 +614,12 @@ export default async function handler(req: any, res: any) {
 
       ok(res, 200, {
         proposals: pageRows.map((row) =>
-          mapProposalRow(row, auth.user, sharedReportByProposalId.get(String(row.id || '')) || null),
+          mapProposalRow(
+            row,
+            auth.user,
+            sharedReportByProposalId.get(String(row.id || '')) || null,
+            resumeStepByProposalId.get(String(row.id || '')) || null,
+          ),
         ),
         page: {
           limit,

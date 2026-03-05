@@ -14,7 +14,7 @@ import test from 'node:test';
 import debugDbHandler from '../../server/routes/debug/db.ts';
 import proposalsHandler from '../../server/routes/proposals/index.ts';
 import summaryHandler from '../../server/routes/dashboard/summary.ts';
-import { hasDatabaseUrl } from '../../server/_lib/db/client.js';
+import { getDb, hasDatabaseUrl, schema } from '../../server/_lib/db/client.js';
 import { createMockReq, createMockRes } from '../helpers/httpMock.mjs';
 import { ensureTestEnv, makeSessionCookie } from '../helpers/auth.mjs';
 
@@ -331,6 +331,67 @@ test(
       false,
       `Proposal ${proposalId} with sent_at set must NOT appear in "Drafts" tab. ` +
         'Once sent_at is set, a proposal graduates out of Drafts.',
+    );
+  },
+);
+
+test(
+  'document_comparison proposal with evaluation history resumes at step 3',
+  { skip: !dbAvailable ? 'DATABASE_URL not set' : false },
+  async () => {
+    const sub = 'workflow-tabs-test-user-resume-step3';
+    const email = 'workflowtabsresumestep3@workflow-test.example';
+    const cookie = makeSessionCookie({ sub, email });
+    const comparisonId = `comparison_resume_${Date.now()}`;
+
+    const createReq = createMockReq({
+      method: 'POST',
+      url: '/api/proposals',
+      headers: { cookie },
+      body: {
+        title: `Resume Step 3 ${Date.now()}`,
+        status: 'draft',
+        proposalType: 'document_comparison',
+        documentComparisonId: comparisonId,
+      },
+    });
+    const createRes = createMockRes();
+    await proposalsHandler(createReq, createRes);
+    assert.equal(createRes.statusCode, 201, `Create should return 201, got ${createRes.statusCode}`);
+    const createdProposal = createRes.jsonBody()?.proposal;
+    assert.ok(createdProposal?.id, 'Created proposal should have an id');
+
+    const db = getDb();
+    const now = new Date();
+    await db.insert(schema.proposalEvaluations).values({
+      id: `eval_resume_${Date.now()}`,
+      proposalId: createdProposal.id,
+      userId: sub,
+      source: 'document_comparison_vertex',
+      status: 'failed',
+      summary: 'Simulated evaluation attempt for resume-step regression guard',
+      result: { error: { code: 'simulated_failure' } },
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const listReq = createMockReq({
+      method: 'GET',
+      url: '/api/proposals',
+      query: { tab: 'drafts', limit: '100' },
+      headers: { cookie },
+    });
+    const listRes = createMockRes();
+    await proposalsHandler(listReq, listRes);
+    assert.equal(listRes.statusCode, 200, `List should return 200, got ${listRes.statusCode}`);
+
+    const proposals = listRes.jsonBody()?.proposals || [];
+    const matching = proposals.find((entry) => entry.id === createdProposal.id);
+    assert.ok(matching, 'Created proposal should appear in drafts list');
+    assert.equal(
+      Number(matching.resume_step || 0),
+      3,
+      `Expected resume_step=3 when evaluation history exists, got ${matching.resume_step}`,
     );
   },
 );
