@@ -226,6 +226,31 @@ function resolveOtherPartyCanaryTokens(existing: any, existingInputs: Record<str
   return [...metadataTokenCandidates, ...inputTokenCandidates].flatMap((candidate) => toStringArray(candidate));
 }
 
+function resolveComparisonCompanyContext(existing: any, existingInputs: Record<string, unknown>) {
+  const metadata =
+    existing?.metadata && typeof existing.metadata === 'object' && !Array.isArray(existing.metadata)
+      ? existing.metadata
+      : {};
+  const companyName = asText(
+    existing?.companyName ||
+      existingInputs.company_name ||
+      existingInputs.companyName ||
+      metadata.company_name ||
+      metadata.companyName,
+  );
+  const companyWebsite = asText(
+    existing?.companyWebsite ||
+      existingInputs.company_website ||
+      existingInputs.companyWebsite ||
+      metadata.company_website ||
+      metadata.companyWebsite,
+  );
+  return {
+    companyName: companyName || undefined,
+    companyWebsite: companyWebsite || undefined,
+  };
+}
+
 export default async function handler(req: any, res: any, comparisonIdParam?: string) {
   await withApiRoute(
     req,
@@ -279,6 +304,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       existing.inputs && typeof existing.inputs === 'object' && !Array.isArray(existing.inputs)
         ? existing.inputs
         : {};
+    const companyContext = resolveComparisonCompanyContext(existing, existingInputs);
     const useRequestDocumentOverrides = intent !== 'custom_prompt';
     const resolvedDocA = resolveCoachDocumentSide({
       requestText: useRequestDocumentOverrides ? body.docAText ?? body.doc_a_text : undefined,
@@ -324,6 +350,8 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       selectionTarget: selectionTarget || undefined,
       selectionText: selectionText || undefined,
       promptText: promptText || undefined,
+      companyName: companyContext.companyName,
+      companyWebsite: companyContext.companyWebsite,
     });
     const cacheHashPrefix = cacheHash.slice(0, 12);
 
@@ -368,6 +396,8 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       selectionTarget: selectionTarget || undefined,
       selectionText: selectionText || undefined,
       promptText: promptText || undefined,
+      companyName: companyContext.companyName,
+      companyWebsite: companyContext.companyWebsite,
       otherPartyCanaryTokens: resolveOtherPartyCanaryTokens(existing, existingInputs),
     });
     const relevanceGuarded = applyCoachRelevanceGuard({

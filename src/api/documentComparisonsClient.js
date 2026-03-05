@@ -302,6 +302,35 @@ export const documentComparisonsClient = {
     };
   },
 
+  async updateCompanyContext(id, input = {}) {
+    const response = await request(`/api/document-comparisons/${encodeId(id)}/company-context`, {
+      method: 'PATCH',
+      body: JSON.stringify(input || {}),
+    });
+    return {
+      comparisonId: response.comparison_id || id,
+      companyContext: response.company_context || {
+        company_name: null,
+        company_website: null,
+      },
+      updatedAt: response.updated_at || null,
+    };
+  },
+
+  async companyBrief(id, input = {}) {
+    const response = await request(`/api/document-comparisons/${encodeId(id)}/company-brief`, {
+      method: 'POST',
+      body: JSON.stringify(input || {}),
+    });
+    return {
+      comparisonId: response.comparison_id || id,
+      provider: typeof response.provider === 'string' ? response.provider : 'vertex',
+      model: typeof response.model === 'string' ? response.model : 'unknown',
+      companyBrief: response.company_brief || null,
+      generatedAt: response.generated_at || null,
+    };
+  },
+
   async downloadJson(id) {
     const response = await request(`/api/document-comparisons/${encodeId(id)}/download/json`);
     return {

@@ -135,6 +135,8 @@ let documentComparisonRouteHandlersPromise:
       documentComparisonsIdHandler: any;
       documentComparisonsEvaluateHandler: any;
       documentComparisonsCoachHandler: any;
+      documentComparisonsCompanyContextHandler: any;
+      documentComparisonsCompanyBriefHandler: any;
       documentComparisonsDownloadJsonHandler: any;
       documentComparisonsDownloadInputsHandler: any;
       documentComparisonsDownloadPdfHandler: any;
@@ -150,6 +152,8 @@ async function getDocumentComparisonRouteHandlers() {
       import('../server/routes/document-comparisons/[id].js'),
       import('../server/routes/document-comparisons/[id]/evaluate.js'),
       import('../server/routes/document-comparisons/[id]/coach.js'),
+      import('../server/routes/document-comparisons/[id]/company-context.js'),
+      import('../server/routes/document-comparisons/[id]/company-brief.js'),
       import('../server/routes/document-comparisons/[id]/download-json.js'),
       import('../server/routes/document-comparisons/[id]/download-inputs.js'),
       import('../server/routes/document-comparisons/[id]/download-pdf.js'),
@@ -161,6 +165,8 @@ async function getDocumentComparisonRouteHandlers() {
         idModule,
         evaluateModule,
         coachModule,
+        companyContextModule,
+        companyBriefModule,
         downloadJsonModule,
         downloadInputsModule,
         downloadPdfModule,
@@ -171,6 +177,8 @@ async function getDocumentComparisonRouteHandlers() {
         documentComparisonsIdHandler: idModule.default,
         documentComparisonsEvaluateHandler: evaluateModule.default,
         documentComparisonsCoachHandler: coachModule.default,
+        documentComparisonsCompanyContextHandler: companyContextModule.default,
+        documentComparisonsCompanyBriefHandler: companyBriefModule.default,
         documentComparisonsDownloadJsonHandler: downloadJsonModule.default,
         documentComparisonsDownloadInputsHandler: downloadInputsModule.default,
         documentComparisonsDownloadPdfHandler: downloadPdfModule.default,
@@ -491,6 +499,26 @@ export default async function handler(req: any, res: any) {
     const id = decodeURIComponent(documentComparisonsCoachMatch[1]);
     const { documentComparisonsCoachHandler } = await getDocumentComparisonRouteHandlers();
     return documentComparisonsCoachHandler(req, res, id);
+  }
+
+  const documentComparisonsCompanyContextMatch = pathname.match(
+    /^\/api\/document-comparisons\/([^/]+)\/company-context$/,
+  );
+  if (documentComparisonsCompanyContextMatch && method === 'PATCH') {
+    const id = decodeURIComponent(documentComparisonsCompanyContextMatch[1]);
+    const { documentComparisonsCompanyContextHandler } =
+      await getDocumentComparisonRouteHandlers();
+    return documentComparisonsCompanyContextHandler(req, res, id);
+  }
+
+  const documentComparisonsCompanyBriefMatch = pathname.match(
+    /^\/api\/document-comparisons\/([^/]+)\/company-brief$/,
+  );
+  if (documentComparisonsCompanyBriefMatch && method === 'POST') {
+    const id = decodeURIComponent(documentComparisonsCompanyBriefMatch[1]);
+    const { documentComparisonsCompanyBriefHandler } =
+      await getDocumentComparisonRouteHandlers();
+    return documentComparisonsCompanyBriefHandler(req, res, id);
   }
 
   const documentComparisonsDownloadJsonMatch = pathname.match(

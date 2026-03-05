@@ -129,6 +129,8 @@ type GenerateCoachParams = {
   selectionText?: string;
   selectionTarget?: CoachSelectionTarget;
   promptText?: string;
+  companyName?: string;
+  companyWebsite?: string;
   otherPartyCanaryTokens?: string[];
 };
 
@@ -379,6 +381,8 @@ function buildIntentSpecificRules(params: GenerateCoachParams) {
 
 export function buildCoachPrompt(params: GenerateCoachParams) {
   const title = params.title || 'Untitled Comparison';
+  const companyName = asText(params.companyName) || 'unknown';
+  const companyWebsite = asText(params.companyWebsite) || 'unknown';
   const selectionTarget = params.selectionTarget || 'shared';
   const selectionText = asText(params.selectionText);
   const selectionDocText = selectionTarget === 'confidential' ? params.docAText : params.docBText;
@@ -410,6 +414,9 @@ export function buildCoachPrompt(params: GenerateCoachParams) {
     `Mode: ${params.mode}`,
     `Intent: ${params.intent}`,
     `Title: ${title}`,
+    'Company Context:',
+    `Company name: ${companyName}`,
+    `Website: ${companyWebsite}`,
     `Selection Target: ${params.mode === 'selection' ? selectionTarget : 'n/a'}`,
     'Selection Text:',
     params.mode === 'selection' ? selectionText || '(none provided)' : 'n/a',
@@ -465,6 +472,8 @@ function buildCustomPromptFeedbackPrompt(params: GenerateCoachParams, strictMode
   const userPrompt = asText(params.promptText).slice(0, MAX_CUSTOM_PROMPT_CHARS);
   const sharedText = String(params.docBText || '');
   const userConfidentialText = String(params.docAText || '');
+  const companyName = asText(params.companyName) || 'unknown';
+  const companyWebsite = asText(params.companyWebsite) || 'unknown';
   const selectionText = asText(params.selectionText);
 
   const strictWarning = strictMode
@@ -485,6 +494,9 @@ function buildCustomPromptFeedbackPrompt(params: GenerateCoachParams, strictMode
     '',
     'User message:',
     `User prompt: ${userPrompt || '(empty prompt)'}`,
+    'Company Context:',
+    `Company name: ${companyName}`,
+    `Website: ${companyWebsite}`,
     '<SHARED_TEXT>',
     sharedText || '(empty)',
     '</SHARED_TEXT>',
@@ -1530,6 +1542,8 @@ export function buildCoachCacheHash(params: {
   selectionTarget?: CoachSelectionTarget;
   selectionText?: string;
   promptText?: string;
+  companyName?: string;
+  companyWebsite?: string;
 }) {
   return createHash('sha256')
     .update(
@@ -1541,6 +1555,8 @@ export function buildCoachCacheHash(params: {
         asLower(params.selectionTarget || ''),
         String(params.docAText || ''),
         String(params.docBText || ''),
+        String(params.companyName || ''),
+        String(params.companyWebsite || ''),
         String(params.selectionText || ''),
         String(params.promptText || ''),
       ].join('\n---\n'),

@@ -853,6 +853,8 @@ export const documentComparisons = pgTable(
     draftStep: integer('draft_step').notNull().default(1),
     partyALabel: text('party_a_label').notNull().default('Document A'),
     partyBLabel: text('party_b_label').notNull().default('Document B'),
+    companyName: text('company_name'),
+    companyWebsite: text('company_website'),
     docAText: text('doc_a_text'),
     docBText: text('doc_b_text'),
     docASpans: jsonb('doc_a_spans').notNull().default(sql`'[]'::jsonb`),

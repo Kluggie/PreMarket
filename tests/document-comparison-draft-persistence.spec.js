@@ -372,4 +372,87 @@ test.describe('Document Comparison Draft Persistence', () => {
       .toBe(2);
     expect(coachRequests[1]?.promptText).toBe('Run from keyboard');
   });
+
+  test('company context saves once and negotiation action runs without reopening modal', async ({ page }) => {
+    await authenticate(page, uniqueId('company_context'));
+    await openStep2FromStep1(page, `Company Context ${uniqueId('title')}`);
+
+    const companyContextRequests = [];
+    await page.route('**/api/document-comparisons/**/company-context', async (route) => {
+      const payload = JSON.parse(route.request().postData() || '{}');
+      companyContextRequests.push(payload);
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          comparison_id: readDraftIdFromUrl(page.url()) || 'comparison_test',
+          company_context: {
+            company_name: payload.companyName || 'Acme Industries',
+            company_website: 'https://acme.test',
+          },
+          updated_at: new Date().toISOString(),
+        }),
+      });
+    });
+
+    const coachRequests = [];
+    await page.route('**/api/document-comparisons/**/coach', async (route) => {
+      const payload = JSON.parse(route.request().postData() || '{}');
+      coachRequests.push(payload);
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          comparison_id: readDraftIdFromUrl(page.url()) || 'comparison_test',
+          cache_hash: `coach_hash_${coachRequests.length}`,
+          cached: false,
+          provider: 'mock',
+          model: 'company-context-e2e-mock',
+          prompt_version: 'coach-v1',
+          coach: {
+            version: 'coach-v1',
+            summary: {
+              overall: 'Negotiation output from test route.',
+              top_priorities: [],
+            },
+            suggestions: [],
+            concerns: [],
+            questions: [],
+            negotiation_moves: [],
+          },
+          created_at: new Date().toISOString(),
+          withheld_count: 0,
+        }),
+      });
+    });
+
+    await page.getByTestId('company-context-edit-button').click();
+    await expect(page.getByTestId('company-context-dialog')).toBeVisible({
+      timeout: STEP_LOAD_TIMEOUT_MS,
+    });
+    await page.getByTestId('company-context-name-input').fill('Acme Industries');
+    await page.getByTestId('company-context-website-input').fill('acme.test');
+    await page.getByTestId('company-context-save-button').click();
+
+    await expect
+      .poll(() => companyContextRequests.length, { timeout: STEP_LOAD_TIMEOUT_MS })
+      .toBe(1);
+    expect(companyContextRequests[0]?.companyName).toBe('Acme Industries');
+    await expect(page.getByTestId('company-context-dialog')).toHaveCount(0);
+    await expect(page.getByTestId('company-context-name')).toContainText('Acme Industries');
+
+    await page.getByRole('button', { name: 'Negotiation Strategy' }).click();
+    await expect
+      .poll(() => coachRequests.length, { timeout: STEP_LOAD_TIMEOUT_MS })
+      .toBe(1);
+    await expect(page.getByTestId('coach-response-feedback')).toContainText(
+      'Negotiation output from test route.',
+      {
+        timeout: STEP_LOAD_TIMEOUT_MS,
+      },
+    );
+    await expect(page.getByTestId('company-context-dialog')).toHaveCount(0);
+  });
 });

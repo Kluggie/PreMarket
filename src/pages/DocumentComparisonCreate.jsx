@@ -71,10 +71,29 @@ const COACH_INTENT_LABELS = {
   rewrite_selection: 'Rewrite selection',
   general: 'General improvements',
   custom_prompt: 'Custom prompt',
+  company_brief: 'Company Brief',
 };
 
 function asText(value) {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function normalizeCompanyWebsite(value) {
+  const raw = asText(value);
+  if (!raw) {
+    return '';
+  }
+  const withProtocol = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+  try {
+    const parsed = new URL(withProtocol);
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      return '';
+    }
+    parsed.hash = '';
+    return parsed.toString().replace(/\/$/, '');
+  } catch {
+    return '';
+  }
 }
 
 function parseCoachResponseBlocks(value) {
@@ -679,6 +698,13 @@ export default function DocumentComparisonCreate() {
   const [coachCached, setCoachCached] = useState(false);
   const [coachWithheldCount, setCoachWithheldCount] = useState(0);
   const [customPromptText, setCustomPromptText] = useState('');
+  const [companyContextName, setCompanyContextName] = useState('');
+  const [companyContextWebsite, setCompanyContextWebsite] = useState('');
+  const [companyContextNameInput, setCompanyContextNameInput] = useState('');
+  const [companyContextWebsiteInput, setCompanyContextWebsiteInput] = useState('');
+  const [isCompanyContextDialogOpen, setIsCompanyContextDialogOpen] = useState(false);
+  const [isSavingCompanyContext, setIsSavingCompanyContext] = useState(false);
+  const [runCompanyBriefAfterContextSave, setRunCompanyBriefAfterContextSave] = useState(false);
   const [isCoachResponseCopied, setIsCoachResponseCopied] = useState(false);
   const [coachRequestMeta, setCoachRequestMeta] = useState(null);
   const [coachResultHash, setCoachResultHash] = useState('');
@@ -875,6 +901,8 @@ export default function DocumentComparisonCreate() {
 
     setComparisonId(comparison.id || resolvedDraftId || '');
     setLinkedProposalId(draftQuery.data.proposal?.id || routeState.proposalId || '');
+    setCompanyContextName(asText(comparison.company_name || comparison.companyName || ''));
+    setCompanyContextWebsite(asText(comparison.company_website || comparison.companyWebsite || ''));
 
     setTitle(comparison.title || '');
 
@@ -1225,6 +1253,12 @@ export default function DocumentComparisonCreate() {
       const persistedComparisonId = comparison.id;
       const persistedProposalId =
         comparison.proposal_id || linkedProposalId || routeState.proposalId || '';
+      const persistedCompanyName = asText(
+        comparison.company_name || comparison.companyName || companyContextName,
+      );
+      const persistedCompanyWebsite = asText(
+        comparison.company_website || comparison.companyWebsite || companyContextWebsite,
+      );
       const persistedTitle = asText(comparison.title) || payload.title;
       const persistedDocAText = String(comparison.doc_a_text || payload.doc_a_text || '');
       const persistedDocBText = String(comparison.doc_b_text || payload.doc_b_text || '');
@@ -1268,6 +1302,8 @@ export default function DocumentComparisonCreate() {
 
       setComparisonId(persistedComparisonId);
       setLinkedProposalId(persistedProposalId);
+      setCompanyContextName(persistedCompanyName);
+      setCompanyContextWebsite(persistedCompanyWebsite);
       comparisonIdRef.current = persistedComparisonId;
       linkedProposalIdRef.current = persistedProposalId;
       const hasNewerLocalEdits = lastEditAtRef.current > saveStartedAtMs;
@@ -1556,6 +1592,9 @@ export default function DocumentComparisonCreate() {
   );
   const coachResponseText = asText(coachResult?.custom_feedback || coachResult?.summary?.overall || '');
   const coachIntentKey = String(coachRequestMeta?.intent || '').toLowerCase();
+  const companyBriefSources = Array.isArray(coachResult?.company_brief_sources) ? coachResult.company_brief_sources : [];
+  const companyBriefLimited = Boolean(coachResult?.company_brief_limited);
+  const hasCompanyContext = Boolean(asText(companyContextName));
   const isCustomPromptResponse = coachIntentKey === 'custom_prompt';
   const coachResponseLabel = COACH_INTENT_LABELS[coachIntentKey] || 'Suggestion feedback';
   const coachResponseMetaParts = [];
@@ -1567,6 +1606,12 @@ export default function DocumentComparisonCreate() {
   }
   if (coachWithheldCount > 0) {
     coachResponseMetaParts.push(`${coachWithheldCount} shared suggestion${coachWithheldCount === 1 ? '' : 's'} withheld for safety`);
+  }
+  if (coachIntentKey === 'company_brief' && companyBriefSources.length > 0) {
+    coachResponseMetaParts.push(`${companyBriefSources.length} source${companyBriefSources.length === 1 ? '' : 's'}`);
+  }
+  if (coachIntentKey === 'company_brief' && companyBriefLimited) {
+    coachResponseMetaParts.push('Limited public info found');
   }
   const coachResponseMeta = coachResponseMetaParts.join(' · ');
 
@@ -2084,6 +2129,64 @@ export default function DocumentComparisonCreate() {
     }
   };
 
+  const updateCompanyContextInDraftCache = useCallback(
+    (nextComparisonId, nextCompanyName, nextCompanyWebsite) => {
+      const normalizedId = asText(nextComparisonId);
+      if (!normalizedId) {
+        return;
+      }
+
+      const normalizedName = asText(nextCompanyName);
+      const normalizedWebsite = asText(nextCompanyWebsite);
+      const cacheKeys = [
+        ['document-comparison-draft', normalizedId, routeState.token || ''],
+      ];
+      if (routeState.token) {
+        cacheKeys.push(['document-comparison-draft', normalizedId, '']);
+      }
+
+      cacheKeys.forEach((queryKey) => {
+        const existing = queryClient.getQueryData(queryKey);
+        if (!existing || typeof existing !== 'object') {
+          return;
+        }
+
+        queryClient.setQueryData(queryKey, (currentValue) => {
+          if (!currentValue || typeof currentValue !== 'object') {
+            return currentValue;
+          }
+          const currentComparison =
+            currentValue.comparison && typeof currentValue.comparison === 'object'
+              ? currentValue.comparison
+              : null;
+          if (!currentComparison) {
+            return currentValue;
+          }
+          return {
+            ...currentValue,
+            comparison: {
+              ...currentComparison,
+              company_name: normalizedName || null,
+              company_website: normalizedWebsite || null,
+              companyName: normalizedName || null,
+              companyWebsite: normalizedWebsite || null,
+            },
+          };
+        });
+      });
+    },
+    [queryClient, routeState.token],
+  );
+
+  const openCompanyContextDialog = ({
+    runCompanyBriefAfterSave = false,
+  } = {}) => {
+    setCompanyContextNameInput(companyContextName || '');
+    setCompanyContextWebsiteInput(companyContextWebsite || '');
+    setRunCompanyBriefAfterContextSave(Boolean(runCompanyBriefAfterSave));
+    setIsCompanyContextDialogOpen(true);
+  };
+
   const runCoach = async ({
     action = '',
     mode = 'full',
@@ -2202,6 +2305,204 @@ export default function DocumentComparisonCreate() {
     } finally {
       setCoachLoading(false);
     }
+  };
+
+  const runCompanyBrief = async ({
+    comparisonIdOverride = '',
+    skipContextCheck = false,
+    silent = false,
+  } = {}) => {
+    if (coachNotConfigured) {
+      return null;
+    }
+
+    const resolvedId = asText(comparisonIdOverride) || (await ensureComparisonIdForCoach());
+    if (!resolvedId) {
+      return null;
+    }
+
+    if (!skipContextCheck && !asText(companyContextName)) {
+      openCompanyContextDialog({ runCompanyBriefAfterSave: true });
+      return null;
+    }
+
+    setCoachLoading(true);
+    setCoachError('');
+    setIsCoachResponseCopied(false);
+
+    try {
+      const response = await documentComparisonsClient.companyBrief(resolvedId, {
+        lens: 'risk_negotiation',
+      });
+      const brief = response?.companyBrief || {};
+      const feedbackText = asText(brief.content);
+      const sources = Array.isArray(brief.sources) ? brief.sources : [];
+      const searches = Array.isArray(brief.searches) ? brief.searches : [];
+      const limited = Boolean(brief.limited);
+      const fallbackText = limited
+        ? 'Limited public info found.'
+        : 'Company brief completed.';
+
+      setCoachResult({
+        version: 'coach-v1',
+        summary: {
+          overall: feedbackText || fallbackText,
+          top_priorities: [],
+        },
+        suggestions: [],
+        concerns: [],
+        questions: [],
+        negotiation_moves: [],
+        custom_feedback: feedbackText || fallbackText,
+        company_brief_sources: sources,
+        company_brief_searches: searches,
+        company_brief_limited: limited,
+      });
+      setCoachResultHash('');
+      setCoachCached(false);
+      setCoachWithheldCount(0);
+      setCoachNotConfigured(false);
+      setCoachRequestMeta({
+        action: 'company_brief',
+        mode: 'full',
+        intent: 'company_brief',
+        promptText: '',
+        model: response?.model || 'unknown',
+        provider: response?.provider || 'vertex',
+        selectionText: '',
+        selectionTarget: null,
+        selectionRange: null,
+      });
+      setExpandedSuggestionIds([]);
+      if (!silent) {
+        toast.success('Company brief ready');
+      }
+      return response;
+    } catch (error) {
+      const status = Number(error?.status || 0);
+      const code = asText(error?.body?.error?.code || error?.body?.code || error?.code);
+      if (status === 400 && code === 'missing_company_context') {
+        openCompanyContextDialog({ runCompanyBriefAfterSave: true });
+        const message = 'Set company context before running Company Brief.';
+        setCoachError(message);
+        if (!silent) {
+          toast.error(message);
+        }
+        return null;
+      }
+
+      if (status === 501 || code === 'not_configured') {
+        const message = 'AI suggestions are unavailable because Vertex AI is not configured.';
+        setCoachResult(null);
+        setCoachResultHash('');
+        setCoachCached(false);
+        setCoachWithheldCount(0);
+        setCoachRequestMeta(null);
+        setExpandedSuggestionIds([]);
+        setCoachError(message);
+        setCoachNotConfigured(true);
+        if (!silent && !coachNotConfigured) {
+          toast.error(message);
+        }
+        return null;
+      }
+
+      if (status === 404 && code === 'document_comparison_not_found') {
+        setIgnoredRouteDraftId(routeState.draftId || resolvedId);
+        setComparisonId('');
+        const message = 'Draft not found. Save Draft to create a new comparison and retry.';
+        setCoachResult(null);
+        setCoachResultHash('');
+        setCoachCached(false);
+        setCoachWithheldCount(0);
+        setCoachRequestMeta(null);
+        setExpandedSuggestionIds([]);
+        setCoachError(message);
+        if (!silent) {
+          toast.error(message);
+        }
+        return null;
+      }
+
+      const message = error?.message || 'Company brief request failed';
+      setCoachError(message);
+      if (!silent) {
+        toast.error(message);
+      }
+      return null;
+    } finally {
+      setCoachLoading(false);
+    }
+  };
+
+  const saveCompanyContext = async () => {
+    if (isSavingCompanyContext) {
+      return;
+    }
+
+    const trimmedCompanyName = asText(companyContextNameInput);
+    const websiteInput = asText(companyContextWebsiteInput);
+    if (!trimmedCompanyName) {
+      toast.error('Company name is required.');
+      return;
+    }
+
+    const resolvedId = await ensureComparisonIdForCoach();
+    if (!resolvedId) {
+      return;
+    }
+
+    setIsSavingCompanyContext(true);
+    try {
+      const response = await documentComparisonsClient.updateCompanyContext(resolvedId, {
+        companyName: trimmedCompanyName,
+        website: websiteInput || undefined,
+      });
+
+      const persistedName = asText(response?.companyContext?.company_name || trimmedCompanyName);
+      const persistedWebsite = asText(
+        response?.companyContext?.company_website || normalizeCompanyWebsite(websiteInput),
+      );
+
+      setCompanyContextName(persistedName);
+      setCompanyContextWebsite(persistedWebsite);
+      setCompanyContextNameInput(persistedName);
+      setCompanyContextWebsiteInput(persistedWebsite);
+      setIsCompanyContextDialogOpen(false);
+      updateCompanyContextInDraftCache(resolvedId, persistedName, persistedWebsite);
+      queryClient.invalidateQueries({
+        queryKey: ['document-comparison-detail', resolvedId],
+      });
+
+      const shouldRunCompanyBrief = runCompanyBriefAfterContextSave;
+      setRunCompanyBriefAfterContextSave(false);
+      toast.success('Company context saved.');
+      if (shouldRunCompanyBrief) {
+        await runCompanyBrief({
+          comparisonIdOverride: resolvedId,
+          skipContextCheck: true,
+          silent: false,
+        });
+      }
+    } catch (error) {
+      const message = error?.message || 'Failed to save company context';
+      toast.error(message);
+    } finally {
+      setIsSavingCompanyContext(false);
+    }
+  };
+
+  const handleCompanyBriefAction = () => {
+    if (coachLoading || coachNotConfigured) {
+      return;
+    }
+
+    if (!hasCompanyContext) {
+      openCompanyContextDialog({ runCompanyBriefAfterSave: true });
+      return;
+    }
+
+    runCompanyBrief();
   };
 
   const runCustomPromptCoach = () => {
@@ -2980,12 +3281,35 @@ export default function DocumentComparisonCreate() {
                       Generate suggestions only when you click an action. No background requests.
                     </CardDescription>
 	                  </CardHeader>
-		                  <CardContent className="space-y-4">
-		                    <div className="grid gap-4 lg:grid-cols-2">
-		                      <div className="h-full rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-		                        <div className="space-y-3">
-		                          <div className="flex flex-wrap gap-2">
-		                            {DOCUMENT_COMPARISON_COACH_ACTIONS.map((option) => (
+	                  <CardContent className="space-y-4">
+	                    <div
+	                      className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-slate-200 bg-white p-3"
+	                      data-testid="company-context-row"
+	                    >
+	                      <div className="space-y-1">
+	                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Company</p>
+	                        <p className="text-sm font-medium text-slate-900" data-testid="company-context-name">
+	                          {asText(companyContextName) || 'Not set'}
+	                        </p>
+	                        <p className="text-xs text-slate-500" data-testid="company-context-website">
+	                          {asText(companyContextWebsite) || 'Not set'}
+	                        </p>
+	                      </div>
+	                      <Button
+	                        type="button"
+	                        variant="outline"
+	                        size="sm"
+	                        onClick={() => openCompanyContextDialog()}
+	                        data-testid="company-context-edit-button"
+	                      >
+	                        Set / Edit
+	                      </Button>
+	                    </div>
+			                    <div className="grid gap-4 lg:grid-cols-2">
+			                      <div className="h-full rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+			                        <div className="space-y-3">
+			                          <div className="flex flex-wrap gap-2">
+			                            {DOCUMENT_COMPARISON_COACH_ACTIONS.map((option) => (
 		                              <Button
 		                                key={option.id}
 		                                type="button"
@@ -3001,19 +3325,31 @@ export default function DocumentComparisonCreate() {
 		                                }}
 		                              >
 		                                {coachLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
-		                                {option.label}
-		                              </Button>
-		                            ))}
-		                          </div>
-		                          <p className="text-xs leading-relaxed text-slate-500">
-		                            Selection source: {selectionContext.side === 'a' ? CONFIDENTIAL_LABEL : SHARED_LABEL}
-		                            {' · '}
-		                            {selectionContext.text
-		                              ? `"${selectionContext.text.slice(0, 120)}${selectionContext.text.length > 120 ? '…' : ''}"`
-		                              : 'no selection'}
-		                          </p>
-		                        </div>
-		                      </div>
+			                                {option.label}
+			                              </Button>
+			                            ))}
+			                            <Button
+			                              type="button"
+			                              variant="outline"
+			                              size="sm"
+			                              disabled={coachLoading || coachNotConfigured}
+			                              onClick={handleCompanyBriefAction}
+			                              data-testid="coach-company-brief-action"
+			                            >
+			                              {coachLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
+			                              Company Brief
+			                            </Button>
+			                          </div>
+			                          <p className="text-xs leading-relaxed text-slate-500">
+			                            Selection source: {selectionContext.side === 'a' ? CONFIDENTIAL_LABEL : SHARED_LABEL}
+			                            {' · '}
+			                            {selectionContext.text
+			                              ? `"${selectionContext.text.slice(0, 120)}${selectionContext.text.length > 120 ? '…' : ''}"`
+			                              : 'no selection'}
+			                          </p>
+			                          <p className="text-xs text-slate-500">Company Brief: Public sources with citations.</p>
+			                        </div>
+			                      </div>
 		                      <div
 		                        className="h-full rounded-lg border border-slate-200 bg-slate-50/60 p-4 shadow-sm"
 		                        data-testid="coach-custom-prompt-panel"
@@ -3087,11 +3423,42 @@ export default function DocumentComparisonCreate() {
 		                            </Button>
 		                          </div>
 		                        </div>
-		                        <div className="min-h-[132px] px-4 py-4">
-		                          <CoachResponseText text={coachResponseText} />
-		                        </div>
-		                      </div>
-		                    ) : null}
+			                        <div className="min-h-[132px] px-4 py-4">
+			                          <CoachResponseText text={coachResponseText} />
+			                          {coachIntentKey === 'company_brief' && companyBriefSources.length > 0 ? (
+			                            <div className="mt-4 border-t border-slate-200 pt-3">
+			                              <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Sources</p>
+			                              <ul className="mt-2 space-y-1 text-xs text-slate-600" data-testid="company-brief-sources">
+			                                {companyBriefSources.map((source, index) => {
+			                                  const title = asText(source?.title) || `Source ${index + 1}`;
+			                                  const url = asText(source?.url);
+			                                  if (!url) {
+			                                    return (
+			                                      <li key={`company-brief-source-${index}`}>
+			                                        [{index + 1}] {title}
+			                                      </li>
+			                                    );
+			                                  }
+			                                  return (
+			                                    <li key={`company-brief-source-${index}`}>
+			                                      [{index + 1}]{' '}
+			                                      <a
+			                                        href={url}
+			                                        target="_blank"
+			                                        rel="noreferrer"
+			                                        className="text-blue-700 underline-offset-2 hover:underline"
+			                                      >
+			                                        {title}
+			                                      </a>
+			                                    </li>
+			                                  );
+			                                })}
+			                              </ul>
+			                            </div>
+			                          ) : null}
+			                        </div>
+			                      </div>
+			                    ) : null}
 
 	                    {visibleCoachSuggestions.length > 0 ? (
 	                      <div className="space-y-2">
@@ -3262,12 +3629,90 @@ export default function DocumentComparisonCreate() {
               </motion.div>
             </DocumentComparisonEditorErrorBoundary>
           )}
-        </AnimatePresence>
+	        </AnimatePresence>
 
-        <Dialog
-          open={showFinishConfirmDialog}
-          onOpenChange={(open) => {
-            if (!isFinishingComparison) {
+	        <Dialog
+	          open={isCompanyContextDialogOpen}
+	          onOpenChange={(open) => {
+	            if (!isSavingCompanyContext) {
+	              setIsCompanyContextDialogOpen(open);
+	              if (!open) {
+	                setRunCompanyBriefAfterContextSave(false);
+	              }
+	            }
+	          }}
+	        >
+	          <DialogContent className="sm:max-w-md" data-testid="company-context-dialog">
+	            <DialogHeader>
+	              <DialogTitle>Set company context</DialogTitle>
+	              <DialogDescription>
+	                Save company name and website once to reuse across all Step 2 AI actions.
+	              </DialogDescription>
+	            </DialogHeader>
+	            <div className="space-y-4">
+	              <div className="space-y-2">
+	                <Label htmlFor="company-context-name-input">Company name</Label>
+	                <Input
+	                  id="company-context-name-input"
+	                  data-testid="company-context-name-input"
+	                  placeholder="e.g., Acme Inc."
+	                  value={companyContextNameInput}
+	                  onChange={(event) => setCompanyContextNameInput(event.target.value)}
+	                  disabled={isSavingCompanyContext}
+	                />
+	              </div>
+	              <div className="space-y-2">
+	                <Label htmlFor="company-context-website-input">Website (optional)</Label>
+	                <Input
+	                  id="company-context-website-input"
+	                  data-testid="company-context-website-input"
+	                  placeholder="e.g., acme.com"
+	                  value={companyContextWebsiteInput}
+	                  onChange={(event) => setCompanyContextWebsiteInput(event.target.value)}
+	                  disabled={isSavingCompanyContext}
+	                />
+	              </div>
+	              {runCompanyBriefAfterContextSave ? (
+	                <p className="text-xs text-slate-500">
+	                  Saving will continue directly into Company Brief.
+	                </p>
+	              ) : null}
+	            </div>
+	            <DialogFooter>
+	              <Button
+	                type="button"
+	                variant="outline"
+	                onClick={() => {
+	                  setIsCompanyContextDialogOpen(false);
+	                  setRunCompanyBriefAfterContextSave(false);
+	                }}
+	                disabled={isSavingCompanyContext}
+	              >
+	                Cancel
+	              </Button>
+	              <Button
+	                type="button"
+	                onClick={saveCompanyContext}
+	                disabled={isSavingCompanyContext || !asText(companyContextNameInput)}
+	                data-testid="company-context-save-button"
+	              >
+	                {isSavingCompanyContext ? (
+	                  <>
+	                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+	                    Saving...
+	                  </>
+	                ) : (
+	                  'Save'
+	                )}
+	              </Button>
+	            </DialogFooter>
+	          </DialogContent>
+	        </Dialog>
+
+	        <Dialog
+	          open={showFinishConfirmDialog}
+	          onOpenChange={(open) => {
+	            if (!isFinishingComparison) {
               setShowFinishConfirmDialog(open);
             }
           }}

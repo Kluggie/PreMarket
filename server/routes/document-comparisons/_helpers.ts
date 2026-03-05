@@ -78,6 +78,8 @@ export function mapComparisonRow(row: any) {
     draft_step: Number(row.draftStep || 1),
     party_a_label: normalizeComparisonLabel('a'),
     party_b_label: normalizeComparisonLabel('b'),
+    company_name: row.companyName || null,
+    company_website: row.companyWebsite || null,
     doc_a_text: docAText,
     doc_b_text: docBText,
     doc_a_html: docAHtml,

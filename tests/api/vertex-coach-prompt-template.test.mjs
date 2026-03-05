@@ -9,6 +9,8 @@ const BASE_PROMPT_PARAMS = {
   mode: 'full',
   selectionText: '',
   selectionTarget: 'shared',
+  companyName: 'Acme Dynamics',
+  companyWebsite: 'https://acme.example.com',
 };
 
 test('negotiate prompt includes consultant constraints and required sections', () => {
@@ -30,6 +32,9 @@ test('negotiate prompt includes consultant constraints and required sections', (
   assert.match(prompt, /## Next-step checklist/);
   assert.match(prompt, /<CONFIDENTIAL_TEXT>/);
   assert.match(prompt, /<SHARED_TEXT>/);
+  assert.match(prompt, /Company Context:/);
+  assert.match(prompt, /Company name: Acme Dynamics/);
+  assert.match(prompt, /Website: https:\/\/acme\.example\.com/);
 });
 
 test('risks prompt includes ranked-risk structure and mitigation framing', () => {
