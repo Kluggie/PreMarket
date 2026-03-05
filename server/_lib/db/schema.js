@@ -8,6 +8,7 @@ import {
   pgTable,
   text,
   timestamp,
+  uuid,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
 
@@ -353,6 +354,26 @@ export const betaApplications = pgTable(
     betaApplicationsEmailUnique: uniqueIndex('beta_applications_email_unique').on(table.email),
     betaApplicationsStatusIdx: index('beta_applications_status_idx').on(table.status, table.createdAt),
     betaApplicationsUserIdx: index('beta_applications_user_idx').on(table.userId, table.createdAt),
+  }),
+);
+
+export const betaSignups = pgTable(
+  'beta_signups',
+  {
+    id: uuid('id').primaryKey().notNull(),
+    email: text('email').notNull(),
+    emailNormalized: text('email_normalized').notNull(),
+    userId: text('user_id').references(() => users.id, { onDelete: 'set null' }),
+    source: text('source'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    betaSignupsEmailNormalizedUnique: uniqueIndex('beta_signups_email_normalized_unique').on(
+      table.emailNormalized,
+    ),
+    betaSignupsCreatedAtIdx: index('beta_signups_created_at_idx').on(table.createdAt),
+    betaSignupsUserIdx: index('beta_signups_user_idx').on(table.userId, table.createdAt),
+    betaSignupsSourceIdx: index('beta_signups_source_idx').on(table.source, table.createdAt),
   }),
 );
 

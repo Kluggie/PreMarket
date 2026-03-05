@@ -51,6 +51,8 @@ import contactHandler from '../server/routes/contact/index.js';
 import contactRequestsHandler from '../server/routes/contact-requests/index.js';
 import betaCountHandler from '../server/routes/beta/count.js';
 import betaApplyHandler from '../server/routes/beta/apply.js';
+import betaSignupsHandler from '../server/routes/beta-signups/index.js';
+import betaSignupsStatsHandler from '../server/routes/beta-signups/stats.js';
 import templatesHandler from '../server/routes/templates/index.js';
 import templatesUseHandler from '../server/routes/templates/[id]/use.js';
 import templatesViewHandler from '../server/routes/templates/[id]/view.js';
@@ -283,6 +285,14 @@ export default async function handler(req: any, res: any) {
 
   if (pathname === '/api/contact' && method === 'POST') {
     return contactHandler(req, res);
+  }
+
+  if (pathname === '/api/beta-signups/stats' && method === 'GET') {
+    return betaSignupsStatsHandler(req, res);
+  }
+
+  if (pathname === '/api/beta-signups' && (method === 'GET' || method === 'POST')) {
+    return betaSignupsHandler(req, res);
   }
 
   if (pathname === '/api/beta/count' && method === 'GET') {

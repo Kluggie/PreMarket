@@ -162,6 +162,13 @@
       "when": 1777615200000,
       "tag": "0022_document_comparison_company_context",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1777683600000,
+      "tag": "0023_beta_signups",
+      "breakpoints": true
     }
   ]
 }

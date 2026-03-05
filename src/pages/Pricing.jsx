@@ -22,6 +22,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Check, X, Zap, Building2, Shield } from 'lucide-react';
+import { toast } from 'sonner';
 
 export default function Pricing() {
   const navigate = useNavigate();
@@ -36,6 +37,7 @@ export default function Pricing() {
   });
   const [betaEmail, setBetaEmail] = useState('');
   const [betaSubmitted, setBetaSubmitted] = useState(false);
+  const [betaAlreadySignedUp, setBetaAlreadySignedUp] = useState(false);
   const [submitted, setSubmitted] = useState(false);
 
   useEffect(() => {
@@ -56,7 +58,7 @@ export default function Pricing() {
   }, [user]);
 
   const { data: betaCount } = useQuery({
-    queryKey: ['beta-count'],
+    queryKey: ['beta-signups-stats'],
     queryFn: () => betaClient.getCount(),
   });
 
@@ -87,7 +89,21 @@ export default function Pricing() {
     mutationFn: (email) => betaClient.apply({ email, source: 'pricing' }),
     onSuccess: () => {
       setBetaSubmitted(true);
-      queryClient.invalidateQueries({ queryKey: ['beta-count'] });
+      setBetaAlreadySignedUp(false);
+      toast.success("You're in!");
+      queryClient.invalidateQueries({ queryKey: ['beta-signups-stats'] });
+    },
+    onError: (error) => {
+      if (error?.code === 'already_signed_up') {
+        setBetaSubmitted(false);
+        setBetaAlreadySignedUp(true);
+        toast("You're already signed up.");
+        queryClient.invalidateQueries({ queryKey: ['beta-signups-stats'] });
+        return;
+      }
+
+      setBetaAlreadySignedUp(false);
+      toast.error(error?.message || 'Unable to submit your beta request right now.');
     },
   });
 
@@ -161,8 +177,14 @@ export default function Pricing() {
 
   const handleBetaApply = (event) => {
     event.preventDefault();
+    const normalizedEmail = betaEmail.trim();
+    if (!normalizedEmail) {
+      toast.error('Please enter your email address.');
+      return;
+    }
     setBetaSubmitted(false);
-    applyBetaMutation.mutate(betaEmail);
+    setBetaAlreadySignedUp(false);
+    applyBetaMutation.mutate(normalizedEmail);
   };
 
   const handleCTA = async (plan) => {
@@ -234,9 +256,12 @@ export default function Pricing() {
               </Button>
             </form>
             {betaSubmitted ? (
-              <p className="text-sm text-blue-700 mt-2">Thanks, your beta application has been recorded.</p>
+              <p className="text-sm text-blue-700 mt-2">You&apos;re in!</p>
             ) : null}
-            {applyBetaMutation.error ? (
+            {betaAlreadySignedUp ? (
+              <p className="text-sm text-slate-700 mt-2">You&apos;re already signed up.</p>
+            ) : null}
+            {applyBetaMutation.error && applyBetaMutation.error.code !== 'already_signed_up' ? (
               <p className="text-sm text-red-600 mt-2">
                 {applyBetaMutation.error.message || 'Unable to submit your beta request right now.'}
               </p>

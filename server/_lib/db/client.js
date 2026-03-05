@@ -40,6 +40,7 @@ function parseDatabaseIdentity(databaseUrl) {
 export function getDatabaseEnvPresence() {
   return {
     DATABASE_URL: Boolean(asTrimmedString(process.env.DATABASE_URL)),
+    DIRECT_URL: Boolean(asTrimmedString(process.env.DIRECT_URL)),
     POSTGRES_URL: Boolean(asTrimmedString(process.env.POSTGRES_URL)),
     NEON_DATABASE_URL: Boolean(asTrimmedString(process.env.NEON_DATABASE_URL)),
   };
@@ -61,6 +62,7 @@ export function getDatabaseIdentitySnapshot() {
       dbUrlHash: null,
       envPresence,
       alternativeDbUrlHashes: {
+        DIRECT_URL: toShortHash(process.env.DIRECT_URL),
         POSTGRES_URL: toShortHash(process.env.POSTGRES_URL),
         NEON_DATABASE_URL: toShortHash(process.env.NEON_DATABASE_URL),
       },
@@ -76,6 +78,7 @@ export function getDatabaseIdentitySnapshot() {
     dbUrlHash: toShortHash(databaseUrl),
     envPresence,
     alternativeDbUrlHashes: {
+      DIRECT_URL: toShortHash(process.env.DIRECT_URL),
       POSTGRES_URL: toShortHash(process.env.POSTGRES_URL),
       NEON_DATABASE_URL: toShortHash(process.env.NEON_DATABASE_URL),
     },
@@ -90,6 +93,7 @@ function warnIfDatabaseEnvMismatch(databaseUrl) {
   }
 
   const alternateEntries = [
+    ['DIRECT_URL', asTrimmedString(process.env.DIRECT_URL)],
     ['POSTGRES_URL', asTrimmedString(process.env.POSTGRES_URL)],
     ['NEON_DATABASE_URL', asTrimmedString(process.env.NEON_DATABASE_URL)],
   ].filter(([, value]) => Boolean(value));

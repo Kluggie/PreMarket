@@ -61,6 +61,7 @@ export async function resetTables() {
       user_mfa,
       contact_requests,
       beta_applications,
+      beta_signups,
       notifications,
       email_dedupes,
       email_verification_tokens,
