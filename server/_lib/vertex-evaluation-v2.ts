@@ -175,25 +175,77 @@ function buildPrompt(params: {
   confidentialText: string;
   chunks: EvaluationChunks;
 }) {
+  // Combine shared + confidential as one unified proposal view with clear separators.
+  // The model must see this as a single proposal with two privacy tiers, not two separate docs.
+  const proposalTextExcerpt =
+    '[SHARED / PUBLIC PORTION]\n' +
+    params.sharedText.slice(0, MAX_SHARED_CHARS) +
+    '\n---\n' +
+    '[CONFIDENTIAL PORTION — internal context only, do NOT reproduce verbatim in output]\n' +
+    params.confidentialText.slice(0, MAX_CONFIDENTIAL_CHARS);
+
   const payload = {
+    // Chunk lists are kept intact — the leak-guard depends on them.
     shared_chunks: params.chunks.sharedChunks,
     confidential_chunks: params.chunks.confidentialChunks,
+    // Single unified proposal text (shared + confidential) for the model to reason over.
+    proposal_text_excerpt: proposalTextExcerpt,
     constraints: {
+      evaluate_proposal_quality_not_alignment: true,
       confidentiality_middleman_rule: true,
       no_confidential_verbatim: true,
       no_confidential_numbers_or_identifiers: true,
       allow_safe_derived_conclusions: true,
     },
-    inputs: {
-      shared_text_excerpt: params.sharedText.slice(0, MAX_SHARED_CHARS),
-      confidential_text_excerpt: params.confidentialText.slice(0, MAX_CONFIDENTIAL_CHARS),
-    },
   };
 
   return [
-    'SYSTEM: You are an evaluation middleman for contract/proposal alignment.',
-    'You may reason over confidential input internally, but output must be safe to share.',
-    'Never quote confidential text. Never disclose confidential numbers, IDs, dates, emails, or exact identifiers.',
+    'SYSTEM: You are an expert business consultant and neutral mediator evaluating a business proposal.',
+    'Your task is: evaluate the overall business proposal quality and decision-readiness.',
+    '',
+    'IMPORTANT — understanding the input:',
+    '- "shared" and "confidential" are two PRIVACY TIERS of the SAME proposal, not two separate documents.',
+    '- You must use BOTH as unified input context to understand the full proposal.',
+    '- You must NEVER compare shared vs confidential for consistency, and must NEVER treat their',
+    '  similarity or overlap as a quality signal of any kind.',
+    '- Do NOT reward or penalize based on whether the two tiers agree with each other.',
+    '- Treat the combined proposal_text_excerpt as the single source of truth for proposal content.',
+    '',
+    'CONFIDENTIALITY RULES (strictly enforced):',
+    '- Never quote confidential text verbatim in your output.',
+    '- Never disclose confidential numbers, IDs, dates, emails, pricing, or exact identifiers.',
+    '- Use only generic, safely-derived conclusions when drawing on confidential context.',
+    '- Output must be safe to share publicly.',
+    '',
+    'EVALUATION RUBRIC — assess the proposal on ALL of these dimensions:',
+    '1. Clarity & specificity: Are goals, deliverables, and scope clearly defined?',
+    '   Flag vague language: "ASAP", "scalable", "world-class", "top dashboards" with no definitions,',
+    '   "as needed", or "TBD" for any critical item.',
+    '2. Feasibility / realism: Are timelines, resources, and assumptions realistic and grounded?',
+    '3. Completeness: Are scope, timeline, constraints, success criteria / KPIs, and deliverable details present?',
+    '4. Risks & assumptions: Are key risks and assumptions identified and addressed?',
+    '5. Decision-readiness: Is there sufficient information for a confident go / no-go decision?',
+    '',
+    'OUTPUT FIELD SEMANTICS:',
+    '- fit_level: Overall proposal quality / readiness.',
+    '  Interpret as: high = decision-ready; medium = promising but gaps exist; low = major gaps; unknown = insufficient info.',
+    '- confidence_0_1: Your confidence in the assessment (0 = no basis to judge, 1 = very confident).',
+    '- why: Array of strings — key strengths AND key risks/concerns of the proposal, written safely for sharing.',
+    '- missing: Array of strings — specific information gaps or questions that block confident decision-making.',
+    '- redactions: Array of strings — topics that must remain confidential and should not appear in any shared output.',
+    '',
+    'HARD GUARDRAILS — follow these without exception:',
+    '- "high" fit_level is RARE. Only assign it when the proposal is specific, quantified where appropriate,',
+    '  internally coherent, addresses risks, and is genuinely decision-ready. When in doubt, use "medium".',
+    '- If ANY of the following are absent or vague: KPIs / success criteria, timeline detail, constraints,',
+    '  key deliverables detail, key risks — then:',
+    '  (a) fit_level CANNOT be "high", AND',
+    '  (b) confidence_0_1 MUST be <= 0.75.',
+    '- If the proposal uses vague language ("ASAP", "scalable", "top N" without definitions, "TBD" for',
+    '  critical items): each instance MUST appear in missing[] and MUST lower fit_level and confidence_0_1.',
+    '- If sharedText and confidentialText are identical, very similar, or heavily overlapping, this is',
+    '  NOT a quality signal. Do NOT assign high fit_level or high confidence_0_1 on that basis alone.',
+    '',
     'Output MUST be valid JSON only. No markdown, no backticks, no preamble.',
     'Required JSON schema (all keys required):',
     JSON.stringify(
@@ -211,8 +263,8 @@ function buildPrompt(params: {
     '- fit_level must be one of high|medium|low|unknown.',
     '- confidence_0_1 must be between 0 and 1.',
     '- why/missing/redactions must be arrays (can be empty).',
-    '- Keep all statements safe for shared/public report.',
-    '- Use generic derived wording for confidential-driven conclusions.',
+    '- Keep ALL statements in why/missing/redactions safe for public sharing.',
+    '- Use generic derived wording for any confidential-driven conclusions.',
     'INPUT JSON:',
     JSON.stringify(payload, null, 2),
     'Return JSON only.',

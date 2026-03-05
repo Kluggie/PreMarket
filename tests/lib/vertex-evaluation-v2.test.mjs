@@ -320,3 +320,146 @@ test('v2 detects planted confidential token leak and fails hard', async () => {
     cleanup();
   }
 });
+
+// ─── Sanity checks: proposal-quality objective (not alignment) ───────────────
+//
+// These tests verify that the prompt sent to the model encodes the
+// anti-alignment guardrails added in the "proposal quality" overhaul.
+// They do NOT call the real Vertex API — they capture the raw prompt text
+// via the mock hook and assert on its contents.
+
+test('sanity: prompt encodes anti-alignment guardrail and proposal-quality objective', async () => {
+  let capturedPrompt = '';
+
+  globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__ = async ({ prompt }) => {
+    capturedPrompt = prompt;
+    return {
+      model: 'gemini-2.0-flash-001',
+      text: JSON.stringify(validPayload({ fit_level: 'medium', confidence_0_1: 0.6 })),
+      finishReason: 'STOP',
+      httpStatus: 200,
+    };
+  };
+
+  try {
+    await evaluateWithVertexV2({
+      sharedText: 'Shared proposal text: deliver analytics dashboard by Q3.',
+      confidentialText: 'Confidential: budget is $200k, team of 5 engineers.',
+      requestId: 'req-sanity-prompt-1',
+    });
+
+    // The prompt must NOT use alignment framing.
+    assert.equal(
+      capturedPrompt.includes('contract/proposal alignment'),
+      false,
+      'Prompt must not contain old alignment framing',
+    );
+
+    // The prompt must encode the new objective.
+    assert.equal(
+      capturedPrompt.includes('evaluate the overall business proposal quality'),
+      true,
+      'Prompt must state proposal-quality objective',
+    );
+
+    // The prompt must explicitly block similarity-as-quality scoring.
+    assert.equal(
+      capturedPrompt.includes('NOT a quality signal'),
+      true,
+      'Prompt must contain the anti-alignment similarity guardrail',
+    );
+
+    // The prompt must include the unified proposal_text_excerpt concept.
+    assert.equal(
+      capturedPrompt.includes('SHARED / PUBLIC PORTION'),
+      true,
+      'Prompt must include combined proposal_text_excerpt with shared section label',
+    );
+    assert.equal(
+      capturedPrompt.includes('CONFIDENTIAL PORTION'),
+      true,
+      'Prompt must include confidential section label inside proposal_text_excerpt',
+    );
+
+    // The prompt must have the hard guardrail for "high" fit_level.
+    assert.equal(
+      capturedPrompt.includes('"high" fit_level is RARE'),
+      true,
+      'Prompt must contain hard guardrail restricting "high" fit_level',
+    );
+
+    // The evaluate_proposal_quality_not_alignment constraint must be in the payload.
+    assert.equal(
+      capturedPrompt.includes('evaluate_proposal_quality_not_alignment'),
+      true,
+      'Prompt payload must include evaluate_proposal_quality_not_alignment constraint',
+    );
+  } finally {
+    delete globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__;
+  }
+});
+
+test('sanity: identical shared+confidential does not auto-produce high/1.0 — guardrail is in prompt, not post-processing', async () => {
+  // This test documents the expected behaviour: the guardrail lives in the
+  // prompt (the model must respect it). If a model ignores the prompt and
+  // returns high/1.0 anyway, the schema layer will still accept it —
+  // the fix is intentionally at the prompt level, not a hard code clamp.
+  //
+  // To verify the full chain against a live model, run:
+  //   VERTEX_PROJECT_ID=... node --import=tsx tests/lib/vertex-evaluation-v2.test.mjs
+  // and assert that identical-text inputs do not produce fit_level: high with
+  // confidence_0_1: 1.0 — they should surface missing[] items instead.
+
+  const identicalText =
+    'We will deliver a scalable platform ASAP with top dashboards and world-class support.';
+
+  let capturedPrompt = '';
+  globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__ = async ({ prompt }) => {
+    capturedPrompt = prompt;
+    // Simulate a realistically-calibrated model response that respects the guardrails.
+    return {
+      model: 'gemini-2.0-flash-001',
+      text: JSON.stringify(
+        validPayload({
+          fit_level: 'low',
+          confidence_0_1: 0.45,
+          why: ['Proposal mentions a platform and dashboards, but lacks specifics.'],
+          missing: [
+            'No KPIs or success criteria defined.',
+            'Timeline is vague ("ASAP") — no dates or milestones.',
+            '"Scalable" and "world-class" are undefined.',
+            'No constraints, risks, or acceptance criteria provided.',
+          ],
+          redactions: [],
+        }),
+      ),
+      finishReason: 'STOP',
+      httpStatus: 200,
+    };
+  };
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: identicalText,
+      confidentialText: identicalText, // intentionally identical
+      requestId: 'req-sanity-identical-1',
+    });
+
+    assert.equal(outcome.ok, true, 'Should parse successfully');
+    if (!outcome.ok) return;
+
+    // A well-calibrated model should NOT return high fit for a vague proposal.
+    assert.notEqual(outcome.data.fit_level, 'high', 'Identical vague texts must not produce fit_level: high');
+    assert.equal(outcome.data.confidence_0_1 <= 0.75, true, 'Vague identical proposal should have confidence <= 0.75');
+    assert.equal(outcome.data.missing.length > 0, true, 'Should surface missing items for vague proposal');
+
+    // Verify the prompt was built with the guardrail text for identical inputs.
+    assert.equal(
+      capturedPrompt.includes('NOT a quality signal'),
+      true,
+      'Prompt must contain the anti-alignment similarity guardrail even for identical inputs',
+    );
+  } finally {
+    delete globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__;
+  }
+});
