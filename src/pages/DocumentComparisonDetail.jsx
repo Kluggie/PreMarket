@@ -31,6 +31,12 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import {
+  hasV2Report,
+  parseV2WhyEntry,
+  filterLegacySectionsForDisplay,
+  getConfidencePercent,
+} from '@/lib/aiReportUtils';
 
 const CONFIDENTIAL_LABEL = 'Confidential Information';
 const SHARED_LABEL = 'Shared Information';
@@ -488,6 +494,9 @@ export default function DocumentComparisonDetail() {
 
   const report = comparison?.public_report || comparison?.evaluation_result?.report || {};
   const reportSections = Array.isArray(report?.sections) ? report.sections : [];
+  const isV2Report = hasV2Report(report);
+  // For legacy evals filter sections by V2 display rules (hide empty/n/a cards).
+  const reportSectionsFiltered = isV2Report ? [] : filterLegacySectionsForDisplay(reportSections);
   const evaluationHistory = Array.isArray(evaluationsQuery.data) ? evaluationsQuery.data : [];
   const latestEvaluation = evaluationHistory[0] || null;
   const comparisonWarningMeta = extractConfidentialityWarnings(comparison?.evaluation_result);
@@ -1214,6 +1223,7 @@ export default function DocumentComparisonDetail() {
 
               {hasReport ? (
                 <>
+                  {/* Quality Assessment — confidence bar uses V2 confidence when available */}
                   <Card className="border border-slate-200 shadow-sm">
                     <CardHeader>
                       <CardTitle>Quality Assessment</CardTitle>
@@ -1234,24 +1244,44 @@ export default function DocumentComparisonDetail() {
                         <div className="h-3 bg-slate-200 rounded-full overflow-hidden">
                           <div
                             className="h-3 bg-slate-500 rounded-full"
-                            style={{ width: `${Math.max(0, Math.min(Number(similarityScore || 0), 100))}%` }}
+                            style={{ width: `${getConfidencePercent(report, similarityScore)}%` }}
                           />
                         </div>
                       </div>
                     </CardContent>
                   </Card>
 
+                  {/* Executive Summary — fit level badge */}
                   <Card className="border border-slate-200 shadow-sm">
                     <CardHeader>
                       <CardTitle>Executive Summary</CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-4">
                       <Badge variant="outline" className="capitalize">
-                        {recommendation || 'No recommendation provided'}
+                        {recommendation || report?.fit_level || 'No recommendation provided'}
                       </Badge>
-                      {reportSections.length > 0 ? (
+                      {isV2Report ? (
+                        // V2: consultant-style narrative with heading-prefixed entries
+                        <div className="space-y-4" data-testid="v2-full-report">
+                          {report.why.map((entry, index) => {
+                            const { heading, body } = parseV2WhyEntry(entry);
+                            return (
+                              <div
+                                key={index}
+                                className="rounded-xl border border-slate-200 p-4"
+                              >
+                                {heading && (
+                                  <p className="font-semibold text-slate-900 mb-1">{heading}</p>
+                                )}
+                                <p className="text-sm text-slate-700 leading-relaxed">{body}</p>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : reportSectionsFiltered.length > 0 ? (
+                        // Legacy: structured section bullets (filtered per V2 display rules)
                         <div className="space-y-4">
-                          {reportSections.map((section, index) => (
+                          {reportSectionsFiltered.map((section, index) => (
                             <div
                               key={`${section.key || section.heading || 'section'}-${index}`}
                               className="rounded-xl border border-slate-200 p-4"
@@ -1272,6 +1302,25 @@ export default function DocumentComparisonDetail() {
                       )}
                     </CardContent>
                   </Card>
+
+                  {/* V2: Key Missing Info — ranked actionable questions */}
+                  {isV2Report && Array.isArray(report.missing) && report.missing.length > 0 && (
+                    <Card className="border border-slate-200 shadow-sm" data-testid="v2-missing-info">
+                      <CardHeader>
+                        <CardTitle>Key Missing Info</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <ul className="space-y-2">
+                          {report.missing.map((item, index) => (
+                            <li key={index} className="flex items-start gap-2 text-sm text-slate-700">
+                              <span className="mt-0.5 text-amber-500 flex-shrink-0" aria-hidden="true">⚠</span>
+                              <span>{item}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </CardContent>
+                    </Card>
+                  )}
                 </>
               ) : null}
             </TabsContent>

@@ -1,0 +1,110 @@
+/**
+ * Pure utility functions for AI Report V2 display.
+ *
+ * These are intentionally dependency-free so they can be unit-tested
+ * with node:test without needing a DOM or React.
+ */
+
+/**
+ * Returns true if the report object contains V2-format data
+ * (a non-empty `why` array produced by evaluateWithVertexV2).
+ *
+ * @param {Record<string, unknown>|null|undefined} report
+ * @returns {boolean}
+ */
+export function hasV2Report(report) {
+  return Array.isArray(report?.why) && report.why.length > 0;
+}
+
+/**
+ * Parses a V2 why-entry string into `{ heading, body }`.
+ *
+ * V2 why entries follow the heading-prefixed convention:
+ *   "Executive Summary: The proposal clearly defines..."
+ *   "Key Strengths: Timeline is realistic given..."
+ *
+ * If the entry doesn't match the pattern, returns heading=null so the
+ * caller can render the full text as a plain paragraph.
+ *
+ * @param {string} text
+ * @returns {{ heading: string|null, body: string }}
+ */
+export function parseV2WhyEntry(text) {
+  const str = String(text ?? '').trim();
+  // Heading starts with an uppercase letter, runs up to 60 chars before ": "
+  // Body is everything after; use `s` flag so `.` matches newlines in body.
+  const match = str.match(/^([A-Z][^:\n]{0,60}?):\s+(.+)$/s);
+  if (match) {
+    return { heading: match[1].trim(), body: match[2].trim() };
+  }
+  return { heading: null, body: str };
+}
+
+/**
+ * Filters and adjusts legacy section cards for display.
+ *
+ * Rules applied:
+ * - Category Breakdown: strip rows with "score n/a"; hide the entire card
+ *   if fewer than 2 rows have a numeric score after stripping.
+ * - Risk Flags: hide if there are no bullets.
+ * - Top Blockers: hide if there are no bullets.
+ * - All other sections: hide if there are no bullets.
+ *
+ * @param {Array<{ key: string; heading: string; bullets: string[] }>} sections
+ * @returns {Array<{ key: string; heading: string; bullets: string[] }>}
+ */
+export function filterLegacySectionsForDisplay(sections) {
+  if (!Array.isArray(sections)) return [];
+
+  return sections
+    .map((section) => {
+      if (!section || typeof section !== 'object') return null;
+      const key = String(section.key ?? '').toLowerCase();
+      const heading = String(section.heading ?? '');
+      const bullets = Array.isArray(section.bullets) ? section.bullets : [];
+
+      // Strip "score n/a" rows from category_breakdown.
+      if (key === 'category_breakdown' || heading === 'Category Breakdown') {
+        return {
+          ...section,
+          bullets: bullets.filter((b) => !/score\s+n\/a/i.test(String(b))),
+        };
+      }
+      return section;
+    })
+    .filter(Boolean)
+    .filter((section) => {
+      const key = String(section.key ?? '').toLowerCase();
+      const heading = String(section.heading ?? '');
+      const bullets = Array.isArray(section.bullets) ? section.bullets : [];
+
+      if (key === 'category_breakdown' || heading === 'Category Breakdown') {
+        // Count rows with an actual numeric score (e.g. "score 11").
+        const numericCount = bullets.filter((b) => /score\s+\d+/i.test(String(b))).length;
+        return numericCount >= 2;
+      }
+
+      // Risk Flags / Top Blockers / everything else: hide when empty.
+      return bullets.length > 0;
+    });
+}
+
+/**
+ * Returns the overall confidence as an integer percentage (0–100) for
+ * display in the progress bar.
+ *
+ * For V2 reports `report.confidence_0_1` (0–1) is preferred.
+ * Falls back to `report.similarity_score` or the legacy `fallbackScore` value.
+ *
+ * @param {Record<string, unknown>|null|undefined} report
+ * @param {number|null|undefined} fallbackScore  0–100 legacy score
+ * @returns {number}
+ */
+export function getConfidencePercent(report, fallbackScore) {
+  const c01 = Number(report?.confidence_0_1);
+  if (Number.isFinite(c01)) {
+    return Math.round(Math.max(0, Math.min(1, c01)) * 100);
+  }
+  const legacy = Number(report?.similarity_score ?? fallbackScore ?? 0);
+  return Number.isFinite(legacy) ? Math.max(0, Math.min(100, Math.round(legacy))) : 0;
+}
