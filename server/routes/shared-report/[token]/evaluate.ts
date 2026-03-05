@@ -64,16 +64,13 @@ function resolveDocumentComparisonEngine(req: any): 'v1' | 'v2' {
   if (runtimeEnv !== 'test' && (configuredEngine === 'v1' || configuredEngine === 'v2')) {
     return configuredEngine;
   }
-  if (runtimeEnv === 'production') {
-    return 'v2';
+  // NODE_ENV=test is the only environment that keeps v1 for test isolation.
+  // Every other environment — including unset NODE_ENV (local Vercel dev) — uses v2.
+  // Force v1 via EVAL_ENGINE=v1 or ?engine=v1 if ever needed.
+  if (runtimeEnv === 'test') {
+    return 'v1';
   }
-  // Default to v2 for any explicitly-named non-test environment (development, staging,
-  // preview, etc.). Unset NODE_ENV (empty string) and NODE_ENV=test keep v1 for
-  // test/CI isolation; use EVAL_ENGINE=v2 or ?engine=v2 to override in those envs.
-  if (runtimeEnv !== '' && runtimeEnv !== 'test') {
-    return 'v2';
-  }
-  return 'v1';
+  return 'v2';
 }
 
 function convertV2ResponseToEvaluation(v2Result: any): Record<string, unknown> {
@@ -99,6 +96,7 @@ function convertV2ResponseToEvaluation(v2Result: any): Record<string, unknown> {
     recommendation,
     summary: why[0] || 'Evaluation complete',
     report: {
+      report_format: 'v2' as const,
       fit_level: fitLevel === 'high' || fitLevel === 'medium' || fitLevel === 'low' ? fitLevel : 'unknown',
       confidence_0_1: normalizedConfidence,
       why,
