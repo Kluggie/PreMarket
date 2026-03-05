@@ -150,13 +150,7 @@ if (!hasDatabaseUrl()) {
     assert.equal(diagnostics.runtime, 'nodejs');
     assert.equal(diagnostics.dbConfigured, true);
     assert.equal(diagnostics.dbConnected, true);
-    assert.equal(
-      ['DATABASE_URL', 'POSTGRES_URL', 'NEON_DATABASE_URL', 'DIRECT_URL'].includes(
-        diagnostics.sourceEnvKey,
-      ),
-      true,
-      'sourceEnvKey must be one of the supported DB env keys',
-    );
+    assert.equal(diagnostics.sourceEnvKey, 'DATABASE_URL');
     assert.ok(diagnostics.dbHost, 'dbHost must be present');
     assert.ok(diagnostics.dbName, 'dbName must be present');
     assert.ok(diagnostics.dbUrlHash, 'dbUrlHash must be present');

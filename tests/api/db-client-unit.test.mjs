@@ -39,8 +39,10 @@ function withEnv(envVars, fn) {
   }
 }
 
-test('database URL resolver prefers stable production sources and still fails fast when none are valid', async () => {
-  function isValidUrl(envVar) {
+test('getDatabaseUrl() throws when DATABASE_URL is missing in production', async () => {
+  // Inline test of hasDatabaseUrl logic without importing the module
+  // (avoids circular issues with dotenv calls on load)
+  function hasDatabaseUrlStub(envVar) {
     if (!envVar || envVar.includes('<') || envVar.includes('>')) {
       return false;
     }
@@ -52,87 +54,41 @@ test('database URL resolver prefers stable production sources and still fails fa
     }
   }
 
-  function resolveDatabaseUrlStub(env, vercelEnv) {
-    const databaseUrl = typeof env.DATABASE_URL === 'string' ? env.DATABASE_URL : '';
-    const postgresUrl = typeof env.POSTGRES_URL === 'string' ? env.POSTGRES_URL : '';
-    const neonUrl = typeof env.NEON_DATABASE_URL === 'string' ? env.NEON_DATABASE_URL : '';
-    const directUrl = typeof env.DIRECT_URL === 'string' ? env.DIRECT_URL : '';
-    const isProduction = vercelEnv === 'production';
-
-    if (isProduction && isValidUrl(postgresUrl) && isValidUrl(databaseUrl) && postgresUrl !== databaseUrl) {
-      return { source: 'POSTGRES_URL', url: postgresUrl };
+  function getDatabaseUrlStub(envVar, vercelEnv) {
+    if (!hasDatabaseUrlStub(envVar)) {
+      if (vercelEnv === 'production') {
+        throw new Error('CRITICAL: DATABASE_URL is missing or invalid in production');
+      }
+      throw new Error('Missing or invalid required environment variable: DATABASE_URL');
     }
-
-    if (isProduction && !isValidUrl(postgresUrl) && isValidUrl(neonUrl) && isValidUrl(databaseUrl) && neonUrl !== databaseUrl) {
-      return { source: 'NEON_DATABASE_URL', url: neonUrl };
-    }
-
-    if (isValidUrl(databaseUrl)) return { source: 'DATABASE_URL', url: databaseUrl };
-    if (isValidUrl(postgresUrl)) return { source: 'POSTGRES_URL', url: postgresUrl };
-    if (isValidUrl(neonUrl)) return { source: 'NEON_DATABASE_URL', url: neonUrl };
-    if (isValidUrl(directUrl)) return { source: 'DIRECT_URL', url: directUrl };
-
-    if (isProduction) {
-      throw new Error('CRITICAL: No valid database URL is configured in production');
-    }
-    throw new Error('Missing or invalid required database URL environment variable');
+    return envVar;
   }
 
-  const appUrl = 'postgresql://app:secret@ep-app.neon.tech/app';
-  const providerUrl = 'postgresql://provider:secret@ep-provider.neon.tech/provider';
-
-  const mismatchResult = resolveDatabaseUrlStub(
-    {
-      DATABASE_URL: appUrl,
-      POSTGRES_URL: providerUrl,
-    },
-    'production',
-  );
-  assert.equal(mismatchResult.source, 'POSTGRES_URL');
-  assert.equal(mismatchResult.url, providerUrl);
-
-  const fallbackResult = resolveDatabaseUrlStub(
-    {
-      DATABASE_URL: '',
-      POSTGRES_URL: providerUrl,
-    },
-    'production',
-  );
-  assert.equal(fallbackResult.source, 'POSTGRES_URL');
-  assert.equal(fallbackResult.url, providerUrl);
-
-  const canonicalResult = resolveDatabaseUrlStub(
-    {
-      DATABASE_URL: appUrl,
-      POSTGRES_URL: appUrl,
-    },
-    'production',
-  );
-  assert.equal(canonicalResult.source, 'DATABASE_URL');
-  assert.equal(canonicalResult.url, appUrl);
-
+  // Test: missing DATABASE_URL in production must throw
   assert.throws(
-    () => resolveDatabaseUrlStub({}, 'production'),
-    /CRITICAL: No valid database URL is configured in production/,
-    'Must throw CRITICAL error when all DB env vars are missing/invalid',
+    () => getDatabaseUrlStub('', 'production'),
+    /CRITICAL.*DATABASE_URL.*missing.*production/,
+    'Must throw CRITICAL error for missing DATABASE_URL in production',
   );
 
+  // Test: missing DATABASE_URL in development must throw (different message)
   assert.throws(
-    () => resolveDatabaseUrlStub({}, 'development'),
+    () => getDatabaseUrlStub('', 'development'),
     /Missing or invalid/,
-    'Must throw for missing DB URL in development',
+    'Must throw for missing DATABASE_URL in development',
   );
 
+  // Test: placeholder value must throw
   assert.throws(
-    () => resolveDatabaseUrlStub({ DATABASE_URL: 'postgres://user:pass@<HOST>/db' }, 'production'),
+    () => getDatabaseUrlStub('postgres://user:pass@<HOST>/db', 'production'),
     /CRITICAL/,
-    'Must throw for placeholder DB URL values in production',
+    'Must throw for placeholder DATABASE_URL in production',
   );
 
+  // Test: valid DATABASE_URL must succeed
   const validUrl = 'postgresql://user:pass@ep-example.neon.tech/neondb';
-  const result = resolveDatabaseUrlStub({ DATABASE_URL: validUrl }, 'production');
-  assert.equal(result.source, 'DATABASE_URL');
-  assert.equal(result.url, validUrl, 'Valid DATABASE_URL must be returned as-is');
+  const result = getDatabaseUrlStub(validUrl, 'production');
+  assert.equal(result, validUrl, 'Valid DATABASE_URL must be returned as-is');
 });
 
 test('hasDatabaseUrl() correctly validates Neon/Postgres URL formats', () => {

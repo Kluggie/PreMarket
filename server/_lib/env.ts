@@ -20,18 +20,11 @@ export function getGoogleClientId() {
 }
 
 export function getEnvReadiness() {
-  const hasAnyDatabaseUrl = Boolean(
-    (process.env.DATABASE_URL || '').trim() ||
-      (process.env.POSTGRES_URL || '').trim() ||
-      (process.env.NEON_DATABASE_URL || '').trim() ||
-      (process.env.DIRECT_URL || '').trim(),
-  );
-
   return {
     APP_BASE_URL: Boolean(process.env.APP_BASE_URL),
     SESSION_SECRET: Boolean(process.env.SESSION_SECRET),
     GOOGLE_CLIENT_ID: Boolean(getGoogleClientId()),
-    DATABASE_URL: hasAnyDatabaseUrl,
+    DATABASE_URL: Boolean(process.env.DATABASE_URL),
   };
 }
 
