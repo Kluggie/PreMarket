@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { ok } from '../../_lib/api-response.js';
 import { requireUser } from '../../_lib/auth.js';
 import { getDb, schema } from '../../_lib/db/client.js';
@@ -81,11 +81,36 @@ async function getOptionalUserId(req: any, db: any) {
 }
 
 async function getSeatsClaimed(db: any) {
-  const [row] = await db
-    .select({ seatsClaimed: sql<number>`cast(count(*) as integer)` })
+  const currentRows = await db
+    .select({
+      emailNormalized: schema.betaSignups.emailNormalized,
+    })
     .from(schema.betaSignups);
 
-  return Number(row?.seatsClaimed || 0);
+  const legacyRows = await db
+    .select({
+      email: schema.betaApplications.email,
+    })
+    .from(schema.betaApplications)
+    .where(inArray(schema.betaApplications.status, ['applied', 'approved']));
+
+  const uniqueEmails = new Set<string>();
+
+  for (const row of currentRows) {
+    const normalized = normalizeEmail(row?.emailNormalized);
+    if (normalized) {
+      uniqueEmails.add(normalized);
+    }
+  }
+
+  for (const row of legacyRows) {
+    const normalized = normalizeEmail(row?.email);
+    if (normalized) {
+      uniqueEmails.add(normalized);
+    }
+  }
+
+  return uniqueEmails.size;
 }
 
 function isProductionRuntime() {
@@ -105,6 +130,63 @@ async function handleCreate(req: any, res: any) {
 
   const db = getDb();
   const userId = await getOptionalUserId(req, db);
+  const [existingCurrentSignup] = await db
+    .select({
+      id: schema.betaSignups.id,
+    })
+    .from(schema.betaSignups)
+    .where(eq(schema.betaSignups.emailNormalized, emailNormalized))
+    .limit(1);
+
+  const [existingLegacySignup] = await db
+    .select({
+      id: schema.betaApplications.id,
+      email: schema.betaApplications.email,
+      source: schema.betaApplications.source,
+    })
+    .from(schema.betaApplications)
+    .where(
+      and(
+        inArray(schema.betaApplications.status, ['applied', 'approved']),
+        sql`trim(coalesce(${schema.betaApplications.email}, '')) <> ''`,
+        sql`lower(trim(${schema.betaApplications.email})) = ${emailNormalized}`,
+      ),
+    )
+    .limit(1);
+
+  if (existingCurrentSignup || existingLegacySignup) {
+    if (!existingCurrentSignup && existingLegacySignup) {
+      await db
+        .insert(schema.betaSignups)
+        .values({
+          id: randomUUID(),
+          email: asText(existingLegacySignup.email) || email,
+          emailNormalized,
+          userId,
+          source: normalizeSource(existingLegacySignup.source || source),
+          createdAt: new Date(),
+        })
+        .onConflictDoNothing({
+          target: schema.betaSignups.emailNormalized,
+        });
+    }
+
+    const seatsClaimed = await getSeatsClaimed(db);
+
+    logEvent('insert_duplicate', {
+      emailNormalized,
+      seatsClaimed,
+      source,
+      hadUserId: Boolean(userId),
+      inLegacy: Boolean(existingLegacySignup),
+      inCurrent: Boolean(existingCurrentSignup),
+    });
+
+    throw new ApiError(409, 'already_signed_up', "You're already signed up.", {
+      seatsClaimed,
+      seatsTotal: BETA_SEATS_TOTAL,
+    });
+  }
 
   const inserted = await db
     .insert(schema.betaSignups)
@@ -124,13 +206,6 @@ async function handleCreate(req: any, res: any) {
   const seatsClaimed = await getSeatsClaimed(db);
 
   if (!inserted.length) {
-    logEvent('insert_duplicate', {
-      emailNormalized,
-      seatsClaimed,
-      source,
-      hadUserId: Boolean(userId),
-    });
-
     throw new ApiError(409, 'already_signed_up', "You're already signed up.", {
       seatsClaimed,
       seatsTotal: BETA_SEATS_TOTAL,

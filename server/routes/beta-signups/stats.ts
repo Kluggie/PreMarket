@@ -1,4 +1,4 @@
-import { sql } from 'drizzle-orm';
+import { inArray } from 'drizzle-orm';
 import { ok } from '../../_lib/api-response.js';
 import { getDb, schema } from '../../_lib/db/client.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
@@ -29,11 +29,40 @@ export default async function handler(req: any, res: any) {
     ensureMethod(req, ['GET']);
 
     const db = getDb();
-    const [row] = await db
-      .select({ seatsClaimed: sql<number>`cast(count(*) as integer)` })
+    const currentRows = await db
+      .select({
+        emailNormalized: schema.betaSignups.emailNormalized,
+      })
       .from(schema.betaSignups);
 
-    const seatsClaimed = Number(row?.seatsClaimed || 0);
+    const legacyRows = await db
+      .select({
+        email: schema.betaApplications.email,
+      })
+      .from(schema.betaApplications)
+      .where(inArray(schema.betaApplications.status, ['applied', 'approved']));
+
+    const uniqueEmails = new Set<string>();
+
+    for (const row of currentRows) {
+      const normalized = String(row?.emailNormalized || '')
+        .trim()
+        .toLowerCase();
+      if (normalized) {
+        uniqueEmails.add(normalized);
+      }
+    }
+
+    for (const row of legacyRows) {
+      const normalized = String(row?.email || '')
+        .trim()
+        .toLowerCase();
+      if (normalized) {
+        uniqueEmails.add(normalized);
+      }
+    }
+
+    const seatsClaimed = uniqueEmails.size;
 
     logEvent('stats', {
       seatsClaimed,

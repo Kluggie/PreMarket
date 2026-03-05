@@ -129,4 +129,70 @@ if (!hasDatabaseUrl()) {
     assert.equal(stats.jsonBody().seatsClaimed, 2);
     assert.equal(stats.jsonBody().seatsTotal, 50);
   });
+
+  test('legacy beta_applications rows are counted and deduped by normalized email', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const db = getDb();
+
+    await db.insert(schema.betaApplications).values({
+      id: 'beta_app_legacy_1',
+      email: '  Kluggie2000@gmail.com ',
+      status: 'applied',
+      userId: null,
+      source: 'pricing',
+      createdAt: new Date('2026-03-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-03-01T00:00:00.000Z'),
+    });
+
+    const stats = await callHandler(betaSignupsStatsHandler, {
+      method: 'GET',
+      url: '/api/beta-signups/stats',
+    });
+
+    assert.equal(stats.statusCode, 200);
+    assert.equal(stats.jsonBody().ok, true);
+    assert.equal(stats.jsonBody().seatsClaimed, 1);
+    assert.equal(stats.jsonBody().seatsTotal, 50);
+  });
+
+  test('legacy signup returns already_signed_up and does not increment count', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const db = getDb();
+
+    await db.insert(schema.betaApplications).values({
+      id: 'beta_app_legacy_2',
+      email: 'kluggie2000@gmail.com',
+      status: 'applied',
+      userId: null,
+      source: 'pricing',
+      createdAt: new Date('2026-03-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-03-01T00:00:00.000Z'),
+    });
+
+    const duplicateCreate = await callHandler(betaSignupsHandler, {
+      method: 'POST',
+      url: '/api/beta-signups',
+      body: {
+        email: ' KLUGGIE2000@gmail.com ',
+        source: 'landing',
+      },
+    });
+
+    assert.equal(duplicateCreate.statusCode, 409);
+    assert.equal(duplicateCreate.jsonBody().ok, false);
+    assert.equal(duplicateCreate.jsonBody().error?.code, 'already_signed_up');
+    assert.equal(duplicateCreate.jsonBody().error?.seatsClaimed, 1);
+
+    const stats = await callHandler(betaSignupsStatsHandler, {
+      method: 'GET',
+      url: '/api/beta-signups/stats',
+    });
+
+    assert.equal(stats.statusCode, 200);
+    assert.equal(stats.jsonBody().seatsClaimed, 1);
+  });
 }

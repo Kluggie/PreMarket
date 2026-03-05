@@ -222,18 +222,91 @@ async function extractXlsx(buffer: Buffer): Promise<string | null> {
   }
 }
 
+type ExtractionReason = 'unsupported_type' | 'no_text_found' | 'encrypted_pdf' | 'extraction_failed';
+
+type InternalExtractionResult = {
+  text: string | null;
+  reason: ExtractionReason | null;
+  errorMessage: string | null;
+};
+
+function classifyPdfError(error: unknown): ExtractionReason {
+  const message = String((error as any)?.message || error || '').toLowerCase();
+  if (
+    message.includes('encrypted') ||
+    message.includes('password') ||
+    message.includes('decrypt')
+  ) {
+    return 'encrypted_pdf';
+  }
+  return 'extraction_failed';
+}
+
 // ---------------------------------------------------------------------------
 // PDF extractor
 // ---------------------------------------------------------------------------
-async function extractPdf(buffer: Buffer): Promise<string | null> {
+async function extractPdf(buffer: Buffer): Promise<InternalExtractionResult> {
   try {
-    const mod: any = await import('pdf-parse');
-    const pdfParse = mod?.default || mod;
-    if (typeof pdfParse !== 'function') return null;
-    const result = await pdfParse(buffer);
-    return normalizeText(result?.text) || null;
-  } catch {
-    return null;
+    const module: any = await import('pdf-parse');
+    const PDFParse = module?.PDFParse;
+
+    if (typeof PDFParse === 'function') {
+      const parser = new PDFParse({ data: buffer });
+      try {
+        const parsed = await parser.getText();
+        const text = normalizeText(parsed?.text);
+        if (!text) {
+          return {
+            text: null,
+            reason: 'no_text_found',
+            errorMessage: 'No text found in PDF',
+          };
+        }
+        return { text, reason: null, errorMessage: null };
+      } catch (error: any) {
+        const reason = classifyPdfError(error);
+        return {
+          text: null,
+          reason,
+          errorMessage:
+            reason === 'encrypted_pdf'
+              ? 'PDF is encrypted and cannot be processed'
+              : String(error?.message || 'PDF extraction failed').slice(0, 500),
+        };
+      } finally {
+        await parser.destroy().catch(() => null);
+      }
+    }
+
+    const fallbackParse = module?.default || module;
+    if (typeof fallbackParse === 'function') {
+      const result = await fallbackParse(buffer);
+      const text = normalizeText(result?.text);
+      if (!text) {
+        return {
+          text: null,
+          reason: 'no_text_found',
+          errorMessage: 'No text found in PDF',
+        };
+      }
+      return { text, reason: null, errorMessage: null };
+    }
+
+    return {
+      text: null,
+      reason: 'extraction_failed',
+      errorMessage: 'PDF extraction dependency is unavailable',
+    };
+  } catch (error: any) {
+    const reason = classifyPdfError(error);
+    return {
+      text: null,
+      reason,
+      errorMessage:
+        reason === 'encrypted_pdf'
+          ? 'PDF is encrypted and cannot be processed'
+          : String(error?.message || 'PDF extraction failed').slice(0, 500),
+    };
   }
 }
 
@@ -270,6 +343,8 @@ function extractPlainText(buffer: Buffer): string | null {
 export type ExtractionResult = {
   text: string | null;
   supported: boolean;
+  reason: ExtractionReason | null;
+  errorMessage: string | null;
 };
 
 /**
@@ -289,35 +364,65 @@ export async function extractDocumentText(
   const ext = String(filename || '').toLowerCase().split('.').pop() || '';
 
   if (mime === 'application/pdf' || ext === 'pdf') {
-    return { text: await extractPdf(buffer), supported: true };
+    const result = await extractPdf(buffer);
+    return { ...result, supported: true };
   }
 
   if (
     mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
     ext === 'docx'
   ) {
-    return { text: await extractDocx(buffer), supported: true };
+    const text = await extractDocx(buffer);
+    return {
+      text,
+      supported: true,
+      reason: text ? null : 'no_text_found',
+      errorMessage: text ? null : 'No text found in DOCX',
+    };
   }
 
   if (
     mime === 'application/vnd.openxmlformats-officedocument.presentationml.presentation' ||
     ext === 'pptx'
   ) {
-    return { text: await extractPptx(buffer), supported: true };
+    const text = await extractPptx(buffer);
+    return {
+      text,
+      supported: true,
+      reason: text ? null : 'no_text_found',
+      errorMessage: text ? null : 'No text found in PPTX',
+    };
   }
 
   if (
     mime === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
     ext === 'xlsx'
   ) {
-    return { text: await extractXlsx(buffer), supported: true };
+    const text = await extractXlsx(buffer);
+    return {
+      text,
+      supported: true,
+      reason: text ? null : 'no_text_found',
+      errorMessage: text ? null : 'No text found in XLSX',
+    };
   }
 
   if (mime === 'text/plain' || mime === 'text/markdown' || ext === 'txt' || ext === 'md') {
-    return { text: extractPlainText(buffer), supported: true };
+    const text = extractPlainText(buffer);
+    return {
+      text,
+      supported: true,
+      reason: text ? null : 'no_text_found',
+      errorMessage: text ? null : 'No text found in text file',
+    };
   }
 
-  return { text: null, supported: false };
+  return {
+    text: null,
+    supported: false,
+    reason: 'unsupported_type',
+    errorMessage: 'Unsupported file type for text extraction',
+  };
 }
 
 /**
