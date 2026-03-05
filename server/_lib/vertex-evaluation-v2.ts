@@ -77,11 +77,53 @@ export interface VertexEvaluationV2Error {
   details?: Record<string, unknown>;
 }
 
+// ─── Fact Sheet (Pass A output) ─────────────────────────────────────────────
+
+interface FactSheetRisk {
+  risk: string;
+  impact: 'low' | 'med' | 'high';
+  likelihood: 'low' | 'med' | 'high';
+}
+
+interface ProposalFactSheetCoverage {
+  has_scope: boolean;
+  has_timeline: boolean;
+  has_kpis: boolean;
+  has_constraints: boolean;
+  has_risks: boolean;
+}
+
+interface ProposalFactSheet {
+  project_goal: string | null;
+  scope_deliverables: string[];
+  timeline: { start: string | null; duration: string | null; milestones: string[] };
+  constraints: string[];
+  success_criteria_kpis: string[];
+  vendor_preferences: string[];
+  assumptions: string[];
+  risks: FactSheetRisk[];
+  open_questions: string[];
+  missing_info: string[];
+  source_coverage: ProposalFactSheetCoverage;
+}
+
+// Internal debug metadata — attached to VertexEvaluationV2Result for
+// server-side logging; never serialised to the client response.
+export interface VertexEvaluationV2Internal {
+  fact_sheet: ProposalFactSheet;
+  coverage_count: number;
+  caps_applied: string[];
+  pass_a_parse_error: boolean;
+  pass_b_attempt_count: number;
+}
+
 export interface VertexEvaluationV2Result {
   ok: true;
   data: VertexEvaluationV2Response;
   attempt_count: number;
   model: string;
+  /** Server-side only. Do not forward to clients. */
+  _internal?: VertexEvaluationV2Internal;
 }
 
 export interface VertexEvaluationV2Failure {
@@ -170,26 +212,211 @@ function buildChunks(sharedText: string, confidentialText: string): EvaluationCh
   };
 }
 
-function buildPrompt(params: {
-  sharedText: string;
-  confidentialText: string;
+// ─── Pass A: Fact Sheet extraction ──────────────────────────────────────────
+
+const FACT_SHEET_SCHEMA_EXAMPLE = {
+  project_goal: 'string or null',
+  scope_deliverables: ['string'],
+  timeline: { start: 'string or null', duration: 'string or null', milestones: ['string'] },
+  constraints: ['string'],
+  success_criteria_kpis: ['string'],
+  vendor_preferences: ['string'],
+  assumptions: ['string'],
+  risks: [{ risk: 'string', impact: 'low|med|high', likelihood: 'low|med|high' }],
+  open_questions: ['string'],
+  missing_info: ['string'],
+  source_coverage: {
+    has_scope: true,
+    has_timeline: true,
+    has_kpis: true,
+    has_constraints: true,
+    has_risks: true,
+  },
+};
+
+function buildFactSheetPrompt(proposalTextExcerpt: string, strict = false): string {
+  const strictNote = strict
+    ? 'STRICT MODE: Output ONLY valid JSON. No text before or after the JSON object. No markdown.'
+    : '';
+  return [
+    'SYSTEM: You are a structured information extractor for business proposals.',
+    'Extract verifiable facts from the proposal text provided. Do not invent, assume, or infer.',
+    'Treat the full proposal text as one document (it has a SHARED section and a CONFIDENTIAL section).',
+    'DO NOT compare the two sections for consistency. Use both as unified context.',
+    '',
+    'CONFIDENTIALITY RULES:',
+    '- Paraphrase only. Never copy verbatim text from the CONFIDENTIAL section.',
+    '- Never include raw numbers, IDs, emails, pricing, or identifiers from the CONFIDENTIAL section.',
+    '',
+    'INSTRUCTIONS:',
+    '- For each field, extract what the text explicitly supports. If a field is not supported, leave it null or empty [].',
+    '- For missing_info: list any critical fields that are absent or too vague to extract.',
+    '- For source_coverage: set each boolean to true ONLY if the proposal contains concrete, specific information',
+    '  (not vague/placeholder language) for that dimension.',
+    '  - has_scope: concrete deliverables or scope items are present.',
+    '  - has_timeline: a start date, duration, or specific milestones are present.',
+    '  - has_kpis: success criteria or KPIs are explicitly defined.',
+    '  - has_constraints: constraints, limitations, or boundaries are stated.',
+    '  - has_risks: identified risks with some description are present.',
+    '',
+    strictNote,
+    'Output MUST be valid JSON only. No markdown, no backticks, no preamble.',
+    'Required JSON schema:',
+    JSON.stringify(FACT_SHEET_SCHEMA_EXAMPLE, null, 2),
+    'PROPOSAL TEXT:',
+    proposalTextExcerpt.slice(0, MAX_SHARED_CHARS + MAX_CONFIDENTIAL_CHARS),
+    'Return JSON only.',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+function normalizeCoverageBoolean(value: unknown): boolean {
+  if (typeof value === 'boolean') return value;
+  if (value === 1 || value === 'true') return true;
+  if (value === 0 || value === 'false' || value === null) return false;
+  return false;
+}
+
+function validateFactSheet(raw: unknown): { ok: true; sheet: ProposalFactSheet } | { ok: false; reason: string } {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { ok: false, reason: 'root_not_object' };
+  }
+  const r = raw as Record<string, unknown>;
+
+  const timeline = (r.timeline && typeof r.timeline === 'object' && !Array.isArray(r.timeline))
+    ? (r.timeline as Record<string, unknown>)
+    : {};
+
+  const coverage = (r.source_coverage && typeof r.source_coverage === 'object' && !Array.isArray(r.source_coverage))
+    ? (r.source_coverage as Record<string, unknown>)
+    : {};
+
+  const risks: FactSheetRisk[] = [];
+  if (Array.isArray(r.risks)) {
+    for (const entry of r.risks) {
+      if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+        const e = entry as Record<string, unknown>;
+        const impact = asLower(e.impact);
+        const likelihood = asLower(e.likelihood);
+        risks.push({
+          risk: asText(e.risk) || 'Unknown risk',
+          impact: (impact === 'low' || impact === 'med' || impact === 'high') ? impact : 'low',
+          likelihood: (likelihood === 'low' || likelihood === 'med' || likelihood === 'high') ? likelihood : 'low',
+        });
+      }
+    }
+  }
+
+  const sheet: ProposalFactSheet = {
+    project_goal: r.project_goal == null ? null : asText(r.project_goal) || null,
+    scope_deliverables: toStringArray(r.scope_deliverables),
+    timeline: {
+      start: timeline.start == null ? null : asText(timeline.start) || null,
+      duration: timeline.duration == null ? null : asText(timeline.duration) || null,
+      milestones: toStringArray(timeline.milestones),
+    },
+    constraints: toStringArray(r.constraints),
+    success_criteria_kpis: toStringArray(r.success_criteria_kpis),
+    vendor_preferences: toStringArray(r.vendor_preferences),
+    assumptions: toStringArray(r.assumptions),
+    risks,
+    open_questions: toStringArray(r.open_questions),
+    missing_info: toStringArray(r.missing_info),
+    source_coverage: {
+      has_scope: normalizeCoverageBoolean(coverage.has_scope),
+      has_timeline: normalizeCoverageBoolean(coverage.has_timeline),
+      has_kpis: normalizeCoverageBoolean(coverage.has_kpis),
+      has_constraints: normalizeCoverageBoolean(coverage.has_constraints),
+      has_risks: normalizeCoverageBoolean(coverage.has_risks),
+    },
+  };
+
+  return { ok: true, sheet };
+}
+
+function fallbackFactSheet(missingInfoItems: string[] = []): ProposalFactSheet {
+  return {
+    project_goal: null,
+    scope_deliverables: [],
+    timeline: { start: null, duration: null, milestones: [] },
+    constraints: [],
+    success_criteria_kpis: [],
+    vendor_preferences: [],
+    assumptions: [],
+    risks: [],
+    open_questions: [],
+    missing_info: missingInfoItems.length
+      ? missingInfoItems
+      : ['Fact extraction failed — proposal content could not be parsed.'],
+    source_coverage: {
+      has_scope: false,
+      has_timeline: false,
+      has_kpis: false,
+      has_constraints: false,
+      has_risks: false,
+    },
+  };
+}
+
+function computeCoverageCount(coverage: ProposalFactSheetCoverage): number {
+  return [
+    coverage.has_scope,
+    coverage.has_timeline,
+    coverage.has_kpis,
+    coverage.has_constraints,
+    coverage.has_risks,
+  ].filter(Boolean).length;
+}
+
+async function extractProposalFactsV2(params: {
+  proposalTextExcerpt: string;
+  requestId?: string;
+  callVertex: VertexCallOverride;
+}): Promise<{ sheet: ProposalFactSheet; parseError: boolean }> {
+  const inputChars = params.proposalTextExcerpt.length;
+
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const strict = attempt === 2;
+    const prompt = buildFactSheetPrompt(params.proposalTextExcerpt, strict);
+
+    let vertexResp: VertexCallResponse;
+    try {
+      vertexResp = await params.callVertex({ prompt, requestId: params.requestId, inputChars });
+    } catch {
+      // Vertex call failed — return fallback immediately
+      return { sheet: fallbackFactSheet(['Fact extraction call failed.']), parseError: true };
+    }
+
+    const rawText = String(vertexResp.text || '');
+    if (!rawText.trim()) continue;
+    if (isLikelyTruncatedOutput(rawText, vertexResp.finishReason)) continue;
+
+    const extracted = parseJsonObject(rawText);
+    if (!extracted.parsed) continue;
+
+    const validation = validateFactSheet(extracted.parsed);
+    if (validation.ok) {
+      return { sheet: validation.sheet, parseError: false };
+    }
+    // Validation failed — try again (strict mode on attempt 2)
+  }
+
+  return { sheet: fallbackFactSheet(), parseError: true };
+}
+
+// ─── Pass B: Final evaluation prompt ─────────────────────────────────────────
+
+function buildEvalPromptFromFactSheet(params: {
+  factSheet: ProposalFactSheet;
   chunks: EvaluationChunks;
 }) {
-  // Combine shared + confidential as one unified proposal view with clear separators.
-  // The model must see this as a single proposal with two privacy tiers, not two separate docs.
-  const proposalTextExcerpt =
-    '[SHARED / PUBLIC PORTION]\n' +
-    params.sharedText.slice(0, MAX_SHARED_CHARS) +
-    '\n---\n' +
-    '[CONFIDENTIAL PORTION — internal context only, do NOT reproduce verbatim in output]\n' +
-    params.confidentialText.slice(0, MAX_CONFIDENTIAL_CHARS);
-
   const payload = {
-    // Chunk lists are kept intact — the leak-guard depends on them.
+    // Chunk lists kept intact — leak-guard depends on them.
     shared_chunks: params.chunks.sharedChunks,
     confidential_chunks: params.chunks.confidentialChunks,
-    // Single unified proposal text (shared + confidential) for the model to reason over.
-    proposal_text_excerpt: proposalTextExcerpt,
+    // Primary input: structured Fact Sheet extracted in Pass A.
+    fact_sheet: params.factSheet,
     constraints: {
       evaluate_proposal_quality_not_alignment: true,
       confidentiality_middleman_rule: true,
@@ -203,13 +430,10 @@ function buildPrompt(params: {
     'SYSTEM: You are an expert business consultant and neutral mediator evaluating a business proposal.',
     'Your task is: evaluate the overall business proposal quality and decision-readiness.',
     '',
-    'IMPORTANT — understanding the input:',
-    '- "shared" and "confidential" are two PRIVACY TIERS of the SAME proposal, not two separate documents.',
-    '- You must use BOTH as unified input context to understand the full proposal.',
-    '- You must NEVER compare shared vs confidential for consistency, and must NEVER treat their',
-    '  similarity or overlap as a quality signal of any kind.',
-    '- Do NOT reward or penalize based on whether the two tiers agree with each other.',
-    '- Treat the combined proposal_text_excerpt as the single source of truth for proposal content.',
+    'IMPORTANT — input structure:',
+    '- The fact_sheet is a structured extraction of the full proposal (shared + confidential tiers combined).',
+    '- Evaluate based on the fact_sheet content. The two privacy tiers are the SAME proposal.',
+    '- DO NOT compare the tiers for consistency. DO NOT treat their similarity as a quality signal.',
     '',
     'CONFIDENTIALITY RULES (strictly enforced):',
     '- Never quote confidential text verbatim in your output.',
@@ -217,34 +441,32 @@ function buildPrompt(params: {
     '- Use only generic, safely-derived conclusions when drawing on confidential context.',
     '- Output must be safe to share publicly.',
     '',
-    'EVALUATION RUBRIC — assess the proposal on ALL of these dimensions:',
-    '1. Clarity & specificity: Are goals, deliverables, and scope clearly defined?',
-    '   Flag vague language: "ASAP", "scalable", "world-class", "top dashboards" with no definitions,',
-    '   "as needed", or "TBD" for any critical item.',
-    '2. Feasibility / realism: Are timelines, resources, and assumptions realistic and grounded?',
-    '3. Completeness: Are scope, timeline, constraints, success criteria / KPIs, and deliverable details present?',
-    '4. Risks & assumptions: Are key risks and assumptions identified and addressed?',
-    '5. Decision-readiness: Is there sufficient information for a confident go / no-go decision?',
+    'EVALUATION RUBRIC — evaluate all dimensions from the fact_sheet:',
+    '1. Clarity & specificity: scope_deliverables, project_goal — concrete and specific?',
+    '   Flag vague language: "ASAP", "scalable", "world-class", "top N" without definitions, "TBD".',
+    '2. Feasibility / realism: timeline and assumptions — realistic and grounded?',
+    '3. Completeness: KPIs, timeline, constraints, risks, deliverables all present and non-empty?',
+    '   Use source_coverage flags to guide your assessment.',
+    '4. Risks & assumptions: risks array — key risks identified with impact/likelihood?',
+    '5. Decision-readiness: sufficient information for a confident go / no-go decision?',
     '',
     'OUTPUT FIELD SEMANTICS:',
     '- fit_level: Overall proposal quality / readiness.',
-    '  Interpret as: high = decision-ready; medium = promising but gaps exist; low = major gaps; unknown = insufficient info.',
-    '- confidence_0_1: Your confidence in the assessment (0 = no basis to judge, 1 = very confident).',
-    '- why: Array of strings — key strengths AND key risks/concerns of the proposal, written safely for sharing.',
-    '- missing: Array of strings — specific information gaps or questions that block confident decision-making.',
-    '- redactions: Array of strings — topics that must remain confidential and should not appear in any shared output.',
+    '  high = decision-ready; medium = promising but gaps exist; low = major gaps; unknown = insufficient info.',
+    '- confidence_0_1: Your confidence in the assessment (0 = no basis, 1 = very confident).',
+    '- why: Array of strings — key strengths AND concerns, written safely for public sharing.',
+    '- missing: Array of strings — specific gaps or questions blocking confident decision-making.',
+    '  Incorporate fact_sheet.missing_info and fact_sheet.open_questions.',
+    '- redactions: Array of strings — topics that must remain confidential.',
     '',
     'HARD GUARDRAILS — follow these without exception:',
-    '- "high" fit_level is RARE. Only assign it when the proposal is specific, quantified where appropriate,',
-    '  internally coherent, addresses risks, and is genuinely decision-ready. When in doubt, use "medium".',
-    '- If ANY of the following are absent or vague: KPIs / success criteria, timeline detail, constraints,',
-    '  key deliverables detail, key risks — then:',
-    '  (a) fit_level CANNOT be "high", AND',
-    '  (b) confidence_0_1 MUST be <= 0.75.',
-    '- If the proposal uses vague language ("ASAP", "scalable", "top N" without definitions, "TBD" for',
-    '  critical items): each instance MUST appear in missing[] and MUST lower fit_level and confidence_0_1.',
-    '- If sharedText and confidentialText are identical, very similar, or heavily overlapping, this is',
-    '  NOT a quality signal. Do NOT assign high fit_level or high confidence_0_1 on that basis alone.',
+    '- "high" fit_level is RARE. Only when specific, quantified, coherent, risks addressed, decision-ready.',
+    '  When in doubt, use "medium".',
+    '- If source_coverage shows has_kpis, has_timeline, has_constraints, or has_risks is false:',
+    '  fit_level CANNOT be "high" AND confidence_0_1 MUST be <= 0.75.',
+    '- If multiple source_coverage fields are false: confidence_0_1 MUST be lower still (<= 0.55).',
+    '- Each item in fact_sheet.missing_info MUST appear in missing[] and MUST lower confidence.',
+    '- Identical or heavily overlapping tiers: NOT a quality signal — do NOT reward this.',
     '',
     'Output MUST be valid JSON only. No markdown, no backticks, no preamble.',
     'Required JSON schema (all keys required):',
@@ -263,12 +485,76 @@ function buildPrompt(params: {
     '- fit_level must be one of high|medium|low|unknown.',
     '- confidence_0_1 must be between 0 and 1.',
     '- why/missing/redactions must be arrays (can be empty).',
-    '- Keep ALL statements in why/missing/redactions safe for public sharing.',
-    '- Use generic derived wording for any confidential-driven conclusions.',
+    '- Keep ALL statements safe for public sharing.',
+    '- Use generic derived wording for confidential-driven conclusions.',
     'INPUT JSON:',
     JSON.stringify(payload, null, 2),
     'Return JSON only.',
   ].join('\n');
+}
+
+// ─── Post-processing coverage clamps ─────────────────────────────────────────
+
+type ClampResult = {
+  data: VertexEvaluationV2Response;
+  capsApplied: string[];
+};
+
+function applyCoverageClamps(params: {
+  data: VertexEvaluationV2Response;
+  factSheet: ProposalFactSheet;
+  sharedText: string;
+  confidentialText: string;
+}): ClampResult {
+  const { factSheet, sharedText, confidentialText } = params;
+  let { fit_level, confidence_0_1, why, missing, redactions } = params.data;
+  const capsApplied: string[] = [];
+  const sc = factSheet.source_coverage;
+
+  const coverageCount = computeCoverageCount(sc);
+
+  // Clamp 2 first — low overall coverage (<3 of 5) is the stricter constraint (0.65).
+  // Apply before the 0.75 clamp so downgrade_high_low_coverage fires when coverage is low.
+  if (coverageCount < 3) {
+    if (confidence_0_1 > 0.65) {
+      confidence_0_1 = 0.65;
+      capsApplied.push('cap_0.65_low_coverage');
+    }
+    if (fit_level === 'high') {
+      fit_level = 'medium';
+      capsApplied.push('downgrade_high_low_coverage');
+    }
+  }
+
+  // Clamp 1 — missing any of the four critical fields → cap at 0.75, block high.
+  // Only fires if fit_level is still 'high' or confidence still above 0.75 after Clamp 2.
+  const missingCritical = !sc.has_kpis || !sc.has_timeline || !sc.has_constraints || !sc.has_risks;
+  if (missingCritical) {
+    if (confidence_0_1 > 0.75) {
+      confidence_0_1 = 0.75;
+      capsApplied.push('cap_0.75_missing_critical');
+    }
+    if (fit_level === 'high') {
+      fit_level = 'medium';
+      capsApplied.push('downgrade_high_missing_critical');
+    }
+  }
+
+  // Clamp 3 — identical shared+confidential text → append warning (no upward effect on fit)
+  const sharedNorm = sharedText.trim();
+  const confNorm = confidentialText.trim();
+  if (sharedNorm && confNorm && sharedNorm === confNorm) {
+    const warning = 'Shared and confidential appear identical; confidentiality separation may not be meaningful.';
+    if (!missing.includes(warning)) {
+      missing = [...missing, warning];
+      capsApplied.push('warn_identical_tiers');
+    }
+  }
+
+  return {
+    data: { fit_level, confidence_0_1: clamp01(confidence_0_1), why, missing, redactions },
+    capsApplied,
+  };
 }
 
 function hasJsonFence(text: string) {
@@ -980,8 +1266,24 @@ export async function evaluateWithVertexV2(
 
   const chunks = buildChunks(sharedText, confidentialText);
   const forbiddenChunks = buildSourceChunks(forbiddenLeakText.slice(0, MAX_CONFIDENTIAL_CHARS), 'conf');
-  const prompt = buildPrompt({ sharedText, confidentialText, chunks });
   const callVertex = getVertexCallImplementation();
+
+  // ── Pass A: extract structured Fact Sheet ────────────────────────────────
+  const proposalTextExcerpt =
+    '[SHARED / PUBLIC PORTION]\n' +
+    sharedText.slice(0, MAX_SHARED_CHARS) +
+    '\n---\n' +
+    '[CONFIDENTIAL PORTION — internal context only, do NOT reproduce verbatim in output]\n' +
+    confidentialText.slice(0, MAX_CONFIDENTIAL_CHARS);
+
+  const { sheet: factSheet, parseError: passAParseError } = await extractProposalFactsV2({
+    proposalTextExcerpt,
+    requestId,
+    callVertex,
+  });
+
+  // ── Pass B: final evaluation using Fact Sheet ────────────────────────────
+  const prompt = buildEvalPromptFromFactSheet({ factSheet, chunks });
 
   let attempt = 0;
   while (attempt < MAX_ATTEMPTS) {
@@ -1141,11 +1443,26 @@ export async function evaluateWithVertexV2(
       }
     }
 
+    // ── Apply deterministic coverage clamps (post-processing) ───────────
+    const clamped = applyCoverageClamps({
+      data: schemaValidation.normalized,
+      factSheet,
+      sharedText,
+      confidentialText,
+    });
+
     return {
       ok: true,
-      data: schemaValidation.normalized,
+      data: clamped.data,
       attempt_count: attempt,
       model: vertex.model,
+      _internal: {
+        fact_sheet: factSheet,
+        coverage_count: computeCoverageCount(factSheet.source_coverage),
+        caps_applied: clamped.capsApplied,
+        pass_a_parse_error: passAParseError,
+        pass_b_attempt_count: attempt,
+      },
     };
   }
 

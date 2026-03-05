@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { evaluateWithVertexV2, validateResponseSchema } from '../../server/_lib/vertex-evaluation-v2.ts';
 
+// ─── Mock helpers ─────────────────────────────────────────────────────────────
+
 function setVertexV2MockSequence(sequence) {
   let index = 0;
   globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__ = async () => {
@@ -20,6 +22,7 @@ function setVertexV2MockSequence(sequence) {
   };
 }
 
+// Final-eval response shape (Pass B result).
 function validPayload(overrides = {}) {
   return {
     fit_level: 'medium',
@@ -30,6 +33,46 @@ function validPayload(overrides = {}) {
     ...overrides,
   };
 }
+
+// Full-coverage fact sheet (all source_coverage flags true).
+// Pass A is expected to produce something in this shape for well-specified proposals.
+function validFactSheetPayload(overrides = {}) {
+  return {
+    project_goal: 'Deliver analytics dashboard with defined KPIs and milestones.',
+    scope_deliverables: ['Dashboard module', 'API integration', 'User acceptance testing'],
+    timeline: { start: '2026-Q2', duration: '6 months', milestones: ['Alpha by Month 2', 'Beta by Month 4'] },
+    constraints: ['Budget cap applies', 'Must use existing cloud infra'],
+    success_criteria_kpis: ['Dashboard load time < 2s', 'User adoption >= 80% by Month 6'],
+    vendor_preferences: [],
+    assumptions: ['Stakeholders available for weekly reviews'],
+    risks: [
+      { risk: 'Scope creep', impact: 'med', likelihood: 'med' },
+      { risk: 'Key-person dependency', impact: 'high', likelihood: 'low' },
+    ],
+    open_questions: [],
+    missing_info: [],
+    source_coverage: {
+      has_scope: true,
+      has_timeline: true,
+      has_kpis: true,
+      has_constraints: true,
+      has_risks: true,
+    },
+    ...overrides,
+  };
+}
+
+// Returns the mock vertex-response wrapper for a Pass A (fact sheet) success.
+function factSheetResponse(overrides = {}) {
+  return {
+    model: 'gemini-2.0-flash-001',
+    text: JSON.stringify(validFactSheetPayload(overrides)),
+    finishReason: 'STOP',
+    httpStatus: 200,
+  };
+}
+
+// ─── Schema validation (no Vertex calls) ─────────────────────────────────────
 
 test('validateResponseSchema accepts strict small schema and rejects missing keys', () => {
   const good = validateResponseSchema(validPayload());
@@ -46,8 +89,17 @@ test('validateResponseSchema accepts strict small schema and rejects missing key
   assert.equal(missing.missingKeys.includes('redactions'), true);
 });
 
+// ─── Core evaluation flow (updated for 2-pass) ───────────────────────────────
+// In 2-pass mode each evaluateWithVertexV2 call makes:
+//   Call 1 = Pass A (fact sheet extraction)
+//   Call 2+ = Pass B (final evaluation, with retry on transient errors)
+// Sequences must supply Pass A response first.
+
 test('v2 accepts valid JSON response', async () => {
   const cleanup = setVertexV2MockSequence([
+    // Pass A — full-coverage fact sheet so no clamps fire
+    { response: factSheetResponse() },
+    // Pass B — final eval
     {
       response: {
         model: 'gemini-2.0-flash-001',
@@ -67,6 +119,7 @@ test('v2 accepts valid JSON response', async () => {
 
     assert.equal(outcome.ok, true);
     if (!outcome.ok) return;
+    // Full-coverage fact sheet → no clamps → high / 0.9 preserved
     assert.equal(outcome.data.fit_level, 'high');
     assert.equal(outcome.data.confidence_0_1, 0.9);
     assert.equal(outcome.attempt_count, 1);
@@ -79,6 +132,7 @@ test('v2 accepts valid JSON response', async () => {
 test('v2 parses fenced JSON and preamble text', async () => {
   const body = `Model output follows:\n\`\`\`json\n${JSON.stringify(validPayload())}\n\`\`\`\nDone`;
   const cleanup = setVertexV2MockSequence([
+    { response: factSheetResponse() },
     {
       response: {
         model: 'gemini-2.0-flash-001',
@@ -122,6 +176,8 @@ test('v2 coerces legacy structured schema into small schema', async () => {
   };
 
   const cleanup = setVertexV2MockSequence([
+    // Full-coverage fact sheet so high/0.81 is not clamped
+    { response: factSheetResponse() },
     {
       response: {
         model: 'gemini-2.0-flash-001',
@@ -151,23 +207,20 @@ test('v2 coerces legacy structured schema into small schema', async () => {
 });
 
 test('v2 retries once then fails with truncated_output and retryable=true', async () => {
+  const truncatedResponse = {
+    model: 'gemini-2.0-flash-001',
+    text: '{"fit_level":"high","confidence_0_1":0.8,"why":["partial"]',
+    finishReason: 'MAX_TOKENS',
+    httpStatus: 200,
+  };
+
   const cleanup = setVertexV2MockSequence([
-    {
-      response: {
-        model: 'gemini-2.0-flash-001',
-        text: '{"fit_level":"high","confidence_0_1":0.8,"why":["partial"]',
-        finishReason: 'MAX_TOKENS',
-        httpStatus: 200,
-      },
-    },
-    {
-      response: {
-        model: 'gemini-2.0-flash-001',
-        text: '{"fit_level":"high","confidence_0_1":0.8,"why":["partial"]',
-        finishReason: 'MAX_TOKENS',
-        httpStatus: 200,
-      },
-    },
+    // Pass A succeeds
+    { response: factSheetResponse() },
+    // Pass B attempt 1 — truncated
+    { response: truncatedResponse },
+    // Pass B attempt 2 — truncated again → final failure
+    { response: truncatedResponse },
   ]);
 
   try {
@@ -198,9 +251,11 @@ test('v2 retries transient vertex_http_error once and then succeeds', async () =
   });
 
   const cleanup = setVertexV2MockSequence([
-    {
-      throw: transientError,
-    },
+    // Pass A succeeds
+    { response: factSheetResponse() },
+    // Pass B attempt 1 — transient error
+    { throw: transientError },
+    // Pass B attempt 2 — success
     {
       response: {
         model: 'gemini-2.0-flash-001',
@@ -237,12 +292,12 @@ test('v2 fails after retry on persistent vertex_http_error and marks retryable=t
   });
 
   const cleanup = setVertexV2MockSequence([
-    {
-      throw: transientError,
-    },
-    {
-      throw: transientError,
-    },
+    // Pass A succeeds
+    { response: factSheetResponse() },
+    // Pass B attempt 1 — transient error
+    { throw: transientError },
+    // Pass B attempt 2 — transient error again → final failure
+    { throw: transientError },
   ]);
 
   try {
@@ -263,6 +318,9 @@ test('v2 fails after retry on persistent vertex_http_error and marks retryable=t
 
 test('v2 fails on json_parse_error for non-JSON content', async () => {
   const cleanup = setVertexV2MockSequence([
+    // Pass A succeeds
+    { response: factSheetResponse() },
+    // Pass B returns non-JSON
     {
       response: {
         model: 'gemini-2.0-flash-001',
@@ -291,6 +349,9 @@ test('v2 fails on json_parse_error for non-JSON content', async () => {
 test('v2 detects planted confidential token leak and fails hard', async () => {
   const planted = 'CONFIDENTIAL_PRICE_12345';
   const cleanup = setVertexV2MockSequence([
+    // Pass A succeeds
+    { response: factSheetResponse() },
+    // Pass B returns a response leaking the token
     {
       response: {
         model: 'gemini-2.0-flash-001',
@@ -321,18 +382,26 @@ test('v2 detects planted confidential token leak and fails hard', async () => {
   }
 });
 
-// ─── Sanity checks: proposal-quality objective (not alignment) ───────────────
-//
-// These tests verify that the prompt sent to the model encodes the
-// anti-alignment guardrails added in the "proposal quality" overhaul.
-// They do NOT call the real Vertex API — they capture the raw prompt text
-// via the mock hook and assert on its contents.
+// ─── Sanity checks: prompt structure (updated for 2-pass) ────────────────────
 
 test('sanity: prompt encodes anti-alignment guardrail and proposal-quality objective', async () => {
-  let capturedPrompt = '';
+  let passAPrompt = '';
+  let passBPrompt = '';
+  let callCount = 0;
 
   globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__ = async ({ prompt }) => {
-    capturedPrompt = prompt;
+    callCount += 1;
+    if (callCount === 1) {
+      passAPrompt = prompt;
+      // Return a valid fact sheet so Pass A completes successfully
+      return {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(validFactSheetPayload()),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      };
+    }
+    passBPrompt = prompt;
     return {
       model: 'gemini-2.0-flash-001',
       text: JSON.stringify(validPayload({ fit_level: 'medium', confidence_0_1: 0.6 })),
@@ -348,75 +417,103 @@ test('sanity: prompt encodes anti-alignment guardrail and proposal-quality objec
       requestId: 'req-sanity-prompt-1',
     });
 
-    // The prompt must NOT use alignment framing.
+    assert.equal(callCount, 2, 'Two Vertex calls must be made (Pass A + Pass B)');
+
+    // Pass A prompt: structured extraction, contains the full proposal text with section labels
     assert.equal(
-      capturedPrompt.includes('contract/proposal alignment'),
+      passAPrompt.includes('SHARED / PUBLIC PORTION'),
+      true,
+      'Pass A prompt must include shared section label inside proposal_text_excerpt',
+    );
+    assert.equal(
+      passAPrompt.includes('CONFIDENTIAL PORTION'),
+      true,
+      'Pass A prompt must include confidential section label inside proposal_text_excerpt',
+    );
+    assert.equal(
+      passAPrompt.includes('source_coverage'),
+      true,
+      'Pass A prompt must instruct the model to populate source_coverage',
+    );
+
+    // Pass B prompt: evaluation framing — must NOT use old alignment framing
+    assert.equal(
+      passBPrompt.includes('contract/proposal alignment'),
       false,
-      'Prompt must not contain old alignment framing',
+      'Pass B prompt must not contain old alignment framing',
     );
 
-    // The prompt must encode the new objective.
+    // Pass B prompt: must state proposal-quality objective
     assert.equal(
-      capturedPrompt.includes('evaluate the overall business proposal quality'),
+      passBPrompt.includes('evaluate the overall business proposal quality'),
       true,
-      'Prompt must state proposal-quality objective',
+      'Pass B prompt must state proposal-quality objective',
     );
 
-    // The prompt must explicitly block similarity-as-quality scoring.
+    // Pass B prompt: must block similarity-as-quality scoring
     assert.equal(
-      capturedPrompt.includes('NOT a quality signal'),
+      passBPrompt.includes('NOT a quality signal'),
       true,
-      'Prompt must contain the anti-alignment similarity guardrail',
+      'Pass B prompt must contain the anti-alignment similarity guardrail',
     );
 
-    // The prompt must include the unified proposal_text_excerpt concept.
+    // Pass B prompt: must have the "high is rare" hard guardrail
     assert.equal(
-      capturedPrompt.includes('SHARED / PUBLIC PORTION'),
+      passBPrompt.includes('"high" fit_level is RARE'),
       true,
-      'Prompt must include combined proposal_text_excerpt with shared section label',
-    );
-    assert.equal(
-      capturedPrompt.includes('CONFIDENTIAL PORTION'),
-      true,
-      'Prompt must include confidential section label inside proposal_text_excerpt',
+      'Pass B prompt must contain hard guardrail restricting "high" fit_level',
     );
 
-    // The prompt must have the hard guardrail for "high" fit_level.
+    // Pass B prompt: payload must include evaluate_proposal_quality_not_alignment constraint
     assert.equal(
-      capturedPrompt.includes('"high" fit_level is RARE'),
+      passBPrompt.includes('evaluate_proposal_quality_not_alignment'),
       true,
-      'Prompt must contain hard guardrail restricting "high" fit_level',
+      'Pass B prompt payload must include evaluate_proposal_quality_not_alignment constraint',
     );
 
-    // The evaluate_proposal_quality_not_alignment constraint must be in the payload.
+    // Pass B prompt: must receive fact_sheet (primary input from Pass A)
     assert.equal(
-      capturedPrompt.includes('evaluate_proposal_quality_not_alignment'),
+      passBPrompt.includes('fact_sheet'),
       true,
-      'Prompt payload must include evaluate_proposal_quality_not_alignment constraint',
+      'Pass B prompt must include fact_sheet as primary input',
     );
   } finally {
     delete globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__;
   }
 });
 
-test('sanity: identical shared+confidential does not auto-produce high/1.0 — guardrail is in prompt, not post-processing', async () => {
-  // This test documents the expected behaviour: the guardrail lives in the
-  // prompt (the model must respect it). If a model ignores the prompt and
-  // returns high/1.0 anyway, the schema layer will still accept it —
-  // the fix is intentionally at the prompt level, not a hard code clamp.
-  //
-  // To verify the full chain against a live model, run:
-  //   VERTEX_PROJECT_ID=... node --import=tsx tests/lib/vertex-evaluation-v2.test.mjs
-  // and assert that identical-text inputs do not produce fit_level: high with
-  // confidence_0_1: 1.0 — they should surface missing[] items instead.
-
+test('sanity: identical shared+confidential triggers identical-tier warning and caps apply', async () => {
   const identicalText =
     'We will deliver a scalable platform ASAP with top dashboards and world-class support.';
 
-  let capturedPrompt = '';
-  globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__ = async ({ prompt }) => {
-    capturedPrompt = prompt;
-    // Simulate a realistically-calibrated model response that respects the guardrails.
+  let callCount = 0;
+  globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__ = async () => {
+    callCount += 1;
+    if (callCount === 1) {
+      // Pass A — low coverage since text is vague (all false)
+      return {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(
+          validFactSheetPayload({
+            source_coverage: {
+              has_scope: false,
+              has_timeline: false,
+              has_kpis: false,
+              has_constraints: false,
+              has_risks: false,
+            },
+            missing_info: [
+              'No KPIs or success criteria defined.',
+              'Timeline is vague ("ASAP") — no dates or milestones.',
+              '"Scalable" is undefined.',
+            ],
+          }),
+        ),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      };
+    }
+    // Pass B — model returns low confidence for vague identical text
     return {
       model: 'gemini-2.0-flash-001',
       text: JSON.stringify(
@@ -424,12 +521,7 @@ test('sanity: identical shared+confidential does not auto-produce high/1.0 — g
           fit_level: 'low',
           confidence_0_1: 0.45,
           why: ['Proposal mentions a platform and dashboards, but lacks specifics.'],
-          missing: [
-            'No KPIs or success criteria defined.',
-            'Timeline is vague ("ASAP") — no dates or milestones.',
-            '"Scalable" and "world-class" are undefined.',
-            'No constraints, risks, or acceptance criteria provided.',
-          ],
+          missing: ['No KPIs defined.', 'Timeline is vague.'],
           redactions: [],
         }),
       ),
@@ -448,18 +540,248 @@ test('sanity: identical shared+confidential does not auto-produce high/1.0 — g
     assert.equal(outcome.ok, true, 'Should parse successfully');
     if (!outcome.ok) return;
 
-    // A well-calibrated model should NOT return high fit for a vague proposal.
+    // Identical vague texts must not produce high fit
     assert.notEqual(outcome.data.fit_level, 'high', 'Identical vague texts must not produce fit_level: high');
-    assert.equal(outcome.data.confidence_0_1 <= 0.75, true, 'Vague identical proposal should have confidence <= 0.75');
-    assert.equal(outcome.data.missing.length > 0, true, 'Should surface missing items for vague proposal');
-
-    // Verify the prompt was built with the guardrail text for identical inputs.
-    assert.equal(
-      capturedPrompt.includes('NOT a quality signal'),
-      true,
-      'Prompt must contain the anti-alignment similarity guardrail even for identical inputs',
+    // Caps must have fired (coverageCount=0 → 0.65 cap, missingCritical → 0.75 cap)
+    assert.equal(outcome.data.confidence_0_1 <= 0.65, true, 'Vague identical proposal must be capped at <= 0.65');
+    // Identical-tier warning must be appended by applyCoverageClamps
+    const warningPresent = outcome.data.missing.some((m) =>
+      m.includes('identical'),
     );
+    assert.equal(warningPresent, true, 'missing[] must contain identical-tier warning');
+    // _internal metadata must record the caps applied
+    assert.equal(Array.isArray(outcome._internal?.caps_applied), true, '_internal.caps_applied must be an array');
+    assert.equal(outcome._internal.caps_applied.includes('warn_identical_tiers'), true, 'warn_identical_tiers cap must be recorded');
   } finally {
     delete globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__;
   }
 });
+
+// ─── 2-pass + coverage clamps (new tests for Prompt 2) ───────────────────────
+
+test('2-pass: two Vertex calls are made (Pass A fact sheet + Pass B eval)', async () => {
+  const calls = [];
+
+  globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__ = async ({ prompt }) => {
+    calls.push(prompt);
+    if (calls.length === 1) {
+      // Pass A
+      return {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(validFactSheetPayload()),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      };
+    }
+    // Pass B
+    return {
+      model: 'gemini-2.0-flash-001',
+      text: JSON.stringify(validPayload({ fit_level: 'medium', confidence_0_1: 0.7 })),
+      finishReason: 'STOP',
+      httpStatus: 200,
+    };
+  };
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Shared: deliver analytics module with SLA definitions.',
+      confidentialText: 'Confidential: budget is fixed, approved vendor list applies.',
+      requestId: 'req-2pass-calls-1',
+    });
+
+    assert.equal(outcome.ok, true, 'Should succeed');
+    assert.equal(calls.length, 2, 'Exactly two Vertex calls must be made');
+
+    // Call 1 (Pass A) must instruct fact extraction (source_coverage key present)
+    assert.equal(calls[0].includes('source_coverage'), true, 'Pass A prompt must mention source_coverage');
+    assert.equal(calls[0].includes('missing_info'), true, 'Pass A prompt must mention missing_info');
+
+    // Call 2 (Pass B) must reference fact_sheet as primary input
+    assert.equal(calls[1].includes('fact_sheet'), true, 'Pass B prompt must include fact_sheet');
+    assert.equal(calls[1].includes('evaluate_proposal_quality_not_alignment'), true,
+      'Pass B prompt must include evaluate_proposal_quality_not_alignment constraint');
+
+    // _internal metadata must expose the fact sheet and call counts
+    if (outcome.ok) {
+      assert.equal(typeof outcome._internal?.fact_sheet, 'object', '_internal.fact_sheet must be an object');
+      assert.equal(outcome._internal.pass_b_attempt_count, 1, '_internal.pass_b_attempt_count must be 1');
+      assert.equal(outcome._internal.pass_a_parse_error, false, '_internal.pass_a_parse_error must be false');
+    }
+  } finally {
+    delete globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__;
+  }
+});
+
+test('2-pass clamps: vague input → coverageCount < 3 → confidence capped at 0.65 and fit_level not high', async () => {
+  // Pass A returns a fact sheet with only 1 out of 5 coverage fields true (scope only).
+  // coverageCount = 1 < 3 → cap_0.65 + downgrade_high fires.
+  const lowCoverageFactSheet = validFactSheetPayload({
+    source_coverage: {
+      has_scope: true,
+      has_timeline: false,
+      has_kpis: false,
+      has_constraints: false,
+      has_risks: false,
+    },
+    missing_info: [
+      'No timeline defined.',
+      'No KPIs or success criteria.',
+      'No constraints stated.',
+      'No risks identified.',
+    ],
+  });
+
+  const cleanup = setVertexV2MockSequence([
+    // Pass A — low coverage
+    {
+      response: {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(lowCoverageFactSheet),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+    // Pass B — model ignores guardrails and tries to return high/0.95
+    {
+      response: {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(validPayload({ fit_level: 'high', confidence_0_1: 0.95 })),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+  ]);
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'We will build a scalable system ASAP.',
+      confidentialText: 'Confidential: some internal notes.',
+      requestId: 'req-clamp-low-coverage-1',
+    });
+
+    assert.equal(outcome.ok, true, 'Should still succeed (clamps, not failure)');
+    if (!outcome.ok) return;
+
+    // fit_level must be downgraded from high
+    assert.notEqual(outcome.data.fit_level, 'high', 'fit_level must not be high when coverage < 3');
+    assert.equal(outcome.data.fit_level, 'medium', 'fit_level must be downgraded to medium');
+
+    // confidence must be capped at 0.65
+    assert.equal(outcome.data.confidence_0_1 <= 0.65, true, 'confidence_0_1 must be capped at <= 0.65');
+
+    // _internal must record the caps applied
+    assert.equal(
+      outcome._internal?.caps_applied.includes('cap_0.65_low_coverage'),
+      true,
+      'cap_0.65_low_coverage must be recorded in caps_applied',
+    );
+    assert.equal(
+      outcome._internal?.caps_applied.includes('downgrade_high_low_coverage'),
+      true,
+      'downgrade_high_low_coverage must be recorded in caps_applied',
+    );
+    assert.equal(outcome._internal?.coverage_count, 1, 'coverage_count must be 1');
+  } finally {
+    cleanup();
+  }
+});
+
+test('2-pass clamps: missing KPIs/timeline/constraints/risks triggers 0.75 cap', async () => {
+  // Pass A: scope + timeline present, but kpis/constraints/risks all missing.
+  // coverageCount = 2 < 3 → also triggers the stricter 0.65 cap.
+  // To isolate the 0.75 clamp specifically, use coverage = 3 (scope+timeline+constraints but no kpis+risks).
+  // coverageCount = 3 (NOT < 3), but missingCritical = true (has_kpis=false, has_risks=false) → 0.75 cap only.
+  const partialCoverageFactSheet = validFactSheetPayload({
+    source_coverage: {
+      has_scope: true,
+      has_timeline: true,
+      has_kpis: false,     // missing
+      has_constraints: true,
+      has_risks: false,    // missing
+    },
+    missing_info: ['No KPIs defined.', 'No risks identified.'],
+  });
+
+  const cleanup = setVertexV2MockSequence([
+    {
+      response: {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(partialCoverageFactSheet),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+    // Pass B model attempts high/0.9 — must be capped
+    {
+      response: {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(validPayload({ fit_level: 'high', confidence_0_1: 0.9 })),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+  ]);
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Analytics dashboard with 6-month timeline and clear constraints.',
+      confidentialText: 'Confidential: budget and vendor details.',
+      requestId: 'req-clamp-kpi-1',
+    });
+
+    assert.equal(outcome.ok, true, 'Should succeed');
+    if (!outcome.ok) return;
+
+    // confidence must be capped at 0.75 (0.65 does NOT fire since coverageCount=3)
+    assert.equal(outcome.data.confidence_0_1 <= 0.75, true, 'confidence_0_1 must be capped at <= 0.75');
+    // fit_level must be downgraded from high
+    assert.notEqual(outcome.data.fit_level, 'high', 'fit_level must not be high when critical fields missing');
+
+    assert.equal(
+      outcome._internal?.caps_applied.includes('cap_0.75_missing_critical'),
+      true,
+      'cap_0.75_missing_critical must be recorded',
+    );
+    assert.equal(outcome._internal?.coverage_count, 3, 'coverage_count must be 3');
+  } finally {
+    cleanup();
+  }
+});
+
+test('2-pass clamps: full coverage + detailed proposal → high/medium preserved, confidence not clamped', async () => {
+  // Pass A returns full-coverage fact sheet (all 5 true) → coverageCount = 5, no missing critical.
+  // No clamps should fire. The Pass B result must come through unchanged.
+  const cleanup = setVertexV2MockSequence([
+    { response: factSheetResponse() },
+    {
+      response: {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(validPayload({ fit_level: 'medium', confidence_0_1: 0.78 })),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+  ]);
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Analytics dashboard with 6-month timeline, defined KPIs, constraints, and risk register.',
+      confidentialText: 'Confidential: budget is $300k, approved vendors list provided.',
+      requestId: 'req-no-clamp-1',
+    });
+
+    assert.equal(outcome.ok, true, 'Should succeed');
+    if (!outcome.ok) return;
+
+    // No clamps should have fired — values must be exactly as the model returned
+    assert.equal(outcome.data.fit_level, 'medium', 'fit_level must be exactly as model returned');
+    assert.equal(outcome.data.confidence_0_1, 0.78, 'confidence_0_1 must be exactly as model returned (no clamp)');
+
+    // caps_applied must be empty
+    assert.equal(outcome._internal?.caps_applied.length, 0, 'No caps should have been applied for full coverage');
+    assert.equal(outcome._internal?.coverage_count, 5, 'coverage_count must be 5 for full-coverage sheet');
+  } finally {
+    cleanup();
+  }
+});
+
