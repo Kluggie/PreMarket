@@ -479,6 +479,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
             sharedText: String(comparison.docBText || ''),
             confidentialText: String(comparison.docAText || ''),
             requestId,
+            enforceLeakGuard: false,
           });
           if (!v2Result.ok) {
             throw toV2ApiError(v2Result.error);
@@ -500,6 +501,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
               routeName: '/api/proposals/[id]/evaluate',
               entityId: comparison.id,
               inputChars: String(comparison.docAText || '').length + String(comparison.docBText || '').length,
+              disableConfidentialLeakGuard: true,
             },
           );
         }

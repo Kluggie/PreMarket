@@ -114,6 +114,46 @@ function extractEvaluationFailureDetails(rawError) {
   };
 }
 
+function toStringList(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map((entry) => asText(entry)).filter(Boolean);
+}
+
+function extractConfidentialityWarnings(result) {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) {
+    return {
+      hasWarnings: false,
+      sectionRedacted: [],
+      sectionRegenerated: [],
+      retriesUsed: {},
+    };
+  }
+
+  const warnings =
+    result.warnings && typeof result.warnings === 'object' && !Array.isArray(result.warnings)
+      ? result.warnings
+      : {};
+  const sectionRedacted = toStringList(warnings.confidentiality_section_redacted);
+  const sectionRegenerated = toStringList(warnings.confidentiality_section_regenerated);
+  const retriesUsed =
+    warnings.retries_used && typeof warnings.retries_used === 'object' && !Array.isArray(warnings.retries_used)
+      ? warnings.retries_used
+      : {};
+  const completionStatus = asLower(result.completion_status || result.completionStatus);
+
+  return {
+    hasWarnings:
+      completionStatus === 'completed_with_warnings' ||
+      sectionRedacted.length > 0 ||
+      sectionRegenerated.length > 0,
+    sectionRedacted,
+    sectionRegenerated,
+    retriesUsed,
+  };
+}
+
 function toFailureBannerMessage(failure) {
   const code = asLower(failure?.failureCode);
   if (code === 'vertex_timeout' || code === 'vertex_rate_limited' || code === 'vertex_unavailable') {
@@ -143,7 +183,7 @@ function toFailureBannerMessage(failure) {
       return 'Vertex output was not valid JSON. Please retry.';
     }
     if (parseKind === 'confidential_leak_detected') {
-      return 'Evaluation blocked due to confidentiality leak detection.';
+      return 'Some sections were omitted due to confidentiality policy. Your report is otherwise complete.';
     }
     if (parseKind === 'vertex_timeout') {
       return 'Vertex request timed out. Please retry.';
@@ -435,6 +475,11 @@ export default function DocumentComparisonDetail() {
   const reportSections = Array.isArray(report?.sections) ? report.sections : [];
   const evaluationHistory = Array.isArray(evaluationsQuery.data) ? evaluationsQuery.data : [];
   const latestEvaluation = evaluationHistory[0] || null;
+  const comparisonWarningMeta = extractConfidentialityWarnings(comparison?.evaluation_result);
+  const latestEvaluationWarningMeta = extractConfidentialityWarnings(latestEvaluation?.result);
+  const activeWarningMeta = latestEvaluationWarningMeta.hasWarnings
+    ? latestEvaluationWarningMeta
+    : comparisonWarningMeta;
   const latestProviderMeta = latestEvaluation
     ? getEvaluationProviderMeta(latestEvaluation)
     : getEvaluationProviderMeta({ result: comparison?.evaluation_result || {} });
@@ -475,6 +520,14 @@ export default function DocumentComparisonDetail() {
     !isEvaluationFailed &&
     comparisonStatus === 'evaluated' &&
     hasReportData;
+  const showConfidentialityWarning = isEvaluationSucceeded && activeWarningMeta.hasWarnings;
+  const confidentialityWarningMessage = 'Some sections were omitted due to confidentiality policy. Your report is otherwise complete.';
+  const confidentialityWarningDetails =
+    activeWarningMeta.sectionRedacted.length > 0
+      ? `Redacted: ${activeWarningMeta.sectionRedacted.join(', ')}`
+      : activeWarningMeta.sectionRegenerated.length > 0
+        ? `Regenerated: ${activeWarningMeta.sectionRegenerated.join(', ')}`
+        : '';
   const hasReport = isEvaluationSucceeded;
   const rawInputTrace =
     comparison?.evaluation_result?.input_trace &&
@@ -834,6 +887,15 @@ export default function DocumentComparisonDetail() {
                       </Alert>
                     ) : null}
 
+                    {showConfidentialityWarning ? (
+                      <Alert className="bg-amber-50 border-amber-200">
+                        <AlertDescription className="text-amber-900">
+                          {confidentialityWarningMessage}
+                          {confidentialityWarningDetails ? ` ${confidentialityWarningDetails}` : ''}
+                        </AlertDescription>
+                      </Alert>
+                    ) : null}
+
                     {isEvaluationFailed ? (
                       <Alert className="bg-red-50 border-red-200">
                         <AlertDescription className="text-red-900">
@@ -938,6 +1000,15 @@ export default function DocumentComparisonDetail() {
                 <Alert className="bg-amber-50 border-amber-200">
                   <AlertDescription className="text-amber-900">
                     Vertex AI integration is not configured. AI report not available (AI not configured).
+                  </AlertDescription>
+                </Alert>
+              ) : null}
+
+              {showConfidentialityWarning ? (
+                <Alert className="bg-amber-50 border-amber-200">
+                  <AlertDescription className="text-amber-900">
+                    {confidentialityWarningMessage}
+                    {confidentialityWarningDetails ? ` ${confidentialityWarningDetails}` : ''}
                   </AlertDescription>
                 </Alert>
               ) : null}

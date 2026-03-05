@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
 import { ok } from '../../../_lib/api-response.js';
 import { requireUser } from '../../../_lib/auth.js';
@@ -11,6 +11,12 @@ import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 import { evaluateDocumentComparisonWithVertex } from '../../../_lib/vertex-evaluation.js';
 import { evaluateWithVertexV2 } from '../../../_lib/vertex-evaluation-v2.js';
 import { getVertexConfig } from '../../../_lib/integrations.js';
+import { generateDocumentComparisonCoach } from '../../../_lib/vertex-coach.js';
+import {
+  buildCounterpartyLeakGuard,
+  detectCounterpartyLeak,
+  healEvaluationReportSections,
+} from '../../../_lib/evaluation-confidentiality.js';
 import {
   htmlToEditorText,
   sanitizeEditorHtml,
@@ -350,6 +356,298 @@ function resolveEvaluationDraft(params: {
     docBText,
     draftStep,
     inputs: updatedInputs,
+  };
+}
+
+function toRecord(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {} as Record<string, unknown>;
+  }
+  return value as Record<string, unknown>;
+}
+
+function toTokenStringArray(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [] as string[];
+  }
+  const unique = new Set<string>();
+  value.forEach((entry) => {
+    const token = asText(entry).toLowerCase();
+    if (!token) {
+      return;
+    }
+    unique.add(token);
+  });
+  return [...unique].slice(0, 120);
+}
+
+function resolveOtherPartyCanaryTokens(existing: any, existingInputs: Record<string, unknown>) {
+  const metadata = toRecord(existing?.metadata);
+  const metadataTokenCandidates = [
+    metadata.other_party_confidential_canary_tokens,
+    metadata.otherPartyConfidentialCanaryTokens,
+    metadata.other_party_canary_tokens,
+    metadata.otherPartyCanaryTokens,
+  ];
+  const inputTokenCandidates = [
+    existingInputs.other_party_confidential_canary_tokens,
+    existingInputs.otherPartyConfidentialCanaryTokens,
+    existingInputs.other_party_canary_tokens,
+    existingInputs.otherPartyCanaryTokens,
+  ];
+
+  return [...metadataTokenCandidates, ...inputTokenCandidates].flatMap((candidate) =>
+    toTokenStringArray(candidate),
+  );
+}
+
+function extractPayloadText(payload: unknown) {
+  const source = toRecord(payload);
+  const directText = asText(source.text);
+  if (directText) {
+    return directText;
+  }
+  const notes = asText(source.notes);
+  if (notes) {
+    return notes;
+  }
+  const content = asText(source.content);
+  if (content) {
+    return content;
+  }
+  return '';
+}
+
+async function getLatestRecipientConfidentialText(db: any, comparisonId: string) {
+  if (!comparisonId) {
+    return '';
+  }
+
+  const [latest] = await db
+    .select()
+    .from(schema.sharedReportRecipientRevisions)
+    .where(
+      and(
+        eq(schema.sharedReportRecipientRevisions.comparisonId, comparisonId),
+        eq(schema.sharedReportRecipientRevisions.actorRole, 'recipient'),
+        eq(schema.sharedReportRecipientRevisions.status, 'sent'),
+      ),
+    )
+    .orderBy(
+      desc(schema.sharedReportRecipientRevisions.updatedAt),
+      desc(schema.sharedReportRecipientRevisions.createdAt),
+    )
+    .limit(1);
+
+  return sanitizeEditorText(extractPayloadText(latest?.recipientConfidentialPayload)).slice(0, 20000);
+}
+
+function resolveCounterpartyConfidentialText(params: {
+  existing: any;
+  existingInputs: Record<string, unknown>;
+  recipientConfidentialText: string;
+}) {
+  const metadata = toRecord(params.existing?.metadata);
+  const values = [
+    metadata.other_party_confidential_note,
+    metadata.otherPartyConfidentialNote,
+    metadata.other_party_confidential_text,
+    metadata.otherPartyConfidentialText,
+    params.existingInputs.other_party_confidential_note,
+    params.existingInputs.otherPartyConfidentialNote,
+    params.existingInputs.other_party_confidential_text,
+    params.existingInputs.otherPartyConfidentialText,
+    params.recipientConfidentialText,
+  ];
+
+  const unique = new Set<string>();
+  values.forEach((entry) => {
+    const text = sanitizeEditorText(asText(entry)).slice(0, 20000);
+    if (!text) {
+      return;
+    }
+    unique.add(text);
+  });
+  return [...unique].join('\n\n').trim();
+}
+
+function resolveComparisonCompanyContext(existing: any, existingInputs: Record<string, unknown>) {
+  const metadata = toRecord(existing?.metadata);
+  const companyName = asText(
+    existing?.companyName ||
+      existingInputs.company_name ||
+      existingInputs.companyName ||
+      metadata.company_name ||
+      metadata.companyName,
+  );
+  const companyWebsite = asText(
+    existing?.companyWebsite ||
+      existingInputs.company_website ||
+      existingInputs.companyWebsite ||
+      metadata.company_website ||
+      metadata.companyWebsite,
+  );
+  return {
+    companyName: companyName || undefined,
+    companyWebsite: companyWebsite || undefined,
+  };
+}
+
+function buildSectionRegenerationPrompt(params: {
+  sectionKey: string;
+  sectionHeading: string;
+  sectionBullets: string[];
+  strictMode: boolean;
+}) {
+  const fallbackRefusal =
+    "That information is confidential and can't be displayed here. You can request it in the shared report / ask the counterparty to share it.";
+  const strictLines = params.strictMode
+    ? [
+        'Strict retry mode:',
+        '- Do not reveal any counterparty confidential details.',
+        `- If safe completion is not possible, return exactly: "${fallbackRefusal}"`,
+      ]
+    : [];
+
+  return [
+    'You are rewriting one section of an internal evaluation report.',
+    'Regenerate the section so it is useful, concise, and safe.',
+    `Section key: ${params.sectionKey || 'unknown'}`,
+    `Section heading: ${params.sectionHeading || 'Section'}`,
+    'Original bullets:',
+    ...(params.sectionBullets.length > 0
+      ? params.sectionBullets.map((line) => `- ${line}`)
+      : ['- (no bullets provided)']),
+    'Rules:',
+    '- Use only provided shared and requester-confidential context.',
+    '- Never reveal counterparty confidential information.',
+    '- If the section asks for counterparty confidential details, refuse safely and suggest requesting it via the shared report.',
+    '- Return only bullets, one per line, no heading.',
+    ...strictLines,
+  ].join('\n');
+}
+
+async function regenerateEvaluationSection(params: {
+  title: string;
+  sharedText: string;
+  requesterConfidentialText: string;
+  sectionKey: string;
+  sectionHeading: string;
+  sectionBullets: string[];
+  strictMode: boolean;
+  companyName?: string;
+  companyWebsite?: string;
+  counterpartyCanaryTokens: string[];
+}) {
+  const override = (globalThis as any).__PREMARKET_TEST_EVALUATION_SECTION_REGEN__;
+  if (typeof override === 'function') {
+    const overrideResult = await override({
+      ...params,
+    });
+    return asText(overrideResult?.text || overrideResult?.feedback || overrideResult);
+  }
+
+  const promptText = buildSectionRegenerationPrompt({
+    sectionKey: params.sectionKey,
+    sectionHeading: params.sectionHeading,
+    sectionBullets: params.sectionBullets,
+    strictMode: params.strictMode,
+  });
+
+  const generated = await generateDocumentComparisonCoach({
+    title: params.title || 'Document Comparison',
+    docAText: params.requesterConfidentialText,
+    docBText: params.sharedText,
+    mode: 'full',
+    intent: 'custom_prompt',
+    promptText,
+    companyName: params.companyName,
+    companyWebsite: params.companyWebsite,
+    otherPartyCanaryTokens: params.counterpartyCanaryTokens,
+  });
+
+  return asText(
+    (generated?.result as any)?.custom_feedback || (generated?.result as any)?.summary?.overall || '',
+  );
+}
+
+async function applyCounterpartyConfidentialitySelfHeal(params: {
+  evaluation: Record<string, any>;
+  title: string;
+  sharedText: string;
+  requesterConfidentialText: string;
+  counterpartyConfidentialText: string;
+  counterpartyCanaryTokens: string[];
+  companyName?: string;
+  companyWebsite?: string;
+}) {
+  const baseEvaluation =
+    params.evaluation && typeof params.evaluation === 'object' && !Array.isArray(params.evaluation)
+      ? { ...params.evaluation }
+      : {};
+
+  const report =
+    baseEvaluation.report && typeof baseEvaluation.report === 'object' && !Array.isArray(baseEvaluation.report)
+      ? baseEvaluation.report
+      : {};
+  const guard = buildCounterpartyLeakGuard({
+    sharedText: params.sharedText,
+    counterpartyConfidentialText: params.counterpartyConfidentialText,
+    counterpartyCanaryTokens: params.counterpartyCanaryTokens,
+  });
+
+  if (!guard.hasForbiddenContent) {
+    return {
+      evaluation: baseEvaluation,
+      warnings: {
+        confidentiality_section_redacted: [],
+        confidentiality_section_regenerated: [],
+        retries_used: {},
+      },
+    };
+  }
+
+  const healed = await healEvaluationReportSections({
+    report,
+    guard,
+    regenerateSection: async ({ section, strictMode }) =>
+      regenerateEvaluationSection({
+        title: params.title,
+        sharedText: params.sharedText,
+        requesterConfidentialText: params.requesterConfidentialText,
+        sectionKey: section.key,
+        sectionHeading: section.heading,
+        sectionBullets: section.bullets,
+        strictMode,
+        companyName: params.companyName,
+        companyWebsite: params.companyWebsite,
+        counterpartyCanaryTokens: params.counterpartyCanaryTokens,
+      }),
+    maxRetries: 2,
+  });
+
+  const warningCount =
+    healed.warnings.confidentiality_section_redacted.length +
+    healed.warnings.confidentiality_section_regenerated.length;
+  const nextEvaluation = {
+    ...baseEvaluation,
+    report: healed.report,
+  } as Record<string, any>;
+
+  if (detectCounterpartyLeak(asText(nextEvaluation.summary), guard)) {
+    nextEvaluation.summary = 'Some sections were omitted due to confidentiality policy.';
+  }
+
+  if (warningCount > 0) {
+    nextEvaluation.warnings = healed.warnings;
+    nextEvaluation.completion_status = 'completed_with_warnings';
+  } else if (!asText(nextEvaluation.completion_status)) {
+    nextEvaluation.completion_status = 'completed';
+  }
+
+  return {
+    evaluation: nextEvaluation,
+    warnings: healed.warnings,
   };
 }
 
@@ -926,6 +1224,15 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       existing,
       body,
     });
+    const existingInputs = toRecord(existing?.inputs);
+    const companyContext = resolveComparisonCompanyContext(existing, existingInputs);
+    const recipientConfidentialText = await getLatestRecipientConfidentialText(db, existing.id);
+    const counterpartyConfidentialText = resolveCounterpartyConfidentialText({
+      existing,
+      existingInputs,
+      recipientConfidentialText,
+    });
+    const counterpartyCanaryTokens = resolveOtherPartyCanaryTokens(existing, existingInputs);
     const inputSource = hasRequestInputOverride(body) ? 'request_body' : 'db';
     const inputVersion = getInputVersionFromMetadata(existing?.metadata);
     const evaluationInputTrace = buildEvaluationInputTrace({
@@ -1069,6 +1376,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
             sharedText: draft.docBText || '',
             confidentialText: draft.docAText || '',
             requestId,
+            enforceLeakGuard: false,
           });
           if (!v2Result.ok) {
             const error = v2Result.error;
@@ -1129,6 +1437,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
             routeName: '/api/document-comparisons/[id]/evaluate',
             entityId: existing.id,
             inputChars: confidentialLength + sharedLength,
+            disableConfidentialLeakGuard: true,
           });
         }
 
@@ -1266,6 +1575,109 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
             ? ((latestFailedResult as any)?.error?.details?.diagnostics as Record<string, unknown> | null)
             : null,
       });
+    }
+
+    const defaultConfidentialityWarnings = {
+      confidentiality_section_redacted: [] as string[],
+      confidentiality_section_regenerated: [] as string[],
+      retries_used: {} as Record<string, number>,
+    };
+    let confidentialityWarnings = defaultConfidentialityWarnings;
+    try {
+      const healed = await applyCounterpartyConfidentialitySelfHeal({
+        evaluation: evaluation as Record<string, any>,
+        title: draft.title,
+        sharedText: draft.docBText || '',
+        requesterConfidentialText: draft.docAText || '',
+        counterpartyConfidentialText,
+        counterpartyCanaryTokens,
+        companyName: companyContext.companyName,
+        companyWebsite: companyContext.companyWebsite,
+      });
+      evaluation = healed.evaluation;
+      confidentialityWarnings = healed.warnings;
+    } catch (error: any) {
+      const report =
+        evaluation?.report && typeof evaluation.report === 'object' && !Array.isArray(evaluation.report)
+          ? { ...(evaluation.report as Record<string, unknown>) }
+          : {};
+      const reportSections = Array.isArray(report.sections) ? report.sections : [];
+      const redactedSectionKeys = reportSections
+        .map((entry, index) => {
+          if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+            return `section_${index + 1}`;
+          }
+          return asText((entry as any).key) || `section_${index + 1}`;
+        })
+        .filter(Boolean);
+      const safeLine = "This section can't be shown due to confidentiality.";
+      report.sections = reportSections.map((entry, index) => {
+        const key = redactedSectionKeys[index] || `section_${index + 1}`;
+        const heading =
+          entry && typeof entry === 'object' && !Array.isArray(entry)
+            ? asText((entry as any).heading) || key
+            : key;
+        return {
+          key,
+          heading,
+          bullets: [safeLine],
+        };
+      });
+      report.executive_summary = 'Some sections were omitted due to confidentiality policy.';
+      evaluation = {
+        ...(evaluation as Record<string, unknown>),
+        summary: 'Some sections were omitted due to confidentiality policy.',
+        report,
+        completion_status: 'completed_with_warnings',
+        warnings: {
+          confidentiality_section_redacted: redactedSectionKeys,
+          confidentiality_section_regenerated: [],
+          retries_used: {},
+          fallback_reason: 'confidentiality_handler_error',
+        },
+      };
+      confidentialityWarnings = {
+        confidentiality_section_redacted: redactedSectionKeys,
+        confidentiality_section_regenerated: [],
+        retries_used: {},
+      };
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          route: '/api/document-comparisons/[id]/evaluate',
+          event: 'evaluation_confidentiality_handler_fallback',
+          requestId,
+          comparisonId: existing.id,
+          message: asText(error?.message) || 'unknown_error',
+        }),
+      );
+    }
+
+    if (confidentialityWarnings.confidentiality_section_regenerated.length > 0) {
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          route: '/api/document-comparisons/[id]/evaluate',
+          event: 'evaluation_confidentiality_section_regenerated',
+          requestId,
+          comparisonId: existing.id,
+          sections: confidentialityWarnings.confidentiality_section_regenerated,
+          retries_used: confidentialityWarnings.retries_used,
+        }),
+      );
+    }
+    if (confidentialityWarnings.confidentiality_section_redacted.length > 0) {
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          route: '/api/document-comparisons/[id]/evaluate',
+          event: 'evaluation_confidentiality_section_omitted',
+          requestId,
+          comparisonId: existing.id,
+          sections: confidentialityWarnings.confidentiality_section_redacted,
+          retries_used: confidentialityWarnings.retries_used,
+        }),
+      );
     }
 
     const now = new Date();

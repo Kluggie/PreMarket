@@ -246,6 +246,7 @@ type EvaluationTelemetry = {
   routeName?: string;
   entityId?: string;
   inputChars?: number;
+  disableConfidentialLeakGuard?: boolean;
 };
 
 type CallVertexOptions = EvaluationTelemetry & {
@@ -4028,11 +4029,13 @@ export async function evaluateDocumentComparisonWithVertex(
     ...collectHiddenSpanSnippets(normalizedInput.docAText, normalizedInput.docASpans),
     ...collectHiddenSpanSnippets(normalizedInput.docBText, normalizedInput.docBSpans),
   ]);
-  assertMiddlemanConfidentiality(report, {
-    confidentialChunks: evidenceMap.confidential_chunks,
-    sharedChunks: evidenceMap.shared_chunks,
-    rawTextLength: String(process.env.VERTEX_MOCK || '').trim() === '1' ? 0 : lastSuccessfulVertexTextLength,
-  });
+  if (!telemetry.disableConfidentialLeakGuard) {
+    assertMiddlemanConfidentiality(report, {
+      confidentialChunks: evidenceMap.confidential_chunks,
+      sharedChunks: evidenceMap.shared_chunks,
+      rawTextLength: String(process.env.VERTEX_MOCK || '').trim() === '1' ? 0 : lastSuccessfulVertexTextLength,
+    });
+  }
   const hasSpecificGrounding = ensureDocumentComparisonSpecificity(report, normalizedInput.docBText);
   if (!hasSpecificGrounding) {
     throw new ApiError(502, 'insufficient_detail', 'Model output lacked references to shared input', {

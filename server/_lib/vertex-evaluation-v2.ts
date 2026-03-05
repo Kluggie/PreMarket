@@ -55,6 +55,9 @@ export interface VertexEvaluationV2Request {
   sharedText: string;
   confidentialText: string;
   requestId?: string;
+  forbiddenLeakText?: string;
+  forbiddenLeakCanaryTokens?: string[];
+  enforceLeakGuard?: boolean;
 }
 
 export interface VertexEvaluationV2Response {
@@ -437,6 +440,22 @@ function toStringArray(value: unknown) {
     .filter(Boolean);
 }
 
+function normalizeCanaryTokens(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [] as string[];
+  }
+
+  const unique = new Set<string>();
+  value.forEach((entry) => {
+    const token = asLower(entry);
+    if (!token) {
+      return;
+    }
+    unique.add(token);
+  });
+  return [...unique].slice(0, 100);
+}
+
 function normalizeFitLevel(value: unknown): FitLevel {
   const normalized = asLower(value);
   if (normalized === 'high' || normalized === 'medium' || normalized === 'low' || normalized === 'unknown') {
@@ -555,9 +574,10 @@ function buildConfidentialPhraseCandidates(confidentialChunks: Array<{ evidence_
 
 function detectConfidentialLeak(params: {
   response: VertexEvaluationV2Response;
-  confidentialText: string;
+  forbiddenText: string;
   sharedText: string;
-  confidentialChunks: Array<{ evidence_id: string; text: string }>;
+  forbiddenChunks: Array<{ evidence_id: string; text: string }>;
+  canaryTokens: string[];
 }) {
   const outputText = [
     ...params.response.why,
@@ -570,7 +590,15 @@ function detectConfidentialLeak(params: {
     return null;
   }
 
-  const phraseCandidates = buildConfidentialPhraseCandidates(params.confidentialChunks, params.sharedText);
+  const leakedCanary = params.canaryTokens.find((token) => outputLower.includes(token));
+  if (leakedCanary) {
+    return {
+      leakType: 'canary_token',
+      leakSample: leakedCanary.slice(0, 120),
+    };
+  }
+
+  const phraseCandidates = buildConfidentialPhraseCandidates(params.forbiddenChunks, params.sharedText);
   const leakedPhrase = phraseCandidates.find((phrase) => outputNormalized.includes(phrase));
   if (leakedPhrase) {
     return {
@@ -579,7 +607,7 @@ function detectConfidentialLeak(params: {
     };
   }
 
-  const sensitiveTokens = collectSensitiveTokens(params.confidentialText, params.sharedText);
+  const sensitiveTokens = collectSensitiveTokens(params.forbiddenText, params.sharedText);
   const leakedToken = sensitiveTokens.find((token) => outputLower.includes(token));
   if (leakedToken) {
     return {
@@ -877,6 +905,12 @@ export async function evaluateWithVertexV2(
 ): Promise<VertexEvaluationV2Outcome> {
   const sharedText = String(input.sharedText || '').trim();
   const confidentialText = String(input.confidentialText || '').trim();
+  const forbiddenLeakText =
+    input.forbiddenLeakText === undefined
+      ? confidentialText
+      : String(input.forbiddenLeakText || '').trim();
+  const forbiddenLeakCanaryTokens = normalizeCanaryTokens(input.forbiddenLeakCanaryTokens);
+  const enforceLeakGuard = input.enforceLeakGuard !== false;
   const requestId = asText(input.requestId) || undefined;
   const inputChars = sharedText.length + confidentialText.length;
 
@@ -893,6 +927,7 @@ export async function evaluateWithVertexV2(
   }
 
   const chunks = buildChunks(sharedText, confidentialText);
+  const forbiddenChunks = buildSourceChunks(forbiddenLeakText.slice(0, MAX_CONFIDENTIAL_CHARS), 'conf');
   const prompt = buildPrompt({ sharedText, confidentialText, chunks });
   const callVertex = getVertexCallImplementation();
 
@@ -1033,22 +1068,25 @@ export async function evaluateWithVertexV2(
       });
     }
 
-    const leak = detectConfidentialLeak({
-      response: schemaValidation.normalized,
-      confidentialText,
-      sharedText,
-      confidentialChunks: chunks.confidentialChunks,
-    });
-    if (leak) {
-      return buildFailure({
-        kind: 'confidential_leak_detected',
-        requestId,
-        finishReason,
-        rawTextLength,
-        retryable: false,
-        attemptCount: attempt,
-        details: leak,
+    if (enforceLeakGuard) {
+      const leak = detectConfidentialLeak({
+        response: schemaValidation.normalized,
+        forbiddenText: forbiddenLeakText,
+        sharedText,
+        forbiddenChunks,
+        canaryTokens: forbiddenLeakCanaryTokens,
       });
+      if (leak) {
+        return buildFailure({
+          kind: 'confidential_leak_detected',
+          requestId,
+          finishReason,
+          rawTextLength,
+          retryable: false,
+          attemptCount: attempt,
+          details: leak,
+        });
+      }
     }
 
     return {
