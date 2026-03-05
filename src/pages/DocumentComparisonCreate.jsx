@@ -3221,6 +3221,11 @@ export default function DocumentComparisonCreate() {
                     ? 'Running AI evaluation on your latest saved inputs.'
                     : 'Persisting your latest draft before evaluation.'}
                 </p>
+                {finishStage === 'evaluating' ? (
+                  <p className="text-xs text-slate-500">
+                    This may take a couple minutes. Please do not exit.
+                  </p>
+                ) : null}
               </div>
             </CardContent>
           </Card>
