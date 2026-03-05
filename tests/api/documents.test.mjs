@@ -1,9 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { sql } from 'drizzle-orm';
-import apiHandler from '../../api/index.ts';
 import documentsIndexHandler from '../../server/routes/documents/index.ts';
 import documentsIdHandler from '../../server/routes/documents/[id].ts';
 import { ensureTestEnv, makeSessionCookie } from '../helpers/auth.mjs';
@@ -17,8 +14,14 @@ process.env.DOCUMENTS_STORAGE_PROVIDER = 'db';
 
 // Tiny valid files for testing
 const TINY_TXT_B64 = Buffer.from('Hello, this is a test document.').toString('base64');
-const SAMPLE_DOCX_B64 = readFileSync(resolve('tests/fixtures/documents/sample.docx')).toString('base64');
-const SAMPLE_PDF_B64 = readFileSync(resolve('tests/fixtures/documents/sample.pdf')).toString('base64');
+const TINY_PDF_B64 = Buffer.from(
+  '%PDF-1.4\n1 0 obj<</Type /Catalog/Pages 2 0 R>>endobj\n' +
+  '2 0 obj<</Type /Pages/Kids [3 0 R]/Count 1>>endobj\n' +
+  '3 0 obj<</Type /Page/MediaBox [0 0 3 3]>>endobj\n' +
+  'xref\n0 4\n0000000000 65535 f\n0000000009 00000 n\n' +
+  '0000000058 00000 n\n0000000115 00000 n\n' +
+  'trailer<</Size 4/Root 1 0 R>>\nstartxref\n190\n%%EOF',
+).toString('base64');
 
 function makeAuthCookie(sub, email) {
   return makeSessionCookie({ sub, email, name: 'Test User' });
@@ -84,56 +87,8 @@ if (!hasDatabaseUrl()) {
     assert.equal(body.ok, true);
     assert.equal(typeof body.document, 'object');
     assert.equal(body.document.filename, 'test.txt');
-    assert.equal(body.document.visibility, 'confidential');
     // Status is 'ready' or 'processing' depending on AI availability
-    assert.ok(['ready', 'not_supported', 'failed'].includes(body.document.status));
-    assert.ok(['usable', 'not_usable', 'processing'].includes(body.document.ai_status));
-  });
-
-  // -------------------------------------------------------------------------
-  test('documents API: normal PDF and DOCX uploads become usable for AI', async () => {
-    await ensureMigrated();
-    await resetTables();
-
-    const userId = 'doc_test_user_usable';
-    const email = 'docusable@example.com';
-    const authCookie = makeAuthCookie(userId, email);
-    const db = getDb();
-    await seedUser(db, userId, email);
-
-    const docxReq = createMockReq({
-      method: 'POST',
-      url: '/api/documents/upload',
-      headers: { cookie: authCookie },
-      body: {
-        filename: 'sample.docx',
-        mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        fileBase64: SAMPLE_DOCX_B64,
-      },
-    });
-    const docxRes = createMockRes();
-    await documentsIndexHandler(docxReq, docxRes);
-    assert.equal(docxRes.statusCode, 201, `Expected 201 but got ${docxRes.statusCode}: ${docxRes.body}`);
-    const docxBody = docxRes.jsonBody();
-    assert.equal(docxBody.document.status, 'ready');
-    assert.equal(docxBody.document.status_reason, null);
-
-    const pdfReq = createMockReq({
-      method: 'POST',
-      url: '/api/documents/upload',
-      headers: { cookie: authCookie },
-      body: {
-        filename: 'sample.pdf',
-        mimeType: 'application/pdf',
-        fileBase64: SAMPLE_PDF_B64,
-      },
-    });
-    const pdfRes = createMockRes();
-    await documentsIndexHandler(pdfReq, pdfRes);
-    assert.equal(pdfRes.statusCode, 201, `Expected 201 but got ${pdfRes.statusCode}: ${pdfRes.body}`);
-    const pdfBody = pdfRes.jsonBody();
-    assert.equal(pdfBody.document.status, 'ready');
-    assert.equal(pdfBody.document.status_reason, null);
+    assert.ok(['ready', 'not_supported', 'processing'].includes(body.document.status));
   });
 
   // -------------------------------------------------------------------------
@@ -162,7 +117,6 @@ if (!hasDatabaseUrl()) {
     assert.equal(Array.isArray(body.documents), true);
     assert.equal(body.documents.length, 2);
     assert.equal(body.usage.file_count, 2);
-    assert.equal(body.documents[0].visibility, 'confidential');
   });
 
   // -------------------------------------------------------------------------
@@ -328,159 +282,6 @@ if (!hasDatabaseUrl()) {
   });
 
   // -------------------------------------------------------------------------
-  test('documents API: owner can patch visibility and list reflects the update', async () => {
-    await ensureMigrated();
-    await resetTables();
-
-    const userId = 'doc_patch_owner';
-    const email = 'docpatchowner@example.com';
-    const authCookie = makeAuthCookie(userId, email);
-    const db = getDb();
-    await seedUser(db, userId, email);
-    await seedDocuments(db, userId, 1, 1024);
-
-    const rows = await db.execute(
-      sql`SELECT id FROM user_documents WHERE user_id = ${userId} LIMIT 1`,
-    );
-    const docId = rows.rows?.[0]?.id || rows[0]?.id;
-    assert.ok(docId, 'Expected a document to exist for patch test');
-
-    const patchReq = createMockReq({
-      method: 'PATCH',
-      url: `/api/documents/${docId}`,
-      headers: { cookie: authCookie },
-      body: { visibility: 'shared' },
-    });
-    const patchRes = createMockRes();
-    await documentsIdHandler(patchReq, patchRes, docId);
-
-    assert.equal(patchRes.statusCode, 200, `Expected 200 but got ${patchRes.statusCode}`);
-    const patchBody = patchRes.jsonBody();
-    assert.equal(patchBody.ok, true);
-    assert.equal(patchBody.document.visibility, 'shared');
-
-    const listReq = createMockReq({
-      method: 'GET',
-      url: '/api/documents',
-      headers: { cookie: authCookie },
-    });
-    const listRes = createMockRes();
-    await documentsIndexHandler(listReq, listRes);
-    assert.equal(listRes.statusCode, 200);
-    const listBody = listRes.jsonBody();
-    assert.equal(listBody.documents[0].visibility, 'shared');
-  });
-
-  // -------------------------------------------------------------------------
-  test('documents API router: PATCH /api/documents/:id is registered via /api/index', async () => {
-    await ensureMigrated();
-    await resetTables();
-
-    const userId = 'doc_patch_router_owner';
-    const email = 'docpatchrouter@example.com';
-    const authCookie = makeAuthCookie(userId, email);
-    const db = getDb();
-    await seedUser(db, userId, email);
-    await seedDocuments(db, userId, 1, 1024);
-
-    const rows = await db.execute(
-      sql`SELECT id FROM user_documents WHERE user_id = ${userId} LIMIT 1`,
-    );
-    const docId = rows.rows?.[0]?.id || rows[0]?.id;
-    assert.ok(docId, 'Expected a document to exist for router patch test');
-
-    const req = createMockReq({
-      method: 'PATCH',
-      url: `/api/index?path=documents%2F${encodeURIComponent(docId)}`,
-      query: {
-        path: `documents/${docId}`,
-      },
-      headers: { cookie: authCookie },
-      body: { visibility: 'shared' },
-    });
-    const res = createMockRes();
-    await apiHandler(req, res);
-
-    assert.equal(res.statusCode, 200, `Expected 200 but got ${res.statusCode}: ${res.body}`);
-    const body = res.jsonBody();
-    assert.equal(body.ok, true);
-    assert.equal(body.document.visibility, 'shared');
-  });
-
-  // -------------------------------------------------------------------------
-  test('documents API: reprocess converts failed row with text PDF to usable', async () => {
-    await ensureMigrated();
-    await resetTables();
-
-    const userId = 'doc_reprocess_owner';
-    const email = 'docreprocess@example.com';
-    const authCookie = makeAuthCookie(userId, email);
-    const db = getDb();
-    await seedUser(db, userId, email);
-
-    const docId = 'doc_reprocess_target';
-    const now = new Date().toISOString();
-    const pdfBuffer = readFileSync(resolve('tests/fixtures/documents/sample.pdf'));
-    await db.execute(
-      sql`INSERT INTO user_documents
-          (id, user_id, uploader_user_id, filename, mime_type, size_bytes,
-           storage_key, content_bytes, status, status_reason, error_message, created_at, updated_at)
-          VALUES
-          (${docId}, ${userId}, ${userId},
-           ${'sample.pdf'}, ${'application/pdf'}, ${pdfBuffer.length},
-           NULL, ${pdfBuffer}, ${'failed'}, ${'processing_timeout'}, ${'Timed out'}, ${now}, ${now})`,
-    );
-
-    const req = createMockReq({
-      method: 'POST',
-      url: `/api/documents/${docId}/reprocess`,
-      headers: { cookie: authCookie },
-    });
-    const res = createMockRes();
-    await documentsIdHandler(req, res, docId);
-
-    assert.equal(res.statusCode, 200, `Expected 200 but got ${res.statusCode}: ${res.body}`);
-    const body = res.jsonBody();
-    assert.equal(body.ok, true);
-    assert.equal(body.document.status, 'ready');
-    assert.equal(body.document.ai_status, 'usable');
-    assert.equal(body.document.extracted_text_chars > 0, true);
-  });
-
-  // -------------------------------------------------------------------------
-  test('documents API: non-owner cannot patch another user\'s visibility', async () => {
-    await ensureMigrated();
-    await resetTables();
-
-    const ownerUserId = 'doc_patch_owner_2';
-    const ownerEmail = 'docpatchowner2@example.com';
-    const otherUserId = 'doc_patch_other_2';
-    const otherEmail = 'docpatchother2@example.com';
-    const db = getDb();
-    await seedUser(db, ownerUserId, ownerEmail);
-    await seedUser(db, otherUserId, otherEmail);
-    await seedDocuments(db, ownerUserId, 1, 512);
-
-    const rows = await db.execute(
-      sql`SELECT id FROM user_documents WHERE user_id = ${ownerUserId} LIMIT 1`,
-    );
-    const docId = rows.rows?.[0]?.id || rows[0]?.id;
-    assert.ok(docId, 'Expected a document to exist for owner');
-
-    const otherCookie = makeAuthCookie(otherUserId, otherEmail);
-    const patchReq = createMockReq({
-      method: 'PATCH',
-      url: `/api/documents/${docId}`,
-      headers: { cookie: otherCookie },
-      body: { visibility: 'shared' },
-    });
-    const patchRes = createMockRes();
-    await documentsIdHandler(patchReq, patchRes, docId);
-
-    assert.equal(patchRes.statusCode, 404, `Expected 404 but got ${patchRes.statusCode}`);
-  });
-
-  // -------------------------------------------------------------------------
   test('documents API: non-owner cannot delete another user\'s document', async () => {
     await ensureMigrated();
     await resetTables();
@@ -517,41 +318,5 @@ if (!hasDatabaseUrl()) {
     );
     const count = remaining.rows?.length ?? remaining.length ?? 0;
     assert.equal(count, 1, 'Document should still exist after failed delete by non-owner');
-  });
-
-  // -------------------------------------------------------------------------
-  test('documents API: shared visibility does not allow another user to download the file', async () => {
-    await ensureMigrated();
-    await resetTables();
-
-    const ownerUserId = 'doc_shared_owner';
-    const ownerEmail = 'docsharedowner@example.com';
-    const otherUserId = 'doc_shared_other';
-    const otherEmail = 'docsharedother@example.com';
-    const db = getDb();
-    await seedUser(db, ownerUserId, ownerEmail);
-    await seedUser(db, otherUserId, otherEmail);
-    await seedDocuments(db, ownerUserId, 1, 1024);
-
-    const rows = await db.execute(
-      sql`SELECT id FROM user_documents WHERE user_id = ${ownerUserId} LIMIT 1`,
-    );
-    const docId = rows.rows?.[0]?.id || rows[0]?.id;
-    assert.ok(docId, 'Expected a document to exist for shared visibility test');
-
-    await db.execute(
-      sql`UPDATE user_documents SET visibility = 'shared' WHERE id = ${docId}`,
-    );
-
-    const otherCookie = makeAuthCookie(otherUserId, otherEmail);
-    const downloadReq = createMockReq({
-      method: 'GET',
-      url: `/api/documents/${docId}/download`,
-      headers: { cookie: otherCookie },
-    });
-    const downloadRes = createMockRes();
-    await documentsIdHandler(downloadReq, downloadRes, docId);
-
-    assert.equal(downloadRes.statusCode, 404, `Expected 404 but got ${downloadRes.statusCode}`);
   });
 }

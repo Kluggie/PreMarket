@@ -92,19 +92,4 @@ export const documentsClient = {
       method: 'DELETE',
     });
   },
-
-  async updateVisibility(id, visibility) {
-    const response = await request(`/api/documents/${encodeURIComponent(id)}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ visibility }),
-    });
-    return response.document;
-  },
-
-  async reprocess(id) {
-    const response = await request(`/api/documents/${encodeURIComponent(id)}/reprocess`, {
-      method: 'POST',
-    });
-    return response.document;
-  },
 };

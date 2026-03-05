@@ -29,23 +29,12 @@ export type UserDocumentContext = {
   docCount: number;
 };
 
-export type UserDocumentVisibility = 'confidential' | 'shared';
-
 type DocSummary = {
   id: string;
   filename: string;
   summaryText: string | null;
   extractedText: string | null;
-  visibility: UserDocumentVisibility;
 };
-
-type SelectRelevantDocumentsOptions = {
-  includeConfidential?: boolean;
-};
-
-function normalizeVisibility(value: unknown): UserDocumentVisibility {
-  return String(value || '').toLowerCase() === 'shared' ? 'shared' : 'confidential';
-}
 
 // ---------------------------------------------------------------------------
 // Keyword relevance scorer
@@ -196,10 +185,8 @@ async function llmSelect(
 export async function selectRelevantDocuments(
   userId: string,
   proposalContext: string,
-  options: SelectRelevantDocumentsOptions = {},
 ): Promise<UserDocumentContext | null> {
   if (!userId || !proposalContext.trim()) return null;
-  const includeConfidential = options.includeConfidential !== false;
 
   try {
     const db = getDb();
@@ -210,7 +197,6 @@ export async function selectRelevantDocuments(
         summaryText: schema.userDocuments.summaryText,
         extractedText: schema.userDocuments.extractedText,
         status: schema.userDocuments.status,
-        visibility: schema.userDocuments.visibility,
       })
       .from(schema.userDocuments)
       .where(eq(schema.userDocuments.userId, userId))
@@ -218,16 +204,9 @@ export async function selectRelevantDocuments(
       .limit(MAX_DOCS_TO_FETCH);
 
     // Only use docs that have been processed and have some text
-    const candidateDocs: DocSummary[] = rows
-      .filter((d) => d.status === 'ready' && (d.summaryText || d.extractedText))
-      .filter((d) => includeConfidential || normalizeVisibility(d.visibility) === 'shared')
-      .map((d) => ({
-        id: d.id,
-        filename: d.filename,
-        summaryText: d.summaryText,
-        extractedText: d.extractedText,
-        visibility: normalizeVisibility(d.visibility),
-      }));
+    const candidateDocs: DocSummary[] = rows.filter(
+      (d) => d.status === 'ready' && (d.summaryText || d.extractedText),
+    );
 
     if (!candidateDocs.length) return null;
 
@@ -254,7 +233,7 @@ export async function selectRelevantDocuments(
         : String(doc.extractedText || '').slice(0, 400) + '...';
 
       if (!content.trim()) continue;
-      parts.push(`[Document: ${safeFilename} | visibility=${doc.visibility}]\n${content.trim()}`);
+      parts.push(`[Document: ${safeFilename}]\n${content.trim()}`);
     }
 
     if (!parts.length) return null;
@@ -281,3 +260,4 @@ export async function selectRelevantDocuments(
 export async function getUserDocumentContext(userId: string): Promise<UserDocumentContext | null> {
   return null;
 }
+

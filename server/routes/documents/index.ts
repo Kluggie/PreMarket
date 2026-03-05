@@ -26,10 +26,7 @@ import {
   getStorageProvider,
   storeFileToDisk,
 } from './storage.js';
-import {
-  deriveDocumentAiState,
-  processDocumentWithTimeout,
-} from './processing.js';
+import { extractDocumentText, generateSummary } from './text-extraction.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -37,6 +34,8 @@ import {
 const MAX_FILES = 5;
 const MAX_TOTAL_BYTES = 10 * 1024 * 1024;   // 10 MB
 const MAX_FILE_BYTES  = 5 * 1024 * 1024;    // 5 MB
+const EXTRACTED_TEXT_CAP = 200 * 1024;       // 200 KB (approx chars for UTF-8)
+const PROCESSING_TIMEOUT_MS = 15_000;        // 15 s hard limit for extraction
 
 // Accepted MIME types *and* extensions — both must be present and valid.
 const ALLOWED_MIME_TYPES = new Set([
@@ -85,25 +84,14 @@ function getExtension(filename: string) {
 }
 
 function mapDocRow(row: any) {
-  const aiState = deriveDocumentAiState({
-    status: row.status,
-    statusReason: row.statusReason,
-    extractedText: row.extractedText,
-  });
-
   return {
     id: row.id,
     filename: row.filename,
     mime_type: row.mimeType,
     size_bytes: row.sizeBytes,
     status: row.status,
-    visibility: row.visibility || 'confidential',
-    status_reason: row.statusReason || null,
     summary_text: row.summaryText || null,
     error_message: row.errorMessage || null,
-    ai_status: aiState.aiStatus,
-    ai_reason: aiState.aiReason,
-    extracted_text_chars: aiState.extractedTextChars,
     created_at: row.createdAt,
     updated_at: row.updatedAt,
   };
@@ -123,6 +111,47 @@ async function getCurrentUsage(db: any, userId: string) {
     fileCount: Number(row.fileCount || 0),
     totalBytes: Number(row.totalBytes || 0),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Synchronous document processing (extraction + summarization)
+// Returns { status, extractedText, summaryText, errorMessage }
+// ---------------------------------------------------------------------------
+type ProcessResult = {
+  status: 'ready' | 'not_supported' | 'failed';
+  extractedText: string | null;
+  summaryText: string | null;
+  errorMessage: string | null;
+};
+
+async function processDocumentSync(
+  buffer: Buffer,
+  filename: string,
+  mimeType: string,
+): Promise<ProcessResult> {
+  const extraction = await extractDocumentText(buffer, mimeType, filename);
+
+  if (!extraction.supported) {
+    return { status: 'not_supported', extractedText: null, summaryText: null, errorMessage: null };
+  }
+
+  const rawText = extraction.text;
+  if (!rawText) {
+    return {
+      status: 'not_supported',
+      extractedText: null,
+      summaryText: null,
+      errorMessage: 'Text extraction produced no content',
+    };
+  }
+
+  // Cap extracted text at 200 KB
+  const extractedText = rawText.slice(0, EXTRACTED_TEXT_CAP);
+
+  // Best-effort summarization; returns null if AI is unavailable
+  const summaryText = await generateSummary(rawText, filename).catch(() => null);
+
+  return { status: 'ready', extractedText, summaryText, errorMessage: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -156,9 +185,6 @@ export default async function handler(req: any, res: any) {
           mimeType: schema.userDocuments.mimeType,
           sizeBytes: schema.userDocuments.sizeBytes,
           status: schema.userDocuments.status,
-          visibility: schema.userDocuments.visibility,
-          statusReason: schema.userDocuments.statusReason,
-          extractedText: schema.userDocuments.extractedText,
           summaryText: schema.userDocuments.summaryText,
           errorMessage: schema.userDocuments.errorMessage,
           createdAt: schema.userDocuments.createdAt,
@@ -298,35 +324,49 @@ export default async function handler(req: any, res: any) {
       storageKey,
       contentBytes: getStorageProvider() === 'db' ? buffer : null,
       status: 'processing',
-      visibility: 'confidential',
       createdAt: new Date(),
       updatedAt: new Date(),
     });
 
-    const processResult = await processDocumentWithTimeout({
-      buffer,
-      filename,
-      mimeType: resolvedMime,
-    });
+    // ---------------------------------------------------------------------------
+    // Best-effort synchronous processing within PROCESSING_TIMEOUT_MS
+    // If extraction/summarization completes in time → status=ready
+    // If it times out                               → status remains 'processing'
+    // ---------------------------------------------------------------------------
+    const timeoutPromise = new Promise<null>((resolve) =>
+      setTimeout(() => resolve(null), PROCESSING_TIMEOUT_MS),
+    );
 
-    await db
-      .update(schema.userDocuments)
-      .set({
-        status: processResult.status,
-        statusReason: processResult.statusReason,
-        extractedText: processResult.extractedText,
-        summaryText: processResult.summaryText,
-        summaryUpdatedAt: processResult.summaryText ? new Date() : null,
-        errorMessage: processResult.errorMessage,
-        updatedAt: new Date(),
-      })
-      .where(eq(schema.userDocuments.id, docId));
+    const processResult = await Promise.race([
+      processDocumentSync(buffer, filename, resolvedMime).catch((err: any) => ({
+        status: 'failed' as const,
+        extractedText: null,
+        summaryText: null,
+        errorMessage: String(err?.message || 'Processing failed').slice(0, 500),
+      })),
+      timeoutPromise,
+    ]);
 
-    const aiState = deriveDocumentAiState({
-      status: processResult.status,
-      statusReason: processResult.statusReason,
-      extractedText: processResult.extractedText,
-    });
+    let finalStatus = 'processing';
+    let summaryText: string | null = null;
+
+    if (processResult !== null) {
+      // Processing finished within the time limit
+      finalStatus = processResult.status;
+      summaryText = processResult.summaryText;
+      await db
+        .update(schema.userDocuments)
+        .set({
+          status: processResult.status,
+          extractedText: processResult.extractedText,
+          summaryText: processResult.summaryText,
+          summaryUpdatedAt: processResult.summaryText ? new Date() : null,
+          errorMessage: processResult.errorMessage,
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.userDocuments.id, docId));
+    }
+    // else: timed out — row stays as 'processing'; no further update needed
 
     ok(res, 201, {
       document: {
@@ -334,14 +374,9 @@ export default async function handler(req: any, res: any) {
         filename,
         mime_type: resolvedMime,
         size_bytes: buffer.length,
-        status: processResult.status,
-        visibility: 'confidential',
-        status_reason: processResult.statusReason,
-        summary_text: processResult.summaryText,
-        error_message: processResult.errorMessage,
-        ai_status: aiState.aiStatus,
-        ai_reason: aiState.aiReason,
-        extracted_text_chars: aiState.extractedTextChars,
+        status: finalStatus,
+        summary_text: summaryText,
+        error_message: null,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       },

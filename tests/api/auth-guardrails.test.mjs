@@ -63,9 +63,6 @@ test('me returns not_configured instead of crashing when DATABASE_URL is missing
       APP_BASE_URL: process.env.APP_BASE_URL || 'http://localhost:5173',
       SESSION_SECRET: process.env.SESSION_SECRET || 'test-session-secret',
       DATABASE_URL: null,
-      POSTGRES_URL: null,
-      NEON_DATABASE_URL: null,
-      DIRECT_URL: null,
     },
     async () => {
       const req = createMockReq({
