@@ -78,24 +78,6 @@ function asText(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-function normalizeCompanyWebsite(value) {
-  const raw = asText(value);
-  if (!raw) {
-    return '';
-  }
-  const withProtocol = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
-  try {
-    const parsed = new URL(withProtocol);
-    if (!['http:', 'https:'].includes(parsed.protocol)) {
-      return '';
-    }
-    parsed.hash = '';
-    return parsed.toString().replace(/\/$/, '');
-  } catch {
-    return '';
-  }
-}
-
 function parseCoachResponseBlocks(value) {
   const lines = String(value || '')
     .replace(/\r/g, '')
@@ -700,11 +682,10 @@ export default function DocumentComparisonCreate() {
   const [customPromptText, setCustomPromptText] = useState('');
   const [companyContextName, setCompanyContextName] = useState('');
   const [companyContextWebsite, setCompanyContextWebsite] = useState('');
-  const [companyContextNameInput, setCompanyContextNameInput] = useState('');
-  const [companyContextWebsiteInput, setCompanyContextWebsiteInput] = useState('');
-  const [isCompanyContextDialogOpen, setIsCompanyContextDialogOpen] = useState(false);
+  const [companyContextSaveState, setCompanyContextSaveState] = useState('idle');
+  const [companyContextSaveError, setCompanyContextSaveError] = useState('');
+  const [companyContextValidationError, setCompanyContextValidationError] = useState('');
   const [isSavingCompanyContext, setIsSavingCompanyContext] = useState(false);
-  const [runCompanyBriefAfterContextSave, setRunCompanyBriefAfterContextSave] = useState(false);
   const [isCoachResponseCopied, setIsCoachResponseCopied] = useState(false);
   const [coachRequestMeta, setCoachRequestMeta] = useState(null);
   const [coachResultHash, setCoachResultHash] = useState('');
@@ -731,6 +712,7 @@ export default function DocumentComparisonCreate() {
 
   const docAInputFileRef = useRef(null);
   const docBInputFileRef = useRef(null);
+  const companyContextNameInputRef = useRef(null);
   const docAEditorRef = useRef(null);
   const docBEditorRef = useRef(null);
   const recoveredMissingDraftIdRef = useRef('');
@@ -749,6 +731,13 @@ export default function DocumentComparisonCreate() {
   const docBSpansRef = useRef([]);
   const activeImportRequestRef = useRef({ id: 0, controller: null });
   const metadataRef = useRef({});
+  const companyContextSaveTimerRef = useRef(null);
+  const companyContextSavedTimerRef = useRef(null);
+  const companyContextPersistedRef = useRef({
+    name: '',
+    website: '',
+  });
+  const companyContextSaveSeqRef = useRef(0);
   const latestDraftStateRef = useRef({
     title: '',
     docAText: '',
@@ -901,8 +890,17 @@ export default function DocumentComparisonCreate() {
 
     setComparisonId(comparison.id || resolvedDraftId || '');
     setLinkedProposalId(draftQuery.data.proposal?.id || routeState.proposalId || '');
-    setCompanyContextName(asText(comparison.company_name || comparison.companyName || ''));
-    setCompanyContextWebsite(asText(comparison.company_website || comparison.companyWebsite || ''));
+    const hydratedCompanyName = asText(comparison.company_name || comparison.companyName || '');
+    const hydratedCompanyWebsite = asText(comparison.company_website || comparison.companyWebsite || '');
+    setCompanyContextName(hydratedCompanyName);
+    setCompanyContextWebsite(hydratedCompanyWebsite);
+    companyContextPersistedRef.current = {
+      name: hydratedCompanyName,
+      website: hydratedCompanyWebsite,
+    };
+    setCompanyContextSaveState('idle');
+    setCompanyContextSaveError('');
+    setCompanyContextValidationError('');
 
     setTitle(comparison.title || '');
 
@@ -1304,6 +1302,12 @@ export default function DocumentComparisonCreate() {
       setLinkedProposalId(persistedProposalId);
       setCompanyContextName(persistedCompanyName);
       setCompanyContextWebsite(persistedCompanyWebsite);
+      companyContextPersistedRef.current = {
+        name: persistedCompanyName,
+        website: persistedCompanyWebsite,
+      };
+      setCompanyContextSaveState('idle');
+      setCompanyContextSaveError('');
       comparisonIdRef.current = persistedComparisonId;
       linkedProposalIdRef.current = persistedProposalId;
       const hasNewerLocalEdits = lastEditAtRef.current > saveStartedAtMs;
@@ -1594,7 +1598,16 @@ export default function DocumentComparisonCreate() {
   const coachIntentKey = String(coachRequestMeta?.intent || '').toLowerCase();
   const companyBriefSources = Array.isArray(coachResult?.company_brief_sources) ? coachResult.company_brief_sources : [];
   const companyBriefLimited = Boolean(coachResult?.company_brief_limited);
-  const hasCompanyContext = Boolean(asText(companyContextName));
+  const companyContextStatusText = companyContextSaveState === 'saving'
+    ? 'Saving...'
+    : companyContextSaveState === 'saved'
+      ? 'Saved'
+      : '';
+  const companyContextStatusClassName = companyContextSaveState === 'saving'
+    ? 'text-blue-700'
+    : companyContextSaveState === 'saved'
+      ? 'text-emerald-700'
+      : 'text-slate-500';
   const isCustomPromptResponse = coachIntentKey === 'custom_prompt';
   const coachResponseLabel = COACH_INTENT_LABELS[coachIntentKey] || 'Suggestion feedback';
   const coachResponseMetaParts = [];
@@ -1650,6 +1663,20 @@ export default function DocumentComparisonCreate() {
       if (activeImportRequestRef.current.controller) {
         activeImportRequestRef.current.controller.abort();
         activeImportRequestRef.current.controller = null;
+      }
+    },
+    [],
+  );
+
+  useEffect(
+    () => () => {
+      if (companyContextSaveTimerRef.current) {
+        clearTimeout(companyContextSaveTimerRef.current);
+        companyContextSaveTimerRef.current = null;
+      }
+      if (companyContextSavedTimerRef.current) {
+        clearTimeout(companyContextSavedTimerRef.current);
+        companyContextSavedTimerRef.current = null;
       }
     },
     [],
@@ -2111,7 +2138,7 @@ export default function DocumentComparisonCreate() {
     finishToComparisonDetail();
   };
 
-  const ensureComparisonIdForCoach = async () => {
+  const ensureComparisonIdForCoach = useCallback(async () => {
     if (comparisonId && !isDocumentComparisonNotFoundError(draftQuery.error)) {
       return comparisonId;
     }
@@ -2127,7 +2154,7 @@ export default function DocumentComparisonCreate() {
       toast.error(message);
       return '';
     }
-  };
+  }, [comparisonId, draftQuery.error, runSaveDraftMutation, step]);
 
   const updateCompanyContextInDraftCache = useCallback(
     (nextComparisonId, nextCompanyName, nextCompanyWebsite) => {
@@ -2178,14 +2205,150 @@ export default function DocumentComparisonCreate() {
     [queryClient, routeState.token],
   );
 
-  const openCompanyContextDialog = ({
-    runCompanyBriefAfterSave = false,
-  } = {}) => {
-    setCompanyContextNameInput(companyContextName || '');
-    setCompanyContextWebsiteInput(companyContextWebsite || '');
-    setRunCompanyBriefAfterContextSave(Boolean(runCompanyBriefAfterSave));
-    setIsCompanyContextDialogOpen(true);
-  };
+  const flushCompanyContextSave = useCallback(
+    async ({
+      showValidation = false,
+      comparisonIdOverride = '',
+    } = {}) => {
+      const trimmedCompanyName = asText(companyContextName);
+      const trimmedWebsite = asText(companyContextWebsite);
+      const persistedName = asText(companyContextPersistedRef.current.name);
+      const persistedWebsite = asText(companyContextPersistedRef.current.website);
+      const hasChanges =
+        trimmedCompanyName !== persistedName || trimmedWebsite !== persistedWebsite;
+
+      if (!hasChanges) {
+        setCompanyContextSaveError('');
+        if (companyContextSaveState === 'error' || companyContextSaveState === 'saving') {
+          setCompanyContextSaveState('idle');
+        }
+        return true;
+      }
+
+      if (!trimmedCompanyName) {
+        if (showValidation && (trimmedWebsite || persistedName || persistedWebsite)) {
+          setCompanyContextSaveState('error');
+          setCompanyContextSaveError('Company name is required to save context.');
+        } else {
+          setCompanyContextSaveState('idle');
+          setCompanyContextSaveError('');
+        }
+        return false;
+      }
+
+      const resolvedId =
+        asText(comparisonIdOverride) || (await ensureComparisonIdForCoach());
+      if (!resolvedId) {
+        setCompanyContextSaveState('error');
+        setCompanyContextSaveError('Could not save company context. Save the draft and retry.');
+        return false;
+      }
+
+      const saveSeq = companyContextSaveSeqRef.current + 1;
+      companyContextSaveSeqRef.current = saveSeq;
+      setIsSavingCompanyContext(true);
+      setCompanyContextSaveState('saving');
+      setCompanyContextSaveError('');
+
+      if (companyContextSavedTimerRef.current) {
+        clearTimeout(companyContextSavedTimerRef.current);
+        companyContextSavedTimerRef.current = null;
+      }
+
+      try {
+        const response = await documentComparisonsClient.updateCompanyContext(resolvedId, {
+          companyName: trimmedCompanyName,
+          website: trimmedWebsite || undefined,
+        });
+
+        if (companyContextSaveSeqRef.current !== saveSeq) {
+          return true;
+        }
+
+        const persistedCompanyName = asText(
+          response?.companyContext?.company_name || trimmedCompanyName,
+        );
+        const persistedCompanyWebsite = asText(
+          response?.companyContext?.company_website || trimmedWebsite,
+        );
+
+        setCompanyContextName(persistedCompanyName);
+        setCompanyContextWebsite(persistedCompanyWebsite);
+        companyContextPersistedRef.current = {
+          name: persistedCompanyName,
+          website: persistedCompanyWebsite,
+        };
+        setCompanyContextSaveState('saved');
+        setCompanyContextSaveError('');
+        updateCompanyContextInDraftCache(
+          resolvedId,
+          persistedCompanyName,
+          persistedCompanyWebsite,
+        );
+        queryClient.invalidateQueries({
+          queryKey: ['document-comparison-detail', resolvedId],
+        });
+
+        companyContextSavedTimerRef.current = setTimeout(() => {
+          setCompanyContextSaveState((current) =>
+            current === 'saved' ? 'idle' : current,
+          );
+          companyContextSavedTimerRef.current = null;
+        }, 1600);
+
+        return true;
+      } catch (error) {
+        if (companyContextSaveSeqRef.current !== saveSeq) {
+          return false;
+        }
+        const message = error?.message || 'Failed to save company context.';
+        setCompanyContextSaveState('error');
+        setCompanyContextSaveError(message);
+        return false;
+      } finally {
+        if (companyContextSaveSeqRef.current === saveSeq) {
+          setIsSavingCompanyContext(false);
+        }
+      }
+    },
+    [
+      companyContextName,
+      companyContextSaveState,
+      companyContextWebsite,
+      ensureComparisonIdForCoach,
+      queryClient,
+      updateCompanyContextInDraftCache,
+    ],
+  );
+
+  const flushCompanyContextSaveNow = useCallback(
+    (options = {}) => {
+      if (companyContextSaveTimerRef.current) {
+        clearTimeout(companyContextSaveTimerRef.current);
+        companyContextSaveTimerRef.current = null;
+      }
+      return flushCompanyContextSave(options);
+    },
+    [flushCompanyContextSave],
+  );
+
+  const handleCompanyContextBlur = useCallback(() => {
+    flushCompanyContextSaveNow({ showValidation: true }).catch(() => {});
+  }, [flushCompanyContextSaveNow]);
+
+  const retryCompanyContextSave = useCallback(() => {
+    flushCompanyContextSaveNow({ showValidation: true }).catch(() => {});
+  }, [flushCompanyContextSaveNow]);
+
+  const handleCompanyContextNameChange = useCallback((event) => {
+    setCompanyContextName(event.target.value);
+    setCompanyContextValidationError('');
+  }, []);
+
+  const handleCompanyContextWebsiteChange = useCallback((event) => {
+    setCompanyContextWebsite(event.target.value);
+    setCompanyContextValidationError('');
+  }, []);
 
   const runCoach = async ({
     action = '',
@@ -2204,6 +2367,13 @@ export default function DocumentComparisonCreate() {
     const resolvedId = await ensureComparisonIdForCoach();
     if (!resolvedId) {
       return null;
+    }
+
+    if (asText(companyContextName)) {
+      await flushCompanyContextSaveNow({
+        showValidation: false,
+        comparisonIdOverride: resolvedId,
+      });
     }
 
     setCoachLoading(true);
@@ -2309,7 +2479,6 @@ export default function DocumentComparisonCreate() {
 
   const runCompanyBrief = async ({
     comparisonIdOverride = '',
-    skipContextCheck = false,
     silent = false,
   } = {}) => {
     if (coachNotConfigured) {
@@ -2321,8 +2490,18 @@ export default function DocumentComparisonCreate() {
       return null;
     }
 
-    if (!skipContextCheck && !asText(companyContextName)) {
-      openCompanyContextDialog({ runCompanyBriefAfterSave: true });
+    if (!asText(companyContextName)) {
+      setCompanyContextValidationError('Company name is required for Company Brief');
+      companyContextNameInputRef.current?.focus?.();
+      return null;
+    }
+    setCompanyContextValidationError('');
+
+    const companyContextSaved = await flushCompanyContextSaveNow({
+      showValidation: true,
+      comparisonIdOverride: resolvedId,
+    });
+    if (!companyContextSaved) {
       return null;
     }
 
@@ -2382,11 +2561,12 @@ export default function DocumentComparisonCreate() {
       const status = Number(error?.status || 0);
       const code = asText(error?.body?.error?.code || error?.body?.code || error?.code);
       if (status === 400 && code === 'missing_company_context') {
-        openCompanyContextDialog({ runCompanyBriefAfterSave: true });
-        const message = 'Set company context before running Company Brief.';
+        setCompanyContextValidationError('Company name is required for Company Brief');
+        companyContextNameInputRef.current?.focus?.();
+        const message = 'Company name is required for Company Brief.';
         setCoachError(message);
         if (!silent) {
-          toast.error(message);
+          toast.error('Company context is missing.');
         }
         return null;
       }
@@ -2435,75 +2615,59 @@ export default function DocumentComparisonCreate() {
     }
   };
 
-  const saveCompanyContext = async () => {
-    if (isSavingCompanyContext) {
-      return;
-    }
-
-    const trimmedCompanyName = asText(companyContextNameInput);
-    const websiteInput = asText(companyContextWebsiteInput);
-    if (!trimmedCompanyName) {
-      toast.error('Company name is required.');
-      return;
-    }
-
-    const resolvedId = await ensureComparisonIdForCoach();
-    if (!resolvedId) {
-      return;
-    }
-
-    setIsSavingCompanyContext(true);
-    try {
-      const response = await documentComparisonsClient.updateCompanyContext(resolvedId, {
-        companyName: trimmedCompanyName,
-        website: websiteInput || undefined,
-      });
-
-      const persistedName = asText(response?.companyContext?.company_name || trimmedCompanyName);
-      const persistedWebsite = asText(
-        response?.companyContext?.company_website || normalizeCompanyWebsite(websiteInput),
-      );
-
-      setCompanyContextName(persistedName);
-      setCompanyContextWebsite(persistedWebsite);
-      setCompanyContextNameInput(persistedName);
-      setCompanyContextWebsiteInput(persistedWebsite);
-      setIsCompanyContextDialogOpen(false);
-      updateCompanyContextInDraftCache(resolvedId, persistedName, persistedWebsite);
-      queryClient.invalidateQueries({
-        queryKey: ['document-comparison-detail', resolvedId],
-      });
-
-      const shouldRunCompanyBrief = runCompanyBriefAfterContextSave;
-      setRunCompanyBriefAfterContextSave(false);
-      toast.success('Company context saved.');
-      if (shouldRunCompanyBrief) {
-        await runCompanyBrief({
-          comparisonIdOverride: resolvedId,
-          skipContextCheck: true,
-          silent: false,
-        });
-      }
-    } catch (error) {
-      const message = error?.message || 'Failed to save company context';
-      toast.error(message);
-    } finally {
-      setIsSavingCompanyContext(false);
-    }
-  };
-
   const handleCompanyBriefAction = () => {
     if (coachLoading || coachNotConfigured) {
       return;
     }
 
-    if (!hasCompanyContext) {
-      openCompanyContextDialog({ runCompanyBriefAfterSave: true });
+    runCompanyBrief();
+  };
+
+  useEffect(() => {
+    if (step !== 2 || !canUseOwnerCoach) {
+      if (companyContextSaveTimerRef.current) {
+        clearTimeout(companyContextSaveTimerRef.current);
+        companyContextSaveTimerRef.current = null;
+      }
       return;
     }
 
-    runCompanyBrief();
-  };
+    const trimmedCompanyName = asText(companyContextName);
+    const trimmedWebsite = asText(companyContextWebsite);
+    const persistedName = asText(companyContextPersistedRef.current.name);
+    const persistedWebsite = asText(companyContextPersistedRef.current.website);
+    const hasChanges =
+      trimmedCompanyName !== persistedName || trimmedWebsite !== persistedWebsite;
+
+    if (companyContextSaveTimerRef.current) {
+      clearTimeout(companyContextSaveTimerRef.current);
+      companyContextSaveTimerRef.current = null;
+    }
+
+    if (!hasChanges || !trimmedCompanyName) {
+      return;
+    }
+
+    companyContextSaveTimerRef.current = setTimeout(() => {
+      flushCompanyContextSave({
+        showValidation: false,
+      }).catch(() => {});
+      companyContextSaveTimerRef.current = null;
+    }, 750);
+
+    return () => {
+      if (companyContextSaveTimerRef.current) {
+        clearTimeout(companyContextSaveTimerRef.current);
+        companyContextSaveTimerRef.current = null;
+      }
+    };
+  }, [
+    canUseOwnerCoach,
+    companyContextName,
+    companyContextWebsite,
+    flushCompanyContextSave,
+    step,
+  ]);
 
   const runCustomPromptCoach = () => {
     const promptText = asText(customPromptText);
@@ -3281,35 +3445,68 @@ export default function DocumentComparisonCreate() {
                       Generate suggestions only when you click an action. No background requests.
                     </CardDescription>
 	                  </CardHeader>
-	                  <CardContent className="space-y-4">
-	                    <div
-	                      className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-slate-200 bg-white p-3"
-	                      data-testid="company-context-row"
-	                    >
-	                      <div className="space-y-1">
-	                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Company</p>
-	                        <p className="text-sm font-medium text-slate-900" data-testid="company-context-name">
-	                          {asText(companyContextName) || 'Not set'}
-	                        </p>
-	                        <p className="text-xs text-slate-500" data-testid="company-context-website">
-	                          {asText(companyContextWebsite) || 'Not set'}
-	                        </p>
-	                      </div>
-	                      <Button
-	                        type="button"
-	                        variant="outline"
-	                        size="sm"
-	                        onClick={() => openCompanyContextDialog()}
-	                        data-testid="company-context-edit-button"
-	                      >
-	                        Set / Edit
-	                      </Button>
-	                    </div>
-			                    <div className="grid gap-4 lg:grid-cols-2">
-			                      <div className="h-full rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-			                        <div className="space-y-3">
-			                          <div className="flex flex-wrap gap-2">
-			                            {DOCUMENT_COMPARISON_COACH_ACTIONS.map((option) => (
+		                  <CardContent className="space-y-4">
+				                    <div className="grid gap-4 lg:grid-cols-2">
+				                      <div className="h-full rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+				                        <div className="space-y-3">
+				                          <div className="space-y-2">
+				                            <div className="flex items-center justify-between gap-2">
+				                              <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+				                                Company
+				                              </p>
+				                              {companyContextStatusText ? (
+				                                <p
+				                                  className={`text-xs ${companyContextStatusClassName}`}
+				                                  data-testid="company-context-save-status"
+				                                >
+				                                  {companyContextStatusText}
+				                                </p>
+				                              ) : null}
+				                            </div>
+				                            <div className="space-y-2">
+				                              <Input
+				                                ref={companyContextNameInputRef}
+				                                data-testid="company-context-name-input-inline"
+				                                placeholder="Company name"
+				                                value={companyContextName}
+				                                onChange={handleCompanyContextNameChange}
+				                                onBlur={handleCompanyContextBlur}
+				                              />
+				                              <Input
+				                                data-testid="company-context-website-input-inline"
+				                                placeholder="Website"
+				                                value={companyContextWebsite}
+				                                onChange={handleCompanyContextWebsiteChange}
+				                                onBlur={handleCompanyContextBlur}
+				                              />
+				                            </div>
+				                            {companyContextValidationError ? (
+				                              <p
+				                                className="text-xs text-red-700"
+				                                data-testid="company-context-validation-error"
+				                              >
+				                                {companyContextValidationError}
+				                              </p>
+				                            ) : null}
+				                            {companyContextSaveError ? (
+				                              <div
+				                                className="flex items-center gap-2 text-xs text-red-700"
+				                                data-testid="company-context-inline-error"
+				                              >
+				                                <span>{companyContextSaveError}</span>
+				                                <button
+				                                  type="button"
+				                                  className="underline underline-offset-2"
+				                                  onClick={retryCompanyContextSave}
+				                                  disabled={isSavingCompanyContext}
+				                                >
+				                                  Retry
+				                                </button>
+				                              </div>
+				                            ) : null}
+				                          </div>
+				                          <div className="flex flex-wrap gap-2">
+				                            {DOCUMENT_COMPARISON_COACH_ACTIONS.map((option) => (
 		                              <Button
 		                                key={option.id}
 		                                type="button"
@@ -3340,16 +3537,8 @@ export default function DocumentComparisonCreate() {
 			                              Company Brief
 			                            </Button>
 			                          </div>
-			                          <p className="text-xs leading-relaxed text-slate-500">
-			                            Selection source: {selectionContext.side === 'a' ? CONFIDENTIAL_LABEL : SHARED_LABEL}
-			                            {' · '}
-			                            {selectionContext.text
-			                              ? `"${selectionContext.text.slice(0, 120)}${selectionContext.text.length > 120 ? '…' : ''}"`
-			                              : 'no selection'}
-			                          </p>
-			                          <p className="text-xs text-slate-500">Company Brief: Public sources with citations.</p>
-			                        </div>
-			                      </div>
+				                        </div>
+				                      </div>
 		                      <div
 		                        className="h-full rounded-lg border border-slate-200 bg-slate-50/60 p-4 shadow-sm"
 		                        data-testid="coach-custom-prompt-panel"
@@ -3630,84 +3819,6 @@ export default function DocumentComparisonCreate() {
             </DocumentComparisonEditorErrorBoundary>
           )}
 	        </AnimatePresence>
-
-	        <Dialog
-	          open={isCompanyContextDialogOpen}
-	          onOpenChange={(open) => {
-	            if (!isSavingCompanyContext) {
-	              setIsCompanyContextDialogOpen(open);
-	              if (!open) {
-	                setRunCompanyBriefAfterContextSave(false);
-	              }
-	            }
-	          }}
-	        >
-	          <DialogContent className="sm:max-w-md" data-testid="company-context-dialog">
-	            <DialogHeader>
-	              <DialogTitle>Set company context</DialogTitle>
-	              <DialogDescription>
-	                Save company name and website once to reuse across all Step 2 AI actions.
-	              </DialogDescription>
-	            </DialogHeader>
-	            <div className="space-y-4">
-	              <div className="space-y-2">
-	                <Label htmlFor="company-context-name-input">Company name</Label>
-	                <Input
-	                  id="company-context-name-input"
-	                  data-testid="company-context-name-input"
-	                  placeholder="e.g., Acme Inc."
-	                  value={companyContextNameInput}
-	                  onChange={(event) => setCompanyContextNameInput(event.target.value)}
-	                  disabled={isSavingCompanyContext}
-	                />
-	              </div>
-	              <div className="space-y-2">
-	                <Label htmlFor="company-context-website-input">Website (optional)</Label>
-	                <Input
-	                  id="company-context-website-input"
-	                  data-testid="company-context-website-input"
-	                  placeholder="e.g., acme.com"
-	                  value={companyContextWebsiteInput}
-	                  onChange={(event) => setCompanyContextWebsiteInput(event.target.value)}
-	                  disabled={isSavingCompanyContext}
-	                />
-	              </div>
-	              {runCompanyBriefAfterContextSave ? (
-	                <p className="text-xs text-slate-500">
-	                  Saving will continue directly into Company Brief.
-	                </p>
-	              ) : null}
-	            </div>
-	            <DialogFooter>
-	              <Button
-	                type="button"
-	                variant="outline"
-	                onClick={() => {
-	                  setIsCompanyContextDialogOpen(false);
-	                  setRunCompanyBriefAfterContextSave(false);
-	                }}
-	                disabled={isSavingCompanyContext}
-	              >
-	                Cancel
-	              </Button>
-	              <Button
-	                type="button"
-	                onClick={saveCompanyContext}
-	                disabled={isSavingCompanyContext || !asText(companyContextNameInput)}
-	                data-testid="company-context-save-button"
-	              >
-	                {isSavingCompanyContext ? (
-	                  <>
-	                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-	                    Saving...
-	                  </>
-	                ) : (
-	                  'Save'
-	                )}
-	              </Button>
-	            </DialogFooter>
-	          </DialogContent>
-	        </Dialog>
 
 	        <Dialog
 	          open={showFinishConfirmDialog}
