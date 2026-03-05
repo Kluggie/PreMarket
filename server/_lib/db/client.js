@@ -12,6 +12,8 @@ function createDbClient(databaseUrl) {
   return drizzle({ client: sql, schema });
 }
 
+const DATABASE_ENV_KEYS = ['DATABASE_URL', 'POSTGRES_URL', 'NEON_DATABASE_URL', 'DIRECT_URL'];
+
 function asTrimmedString(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
@@ -37,6 +39,73 @@ function parseDatabaseIdentity(databaseUrl) {
   };
 }
 
+function isValidDatabaseUrl(databaseUrl) {
+  const normalized = asTrimmedString(databaseUrl);
+
+  if (!normalized || normalized.includes('<') || normalized.includes('>')) {
+    return false;
+  }
+
+  try {
+    const parsed = new URL(normalized);
+    return parsed.protocol === 'postgres:' || parsed.protocol === 'postgresql:';
+  } catch {
+    return false;
+  }
+}
+
+function getDatabaseEnvCandidates() {
+  return DATABASE_ENV_KEYS.map((key) => ({
+    key,
+    value: asTrimmedString(process.env[key]),
+  }));
+}
+
+function resolveDatabaseSource() {
+  const vercelEnv = asTrimmedString(process.env.VERCEL_ENV) || asTrimmedString(process.env.NODE_ENV) || 'development';
+  const isProduction = vercelEnv === 'production';
+  const candidates = getDatabaseEnvCandidates().filter((entry) => isValidDatabaseUrl(entry.value));
+  const byKey = new Map(candidates.map((entry) => [entry.key, entry]));
+
+  // In production, prefer provider-managed env URLs over potentially stale manual
+  // DATABASE_URL values when both are present and disagree.
+  if (isProduction) {
+    const postgresUrl = byKey.get('POSTGRES_URL');
+    const neonUrl = byKey.get('NEON_DATABASE_URL');
+    const databaseUrl = byKey.get('DATABASE_URL');
+
+    if (postgresUrl && databaseUrl && postgresUrl.value !== databaseUrl.value) {
+      return {
+        ...postgresUrl,
+        reason: 'production_mismatch_prefer_postgres_url',
+      };
+    }
+
+    if (!postgresUrl && neonUrl && databaseUrl && neonUrl.value !== databaseUrl.value) {
+      return {
+        ...neonUrl,
+        reason: 'production_mismatch_prefer_neon_database_url',
+      };
+    }
+  }
+
+  const preferredOrder = isProduction
+    ? ['DATABASE_URL', 'POSTGRES_URL', 'NEON_DATABASE_URL', 'DIRECT_URL']
+    : ['DATABASE_URL', 'POSTGRES_URL', 'NEON_DATABASE_URL', 'DIRECT_URL'];
+
+  for (const key of preferredOrder) {
+    const entry = byKey.get(key);
+    if (entry) {
+      return {
+        ...entry,
+        reason: 'preferred_order',
+      };
+    }
+  }
+
+  return null;
+}
+
 export function getDatabaseEnvPresence() {
   return {
     DATABASE_URL: Boolean(asTrimmedString(process.env.DATABASE_URL)),
@@ -47,14 +116,16 @@ export function getDatabaseEnvPresence() {
 }
 
 export function getDatabaseIdentitySnapshot() {
-  const databaseUrl = asTrimmedString(process.env.DATABASE_URL);
+  const resolved = resolveDatabaseSource();
+  const databaseUrl = resolved ? resolved.value : '';
   const envPresence = getDatabaseEnvPresence();
   const vercelEnv = asTrimmedString(process.env.VERCEL_ENV) || 'development';
+  const sourceEnvKey = resolved?.key || 'DATABASE_URL';
 
-  if (!hasDatabaseUrl()) {
+  if (!resolved) {
     return {
       configured: false,
-      sourceEnvKey: 'DATABASE_URL',
+      sourceEnvKey,
       vercelEnv,
       dbHost: null,
       dbName: null,
@@ -72,7 +143,7 @@ export function getDatabaseIdentitySnapshot() {
   const identity = parseDatabaseIdentity(databaseUrl);
   return {
     configured: true,
-    sourceEnvKey: 'DATABASE_URL',
+    sourceEnvKey,
     vercelEnv,
     ...identity,
     dbUrlHash: toShortHash(databaseUrl),
@@ -103,6 +174,8 @@ function warnIfDatabaseEnvMismatch(databaseUrl) {
     return;
   }
 
+  const resolved = resolveDatabaseSource();
+  const canonicalSource = resolved?.key || 'DATABASE_URL';
   const canonicalHash = toShortHash(databaseUrl);
   const mismatches = alternateEntries
     .map(([key, value]) => ({
@@ -121,27 +194,17 @@ function warnIfDatabaseEnvMismatch(databaseUrl) {
     JSON.stringify({
       level: 'warn',
       route: 'db_client',
-      message: 'DATABASE_URL differs from alternate database env vars',
-      canonicalSource: 'DATABASE_URL',
+      message: 'Canonical database URL differs from alternate database env vars',
+      canonicalSource,
       canonicalHash,
+      selectionReason: resolved?.reason || 'unknown',
       mismatches,
     }),
   );
 }
 
 export function hasDatabaseUrl() {
-  const databaseUrl = (process.env.DATABASE_URL || '').trim();
-
-  if (!databaseUrl || databaseUrl.includes('<') || databaseUrl.includes('>')) {
-    return false;
-  }
-
-  try {
-    const parsed = new URL(databaseUrl);
-    return parsed.protocol === 'postgres:' || parsed.protocol === 'postgresql:';
-  } catch {
-    return false;
-  }
+  return Boolean(resolveDatabaseSource());
 }
 
 /**
@@ -150,15 +213,16 @@ export function hasDatabaseUrl() {
  * This prevents silent fallback to ephemeral storage which causes data loss.
  */
 export function getDatabaseUrl() {
-  const databaseUrl = (process.env.DATABASE_URL || '').trim();
+  const resolved = resolveDatabaseSource();
+  const databaseUrl = resolved?.value || '';
   const vercelEnv = process.env.VERCEL_ENV || process.env.NODE_ENV || 'development';
   const isProduction = vercelEnv === 'production';
 
-  if (!hasDatabaseUrl()) {
+  if (!resolved) {
     const errorMessage = isProduction
-      ? 'CRITICAL: DATABASE_URL is missing or invalid in production. ' +
-        'This will cause data loss. Set DATABASE_URL in Vercel Environment Variables.'
-      : 'Missing or invalid required environment variable: DATABASE_URL';
+      ? 'CRITICAL: No valid database URL is configured in production. ' +
+        'Set DATABASE_URL or POSTGRES_URL/NEON_DATABASE_URL in Vercel Environment Variables.'
+      : 'Missing or invalid required database URL environment variable';
 
     // Log the failure for observability
     console.error(
@@ -172,6 +236,19 @@ export function getDatabaseUrl() {
     );
 
     throw new Error(errorMessage);
+  }
+
+  if (resolved.key !== 'DATABASE_URL') {
+    console.warn(
+      JSON.stringify({
+        level: 'warn',
+        route: 'db_client',
+        message: 'Using alternate database env var as canonical source',
+        sourceEnvKey: resolved.key,
+        reason: resolved.reason,
+        dbUrlHash: toShortHash(databaseUrl),
+      }),
+    );
   }
 
   return databaseUrl;
