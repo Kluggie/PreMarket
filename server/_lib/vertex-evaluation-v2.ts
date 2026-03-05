@@ -49,6 +49,8 @@ type VertexCallOverride = (params: {
   prompt: string;
   requestId?: string;
   inputChars: number;
+  /** Hint to real implementation — ignored by mocks. */
+  maxOutputTokens?: number;
 }) => Promise<VertexCallResponse>;
 
 export interface VertexEvaluationV2Request {
@@ -203,6 +205,10 @@ export interface VertexEvaluationV2Internal {
   pass_b_attempt_count: number;
   report_style: ReportStyle;
   telemetry?: VertexEvaluationV2Telemetry;
+  /** Non-empty when a safe fallback was used instead of a hard failure. */
+  warnings?: string[];
+  /** Set when fallback was used due to a model failure. */
+  failure_kind?: string;
 }
 
 export interface VertexEvaluationV2Result {
@@ -501,12 +507,113 @@ function containsAny(arr: string[], keywords: string[]): boolean {
   return keywords.some((kw) => lower.some((s) => s.includes(kw)));
 }
 
+const WHY_MAX_CHARS_STANDARD = 1200;
+const WHY_MAX_CHARS_TIGHT = 800;
+const MISSING_MAX_ITEMS = 8;
+const REDACTIONS_MAX_ITEMS = 8;
+
+/**
+ * Safely truncates the why[] array so total chars stay under maxChars.
+ * Each element is kept whole if it fits; truncated with "…" otherwise.
+ */
+function truncateWhyOutput(why: string[], maxChars: number): string[] {
+  if (!Array.isArray(why)) return [];
+  const result: string[] = [];
+  let total = 0;
+  for (const entry of why) {
+    const text = String(entry || '');
+    if (total + text.length + 1 > maxChars) {
+      const remaining = maxChars - total - 1;
+      if (remaining > 40) {
+        result.push(text.slice(0, remaining) + '…');
+      }
+      break;
+    }
+    result.push(text);
+    total += text.length + 1;
+  }
+  return result;
+}
+
+/**
+ * Generic actionable questions used when the fact sheet has no extracted missing_info.
+ * Covers the five core decision-blocking dimensions.
+ */
+const GENERIC_FALLBACK_MISSING: string[] = [
+  'What are the specific deliverables and acceptance criteria for this project?',
+  'What is the confirmed timeline — start date, key milestones, and go-live deadline?',
+  'What are the measurable success criteria (KPIs) that define project success?',
+  'What budget, resource, or technical constraints apply to delivery?',
+  'What are the key project risks and their proposed mitigations?',
+];
+
+/**
+ * Produces a safe, clamped fallback VertexEvaluationV2Response when all Vertex
+ * attempts have failed. Never returns raw confidential text.
+ */
+function safeFallbackEvaluationFromFactSheet(
+  factSheet: ProposalFactSheet,
+  params: {
+    failureKind: string;
+    requestId?: string;
+    finishReason?: string | null;
+    sharedChars: number;
+    confidentialChars: number;
+  },
+): { data: VertexEvaluationV2Response; warnings: string[] } {
+  const warningKey =
+    params.failureKind === 'truncated_output'
+      ? 'vertex_truncated_output_fallback_used'
+      : params.failureKind.startsWith('vertex_http') || params.failureKind === 'vertex_timeout'
+      ? 'vertex_request_failed_fallback_used'
+      : params.failureKind === 'not_configured'
+      ? 'vertex_not_configured_fallback_used'
+      : 'vertex_invalid_response_fallback_used';
+
+  // Build missing[] from fact sheet's missing_info, falling back to generic questions.
+  const extractedMissing = factSheet.missing_info
+    .filter(Boolean)
+    .map((item) => {
+      const text = String(item).trim();
+      // Convert statement-style items to question format if not already a question.
+      return text.endsWith('?') ? text : `${text} — please clarify.`;
+    })
+    .slice(0, MISSING_MAX_ITEMS);
+
+  const missing =
+    extractedMissing.length >= 3
+      ? extractedMissing
+      : [...extractedMissing, ...GENERIC_FALLBACK_MISSING].slice(0, Math.max(3, extractedMissing.length));
+
+  const why = [
+    'Executive Summary: AI report could not be fully generated due to a model output issue. Key missing inputs are listed below to help guide next steps.',
+    'Key Risks: Unable to fully assess — model did not return a complete report. Review missing items for critical gaps.',
+    'Key Strengths: Unable to fully assess — insufficient model output received.',
+    'Decision Readiness: Evaluation incomplete. Please address the missing items below and re-run evaluation for a fuller report.',
+    'Recommendations: Ensure all required fields (scope, timeline, KPIs, constraints, risks) are populated before re-running.',
+  ];
+
+  return {
+    data: {
+      fit_level: 'unknown',
+      confidence_0_1: 0.2,
+      why,
+      missing: missing.length > 0 ? missing : GENERIC_FALLBACK_MISSING.slice(0, 3),
+      redactions: [],
+    },
+    warnings: [warningKey],
+  };
+}
+
 function buildEvalPromptFromFactSheet(params: {
   factSheet: ProposalFactSheet;
   chunks: EvaluationChunks;
   reportStyle: ReportStyle;
+  /** When true, uses tighter output limits to avoid truncation. */
+  tightMode?: boolean;
 }) {
   const { factSheet, chunks, reportStyle } = params;
+  const tightMode = Boolean(params.tightMode);
   const sc = factSheet.source_coverage;
   const coverageCount = computeCoverageCount(sc);
 
@@ -548,8 +655,8 @@ function buildEvalPromptFromFactSheet(params: {
       ? 'Voice: blunt and direct. Short sentences. Minimal hedging. State conclusions plainly.'
       : 'Voice: constructive and collaborative. Forward-looking language. Frame gaps as opportunities.';
 
-  // If coverage is weak, force tight regardless of selected verbosity.
-  const effectiveVerbosity: Verbosity = coverageCount < 3 ? 'tight' : reportStyle.verbosity;
+  // If coverage is weak OR tight retry, force tight depth.
+  const effectiveVerbosity: Verbosity = coverageCount < 3 || tightMode ? 'tight' : reportStyle.verbosity;
   const depthGuide =
     effectiveVerbosity === 'tight'
       ? 'Depth: concise. 1-2 sentences per section. Push detail to missing[].'
@@ -564,10 +671,13 @@ function buildEvalPromptFromFactSheet(params: {
       ? 'Ordering: lead with strengths, then follow with risks.'
       : 'Ordering: balance strengths and risks throughout.';
 
+  const whyMaxChars = tightMode ? WHY_MAX_CHARS_TIGHT : WHY_MAX_CHARS_STANDARD;
+
+  // IMPORTANT: chunk arrays are NOT sent to the model. Only counts are included.
+  // The raw chunks are used code-side only for leak-guard checks after generation.
   const payload = {
-    // Chunk lists kept intact — leak-guard depends on them.
-    shared_chunks: chunks.sharedChunks,
-    confidential_chunks: chunks.confidentialChunks,
+    shared_chunk_count: chunks.sharedChunks.length,
+    confidential_chunk_count: chunks.confidentialChunks.length,
     // Primary input: structured Fact Sheet extracted in Pass A.
     fact_sheet: factSheet,
     constraints: {
@@ -576,6 +686,10 @@ function buildEvalPromptFromFactSheet(params: {
       no_confidential_verbatim: true,
       no_confidential_numbers_or_identifiers: true,
       allow_safe_derived_conclusions: true,
+      // Output size limits — strictly enforced to avoid truncation.
+      why_max_chars: whyMaxChars,
+      missing_max_items: MISSING_MAX_ITEMS,
+      redactions_max_items: REDACTIONS_MAX_ITEMS,
       report_style: {
         style_id: reportStyle.style_id,
         ordering: reportStyle.ordering,
@@ -586,6 +700,9 @@ function buildEvalPromptFromFactSheet(params: {
   };
 
   return [
+    tightMode
+      ? 'STRICT COMPACT MODE: Return JSON only. No markdown. No code fences. No commentary. Output must be short.'
+      : '',
     'SYSTEM: You are an expert business consultant and neutral mediator evaluating a business proposal.',
     'Your task is: evaluate the overall business proposal quality and decision-readiness.',
     '',
@@ -615,6 +732,7 @@ function buildEvalPromptFromFactSheet(params: {
     orderingGuide,
     '',
     'WHY FIELD — FORMAT INSTRUCTIONS:',
+    `- Total combined length of all why[] entries MUST NOT exceed ${whyMaxChars} characters.`,
     '- The "why" array must contain one element per heading below, in the order listed.',
     '- Each element must start with its heading name followed by a colon and a space',
     '  (e.g., "Key Strengths: The proposal defines three concrete deliverables...").',
@@ -624,10 +742,9 @@ function buildEvalPromptFromFactSheet(params: {
       : '- No conditional headings apply to this proposal.',
     '',
     'MISSING FIELD — QUALITY RULES:',
-    '- Include ONLY items that materially change feasibility, cost, timeline, or risk assessment.',
+    `- Maximum ${MISSING_MAX_ITEMS} items. Include ONLY items that materially change feasibility, cost, timeline, or risk.`,
     '- Phrase each item as an actionable question (e.g., "What is the confirmed go-live deadline?").',
     '- Rank most-critical items first.',
-    '- Do not include trivial or cosmetic gaps.',
     '- Incorporate all items from fact_sheet.missing_info and fact_sheet.open_questions (paraphrase as questions).',
     coverageCount < 3
       ? '- Coverage is weak: missing[] must contain substantive, decision-blocking questions (minimum 3).'
@@ -637,9 +754,9 @@ function buildEvalPromptFromFactSheet(params: {
     '- fit_level: Overall proposal quality / readiness.',
     '  high = decision-ready; medium = promising but gaps exist; low = major gaps; unknown = insufficient info.',
     '- confidence_0_1: Your confidence in the assessment (0 = no basis, 1 = very confident).',
-    '- why: Consultant-style narrative per heading, as described in WHY FIELD instructions above.',
-    '- missing: Actionable questions ranked by criticality, per quality rules above.',
-    '- redactions: Array of strings — topics that must remain confidential.',
+    '- why: Consultant-style narrative per heading, as described above. Keep concise — total chars <= why_max_chars.',
+    '- missing: Actionable questions ranked by criticality. Max missing_max_items items.',
+    '- redactions: Array of strings — topics that must remain confidential. Max redactions_max_items items.',
     '',
     'HARD GUARDRAILS — follow these without exception:',
     '- "high" fit_level is RARE. Only when specific, quantified, coherent, risks addressed, decision-ready.',
@@ -1257,7 +1374,7 @@ async function callVertexV2(params: {
   const generationConfig: Record<string, unknown> = {
     temperature: 0,
     topP: 1,
-    maxOutputTokens: 2048,
+    maxOutputTokens: params.maxOutputTokens ?? 4096,
     responseMimeType: 'application/json',
   };
 
@@ -1524,9 +1641,14 @@ export async function evaluateWithVertexV2(
   });
 
   // ── Pass B: final evaluation using Fact Sheet ────────────────────────────
-  const prompt = buildEvalPromptFromFactSheet({ factSheet, chunks, reportStyle });
+  let prompt = buildEvalPromptFromFactSheet({ factSheet, chunks, reportStyle });
 
   let attempt = 0;
+  let usedTightRetry = false;
+  let lastParseFailureKind: string = 'unknown';
+  let lastFinishReason: string | null = null;
+  let lastRawTextLength = 0;
+
   while (attempt < MAX_ATTEMPTS) {
     attempt += 1;
     let vertex: VertexCallResponse;
@@ -1536,6 +1658,7 @@ export async function evaluateWithVertexV2(
         prompt,
         requestId,
         inputChars,
+        maxOutputTokens: 4096,
       });
     } catch (error: any) {
       const code = asLower(error?.code);
@@ -1549,6 +1672,7 @@ export async function evaluateWithVertexV2(
         'Vertex request failed';
       const isTimeout = code === 'vertex_timeout';
       if (code === 'not_configured') {
+        // Hard failure — not_configured is not recoverable via fallback.
         return buildFailure({
           kind: 'vertex_http_error',
           requestId,
@@ -1577,90 +1701,64 @@ export async function evaluateWithVertexV2(
         continue;
       }
 
-      return buildFailure({
-        kind,
-        requestId,
-        finishReason: null,
-        rawTextLength: 0,
-        retryable,
-        attemptCount: attempt,
-        details: {
-          status: status || (isTimeout ? 504 : 502),
-          code: code || (isTimeout ? 'vertex_timeout' : 'vertex_http_error'),
-          message,
-          model: asText(error?.extra?.model) || null,
-          upstream_status: Number(error?.extra?.upstreamStatus || 0) || null,
-          tried_models: Array.isArray(error?.extra?.triedModels)
-            ? error.extra.triedModels.map((entry: unknown) => asText(entry)).filter(Boolean).slice(0, 8)
-            : [],
-        },
-      });
+      // Network error exhausted retries — fall through to fallback.
+      lastParseFailureKind = kind;
+      break;
     }
 
     const rawText = String(vertex.text || '');
     const rawTextLength = rawText.length;
     const finishReason = vertex.finishReason ? asLower(vertex.finishReason) : null;
+    lastFinishReason = finishReason;
+    lastRawTextLength = rawTextLength;
 
     if (!rawText.trim()) {
       if (attempt < MAX_ATTEMPTS) {
         continue;
       }
-      return buildFailure({
-        kind: 'empty_output',
-        requestId,
-        finishReason,
-        rawTextLength,
-        retryable: true,
-        attemptCount: attempt,
-      });
+      // Empty output after all attempts — fall through to fallback.
+      lastParseFailureKind = 'empty_output';
+      break;
     }
 
     if (isLikelyTruncatedOutput(rawText, finishReason)) {
-      if (attempt < MAX_ATTEMPTS) {
+      if (!usedTightRetry) {
+        // First truncation → retry once with tight mode to reduce output size.
+        usedTightRetry = true;
+        prompt = buildEvalPromptFromFactSheet({ factSheet, chunks, reportStyle, tightMode: true });
         continue;
       }
-      return buildFailure({
-        kind: 'truncated_output',
-        requestId,
-        finishReason,
-        rawTextLength,
-        retryable: true,
-        attemptCount: attempt,
-      });
+      // Tight retry also truncated → use fallback.
+      lastParseFailureKind = 'truncated_output';
+      break;
     }
 
     const extracted = parseJsonObject(rawText);
     if (!extracted.parsed) {
-      return buildFailure({
-        kind: 'json_parse_error',
-        requestId,
-        finishReason,
-        rawTextLength,
-        retryable: false,
-        attemptCount: attempt,
-        details: {
-          had_json_fence: extracted.hadJsonFence,
-          extraction_mode: extracted.extractionMode,
-        },
-      });
+      if (!usedTightRetry) {
+        // First parse failure → retry once with tight mode.
+        usedTightRetry = true;
+        lastParseFailureKind = 'json_parse_error';
+        prompt = buildEvalPromptFromFactSheet({ factSheet, chunks, reportStyle, tightMode: true });
+        continue;
+      }
+      // Both attempts failed to parse → use fallback.
+      lastParseFailureKind = 'json_parse_error';
+      break;
     }
 
     const coerced = coerceToSmallSchema(extracted.parsed);
     const schemaValidation = validateResponseSchema(coerced.candidate);
     if (!schemaValidation.ok) {
-      return buildFailure({
-        kind: 'schema_validation_error',
-        requestId,
-        finishReason,
-        rawTextLength,
-        retryable: false,
-        attemptCount: attempt,
-        details: {
-          schema_missing_keys: schemaValidation.missingKeys,
-          invalid_fields: schemaValidation.invalidFields,
-          coerced_from_legacy: coerced.coerced,
-        },
-      });
+      if (!usedTightRetry) {
+        usedTightRetry = true;
+        lastParseFailureKind = 'schema_validation_error';
+        prompt = buildEvalPromptFromFactSheet({ factSheet, chunks, reportStyle, tightMode: true });
+        continue;
+      }
+      // Schema still invalid after tight retry → fallback.
+      lastParseFailureKind = 'schema_validation_error';
+      break;
     }
 
     if (enforceLeakGuard) {
@@ -1672,6 +1770,7 @@ export async function evaluateWithVertexV2(
         canaryTokens: forbiddenLeakCanaryTokens,
       });
       if (leak) {
+        // Hard security failure — never fall back on a leak.
         return buildFailure({
           kind: 'confidential_leak_detected',
           requestId,
@@ -1731,14 +1830,52 @@ export async function evaluateWithVertexV2(
     };
   }
 
-  return buildFailure({
-    kind: 'empty_output',
+  // ── All Pass B attempts failed → safe fallback ───────────────────────────
+  // Return ok:true with a clamped fallback evaluation so the API never fails.
+  const fallback = safeFallbackEvaluationFromFactSheet(factSheet, {
+    failureKind: lastParseFailureKind,
     requestId,
-    finishReason: null,
-    rawTextLength: 0,
-    retryable: toRetryableForKind('empty_output'),
-    attemptCount: MAX_ATTEMPTS,
+    finishReason: lastFinishReason,
+    sharedChars: sharedText.length,
+    confidentialChars: confidentialText.length,
   });
+
+  const fallbackClamped = applyCoverageClamps({
+    data: fallback.data,
+    factSheet,
+    sharedText,
+    confidentialText,
+  });
+
+  const fallbackTelemetry = buildTelemetry({
+    sharedText,
+    confidentialText,
+    proposalTextExcerpt,
+    sharedChunks: chunks.sharedChunks,
+    confidentialChunks: chunks.confidentialChunks,
+    factSheet,
+    evalResult: fallbackClamped.data,
+    reportStyle,
+    clampsApplied: fallbackClamped.capsApplied,
+  });
+
+  return {
+    ok: true,
+    data: fallbackClamped.data,
+    attempt_count: attempt,
+    model: null,
+    _internal: {
+      fact_sheet: factSheet,
+      coverage_count: computeCoverageCount(factSheet.source_coverage),
+      caps_applied: fallbackClamped.capsApplied,
+      pass_a_parse_error: passAParseError,
+      pass_b_attempt_count: attempt,
+      report_style: reportStyle,
+      telemetry: fallbackTelemetry,
+      warnings: fallback.warnings,
+      failure_kind: lastParseFailureKind,
+    },
+  };
 }
 
 export { validateResponseSchema };

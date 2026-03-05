@@ -216,7 +216,7 @@ test('v2 coerces legacy structured schema into small schema', async () => {
   }
 });
 
-test('v2 retries once then fails with truncated_output and retryable=true', async () => {
+test('v2 retries once (tight mode) then falls back with truncated_output', async () => {
   const truncatedResponse = {
     model: 'gemini-2.0-flash-001',
     text: '{"fit_level":"high","confidence_0_1":0.8,"why":["partial"]',
@@ -227,9 +227,9 @@ test('v2 retries once then fails with truncated_output and retryable=true', asyn
   const cleanup = setVertexV2MockSequence([
     // Pass A succeeds
     { response: factSheetResponse() },
-    // Pass B attempt 1 — truncated
+    // Pass B attempt 1 — truncated → triggers tight retry
     { response: truncatedResponse },
-    // Pass B attempt 2 — truncated again → final failure
+    // Pass B attempt 2 (tight mode) — truncated again → fallback
     { response: truncatedResponse },
   ]);
 
@@ -239,12 +239,23 @@ test('v2 retries once then fails with truncated_output and retryable=true', asyn
       confidentialText: 'Confidential text has enough content for internal alignment checks.',
       requestId: 'req-trunc-1',
     });
-    assert.equal(outcome.ok, false);
-    if (outcome.ok) return;
-    assert.equal(outcome.attempt_count, 2);
-    assert.equal(outcome.error.parse_error_kind, 'truncated_output');
-    assert.equal(outcome.error.retryable, true);
-    assert.equal(String(outcome.error.finish_reason || '').toLowerCase(), 'max_tokens');
+    // New behaviour: truncation falls back to a safe partial result (never ok:false).
+    assert.equal(outcome.ok, true, 'truncated output must return ok:true via fallback');
+    if (!outcome.ok) return;
+    assert.equal(outcome.attempt_count, 2, 'should have attempted twice');
+    assert.equal(outcome._internal.failure_kind, 'truncated_output', 'failure_kind must record truncated_output');
+    assert.ok(
+      Array.isArray(outcome._internal.warnings) && outcome._internal.warnings.length > 0,
+      '_internal.warnings must be non-empty for fallback path',
+    );
+    assert.ok(
+      outcome._internal.warnings.some((w) => w.includes('truncated')),
+      '_internal.warnings must contain a truncated-output warning key',
+    );
+    assert.equal(outcome.data.fit_level, 'unknown', 'fallback fit_level must be unknown');
+    assert.ok(outcome.data.confidence_0_1 <= 0.65, 'fallback confidence must be clamped <= 0.65');
+    assert.ok(Array.isArray(outcome.data.missing) && outcome.data.missing.length >= 3,
+      'fallback must provide at least 3 missing items');
   } finally {
     cleanup();
   }
@@ -291,7 +302,7 @@ test('v2 retries transient vertex_http_error once and then succeeds', async () =
   }
 });
 
-test('v2 fails after retry on persistent vertex_http_error and marks retryable=true', async () => {
+test('v2 falls back after persistent vertex_http_error (retries exhausted)', async () => {
   const transientError = Object.assign(new Error('upstream 502'), {
     code: 'vertex_request_failed',
     statusCode: 502,
@@ -306,7 +317,7 @@ test('v2 fails after retry on persistent vertex_http_error and marks retryable=t
     { response: factSheetResponse() },
     // Pass B attempt 1 — transient error
     { throw: transientError },
-    // Pass B attempt 2 — transient error again → final failure
+    // Pass B attempt 2 — transient error again → retries exhausted → fallback
     { throw: transientError },
   ]);
 
@@ -316,29 +327,41 @@ test('v2 fails after retry on persistent vertex_http_error and marks retryable=t
       confidentialText: 'Confidential text contains enough detail for persistent upstream failure checks.',
       requestId: 'req-http-retry-fail-1',
     });
-    assert.equal(outcome.ok, false);
-    if (outcome.ok) return;
-    assert.equal(outcome.attempt_count, 2);
-    assert.equal(outcome.error.parse_error_kind, 'vertex_http_error');
-    assert.equal(outcome.error.retryable, true);
+    // New behaviour: network failures after retries use fallback (never ok:false).
+    assert.equal(outcome.ok, true, 'network error fallback must return ok:true');
+    if (!outcome.ok) return;
+    assert.equal(outcome.attempt_count, 2, 'should have attempted twice');
+    assert.equal(outcome._internal.failure_kind, 'vertex_http_error', 'failure_kind must record vertex_http_error');
+    assert.ok(
+      Array.isArray(outcome._internal.warnings) && outcome._internal.warnings.length > 0,
+      '_internal.warnings must be non-empty for fallback path',
+    );
+    assert.ok(
+      outcome._internal.warnings.some((w) => w.includes('request_failed')),
+      '_internal.warnings must contain a vertex_request_failed warning key',
+    );
+    assert.equal(outcome.data.fit_level, 'unknown', 'fallback fit_level must be unknown');
+    assert.ok(outcome.data.confidence_0_1 <= 0.65, 'fallback confidence must be clamped <= 0.65');
   } finally {
     cleanup();
   }
 });
 
-test('v2 fails on json_parse_error for non-JSON content', async () => {
+test('v2 falls back on persistent json_parse_error (tight retry also fails)', async () => {
+  const badJsonResponse = {
+    model: 'gemini-2.0-flash-001',
+    text: 'Not JSON at all',
+    finishReason: 'STOP',
+    httpStatus: 200,
+  };
+
   const cleanup = setVertexV2MockSequence([
     // Pass A succeeds
     { response: factSheetResponse() },
-    // Pass B returns non-JSON
-    {
-      response: {
-        model: 'gemini-2.0-flash-001',
-        text: 'Not JSON at all',
-        finishReason: 'STOP',
-        httpStatus: 200,
-      },
-    },
+    // Pass B attempt 1 — invalid JSON → triggers tight retry
+    { response: badJsonResponse },
+    // Pass B attempt 2 (tight mode) — still invalid JSON → fallback
+    { response: badJsonResponse },
   ]);
 
   try {
@@ -347,10 +370,20 @@ test('v2 fails on json_parse_error for non-JSON content', async () => {
       confidentialText: 'Confidential content for parse test.',
       requestId: 'req-json-err-1',
     });
-    assert.equal(outcome.ok, false);
-    if (outcome.ok) return;
-    assert.equal(outcome.error.parse_error_kind, 'json_parse_error');
-    assert.equal(outcome.error.retryable, false);
+    // New behaviour: parse errors fall back to a safe partial result (never ok:false).
+    assert.equal(outcome.ok, true, 'json parse error must return ok:true via fallback');
+    if (!outcome.ok) return;
+    assert.equal(outcome._internal.failure_kind, 'json_parse_error', 'failure_kind must record json_parse_error');
+    assert.ok(
+      Array.isArray(outcome._internal.warnings) && outcome._internal.warnings.length > 0,
+      '_internal.warnings must be non-empty for fallback path',
+    );
+    assert.ok(
+      outcome._internal.warnings.some((w) => w.includes('invalid_response') || w.includes('fallback')),
+      '_internal.warnings must contain an invalid_response fallback key',
+    );
+    assert.equal(outcome.data.fit_level, 'unknown', 'fallback fit_level must be unknown');
+    assert.ok(outcome.data.confidence_0_1 <= 0.65, 'fallback confidence must be clamped <= 0.65');
   } finally {
     cleanup();
   }
@@ -1265,5 +1298,173 @@ test('anti-leak: telemetry and outputs do not contain raw confidential canary st
     );
   } finally {
     delete globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__;
+  }
+});
+
+// ─── New tests: Prompt safety + tight retry ────────────────────────────────
+
+test('Pass B prompt does not include shared_chunks or confidential_chunks arrays', async () => {
+  let passAPrompt = null;
+  let passBPrompt = null;
+  let callCount = 0;
+
+  globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__ = async (params) => {
+    callCount += 1;
+    if (callCount === 1) {
+      passAPrompt = params.prompt;
+      return {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(validFactSheetPayload()),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      };
+    }
+    passBPrompt = params.prompt;
+    return {
+      model: 'gemini-2.0-flash-001',
+      text: JSON.stringify(validPayload({ fit_level: 'medium', confidence_0_1: 0.7 })),
+      finishReason: 'STOP',
+      httpStatus: 200,
+    };
+  };
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Shared text describing deliverables, timeline, and KPIs for the project.',
+      confidentialText: 'Confidential: internal budget is 500k; team of 3 engineers.',
+      requestId: 'req-prompt-no-chunks-1',
+    });
+    assert.equal(outcome.ok, true, 'evaluation must succeed');
+
+    // Pass B prompt must not embed chunk arrays.
+    assert.ok(passBPrompt, 'Pass B prompt must have been captured');
+    assert.equal(
+      passBPrompt.includes('"shared_chunks"'),
+      false,
+      'Pass B prompt must NOT contain "shared_chunks" key',
+    );
+    assert.equal(
+      passBPrompt.includes('"confidential_chunks"'),
+      false,
+      'Pass B prompt must NOT contain "confidential_chunks" key',
+    );
+    // It must include the count fields instead.
+    assert.equal(
+      passBPrompt.includes('"shared_chunk_count"'),
+      true,
+      'Pass B prompt must include "shared_chunk_count"',
+    );
+    assert.equal(
+      passBPrompt.includes('"confidential_chunk_count"'),
+      true,
+      'Pass B prompt must include "confidential_chunk_count"',
+    );
+  } finally {
+    delete globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__;
+  }
+});
+
+test('Tight retry fires on truncation and succeeds on second attempt', async () => {
+  let passBCallCount = 0;
+  let tightModeDetected = false;
+
+  const cleanup = setVertexV2MockSequence([
+    // Pass A succeeds
+    { response: factSheetResponse() },
+    // Pass B attempt 1 — truncated → triggers tight retry
+    {
+      response: {
+        model: 'gemini-2.0-flash-001',
+        text: '{"fit_level":"high","confidence_0_1":0.9,"why":["partial cut]',
+        finishReason: 'MAX_TOKENS',
+        httpStatus: 200,
+      },
+    },
+    // Pass B attempt 2 (tight mode) — succeeds with valid response
+    {
+      response: {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(validPayload({ fit_level: 'medium', confidence_0_1: 0.68 })),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+  ]);
+
+  // Wrap the mock to detect tight mode on second Pass B call.
+  const originalMock = globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__;
+  globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__ = async (params) => {
+    const result = await originalMock(params);
+    // Detect if tight mode prompt was used (has 'STRICT COMPACT MODE').
+    if (params.prompt && params.prompt.includes('STRICT COMPACT MODE')) {
+      tightModeDetected = true;
+    }
+    return result;
+  };
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Shared text for tight retry scenario with enough meaningful content.',
+      confidentialText: 'Confidential text for tight retry scenario with enough meaningful content.',
+      requestId: 'req-tight-retry-1',
+    });
+    assert.equal(outcome.ok, true, 'outcome must be ok:true after tight retry success');
+    if (!outcome.ok) return;
+    assert.equal(outcome.attempt_count, 2, 'must have used 2 Pass B attempts');
+    assert.equal(tightModeDetected, true, 'tight mode must have been used on the retry');
+    assert.equal(outcome.data.fit_level, 'medium', 'fit_level from second attempt must be returned');
+    // No fallback warning because second attempt succeeded.
+    assert.ok(
+      !outcome._internal.warnings || outcome._internal.warnings.length === 0,
+      '_internal.warnings must be empty when tight retry succeeds',
+    );
+  } finally {
+    cleanup();
+    delete globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__;
+  }
+});
+
+test('anti-leak: fallback path output does not contain confidential canary', async () => {
+  const canary = 'FALLBACK_CANARY_7b91e';
+  const badJsonResponse = {
+    model: 'gemini-2.0-flash-001',
+    text: 'not valid json',
+    finishReason: 'STOP',
+    httpStatus: 200,
+  };
+
+  const cleanup = setVertexV2MockSequence([
+    // Pass A — fact sheet does NOT embed canary
+    { response: factSheetResponse() },
+    // Pass B attempt 1 — invalid JSON
+    { response: badJsonResponse },
+    // Pass B attempt 2 (tight retry) — still invalid JSON → fallback used
+    { response: badJsonResponse },
+  ]);
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Shared proposal text for anti-leak fallback check.',
+      confidentialText: `Confidential details contain the canary ${canary} and budget info.`,
+      requestId: 'req-fallback-antileak-1',
+    });
+    assert.equal(outcome.ok, true, 'fallback must return ok:true');
+    if (!outcome.ok) return;
+
+    // Fallback output must not contain the canary at any level.
+    const outputJson = JSON.stringify(outcome.data);
+    assert.equal(outputJson.includes(canary), false, 'fallback output JSON must not contain canary');
+
+    const internalJson = JSON.stringify(outcome._internal);
+    assert.equal(internalJson.includes(canary), false, '_internal JSON must not contain canary');
+
+    // Confirm it's actually the fallback path.
+    assert.ok(
+      Array.isArray(outcome._internal.warnings) && outcome._internal.warnings.length > 0,
+      '_internal.warnings must be non-empty on fallback path',
+    );
+    assert.equal(outcome.data.fit_level, 'unknown', 'fallback fit_level must be unknown');
+  } finally {
+    cleanup();
   }
 });

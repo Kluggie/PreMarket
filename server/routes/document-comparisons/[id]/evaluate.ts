@@ -1372,55 +1372,128 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
 
         let evaluated: any = null;
         if (useV2) {
-          const v2Result = await evaluateWithVertexV2({
-            sharedText: draft.docBText || '',
-            confidentialText: draft.docAText || '',
-            requestId,
-            enforceLeakGuard: false,
-          });
+          // Wrap call in a hard try-catch so any unexpected evaluator throw also
+          // produces a valid (completed_with_warnings) result rather than a 502.
+          let v2Result: any;
+          try {
+            v2Result = await evaluateWithVertexV2({
+              sharedText: draft.docBText || '',
+              confidentialText: draft.docAText || '',
+              requestId,
+              enforceLeakGuard: false,
+            });
+          } catch (unexpectedError: any) {
+            console.error(
+              JSON.stringify({
+                level: 'error',
+                route: '/api/document-comparisons/[id]/evaluate',
+                event: 'vertex_v2_unexpected_throw',
+                requestId,
+                comparisonId: existing.id,
+                message: asText(unexpectedError?.message) || 'unknown',
+              }),
+            );
+            // Build a minimal ok:true fallback so we never 502 on an unexpected throw.
+            v2Result = {
+              ok: true,
+              data: {
+                fit_level: 'unknown',
+                confidence_0_1: 0.2,
+                why: [
+                  'Executive Summary: AI report could not be generated due to an unexpected internal error.',
+                  'Key Strengths: Unable to assess — model call failed unexpectedly.',
+                  'Key Risks: Unable to assess — insufficient data.',
+                  'Decision Readiness: Incomplete. Please address missing items and retry.',
+                  'Recommendations: Review missing items below and re-run evaluation.',
+                ],
+                missing: [
+                  'What is the confirmed scope and set of deliverables?',
+                  'What is the confirmed timeline and go-live date?',
+                  'What are the measurable success criteria (KPIs)?',
+                ],
+                redactions: [],
+              },
+              attempt_count: 1,
+              model: null,
+              _internal: {
+                warnings: ['vertex_unexpected_error_fallback_used'],
+                failure_kind: 'unexpected_error',
+              },
+            };
+          }
+
           if (!v2Result.ok) {
             const error = v2Result.error;
             const parseKind = asLower(error.parse_error_kind);
+
+            // Confidential leak is a security hard failure — never return a
+            // partially-generated result that might contain leaked data.
+            if (parseKind === 'confidential_leak_detected') {
+              const v2Error = new ApiError(400, 'confidential_leak_detected', 'Vertex evaluation failed: confidential data leak detected', {
+                reasonCode: parseKind,
+                parseErrorKind: parseKind,
+                parseErrorName: parseKind,
+                parseErrorMessage: JSON.stringify({
+                  parse_error_kind: parseKind || null,
+                  raw_text_length: toSafeInteger(error.raw_text_length) || 0,
+                  had_json_fence: null,
+                  finish_reason: asText(error.finish_reason) || null,
+                  schema_missing_keys: [],
+                  category_count: null,
+                }),
+              });
+              throw v2Error;
+            }
+
+            // For all other ok:false cases (e.g. not_configured) — use a
+            // completed_with_warnings fallback so the API returns 200, not 502.
             const details =
               error.details && typeof error.details === 'object' && !Array.isArray(error.details)
                 ? (error.details as Record<string, unknown>)
                 : {};
-            const upstreamStatus = toSafeInteger((details as any).status);
-            const statusCode =
-              parseKind === 'vertex_timeout'
-                ? 504
-                : Number.isFinite(Number(upstreamStatus)) && Number(upstreamStatus) > 0
-                  ? Number(upstreamStatus)
-                  : 502;
-            const errorCode =
-              parseKind === 'vertex_timeout'
-                ? 'vertex_timeout'
-                : parseKind === 'vertex_http_error' && Number(statusCode) === 501
-                  ? 'not_configured'
-                  : parseKind === 'vertex_http_error'
-                    ? 'vertex_request_failed'
-                    : 'invalid_model_output';
-            const v2Error = new ApiError(statusCode, errorCode, 'Vertex evaluation failed', {
-              reasonCode: parseKind,
-              parseErrorKind: parseKind,
-              parseErrorName: parseKind,
-              parseErrorMessage: JSON.stringify({
-                parse_error_kind: parseKind || null,
-                raw_text_length: toSafeInteger(error.raw_text_length) || 0,
-                had_json_fence: null,
-                finish_reason: asText(error.finish_reason) || null,
-                schema_missing_keys: Array.isArray((details as any).schema_missing_keys)
-                  ? (details as any).schema_missing_keys
-                  : [],
-                category_count: null,
+            const warningKey =
+              parseKind === 'not_configured' || (details as any).code === 'not_configured'
+                ? 'vertex_not_configured_fallback_used'
+                : 'vertex_invalid_response_fallback_used';
+            console.warn(
+              JSON.stringify({
+                level: 'warn',
+                route: '/api/document-comparisons/[id]/evaluate',
+                event: 'vertex_v2_ok_false_using_fallback',
+                requestId,
+                comparisonId: existing.id,
+                parseKind,
+                warningKey,
               }),
-              rawTextLength: toSafeInteger(error.raw_text_length) || 0,
-              finishReason: asText(error.finish_reason) || null,
-              retryable: Boolean(error.retryable),
-              upstreamStatus: Number.isFinite(Number(upstreamStatus)) ? Number(upstreamStatus) : null,
-              ...details,
-            });
-            throw v2Error;
+            );
+            v2Result = {
+              ok: true,
+              data: {
+                fit_level: 'unknown',
+                confidence_0_1: 0.2,
+                why: [
+                  'Executive Summary: AI report could not be generated. This evaluation is incomplete.',
+                  'Key Strengths: Unable to assess due to model configuration or availability issue.',
+                  'Key Risks: Unable to assess — please retry or contact support if issue persists.',
+                  'Decision Readiness: Incomplete. Address missing items below.',
+                  'Recommendations: Retry evaluation once the underlying issue is resolved.',
+                ],
+                missing: [
+                  'What is the confirmed scope and set of deliverables?',
+                  'What is the confirmed timeline and go-live date?',
+                  'What are the measurable success criteria (KPIs)?',
+                  'What budget and resource constraints apply?',
+                  'What are the key risks and their mitigations?',
+                ],
+                redactions: [],
+              },
+              attempt_count: v2Result.attempt_count ?? 1,
+              model: null,
+              _internal: {
+                warnings: [warningKey],
+                failure_kind: parseKind,
+              },
+            };
           }
           evaluated = convertV2ResponseToEvaluation(v2Result);
         } else {
