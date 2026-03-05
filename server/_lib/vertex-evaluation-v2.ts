@@ -153,6 +153,46 @@ export function selectReportStyle(seed: number): ReportStyle {
   };
 }
 
+// ─── Telemetry (safe, internal-only) ────────────────────────────────────────
+// NEVER includes raw proposal text, extracted strings, or identifiers.
+// Safe to log for observability (coverage distribution, clamp frequency, style).
+
+export interface VertexEvaluationV2Telemetry {
+  version: 'eval_v2';
+  // Coverage signals (booleans only — no extracted text)
+  coverageCount: number;
+  coverageFlags: {
+    has_scope: boolean;
+    has_timeline: boolean;
+    has_kpis: boolean;
+    has_constraints: boolean;
+    has_risks: boolean;
+  };
+  // Post-processing
+  clampsApplied: string[];
+  identicalTiers: boolean;
+  // Output signals (values/counts only)
+  fit_level: string;
+  confidence_0_1: number;
+  missingCount: number;
+  redactionsCount: number;
+  // Input size signals (counts only — no text)
+  sharedChars: number;
+  confidentialChars: number;
+  proposalChars: number;
+  sharedChunkCount: number;
+  confidentialChunkCount: number;
+  // Style
+  reportStyle: {
+    style_id: StyleId;
+    ordering: Ordering;
+    verbosity: Verbosity;
+    seed: number;
+  };
+  // Optional timestamp for time-series drift detection
+  timestampMs?: number;
+}
+
 // Internal debug metadata — attached to VertexEvaluationV2Result for
 // server-side logging; never serialised to the client response.
 export interface VertexEvaluationV2Internal {
@@ -162,6 +202,7 @@ export interface VertexEvaluationV2Internal {
   pass_a_parse_error: boolean;
   pass_b_attempt_count: number;
   report_style: ReportStyle;
+  telemetry?: VertexEvaluationV2Telemetry;
 }
 
 export interface VertexEvaluationV2Result {
@@ -1381,6 +1422,56 @@ function isTransientVertexHttpFailure(params: {
   return false;
 }
 
+// ─── Safe telemetry builder ────────────────────────────────────────────────────────
+// Extracts ONLY counts, booleans, and enums — never raw text or identifiers.
+// Safe to log, emit to monitoring, or store without PII/confidentiality risk.
+
+function buildTelemetry(params: {
+  sharedText: string;
+  confidentialText: string;
+  proposalTextExcerpt: string;
+  sharedChunks: Array<{ evidence_id: string; text: string }>;
+  confidentialChunks: Array<{ evidence_id: string; text: string }>;
+  factSheet: ProposalFactSheet;
+  evalResult: VertexEvaluationV2Response;
+  reportStyle: ReportStyle;
+  clampsApplied: string[];
+}): VertexEvaluationV2Telemetry {
+  const sc = params.factSheet.source_coverage;
+  const sharedNorm = params.sharedText.trim();
+  const confNorm = params.confidentialText.trim();
+
+  return {
+    version: 'eval_v2',
+    coverageCount: computeCoverageCount(sc),
+    coverageFlags: {
+      has_scope: sc.has_scope,
+      has_timeline: sc.has_timeline,
+      has_kpis: sc.has_kpis,
+      has_constraints: sc.has_constraints,
+      has_risks: sc.has_risks,
+    },
+    clampsApplied: params.clampsApplied,
+    identicalTiers: Boolean(sharedNorm && confNorm && sharedNorm === confNorm),
+    fit_level: params.evalResult.fit_level,
+    confidence_0_1: params.evalResult.confidence_0_1,
+    missingCount: params.evalResult.missing.length,
+    redactionsCount: params.evalResult.redactions.length,
+    sharedChars: params.sharedText.length,
+    confidentialChars: params.confidentialText.length,
+    proposalChars: params.proposalTextExcerpt.length,
+    sharedChunkCount: params.sharedChunks.length,
+    confidentialChunkCount: params.confidentialChunks.length,
+    reportStyle: {
+      style_id: params.reportStyle.style_id,
+      ordering: params.reportStyle.ordering,
+      verbosity: params.reportStyle.verbosity,
+      seed: params.reportStyle.seed,
+    },
+    timestampMs: Date.now(),
+  };
+}
+
 export async function evaluateWithVertexV2(
   input: VertexEvaluationV2Request,
 ): Promise<VertexEvaluationV2Outcome> {
@@ -1601,6 +1692,28 @@ export async function evaluateWithVertexV2(
       confidentialText,
     });
 
+    // ── Build safe telemetry (counts/booleans/enums only) ─────────────────
+    const telemetry = buildTelemetry({
+      sharedText,
+      confidentialText,
+      proposalTextExcerpt,
+      sharedChunks: chunks.sharedChunks,
+      confidentialChunks: chunks.confidentialChunks,
+      factSheet,
+      evalResult: clamped.data,
+      reportStyle,
+      clampsApplied: clamped.capsApplied,
+    });
+
+    // ── Gated debug log (never in production) ────────────────────────────
+    if (
+      process.env['EVAL_V2_TELEMETRY'] === '1' &&
+      process.env['NODE_ENV'] !== 'production'
+    ) {
+      // eslint-disable-next-line no-console
+      console.log('[eval_v2.telemetry]', JSON.stringify(telemetry));
+    }
+
     return {
       ok: true,
       data: clamped.data,
@@ -1613,6 +1726,7 @@ export async function evaluateWithVertexV2(
         pass_a_parse_error: passAParseError,
         pass_b_attempt_count: attempt,
         report_style: reportStyle,
+        telemetry,
       },
     };
   }

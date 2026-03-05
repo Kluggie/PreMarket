@@ -1,11 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
 import {
   evaluateWithVertexV2,
   validateResponseSchema,
   computeReportStyleSeed,
   selectReportStyle,
 } from '../../server/_lib/vertex-evaluation-v2.ts';
+
+const require = createRequire(import.meta.url);
+/** @type {{ cases: Array<any> }} */
+const goldenFixtures = require('../fixtures/vertex-eval-v2-golden.json');
 
 // ─── Mock helpers ─────────────────────────────────────────────────────────────
 
@@ -1008,4 +1013,257 @@ test('style: vendor_preferences empty → "Vendor Fit Notes" absent; non-empty �
     true,
     'Vendor Fit Notes must appear in Pass B prompt when vendor_preferences is non-empty',
   );
+});
+
+// ─── Golden property tests (regression fixtures) ──────────────────────────────
+// Each fixture specifies fact-sheet + model output + expected properties.
+// Tests assert: clamp behavior, heading instructions, telemetry safety, style determinism.
+
+for (const fixture of goldenFixtures.cases) {
+  test(`golden: ${fixture.name}`, async () => {
+    let passBPrompt = '';
+    let callCount = 0;
+
+    globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__ = async ({ prompt }) => {
+      callCount += 1;
+      if (callCount === 1) {
+        // Pass A — return the fixture's fact sheet
+        return {
+          model: 'gemini-2.0-flash-001',
+          text: JSON.stringify(fixture.factSheet),
+          finishReason: 'STOP',
+          httpStatus: 200,
+        };
+      }
+      // Pass B — capture full prompt, return fixture model output
+      passBPrompt = prompt;
+      return {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(fixture.passBModelOutput),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      };
+    };
+
+    try {
+      const outcome = await evaluateWithVertexV2({
+        sharedText: fixture.sharedText,
+        confidentialText: fixture.confidentialText,
+        requestId: fixture.proposalId ?? undefined,
+      });
+
+      assert.equal(outcome.ok, true, `[${fixture.name}] evaluateWithVertexV2 should succeed`);
+      if (!outcome.ok) return;
+
+      const exp = fixture.expected;
+
+      // ── Confidence cap ──────────────────────────────────────────────────
+      if (typeof exp.maxConfidence === 'number') {
+        assert.equal(
+          outcome.data.confidence_0_1 <= exp.maxConfidence,
+          true,
+          `[${fixture.name}] confidence_0_1 (${outcome.data.confidence_0_1}) must be <= ${exp.maxConfidence}`,
+        );
+      }
+
+      // ── fit_level ───────────────────────────────────────────────────────
+      if (exp.fitNotHigh) {
+        assert.notEqual(outcome.data.fit_level, 'high', `[${fixture.name}] fit_level must not be 'high'`);
+      }
+      if (exp.expectedFit) {
+        assert.equal(outcome.data.fit_level, exp.expectedFit, `[${fixture.name}] fit_level must be '${exp.expectedFit}'`);
+      }
+
+      // ── missing count ───────────────────────────────────────────────────
+      if (typeof exp.minMissingCount === 'number') {
+        assert.equal(
+          outcome.data.missing.length >= exp.minMissingCount,
+          true,
+          `[${fixture.name}] missing.length (${outcome.data.missing.length}) must be >= ${exp.minMissingCount}`,
+        );
+      }
+
+      // ── clamps applied ──────────────────────────────────────────────────
+      if (Array.isArray(exp.expectedClampsApplied)) {
+        for (const clamp of exp.expectedClampsApplied) {
+          assert.equal(
+            outcome._internal?.caps_applied.includes(clamp),
+            true,
+            `[${fixture.name}] caps_applied must include '${clamp}'`,
+          );
+        }
+      }
+      if (Array.isArray(exp.shouldExcludeClamps)) {
+        for (const clamp of exp.shouldExcludeClamps) {
+          assert.equal(
+            outcome._internal?.caps_applied.includes(clamp),
+            false,
+            `[${fixture.name}] caps_applied must NOT include '${clamp}'`,
+          );
+        }
+      }
+
+      // ── required headings in why[] ──────────────────────────────────────
+      if (Array.isArray(exp.mustContainHeadings)) {
+        for (const heading of exp.mustContainHeadings) {
+          const found = outcome.data.why.some((s) => s.toLowerCase().includes(heading.toLowerCase()));
+          assert.equal(found, true, `[${fixture.name}] why[] must contain heading '${heading}'`);
+        }
+      }
+
+      // ── optional headings in Pass B prompt (conditional logic) ──────────
+      if (Array.isArray(exp.shouldIncludeOptionalHeadings)) {
+        for (const heading of exp.shouldIncludeOptionalHeadings) {
+          assert.equal(
+            passBPrompt.includes(heading),
+            true,
+            `[${fixture.name}] Pass B prompt must instruct optional heading '${heading}'`,
+          );
+        }
+      }
+      if (Array.isArray(exp.shouldExcludeOptionalHeadings)) {
+        for (const heading of exp.shouldExcludeOptionalHeadings) {
+          assert.equal(
+            passBPrompt.includes(heading),
+            false,
+            `[${fixture.name}] Pass B prompt must NOT instruct optional heading '${heading}'`,
+          );
+        }
+      }
+
+      // ── telemetry structure & safety ────────────────────────────────────
+      const t = outcome._internal?.telemetry;
+      assert.equal(typeof t, 'object', `[${fixture.name}] _internal.telemetry must be an object`);
+      assert.equal(t?.version, 'eval_v2', `[${fixture.name}] telemetry.version must be 'eval_v2'`);
+      assert.equal(typeof t?.coverageCount, 'number', `[${fixture.name}] telemetry.coverageCount must be a number`);
+      assert.equal(typeof t?.fit_level, 'string', `[${fixture.name}] telemetry.fit_level must be a string`);
+      assert.equal(typeof t?.confidence_0_1, 'number', `[${fixture.name}] telemetry.confidence_0_1 must be a number`);
+      assert.equal(typeof t?.missingCount, 'number', `[${fixture.name}] telemetry.missingCount must be a number`);
+      assert.equal(typeof t?.sharedChars, 'number', `[${fixture.name}] telemetry.sharedChars must be a number`);
+      assert.equal(
+        t?.sharedChars,
+        fixture.sharedText.length,
+        `[${fixture.name}] telemetry.sharedChars must equal sharedText.length`,
+      );
+      assert.equal(
+        t?.confidentialChars,
+        fixture.confidentialText.length,
+        `[${fixture.name}] telemetry.confidentialChars must equal confidentialText.length`,
+      );
+      // Telemetry JSON must NOT contain raw proposal text
+      const tJson = JSON.stringify(t);
+      assert.equal(
+        tJson.includes(fixture.sharedText),
+        false,
+        `[${fixture.name}] telemetry JSON must not contain raw sharedText`,
+      );
+      // Only assert confidentialText safety if the texts differ (identical-tier cases share content)
+      if (fixture.sharedText !== fixture.confidentialText) {
+        assert.equal(
+          tJson.includes(fixture.confidentialText),
+          false,
+          `[${fixture.name}] telemetry JSON must not contain raw confidentialText`,
+        );
+      }
+
+      // ── deterministic style for proposalId cases ────────────────────────
+      if (fixture.proposalId) {
+        // proposalId is used as the stable seed input (passed as requestId)
+        const expectedSeed = computeReportStyleSeed({
+          proposalTextExcerpt: 'irrelevant-text-because-proposalId-takes-precedence',
+          proposalId: fixture.proposalId,
+        });
+        const expectedStyle = selectReportStyle(expectedSeed);
+        assert.equal(
+          outcome._internal?.report_style.style_id,
+          expectedStyle.style_id,
+          `[${fixture.name}] report_style.style_id must be deterministic for proposalId`,
+        );
+        assert.equal(
+          outcome._internal?.report_style.ordering,
+          expectedStyle.ordering,
+          `[${fixture.name}] report_style.ordering must be deterministic for proposalId`,
+        );
+        assert.equal(
+          outcome._internal?.report_style.verbosity,
+          expectedStyle.verbosity,
+          `[${fixture.name}] report_style.verbosity must be deterministic for proposalId`,
+        );
+        // Telemetry must echo same style
+        assert.equal(
+          t?.reportStyle.style_id,
+          expectedStyle.style_id,
+          `[${fixture.name}] telemetry.reportStyle.style_id must match deterministic selection`,
+        );
+      }
+    } finally {
+      delete globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__;
+    }
+  });
+}
+
+// ─── Anti-leak regression: telemetry + outputs must never expose confidential canary ─────
+
+test('anti-leak: telemetry and outputs do not contain raw confidential canary string', async () => {
+  const canary = 'CONFIDENTIAL_CANARY_9f3a2';
+  const sharedText = 'We will deliver an analytics dashboard with defined KPIs and a 6-month timeline.';
+  const confidentialText = `Internal governance note: the canary token is ${canary}. Budget allocation confirmed.`;
+
+  let callCount = 0;
+  globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__ = async () => {
+    callCount += 1;
+    if (callCount === 1) {
+      // Pass A — full-coverage fact sheet (no confidential strings in it)
+      return {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(validFactSheetPayload()),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      };
+    }
+    // Pass B — safe output (no leak)
+    return {
+      model: 'gemini-2.0-flash-001',
+      text: JSON.stringify(validPayload({ fit_level: 'medium', confidence_0_1: 0.72 })),
+      finishReason: 'STOP',
+      httpStatus: 200,
+    };
+  };
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText,
+      confidentialText,
+      requestId: 'req-antileak-canary-1',
+    });
+
+    assert.equal(outcome.ok, true, 'Should succeed');
+    if (!outcome.ok) return;
+
+    // Client-facing output must not contain the canary
+    const whyJoined = outcome.data.why.join(' ');
+    const missingJoined = outcome.data.missing.join(' ');
+    const redactionsJoined = outcome.data.redactions.join(' ');
+    assert.equal(whyJoined.includes(canary), false, 'output.why must not contain confidential canary');
+    assert.equal(missingJoined.includes(canary), false, 'output.missing must not contain confidential canary');
+    assert.equal(redactionsJoined.includes(canary), false, 'output.redactions must not contain confidential canary');
+
+    // Telemetry JSON must not contain the canary
+    const telemetryJson = JSON.stringify(outcome._internal?.telemetry ?? {});
+    assert.equal(telemetryJson.includes(canary), false, 'telemetry JSON must not contain confidential canary');
+
+    // Telemetry must have character counts (not the text itself)
+    assert.equal(
+      outcome._internal?.telemetry?.confidentialChars,
+      confidentialText.length,
+      'telemetry must record confidentialChars length',
+    );
+    assert.equal(
+      outcome._internal?.telemetry?.confidentialChunkCount > 0,
+      true,
+      'telemetry must record confidentialChunkCount > 0',
+    );
+  } finally {
+    delete globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__;
+  }
 });

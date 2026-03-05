@@ -1,0 +1,309 @@
+{
+  "_comment": "Golden fixtures for vertex-evaluation-v2 regression tests. passBModelOutput may be intentionally over-optimistic to exercise clamps.",
+  "cases": [
+    {
+      "name": "identical_vague",
+      "description": "shared == confidential, all vague ('ASAP', 'world-class'). All coverage false. Model returns high/0.95. Expect: 0.65 cap, high→medium downgrade, identical-tiers warning, missing >= 1.",
+      "sharedText": "We will build a world-class scalable system ASAP with top dashboards and enterprise support.",
+      "confidentialText": "We will build a world-class scalable system ASAP with top dashboards and enterprise support.",
+      "factSheet": {
+        "project_goal": null,
+        "scope_deliverables": [],
+        "timeline": { "start": null, "duration": null, "milestones": [] },
+        "constraints": [],
+        "success_criteria_kpis": [],
+        "vendor_preferences": [],
+        "assumptions": [],
+        "risks": [],
+        "open_questions": [],
+        "missing_info": [
+          "No deliverables or scope defined.",
+          "Timeline is vague ('ASAP') — no dates or milestones.",
+          "No KPIs or success criteria defined.",
+          "No constraints stated.",
+          "No risks identified."
+        ],
+        "source_coverage": {
+          "has_scope": false,
+          "has_timeline": false,
+          "has_kpis": false,
+          "has_constraints": false,
+          "has_risks": false
+        }
+      },
+      "passBModelOutput": {
+        "fit_level": "high",
+        "confidence_0_1": 0.95,
+        "why": [
+          "Executive Summary: The proposal describes a scalable platform with enterprise support ambitions.",
+          "Key Strengths: The team's commitment to a world-class solution is clear.",
+          "Key Risks: No specific risks have been identified in the proposal.",
+          "Decision Readiness: The proposal lacks specifics needed for a confident decision.",
+          "Recommendations: Define concrete deliverables, timeline, and success criteria."
+        ],
+        "missing": [],
+        "redactions": []
+      },
+      "expected": {
+        "maxConfidence": 0.65,
+        "minMissingCount": 1,
+        "fitNotHigh": true,
+        "expectedClampsApplied": ["cap_0.65_low_coverage", "downgrade_high_low_coverage", "warn_identical_tiers"],
+        "mustContainHeadings": ["Executive Summary", "Key Strengths", "Key Risks", "Decision Readiness", "Recommendations"],
+        "shouldExcludeOptionalHeadings": ["Implementation Notes", "Vendor Fit Notes", "Commercial Notes", "Data & Security Notes"]
+      }
+    },
+    {
+      "name": "vague_non_identical",
+      "description": "Both texts are vague but different. All coverage false. Model returns high/0.9. Expect: 0.65 cap, no identical-tiers warning.",
+      "sharedText": "Our solution will be top-tier and scalable for enterprise clients with world-class service.",
+      "confidentialText": "Internal planning is ongoing. Budget and timeline remain under review with no firm commitments.",
+      "factSheet": {
+        "project_goal": null,
+        "scope_deliverables": [],
+        "timeline": { "start": null, "duration": null, "milestones": [] },
+        "constraints": [],
+        "success_criteria_kpis": [],
+        "vendor_preferences": [],
+        "assumptions": [],
+        "risks": [],
+        "open_questions": [],
+        "missing_info": [
+          "No scope or deliverables defined.",
+          "Timeline is undefined.",
+          "No KPIs or success criteria present.",
+          "No constraints or risks identified."
+        ],
+        "source_coverage": {
+          "has_scope": false,
+          "has_timeline": false,
+          "has_kpis": false,
+          "has_constraints": false,
+          "has_risks": false
+        }
+      },
+      "passBModelOutput": {
+        "fit_level": "high",
+        "confidence_0_1": 0.9,
+        "why": [
+          "Executive Summary: The proposal conveys ambition but lacks specifics.",
+          "Key Strengths: Enterprise focus and commitment to quality.",
+          "Key Risks: No concrete risks identified in the proposal text.",
+          "Decision Readiness: Insufficient detail for a go/no-go decision.",
+          "Recommendations: Provide timeline, KPIs, and defined deliverables."
+        ],
+        "missing": [],
+        "redactions": []
+      },
+      "expected": {
+        "maxConfidence": 0.65,
+        "fitNotHigh": true,
+        "expectedClampsApplied": ["cap_0.65_low_coverage", "downgrade_high_low_coverage"],
+        "shouldExcludeClamps": ["warn_identical_tiers"],
+        "mustContainHeadings": ["Executive Summary"]
+      }
+    },
+    {
+      "name": "scope_only",
+      "description": "Only has_scope=true (coverageCount=1 < 3). Model returns high/0.9. Expect 0.65 cap, high→medium downgrade.",
+      "sharedText": "Deliverables include a CRM dashboard, customer portal, and monthly reporting module.",
+      "confidentialText": "Internal strategic priority. No timeline confirmed. Budget allocation pending approval.",
+      "factSheet": {
+        "project_goal": "Build and deliver CRM dashboard, customer portal, and reporting module.",
+        "scope_deliverables": ["CRM dashboard", "Customer portal", "Monthly reporting module"],
+        "timeline": { "start": null, "duration": null, "milestones": [] },
+        "constraints": [],
+        "success_criteria_kpis": [],
+        "vendor_preferences": [],
+        "assumptions": [],
+        "risks": [],
+        "open_questions": [],
+        "missing_info": [
+          "No timeline defined.",
+          "No KPIs or success criteria.",
+          "No constraints stated.",
+          "No risks identified."
+        ],
+        "source_coverage": {
+          "has_scope": true,
+          "has_timeline": false,
+          "has_kpis": false,
+          "has_constraints": false,
+          "has_risks": false
+        }
+      },
+      "passBModelOutput": {
+        "fit_level": "high",
+        "confidence_0_1": 0.9,
+        "why": [
+          "Executive Summary: Three concrete deliverables are identified.",
+          "Key Strengths: Scope is defined with three named modules.",
+          "Key Risks: No timeline or constraints make feasibility hard to assess.",
+          "Decision Readiness: Scope defined but no KPIs, timeline, or risk register.",
+          "Recommendations: Define timeline, KPIs, constraints, and key risks."
+        ],
+        "missing": [],
+        "redactions": []
+      },
+      "expected": {
+        "maxConfidence": 0.65,
+        "fitNotHigh": true,
+        "minMissingCount": 0,
+        "expectedClampsApplied": ["cap_0.65_low_coverage", "downgrade_high_low_coverage"],
+        "shouldExcludeOptionalHeadings": ["Implementation Notes", "Vendor Fit Notes"]
+      }
+    },
+    {
+      "name": "timeline_scope_constraints_no_kpis_risks",
+      "description": "coverageCount=3 (scope+timeline+constraints). KPIs and risks absent → 0.75 cap. proposalId stabilises style. Implementation Notes expected (has_timeline). No Vendor Fit Notes (no vendor_preferences).",
+      "proposalId": "golden-prop-timeline-001",
+      "sharedText": "Analytics platform to be delivered over 6 months. Scope includes dashboard, reporting, and user management. Must comply with existing SLAs and deployment windows.",
+      "confidentialText": "Internal: delivery cadence approved as monthly sprints. Governance review required before go-live.",
+      "factSheet": {
+        "project_goal": "Deliver analytics platform with dashboard and reporting in 6 months.",
+        "scope_deliverables": ["Analytics dashboard", "Reporting interface", "User management portal"],
+        "timeline": { "start": "2026-Q3", "duration": "6 months", "milestones": ["Alpha by Month 2", "Beta by Month 4", "GA by Month 6"] },
+        "constraints": ["Must comply with existing SLAs", "Deployment window: weekends only", "Monthly sprint cadence required"],
+        "success_criteria_kpis": [],
+        "vendor_preferences": [],
+        "assumptions": ["Stakeholders available for weekly reviews"],
+        "risks": [],
+        "open_questions": [],
+        "missing_info": [
+          "No KPIs or success criteria defined.",
+          "No risks identified."
+        ],
+        "source_coverage": {
+          "has_scope": true,
+          "has_timeline": true,
+          "has_kpis": false,
+          "has_constraints": true,
+          "has_risks": false
+        }
+      },
+      "passBModelOutput": {
+        "fit_level": "high",
+        "confidence_0_1": 0.9,
+        "why": [
+          "Executive Summary: Well-scoped project with a clear 6-month timeline and SLA constraints.",
+          "Key Strengths: Timeline and scope are both defined with milestones.",
+          "Key Risks: No risks identified — this is a gap in the proposal.",
+          "Decision Readiness: Missing KPIs and risk register prevent a confident go/no-go.",
+          "Recommendations: Define KPIs, success criteria, and a risk register.",
+          "Implementation Notes: 6-month timeline with three defined milestones provides a delivery framework."
+        ],
+        "missing": ["No KPIs or success criteria defined.", "No risks identified."],
+        "redactions": []
+      },
+      "expected": {
+        "maxConfidence": 0.75,
+        "fitNotHigh": true,
+        "expectedClampsApplied": ["cap_0.75_missing_critical", "downgrade_high_missing_critical"],
+        "mustContainHeadings": ["Executive Summary", "Key Strengths", "Key Risks", "Decision Readiness", "Recommendations"],
+        "shouldIncludeOptionalHeadings": ["Implementation Notes"],
+        "shouldExcludeOptionalHeadings": ["Vendor Fit Notes", "Commercial Notes", "Data & Security Notes"]
+      }
+    },
+    {
+      "name": "full_coverage_no_vendor",
+      "description": "All 5 coverage flags true. No vendor_preferences. No api/data keywords in deliverables. No budget keywords in constraints. Expect: no clamps, all required headings, Implementation Notes (has_timeline), no Vendor Fit/Commercial/Data-Security Notes.",
+      "proposalId": "golden-prop-full-001",
+      "sharedText": "Analytics dashboard to be delivered in 6 months with defined KPIs, risk register, SLA constraints, and monthly milestones.",
+      "confidentialText": "Internal: governance approval secured. Sprint velocity confirmed. Infrastructure allocation locked for the programme.",
+      "factSheet": {
+        "project_goal": "Deliver analytics dashboard with full governance approval and defined KPIs.",
+        "scope_deliverables": ["Analytics dashboard", "Reporting interface", "User acceptance testing"],
+        "timeline": { "start": "2026-Q3", "duration": "6 months", "milestones": ["Alpha by Month 2", "Beta by Month 4", "GA by Month 6"] },
+        "constraints": ["Must use existing infrastructure", "Delivery cadence: monthly sprints", "Requires governance sign-off before each phase"],
+        "success_criteria_kpis": ["Dashboard load time < 2s", "User adoption >= 80% by Month 6", "Zero P1 incidents in first 90 days"],
+        "vendor_preferences": [],
+        "assumptions": ["Key stakeholders available for weekly reviews"],
+        "risks": [
+          { "risk": "Scope creep", "impact": "med", "likelihood": "med" },
+          { "risk": "Key-person dependency", "impact": "high", "likelihood": "low" }
+        ],
+        "open_questions": [],
+        "missing_info": [],
+        "source_coverage": {
+          "has_scope": true,
+          "has_timeline": true,
+          "has_kpis": true,
+          "has_constraints": true,
+          "has_risks": true
+        }
+      },
+      "passBModelOutput": {
+        "fit_level": "medium",
+        "confidence_0_1": 0.82,
+        "why": [
+          "Executive Summary: Well-specified proposal with full coverage across scope, timeline, KPIs, constraints, and risks.",
+          "Key Strengths: Defined KPIs, a clear 6-month timeline with milestones, and an identified risk register.",
+          "Key Risks: Scope creep and key-person dependency are identified with appropriate impact ratings.",
+          "Decision Readiness: Proposal is largely decision-ready; governance sign-off process is well-defined.",
+          "Recommendations: Clarify escalation paths and validate KPI baselines before go-live.",
+          "Implementation Notes: 6-month delivery with phased milestones provides a solid execution framework."
+        ],
+        "missing": [],
+        "redactions": []
+      },
+      "expected": {
+        "maxConfidence": 1.0,
+        "expectedClampsApplied": [],
+        "mustContainHeadings": ["Executive Summary", "Key Strengths", "Key Risks", "Decision Readiness", "Recommendations"],
+        "shouldIncludeOptionalHeadings": ["Implementation Notes"],
+        "shouldExcludeOptionalHeadings": ["Vendor Fit Notes", "Commercial Notes", "Data & Security Notes"]
+      }
+    },
+    {
+      "name": "data_security_triggered",
+      "description": "Full coverage. scope_deliverables mention 'API integration' and 'data pipeline' → Data & Security Notes instructed. vendor_preferences non-empty → Vendor Fit Notes instructed. Expect no clamps.",
+      "sharedText": "Platform to include API integration layer, data pipeline module, and real-time analytics. Timeline: 8 months with defined KPIs and risk register.",
+      "confidentialText": "Internal: approved vendors are AWS and Snowflake. Budget locked. Infrastructure team engaged.",
+      "factSheet": {
+        "project_goal": "Build API integration, data pipeline, and analytics platform in 8 months.",
+        "scope_deliverables": ["API integration layer", "Data pipeline module", "Real-time analytics dashboard", "User access management"],
+        "timeline": { "start": "2026-Q3", "duration": "8 months", "milestones": ["API layer by Month 3", "Data pipeline by Month 5", "Analytics GA by Month 8"] },
+        "constraints": ["Approved vendor list applies", "Must meet data residency requirements", "Monthly sprint cadence"],
+        "success_criteria_kpis": ["API latency < 100ms (p95)", "Pipeline throughput >= 10k events/sec", "Zero data loss SLA"],
+        "vendor_preferences": ["AWS (preferred)", "Snowflake (preferred)"],
+        "assumptions": ["Data residency approval obtained before Month 2"],
+        "risks": [
+          { "risk": "Third-party API instability", "impact": "high", "likelihood": "med" },
+          { "risk": "Data volume exceeded estimates", "impact": "med", "likelihood": "med" }
+        ],
+        "open_questions": [],
+        "missing_info": [],
+        "source_coverage": {
+          "has_scope": true,
+          "has_timeline": true,
+          "has_kpis": true,
+          "has_constraints": true,
+          "has_risks": true
+        }
+      },
+      "passBModelOutput": {
+        "fit_level": "high",
+        "confidence_0_1": 0.88,
+        "why": [
+          "Executive Summary: Technically detailed proposal with full coverage across all evaluation dimensions.",
+          "Key Strengths: Concrete API and data pipeline deliverables with quantified KPIs and vendor preferences.",
+          "Key Risks: Third-party API instability and data volume uncertainty are well-identified.",
+          "Decision Readiness: Decision-ready with strong specificity; data residency lead time is the key dependency.",
+          "Recommendations: Confirm data residency approval timeline and validate API SLA with vendors.",
+          "Implementation Notes: 8-month phased delivery with 3 milestones provides clear checkpoints.",
+          "Data & Security Notes: API integration and data pipeline components require data residency and security review.",
+          "Vendor Fit Notes: AWS and Snowflake preferences align with stated infrastructure and data warehouse needs."
+        ],
+        "missing": [],
+        "redactions": []
+      },
+      "expected": {
+        "maxConfidence": 1.0,
+        "expectedClampsApplied": [],
+        "mustContainHeadings": ["Executive Summary", "Key Strengths", "Key Risks", "Decision Readiness", "Recommendations"],
+        "shouldIncludeOptionalHeadings": ["Implementation Notes", "Data & Security Notes", "Vendor Fit Notes"],
+        "shouldExcludeOptionalHeadings": ["Commercial Notes"]
+      }
+    }
+  ]
+}
