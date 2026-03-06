@@ -287,9 +287,8 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
         let callout: boolean | undefined;
 
         if (spec?.callout && body) {
-          // Callout box — first compact paragraph (trim to a manageable length)
-          const trimmed = body.length > 400 ? body.slice(0, 397) + '...' : body;
-          paragraphs = [trimmed];
+          // Callout box — render the full body without any truncation
+          paragraphs = [body];
           callout = true;
         } else if (spec?.splitOptions && body) {
           const opts = parseOptionsBullets(body);

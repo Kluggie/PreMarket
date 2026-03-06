@@ -310,7 +310,9 @@ export async function renderProfessionalPdfBuffer(document: PdfDocument): Promis
       });
     }
 
-    const panelH = 14 + 46 + 14 + 12 + 18 + ctxH + (driversArr.length > 0 ? 8 + driversH : 0) + 14;
+    // panelH accounts for: 14 initial + 46 metrics row + 14 hLine gap (now 14) + 24 label gap
+    // (now 18) + 18 context lead = 116 fixed + dynamic context/driver rows + 14 bottom pad.
+    const panelH = 14 + 46 + 14 + 24 + 18 + ctxH + (driversArr.length > 0 ? 8 + driversH : 0) + 14;
 
     const px = mL;
     const py = y;
@@ -346,17 +348,18 @@ export async function renderProfessionalPdfBuffer(document: PdfDocument): Promis
     y += 44;
 
     hLine(innerX, px + pw - 8, y, C.borderLight);
-    y += 12;
+    y += 14;
 
-    // Decision status
+    // Decision status — label sits on its own line; accent bar is beside the status text only
     setFont('normal', 7, C.label);
     pdf.text('DECISION STATUS', innerX, y);
-    y += 12;
+    y += 18;  // generous gap below the label before the status bar/text
 
-    fillRect(innerX, y - 13, 4, 16, dp.fitColor);
+    // Draw accent bar anchored to the status text baseline so it never overlaps the label
+    fillRect(innerX, y - 14, 4, 18, dp.fitColor);
     setFont('bold', 12, dp.fitColor);
-    pdf.text(normalizePdfText(dp.decisionStatus), innerX + 8, y);
-    y += 6;
+    pdf.text(normalizePdfText(dp.decisionStatus), innerX + 10, y);
+    y += 10;
 
     // Context sentence
     if (ctxWrapped.length > 0) {
@@ -384,7 +387,7 @@ export async function renderProfessionalPdfBuffer(document: PdfDocument): Promis
       });
     }
 
-    y = py + panelH + 16;
+    y = py + panelH + 28;  // extra breathing room between panel and first section
   }
 
   // ── Sections ──────────────────────────────────────────────────────────────
@@ -407,11 +410,41 @@ export async function renderProfessionalPdfBuffer(document: PdfDocument): Promis
       hLine(mL, pageWidth - mR, y, C.divL1);
       y += 14;
     } else if (!isL1 && idx > 0) {
-      // ── Orphan guard for L2: divider (16pt) + heading (~17pt) + min 2 content lines (30pt).
+      // ── Orphan guard for L2: must keep heading + content together.
+      // For short bullet lists (≤6) we pre-compute the FULL list height so we
+      // page-break before the heading, not after it.
       const h2safe = normalizePdfText(section.heading || '');
       const h2HeadH = lineCount(h2safe, colW - 8, 11) * 15 + 2;
-      const minContentH = (section.bullets?.length ?? 0) + (section.paragraphs?.length ?? 0) > 0 ? 30 : 0;
-      ensureSpace(16 + h2HeadH + minContentH);
+      const captionH2 = section.caption ? lineCount(section.caption, colW - 12, 8) * 12 + 2 : 0;
+      const bulletsArr = Array.isArray(section.bullets) ? section.bullets : [];
+      const parasArr = Array.isArray(section.paragraphs) ? section.paragraphs : [];
+
+      let minContentH = 0;
+      if (bulletsArr.length > 0 && bulletsArr.length <= 6) {
+        // Reserve height for the ENTIRE short bullet list
+        pdf.setFontSize(10.5);
+        minContentH = bulletsArr.reduce((acc, b) => {
+          const norm = normalizeBullet(b);
+          if (!norm) return acc;
+          const ls: string[] = pdf.splitTextToSize(norm, colW - 16 - 12);
+          return acc + ls.length * 15 + 2;
+        }, 0);
+      } else if (section.callout && parasArr.length > 0) {
+        // Callout box: reserve enough for heading + first chunk of the box
+        pdf.setFontSize(10);
+        const boxW = colW - (isL1 ? 16 : 12) - 22;
+        const boxLines: string[] = pdf.splitTextToSize(normalizePdfText(parasArr.join(' ')), boxW);
+        minContentH = Math.min(boxLines.length, 6) * 14 + 24;
+      } else if (parasArr.length > 0) {
+        // Paragraphs: keep at least 2 wrapped lines with the heading
+        pdf.setFontSize(10.5);
+        const pLines: string[] = pdf.splitTextToSize(normalizePdfText(parasArr[0]), colW - 12);
+        minContentH = Math.min(pLines.length, 3) * 15 + 5;
+      } else if (bulletsArr.length > 6) {
+        minContentH = 34;  // at least 2 bullets from a long list
+      }
+
+      ensureSpace(16 + h2HeadH + captionH2 + minContentH);
       y += 6;
       hLine(mL + 4, pageWidth - mR, y, C.divL2);
       y += 10;
