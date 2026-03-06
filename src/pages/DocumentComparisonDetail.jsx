@@ -399,6 +399,7 @@ export default function DocumentComparisonDetail() {
   const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
   const [shareRecipientEmail, setShareRecipientEmail] = useState('');
   const [selectedShareToken, setSelectedShareToken] = useState('');
+  const [isShareLinkInitializedForOpen, setIsShareLinkInitializedForOpen] = useState(false);
   const [evaluationPollDeadline, setEvaluationPollDeadline] = useState(null);
 
 
@@ -614,10 +615,11 @@ export default function DocumentComparisonDetail() {
   });
 
   const createShareLinkMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (options = {}) => {
+      const recipientEmail = asText(options?.recipientEmail) || asText(shareRecipientEmail) || null;
       const response = await sharedReportsClient.create({
         comparisonId,
-        recipientEmail: asText(shareRecipientEmail) || null,
+        recipientEmail,
       });
 
       if (!response?.token) {
@@ -626,15 +628,52 @@ export default function DocumentComparisonDetail() {
 
       return response;
     },
-    onSuccess: async (payload) => {
+    onSuccess: async (payload, variables) => {
       setSelectedShareToken(payload.token);
       await queryClient.invalidateQueries({ queryKey: ['shared-reports', comparisonId] });
-      toast.success('Shared report link created');
+      if (!variables?.silent) {
+        toast.success('Shared report link created');
+      }
     },
-    onError: (error) => {
-      toast.error(error?.message || 'Failed to create shared report link');
+    onError: (error, variables) => {
+      if (!variables?.silent) {
+        toast.error(error?.message || 'Failed to create shared report link');
+      }
     },
   });
+
+  useEffect(() => {
+    if (!isShareDialogOpen) {
+      setIsShareLinkInitializedForOpen(false);
+      return;
+    }
+
+    if (isShareLinkInitializedForOpen) {
+      return;
+    }
+
+    if (!comparisonId || sharedReportsQuery.isLoading || sharedReportsQuery.isFetching || createShareLinkMutation.isPending) {
+      return;
+    }
+
+    if (sharedReports.length > 0) {
+      setIsShareLinkInitializedForOpen(true);
+      return;
+    }
+
+    setIsShareLinkInitializedForOpen(true);
+    createShareLinkMutation.mutate({ silent: true, recipientEmail: asText(shareRecipientEmail) || null });
+  }, [
+    comparisonId,
+    createShareLinkMutation,
+    createShareLinkMutation.isPending,
+    isShareDialogOpen,
+    isShareLinkInitializedForOpen,
+    shareRecipientEmail,
+    sharedReports.length,
+    sharedReportsQuery.isFetching,
+    sharedReportsQuery.isLoading,
+  ]);
 
   const sendShareEmailMutation = useMutation({
     mutationFn: async (token) => {
@@ -670,17 +709,9 @@ export default function DocumentComparisonDetail() {
       toast.error(error?.message || 'Failed to send shared report email');
     },
   });
-
-  const revokeShareLinkMutation = useMutation({
-    mutationFn: (token) => sharedReportsClient.revoke(token),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['shared-reports', comparisonId] });
-      toast.success('Shared report link revoked');
-    },
-    onError: (error) => {
-      toast.error(error?.message || 'Failed to revoke shared report link');
-    },
-  });
+  const isShareLinkPanelLoading =
+    sharedReportsQuery.isLoading || sharedReportsQuery.isFetching || createShareLinkMutation.isPending;
+  const activeShareUrl = asText(activeSharedReport?.url);
 
   async function copyShareUrl(url) {
     const normalized = asText(url);
@@ -1187,6 +1218,7 @@ export default function DocumentComparisonDetail() {
           setIsShareDialogOpen(nextOpen);
           if (!nextOpen) {
             setShareRecipientEmail('');
+            setIsShareLinkInitializedForOpen(false);
           }
         }}
       >
@@ -1212,18 +1244,6 @@ export default function DocumentComparisonDetail() {
 
             <div className="flex flex-wrap gap-2">
               <Button
-                variant="outline"
-                onClick={() => createShareLinkMutation.mutate()}
-                disabled={createShareLinkMutation.isPending || sendShareEmailMutation.isPending}
-              >
-                {createShareLinkMutation.isPending ? (
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                ) : (
-                  <FileText className="w-4 h-4 mr-2" />
-                )}
-                Create link
-              </Button>
-              <Button
                 onClick={() => sendShareEmailMutation.mutate(activeSharedReport?.token || '')}
                 disabled={createShareLinkMutation.isPending || sendShareEmailMutation.isPending}
               >
@@ -1236,65 +1256,57 @@ export default function DocumentComparisonDetail() {
               </Button>
             </div>
 
-            {sharedReportsQuery.isLoading ? (
-              <p className="text-sm text-slate-500">Loading shared links...</p>
-            ) : null}
-
-            {activeSharedReport ? (
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="outline">{activeSharedReport.status || 'active'}</Badge>
-                  {activeSharedReport.last_delivery?.status ? (
-                    <Badge className="bg-blue-100 text-blue-700">
-                      Last delivery: {activeSharedReport.last_delivery.status}
-                    </Badge>
-                  ) : null}
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Share URL</Label>
-                  <Input readOnly value={activeSharedReport.url || ''} />
-                </div>
-
-                <div className="flex flex-wrap gap-2">
-                  <Button variant="outline" onClick={() => copyShareUrl(activeSharedReport.url || '')}>
-                    <Copy className="w-4 h-4 mr-2" />
-                    Copy link
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => sendShareEmailMutation.mutate(activeSharedReport.token)}
-                    disabled={sendShareEmailMutation.isPending}
-                  >
-                    <Send className="w-4 h-4 mr-2" />
-                    Resend email
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => revokeShareLinkMutation.mutate(activeSharedReport.token)}
-                    disabled={revokeShareLinkMutation.isPending || activeSharedReport.status === 'revoked'}
-                  >
-                    Revoke link
-                  </Button>
-                </div>
-
-                {Array.isArray(activeSharedReport.deliveries) && activeSharedReport.deliveries.length > 0 ? (
-                  <div className="space-y-1 pt-2">
-                    {activeSharedReport.deliveries.map((delivery) => (
-                      <p key={delivery.id} className="text-xs text-slate-600">
-                        {delivery.status} • {delivery.sent_to_email || 'recipient'} •{' '}
-                        {formatDateTime(delivery.sent_at || delivery.created_at)}
-                        {delivery.last_error ? ` • ${delivery.last_error}` : ''}
-                      </p>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-xs text-slate-500 pt-2">No delivery attempts yet.</p>
-                )}
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="outline">
+                  {activeSharedReport?.status || (isShareLinkPanelLoading ? 'initializing' : 'pending')}
+                </Badge>
+                {activeSharedReport?.last_delivery?.status ? (
+                  <Badge className="bg-blue-100 text-blue-700">
+                    Last delivery: {activeSharedReport.last_delivery.status}
+                  </Badge>
+                ) : null}
               </div>
-            ) : (
-              <p className="text-sm text-slate-500">No shared report link has been created yet.</p>
-            )}
+
+              <div className="space-y-2">
+                <Label>Share URL</Label>
+                <Input
+                  readOnly
+                  value={activeShareUrl}
+                  placeholder={isShareLinkPanelLoading ? 'Creating shared link...' : 'Shared link unavailable'}
+                />
+                {!activeSharedReport && isShareLinkPanelLoading ? (
+                  <p className="text-xs text-slate-500">Preparing shared link...</p>
+                ) : null}
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => copyShareUrl(activeShareUrl)}
+                  disabled={!activeShareUrl}
+                >
+                  <Copy className="w-4 h-4 mr-2" />
+                  Copy link
+                </Button>
+              </div>
+
+              {Array.isArray(activeSharedReport?.deliveries) && activeSharedReport.deliveries.length > 0 ? (
+                <div className="space-y-1 pt-2">
+                  {activeSharedReport.deliveries.map((delivery) => (
+                    <p key={delivery.id} className="text-xs text-slate-600">
+                      {delivery.status} • {delivery.sent_to_email || 'recipient'} •{' '}
+                      {formatDateTime(delivery.sent_at || delivery.created_at)}
+                      {delivery.last_error ? ` • ${delivery.last_error}` : ''}
+                    </p>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500 pt-2">
+                  {isShareLinkPanelLoading ? 'Preparing delivery details...' : 'No delivery attempts yet.'}
+                </p>
+              )}
+            </div>
           </div>
         </DialogContent>
       </Dialog>
