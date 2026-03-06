@@ -53,6 +53,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       title: comparison.title || 'Document Comparison',
       subtitle: 'Complete Proposal Details',
       comparisonId: comparison.id,
+      footerNote: 'Confidential \u2014 For internal use only',
       sections: [
         {
           heading: CONFIDENTIAL_LABEL,
