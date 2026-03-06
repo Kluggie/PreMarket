@@ -707,10 +707,10 @@ function buildEvalPromptFromFactSheet(params: {
   const effectiveVerbosity: Verbosity = coverageCount < 3 || tightMode ? 'tight' : reportStyle.verbosity;
   const depthGuide =
     effectiveVerbosity === 'tight'
-      ? 'Depth: concise. Each section: 1-2 compact paragraphs (5-8 sentences total). Prose only — do NOT convert to bullets to compress.'
+      ? 'Depth: concise. Keep each paragraph to 2-3 tight sentences. Every word must earn its place — cut filler, keep substance.'
       : effectiveVerbosity === 'deep'
-      ? 'Depth: detailed. Each section: 3-4 paragraphs. Reference specific fact_sheet fields by name.'
-      : 'Depth: standard. Each section: 2-3 paragraphs.';
+      ? 'Depth: detailed. 4-6 sentences per paragraph. Reference specific fact_sheet fields by name where helpful.'
+      : 'Depth: standard. 3-4 sentences per paragraph.';
 
   const orderingGuide =
     reportStyle.ordering === 'risks_first'
@@ -751,12 +751,8 @@ function buildEvalPromptFromFactSheet(params: {
   };
 
   // ── Paragraph depth requirement line (matches depthGuide for test assertions) ──
-  const paragraphReq =
-    effectiveVerbosity === 'tight'
-      ? '1-2 compact paragraphs per section'
-      : effectiveVerbosity === 'deep'
-      ? '3-4 paragraphs per section'
-      : '2-3 paragraphs per section';
+  // Paragraph *count* is fixed (2–4); depthGuide varies prose density per verbosity.
+  const paragraphReq = '2–4 short paragraphs per required heading';
 
   return [
     tightMode
@@ -792,8 +788,10 @@ function buildEvalPromptFromFactSheet(params: {
     '',
     'WRITING REQUIREMENTS — follow these strictly:',
     `- Write ${paragraphReq}. Separate paragraphs within one why[] entry using \\n\\n.`,
-    '- Max 1 bullet list in the ENTIRE why array. Bullets allowed only in Recommendations (max 4 short items).',
-    '- Prose-first: do NOT convert paragraphs to bullets to save space.',
+    '- Prose-first: do NOT default to bullets. Write flowing prose that shows nuanced tradeoffs and judgment.',
+    '- Bullets are acceptable sparingly when they genuinely improve clarity (e.g., a short action list).',
+    '  If bullets are used: any list must be <= 4 items; each bullet must be actionable, not a rephrased paragraph.',
+    "  Do NOT produce a \u201cbullet-disguised-as-paragraphs\u201d report.",
     '- Write as a human consultant/mediator — NOT as auto-filled template fields.',
     '- Natural language, varied sentence length, show nuanced tradeoffs.',
     '- Include at least 2 explicit if/then tradeoff statements distributed across sections.',
@@ -807,9 +805,19 @@ function buildEvalPromptFromFactSheet(params: {
     '   presenting 2-3 concrete paths (e.g., fast MVP, discovery-first, narrow scope) grounded in the fact sheet.',
     '   Do not invent specific numbers — reference the fact_sheet where available.',
     '3. First 2 weeks plan — inside "Recommendations", include a paragraph starting with "First 2 weeks plan:"',
-    '   covering: who to interview, discovery/audit tasks (data profiling, source audit, technical spike),',
-    '   and measurable success criteria for exiting the discovery phase.',
+    '   covering: who to interview (Finance/Sales/CS/Eng as relevant), discovery/audit tasks',
+    '   (data profiling, source audit, technical spike or PoC), and measurable success criteria for exiting discovery.',
     '   Keep it specific to the proposal domain (reference systems, integrations, or workstreams named in fact_sheet).',
+    '4. Next call: what I\'d ask for — inside "Decision Readiness" OR "Recommendations", include a short paragraph',
+    '   starting with "Next call: what I\'d ask for:" followed by exactly 3 pointed, proposal-specific',
+    '   questions or requests, phrased like a mediator steering a negotiation meeting (not generic;',
+    '   reference the specific domain, systems, or constraints visible in the fact_sheet).',
+    '5. Likely pushback & response — immediately after the "Next call" paragraph (same heading section),',
+    '   include a paragraph starting with "Likely pushback & response:" with 2 concise pushback',
+    '   scenarios and counter-moves. Each scenario MUST use If…then… language.',
+    '   Example shape (do NOT copy verbatim): "If the vendor pushes for fixed-price now, then anchor on a',
+    '   time-boxed discovery phase first. If the buyer insists on the hard deadline, then surface the scope',
+    '   trade-offs explicitly and ask them to prioritise."',
     '',
     hasFixedPriceContract
       ? 'CONDITIONAL — fixed-price signals detected: inside "Key Risks" or "Recommendations", include a paragraph starting with "Commercial posture:" covering acceptance criteria, change-order triggers, and risk allocation between parties.'

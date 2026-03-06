@@ -1513,16 +1513,20 @@ test('memo-prose: Pass B prompt contains multi-paragraph, prose-first, if/then, 
     assert.equal(outcome.ok, true, 'Evaluation must succeed');
     assert.ok(passBPrompt.length > 0, 'Pass B prompt must have been captured');
 
-    // Multi-paragraph writing requirement — all three verbosity levels include "paragraphs per section"
+    // Fixed 2–4 paragraph writing requirement
     assert.ok(
-      passBPrompt.includes('paragraphs per section'),
-      'Pass B prompt must specify a paragraph-count writing requirement per section',
+      passBPrompt.includes('2\u20134 short paragraphs'),
+      'Pass B prompt must specify the 2\u20134 short paragraphs per required heading writing requirement',
     );
 
-    // Max 1 bullet list constraint
+    // Prose-first / sparingly rule (replacing hard "Max 1 bullet list")
     assert.ok(
-      passBPrompt.includes('Max 1 bullet list'),
-      'Pass B prompt must restrict output to Max 1 bullet list',
+      passBPrompt.includes('Prose-first'),
+      'Pass B prompt must include a Prose-first writing instruction',
+    );
+    assert.ok(
+      passBPrompt.includes('sparingly'),
+      'Pass B prompt must instruct that bullets are used sparingly, not by default',
     );
 
     // if/then tradeoff requirement
@@ -1547,6 +1551,18 @@ test('memo-prose: Pass B prompt contains multi-paragraph, prose-first, if/then, 
     assert.ok(
       passBPrompt.includes('"Options:"') || passBPrompt.includes('starting with "Options:"'),
       'Pass B prompt must require an Options paragraph with concrete paths',
+    );
+
+    // Next call: what I'd ask for — mediator/negotiator flavor
+    assert.ok(
+      passBPrompt.includes("Next call: what I'd ask for"),
+      "Pass B prompt must require a 'Next call: what I'd ask for' paragraph",
+    );
+
+    // Likely pushback & response — with if/then language
+    assert.ok(
+      passBPrompt.includes('Likely pushback & response'),
+      "Pass B prompt must require a 'Likely pushback & response' paragraph",
     );
   } finally {
     delete globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__;
