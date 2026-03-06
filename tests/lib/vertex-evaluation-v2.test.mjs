@@ -389,7 +389,7 @@ test('v2 falls back on persistent json_parse_error (tight retry also fails)', as
   }
 });
 
-test('v2 detects planted confidential token leak and fails hard', async () => {
+test('v2 detects planted confidential token leak: ok:true suppressed, canary absent', async () => {
   const planted = 'CONFIDENTIAL_PRICE_12345';
   const cleanup = setVertexV2MockSequence([
     // Pass A succeeds
@@ -414,12 +414,21 @@ test('v2 detects planted confidential token leak and fails hard', async () => {
       sharedText: 'Shared draft discusses commercial structure in general terms.',
       confidentialText: `Internal planning includes token ${planted} that must never leak.`,
       requestId: 'req-leak-1',
+      enforceLeakGuard: true,
     });
-    assert.equal(outcome.ok, false);
-    if (outcome.ok) return;
-    assert.equal(outcome.error.parse_error_kind, 'confidential_leak_detected');
-    assert.equal(outcome.error.retryable, false);
-    assert.equal(JSON.stringify(outcome).includes(planted), false);
+    // Policy: leak detected → ok:true suppressed output, never a hard failure.
+    assert.equal(outcome.ok, true);
+    if (!outcome.ok) return;
+    assert.equal(outcome.data.fit_level, 'unknown', 'fit_level must be unknown (suppressed)');
+    assert.equal(outcome.data.confidence_0_1, 0, 'confidence_0_1 must be 0 (suppressed)');
+    const warnings = outcome._internal?.warnings ?? [];
+    assert.ok(
+      warnings.includes('confidential_leak_detected_output_suppressed'),
+      `Expected confidential_leak_detected_output_suppressed in warnings; got: ${JSON.stringify(warnings)}`,
+    );
+    assert.equal(outcome._internal?.failure_kind, 'confidential_leak_detected');
+    // Canary must never appear in the output
+    assert.equal(JSON.stringify(outcome.data).includes(planted), false);
   } finally {
     cleanup();
   }

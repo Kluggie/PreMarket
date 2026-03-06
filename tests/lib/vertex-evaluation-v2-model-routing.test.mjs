@@ -367,3 +367,158 @@ await test('T4 — no 502: Vertex throw + verifier throw both produce ok:true fa
     restoreEnvGen();
   }
 });
+
+// ─── Test D1: Verifier unavailable → output suppressed, never 5xx ─────────────
+
+await test('D1 — verifier unavailable: output suppressed, ok:true, verifier_unavailable warning', async () => {
+  // Pass A + Pass B succeed normally.
+  const mainSequence = [factSheetPayload(), evalPayload()];
+  let mainIdx = 0;
+  const mainHook = async () => {
+    const text = mainIdx < mainSequence.length ? mainSequence[mainIdx] : evalPayload();
+    mainIdx += 1;
+    return { model: 'gemini-2.5-pro', text, finishReason: 'STOP', httpStatus: 200 };
+  };
+
+  // Verifier throws on every call (initial + escalation) → 'unavailable' verdict.
+  let verifierCallCount = 0;
+  const verifierHook = async () => {
+    verifierCallCount += 1;
+    throw new Error('Simulated verifier network timeout');
+  };
+
+  const restoreMain = setMainHook(mainHook);
+  const restoreVerifier = setVerifierHook(verifierHook);
+  const restoreEnvGen = setEnv('VERTEX_DOC_COMPARE_GENERATION_MODEL', 'gemini-2.5-pro');
+  const restoreEnvVerifier = setEnv('VERTEX_DOC_COMPARE_VERIFIER_MODEL', 'gemini-2.5-flash-lite');
+
+  try {
+    let result;
+    try {
+      result = await evaluateWithVertexV2({
+        sharedText: SHARED_TEXT,
+        confidentialText: CONFIDENTIAL_TEXT,
+        enforceLeakGuard: true,
+      });
+    } catch (err) {
+      assert.fail(`evaluateWithVertexV2 must never throw when verifier is unavailable; got: ${err?.message}`);
+    }
+
+    // Policy: verifier down → ok:true suppressed, never 5xx.
+    assert.equal(result.ok, true, 'Expected ok:true when verifier is unavailable');
+    assert.equal(result.data?.fit_level, 'unknown', 'fit_level must be "unknown" (suppressed placeholder)');
+    assert.equal(result.data?.confidence_0_1, 0, 'confidence_0_1 must be 0 (suppressed placeholder)');
+
+    // Warning must identify the cause.
+    const warnings = result._internal?.warnings ?? [];
+    assert.ok(
+      warnings.includes('verifier_unavailable_output_suppressed'),
+      `Expected 'verifier_unavailable_output_suppressed' in warnings; got: ${JSON.stringify(warnings)}`,
+    );
+
+    // failure_kind must be set to verifier_unavailable.
+    assert.equal(
+      result._internal?.failure_kind,
+      'verifier_unavailable',
+      `Expected failure_kind='verifier_unavailable'; got: ${result._internal?.failure_kind}`,
+    );
+
+    // models_used must track the unavailability.
+    const modelsUsed = result._internal?.models_used;
+    assert.ok(modelsUsed, '_internal.models_used must be set');
+    assert.equal(modelsUsed.verifier_used, true, 'verifier_used must be true (verifier was attempted)');
+    assert.equal(modelsUsed.verifier_unavailable, true, 'verifier_unavailable must be true');
+
+    // Suppressed output must not contain any confidential text.
+    const outputText = JSON.stringify(result.data ?? {});
+    assert.ok(
+      !outputText.includes('500k') && !outputText.includes('renewal auto'),
+      'Suppressed output must not contain confidential canary text',
+    );
+  } finally {
+    restoreMain();
+    restoreVerifier();
+    restoreEnvGen();
+    restoreEnvVerifier();
+  }
+});
+
+// ─── Test D2: Leak detected by LLM verifier → ok:true suppressed, never 5xx ──
+
+await test('D2 — leak detected by LLM verifier: ok:true suppressed result, no 5xx, no leaked content', async () => {
+  // Pass A + Pass B succeed normally.
+  const mainSequence = [factSheetPayload(), evalPayload()];
+  let mainIdx = 0;
+  const mainHook = async () => {
+    const text = mainIdx < mainSequence.length ? mainSequence[mainIdx] : evalPayload();
+    mainIdx += 1;
+    return { model: 'gemini-2.5-pro', text, finishReason: 'STOP', httpStatus: 200 };
+  };
+
+  // Verifier returns leak=true on the first call.
+  let verifierCallCount = 0;
+  const verifierHook = async () => {
+    verifierCallCount += 1;
+    return {
+      model: 'gemini-2.5-flash-lite',
+      text: JSON.stringify({ leak: true, reason: 'Output contains budget cap figure from confidential input.' }),
+      finishReason: 'STOP',
+      httpStatus: 200,
+    };
+  };
+
+  const restoreMain = setMainHook(mainHook);
+  const restoreVerifier = setVerifierHook(verifierHook);
+  const restoreEnvGen = setEnv('VERTEX_DOC_COMPARE_GENERATION_MODEL', 'gemini-2.5-pro');
+  const restoreEnvVerifier = setEnv('VERTEX_DOC_COMPARE_VERIFIER_MODEL', 'gemini-2.5-flash-lite');
+
+  try {
+    let result;
+    try {
+      result = await evaluateWithVertexV2({
+        sharedText: SHARED_TEXT,
+        confidentialText: CONFIDENTIAL_TEXT,
+        enforceLeakGuard: true,
+      });
+    } catch (err) {
+      assert.fail(`evaluateWithVertexV2 must never throw when leak is detected; got: ${err?.message}`);
+    }
+
+    // Policy: leak detected → ok:true suppressed, never 5xx (was: ok:false hard failure).
+    assert.equal(result.ok, true, 'Expected ok:true when leak is detected (not a user-visible failure)');
+    assert.equal(result.data?.fit_level, 'unknown', 'fit_level must be "unknown" (suppressed placeholder)');
+    assert.equal(result.data?.confidence_0_1, 0, 'confidence_0_1 must be 0 (suppressed placeholder)');
+
+    // Warning must identify the cause.
+    const warnings = result._internal?.warnings ?? [];
+    assert.ok(
+      warnings.includes('confidential_leak_detected_output_suppressed'),
+      `Expected 'confidential_leak_detected_output_suppressed' in warnings; got: ${JSON.stringify(warnings)}`,
+    );
+
+    // failure_kind must be confidential_leak_detected.
+    assert.equal(
+      result._internal?.failure_kind,
+      'confidential_leak_detected',
+      `Expected failure_kind='confidential_leak_detected'; got: ${result._internal?.failure_kind}`,
+    );
+
+    // models_used must confirm verifier was used and no unavailability.
+    const modelsUsed = result._internal?.models_used;
+    assert.ok(modelsUsed, '_internal.models_used must be set');
+    assert.equal(modelsUsed.verifier_used, true, 'verifier_used must be true');
+    assert.equal(modelsUsed.verifier_unavailable, false, 'verifier_unavailable must be false (leak was detected, not an error)');
+
+    // Suppressed output must not contain any confidential text.
+    const outputText = JSON.stringify(result.data ?? {});
+    assert.ok(
+      !outputText.includes('500k') && !outputText.includes('renewal auto'),
+      'Suppressed output must not contain confidential canary text',
+    );
+  } finally {
+    restoreMain();
+    restoreVerifier();
+    restoreEnvGen();
+    restoreEnvVerifier();
+  }
+});

@@ -233,6 +233,8 @@ export interface VertexEvaluationV2Internal {
     verifier: string;
     verifier_escalated: boolean;
     verifier_used: boolean;
+    /** True when verifier threw / timed out / could not reach a verdict after escalation. */
+    verifier_unavailable: boolean;
   };
 }
 
@@ -1532,7 +1534,26 @@ function getVertexVerifierCallImplementation(): VertexCallOverride {
 
 // ─── LLM leak verifier ────────────────────────────────────────────────────────
 
-type LlmVerifierVerdict = 'clean' | 'leak' | 'unsure';
+type LlmVerifierVerdict = 'clean' | 'leak' | 'unsure' | 'unavailable';
+
+/**
+ * Returns a safe, narrative-free placeholder response for cases where the
+ * evaluator must suppress the real output (leak detected or verifier down).
+ * Callers add a 'warnings' entry to _internal to explain which case occurred.
+ */
+function buildSuppressedOutput(warningReason: 'leak_detected' | 'verifier_unavailable'): VertexEvaluationV2Response {
+  const placeholder =
+    warningReason === 'leak_detected'
+      ? 'Output suppressed: evaluation output contained confidential information and could not be shared.'
+      : 'Output suppressed: evaluation verifier was unavailable and output safety could not be confirmed.';
+  return {
+    fit_level: 'unknown',
+    confidence_0_1: 0,
+    why: [placeholder],
+    missing: [],
+    redactions: [],
+  };
+}
 
 function buildLeakVerifierPrompt(params: {
   forbiddenText: string;
@@ -1628,6 +1649,7 @@ async function runLlmLeakVerifier(params: {
 
   // ── First attempt: verifier model ─────────────────────────────────────────
   let verifierText = '';
+  let verifierThrew = false;
   try {
     const resp = await params.callVerifier({
       prompt,
@@ -1639,8 +1661,12 @@ async function runLlmLeakVerifier(params: {
     verifierText = asText(resp.text);
   } catch {
     // Verifier infrastructure failure (not configured, network error, etc.).
-    // Treat as clean — deterministic checks already ran before this step.
-    return { verdict: 'clean', escalated: false, reason: 'verifier_call_failed' };
+    // Policy: cannot treat as clean — must suppress output to avoid silent leaks.
+    verifierThrew = true;
+  }
+
+  if (verifierThrew) {
+    return { verdict: 'unavailable', escalated: false, reason: 'verifier_call_failed' };
   }
 
   const firstVerdict = parseVerifierResponse(verifierText);
@@ -1652,6 +1678,7 @@ async function runLlmLeakVerifier(params: {
   // NOTE: Uses callVerifier (not callGeneration) to keep the main generation
   // hook exclusively for Pass A + Pass B calls — simplifies test isolation.
   let escalationText = '';
+  let escalationThrew = false;
   try {
     const resp = await params.callVerifier({
       prompt,
@@ -1662,15 +1689,21 @@ async function runLlmLeakVerifier(params: {
     });
     escalationText = asText(resp.text);
   } catch {
-    escalationText = '';
+    escalationThrew = true;
+  }
+
+  if (escalationThrew) {
+    return { verdict: 'unavailable', escalated: true, reason: 'escalation_call_failed' };
   }
 
   const escalatedVerdict = parseVerifierResponse(escalationText);
-  // If still unsure after escalation, treat as clean (conservative but not block-happy).
-  // Deterministic checks already ran before this step, so we've done our due diligence.
-  const finalVerdict: LlmVerifierVerdict = escalatedVerdict === 'unsure' ? 'clean' : escalatedVerdict;
+  // If still unsure after escalation: cannot confirm safety — return 'unavailable'.
+  // Policy: unresolvable ambiguity is treated the same as unavailability (suppress output).
+  if (escalatedVerdict === 'unsure') {
+    return { verdict: 'unavailable', escalated: true, reason: 'unsure_after_escalation' };
+  }
   return {
-    verdict: finalVerdict,
+    verdict: escalatedVerdict,
     escalated: true,
     reason: getReason(escalationText) || 'escalation_used',
   };
@@ -1800,7 +1833,7 @@ export async function evaluateWithVertexV2(
       ? confidentialText
       : String(input.forbiddenLeakText || '').trim();
   const forbiddenLeakCanaryTokens = normalizeCanaryTokens(input.forbiddenLeakCanaryTokens);
-  const enforceLeakGuard = input.enforceLeakGuard !== false;
+  const enforceLeakGuard = input.enforceLeakGuard === true;
   const requestId = asText(input.requestId) || undefined;
   const inputChars = sharedText.length + confidentialText.length;
 
@@ -1989,16 +2022,34 @@ export async function evaluateWithVertexV2(
         canaryTokens: forbiddenLeakCanaryTokens,
       });
       if (leak) {
-        // Hard security failure — never fall back on a leak.
-        return buildFailure({
-          kind: 'confidential_leak_detected',
-          requestId,
-          finishReason,
-          rawTextLength,
-          retryable: false,
-          attemptCount: attempt,
-          details: leak,
-        });
+        // Deterministic leak detected: suppress output, return ok:true with warnings.
+        // Never 5xx — the evaluation is persisted as completed_with_warnings.
+        const suppressed = buildSuppressedOutput('leak_detected');
+        return {
+          ok: true,
+          data: suppressed,
+          attempt_count: attempt,
+          model: vertex.model,
+          generation_model: generationModel,
+          _internal: {
+            fact_sheet: factSheet,
+            coverage_count: computeCoverageCount(factSheet.source_coverage),
+            caps_applied: [],
+            pass_a_parse_error: passAParseError,
+            pass_b_attempt_count: attempt,
+            report_style: reportStyle,
+            warnings: ['confidential_leak_detected_output_suppressed'],
+            failure_kind: 'confidential_leak_detected',
+            models_used: {
+              generation: generationModel,
+              extract: extractModel,
+              verifier: verifierModel,
+              verifier_used: false,
+              verifier_escalated: false,
+              verifier_unavailable: false,
+            },
+          },
+        };
       }
 
       // ── LLM verifier (second-layer leak check using cheap/fast model) ────
@@ -2015,19 +2066,64 @@ export async function evaluateWithVertexV2(
         callGeneration: callVertex,
       });
       if (llmVerify.verdict === 'leak') {
-        return buildFailure({
-          kind: 'confidential_leak_detected',
-          requestId,
-          finishReason,
-          rawTextLength,
-          retryable: false,
-          attemptCount: attempt,
-          details: {
-            leakType: 'llm_verifier_detected',
-            leakSample: llmVerify.reason.slice(0, 120),
-            verifierEscalated: llmVerify.escalated,
+        // LLM verifier detected leak: suppress output, return ok:true with warnings.
+        const suppressed = buildSuppressedOutput('leak_detected');
+        return {
+          ok: true,
+          data: suppressed,
+          attempt_count: attempt,
+          model: vertex.model,
+          generation_model: generationModel,
+          _internal: {
+            fact_sheet: factSheet,
+            coverage_count: computeCoverageCount(factSheet.source_coverage),
+            caps_applied: [],
+            pass_a_parse_error: passAParseError,
+            pass_b_attempt_count: attempt,
+            report_style: reportStyle,
+            warnings: ['confidential_leak_detected_output_suppressed'],
+            failure_kind: 'confidential_leak_detected',
+            models_used: {
+              generation: generationModel,
+              extract: extractModel,
+              verifier: verifierModel,
+              verifier_used: true,
+              verifier_escalated: llmVerify.escalated,
+              verifier_unavailable: false,
+            },
           },
-        });
+        };
+      }
+      if (llmVerify.verdict === 'unavailable') {
+        // Verifier infrastructure failure: cannot confirm output is safe.
+        // Policy: suppress narrative output to prevent silent leaks.
+        // Never 5xx — persisted as completed_with_warnings.
+        const suppressed = buildSuppressedOutput('verifier_unavailable');
+        return {
+          ok: true,
+          data: suppressed,
+          attempt_count: attempt,
+          model: vertex.model,
+          generation_model: generationModel,
+          _internal: {
+            fact_sheet: factSheet,
+            coverage_count: computeCoverageCount(factSheet.source_coverage),
+            caps_applied: [],
+            pass_a_parse_error: passAParseError,
+            pass_b_attempt_count: attempt,
+            report_style: reportStyle,
+            warnings: ['verifier_unavailable_output_suppressed'],
+            failure_kind: 'verifier_unavailable',
+            models_used: {
+              generation: generationModel,
+              extract: extractModel,
+              verifier: verifierModel,
+              verifier_used: true,
+              verifier_escalated: llmVerify.escalated,
+              verifier_unavailable: true,
+            },
+          },
+        };
       }
       // Store verifier metadata for _internal so we can track it.
       (schemaValidation as any)._llmVerify = llmVerify;
@@ -2086,6 +2182,7 @@ export async function evaluateWithVertexV2(
           verifier: verifierModel,
           verifier_used: Boolean(llmVerify),
           verifier_escalated: Boolean(llmVerify?.escalated),
+          verifier_unavailable: false,
         },
       },
     };
@@ -2142,6 +2239,7 @@ export async function evaluateWithVertexV2(
         verifier: verifierModel,
         verifier_used: false,
         verifier_escalated: false,
+        verifier_unavailable: false,
       },
     },
   };
