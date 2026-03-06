@@ -400,8 +400,7 @@ export default function DocumentComparisonDetail() {
   const [shareRecipientEmail, setShareRecipientEmail] = useState('');
   const [selectedShareToken, setSelectedShareToken] = useState('');
   const [evaluationPollDeadline, setEvaluationPollDeadline] = useState(null);
-  const [selectedFailureEntry, setSelectedFailureEntry] = useState(null);
-  const [showInputPreview, setShowInputPreview] = useState(false);
+
 
   useEffect(() => {
     setActiveTab(initialTab);
@@ -1053,204 +1052,20 @@ export default function DocumentComparisonDetail() {
                 </Card>
               ) : null}
 
-              {hasReport ? (
-                <Card className="border border-slate-200 shadow-sm">
-                  <CardContent className="py-4 text-sm text-slate-700">
-                    Provider:{' '}
-                    <span className="font-mono">
-                      {latestProviderMeta.provider}
-                      {latestProviderMeta.model ? ` · ${latestProviderMeta.model}` : ''}
-                    </span>
-                    {latestProviderMeta.provider !== 'vertex' && latestProviderMeta.reason ? (
-                      <span className="text-slate-500"> ({latestProviderMeta.reason})</span>
-                    ) : null}
-                  </CardContent>
-                </Card>
-              ) : null}
-
-              {evaluationHistory.length > 0 ? (
-                <Card className="border border-slate-200 shadow-sm">
-                  <CardHeader>
-                    <CardTitle>Evaluation History ({evaluationHistory.length})</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-3">
-                      {evaluationHistory.map((evaluation, index) => {
-                        const rowMeta = getEvaluationRowMeta(evaluation);
-                        const rowFailure = extractEvaluationFailureDetails(evaluation?.result?.error);
-                        const rowInputMeta = getEvaluationInputMeta(evaluation);
-                        const rowProviderMeta = getEvaluationProviderMeta(evaluation);
-                        const hasRowInputMeta =
-                          Boolean(rowInputMeta.inputSharedHash) ||
-                          Boolean(rowInputMeta.inputConfHash) ||
-                          Number.isFinite(Number(rowInputMeta.inputSharedLen)) ||
-                          Number.isFinite(Number(rowInputMeta.inputConfLen));
-                        return (
-                          <div
-                            key={evaluation.id || `evaluation-${index}`}
-                            className={rowMeta.rowClassName}
-                          >
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="space-y-1">
-                                <div className="flex items-center gap-3">
-                                  <Badge className={rowMeta.badgeClassName}>{rowMeta.label}</Badge>
-                                  <span className="text-slate-700">{formatDateTime(evaluation.created_date)}</span>
-                                  {index === 0 ? <Badge variant="outline">Latest</Badge> : null}
-                                </div>
-                                {rowFailure ? (
-                                  <p className="text-xs text-slate-500">
-                                    Failure code:{' '}
-                                    <span className="font-mono text-slate-700">{rowFailure.failureCode}</span>
-                                  </p>
-                                ) : null}
-                                <p className="text-xs text-slate-500">
-                                  Provider:{' '}
-                                  <span className="font-mono text-slate-700">
-                                    {rowProviderMeta.provider}
-                                    {rowProviderMeta.model ? ` · ${rowProviderMeta.model}` : ''}
-                                  </span>
-                                  {rowProviderMeta.provider !== 'vertex' && rowProviderMeta.reason ? (
-                                    <span className="text-slate-500"> ({rowProviderMeta.reason})</span>
-                                  ) : null}
-                                </p>
-                                {isOwnerView && hasRowInputMeta ? (
-                                  <p className="text-xs text-slate-500">
-                                    Inputs:{' '}
-                                    <span className="font-mono text-slate-700">
-                                      shared[{rowInputMeta.inputSharedLen ?? '—'}|{rowInputMeta.inputSharedHash || '—'}]
-                                    </span>{' '}
-                                    ·{' '}
-                                    <span className="font-mono text-slate-700">
-                                      conf[{rowInputMeta.inputConfLen ?? '—'}|{rowInputMeta.inputConfHash || '—'}]
-                                    </span>
-                                    {Number.isFinite(Number(rowInputMeta.inputVersion))
-                                      ? ` · v${rowInputMeta.inputVersion}`
-                                      : ''}
-                                  </p>
-                                ) : null}
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <span
-                                  className={`font-semibold ${
-                                    rowMeta.label === 'Succeeded' ? 'text-blue-600' : 'text-slate-600'
-                                  }`}
-                                >
-                                  {rowMeta.scoreLabel}
-                                </span>
-                                {rowFailure ? (
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() =>
-                                      setSelectedFailureEntry({
-                                        evaluationId: evaluation.id || '',
-                                        createdDate: evaluation.created_date || null,
-                                        failure: rowFailure,
-                                      })
-                                    }
-                                  >
-                                    View details
-                                  </Button>
-                                ) : null}
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </CardContent>
-                </Card>
-              ) : null}
-
-              {hasReport && isOwnerView ? (
-                <Card className="border border-slate-200 shadow-sm">
-                  <CardHeader>
-                    <CardTitle>Inputs Used</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <p className="text-sm text-slate-600">
-                      Source: <span className="font-medium text-slate-900">{evaluatedInputTrace.source}</span>
-                    </p>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                      <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                        <p className="font-semibold text-slate-800">{CONFIDENTIAL_LABEL}</p>
-                        <p className="text-slate-600">
-                          {evaluatedInputTrace.confidentialWords} words • {evaluatedInputTrace.confidentialLength} chars
-                        </p>
-                        <p className="text-slate-500 font-mono text-xs">
-                          hash: {evaluatedInputTrace.confidentialHash || '—'}
-                        </p>
-                      </div>
-                      <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                        <p className="font-semibold text-slate-800">{SHARED_LABEL}</p>
-                        <p className="text-slate-600">
-                          {evaluatedInputTrace.sharedWords} words • {evaluatedInputTrace.sharedLength} chars
-                        </p>
-                        <p className="text-slate-500 font-mono text-xs">
-                          hash: {evaluatedInputTrace.sharedHash || '—'}
-                        </p>
-                      </div>
-                    </div>
-                    <div>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setShowInputPreview((current) => !current)}
-                      >
-                        {showInputPreview ? 'Hide preview' : 'Reveal preview'}
-                      </Button>
-                    </div>
-                    {showInputPreview ? (
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-                        <div className="rounded-lg border border-slate-200 bg-white p-3">
-                          <p className="font-semibold text-slate-700 mb-1">{CONFIDENTIAL_LABEL} preview</p>
-                          <p className="text-slate-600 whitespace-pre-wrap">
-                            {String(comparison?.doc_a_text || '').slice(0, 120) || '—'}
-                          </p>
-                        </div>
-                        <div className="rounded-lg border border-slate-200 bg-white p-3">
-                          <p className="font-semibold text-slate-700 mb-1">{SHARED_LABEL} preview</p>
-                          <p className="text-slate-600 whitespace-pre-wrap">
-                            {String(comparison?.doc_b_text || '').slice(0, 120) || '—'}
-                          </p>
-                        </div>
-                      </div>
-                    ) : null}
-                  </CardContent>
-                </Card>
+              {(hasReport || evaluationHistory.length > 0) ? (
+                <div className="flex justify-end">
+                  <Link
+                    to={createPageUrl(`DocumentComparisonRunDetails?id=${encodeURIComponent(comparisonId)}`)}
+                    className="inline-flex items-center text-sm text-slate-500 hover:text-slate-700 gap-1.5"
+                  >
+                    <BarChart3 className="w-3.5 h-3.5" />
+                    Run details
+                  </Link>
+                </div>
               ) : null}
 
               {hasReport ? (
                 <>
-                  {/* Quality Assessment — confidence bar uses V2 confidence when available */}
-                  <Card className="border border-slate-200 shadow-sm">
-                    <CardHeader>
-                      <CardTitle>Quality Assessment</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-5">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div>
-                          <p className="text-slate-500">{CONFIDENTIAL_LABEL} Words</p>
-                          <p className="text-4xl font-bold text-slate-900">{confidentialWordCount}</p>
-                        </div>
-                        <div>
-                          <p className="text-slate-500">{SHARED_LABEL} Words</p>
-                          <p className="text-4xl font-bold text-slate-900">{sharedWordCount}</p>
-                        </div>
-                      </div>
-                      <div>
-                        <p className="text-slate-500 mb-2">Overall Confidence</p>
-                        <div className="h-3 bg-slate-200 rounded-full overflow-hidden">
-                          <div
-                            className="h-3 bg-slate-500 rounded-full"
-                            style={{ width: `${getConfidencePercent(report, similarityScore)}%` }}
-                          />
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-
                   {/* Executive Summary — fit level badge */}
                   <Card className="border border-slate-200 shadow-sm">
                     <CardHeader>
@@ -1365,54 +1180,6 @@ export default function DocumentComparisonDetail() {
           </Tabs>
         </div>
       </div>
-
-      <Dialog
-        open={Boolean(selectedFailureEntry)}
-        onOpenChange={(nextOpen) => {
-          if (!nextOpen) {
-            setSelectedFailureEntry(null);
-          }
-        }}
-      >
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Evaluation Failure Details</DialogTitle>
-            <DialogDescription>
-              Safe diagnostic details for this evaluation attempt.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3 text-sm">
-            <div>
-              <p className="text-slate-500">Failure code</p>
-              <p className="font-mono text-slate-900">
-                {asText(selectedFailureEntry?.failure?.failureCode) || 'unknown_error'}
-              </p>
-            </div>
-            <div>
-              <p className="text-slate-500">Failure message</p>
-              <p className="text-slate-900">
-                {asText(selectedFailureEntry?.failure?.message) || 'Evaluation failed'}
-              </p>
-            </div>
-            <div>
-              <p className="text-slate-500">Failure stage</p>
-              <p className="font-mono text-slate-900">
-                {asText(selectedFailureEntry?.failure?.failureStage) || 'unknown'}
-              </p>
-            </div>
-            <div>
-              <p className="text-slate-500">Request ID</p>
-              <p className="font-mono text-slate-900">
-                {asText(selectedFailureEntry?.failure?.requestId) || '—'}
-              </p>
-            </div>
-            <div>
-              <p className="text-slate-500">Timestamp</p>
-              <p className="text-slate-900">{formatDateTime(selectedFailureEntry?.createdDate)}</p>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
 
       <Dialog
         open={isShareDialogOpen}

@@ -293,7 +293,7 @@ test.describe('Document Comparison Draft Persistence', () => {
     await expect(page).toHaveURL(/\/DocumentComparisonDetail\?id=.*tab=report/, {
       timeout: STEP_LOAD_TIMEOUT_MS,
     });
-    await expect(page.getByRole('heading', { name: /Evaluation History/i })).toBeVisible({
+    await expect(page.getByRole('heading', { name: /Executive Summary/i })).toBeVisible({
       timeout: STEP_LOAD_TIMEOUT_MS,
     });
   });
