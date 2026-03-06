@@ -8,10 +8,13 @@ import { sharedReportsClient } from '@/api/sharedReportsClient';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  ComparisonDetailTabs,
+  buildOverviewBullets,
+} from '@/components/document-comparison/ComparisonDetailTabs';
 import {
   Dialog,
   DialogContent,
@@ -21,22 +24,12 @@ import {
 } from '@/components/ui/dialog';
 import {
   ArrowLeft,
-  BarChart3,
-  Clock,
   Copy,
   Download,
-  FileText,
   Loader2,
   Send,
-  Sparkles,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import {
-  hasV2Report,
-  parseV2WhyEntry,
-  filterLegacySectionsForDisplay,
-  getConfidencePercent,
-} from '@/lib/aiReportUtils';
 
 const CONFIDENTIAL_LABEL = 'Confidential Information';
 const SHARED_LABEL = 'Shared Information';
@@ -273,24 +266,6 @@ function formatDateTime(dateValue) {
   return parsed.toLocaleString();
 }
 
-function toSummaryLines(value) {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value
-    .map((entry) => {
-      if (typeof entry === 'string') {
-        return asText(entry);
-      }
-      if (entry && typeof entry === 'object') {
-        return asText(entry.text || entry.title || '');
-      }
-      return '';
-    })
-    .filter(Boolean);
-}
-
 function toSafeInteger(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) {
@@ -350,26 +325,6 @@ function getEvaluationProviderMeta(evaluation) {
     model: model || null,
     reason: reason || null,
   };
-}
-
-function renderDocumentReadOnly({ text, html }) {
-  const safeText = String(text || '').trim();
-  const safeHtml = asText(html);
-
-  if (!safeText && !safeHtml) {
-    return <p className="text-sm text-slate-500 italic">No text available.</p>;
-  }
-
-  if (safeHtml) {
-    return (
-      <div
-        className="text-sm text-slate-800 leading-relaxed"
-        dangerouslySetInnerHTML={{ __html: safeHtml }}
-      />
-    );
-  }
-
-  return <div className="whitespace-pre-wrap text-sm text-slate-800">{safeText}</div>;
 }
 
 function useComparisonId() {
@@ -493,10 +448,6 @@ export default function DocumentComparisonDetail() {
   }, [selectedShareToken, sharedReports]);
 
   const report = comparison?.public_report || comparison?.evaluation_result?.report || {};
-  const reportSections = Array.isArray(report?.sections) ? report.sections : [];
-  const isV2Report = hasV2Report(report);
-  // For legacy evals filter sections by V2 display rules (hide empty/n/a cards).
-  const reportSectionsFiltered = isV2Report ? [] : filterLegacySectionsForDisplay(reportSections);
   const evaluationHistory = Array.isArray(evaluationsQuery.data) ? evaluationsQuery.data : [];
   const latestEvaluation = evaluationHistory[0] || null;
   const comparisonWarningMeta = extractConfidentialityWarnings(comparison?.evaluation_result);
@@ -778,32 +729,42 @@ export default function DocumentComparisonDetail() {
     asText(report?.recommendation) ||
     asText(comparison?.evaluation_result?.recommendation) ||
     asText(latestEvaluation?.summary);
-  const overviewBullets = (() => {
-    const collected = [];
-    const pushUnique = (line) => {
-      const normalized = asText(line);
-      if (!normalized || collected.includes(normalized)) {
-        return;
-      }
-      collected.push(normalized);
-    };
-
-    toSummaryLines(report?.summary?.top_fit_reasons).forEach(pushUnique);
-    toSummaryLines(report?.summary?.top_blockers).forEach(pushUnique);
-    toSummaryLines(report?.summary?.next_actions).forEach(pushUnique);
-
-    if (collected.length === 0) {
-      reportSections.forEach((section) => {
-        const bullets = Array.isArray(section?.bullets) ? section.bullets : [];
-        bullets.forEach(pushUnique);
-      });
-    }
-
-    return collected.slice(0, 6);
-  })();
-  const similarityScore = isEvaluationSucceeded
-    ? Number(comparison?.evaluation_result?.score ?? report?.similarity_score ?? latestEvaluation?.score ?? 0)
-    : null;
+  const overviewBullets = buildOverviewBullets(report);
+  const timelineTone =
+    latestEvaluationMeta.label === 'Succeeded'
+      ? 'success'
+      : latestEvaluationMeta.label === 'Not configured'
+        ? 'warning'
+        : latestEvaluationMeta.label === 'Failed'
+          ? 'danger'
+          : 'neutral';
+  const timelineItems = [
+    {
+      id: 'created',
+      kind: 'file',
+      tone: 'info',
+      title: 'Proposal Created',
+      timestamp: formatDateTime(comparison.created_date),
+    },
+    {
+      id: 'updated',
+      kind: 'clock',
+      tone: 'neutral',
+      title: 'Last Updated',
+      timestamp: formatDateTime(comparison.updated_date),
+    },
+    ...(latestEvaluation
+      ? [
+          {
+            id: 'latest-evaluation',
+            kind: 'sparkles',
+            tone: timelineTone,
+            title: latestEvaluationMeta.timelineTitle,
+            timestamp: formatDateTime(latestEvaluation.created_date),
+          },
+        ]
+      : []),
+  ];
 
   return (
     <div className="min-h-screen bg-slate-50 py-6">
@@ -886,329 +847,51 @@ export default function DocumentComparisonDetail() {
             </CardContent>
           </Card>
 
-          <Tabs value={activeTab} onValueChange={setActiveTab}>
-            <TabsList className="bg-white border border-slate-200 p-1">
-              <TabsTrigger
-                value="overview"
-                className="data-[state=active]:bg-slate-900 data-[state=active]:text-white"
-              >
-                <FileText className="w-4 h-4 mr-2" />
-                Overview
-              </TabsTrigger>
-              <TabsTrigger
-                value="report"
-                className="data-[state=active]:bg-slate-900 data-[state=active]:text-white"
-              >
-                <BarChart3 className="w-4 h-4 mr-2" />
-                AI Report
-                {hasReport && <Badge className="ml-2 bg-green-100 text-green-700 text-xs">Complete</Badge>}
-              </TabsTrigger>
-              <TabsTrigger
-                value="details"
-                className="data-[state=active]:bg-slate-900 data-[state=active]:text-white"
-              >
-                <FileText className="w-4 h-4 mr-2" />
-                Complete Proposal Details
-              </TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="overview" className="mt-6">
-              <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-6 items-start">
-                <Card className="border border-slate-200 shadow-sm">
-                  <CardHeader>
-                    <CardTitle>Overview</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    {isEvaluationRunning ? (
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-2 text-slate-700">
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          <span className="font-medium">Evaluation is running...</span>
-                        </div>
-                        <p className="text-sm text-slate-500">
-                          {isPollingTimedOut
-                            ? 'Still processing. Refresh to check for updates.'
-                            : 'This page refreshes automatically while evaluation is in progress.'}
-                        </p>
-                      </div>
-                    ) : null}
-
-                    {isEvaluationNotConfigured ? (
-                      <Alert className="bg-amber-50 border-amber-200">
-                        <AlertDescription className="text-amber-900">
-                          Vertex AI integration is not configured.
-                        </AlertDescription>
-                      </Alert>
-                    ) : null}
-
-                    {showConfidentialityWarning ? (
-                      <Alert className="bg-amber-50 border-amber-200">
-                        <AlertDescription className="text-amber-900">
-                          {confidentialityWarningMessage}
-                          {confidentialityWarningDetails ? ` ${confidentialityWarningDetails}` : ''}
-                        </AlertDescription>
-                      </Alert>
-                    ) : null}
-
-                    {isEvaluationFailed ? (
-                      <Alert className="bg-red-50 border-red-200">
-                        <AlertDescription className="text-red-900">
-                          {evaluationFailureBannerMessage}
-                        </AlertDescription>
-                      </Alert>
-                    ) : null}
-
-                    {!isEvaluationRunning && !isEvaluationNotConfigured && !isEvaluationFailed && hasReport ? (
-                      <>
-                        <p className="text-slate-700">
-                          Latest recommendation:{' '}
-                          <span className="font-semibold capitalize">{recommendation || 'not provided'}</span>
-                        </p>
-                        {overviewBullets.length > 0 ? (
-                          <ul className="list-disc pl-5 space-y-1 text-sm text-slate-700">
-                            {overviewBullets.map((line, index) => (
-                              <li key={`overview-bullet-${index}`}>{line}</li>
-                            ))}
-                          </ul>
-                        ) : (
-                          <p className="text-sm text-slate-600">Evaluation completed. Open AI Report for full details.</p>
-                        )}
-                      </>
-                    ) : null}
-
-                    {!isEvaluationRunning && !isEvaluationNotConfigured && !isEvaluationFailed && !hasReport ? (
-                      <p className="text-sm text-slate-600">
-                        No evaluation yet. Use Run Evaluation from the editor to generate it.
-                      </p>
-                    ) : null}
-                  </CardContent>
-                </Card>
-
-                <Card className="border border-slate-200 shadow-sm">
-                  <CardHeader>
-                    <CardTitle>Activity Timeline</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="flex items-start gap-3">
-                      <div className="w-9 h-9 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center">
-                        <FileText className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <p className="font-medium text-slate-900">Proposal Created</p>
-                        <p className="text-slate-500">{formatDateTime(comparison.created_date)}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-start gap-3">
-                      <div className="w-9 h-9 rounded-full bg-slate-100 text-slate-700 flex items-center justify-center">
-                        <Clock className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <p className="font-medium text-slate-900">Last Updated</p>
-                        <p className="text-slate-500">{formatDateTime(comparison.updated_date)}</p>
-                      </div>
-                    </div>
-                    {latestEvaluation && (
-                      <div className="flex items-start gap-3">
-                        <div
-                          className={`w-9 h-9 rounded-full flex items-center justify-center ${
-                            latestEvaluationMeta.label === 'Succeeded'
-                              ? 'bg-purple-100 text-purple-700'
-                              : latestEvaluationMeta.label === 'Not configured'
-                                ? 'bg-amber-100 text-amber-700'
-                                : latestEvaluationMeta.label === 'Failed'
-                                  ? 'bg-red-100 text-red-700'
-                                  : 'bg-slate-100 text-slate-700'
-                          }`}
-                        >
-                          <Sparkles className="w-4 h-4" />
-                        </div>
-                        <div>
-                          <p className="font-medium text-slate-900">{latestEvaluationMeta.timelineTitle}</p>
-                          <p className="text-slate-500">{formatDateTime(latestEvaluation.created_date)}</p>
-                        </div>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              </div>
-            </TabsContent>
-
-            <TabsContent value="report" className="mt-6 space-y-6">
-              {isEvaluationRunning ? (
-                <Card className="border border-slate-200 shadow-sm">
-                  <CardContent className="py-6">
-                    <div className="flex items-center gap-2 text-slate-700">
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      <span className="font-medium">Evaluation in progress...</span>
-                    </div>
-                    <p className="text-sm text-slate-500 mt-2">
-                      {isPollingTimedOut
-                        ? 'Still processing. Refresh to check status.'
-                        : 'Report updates automatically when processing finishes.'}
-                    </p>
-                  </CardContent>
-                </Card>
-              ) : null}
-
-              {isEvaluationNotConfigured ? (
-                <Alert className="bg-amber-50 border-amber-200">
-                  <AlertDescription className="text-amber-900">
-                    Vertex AI integration is not configured. AI report not available (AI not configured).
-                  </AlertDescription>
-                </Alert>
-              ) : null}
-
-              {showConfidentialityWarning ? (
-                <Alert className="bg-amber-50 border-amber-200">
-                  <AlertDescription className="text-amber-900">
-                    {confidentialityWarningMessage}
-                    {confidentialityWarningDetails ? ` ${confidentialityWarningDetails}` : ''}
-                  </AlertDescription>
-                </Alert>
-              ) : null}
-
-              {isEvaluationFailed ? (
-                <Alert className="bg-red-50 border-red-200">
-                  <AlertDescription className="text-red-900">
-                    {evaluationFailureBannerMessage}
-                  </AlertDescription>
-                </Alert>
-              ) : null}
-
-              {!isEvaluationRunning && !isEvaluationNotConfigured && !isEvaluationFailed && !hasReport && evaluationHistory.length === 0 ? (
-                <Card className="border border-slate-200 shadow-sm">
-                  <CardContent className="py-6 text-slate-600">
-                    No evaluation yet. Go to the editor and use Run Evaluation to generate it.
-                  </CardContent>
-                </Card>
-              ) : null}
-
-              {(hasReport || evaluationHistory.length > 0) ? (
-                <div className="flex justify-end">
-                  <Link
-                    to={createPageUrl(`DocumentComparisonRunDetails?id=${encodeURIComponent(comparisonId)}`)}
-                    className="inline-flex items-center text-sm text-slate-500 hover:text-slate-700 gap-1.5"
-                  >
-                    <BarChart3 className="w-3.5 h-3.5" />
-                    Run details
-                  </Link>
-                </div>
-              ) : null}
-
-              {hasReport ? (
-                <>
-                  {/* Executive Summary — fit level badge */}
-                  <Card className="border border-slate-200 shadow-sm">
-                    <CardHeader>
-                      <CardTitle>Executive Summary</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                      <Badge variant="outline" className="capitalize">
-                        {recommendation || report?.fit_level || 'No recommendation provided'}
-                      </Badge>
-                      {isV2Report ? (
-                        // V2: consultant-style narrative with heading-prefixed entries
-                        <div className="space-y-4" data-testid="v2-full-report">
-                          {report.why.map((entry, index) => {
-                            const { heading, body } = parseV2WhyEntry(entry);
-                            return (
-                              <div
-                                key={index}
-                                className="rounded-xl border border-slate-200 p-4"
-                              >
-                                {heading && (
-                                  <p className="font-semibold text-slate-900 mb-1">{heading}</p>
-                                )}
-                                <p className="text-sm text-slate-700 leading-relaxed">{body}</p>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      ) : reportSectionsFiltered.length > 0 ? (
-                        // Legacy: structured section bullets (filtered per V2 display rules)
-                        <div className="space-y-4">
-                          {reportSectionsFiltered.map((section, index) => (
-                            <div
-                              key={`${section.key || section.heading || 'section'}-${index}`}
-                              className="rounded-xl border border-slate-200 p-4"
-                            >
-                              <p className="font-semibold text-slate-900 mb-2">
-                                {section.heading || section.key || `Section ${index + 1}`}
-                              </p>
-                              <ul className="list-disc pl-5 space-y-1 text-slate-700">
-                                {(Array.isArray(section.bullets) ? section.bullets : []).map((line, lineIndex) => (
-                                  <li key={`${index}-${lineIndex}`}>{line}</li>
-                                ))}
-                              </ul>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="text-slate-600">AI report content is not available yet.</p>
-                      )}
-                    </CardContent>
-                  </Card>
-
-                  {/* V2: Key Missing Info — ranked actionable questions */}
-                  {isV2Report && Array.isArray(report.missing) && report.missing.length > 0 && (
-                    <Card className="border border-slate-200 shadow-sm" data-testid="v2-missing-info">
-                      <CardHeader>
-                        <CardTitle>Key Missing Info</CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <ul className="space-y-2">
-                          {report.missing.map((item, index) => (
-                            <li key={index} className="flex items-start gap-2 text-sm text-slate-700">
-                              <span className="mt-0.5 text-amber-500 flex-shrink-0" aria-hidden="true">⚠</span>
-                              <span>{item}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </CardContent>
-                    </Card>
-                  )}
-                </>
-              ) : null}
-            </TabsContent>
-
-            <TabsContent value="details" className="mt-6">
-              <Card className="border border-slate-200 shadow-sm">
-                <CardHeader>
-                  <CardTitle>Complete Proposal Details</CardTitle>
-                  <p className="text-slate-500">
-                    Read-only document content for both information documents.
-                  </p>
-                </CardHeader>
-                <CardContent className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  <div className="space-y-2 min-w-0">
-                    <div className="flex items-center gap-2 text-slate-700 font-semibold">
-                      <FileText className="w-4 h-4" />
-                      {comparison.party_a_label || CONFIDENTIAL_LABEL}
-                    </div>
-                    <div className="rounded-xl border border-slate-200 bg-white p-4 min-h-[320px] max-h-[560px] overflow-auto">
-                      {renderDocumentReadOnly({
-                        text: comparison.doc_a_text || '',
-                        html: comparison.doc_a_html || '',
-                      })}
-                    </div>
-                  </div>
-
-                  <div className="space-y-2 min-w-0">
-                    <div className="flex items-center gap-2 text-slate-700 font-semibold">
-                      <FileText className="w-4 h-4" />
-                      {comparison.party_b_label || SHARED_LABEL}
-                    </div>
-                    <div className="rounded-xl border border-slate-200 bg-white p-4 min-h-[320px] max-h-[560px] overflow-auto">
-                      {renderDocumentReadOnly({
-                        text: comparison.doc_b_text || '',
-                        html: comparison.doc_b_html || '',
-                      })}
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
-          </Tabs>
+          <ComparisonDetailTabs
+            activeTab={activeTab}
+            onTabChange={setActiveTab}
+            hasReportBadge={hasReport}
+            overviewProps={{
+              recommendation,
+              overviewBullets,
+              isEvaluationRunning,
+              isPollingTimedOut,
+              isEvaluationNotConfigured,
+              showConfidentialityWarning,
+              confidentialityWarningMessage,
+              confidentialityWarningDetails,
+              isEvaluationFailed,
+              evaluationFailureBannerMessage,
+              hasReport,
+              noReportMessage: 'No evaluation yet. Use Run Evaluation from the editor to generate it.',
+              timelineItems,
+            }}
+            aiReportProps={{
+              isEvaluationRunning,
+              isPollingTimedOut,
+              isEvaluationNotConfigured,
+              showConfidentialityWarning,
+              confidentialityWarningMessage,
+              confidentialityWarningDetails,
+              isEvaluationFailed,
+              evaluationFailureBannerMessage,
+              hasReport,
+              hasEvaluations: evaluationHistory.length > 0,
+              noReportMessage: 'No evaluation yet. Go to the editor and use Run Evaluation to generate it.',
+              runDetailsHref: createPageUrl(`DocumentComparisonRunDetails?id=${encodeURIComponent(comparisonId)}`),
+              report,
+              recommendation,
+            }}
+            proposalDetailsProps={{
+              description: 'Read-only document content for both information documents.',
+              leftLabel: comparison.party_a_label || CONFIDENTIAL_LABEL,
+              rightLabel: comparison.party_b_label || SHARED_LABEL,
+              leftText: comparison.doc_a_text || '',
+              leftHtml: comparison.doc_a_html || '',
+              rightText: comparison.doc_b_text || '',
+              rightHtml: comparison.doc_b_html || '',
+            }}
+          />
         </div>
       </div>
 

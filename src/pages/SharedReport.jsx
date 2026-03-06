@@ -7,6 +7,10 @@ import { useAuth } from '@/lib/AuthContext';
 import DocumentRichEditor from '@/components/document-comparison/DocumentRichEditor';
 import DocumentComparisonEditorErrorBoundary from '@/components/document-comparison/DocumentComparisonEditorErrorBoundary';
 import { sanitizeEditorHtml } from '@/components/document-comparison/editorSanitization';
+import {
+  ComparisonDetailTabs,
+  buildOverviewBullets,
+} from '@/components/document-comparison/ComparisonDetailTabs';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -19,7 +23,6 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
-  FileText,
   Loader2,
   Save,
   Send,
@@ -264,42 +267,6 @@ function toFriendlyVerifyError(error) {
   return error?.message || 'Unable to verify access.';
 }
 
-function renderAiReport(report) {
-  const recommendation = asText(report?.recommendation);
-  const executiveSummary = asText(report?.executive_summary);
-  const sections = Array.isArray(report?.sections) ? report.sections : [];
-
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap gap-2">
-        <Badge variant="outline">Read-only</Badge>
-        {recommendation ? (
-          <Badge className="bg-blue-100 text-blue-700 border-blue-200 capitalize">{recommendation}</Badge>
-        ) : null}
-      </div>
-      {executiveSummary ? <p className="text-sm text-slate-700">{executiveSummary}</p> : null}
-      {sections.length > 0 ? (
-        <div className="space-y-3">
-          {sections.map((section, index) => (
-            <div key={`${section?.heading || section?.key || 'section'}-${index}`} className="rounded-lg border p-3">
-              <p className="font-semibold text-sm text-slate-900 mb-2">
-                {section?.heading || section?.key || `Section ${index + 1}`}
-              </p>
-              <ul className="list-disc pl-5 text-sm text-slate-700 space-y-1">
-                {(Array.isArray(section?.bullets) ? section.bullets : []).map((line, lineIndex) => (
-                  <li key={`${index}-${lineIndex}`}>{line}</li>
-                ))}
-              </ul>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <p className="text-sm text-slate-500">No report sections available.</p>
-      )}
-    </div>
-  );
-}
-
 async function fetchWorkspaceWithTimeout(token, timeoutMs = 45000) {
   let timeoutId = null;
 
@@ -353,6 +320,7 @@ export default function SharedReport() {
   const [verificationCode, setVerificationCode] = useState('');
   const [verificationRequested, setVerificationRequested] = useState(false);
   const [forcedMismatchInvitedEmail, setForcedMismatchInvitedEmail] = useState('');
+  const [recipientDetailTab, setRecipientDetailTab] = useState('overview');
 
   const docAInputFileRef = useRef(null);
   const docBInputFileRef = useRef(null);
@@ -373,6 +341,50 @@ export default function SharedReport() {
   const recipientDraft = workspaceQuery.data?.recipientDraft || workspaceQuery.data?.currentDraft || null;
   const latestEvaluation = workspaceQuery.data?.latestEvaluation || null;
   const latestSentRevision = workspaceQuery.data?.latestSentRevision || null;
+  const baselineSharedPayload = useMemo(
+    () => baseline?.shared_payload || workspaceQuery.data?.baselineShared || defaults.shared_payload || {},
+    [baseline?.shared_payload, defaults.shared_payload, workspaceQuery.data?.baselineShared],
+  );
+  const baselineConfidentialPayload = useMemo(
+    () => defaults.recipient_confidential_payload || {},
+    [defaults.recipient_confidential_payload],
+  );
+  const baselineSharedDocument = useMemo(
+    () =>
+      coercePayloadToDocument(
+        baselineSharedPayload,
+        SHARED_LABEL,
+        String(baselineSharedPayload?.text || ''),
+      ),
+    [baselineSharedPayload],
+  );
+  const baselineConfidentialDocument = useMemo(
+    () =>
+      coercePayloadToDocument(
+        baselineConfidentialPayload,
+        CONFIDENTIAL_LABEL,
+        String(baselineConfidentialPayload?.text || baselineConfidentialPayload?.notes || ''),
+      ),
+    [baselineConfidentialPayload],
+  );
+  const recipientSharedDocument = useMemo(
+    () =>
+      coercePayloadToDocument(
+        recipientDraft?.shared_payload || baselineSharedPayload,
+        SHARED_LABEL,
+        String(baselineSharedPayload?.text || ''),
+      ),
+    [baselineSharedPayload, recipientDraft?.shared_payload],
+  );
+  const recipientConfidentialDocument = useMemo(
+    () =>
+      coercePayloadToDocument(
+        recipientDraft?.recipient_confidential_payload || baselineConfidentialPayload,
+        CONFIDENTIAL_LABEL,
+        String(baselineConfidentialPayload?.text || baselineConfidentialPayload?.notes || ''),
+      ),
+    [baselineConfidentialPayload, recipientDraft?.recipient_confidential_payload],
+  );
   const currentUserEmail = asText(user?.email).toLowerCase();
   const invitedEmail =
     asText(share?.invited_email || forcedMismatchInvitedEmail).toLowerCase() || '';
@@ -395,6 +407,7 @@ export default function SharedReport() {
     setVerificationCode('');
     setVerificationRequested(false);
     setForcedMismatchInvitedEmail('');
+    setRecipientDetailTab('overview');
   }, [token]);
 
   useEffect(
@@ -410,35 +423,25 @@ export default function SharedReport() {
   useEffect(() => {
     if (!workspaceQuery.data) return;
 
-    const baselineSharedPayload = baseline?.shared_payload || workspaceQuery.data?.baselineShared || defaults.shared_payload || {};
-    const baselineConfidentialPayload = defaults.recipient_confidential_payload || {};
-
-    const sharedDocument = coercePayloadToDocument(
-      recipientDraft?.shared_payload || baselineSharedPayload,
-      SHARED_LABEL,
-      String(baselineSharedPayload?.text || ''),
-    );
-    const confidentialDocument = coercePayloadToDocument(
-      recipientDraft?.recipient_confidential_payload || baselineConfidentialPayload,
-      CONFIDENTIAL_LABEL,
-      String(baselineConfidentialPayload?.text || baselineConfidentialPayload?.notes || ''),
-    );
-
     setTitle(asText(comparison?.title) || asText(parent?.title) || 'Shared Report');
 
-    setDocAText(confidentialDocument.text);
-    setDocAHtml(confidentialDocument.html);
-    setDocAJson(confidentialDocument.json);
-    setDocASource(confidentialDocument.source);
-    setDocAFiles(confidentialDocument.files);
-    setDocAPreviewSnippet(previewSnippet(confidentialDocument.text || htmlToText(confidentialDocument.html)));
+    setDocAText(recipientConfidentialDocument.text);
+    setDocAHtml(recipientConfidentialDocument.html);
+    setDocAJson(recipientConfidentialDocument.json);
+    setDocASource(recipientConfidentialDocument.source);
+    setDocAFiles(recipientConfidentialDocument.files);
+    setDocAPreviewSnippet(
+      previewSnippet(recipientConfidentialDocument.text || htmlToText(recipientConfidentialDocument.html)),
+    );
 
-    setDocBText(sharedDocument.text);
-    setDocBHtml(sharedDocument.html);
-    setDocBJson(sharedDocument.json);
-    setDocBSource(sharedDocument.source);
-    setDocBFiles(sharedDocument.files);
-    setDocBPreviewSnippet(previewSnippet(sharedDocument.text || htmlToText(sharedDocument.html)));
+    setDocBText(recipientSharedDocument.text);
+    setDocBHtml(recipientSharedDocument.html);
+    setDocBJson(recipientSharedDocument.json);
+    setDocBSource(recipientSharedDocument.source);
+    setDocBFiles(recipientSharedDocument.files);
+    setDocBPreviewSnippet(
+      previewSnippet(recipientSharedDocument.text || htmlToText(recipientSharedDocument.html)),
+    );
 
     const hydratedStep = isAuthenticated ? clampStep(recipientDraft?.workflow_step, 0) : 0;
     if (!stepHydrated) {
@@ -450,13 +453,12 @@ export default function SharedReport() {
     setDraftDirty(false);
   }, [
     workspaceQuery.data,
-    baseline?.shared_payload,
     comparison?.title,
-    defaults.recipient_confidential_payload,
-    defaults.shared_payload,
     isAuthenticated,
     parent?.title,
     recipientDraft,
+    recipientConfidentialDocument,
+    recipientSharedDocument,
     step,
     stepHydrated,
   ]);
@@ -743,14 +745,92 @@ export default function SharedReport() {
   };
 
   const progress = (clampStep(step, 0) / TOTAL_WORKFLOW_STEPS) * 100;
-
-  const activeReport =
+  const baselineReport =
+    baseline?.ai_report ||
+    workspaceQuery.data?.baselineAiReport ||
+    comparison?.public_report ||
+    comparison?.evaluation_result?.report ||
+    {};
+  const updatedRecipientReport =
     latestEvaluatedReport ||
     latestEvaluation?.public_report ||
     workspaceQuery.data?.latestReport ||
-    baseline?.ai_report ||
-    workspaceQuery.data?.baselineAiReport ||
+    baselineReport ||
     {};
+  const hasStep0Report =
+    Boolean(baselineReport && typeof baselineReport === 'object' && !Array.isArray(baselineReport)) &&
+    Object.keys(baselineReport).length > 0;
+  const hasStep3Report =
+    Boolean(updatedRecipientReport && typeof updatedRecipientReport === 'object' && !Array.isArray(updatedRecipientReport)) &&
+    Object.keys(updatedRecipientReport).length > 0;
+  const step0Recommendation =
+    asText(baselineReport?.recommendation) ||
+    asText(baseline?.summary) ||
+    asText(comparison?.evaluation_result?.recommendation);
+  const step3Recommendation =
+    asText(updatedRecipientReport?.recommendation) ||
+    asText(latestEvaluation?.summary) ||
+    asText(comparison?.evaluation_result?.recommendation);
+  const step0OverviewBullets = buildOverviewBullets(baselineReport);
+  const step3OverviewBullets = buildOverviewBullets(updatedRecipientReport);
+  const latestEvaluationStatus = asText(latestEvaluation?.status).toLowerCase();
+  const latestEvaluationErrorCode = asText(
+    latestEvaluation?.result?.error?.code || latestEvaluation?.error?.code,
+  ).toLowerCase();
+  const step3IsEvaluationRunning =
+    evaluateMutation.isPending ||
+    latestEvaluationStatus === 'running' ||
+    latestEvaluationStatus === 'queued' ||
+    latestEvaluationStatus === 'evaluating';
+  const step3IsEvaluationNotConfigured = latestEvaluationErrorCode === 'not_configured';
+  const step3IsEvaluationFailed =
+    !step3IsEvaluationRunning &&
+    !step3IsEvaluationNotConfigured &&
+    (latestEvaluationStatus === 'failed' || Boolean(latestEvaluation?.result?.error));
+  const step3EvaluationFailureMessage =
+    asText(latestEvaluation?.result?.error?.message) || 'Evaluation failed. Please retry.';
+  const baseTimelineItems = [
+    {
+      id: 'created',
+      kind: 'file',
+      tone: 'info',
+      title: 'Proposal Created',
+      timestamp: formatDateTime(parent?.created_at || comparison?.created_at),
+    },
+    {
+      id: 'updated',
+      kind: 'clock',
+      tone: 'neutral',
+      title: 'Last Updated',
+      timestamp: formatDateTime(comparison?.updated_at || recipientDraft?.updated_at || parent?.updated_at),
+    },
+  ];
+  const step3TimelineItems = [
+    ...baseTimelineItems,
+    ...(latestEvaluation
+      ? [
+          {
+            id: 'recipient-evaluation',
+            kind: 'sparkles',
+            tone: step3IsEvaluationFailed
+              ? 'danger'
+              : step3IsEvaluationRunning
+                ? 'info'
+                : step3IsEvaluationNotConfigured
+                  ? 'warning'
+                  : 'success',
+            title: step3IsEvaluationFailed
+              ? 'Evaluation Failed'
+              : step3IsEvaluationRunning
+                ? 'Evaluation Running'
+                : step3IsEvaluationNotConfigured
+                  ? 'AI Not Configured'
+                  : 'Evaluation Complete',
+            timestamp: formatDateTime(latestEvaluation?.created_at || latestEvaluation?.updated_at),
+          },
+        ]
+      : []),
+  ];
 
   if (!token) {
     return (
@@ -986,44 +1066,50 @@ export default function SharedReport() {
 
         {step === 0 ? (
           <div className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Step 0: Overview</CardTitle>
-                <CardDescription>Review shared baseline information and latest report before editing.</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                  <div className="rounded-lg border border-slate-200 bg-white p-4">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">Comparison</p>
-                    <p className="text-slate-800">{asText(comparison?.title) || title || 'Shared Report'}</p>
-                  </div>
-                  <div className="rounded-lg border border-slate-200 bg-white p-4">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">Last Updated</p>
-                    <p className="text-slate-800">{formatDateTime(comparison?.updated_at || parent?.created_at)}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Shared Information</CardTitle>
-                <CardDescription>Read-only baseline shared content from the proposer.</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="rounded-lg border border-slate-200 p-4 bg-white">
-                  <pre className="text-sm whitespace-pre-wrap text-slate-700">{docBText || '(No shared information available)'}</pre>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Latest AI Report</CardTitle>
-                <CardDescription>Read-only latest recipient-safe report.</CardDescription>
-              </CardHeader>
-              <CardContent>{renderAiReport(activeReport)}</CardContent>
-            </Card>
+            <ComparisonDetailTabs
+              activeTab={recipientDetailTab}
+              onTabChange={setRecipientDetailTab}
+              hasReportBadge={hasStep0Report}
+              overviewProps={{
+                recommendation: step0Recommendation,
+                overviewBullets: step0OverviewBullets,
+                isEvaluationRunning: false,
+                isPollingTimedOut: false,
+                isEvaluationNotConfigured: false,
+                showConfidentialityWarning: false,
+                confidentialityWarningMessage: '',
+                confidentialityWarningDetails: '',
+                isEvaluationFailed: false,
+                evaluationFailureBannerMessage: '',
+                hasReport: hasStep0Report,
+                noReportMessage: 'No baseline evaluation is available yet for this proposal.',
+                timelineItems: baseTimelineItems,
+              }}
+              aiReportProps={{
+                isEvaluationRunning: false,
+                isPollingTimedOut: false,
+                isEvaluationNotConfigured: false,
+                showConfidentialityWarning: false,
+                confidentialityWarningMessage: '',
+                confidentialityWarningDetails: '',
+                isEvaluationFailed: false,
+                evaluationFailureBannerMessage: '',
+                hasReport: hasStep0Report,
+                hasEvaluations: false,
+                noReportMessage: 'No baseline AI report is available yet for this proposal.',
+                report: baselineReport,
+                recommendation: step0Recommendation,
+              }}
+              proposalDetailsProps={{
+                description: 'Read-only baseline proposal content shared by the proposer.',
+                leftLabel: baselineConfidentialDocument.label || CONFIDENTIAL_LABEL,
+                rightLabel: baselineSharedDocument.label || SHARED_LABEL,
+                leftText: baselineConfidentialDocument.text || '',
+                leftHtml: baselineConfidentialDocument.html || '',
+                rightText: baselineSharedDocument.text || '',
+                rightHtml: baselineSharedDocument.html || '',
+              }}
+            />
 
             <div className="space-y-3">
               {!isAuthenticated ? (
@@ -1268,22 +1354,52 @@ export default function SharedReport() {
               </CardContent>
             </Card>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>AI Report</CardTitle>
-                <CardDescription>Latest recipient-safe report.</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {evaluateMutation.isPending ? (
-                  <div className="flex items-center gap-2 text-slate-700">
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Running evaluation...
-                  </div>
-                ) : (
-                  renderAiReport(activeReport)
-                )}
-              </CardContent>
-            </Card>
+            <ComparisonDetailTabs
+              activeTab={recipientDetailTab}
+              onTabChange={setRecipientDetailTab}
+              hasReportBadge={hasStep3Report}
+              overviewProps={{
+                recommendation: step3Recommendation,
+                overviewBullets: step3OverviewBullets,
+                isEvaluationRunning: step3IsEvaluationRunning,
+                isPollingTimedOut: false,
+                isEvaluationNotConfigured: step3IsEvaluationNotConfigured,
+                showConfidentialityWarning: false,
+                confidentialityWarningMessage: '',
+                confidentialityWarningDetails: '',
+                isEvaluationFailed: step3IsEvaluationFailed,
+                evaluationFailureBannerMessage: step3EvaluationFailureMessage,
+                hasReport: hasStep3Report,
+                noReportMessage: 'No recipient evaluation is available yet. Run evaluation to generate one.',
+                timelineItems: step3TimelineItems,
+              }}
+              aiReportProps={{
+                isEvaluationRunning: step3IsEvaluationRunning,
+                isPollingTimedOut: false,
+                isEvaluationNotConfigured: step3IsEvaluationNotConfigured,
+                showConfidentialityWarning: false,
+                confidentialityWarningMessage: '',
+                confidentialityWarningDetails: '',
+                isEvaluationFailed: step3IsEvaluationFailed,
+                evaluationFailureBannerMessage: step3EvaluationFailureMessage,
+                hasReport: hasStep3Report,
+                hasEvaluations: Boolean(latestEvaluation),
+                noReportMessage: 'No recipient evaluation is available yet. Run evaluation to generate one.',
+                report: updatedRecipientReport,
+                recommendation: step3Recommendation,
+              }}
+              proposalDetailsProps={{
+                description: 'Read-only current proposal state after recipient edits.',
+                leftLabel: CONFIDENTIAL_LABEL,
+                rightLabel: SHARED_LABEL,
+                leftText: docAText,
+                leftHtml: docAHtml,
+                rightText: docBText,
+                rightHtml: docBHtml,
+                leftBadges: [docASource || 'typed'],
+                rightBadges: [docBSource || 'typed'],
+              }}
+            />
           </div>
         ) : null}
       </div>
