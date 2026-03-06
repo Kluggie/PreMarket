@@ -1477,3 +1477,207 @@ test('anti-leak: fallback path output does not contain confidential canary', asy
     cleanup();
   }
 });
+
+// ─── Memo-prose prompt constraints ────────────────────────────────────────────
+
+test('memo-prose: Pass B prompt contains multi-paragraph, prose-first, if/then, and First 2 weeks plan requirements', async () => {
+  let passBPrompt = '';
+  let callCount = 0;
+
+  globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__ = async ({ prompt }) => {
+    callCount += 1;
+    if (callCount === 1) {
+      // Pass A — full coverage so tight mode doesn't activate
+      return {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(validFactSheetPayload()),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      };
+    }
+    passBPrompt = prompt;
+    return {
+      model: 'gemini-2.0-flash-001',
+      text: JSON.stringify(validPayload({ fit_level: 'medium', confidence_0_1: 0.72 })),
+      finishReason: 'STOP',
+      httpStatus: 200,
+    };
+  };
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Shared: deliver analytics module with SLA definitions and monthly milestones.',
+      confidentialText: 'Confidential: budget fixed, governance approval secured.',
+    });
+
+    assert.equal(outcome.ok, true, 'Evaluation must succeed');
+    assert.ok(passBPrompt.length > 0, 'Pass B prompt must have been captured');
+
+    // Multi-paragraph writing requirement — all three verbosity levels include "paragraphs per section"
+    assert.ok(
+      passBPrompt.includes('paragraphs per section'),
+      'Pass B prompt must specify a paragraph-count writing requirement per section',
+    );
+
+    // Max 1 bullet list constraint
+    assert.ok(
+      passBPrompt.includes('Max 1 bullet list'),
+      'Pass B prompt must restrict output to Max 1 bullet list',
+    );
+
+    // if/then tradeoff requirement
+    assert.ok(
+      passBPrompt.includes('if/then'),
+      'Pass B prompt must require explicit if/then tradeoff statements',
+    );
+
+    // First 2 weeks plan mandatory element
+    assert.ok(
+      passBPrompt.includes('First 2 weeks plan'),
+      'Pass B prompt must require a First 2 weeks plan paragraph in Recommendations',
+    );
+
+    // Assumptions / Dependencies mandatory element
+    assert.ok(
+      passBPrompt.includes('Assumptions / Dependencies'),
+      'Pass B prompt must require an Assumptions / Dependencies paragraph',
+    );
+
+    // Options mandatory element
+    assert.ok(
+      passBPrompt.includes('"Options:"') || passBPrompt.includes('starting with "Options:"'),
+      'Pass B prompt must require an Options paragraph with concrete paths',
+    );
+  } finally {
+    delete globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__;
+  }
+});
+
+test('memo-prose: missing strictness — thin coverage produces missing[] >= 6 items with em-dash why clauses', async () => {
+  let callCount = 0;
+
+  globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__ = async () => {
+    callCount += 1;
+    if (callCount === 1) {
+      // Pass A — low coverage (1/5): only has_scope = true
+      return {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(
+          validFactSheetPayload({
+            source_coverage: {
+              has_scope: true,
+              has_timeline: false,
+              has_kpis: false,
+              has_constraints: false,
+              has_risks: false,
+            },
+            missing_info: [
+              'No timeline defined.',
+              'No KPIs.',
+              'No constraints.',
+              'No risks.',
+              'No acceptance criteria.',
+              'No data schema.',
+            ],
+          }),
+        ),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      };
+    }
+    // Pass B — mock returns 6 items each with em-dash why clause as instructed
+    return {
+      model: 'gemini-2.0-flash-001',
+      text: JSON.stringify(
+        validPayload({
+          fit_level: 'low',
+          confidence_0_1: 0.38,
+          missing: [
+            'What is the confirmed go-live date and key milestone schedule? — determines resource planning and exposes schedule risk.',
+            'What are the measurable success criteria and KPIs for this project? — required to define "done" and enforce scope boundaries.',
+            'What budget constraints and approval thresholds apply? — impacts vendor selection and delivery model choices.',
+            'What risks have been identified and what are the proposed mitigations? — needed to build a viable risk register.',
+            'What is the data schema and access method for source systems? — determines ingestion architecture and governance approach.',
+            'What acceptance criteria define successful delivery for each phase? — required for contractual sign-off and phase exit gates.',
+          ],
+        }),
+      ),
+      finishReason: 'STOP',
+      httpStatus: 200,
+    };
+  };
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Deliver a scalable analytics platform for internal teams.',
+      confidentialText: 'Internal: timeline and budget are TBD pending board approval.',
+    });
+
+    assert.equal(outcome.ok, true, 'Evaluation must succeed');
+    if (!outcome.ok) return;
+
+    assert.ok(
+      outcome.data.missing.length >= 6,
+      `missing[] must have >= 6 items when source_coverage is thin; got ${outcome.data.missing.length}`,
+    );
+
+    // Each item must contain an em-dash why clause (skip auto-injected identical-tier warning if present)
+    const itemsToCheck = outcome.data.missing.filter(
+      (m) => !m.toLowerCase().includes('identical') && !m.toLowerCase().includes('overlapping'),
+    );
+    for (const item of itemsToCheck) {
+      assert.ok(
+        item.includes('\u2014'),
+        `missing item must include an em-dash (—) why-it-matters clause; got: "${item}"`,
+      );
+    }
+  } finally {
+    delete globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__;
+  }
+});
+
+test('memo-prose: commercial posture included in Pass B prompt when vendor_preferences include fixed price', async () => {
+  let passBPrompt = '';
+  let callCount = 0;
+
+  globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__ = async ({ prompt }) => {
+    callCount += 1;
+    if (callCount === 1) {
+      // Pass A — fact sheet with fixed-price vendor preference
+      return {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(
+          validFactSheetPayload({
+            vendor_preferences: ['fixed price engagement preferred'],
+          }),
+        ),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      };
+    }
+    passBPrompt = prompt;
+    return {
+      model: 'gemini-2.0-flash-001',
+      text: JSON.stringify(validPayload({ fit_level: 'medium', confidence_0_1: 0.68 })),
+      finishReason: 'STOP',
+      httpStatus: 200,
+    };
+  };
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Deliver analytics platform under a fixed-price engagement model.',
+      confidentialText: 'Internal: fixed-price structure preferred; budget ceiling applies.',
+    });
+
+    assert.equal(outcome.ok, true, 'Evaluation must succeed');
+    assert.ok(passBPrompt.length > 0, 'Pass B prompt must have been captured');
+
+    assert.ok(
+      passBPrompt.includes('Commercial posture'),
+      'Pass B prompt must instruct "Commercial posture:" paragraph when fixed-price vendor preference is detected',
+    );
+  } finally {
+    delete globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__;
+  }
+});

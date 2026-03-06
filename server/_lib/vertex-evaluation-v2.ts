@@ -543,9 +543,9 @@ function containsAny(arr: string[], keywords: string[]): boolean {
   return keywords.some((kw) => lower.some((s) => s.includes(kw)));
 }
 
-const WHY_MAX_CHARS_STANDARD = 1200;
-const WHY_MAX_CHARS_TIGHT = 800;
-const MISSING_MAX_ITEMS = 8;
+const WHY_MAX_CHARS_STANDARD = 2400;
+const WHY_MAX_CHARS_TIGHT = 1400;
+const MISSING_MAX_ITEMS = 10;
 const REDACTIONS_MAX_ITEMS = 8;
 
 /**
@@ -662,6 +662,16 @@ function buildEvalPromptFromFactSheet(params: {
   const hasDataSecurity = containsAny(factSheet.scope_deliverables, [
     'data', 'api', 'system', 'database', 'integration', 'security', 'cloud', 'storage', 'pipeline',
   ]);
+  // Fixed-price contract signal (from vendor preferences or explicit constraint)
+  const hasFixedPriceContract = containsAny(factSheet.vendor_preferences, [
+    'fixed', 'fixed-price', 'fixed price', 'lump sum', 'firm fixed', 'firm price',
+  ]) || containsAny(factSheet.constraints, [
+    'fixed price', 'fixed-price', 'fixed contract',
+  ]);
+  // Urgency / aggressive-timeline signal (from constraints)
+  const hasAggressiveTimeline = containsAny(factSheet.constraints, [
+    'aggressive', 'tight timeline', 'hard deadline', 'asap', 'urgent',
+  ]);
 
   // ── Required headings (always) ───────────────────────────────────────────
   const firstStrengthOrRisk =
@@ -669,7 +679,9 @@ function buildEvalPromptFromFactSheet(params: {
   const secondStrengthOrRisk =
     reportStyle.ordering === 'risks_first' ? 'Key Strengths' : 'Key Risks';
   const requiredHeadings = [
-    'Executive Summary',
+    // Use 'Snapshot' not 'Executive Summary' — the page header already reads 'Executive Summary';
+    // using a distinct first-heading avoids a duplicated label in the rendered report.
+    'Snapshot',
     firstStrengthOrRisk,
     secondStrengthOrRisk,
     'Decision Readiness',
@@ -695,10 +707,10 @@ function buildEvalPromptFromFactSheet(params: {
   const effectiveVerbosity: Verbosity = coverageCount < 3 || tightMode ? 'tight' : reportStyle.verbosity;
   const depthGuide =
     effectiveVerbosity === 'tight'
-      ? 'Depth: concise. 1-2 sentences per section. Push detail to missing[].'
+      ? 'Depth: concise. Each section: 1-2 compact paragraphs (5-8 sentences total). Prose only — do NOT convert to bullets to compress.'
       : effectiveVerbosity === 'deep'
-      ? 'Depth: detailed. 3-5 sentences per section. Reference specific fact_sheet fields by name.'
-      : 'Depth: standard. 2-3 sentences per section.';
+      ? 'Depth: detailed. Each section: 3-4 paragraphs. Reference specific fact_sheet fields by name.'
+      : 'Depth: standard. Each section: 2-3 paragraphs.';
 
   const orderingGuide =
     reportStyle.ordering === 'risks_first'
@@ -722,6 +734,9 @@ function buildEvalPromptFromFactSheet(params: {
       no_confidential_verbatim: true,
       no_confidential_numbers_or_identifiers: true,
       allow_safe_derived_conclusions: true,
+      // Conditional advisor signals derived from the fact sheet.
+      has_fixed_price_contract: hasFixedPriceContract,
+      has_aggressive_timeline: hasAggressiveTimeline,
       // Output size limits — strictly enforced to avoid truncation.
       why_max_chars: whyMaxChars,
       missing_max_items: MISSING_MAX_ITEMS,
@@ -734,6 +749,14 @@ function buildEvalPromptFromFactSheet(params: {
       },
     },
   };
+
+  // ── Paragraph depth requirement line (matches depthGuide for test assertions) ──
+  const paragraphReq =
+    effectiveVerbosity === 'tight'
+      ? '1-2 compact paragraphs per section'
+      : effectiveVerbosity === 'deep'
+      ? '3-4 paragraphs per section'
+      : '2-3 paragraphs per section';
 
   return [
     tightMode
@@ -767,11 +790,43 @@ function buildEvalPromptFromFactSheet(params: {
     depthGuide,
     orderingGuide,
     '',
+    'WRITING REQUIREMENTS — follow these strictly:',
+    `- Write ${paragraphReq}. Separate paragraphs within one why[] entry using \\n\\n.`,
+    '- Max 1 bullet list in the ENTIRE why array. Bullets allowed only in Recommendations (max 4 short items).',
+    '- Prose-first: do NOT convert paragraphs to bullets to save space.',
+    '- Write as a human consultant/mediator — NOT as auto-filled template fields.',
+    '- Natural language, varied sentence length, show nuanced tradeoffs.',
+    '- Include at least 2 explicit if/then tradeoff statements distributed across sections.',
+    '  Example: "If the timeline is compressed, then scope must be reduced or budget increased."',
+    '',
+    'MANDATORY ADVISOR ELEMENTS (every report must include ALL of these):',
+    '1. Assumptions / Dependencies — inside "Key Risks" OR "Decision Readiness", include a paragraph',
+    '   starting with "Assumptions / Dependencies:" listing the key assumptions the project relies on.',
+    '   If source_coverage is thin (multiple false fields), make assumptions explicit and conservative.',
+    '2. Options — inside "Decision Readiness" OR "Recommendations", include a paragraph starting with "Options:"',
+    '   presenting 2-3 concrete paths (e.g., fast MVP, discovery-first, narrow scope) grounded in the fact sheet.',
+    '   Do not invent specific numbers — reference the fact_sheet where available.',
+    '3. First 2 weeks plan — inside "Recommendations", include a paragraph starting with "First 2 weeks plan:"',
+    '   covering: who to interview, discovery/audit tasks (data profiling, source audit, technical spike),',
+    '   and measurable success criteria for exiting the discovery phase.',
+    '   Keep it specific to the proposal domain (reference systems, integrations, or workstreams named in fact_sheet).',
+    '',
+    hasFixedPriceContract
+      ? 'CONDITIONAL — fixed-price signals detected: inside "Key Risks" or "Recommendations", include a paragraph starting with "Commercial posture:" covering acceptance criteria, change-order triggers, and risk allocation between parties.'
+      : '',
+    hasAggressiveTimeline
+      ? 'CONDITIONAL — urgency signals detected: inside "Decision Readiness" or "Recommendations", include a paragraph starting with "Negotiation lever:" covering scope-time-budget tradeoffs and phased delivery options.'
+      : '',
+    hasDataSecurity
+      ? 'CONDITIONAL — data/integration systems detected: inside "Key Risks" or the data security heading, include a paragraph starting with "Risk containment:" covering access controls, data handling assumptions, and relevant compliance (SOC2, GDPR, etc.).'
+      : '',
+    '',
     'WHY FIELD — FORMAT INSTRUCTIONS:',
     `- Total combined length of all why[] entries MUST NOT exceed ${whyMaxChars} characters.`,
     '- The "why" array must contain one element per heading below, in the order listed.',
-    '- Each element must start with its heading name followed by a colon and a space',
-    '  (e.g., "Key Strengths: The proposal defines three concrete deliverables...").',
+    '- Each element must start with its heading name followed by ": "',
+    '  (e.g., "Snapshot: The proposal defines three concrete deliverables...").',
+    '- Separate paragraphs within a single heading entry with \\n\\n.',
     `- Required headings (always include, in this order): ${requiredHeadings.join(', ')}.`,
     optionalHeadings.length > 0
       ? `- Conditional headings (relevant to this proposal — include after required ones): ${optionalHeadings.join(', ')}.`
@@ -779,19 +834,21 @@ function buildEvalPromptFromFactSheet(params: {
     '',
     'MISSING FIELD — QUALITY RULES:',
     `- Maximum ${MISSING_MAX_ITEMS} items. Include ONLY items that materially change feasibility, cost, timeline, or risk.`,
-    '- Phrase each item as an actionable question (e.g., "What is the confirmed go-live deadline?").',
-    '- Rank most-critical items first.',
-    '- Incorporate all items from fact_sheet.missing_info and fact_sheet.open_questions (paraphrase as questions).',
+    '- Each item must be an actionable question AND include a "why it matters" clause after an em-dash (—).',
+    '  Example: "What is the event schema and retention policy for the source data? — determines ingestion approach and governance risk."',
+    '- Order by criticality: contract/deal-blockers first, then technical unknowns, then operational gaps.',
+    '- Avoid generic questions. Reference the specific proposal context (systems, vendors, integrations named in fact_sheet).',
+    '- Paraphrase all items from fact_sheet.missing_info and fact_sheet.open_questions as actionable questions with why-matters clauses.',
     coverageCount < 3
-      ? '- Coverage is weak: missing[] must contain substantive, decision-blocking questions (minimum 3).'
+      ? '- Coverage is thin (multiple false source_coverage fields): missing[] MUST contain at least 6 decision-blocking items with em-dash why clauses.'
       : '',
     '',
     'OUTPUT FIELD SEMANTICS:',
     '- fit_level: Overall proposal quality / readiness.',
     '  high = decision-ready; medium = promising but gaps exist; low = major gaps; unknown = insufficient info.',
     '- confidence_0_1: Your confidence in the assessment (0 = no basis, 1 = very confident).',
-    '- why: Consultant-style narrative per heading, as described above. Keep concise — total chars <= why_max_chars.',
-    '- missing: Actionable questions ranked by criticality. Max missing_max_items items.',
+    '- why: Consultant memo narrative per heading (multi-paragraph prose). Total chars <= why_max_chars.',
+    '- missing: Actionable questions with em-dash why-it-matters, ranked by criticality. Max missing_max_items items.',
     '- redactions: Array of strings — topics that must remain confidential. Max redactions_max_items items.',
     '',
     'HARD GUARDRAILS — follow these without exception:',
