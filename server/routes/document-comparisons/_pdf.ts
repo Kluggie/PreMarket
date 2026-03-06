@@ -201,8 +201,16 @@ export async function renderProfessionalPdfBuffer(document: PdfDocument): Promis
   const ensureSpace = (h: number, forceBreak = false) => {
     if (forceBreak || y + h > contentBottom) {
       pdf.addPage();
-      y = mT + runHdrH;
+      // Consistent breathing room at the top of every new page (after running header)
+      y = mT + runHdrH + 12;
     }
+  };
+
+  /** Estimate wrapped line count for a string at a given font size and max width. */
+  const lineCount = (text: string, maxW: number, fz: number): number => {
+    pdf.setFontSize(fz);
+    const lines: string[] = pdf.splitTextToSize(normalizePdfText(text), maxW);
+    return Math.max(1, lines.length);
   };
 
   const fillRect = (x: number, ry: number, w: number, h: number, rgb: [number,number,number]) => {
@@ -390,12 +398,20 @@ export async function renderProfessionalPdfBuffer(document: PdfDocument): Promis
     if (section.breakBefore) {
       ensureSpace(9999, true);
     } else if (isL1 && idx > 0) {
-      ensureSpace(80);
+      // ── Orphan guard: divider (22pt) + band (26pt) + caption (14pt est.) +
+      //    minimum 2 lines of content (30pt) must all fit together.
+      const captionH = section.caption ? lineCount(section.caption, colW - 16, 8) * 12 + 3 : 0;
+      const minContentH = (section.bullets?.length ?? 0) + (section.paragraphs?.length ?? 0) > 0 ? 32 : 0;
+      ensureSpace(22 + 26 + captionH + minContentH);
       y += 8;
       hLine(mL, pageWidth - mR, y, C.divL1);
       y += 14;
     } else if (!isL1 && idx > 0) {
-      ensureSpace(50);
+      // ── Orphan guard for L2: divider (16pt) + heading (~17pt) + min 2 content lines (30pt).
+      const h2safe = normalizePdfText(section.heading || '');
+      const h2HeadH = lineCount(h2safe, colW - 8, 11) * 15 + 2;
+      const minContentH = (section.bullets?.length ?? 0) + (section.paragraphs?.length ?? 0) > 0 ? 30 : 0;
+      ensureSpace(16 + h2HeadH + minContentH);
       y += 6;
       hLine(mL + 4, pageWidth - mR, y, C.divL2);
       y += 10;
@@ -406,13 +422,14 @@ export async function renderProfessionalPdfBuffer(document: PdfDocument): Promis
       const hUpper = normalizePdfText(
         (section.heading || `Section ${idx + 1}`).toUpperCase(),
       );
-      const bandY = y - 12;
-      ensureSpace(26);
-      fillRect(mL, bandY, colW, 22, C.panelBg);
-      fillRect(mL, bandY, 4, 22, C.indigo);
+      // bandY is anchored at current y
+      const bandH = 22;
+      fillRect(mL, y, colW, bandH, C.panelBg);
+      fillRect(mL, y, 4, bandH, C.indigo);
       setFont('bold', 10.5, C.indigoDark);
-      pdf.text(hUpper, mL + 12, y);
-      y += 16;
+      // Text baseline sits 14pt into the 22pt band
+      pdf.text(hUpper, mL + 12, y + 14);
+      y += bandH + 2;
 
       if (section.caption) {
         emit({ text: section.caption, x: mL + 12, maxW: colW - 16, fz: 8, wt: 'italic', rgb: C.label, lh: 12, gapAfter: 3 });
@@ -423,7 +440,7 @@ export async function renderProfessionalPdfBuffer(document: PdfDocument): Promis
       const h2safe = normalizePdfText(section.heading || `Section ${idx + 1}`);
       pdf.setFontSize(11);
       const h2lines: string[] = pdf.splitTextToSize(h2safe, colW - 8);
-      ensureSpace(h2lines.length * 15 + 10);
+      // No separate ensureSpace here — the orphan guard above already reserved space
       setFont('bold', 11, C.indigoDeep);
       h2lines.forEach((line: string) => { pdf.text(line, mL + 4, y); y += 15; });
       y += 2;
@@ -436,20 +453,26 @@ export async function renderProfessionalPdfBuffer(document: PdfDocument): Promis
     const bodyX = isL1 ? mL + 12 : mL + 8;
     const bodyW = colW - (isL1 ? 16 : 12);
 
-    // Callout box
+    // Callout box — always atomic: compute ensureSpace first, then capture y
     if (section.callout && section.paragraphs?.length) {
       const safe = normalizePdfText(section.paragraphs.join(' '));
       pdf.setFontSize(10);
       const boxLines: string[] = pdf.splitTextToSize(safe, bodyW - 22);
-      const boxH = boxLines.length * 14 + 20;
-      ensureSpace(boxH + 10);
-      fillRect(bodyX, y, bodyW, boxH, C.calloutBg);
-      strokeRect(bodyX, y, bodyW, boxH, C.indigo, 0.75);
-      fillRect(bodyX, y, 4, boxH, C.indigo);
+      const boxH = boxLines.length * 14 + 24;  // 12pt top pad + 12pt bottom pad
+      // Ensure the ENTIRE box fits; if too tall for remaining space, break to new page
+      const availH = contentBottom - y;
+      if (boxH > availH) {
+        ensureSpace(9999, true);
+      }
+      // Capture y after potential page break so box and text are co-located
+      const boxTop = y;
+      fillRect(bodyX, boxTop, bodyW, boxH, C.calloutBg);
+      strokeRect(bodyX, boxTop, bodyW, boxH, C.indigo, 0.75);
+      fillRect(bodyX, boxTop, 4, boxH, C.indigo);
       setFont('normal', 10, C.bodyText);
-      let by = y + 14;
+      let by = boxTop + 14;
       boxLines.forEach((line: string) => { pdf.text(line, bodyX + 14, by); by += 14; });
-      y += boxH + 8;
+      y = boxTop + boxH + 10;
       return;
     }
 
@@ -460,27 +483,61 @@ export async function renderProfessionalPdfBuffer(document: PdfDocument): Promis
       if (!safe) return;
       pdf.setFontSize(10.5);
       const lines: string[] = pdf.splitTextToSize(safe, bodyW);
-      ensureSpace(lines.length * 15 + 5);
+      const lineH = 15;
+      // Widow prevention: never strand a single orphaned line at the bottom of a page.
+      // If only 1 line fits in the remaining space but the paragraph wraps to 2+,
+      // move the whole paragraph to the next page.
+      const spaceLeft = contentBottom - y;
+      const linesOnPage = Math.floor(spaceLeft / lineH);
+      if (lines.length > 1 && linesOnPage <= 1) {
+        ensureSpace(9999, true);
+      } else {
+        ensureSpace(Math.min(lines.length, 2) * lineH + 5);
+      }
       setFont('normal', 10.5, C.bodyText);
-      lines.forEach((line: string) => { pdf.text(line, bodyX, y); y += 15; });
+      lines.forEach((line: string) => { pdf.text(line, bodyX, y); y += lineH; });
       y += (pi < paragraphs.length - 1 ? 5 : 4);
     });
 
     // Bullets — em-dash in accent color, text in body color
     const bullets = Array.isArray(section.bullets) ? section.bullets : [];
     const bulletW = bodyW - 16;
-    bullets.forEach((bullet, bi) => {
-      const norm = normalizeBullet(bullet);
-      if (!norm) return;
+    if (bullets.length > 0) {
+      // Pre-compute per-bullet heights so we can decide atomicity up-front.
       pdf.setFontSize(10.5);
-      const lines: string[] = pdf.splitTextToSize(norm, bulletW);
-      ensureSpace(lines.length * 15 + 3);
-      setFont('normal', 10.5, C.indigo);
-      pdf.text('\u2013', bodyX + 2, y);
-      setFont('normal', 10.5, C.bodyText);
-      lines.forEach((line: string) => { pdf.text(line, bodyX + 14, y); y += 15; });
-      if (bi < bullets.length - 1) y += 2;
-    });
+      const bulletHeights = bullets.map((b) => {
+        const norm = normalizeBullet(b);
+        if (!norm) return 0;
+        const ls: string[] = pdf.splitTextToSize(norm, bulletW);
+        return ls.length * 15 + 2;
+      });
+      const totalBulletH = bulletHeights.reduce((a, c) => a + c, 0);
+
+      if (bullets.length <= 6) {
+        // Short list — keep entirely on one page.
+        ensureSpace(totalBulletH);
+      } else {
+        // Longer list — keep at least the first 2 bullets with whatever heading preceded.
+        const twoItemH = bulletHeights.slice(0, 2).reduce((a, c) => a + c, 0);
+        ensureSpace(twoItemH);
+      }
+
+      bullets.forEach((bullet, _bi) => {
+        const norm = normalizeBullet(bullet);
+        if (!norm) return;
+        pdf.setFontSize(10.5);
+        const lines: string[] = pdf.splitTextToSize(norm, bulletW);
+        const itemH = lines.length * 15 + 2;
+        // For long lists allow mid-list page breaks, but keep each item's
+        // wrapped lines together (never split one bullet entry across pages).
+        if (bullets.length > 6) ensureSpace(itemH);
+        setFont('normal', 10.5, C.indigo);
+        pdf.text('\u2013', bodyX + 2, y);
+        setFont('normal', 10.5, C.bodyText);
+        lines.forEach((line: string) => { pdf.text(line, bodyX + 14, y); y += 15; });
+        y += 2;
+      });
+    }
 
     if (paragraphs.length + bullets.length > 0) y += 2;
   });
