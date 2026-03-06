@@ -8,6 +8,24 @@ import { readJsonBody } from '../../../_lib/http.js';
 import { newId } from '../../../_lib/ids.js';
 import { getResendConfig } from '../../../_lib/integrations.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
+import { buildRecipientSafeEvaluationProjection } from '../../document-comparisons/_helpers.js';
+
+const DEFAULT_SUMMARY_PREVIEW = 'A business proposal has been shared with you for review on PreMarket.';
+const SUMMARY_TARGET_MIN = 100;
+const SUMMARY_TARGET_PREFERRED = 150;
+const SUMMARY_TARGET_MAX = 180;
+const SYSTEM_STYLE_TERMS = new Set([
+  'workflow',
+  'module',
+  'template',
+  'screen',
+  'component',
+  'engine',
+  'endpoint',
+  'feature',
+  'pipeline',
+  'system',
+]);
 
 function asText(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
@@ -15,6 +33,26 @@ function asText(value: unknown) {
 
 function normalizeEmail(value: unknown) {
   return asText(value).toLowerCase();
+}
+
+function toObject(value: unknown): Record<string, any> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+  return value as Record<string, any>;
+}
+
+function normalizeInlineText(value: unknown) {
+  return asText(String(value || '').replace(/\s+/g, ' '));
+}
+
+function escapeHtml(value: unknown) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function getToken(req: any, tokenParam?: string) {
@@ -39,6 +77,339 @@ function normalizeErrorForStorage(message: unknown) {
   const text = asText(message);
   if (!text) return null;
   return text.replace(/\s+/g, ' ').slice(0, 400);
+}
+
+function clipAtWordBoundary(input: string, preferred = SUMMARY_TARGET_PREFERRED, hardLimit = SUMMARY_TARGET_MAX) {
+  const text = normalizeInlineText(input);
+  if (!text) {
+    return '';
+  }
+  if (text.length <= hardLimit) {
+    return text;
+  }
+
+  const sliced = text.slice(0, hardLimit + 1);
+  let cutoff = sliced.lastIndexOf(' ', preferred);
+  if (cutoff < Math.floor(preferred * 0.65)) {
+    cutoff = sliced.lastIndexOf(' ');
+  }
+  if (cutoff <= 0) {
+    cutoff = hardLimit;
+  }
+
+  const trimmed = sliced.slice(0, cutoff).trim().replace(/[,:;.!?]+$/g, '');
+  const fallback = sliced.slice(0, hardLimit).trim();
+  return `${trimmed || fallback}...`;
+}
+
+function summarizePreviewText(value: unknown) {
+  const text = normalizeInlineText(value);
+  if (!text) {
+    return '';
+  }
+
+  const sentences = text
+    .split(/(?<=[.!?])\s+/g)
+    .map((sentence) => normalizeInlineText(sentence))
+    .filter(Boolean);
+  if (!sentences.length) {
+    return clipAtWordBoundary(text);
+  }
+
+  let selected = '';
+  for (const sentence of sentences) {
+    const candidate = selected ? `${selected} ${sentence}` : sentence;
+    if (candidate.length > SUMMARY_TARGET_MAX) {
+      if (!selected || selected.length < SUMMARY_TARGET_MIN) {
+        return clipAtWordBoundary(candidate);
+      }
+      break;
+    }
+    selected = candidate;
+    if (selected.length >= SUMMARY_TARGET_MIN) {
+      break;
+    }
+  }
+
+  const result = selected || sentences[0];
+  return result.length > SUMMARY_TARGET_MAX ? clipAtWordBoundary(result) : result;
+}
+
+function ensureSentenceEnding(value: string) {
+  const text = normalizeInlineText(value);
+  if (!text) {
+    return '';
+  }
+  if (/[.!?]$/.test(text) || text.endsWith('...')) {
+    return text;
+  }
+  return `${text}.`;
+}
+
+function stripSummaryLabelPrefix(value: unknown) {
+  const text = normalizeInlineText(value);
+  if (!text) {
+    return '';
+  }
+
+  return text
+    .replace(
+      /^(proposal\s+preview|proposal\s+summary|summary|overview|snapshot|proposal|document\s+comparison)\s*[:\-]\s*/i,
+      '',
+    )
+    .trim();
+}
+
+function isSystemStyleSummary(value: unknown) {
+  const normalized = normalizeInlineText(value).toLowerCase();
+  if (!normalized) {
+    return true;
+  }
+
+  const words = normalized.split(' ').filter(Boolean);
+  if (!words.length) {
+    return true;
+  }
+
+  const hasPunctuation = /[.!?]/.test(normalized);
+  const systemTermCount = words.filter((word) => SYSTEM_STYLE_TERMS.has(word)).length;
+  const labelOnly = /^(document|proposal|comparison|shared|summary|overview|workflow|module|template)(\s+(document|proposal|comparison|shared|summary|overview|workflow|module|template))*$/i.test(
+    normalized,
+  );
+
+  if (labelOnly) {
+    return true;
+  }
+  if (!hasPunctuation && words.length <= 4) {
+    return true;
+  }
+  if (!hasPunctuation && words.length <= 7 && systemTermCount > 0) {
+    return true;
+  }
+  return false;
+}
+
+function toNaturalLanguagePreview(value: unknown) {
+  const cleaned = stripSummaryLabelPrefix(value);
+  if (!cleaned) {
+    return '';
+  }
+
+  const summarized = summarizePreviewText(cleaned);
+  if (!summarized) {
+    return '';
+  }
+
+  if (!isSystemStyleSummary(summarized)) {
+    return ensureSentenceEnding(summarized);
+  }
+
+  const base = cleaned.replace(/[.!?]+$/g, '').trim();
+  if (!base || isSystemStyleSummary(base)) {
+    return '';
+  }
+
+  if (/^(a|an|the|this|that)\b/i.test(base)) {
+    return ensureSentenceEnding(summarizePreviewText(base));
+  }
+
+  return ensureSentenceEnding(
+    summarizePreviewText(`A proposal outlining ${base.charAt(0).toLowerCase()}${base.slice(1)}`),
+  );
+}
+
+function extractSectionSummary(report: Record<string, any>) {
+  const sections = Array.isArray(report.sections) ? report.sections : [];
+  for (const section of sections) {
+    if (!section || typeof section !== 'object' || Array.isArray(section)) {
+      continue;
+    }
+
+    const heading = normalizeInlineText(section.heading || section.title || section.key).toLowerCase();
+    const isSummarySection =
+      heading.includes('summary') ||
+      heading.includes('overview') ||
+      heading.includes('snapshot') ||
+      heading.includes('proposal');
+    if (!isSummarySection) {
+      continue;
+    }
+
+    const direct = normalizeInlineText(
+      section.summary || section.text || section.description || section.value_summary,
+    );
+    if (direct) {
+      return direct;
+    }
+
+    const bullets = Array.isArray(section.bullets)
+      ? section.bullets.map((entry: unknown) => normalizeInlineText(entry)).filter(Boolean)
+      : [];
+    if (bullets.length > 0) {
+      return bullets.join(' ');
+    }
+  }
+  return '';
+}
+
+function isGenericProjectionSummary(value: string) {
+  const normalized = normalizeInlineText(value).toLowerCase();
+  if (!normalized) {
+    return true;
+  }
+  return (
+    normalized.includes('recipient-safe evaluation generated from shared information only') ||
+    normalized.includes('evaluation generated from shared information only') ||
+    normalized.includes('shared information provides the basis for this recipient-safe fit summary') ||
+    normalized.includes('shared information was used to generate this recipient-safe report')
+  );
+}
+
+function buildSummaryPreview(params: { proposal: any; comparison: any }) {
+  const comparison = params.comparison || null;
+  const sharedTextSummary = normalizeInlineText(comparison?.docBText);
+
+  let safeEvaluationSummary = '';
+  let safeExecutiveSummary = '';
+  let safeSectionSummary = '';
+  if (comparison) {
+    const projection = buildRecipientSafeEvaluationProjection({
+      evaluationResult: comparison.evaluationResult || {},
+      publicReport: comparison.publicReport || {},
+      confidentialText: comparison.docAText || '',
+      sharedText: comparison.docBText || '',
+      title: comparison.title || params.proposal?.title || 'Business Proposal',
+    });
+    const safeEvaluation = toObject(projection.evaluation_result);
+    const safeReport = toObject(projection.public_report);
+    safeEvaluationSummary = normalizeInlineText(safeEvaluation.summary);
+    safeExecutiveSummary = normalizeInlineText(safeReport.executive_summary);
+    safeSectionSummary = extractSectionSummary(safeReport);
+
+    if (isGenericProjectionSummary(safeEvaluationSummary)) {
+      safeEvaluationSummary = '';
+    }
+    if (isGenericProjectionSummary(safeExecutiveSummary)) {
+      safeExecutiveSummary = '';
+    }
+    if (isGenericProjectionSummary(safeSectionSummary)) {
+      safeSectionSummary = '';
+    }
+  }
+
+  const candidates = [safeExecutiveSummary, safeEvaluationSummary, safeSectionSummary, sharedTextSummary];
+  for (const candidate of candidates) {
+    const preview = toNaturalLanguagePreview(candidate);
+    if (preview) {
+      return preview;
+    }
+  }
+
+  return DEFAULT_SUMMARY_PREVIEW;
+}
+
+function buildSharedProposalEmail(params: {
+  senderName: string;
+  proposalTitle: string;
+  shareUrl: string;
+  summaryPreview: string;
+}) {
+  const senderName = normalizeInlineText(params.senderName) || 'A PreMarket user';
+  const proposalTitle = normalizeInlineText(params.proposalTitle) || 'Untitled proposal';
+  const shareUrl = asText(params.shareUrl);
+  const summaryPreview = toNaturalLanguagePreview(params.summaryPreview) || DEFAULT_SUMMARY_PREVIEW;
+
+  const subject = `${senderName} shared "${proposalTitle}" with you on PreMarket`;
+  const text = [
+    'PreMarket | Proposal Shared',
+    '',
+    `${senderName} shared a proposal with you on PreMarket.`,
+    '',
+    'Proposal',
+    proposalTitle,
+    '',
+    'Summary',
+    summaryPreview,
+    '',
+    `View Proposal: ${shareUrl}`,
+    '',
+    `If the button doesn't work, open this link: ${shareUrl}`,
+    '',
+    'This proposal was shared with you via PreMarket.',
+    "If you weren't expecting this email, you can safely ignore it.",
+  ].join('\n');
+
+  const escapedSenderName = escapeHtml(senderName);
+  const escapedTitle = escapeHtml(proposalTitle);
+  const escapedSummary = escapeHtml(summaryPreview);
+  const escapedShareUrl = escapeHtml(shareUrl);
+  const html = [
+    '<!doctype html>',
+    '<html lang="en">',
+    '<body style="margin:0;padding:0;background-color:#f5f7fb;">',
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f5f7fb;padding:24px 12px;">',
+    '<tr>',
+    '<td align="center">',
+    '<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;background-color:#ffffff;border:1px solid #e5e7eb;border-radius:14px;overflow:hidden;">',
+    '<tr>',
+    '<td style="padding:30px 32px 20px;border-bottom:1px solid #eef2f7;">',
+    '<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#0f172a;font-size:18px;font-weight:700;line-height:1.2;">PreMarket</div>',
+    '<div style="margin-top:6px;display:inline-block;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:12px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:#334155;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:999px;padding:5px 10px;">Proposal Shared</div>',
+    '</td>',
+    '</tr>',
+    '<tr>',
+    '<td style="padding:28px 32px 0;">',
+    `<h1 style="margin:0;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#0f172a;font-size:23px;font-weight:700;line-height:1.32;">${escapedSenderName} shared a proposal with you</h1>`,
+    '</td>',
+    '</tr>',
+    '<tr>',
+    '<td style="padding:24px 32px 0;">',
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;">',
+    '<tr>',
+    '<td style="padding:14px 16px 6px;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:11px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:#64748b;">Proposal</td>',
+    '</tr>',
+    '<tr>',
+    `<td style="padding:0 16px 16px;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:16px;font-weight:600;line-height:1.5;color:#0f172a;">${escapedTitle}</td>`,
+    '</tr>',
+    '</table>',
+    '</td>',
+    '</tr>',
+    '<tr>',
+    '<td style="padding:20px 32px 0;">',
+    '<p style="margin:0 0 8px;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:11px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:#64748b;">Summary</p>',
+    `<p style="margin:0;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:1.65;color:#1e293b;">${escapedSummary}</p>`,
+    '</td>',
+    '</tr>',
+    '<tr>',
+    '<td style="padding:28px 32px 24px;text-align:center;">',
+    `<a href="${escapedShareUrl}" target="_blank" rel="noopener noreferrer" style="display:inline-block;min-width:196px;background:#0f172a;color:#ffffff;text-decoration:none;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:15px;font-weight:600;padding:13px 28px;border-radius:10px;">View Proposal</a>`,
+    '</td>',
+    '</tr>',
+    '<tr>',
+    '<td style="padding:0 32px 30px;">',
+    '<p style="margin:0;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:1.6;color:#64748b;">If the button doesn&apos;t work, open this link:</p>',
+    `<p style="margin:8px 0 0;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:1.6;color:#2563eb;word-break:break-all;">${escapedShareUrl}</p>`,
+    '</td>',
+    '</tr>',
+    '<tr>',
+    '<td style="padding:18px 32px 26px;border-top:1px solid #eef2f7;">',
+    '<p style="margin:0 0 6px;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:1.6;color:#64748b;">This proposal was shared with you via PreMarket.</p>',
+    '<p style="margin:0;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:1.6;color:#64748b;">If you weren&apos;t expecting this email, you can safely ignore it.</p>',
+    '</td>',
+    '</tr>',
+    '</table>',
+    '</td>',
+    '</tr>',
+    '</table>',
+    '</body>',
+    '</html>',
+  ].join('');
+
+  return {
+    subject,
+    text,
+    html,
+  };
 }
 
 function isExpired(expiresAt: Date | string | null) {
@@ -134,26 +505,31 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       throw new ApiError(400, 'invalid_input', 'recipientEmail is required');
     }
 
-    const senderName = asText((auth.user as any)?.name) || asText(auth.user.email) || 'PreMarket';
-    const title = asText(proposal.title) || 'Shared report';
+    const reportMetadata = toObject(link.reportMetadata);
+    const comparisonId = asText(reportMetadata.comparison_id) || asText(proposal.documentComparisonId);
+    const [comparison] = comparisonId
+      ? await db
+          .select()
+          .from(schema.documentComparisons)
+          .where(
+            and(
+              eq(schema.documentComparisons.id, comparisonId),
+              eq(schema.documentComparisons.proposalId, proposal.id),
+            ),
+          )
+          .limit(1)
+      : [null];
+
+    const senderName = normalizeInlineText((auth.user as any)?.name) || asText(auth.user.email) || 'A PreMarket user';
+    const title = normalizeInlineText(proposal.title) || 'Untitled proposal';
     const shareUrl = buildShareUrl(link.token);
-    const subject = `${senderName} shared a report: ${title}`;
-    const textLines = [
-      `${senderName} shared a report with you.`,
-      '',
-      `Title: ${title}`,
-      '',
-      `Open report: ${shareUrl}`,
-    ].join('\n');
-    const html = [
-      `<div style="font-family:Arial,sans-serif;line-height:1.5;color:#0f172a;">`,
-      `<h2 style="margin:0 0 12px;font-size:20px;">${title}</h2>`,
-      `<p style="margin:0 0 12px;">${senderName} shared a report with you on PreMarket.</p>`,
-      `<p style="margin:0 0 20px;">Use the button below to view the shared report.</p>`,
-      `<a href="${shareUrl}" style="display:inline-block;padding:10px 16px;background:#0f172a;color:#ffffff;text-decoration:none;border-radius:8px;">Open Shared Report</a>`,
-      `<p style="margin:20px 0 0;color:#64748b;font-size:12px;">If the button does not work, use this link: ${shareUrl}</p>`,
-      `</div>`,
-    ].join('');
+    const summaryPreview = buildSummaryPreview({ proposal, comparison });
+    const emailContent = buildSharedProposalEmail({
+      senderName,
+      proposalTitle: title,
+      shareUrl,
+      summaryPreview,
+    });
 
     const resend = getResendConfig();
     if (!resend.ready) {
@@ -178,9 +554,9 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     const payload: Record<string, unknown> = {
       from,
       to: [recipientEmail],
-      subject,
-      text: textLines,
-      html,
+      subject: emailContent.subject,
+      text: emailContent.text,
+      html: emailContent.html,
     };
 
     if (resend.replyTo) {

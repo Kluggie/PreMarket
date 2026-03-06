@@ -211,4 +211,211 @@ if (!hasDatabaseUrl()) {
       }
     }
   });
+
+  test('shared report send uses proposal-first email template with contextual subject and summary preview', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = authCookie('shared_report_template_owner', 'sender@example.com');
+    const comparison = await createComparison(ownerCookie, {
+      title: '3',
+      docAText: 'Confidential internal details that should never appear in recipient summaries.',
+      docBText:
+        'A two-phase project to build a unified revenue operations, billing, and usage reporting layer for executive and operations teams. Phase one establishes data governance and pipeline reliability. Phase two delivers stakeholder dashboards and approval workflows.',
+    });
+
+    const createdShare = await createSharedReportLink(
+      ownerCookie,
+      comparison.id,
+      'recipient@example.com',
+    );
+
+    const originalFetch = globalThis.fetch;
+    const originalApiKey = process.env.RESEND_API_KEY;
+    const originalFromEmail = process.env.RESEND_FROM_EMAIL;
+    const originalFromName = process.env.RESEND_FROM_NAME;
+    const originalReplyTo = process.env.RESEND_REPLY_TO;
+
+    process.env.RESEND_API_KEY = 'test_resend_key';
+    process.env.RESEND_FROM_EMAIL = 'notifications@mail.getpremarket.com';
+    process.env.RESEND_FROM_NAME = 'PreMarket';
+    process.env.RESEND_REPLY_TO = 'support@getpremarket.com';
+
+    let capturedPayload = null;
+
+    try {
+      globalThis.fetch = async (url, init) => {
+        if (String(url).includes('api.resend.com')) {
+          capturedPayload = JSON.parse(String(init?.body || '{}'));
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ id: 'resend_template_test' }),
+          };
+        }
+        return originalFetch.call(globalThis, url, init);
+      };
+
+      const sendReq = createMockReq({
+        method: 'POST',
+        url: `/api/sharedReports/${createdShare.token}/send`,
+        headers: { cookie: ownerCookie },
+        query: { token: createdShare.token },
+        body: {
+          recipientEmail: 'recipient@example.com',
+        },
+      });
+      const sendRes = createMockRes();
+      await sharedReportsSendHandler(sendReq, sendRes, createdShare.token);
+
+      assert.equal(sendRes.statusCode, 200);
+      assert.equal(Boolean(capturedPayload), true);
+
+      const subject = String(capturedPayload?.subject || '');
+      assert.equal(subject === '3', false);
+      assert.equal(subject.includes('3'), true);
+      assert.equal(subject.toLowerCase().includes('shared'), true);
+      assert.equal(subject.toLowerCase().includes('premarket'), true);
+
+      const text = String(capturedPayload?.text || '');
+      assert.equal(text.includes('shared a proposal with you on PreMarket'), true);
+      assert.equal(text.includes('Proposal\n3'), true);
+      assert.equal(text.includes('Summary'), true);
+      assert.equal(text.includes('View Proposal:'), true);
+      assert.equal(text.toLowerCase().includes('shared a report'), false);
+      assert.equal(text.includes('Open Shared Report'), false);
+      assert.equal(text.includes('Shared by:'), false);
+
+      const summaryMatch = text.match(/Summary\n(.+)\n\nView Proposal:/);
+      assert.equal(Boolean(summaryMatch && summaryMatch[1]), true);
+      assert.equal(String(summaryMatch?.[1] || '').length <= 183, true);
+
+      const html = String(capturedPayload?.html || '');
+      assert.equal(html.includes('View Proposal'), true);
+      assert.equal(html.includes('Summary'), true);
+      assert.equal(html.includes('shared a proposal with you'), true);
+      assert.equal(html.includes('Open Shared Report'), false);
+      assert.equal(html.toLowerCase().includes('shared a report'), false);
+      assert.equal(html.includes('Shared by:'), false);
+    } finally {
+      globalThis.fetch = originalFetch;
+
+      if (originalApiKey !== undefined) {
+        process.env.RESEND_API_KEY = originalApiKey;
+      } else {
+        delete process.env.RESEND_API_KEY;
+      }
+
+      if (originalFromEmail !== undefined) {
+        process.env.RESEND_FROM_EMAIL = originalFromEmail;
+      } else {
+        delete process.env.RESEND_FROM_EMAIL;
+      }
+
+      if (originalFromName !== undefined) {
+        process.env.RESEND_FROM_NAME = originalFromName;
+      } else {
+        delete process.env.RESEND_FROM_NAME;
+      }
+
+      if (originalReplyTo !== undefined) {
+        process.env.RESEND_REPLY_TO = originalReplyTo;
+      } else {
+        delete process.env.RESEND_REPLY_TO;
+      }
+    }
+  });
+
+  test('shared report send avoids system-label summaries and falls back to recipient-safe language', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = authCookie('shared_report_summary_owner', 'sender@example.com');
+    const comparison = await createComparison(ownerCookie, {
+      title: 'Label Summary Test',
+      docAText: 'Confidential details that must never appear in recipient-facing email copy.',
+      docBText: 'Document comparison workflow',
+    });
+
+    const createdShare = await createSharedReportLink(
+      ownerCookie,
+      comparison.id,
+      'recipient@example.com',
+    );
+
+    const originalFetch = globalThis.fetch;
+    const originalApiKey = process.env.RESEND_API_KEY;
+    const originalFromEmail = process.env.RESEND_FROM_EMAIL;
+    const originalFromName = process.env.RESEND_FROM_NAME;
+    const originalReplyTo = process.env.RESEND_REPLY_TO;
+
+    process.env.RESEND_API_KEY = 'test_resend_key';
+    process.env.RESEND_FROM_EMAIL = 'notifications@mail.getpremarket.com';
+    process.env.RESEND_FROM_NAME = 'PreMarket';
+    process.env.RESEND_REPLY_TO = 'support@getpremarket.com';
+
+    let capturedPayload = null;
+
+    try {
+      globalThis.fetch = async (url, init) => {
+        if (String(url).includes('api.resend.com')) {
+          capturedPayload = JSON.parse(String(init?.body || '{}'));
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ id: 'resend_summary_test' }),
+          };
+        }
+        return originalFetch.call(globalThis, url, init);
+      };
+
+      const sendReq = createMockReq({
+        method: 'POST',
+        url: `/api/sharedReports/${createdShare.token}/send`,
+        headers: { cookie: ownerCookie },
+        query: { token: createdShare.token },
+        body: {
+          recipientEmail: 'recipient@example.com',
+        },
+      });
+      const sendRes = createMockRes();
+      await sharedReportsSendHandler(sendReq, sendRes, createdShare.token);
+      assert.equal(sendRes.statusCode, 200);
+
+      const text = String(capturedPayload?.text || '');
+      const summaryMatch = text.match(/Summary\n(.+)\n\nView Proposal:/);
+      const preview = String(summaryMatch?.[1] || '').trim();
+      assert.equal(preview.toLowerCase().includes('document comparison workflow'), false);
+      assert.equal(
+        preview,
+        'A business proposal has been shared with you for review on PreMarket.',
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+
+      if (originalApiKey !== undefined) {
+        process.env.RESEND_API_KEY = originalApiKey;
+      } else {
+        delete process.env.RESEND_API_KEY;
+      }
+
+      if (originalFromEmail !== undefined) {
+        process.env.RESEND_FROM_EMAIL = originalFromEmail;
+      } else {
+        delete process.env.RESEND_FROM_EMAIL;
+      }
+
+      if (originalFromName !== undefined) {
+        process.env.RESEND_FROM_NAME = originalFromName;
+      } else {
+        delete process.env.RESEND_FROM_NAME;
+      }
+
+      if (originalReplyTo !== undefined) {
+        process.env.RESEND_REPLY_TO = originalReplyTo;
+      } else {
+        delete process.env.RESEND_REPLY_TO;
+      }
+    }
+  });
 }
