@@ -87,9 +87,15 @@ function convertV2ResponseToEvaluation(v2Result: any): Record<string, unknown> {
     ? data.redactions.map((entry: unknown) => asText(entry)).filter(Boolean)
     : [];
   const generatedAt = new Date().toISOString();
+  const generationModel =
+    asText(v2Result?.generation_model) ||
+    asText(process.env.VERTEX_DOC_COMPARE_GENERATION_MODEL) ||
+    asText(process.env.VERTEX_MODEL) ||
+    'gemini-2.5-pro';
+  const providerModel = asText(v2Result?.model) || generationModel;
   return {
     provider: 'vertex',
-    model: asText(v2Result?.model) || process.env.VERTEX_MODEL || 'gemini-2.0-flash-001',
+    model: providerModel,
     generatedAt,
     score: Math.round(normalizedConfidence * 100),
     confidence: normalizedConfidence,
@@ -117,7 +123,8 @@ function convertV2ResponseToEvaluation(v2Result: any): Record<string, unknown> {
       recommendation,
     },
     evaluation_provider: 'vertex',
-    evaluation_model: asText(v2Result?.model) || process.env.VERTEX_MODEL || 'gemini-2.0-flash-001',
+    evaluation_model: generationModel,
+    evaluation_provider_model: providerModel,
     evaluation_provider_reason: null,
   };
 }
@@ -331,6 +338,9 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
             sharedText,
             confidentialText: confidentialBundle,
             requestId: context?.requestId || undefined,
+            generationModel: asText(process.env.VERTEX_DOC_COMPARE_GENERATION_MODEL) || undefined,
+            verifierModel: asText(process.env.VERTEX_DOC_COMPARE_VERIFIER_MODEL) || undefined,
+            extractModel: asText(process.env.VERTEX_DOC_COMPARE_EXTRACT_MODEL) || undefined,
           });
         } catch (unexpectedError: any) {
           v2Result = {

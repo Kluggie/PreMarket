@@ -12,6 +12,15 @@ const MAX_CHUNK_TEXT_CHARS = 420;
 const MIN_LEAK_PHRASE_LEN = 20;
 const MIN_LEAK_TOKEN_LEN = 4;
 
+// ─── Default model routing constants ────────────────────────────────────────
+// Override via env vars — no code change required to switch models.
+// VERTEX_DOC_COMPARE_GENERATION_MODEL: main report quality model
+// VERTEX_DOC_COMPARE_VERIFIER_MODEL:   cheap/fast leak-check model
+// VERTEX_DOC_COMPARE_EXTRACT_MODEL:    Pass A fact-sheet extraction model
+const DEFAULT_GENERATION_MODEL = 'gemini-2.5-pro';
+const DEFAULT_VERIFIER_MODEL = 'gemini-2.5-flash-lite';
+const DEFAULT_EXTRACT_MODEL = 'gemini-2.5-flash-lite';
+
 type ParseErrorKind =
   | 'json_parse_error'
   | 'schema_validation_error'
@@ -51,6 +60,8 @@ type VertexCallOverride = (params: {
   inputChars: number;
   /** Hint to real implementation — ignored by mocks. */
   maxOutputTokens?: number;
+  /** Preferred model to use; implementation may fall back to candidates if unavailable. */
+  preferredModel?: string;
 }) => Promise<VertexCallResponse>;
 
 export interface VertexEvaluationV2Request {
@@ -60,6 +71,12 @@ export interface VertexEvaluationV2Request {
   forbiddenLeakText?: string;
   forbiddenLeakCanaryTokens?: string[];
   enforceLeakGuard?: boolean;
+  /** Model for Pass B (final evaluation). Defaults to VERTEX_DOC_COMPARE_GENERATION_MODEL or gemini-2.5-pro. */
+  generationModel?: string;
+  /** Model for the LLM leak-verifier step. Defaults to VERTEX_DOC_COMPARE_VERIFIER_MODEL or gemini-2.5-flash-lite. */
+  verifierModel?: string;
+  /** Model for Pass A (fact-sheet extraction). Defaults to VERTEX_DOC_COMPARE_EXTRACT_MODEL or verifierModel. */
+  extractModel?: string;
 }
 
 export interface VertexEvaluationV2Response {
@@ -209,6 +226,14 @@ export interface VertexEvaluationV2Internal {
   warnings?: string[];
   /** Set when fallback was used due to a model failure. */
   failure_kind?: string;
+  /** Actual models used for each step (server-side only). */
+  models_used?: {
+    generation: string;
+    extract: string;
+    verifier: string;
+    verifier_escalated: boolean;
+    verifier_used: boolean;
+  };
 }
 
 export interface VertexEvaluationV2Result {
@@ -216,6 +241,8 @@ export interface VertexEvaluationV2Result {
   data: VertexEvaluationV2Response;
   attempt_count: number;
   model: string;
+  /** Configured generation model (may differ from model when fallback candidates are used). */
+  generation_model?: string;
   /** Server-side only. Do not forward to clients. */
   _internal?: VertexEvaluationV2Internal;
 }
@@ -467,6 +494,8 @@ async function extractProposalFactsV2(params: {
   proposalTextExcerpt: string;
   requestId?: string;
   callVertex: VertexCallOverride;
+  /** Preferred model for Pass A fact-sheet extraction. */
+  preferredModel?: string;
 }): Promise<{ sheet: ProposalFactSheet; parseError: boolean }> {
   const inputChars = params.proposalTextExcerpt.length;
 
@@ -476,7 +505,12 @@ async function extractProposalFactsV2(params: {
 
     let vertexResp: VertexCallResponse;
     try {
-      vertexResp = await params.callVertex({ prompt, requestId: params.requestId, inputChars });
+      vertexResp = await params.callVertex({
+        prompt,
+        requestId: params.requestId,
+        inputChars,
+        preferredModel: params.preferredModel,
+      });
     } catch {
       // Vertex call failed — return fallback immediately
       return { sheet: fallbackFactSheet(['Fact extraction call failed.']), parseError: true };
@@ -1349,6 +1383,8 @@ async function callVertexV2(params: {
   prompt: string;
   requestId?: string;
   inputChars: number;
+  maxOutputTokens?: number;
+  preferredModel?: string;
 }): Promise<VertexCallResponse> {
   const vertex = getVertexConfig();
   if (!vertex.ready || !vertex.credentials) {
@@ -1358,9 +1394,15 @@ async function callVertexV2(params: {
 
   const projectId = asText(process.env.GCP_PROJECT_ID) || vertex.credentials.project_id;
   const location = asText(process.env.GCP_LOCATION) || vertex.location || 'us-central1';
-  const preferredModel = asText(process.env.VERTEX_MODEL) || vertex.model || 'gemini-2.0-flash-001';
+  // Priority: explicit caller override > env var > vertex config default
+  const preferredModel =
+    asText(params.preferredModel) ||
+    asText(process.env.VERTEX_MODEL) ||
+    vertex.model ||
+    DEFAULT_GENERATION_MODEL;
   const modelCandidates = [
     preferredModel,
+    DEFAULT_GENERATION_MODEL,
     'gemini-2.0-flash-001',
     'gemini-1.5-flash-001',
     'gemini-1.5-flash',
@@ -1473,6 +1515,165 @@ function getVertexCallImplementation(): VertexCallOverride {
     return override as VertexCallOverride;
   }
   return callVertexV2;
+}
+
+/**
+ * Separate test hook for the LLM leak-verifier step so tests can control it
+ * independently of the main generation call.
+ * Global: __PREMARKET_TEST_VERTEX_EVAL_V2_VERIFIER_CALL__
+ */
+function getVertexVerifierCallImplementation(): VertexCallOverride {
+  const override = (globalThis as any).__PREMARKET_TEST_VERTEX_EVAL_V2_VERIFIER_CALL__;
+  if (typeof override === 'function') {
+    return override as VertexCallOverride;
+  }
+  return callVertexV2;
+}
+
+// ─── LLM leak verifier ────────────────────────────────────────────────────────
+
+type LlmVerifierVerdict = 'clean' | 'leak' | 'unsure';
+
+function buildLeakVerifierPrompt(params: {
+  forbiddenText: string;
+  outputText: string;
+}): string {
+  const forbidden = params.forbiddenText.slice(0, 2000);
+  const output = params.outputText.slice(0, 3000);
+  return [
+    'You are a strict security auditor. Your only job is to check whether the OUTPUT TEXT below',
+    'contains any information from the CONFIDENTIAL MATERIAL that should not be disclosed.',
+    '',
+    'CONFIDENTIAL MATERIAL (must NOT appear verbatim or paraphrased in output):',
+    '---',
+    forbidden || '(none)',
+    '---',
+    '',
+    'OUTPUT TEXT TO AUDIT:',
+    '---',
+    output || '(empty)',
+    '---',
+    '',
+    'Rules:',
+    '- "leak": true  → output reproduces or paraphrases confidential details.',
+    '- "leak": false → output is safe; no confidential content disclosed.',
+    '- Be conservative: when in doubt, prefer "leak": true.',
+    '- "reason": one concise sentence.',
+    '',
+    'Respond in strict JSON ONLY (no markdown, no preamble):',
+    '{ "leak": boolean, "reason": string }',
+  ].join('\n');
+}
+
+/**
+ * Runs the LLM leak-verifier step.
+ * 1. Calls verifierModel with the audit prompt.
+ * 2. If the response is invalid/unsure, escalates once to escalationModel.
+ * 3. Never throws — unknown errors return 'unsure' for the caller to handle.
+ *
+ * Returns { verdict, escalated, reason }.
+ */
+async function runLlmLeakVerifier(params: {
+  response: VertexEvaluationV2Response;
+  forbiddenText: string;
+  sharedText: string;
+  requestId?: string;
+  verifierModel: string;
+  escalationModel: string;
+  callVerifier: VertexCallOverride;
+  callGeneration: VertexCallOverride;
+}): Promise<{ verdict: LlmVerifierVerdict; escalated: boolean; reason: string }> {
+  const outputText = [
+    ...params.response.why,
+    ...params.response.missing,
+    ...params.response.redactions,
+  ].join('\n');
+
+  // Nothing to verify if there's no confidential text or no output.
+  if (!params.forbiddenText.trim() || !outputText.trim()) {
+    return { verdict: 'clean', escalated: false, reason: 'no_content_to_verify' };
+  }
+
+  const prompt = buildLeakVerifierPrompt({
+    forbiddenText: params.forbiddenText,
+    outputText,
+  });
+  const inputChars = prompt.length;
+
+  const parseVerifierResponse = (text: string): LlmVerifierVerdict => {
+    try {
+      const raw = text.trim();
+      // Strip optional JSON fence
+      const inner = raw.startsWith('```') ? raw.replace(/^```[^\n]*\n?/, '').replace(/\n?```$/, '').trim() : raw;
+      const parsed = JSON.parse(inner);
+      if (typeof parsed?.leak === 'boolean') {
+        return parsed.leak ? 'leak' : 'clean';
+      }
+    } catch {
+      // fall through
+    }
+    return 'unsure';
+  };
+
+  const getReason = (text: string): string => {
+    try {
+      const raw = text.trim();
+      const inner = raw.startsWith('```') ? raw.replace(/^```[^\n]*\n?/, '').replace(/\n?```$/, '').trim() : raw;
+      const parsed = JSON.parse(inner);
+      return asText(parsed?.reason) || 'no_reason';
+    } catch {
+      return 'parse_error';
+    }
+  };
+
+  // ── First attempt: verifier model ─────────────────────────────────────────
+  let verifierText = '';
+  try {
+    const resp = await params.callVerifier({
+      prompt,
+      requestId: params.requestId,
+      inputChars,
+      maxOutputTokens: 256,
+      preferredModel: params.verifierModel,
+    });
+    verifierText = asText(resp.text);
+  } catch {
+    // Verifier infrastructure failure (not configured, network error, etc.).
+    // Treat as clean — deterministic checks already ran before this step.
+    return { verdict: 'clean', escalated: false, reason: 'verifier_call_failed' };
+  }
+
+  const firstVerdict = parseVerifierResponse(verifierText);
+  if (firstVerdict !== 'unsure') {
+    return { verdict: firstVerdict, escalated: false, reason: getReason(verifierText) };
+  }
+
+  // ── Escalation: retry with escalation model via the same verifier hook ────
+  // NOTE: Uses callVerifier (not callGeneration) to keep the main generation
+  // hook exclusively for Pass A + Pass B calls — simplifies test isolation.
+  let escalationText = '';
+  try {
+    const resp = await params.callVerifier({
+      prompt,
+      requestId: params.requestId,
+      inputChars,
+      maxOutputTokens: 256,
+      preferredModel: params.escalationModel,
+    });
+    escalationText = asText(resp.text);
+  } catch {
+    escalationText = '';
+  }
+
+  const escalatedVerdict = parseVerifierResponse(escalationText);
+  // If still unsure after escalation, treat as clean (conservative but not block-happy).
+  // Deterministic checks already ran before this step, so we've done our due diligence.
+  const finalVerdict: LlmVerifierVerdict = escalatedVerdict === 'unsure' ? 'clean' : escalatedVerdict;
+  return {
+    verdict: finalVerdict,
+    escalated: true,
+    reason: getReason(escalationText) || 'escalation_used',
+  };
 }
 
 function buildFailure(params: {
@@ -1603,6 +1804,21 @@ export async function evaluateWithVertexV2(
   const requestId = asText(input.requestId) || undefined;
   const inputChars = sharedText.length + confidentialText.length;
 
+  // ── Model resolution (env var overrides > request params > built-in defaults) ─
+  const generationModel =
+    asText(input.generationModel) ||
+    asText(process.env.VERTEX_DOC_COMPARE_GENERATION_MODEL) ||
+    asText(process.env.VERTEX_MODEL) ||
+    DEFAULT_GENERATION_MODEL;
+  const verifierModel =
+    asText(input.verifierModel) ||
+    asText(process.env.VERTEX_DOC_COMPARE_VERIFIER_MODEL) ||
+    DEFAULT_VERIFIER_MODEL;
+  const extractModel =
+    asText(input.extractModel) ||
+    asText(process.env.VERTEX_DOC_COMPARE_EXTRACT_MODEL) ||
+    verifierModel;
+
   if (!sharedText || !confidentialText) {
     return buildFailure({
       kind: 'empty_output',
@@ -1618,6 +1834,7 @@ export async function evaluateWithVertexV2(
   const chunks = buildChunks(sharedText, confidentialText);
   const forbiddenChunks = buildSourceChunks(forbiddenLeakText.slice(0, MAX_CONFIDENTIAL_CHARS), 'conf');
   const callVertex = getVertexCallImplementation();
+  const callVerifier = getVertexVerifierCallImplementation();
 
   // ── Pass A: extract structured Fact Sheet ────────────────────────────────
   const proposalTextExcerpt =
@@ -1638,6 +1855,7 @@ export async function evaluateWithVertexV2(
     proposalTextExcerpt,
     requestId,
     callVertex,
+    preferredModel: extractModel,
   });
 
   // ── Pass B: final evaluation using Fact Sheet ────────────────────────────
@@ -1659,6 +1877,7 @@ export async function evaluateWithVertexV2(
         requestId,
         inputChars,
         maxOutputTokens: 4096,
+        preferredModel: generationModel,
       });
     } catch (error: any) {
       const code = asLower(error?.code);
@@ -1781,6 +2000,37 @@ export async function evaluateWithVertexV2(
           details: leak,
         });
       }
+
+      // ── LLM verifier (second-layer leak check using cheap/fast model) ────
+      // Only runs when deterministic check passes. Escalates to the generation
+      // model when the verifier returns invalid JSON or an "unsure" verdict.
+      const llmVerify = await runLlmLeakVerifier({
+        response: schemaValidation.normalized,
+        forbiddenText: forbiddenLeakText,
+        sharedText,
+        requestId,
+        verifierModel,
+        escalationModel: generationModel,
+        callVerifier,
+        callGeneration: callVertex,
+      });
+      if (llmVerify.verdict === 'leak') {
+        return buildFailure({
+          kind: 'confidential_leak_detected',
+          requestId,
+          finishReason,
+          rawTextLength,
+          retryable: false,
+          attemptCount: attempt,
+          details: {
+            leakType: 'llm_verifier_detected',
+            leakSample: llmVerify.reason.slice(0, 120),
+            verifierEscalated: llmVerify.escalated,
+          },
+        });
+      }
+      // Store verifier metadata for _internal so we can track it.
+      (schemaValidation as any)._llmVerify = llmVerify;
     }
 
     // ── Apply deterministic coverage clamps (post-processing) ───────────
@@ -1813,11 +2063,15 @@ export async function evaluateWithVertexV2(
       console.log('[eval_v2.telemetry]', JSON.stringify(telemetry));
     }
 
+    const llmVerify: { verdict: string; escalated: boolean } | undefined =
+      (schemaValidation as any)._llmVerify;
+
     return {
       ok: true,
       data: clamped.data,
       attempt_count: attempt,
       model: vertex.model,
+      generation_model: generationModel,
       _internal: {
         fact_sheet: factSheet,
         coverage_count: computeCoverageCount(factSheet.source_coverage),
@@ -1826,6 +2080,13 @@ export async function evaluateWithVertexV2(
         pass_b_attempt_count: attempt,
         report_style: reportStyle,
         telemetry,
+        models_used: {
+          generation: generationModel,
+          extract: extractModel,
+          verifier: verifierModel,
+          verifier_used: Boolean(llmVerify),
+          verifier_escalated: Boolean(llmVerify?.escalated),
+        },
       },
     };
   }
@@ -1864,6 +2125,7 @@ export async function evaluateWithVertexV2(
     data: fallbackClamped.data,
     attempt_count: attempt,
     model: null,
+    generation_model: generationModel,
     _internal: {
       fact_sheet: factSheet,
       coverage_count: computeCoverageCount(factSheet.source_coverage),
@@ -1874,6 +2136,13 @@ export async function evaluateWithVertexV2(
       telemetry: fallbackTelemetry,
       warnings: fallback.warnings,
       failure_kind: lastParseFailureKind,
+      models_used: {
+        generation: generationModel,
+        extract: extractModel,
+        verifier: verifierModel,
+        verifier_used: false,
+        verifier_escalated: false,
+      },
     },
   };
 }

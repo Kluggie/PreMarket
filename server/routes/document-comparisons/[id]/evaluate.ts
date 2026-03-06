@@ -778,6 +778,13 @@ function convertV2ResponseToEvaluation(v2Result: any): Record<string, unknown> {
     ? data.redactions.map((entry: unknown) => asText(entry)).filter(Boolean)
     : [];
   const generatedAt = new Date().toISOString();
+  // generation_model = what was configured/intended; model = what Vertex actually used
+  const generationModel =
+    asText(v2Result?.generation_model) ||
+    asText(process.env.VERTEX_DOC_COMPARE_GENERATION_MODEL) ||
+    asText(process.env.VERTEX_MODEL) ||
+    'gemini-2.5-pro';
+  const providerModel = asText(v2Result?.model) || generationModel;
   const report = {
     report_format: 'v2' as const,
     fit_level: fitLevel === 'high' || fitLevel === 'medium' || fitLevel === 'low' ? fitLevel : 'unknown',
@@ -801,7 +808,7 @@ function convertV2ResponseToEvaluation(v2Result: any): Record<string, unknown> {
   };
   return {
     provider: 'vertex',
-    model: asText(v2Result?.model) || process.env.VERTEX_MODEL || 'gemini-2.0-flash-001',
+    model: providerModel,
     generatedAt: generatedAt,
     score: Math.round(normalizedConfidence * 100),
     confidence: normalizedConfidence,
@@ -809,7 +816,8 @@ function convertV2ResponseToEvaluation(v2Result: any): Record<string, unknown> {
     summary: why[0] || 'Evaluation complete',
     report,
     evaluation_provider: 'vertex',
-    evaluation_model: asText(v2Result?.model) || process.env.VERTEX_MODEL || 'gemini-2.0-flash-001',
+    evaluation_model: generationModel,
+    evaluation_provider_model: providerModel,
     evaluation_provider_reason: null,
   };
 }
@@ -1364,7 +1372,9 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
               comparisonId: existing.id,
               attempt: attemptCount,
               engine,
-              model: vertexConfig.model || process.env.VERTEX_MODEL || null,
+              model: asText(process.env.VERTEX_DOC_COMPARE_GENERATION_MODEL) || vertexConfig.model || process.env.VERTEX_MODEL || null,
+              generation_model: asText(process.env.VERTEX_DOC_COMPARE_GENERATION_MODEL) || 'gemini-2.5-pro',
+              verifier_model: asText(process.env.VERTEX_DOC_COMPARE_VERIFIER_MODEL) || 'gemini-2.5-flash-lite',
               region: vertexConfig.location || process.env.GCP_LOCATION || null,
               prompt_length: null,
               total_input_chars: confidentialLength + sharedLength,
@@ -1384,6 +1394,11 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
               confidentialText: draft.docAText || '',
               requestId,
               enforceLeakGuard: false,
+              // Model routing — resolved inside the lib via env vars if not set here.
+              // Providing them explicitly lets the route override via query/body in future.
+              generationModel: asText(process.env.VERTEX_DOC_COMPARE_GENERATION_MODEL) || undefined,
+              verifierModel: asText(process.env.VERTEX_DOC_COMPARE_VERIFIER_MODEL) || undefined,
+              extractModel: asText(process.env.VERTEX_DOC_COMPARE_EXTRACT_MODEL) || undefined,
             });
           } catch (unexpectedError: any) {
             console.error(
