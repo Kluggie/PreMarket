@@ -154,7 +154,12 @@ function coercePayloadToDocument(payload, fallbackLabel, fallbackText = '') {
   const directText = asText(safePayload.text);
   const notesText = asText(safePayload.notes);
   const text = directText || notesText || asText(fallbackText) || htmlToText(asText(safePayload.html));
-  const html = sanitizeEditorHtml(asText(safePayload.html) || textToHtml(text));
+  const rawHtml = asText(safePayload.html);
+  const sanitizedHtml = sanitizeEditorHtml(rawHtml || '');
+  const html =
+    asText(htmlToText(sanitizedHtml)).length > 0
+      ? sanitizedHtml
+      : sanitizeEditorHtml(textToHtml(text));
   const json = parseDocJson(safePayload.json);
   const source = asText(safePayload.source) || 'typed';
   const files = Array.isArray(safePayload.files) ? safePayload.files : [];
@@ -320,7 +325,7 @@ export default function SharedReport() {
   const [verificationCode, setVerificationCode] = useState('');
   const [verificationRequested, setVerificationRequested] = useState(false);
   const [forcedMismatchInvitedEmail, setForcedMismatchInvitedEmail] = useState('');
-  const [recipientDetailTab, setRecipientDetailTab] = useState('overview');
+  const [recipientDetailTab, setRecipientDetailTab] = useState('details');
 
   const docAInputFileRef = useRef(null);
   const docBInputFileRef = useRef(null);
@@ -357,15 +362,6 @@ export default function SharedReport() {
         String(baselineSharedPayload?.text || ''),
       ),
     [baselineSharedPayload],
-  );
-  const baselineConfidentialDocument = useMemo(
-    () =>
-      coercePayloadToDocument(
-        baselineConfidentialPayload,
-        CONFIDENTIAL_LABEL,
-        String(baselineConfidentialPayload?.text || baselineConfidentialPayload?.notes || ''),
-      ),
-    [baselineConfidentialPayload],
   );
   const recipientSharedDocument = useMemo(
     () =>
@@ -407,7 +403,7 @@ export default function SharedReport() {
     setVerificationCode('');
     setVerificationRequested(false);
     setForcedMismatchInvitedEmail('');
-    setRecipientDetailTab('overview');
+    setRecipientDetailTab('details');
   }, [token]);
 
   useEffect(
@@ -603,6 +599,30 @@ export default function SharedReport() {
     },
   });
 
+  const downloadSharedProposalPdfMutation = useMutation({
+    mutationFn: () => sharedReportsClient.downloadRecipientProposalPdf(token),
+    onSuccess: () => {
+      toast.success('Proposal PDF download started');
+    },
+    onError: (error) => {
+      toast.error(error?.message || 'Unable to download proposal PDF');
+    },
+  });
+
+  const downloadSharedAiReportPdfMutation = useMutation({
+    mutationFn: () => sharedReportsClient.downloadRecipientAiReportPdf(token),
+    onSuccess: () => {
+      toast.success('AI report PDF download started');
+    },
+    onError: (error) => {
+      if (error?.code === 'not_configured' || Number(error?.status || 0) === 501) {
+        toast.error('AI report PDF is not configured in this environment yet.');
+        return;
+      }
+      toast.error(error?.message || 'Unable to download AI report PDF');
+    },
+  });
+
   const applyImportedContent = (side, file, extracted) => {
     const rawText = asText(extracted?.text) || htmlToText(extracted?.html || '');
     const html = sanitizeEditorHtml(asText(extracted?.html) || textToHtml(rawText));
@@ -775,7 +795,10 @@ export default function SharedReport() {
   const step3OverviewBullets = buildOverviewBullets(updatedRecipientReport);
   const latestEvaluationStatus = asText(latestEvaluation?.status).toLowerCase();
   const latestEvaluationErrorCode = asText(
-    latestEvaluation?.result?.error?.code || latestEvaluation?.error?.code,
+    latestEvaluation?.error_code ||
+      latestEvaluation?.result_json?.error?.code ||
+      latestEvaluation?.result?.error?.code ||
+      latestEvaluation?.error?.code,
   ).toLowerCase();
   const step3IsEvaluationRunning =
     evaluateMutation.isPending ||
@@ -786,9 +809,15 @@ export default function SharedReport() {
   const step3IsEvaluationFailed =
     !step3IsEvaluationRunning &&
     !step3IsEvaluationNotConfigured &&
-    (latestEvaluationStatus === 'failed' || Boolean(latestEvaluation?.result?.error));
+    (latestEvaluationStatus === 'failed' ||
+      latestEvaluationStatus === 'error' ||
+      Boolean(latestEvaluationErrorCode));
   const step3EvaluationFailureMessage =
-    asText(latestEvaluation?.result?.error?.message) || 'Evaluation failed. Please retry.';
+    asText(
+      latestEvaluation?.error_message ||
+        latestEvaluation?.result_json?.error?.message ||
+        latestEvaluation?.result?.error?.message,
+    ) || 'Evaluation failed. Please retry.';
   const baseTimelineItems = [
     {
       id: 'created',
@@ -1066,10 +1095,37 @@ export default function SharedReport() {
 
         {step === 0 ? (
           <div className="space-y-6">
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => downloadSharedProposalPdfMutation.mutate()}
+                disabled={downloadSharedProposalPdfMutation.isPending}
+              >
+                {downloadSharedProposalPdfMutation.isPending ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : null}
+                Download Proposal PDF
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => downloadSharedAiReportPdfMutation.mutate()}
+                disabled={downloadSharedAiReportPdfMutation.isPending}
+              >
+                {downloadSharedAiReportPdfMutation.isPending ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : null}
+                Download AI Report PDF
+              </Button>
+            </div>
+
             <ComparisonDetailTabs
               activeTab={recipientDetailTab}
               onTabChange={setRecipientDetailTab}
               hasReportBadge={hasStep0Report}
+              tabOrder={['details', 'overview', 'report']}
+              detailsTabLabel="Proposal"
               overviewProps={{
                 recommendation: step0Recommendation,
                 overviewBullets: step0OverviewBullets,
@@ -1102,12 +1158,14 @@ export default function SharedReport() {
               }}
               proposalDetailsProps={{
                 description: 'Read-only baseline proposal content shared by the proposer.',
-                leftLabel: baselineConfidentialDocument.label || CONFIDENTIAL_LABEL,
-                rightLabel: baselineSharedDocument.label || SHARED_LABEL,
-                leftText: baselineConfidentialDocument.text || '',
-                leftHtml: baselineConfidentialDocument.html || '',
-                rightText: baselineSharedDocument.text || '',
-                rightHtml: baselineSharedDocument.html || '',
+                documents: [
+                  {
+                    label: baselineSharedDocument.label || 'Proposal',
+                    text: baselineSharedDocument.text || '',
+                    html: baselineSharedDocument.html || '',
+                    badges: [baselineSharedDocument.source || 'typed'],
+                  },
+                ],
               }}
             />
 
@@ -1358,6 +1416,8 @@ export default function SharedReport() {
               activeTab={recipientDetailTab}
               onTabChange={setRecipientDetailTab}
               hasReportBadge={hasStep3Report}
+              tabOrder={['details', 'overview', 'report']}
+              detailsTabLabel="Proposal"
               overviewProps={{
                 recommendation: step3Recommendation,
                 overviewBullets: step3OverviewBullets,

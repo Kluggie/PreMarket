@@ -15,6 +15,23 @@ function asText(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function stripHtml(value) {
+  return String(value || '')
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, ' ')
+    .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, ' ')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|section|article|h[1-6]|li|tr)>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export function toSummaryLines(value) {
   if (!Array.isArray(value)) {
     return [];
@@ -62,12 +79,13 @@ export function buildOverviewBullets(report, maxBullets = 6) {
 export function renderDocumentReadOnly({ text, html }) {
   const safeText = String(text || '').trim();
   const safeHtml = asText(html);
+  const safeHtmlText = stripHtml(safeHtml);
 
   if (!safeText && !safeHtml) {
     return <p className="text-sm text-slate-500 italic">No text available.</p>;
   }
 
-  if (safeHtml) {
+  if (safeHtml && safeHtmlText) {
     return (
       <div
         className="text-sm text-slate-800 leading-relaxed"
@@ -394,7 +412,9 @@ function DocumentPanel({ label, text, html, badges = [] }) {
 }
 
 export function ComparisonProposalDetailsTab({
+  title = 'Complete Proposal Details',
   description = 'Read-only document content for both information documents.',
+  documents = [],
   leftLabel = 'Confidential Information',
   rightLabel = 'Shared Information',
   leftText = '',
@@ -404,15 +424,42 @@ export function ComparisonProposalDetailsTab({
   leftBadges = [],
   rightBadges = [],
 }) {
+  const normalizedDocuments = Array.isArray(documents)
+    ? documents
+        .map((doc) => ({
+          label: asText(doc?.label) || 'Proposal',
+          text: asText(doc?.text),
+          html: asText(doc?.html),
+          badges: Array.isArray(doc?.badges) ? doc.badges : [],
+        }))
+        .filter((doc) => doc.label || doc.text || doc.html)
+    : [];
+  const resolvedDocuments =
+    normalizedDocuments.length > 0
+      ? normalizedDocuments
+      : [
+          { label: leftLabel, text: leftText, html: leftHtml, badges: leftBadges },
+          { label: rightLabel, text: rightText, html: rightHtml, badges: rightBadges },
+        ];
+
   return (
     <Card className="border border-slate-200 shadow-sm">
       <CardHeader>
-        <CardTitle>Complete Proposal Details</CardTitle>
+        <CardTitle>{title}</CardTitle>
         <p className="text-slate-500">{description}</p>
       </CardHeader>
-      <CardContent className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <DocumentPanel label={leftLabel} text={leftText} html={leftHtml} badges={leftBadges} />
-        <DocumentPanel label={rightLabel} text={rightText} html={rightHtml} badges={rightBadges} />
+      <CardContent
+        className={`grid grid-cols-1 gap-6 ${resolvedDocuments.length > 1 ? 'lg:grid-cols-2' : ''}`}
+      >
+        {resolvedDocuments.map((doc, index) => (
+          <DocumentPanel
+            key={`${doc.label}-${index}`}
+            label={doc.label}
+            text={doc.text}
+            html={doc.html}
+            badges={doc.badges}
+          />
+        ))}
       </CardContent>
     </Card>
   );
@@ -422,35 +469,60 @@ export function ComparisonDetailTabs({
   activeTab = 'overview',
   onTabChange,
   hasReportBadge = false,
+  tabOrder = ['overview', 'report', 'details'],
+  detailsTabLabel = 'Complete Proposal Details',
   overviewProps = {},
   aiReportProps = {},
   proposalDetailsProps = {},
 }) {
+  const orderedTabs = Array.isArray(tabOrder)
+    ? tabOrder.filter((tab, index, source) => ['overview', 'report', 'details'].includes(tab) && source.indexOf(tab) === index)
+    : ['overview', 'report', 'details'];
+
   return (
     <Tabs value={activeTab} onValueChange={onTabChange}>
       <TabsList className="bg-white border border-slate-200 p-1">
-        <TabsTrigger
-          value="overview"
-          className="data-[state=active]:bg-slate-900 data-[state=active]:text-white"
-        >
-          <FileText className="w-4 h-4 mr-2" />
-          Overview
-        </TabsTrigger>
-        <TabsTrigger
-          value="report"
-          className="data-[state=active]:bg-slate-900 data-[state=active]:text-white"
-        >
-          <BarChart3 className="w-4 h-4 mr-2" />
-          AI Report
-          {hasReportBadge ? <Badge className="ml-2 bg-green-100 text-green-700 text-xs">Complete</Badge> : null}
-        </TabsTrigger>
-        <TabsTrigger
-          value="details"
-          className="data-[state=active]:bg-slate-900 data-[state=active]:text-white"
-        >
-          <FileText className="w-4 h-4 mr-2" />
-          Complete Proposal Details
-        </TabsTrigger>
+        {orderedTabs.map((tab) => {
+          if (tab === 'overview') {
+            return (
+              <TabsTrigger
+                key="overview"
+                value="overview"
+                className="data-[state=active]:bg-slate-900 data-[state=active]:text-white"
+              >
+                <FileText className="w-4 h-4 mr-2" />
+                Overview
+              </TabsTrigger>
+            );
+          }
+
+          if (tab === 'report') {
+            return (
+              <TabsTrigger
+                key="report"
+                value="report"
+                className="data-[state=active]:bg-slate-900 data-[state=active]:text-white"
+              >
+                <BarChart3 className="w-4 h-4 mr-2" />
+                AI Report
+                {hasReportBadge ? (
+                  <Badge className="ml-2 bg-green-100 text-green-700 text-xs">Complete</Badge>
+                ) : null}
+              </TabsTrigger>
+            );
+          }
+
+          return (
+            <TabsTrigger
+              key="details"
+              value="details"
+              className="data-[state=active]:bg-slate-900 data-[state=active]:text-white"
+            >
+              <FileText className="w-4 h-4 mr-2" />
+              {detailsTabLabel}
+            </TabsTrigger>
+          );
+        })}
       </TabsList>
 
       <TabsContent value="overview" className="mt-6">
@@ -462,7 +534,7 @@ export function ComparisonDetailTabs({
       </TabsContent>
 
       <TabsContent value="details" className="mt-6">
-        <ComparisonProposalDetailsTab {...proposalDetailsProps} />
+        <ComparisonProposalDetailsTab title={detailsTabLabel} {...proposalDetailsProps} />
       </TabsContent>
     </Tabs>
   );

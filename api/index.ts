@@ -34,6 +34,8 @@ import sharedReportWorkspaceHandler from '../server/routes/shared-report/[token]
 import sharedReportDraftHandler from '../server/routes/shared-report/[token]/draft.js';
 import sharedReportEvaluateHandler from '../server/routes/shared-report/[token]/evaluate.js';
 import sharedReportSendBackHandler from '../server/routes/shared-report/[token]/send-back.js';
+import sharedReportDownloadPdfHandler from '../server/routes/shared-report/[token]/download-pdf.js';
+import sharedReportDownloadProposalPdfHandler from '../server/routes/shared-report/[token]/download-proposal-pdf.js';
 import sharedReportVerifyStartHandler from '../server/routes/shared-report/[token]/verify/start.js';
 import sharedReportVerifyConfirmHandler from '../server/routes/shared-report/[token]/verify/confirm.js';
 import vertexSmokeHandler from '../server/routes/vertex/smoke.js';
@@ -405,6 +407,20 @@ export default async function handler(req: any, res: any) {
   if (sharedReportSendBackMatch && method === 'POST') {
     const token = decodeURIComponent(sharedReportSendBackMatch[1]);
     return sharedReportSendBackHandler(req, res, token);
+  }
+
+  const sharedReportDownloadPdfMatch = pathname.match(/^\/api\/shared-report\/([^/]+)\/download\/pdf$/);
+  if (sharedReportDownloadPdfMatch && method === 'GET') {
+    const token = decodeURIComponent(sharedReportDownloadPdfMatch[1]);
+    return sharedReportDownloadPdfHandler(req, res, token);
+  }
+
+  const sharedReportDownloadProposalPdfMatch = pathname.match(
+    /^\/api\/shared-report\/([^/]+)\/download\/proposal-pdf$/,
+  );
+  if (sharedReportDownloadProposalPdfMatch && method === 'GET') {
+    const token = decodeURIComponent(sharedReportDownloadProposalPdfMatch[1]);
+    return sharedReportDownloadProposalPdfHandler(req, res, token);
   }
 
   const sharedReportVerifyStartMatch = pathname.match(/^\/api\/shared-report\/([^/]+)\/verify\/start$/);

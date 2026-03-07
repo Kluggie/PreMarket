@@ -4,6 +4,73 @@ function encodeToken(token) {
   return encodeURIComponent(String(token || ''));
 }
 
+function parseDownloadFilename(contentDisposition, fallback) {
+  const header = String(contentDisposition || '');
+  if (!header) {
+    return fallback;
+  }
+
+  const utf8Match = header.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1]);
+    } catch {
+      return utf8Match[1];
+    }
+  }
+
+  const filenameMatch = header.match(/filename=\"?([^\";]+)\"?/i);
+  if (filenameMatch?.[1]) {
+    return filenameMatch[1];
+  }
+
+  return fallback;
+}
+
+async function parseErrorResponse(response) {
+  let body = {};
+  try {
+    body = await response.json();
+  } catch {
+    body = {};
+  }
+
+  const message = body?.error?.message || body?.message || 'Download failed';
+  const code = body?.error?.code || 'request_failed';
+  const error = new Error(message);
+  error.status = response.status;
+  error.code = code;
+  error.body = body;
+  throw error;
+}
+
+async function downloadPdfFile(path, fallbackFilename) {
+  const response = await fetch(path, {
+    method: 'GET',
+    credentials: 'include',
+  });
+
+  if (!response.ok) {
+    await parseErrorResponse(response);
+  }
+
+  const blob = await response.blob();
+  const filename = parseDownloadFilename(response.headers.get('content-disposition'), fallbackFilename);
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+
+  return {
+    filename,
+    bytes: Number(blob.size || 0),
+  };
+}
+
 export const sharedReportsClient = {
   async list(params = {}) {
     const search = new URLSearchParams();
@@ -159,5 +226,19 @@ export const sharedReportsClient = {
       sharedReport: response.sharedReport || null,
       savedResponses: Number(response.savedResponses || 0),
     };
+  },
+
+  async downloadRecipientAiReportPdf(token) {
+    return downloadPdfFile(
+      `/api/shared-report/${encodeToken(token)}/download/pdf`,
+      'shared-report-ai-report.pdf',
+    );
+  },
+
+  async downloadRecipientProposalPdf(token) {
+    return downloadPdfFile(
+      `/api/shared-report/${encodeToken(token)}/download/proposal-pdf`,
+      'shared-report-proposal.pdf',
+    );
   },
 };
