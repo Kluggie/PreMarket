@@ -6,6 +6,10 @@ import { documentComparisonsClient } from '@/api/documentComparisonsClient';
 import { useAuth } from '@/lib/AuthContext';
 import DocumentRichEditor from '@/components/document-comparison/DocumentRichEditor';
 import DocumentComparisonEditorErrorBoundary from '@/components/document-comparison/DocumentComparisonEditorErrorBoundary';
+import {
+  buildCoachActionRequest,
+  DOCUMENT_COMPARISON_COACH_ACTIONS,
+} from '@/components/document-comparison/coachActions';
 import { sanitizeEditorHtml } from '@/components/document-comparison/editorSanitization';
 import {
   ComparisonDetailTabs,
@@ -14,6 +18,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -23,16 +28,29 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
+  Check,
+  Copy,
+  FileText,
   Loader2,
   Save,
   Send,
+  Sparkles,
   Upload,
+  X,
 } from 'lucide-react';
 
 const CONFIDENTIAL_LABEL = 'Confidential Information';
 const SHARED_LABEL = 'Shared Information';
 const MAX_PREVIEW_CHARS = 500;
 const TOTAL_WORKFLOW_STEPS = 3;
+const COACH_INTENT_LABELS = {
+  improve_shared: 'Improve shared writing',
+  negotiate: 'Negotiation strategy',
+  risks: 'Risks & Gaps',
+  rewrite_selection: 'Rewrite selection',
+  general: 'General improvements',
+  custom_prompt: 'Custom prompt',
+};
 
 function asText(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -42,6 +60,143 @@ function clampStep(value, fallback = 0) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return fallback;
   return Math.min(Math.max(Math.floor(numeric), 0), TOTAL_WORKFLOW_STEPS);
+}
+
+function parseCoachResponseBlocks(value) {
+  const lines = String(value || '')
+    .replace(/\r/g, '')
+    .split('\n');
+  const blocks = [];
+
+  let index = 0;
+  while (index < lines.length) {
+    const rawLine = lines[index] || '';
+    const line = rawLine.trim();
+    if (!line) {
+      index += 1;
+      continue;
+    }
+
+    const headingMatch = line.match(/^#{1,6}\s+(.*)$/);
+    if (headingMatch) {
+      blocks.push({
+        type: 'heading',
+        text: headingMatch[1].trim(),
+      });
+      index += 1;
+      continue;
+    }
+
+    const orderedItemMatch = line.match(/^\d+[.)]\s+(.*)$/);
+    if (orderedItemMatch) {
+      const items = [];
+      while (index < lines.length) {
+        const orderedLine = String(lines[index] || '').trim();
+        const match = orderedLine.match(/^\d+[.)]\s+(.*)$/);
+        if (!match) {
+          break;
+        }
+        const itemText = String(match[1] || '').trim();
+        if (itemText) {
+          items.push(itemText);
+        }
+        index += 1;
+      }
+      if (items.length) {
+        blocks.push({ type: 'ordered', items });
+      }
+      continue;
+    }
+
+    const bulletItemMatch = line.match(/^[-*]\s+(.*)$/);
+    if (bulletItemMatch) {
+      const items = [];
+      while (index < lines.length) {
+        const bulletLine = String(lines[index] || '').trim();
+        const match = bulletLine.match(/^[-*]\s+(.*)$/);
+        if (!match) {
+          break;
+        }
+        const itemText = String(match[1] || '').trim();
+        if (itemText) {
+          items.push(itemText);
+        }
+        index += 1;
+      }
+      if (items.length) {
+        blocks.push({ type: 'unordered', items });
+      }
+      continue;
+    }
+
+    const paragraphLines = [];
+    while (index < lines.length) {
+      const paragraphLine = String(lines[index] || '');
+      const paragraphLineTrimmed = paragraphLine.trim();
+      if (!paragraphLineTrimmed) {
+        break;
+      }
+      if (/^#{1,6}\s+/.test(paragraphLineTrimmed) || /^\d+[.)]\s+/.test(paragraphLineTrimmed) || /^[-*]\s+/.test(paragraphLineTrimmed)) {
+        break;
+      }
+      paragraphLines.push(paragraphLine);
+      index += 1;
+    }
+    if (paragraphLines.length) {
+      blocks.push({
+        type: 'paragraph',
+        text: paragraphLines.join('\n').trim(),
+      });
+    } else {
+      index += 1;
+    }
+  }
+
+  return blocks;
+}
+
+function CoachResponseText({ text = '' }) {
+  const blocks = parseCoachResponseBlocks(text);
+  if (!blocks.length) {
+    return <p className="text-sm leading-6 text-slate-700 whitespace-pre-wrap">{String(text || '').trim()}</p>;
+  }
+
+  return (
+    <div className="space-y-3">
+      {blocks.map((block, index) => {
+        if (block.type === 'heading') {
+          return (
+            <h4 key={`coach-response-heading-${index}`} className="text-sm font-semibold text-slate-900">
+              {block.text}
+            </h4>
+          );
+        }
+        if (block.type === 'unordered') {
+          return (
+            <ul key={`coach-response-unordered-${index}`} className="list-disc space-y-1 pl-5 text-sm leading-6 text-slate-700">
+              {block.items.map((item, itemIndex) => (
+                <li key={`coach-response-unordered-item-${index}-${itemIndex}`}>{item}</li>
+              ))}
+            </ul>
+          );
+        }
+        if (block.type === 'ordered') {
+          return (
+            <ol key={`coach-response-ordered-${index}`} className="list-decimal space-y-1 pl-5 text-sm leading-6 text-slate-700">
+              {block.items.map((item, itemIndex) => (
+                <li key={`coach-response-ordered-item-${index}-${itemIndex}`}>{item}</li>
+              ))}
+            </ol>
+          );
+        }
+        return (
+          <p key={`coach-response-paragraph-${index}`} className="text-sm leading-6 text-slate-700 whitespace-pre-wrap">
+            {block.text}
+          </p>
+        );
+      })}
+    </div>
+  );
 }
 
 function escapeHtml(value) {
@@ -243,6 +398,9 @@ function toFriendlyEvaluateError(error) {
 
 function toFriendlySendBackError(error) {
   const code = asText(error?.code).toLowerCase();
+  if (Number(error?.status || 0) === 401 || code === 'unauthorized') {
+    return 'Please sign in to send updates to the proposer.';
+  }
   if (code === 'send_back_not_allowed') {
     return 'This link does not allow sending updates back.';
   }
@@ -326,6 +484,15 @@ export default function SharedReport() {
   const [verificationRequested, setVerificationRequested] = useState(false);
   const [forcedMismatchInvitedEmail, setForcedMismatchInvitedEmail] = useState('');
   const [recipientDetailTab, setRecipientDetailTab] = useState('details');
+  const [customPromptText, setCustomPromptText] = useState('');
+  const [coachResult, setCoachResult] = useState(null);
+  const [coachLoading, setCoachLoading] = useState(false);
+  const [coachError, setCoachError] = useState('');
+  const [coachNotConfigured, setCoachNotConfigured] = useState(false);
+  const [coachCached, setCoachCached] = useState(false);
+  const [coachWithheldCount, setCoachWithheldCount] = useState(0);
+  const [coachRequestMeta, setCoachRequestMeta] = useState(null);
+  const [isCoachResponseCopied, setIsCoachResponseCopied] = useState(false);
 
   const docAInputFileRef = useRef(null);
   const docBInputFileRef = useRef(null);
@@ -384,6 +551,11 @@ export default function SharedReport() {
   const currentUserEmail = asText(user?.email).toLowerCase();
   const invitedEmail =
     asText(share?.invited_email || forcedMismatchInvitedEmail).toLowerCase() || '';
+  const senderEmail = asText(parent?.proposer_email);
+  const recipientEmailDisplay =
+    asText(share?.invited_email) ||
+    asText(share?.authorization?.authorized_email) ||
+    asText(forcedMismatchInvitedEmail);
   const authorizedForCurrentUser = Boolean(share?.authorization?.authorized_for_current_user);
   const requiresRecipientVerification =
     Boolean(isAuthenticated && invitedEmail) && !authorizedForCurrentUser;
@@ -404,6 +576,15 @@ export default function SharedReport() {
     setVerificationRequested(false);
     setForcedMismatchInvitedEmail('');
     setRecipientDetailTab('details');
+    setCustomPromptText('');
+    setCoachResult(null);
+    setCoachLoading(false);
+    setCoachError('');
+    setCoachNotConfigured(false);
+    setCoachCached(false);
+    setCoachWithheldCount(0);
+    setCoachRequestMeta(null);
+    setIsCoachResponseCopied(false);
   }, [token]);
 
   useEffect(
@@ -567,6 +748,12 @@ export default function SharedReport() {
       await workspaceQuery.refetch();
     },
     onError: (error) => {
+      if (Number(error?.status) === 401) {
+        const returnTo = `${location.pathname}${location.search || ''}${location.hash || ''}`;
+        toast.error('Please sign in to send updates to the proposer.');
+        navigateToLogin(returnTo);
+        return;
+      }
       if (isRecipientMismatchError(error)) {
         handleRecipientMismatch(error);
         return;
@@ -764,6 +951,177 @@ export default function SharedReport() {
     await evaluateMutation.mutateAsync();
   };
 
+  const runCoach = async ({
+    action = '',
+    mode = 'full',
+    intent = 'general',
+    promptText = '',
+    selectionText = '',
+    selectionTarget = null,
+    selectionRange = null,
+  } = {}) => {
+    if (!isAuthenticated) {
+      if (!requireSignInForEditing()) {
+        return null;
+      }
+    }
+    if (requiresRecipientVerification) {
+      toast.error('Verify access before using AI support.');
+      setStep(0);
+      return null;
+    }
+    if (coachNotConfigured) {
+      return null;
+    }
+
+    setCoachLoading(true);
+    setCoachError('');
+    setIsCoachResponseCopied(false);
+
+    try {
+      const normalizedAction = String(action || intent || '').trim().toLowerCase();
+      const isCustomPromptRequest = normalizedAction === 'custom_prompt';
+      const payload = {
+        action: action || undefined,
+        mode,
+        intent,
+        promptText: isCustomPromptRequest ? String(promptText || '').trim() : undefined,
+        selectionText: selectionText || undefined,
+        selectionTarget: selectionTarget || undefined,
+      };
+      if (!isCustomPromptRequest) {
+        const sanitizedDocAHtml = sanitizeEditorHtml(docAHtml || textToHtml(docAText));
+        const sanitizedDocBHtml = sanitizeEditorHtml(docBHtml || textToHtml(docBText));
+        const normalizedDocAText = asText(docAText) || htmlToText(sanitizedDocAHtml);
+        const normalizedDocBText = asText(docBText) || htmlToText(sanitizedDocBHtml);
+        payload.doc_a_text = normalizedDocAText;
+        payload.doc_b_text = normalizedDocBText;
+        payload.doc_a_html = sanitizedDocAHtml;
+        payload.doc_b_html = sanitizedDocBHtml;
+      }
+
+      const response = await sharedReportsClient.coachRecipient(token, payload);
+      const coach = response?.coach || null;
+      setCoachResult(coach);
+      setCoachCached(Boolean(response?.cached));
+      setCoachWithheldCount(Number(response?.withheldCount || 0));
+      setCoachNotConfigured(false);
+      setCoachRequestMeta({
+        action: action || '',
+        mode,
+        intent,
+        promptText: isCustomPromptRequest ? String(promptText || '').trim() : '',
+        model: response?.model || 'unknown',
+        provider: response?.provider || 'vertex',
+        selectionText: selectionText || '',
+        selectionTarget: selectionTarget || null,
+        selectionRange:
+          selectionRange && Number.isFinite(selectionRange.from) && Number.isFinite(selectionRange.to)
+            ? {
+                from: Number(selectionRange.from),
+                to: Number(selectionRange.to),
+              }
+            : null,
+      });
+      toast.success(response?.cached ? 'Loaded cached suggestions' : 'Suggestions ready');
+      return response;
+    } catch (error) {
+      const status = Number(error?.status || 0);
+      const code = asText(error?.body?.error?.code || error?.body?.code || error?.code);
+      if (status === 501 || code === 'not_configured') {
+        const message = 'AI suggestions are unavailable because Vertex AI is not configured.';
+        setCoachResult(null);
+        setCoachCached(false);
+        setCoachWithheldCount(0);
+        setCoachRequestMeta(null);
+        setCoachError(message);
+        setCoachNotConfigured(true);
+        toast.error(message);
+        return null;
+      }
+
+      const message = error?.message || 'Suggestion request failed';
+      setCoachError(message);
+      toast.error(message);
+      return null;
+    } finally {
+      setCoachLoading(false);
+    }
+  };
+
+  const runCustomPromptCoach = () => {
+    const prompt = asText(customPromptText);
+    if (!prompt || coachLoading || coachNotConfigured) {
+      return;
+    }
+
+    runCoach({
+      action: 'custom_prompt',
+      mode: 'full',
+      intent: 'custom_prompt',
+      promptText: prompt,
+    });
+  };
+
+  const handleCustomPromptKeyDown = (event) => {
+    if (event.key !== 'Enter' || event.shiftKey) {
+      return;
+    }
+    event.preventDefault();
+    runCustomPromptCoach();
+  };
+
+  const clearCoachResponse = () => {
+    setCoachResult(null);
+    setCoachError('');
+    setCoachCached(false);
+    setCoachWithheldCount(0);
+    setCoachRequestMeta(null);
+    setIsCoachResponseCopied(false);
+  };
+
+  const copyCoachResponse = async () => {
+    const responseText = asText(coachResult?.custom_feedback || coachResult?.summary?.overall || '');
+    if (!responseText) {
+      return;
+    }
+    if (!navigator.clipboard?.writeText) {
+      toast.error('Clipboard is not available in this browser');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(responseText);
+      setIsCoachResponseCopied(true);
+      toast.success('Response copied');
+    } catch {
+      toast.error('Unable to copy response');
+    }
+  };
+
+  const sendToProposer = async () => {
+    if (!requireSignInForEditing()) {
+      return;
+    }
+    if (requiresRecipientVerification) {
+      toast.error('Verify access before sending updates.');
+      setStep(0);
+      return;
+    }
+    if (!canSendBack) {
+      toast.error('Sending updates is disabled for this shared link.');
+      return;
+    }
+
+    try {
+      if (draftDirty || !hasActiveDraft) {
+        await saveDraftMutation.mutateAsync({ stepToSave: 3, silent: true });
+      }
+      await sendBackMutation.mutateAsync();
+    } catch {
+      // Errors are surfaced by mutation handlers.
+    }
+  };
+
   const progress = (clampStep(step, 0) / TOTAL_WORKFLOW_STEPS) * 100;
   const baselineReport =
     baseline?.ai_report ||
@@ -860,6 +1218,31 @@ export default function SharedReport() {
         ]
       : []),
   ];
+  const coachSuggestions = Array.isArray(coachResult?.suggestions) ? coachResult.suggestions : [];
+  const visibleCoachSuggestions = coachSuggestions.filter(
+    (suggestion) => String(suggestion?.visibility || 'visible').toLowerCase() !== 'hidden',
+  );
+  const coachResponseText = asText(coachResult?.custom_feedback || coachResult?.summary?.overall || '');
+  const coachIntentKey = String(coachRequestMeta?.intent || '').toLowerCase();
+  const coachResponseLabel = COACH_INTENT_LABELS[coachIntentKey] || 'Suggestion feedback';
+  const coachResponseMetaParts = [];
+  if (visibleCoachSuggestions.length > 0) {
+    coachResponseMetaParts.push(
+      `${visibleCoachSuggestions.length} suggestion${visibleCoachSuggestions.length === 1 ? '' : 's'}`,
+    );
+  }
+  if (Array.isArray(coachResult?.concerns) && coachResult.concerns.length > 0) {
+    coachResponseMetaParts.push(
+      `${coachResult.concerns.length} risk flag${coachResult.concerns.length === 1 ? '' : 's'}`,
+    );
+  }
+  if (coachWithheldCount > 0) {
+    coachResponseMetaParts.push(
+      `${coachWithheldCount} shared suggestion${coachWithheldCount === 1 ? '' : 's'} withheld for safety`,
+    );
+  }
+  const coachResponseMeta = coachResponseMetaParts.join(' · ');
+  const canRunCoach = Boolean(canReevaluate) && !requiresRecipientVerification;
 
   if (!token) {
     return (
@@ -1011,6 +1394,22 @@ export default function SharedReport() {
               Created: {formatDateTime(parent.created_at)} • Expires: {formatDateTime(share.expires_at)}
             </CardDescription>
           </CardHeader>
+          <CardContent className="pt-0">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Sent by</p>
+                <p className="text-sm font-medium text-slate-900 break-all">
+                  {senderEmail || 'Unavailable'}
+                </p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Sent to</p>
+                <p className="text-sm font-medium text-slate-900 break-all">
+                  {recipientEmailDisplay || 'Unavailable until verification'}
+                </p>
+              </div>
+            </div>
+          </CardContent>
         </Card>
 
         <div className="space-y-2">
@@ -1333,6 +1732,155 @@ export default function SharedReport() {
                 </Card>
               </div>
 
+              <Card className="border border-slate-200 shadow-sm">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-blue-600" />
+                    Ask for suggestions
+                    {coachCached ? <Badge variant="outline">Cached</Badge> : null}
+                  </CardTitle>
+                  <CardDescription>
+                    Run targeted AI assistance for negotiation strategy, risks, and improvement suggestions.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid gap-4 lg:grid-cols-2">
+                    <div className="h-full rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+                      <div className="space-y-3">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Quick actions</p>
+                        <div className="flex flex-wrap gap-2">
+                          {DOCUMENT_COMPARISON_COACH_ACTIONS.map((option) => (
+                            <Button
+                              key={option.id}
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              disabled={coachLoading || coachNotConfigured || !canRunCoach}
+                              onClick={() => {
+                                const request = buildCoachActionRequest(option, null);
+                                if (!request) {
+                                  return;
+                                }
+                                runCoach(request);
+                              }}
+                            >
+                              {coachLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
+                              {option.label}
+                            </Button>
+                          ))}
+                        </div>
+                        {!canReevaluate ? (
+                          <p className="text-xs text-amber-700">
+                            AI support is disabled for this shared link.
+                          </p>
+                        ) : null}
+                      </div>
+                    </div>
+                    <div
+                      className="h-full rounded-lg border border-slate-200 bg-slate-50/60 p-4 shadow-sm"
+                      data-testid="coach-custom-prompt-panel"
+                    >
+                      <div className="flex h-full flex-col gap-3">
+                        <div className="space-y-1">
+                          <Label htmlFor="coach-custom-prompt-input" className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                            Custom prompt
+                          </Label>
+                          <p className="text-xs text-slate-500">Ask for feedback, risks, gaps, strategy...</p>
+                        </div>
+                        <Textarea
+                          id="coach-custom-prompt-input"
+                          data-testid="coach-custom-prompt-input"
+                          rows={5}
+                          className="min-h-[140px] w-full resize-y bg-white"
+                          placeholder="Ask for feedback, risks, gaps, strategy..."
+                          value={customPromptText}
+                          onChange={(event) => setCustomPromptText(event.target.value)}
+                          onKeyDown={handleCustomPromptKeyDown}
+                          disabled={coachLoading || coachNotConfigured || !canRunCoach}
+                        />
+                        <div className="flex justify-end">
+                          <Button
+                            type="button"
+                            data-testid="coach-custom-prompt-run"
+                            onClick={runCustomPromptCoach}
+                            disabled={coachLoading || coachNotConfigured || !canRunCoach || !asText(customPromptText)}
+                          >
+                            {coachLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                            {coachLoading ? 'Running...' : 'Run'}
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {coachNotConfigured ? (
+                    <Alert className="bg-amber-50 border-amber-200">
+                      <AlertTriangle className="h-4 w-4 text-amber-700" />
+                      <AlertDescription className="text-amber-800">
+                        AI suggestions are unavailable because Vertex AI is not configured.
+                      </AlertDescription>
+                    </Alert>
+                  ) : null}
+
+                  {!coachNotConfigured && coachError ? (
+                    <Alert className="bg-red-50 border-red-200">
+                      <AlertTriangle className="h-4 w-4 text-red-700" />
+                      <AlertDescription className="text-red-800">{coachError}</AlertDescription>
+                    </Alert>
+                  ) : null}
+
+                  {coachResponseText ? (
+                    <div
+                      className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm transition-all duration-200"
+                      data-testid={coachIntentKey === 'custom_prompt' ? 'coach-custom-prompt-feedback' : 'coach-response-feedback'}
+                    >
+                      <div className="flex items-start justify-between gap-3 border-b border-slate-200 bg-slate-50/70 px-4 py-3">
+                        <div className="space-y-1">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">{coachResponseLabel}</p>
+                          {coachResponseMeta ? <p className="text-xs text-slate-500">{coachResponseMeta}</p> : null}
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <Button type="button" size="sm" variant="outline" onClick={copyCoachResponse} disabled={!coachResponseText}>
+                            {isCoachResponseCopied ? <Check className="mr-2 h-4 w-4" /> : <Copy className="mr-2 h-4 w-4" />}
+                            {isCoachResponseCopied ? 'Copied' : 'Copy'}
+                          </Button>
+                          <Button type="button" size="icon" variant="ghost" aria-label="Clear response" onClick={clearCoachResponse}>
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                      <div className="min-h-[132px] px-4 py-4">
+                        <CoachResponseText text={coachResponseText} />
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {visibleCoachSuggestions.length > 0 ? (
+                    <div className="space-y-2">
+                      {visibleCoachSuggestions.slice(0, 8).map((suggestion, index) => {
+                        const isShared = suggestion?.scope === 'shared' || suggestion?.proposed_change?.target === 'doc_b';
+                        return (
+                          <div key={`coach-suggestion-${index}`} className="rounded-lg border border-slate-200 bg-white p-3">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Badge variant="outline">{String(suggestion?.severity || 'info')}</Badge>
+                              <Badge variant={isShared ? 'secondary' : 'outline'}>
+                                {isShared ? 'Shared-safe' : 'Confidential-only'}
+                              </Badge>
+                              <span className="text-sm font-medium text-slate-800">{suggestion?.title || 'Suggestion'}</span>
+                            </div>
+                            {asText(suggestion?.explanation || suggestion?.rationale) ? (
+                              <p className="mt-2 text-sm text-slate-600">
+                                {asText(suggestion?.explanation || suggestion?.rationale)}
+                              </p>
+                            ) : null}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </CardContent>
+              </Card>
+
               <div className="flex justify-between pt-2">
                 <Button variant="outline" onClick={() => setStep(1)}>
                   <ArrowLeft className="w-4 h-4 mr-2" />
@@ -1393,11 +1941,17 @@ export default function SharedReport() {
 
                   <Button
                     type="button"
-                    onClick={() => sendBackMutation.mutate()}
-                    disabled={sendBackMutation.isPending || !canSendBack || isSentToProposer || requiresRecipientVerification}
+                    onClick={sendToProposer}
+                    disabled={
+                      sendBackMutation.isPending ||
+                      saveDraftMutation.isPending ||
+                      !canSendBack ||
+                      isSentToProposer ||
+                      requiresRecipientVerification
+                    }
                   >
                     {sendBackMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Send className="w-4 h-4 mr-2" />}
-                    {isSentToProposer ? 'Sent to proposer' : sendBackMutation.isPending ? 'Sending...' : 'Send back to proposer'}
+                    {isSentToProposer ? 'Sent to proposer' : sendBackMutation.isPending ? 'Sending...' : 'Send to proposer'}
                   </Button>
 
                   <Button

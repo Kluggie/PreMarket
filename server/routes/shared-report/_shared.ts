@@ -233,6 +233,7 @@ export function buildParentView(params: { proposal: any; comparison: any; owner:
     status: asText(proposal.status) || null,
     created_at: proposal.createdAt || null,
     proposer_name: asText(owner?.fullName) || null,
+    proposer_email: normalizeEmail(owner?.email) || null,
   };
 }
 

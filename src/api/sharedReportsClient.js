@@ -176,6 +176,24 @@ export const sharedReportsClient = {
     };
   },
 
+  async coachRecipient(token, input = {}) {
+    const response = await request(`/api/shared-report/${encodeToken(token)}/coach`, {
+      method: 'POST',
+      body: JSON.stringify(input || {}),
+    });
+    return {
+      comparisonId: response.comparison_id || null,
+      cacheHash: response.cache_hash || null,
+      cached: Boolean(response.cached),
+      provider: typeof response.provider === 'string' ? response.provider : 'vertex',
+      model: typeof response.model === 'string' ? response.model : 'unknown',
+      promptVersion: typeof response.prompt_version === 'string' ? response.prompt_version : null,
+      coach: response.coach || null,
+      createdAt: response.created_at || null,
+      withheldCount: Number(response.withheld_count || 0),
+    };
+  },
+
   async sendBackRecipient(token) {
     const response = await request(`/api/shared-report/${encodeToken(token)}/send-back`, {
       method: 'POST',
