@@ -40,6 +40,20 @@ import {
   defaultOwnerPermissions,
   mergeEvaluationHistoryWithOptimistic,
 } from '@/pages/document-comparison/evaluationCache';
+import {
+  compileBundleForVisibility,
+  compileBundles,
+  createDocument,
+  hydrateDocumentsFromComparison,
+  VISIBILITY_CONFIDENTIAL,
+  VISIBILITY_SHARED,
+  VISIBILITY_UNCLASSIFIED,
+  allDocumentsClassified,
+  buildDocumentsStateHash,
+} from '@/pages/document-comparison/documentsModel';
+import Step1AddSources from '@/components/document-comparison/Step1AddSources';
+import Step2EditSources from '@/components/document-comparison/Step2EditSources';
+import Step3ReviewPackage from '@/components/document-comparison/Step3ReviewPackage';
 import { countWords, getDocumentComparisonTextLimits } from '@/config/aiLimits';
 import { toast } from 'sonner';
 import {
@@ -59,7 +73,7 @@ import {
 const CONFIDENTIAL_LABEL = 'Confidential Information';
 const SHARED_LABEL = 'Shared Information';
 const MAX_PREVIEW_CHARS = 500;
-const TOTAL_EDITOR_STEPS = 2;
+const TOTAL_EDITOR_STEPS = 3;
 const TOTAL_WORKFLOW_STEPS = 3;
 const DIFF_CONTEXT_CHARS = 220;
 const STEP2_AUTOSAVE_DEBOUNCE_MS = 2500;
@@ -651,25 +665,16 @@ export default function DocumentComparisonCreate() {
   const [linkedProposalId, setLinkedProposalId] = useState(routeState.proposalId);
 
   const [title, setTitle] = useState('');
-  const [docAText, setDocAText] = useState('');
-  const [docBText, setDocBText] = useState('');
-  const [docAHtml, setDocAHtml] = useState('<p></p>');
-  const [docBHtml, setDocBHtml] = useState('<p></p>');
-  const [docAJson, setDocAJson] = useState(null);
-  const [docBJson, setDocBJson] = useState(null);
 
-  const [docASource, setDocASource] = useState('typed');
-  const [docBSource, setDocBSource] = useState('typed');
-  const [docAFiles, setDocAFiles] = useState([]);
-  const [docBFiles, setDocBFiles] = useState([]);
-  const [docASelectedFile, setDocASelectedFile] = useState(null);
-  const [docBSelectedFile, setDocBSelectedFile] = useState(null);
-  const [docAPreviewSnippet, setDocAPreviewSnippet] = useState('');
-  const [docBPreviewSnippet, setDocBPreviewSnippet] = useState('');
+  // ── Multi-document model ─────────────────────────────────────────────────
+  // `documents` is the canonical source of truth for document content.
+  // docA/docB (confidential/shared) bundles are derived from it.
+  const [documents, setDocuments] = useState([]);
+  const [activeDocId, setActiveDocId] = useState(null);
+  const [importingDocId, setImportingDocId] = useState(null);
 
-  const [importingSide, setImportingSide] = useState(null);
   const [uiError, setUiError] = useState('');
-  const [fullscreenSide, setFullscreenSide] = useState(null);
+  const [fullscreenDocId, setFullscreenDocId] = useState(null);
   const [lastSavedHash, setLastSavedHash] = useState('');
   const [draftDirty, setDraftDirty] = useState(false);
   const [lastEditAt, setLastEditAt] = useState(0);
@@ -710,11 +715,8 @@ export default function DocumentComparisonCreate() {
   const [finishStage, setFinishStage] = useState('idle');
   const [ignoredRouteDraftId, setIgnoredRouteDraftId] = useState('');
 
-  const docAInputFileRef = useRef(null);
-  const docBInputFileRef = useRef(null);
   const companyContextNameInputRef = useRef(null);
-  const docAEditorRef = useRef(null);
-  const docBEditorRef = useRef(null);
+  const activeEditorRef = useRef(null);
   const recoveredMissingDraftIdRef = useRef('');
   const draftDirtyRef = useRef(false);
   const lastEditAtRef = useRef(0);
@@ -727,6 +729,9 @@ export default function DocumentComparisonCreate() {
   const saveMutationPendingRef = useRef(false);
   const activeSavePromiseRef = useRef(null);
   const lastStep2AutosaveAtRef = useRef(0);
+  // Tracks which comparisonId has already had its documents hydrated from the server.
+  // Prevents post-save draftQuery refetches from wiping locally-edited documents.
+  const lastHydratedComparisonIdRef = useRef(null);
   const docASpansRef = useRef([]);
   const docBSpansRef = useRef([]);
   const activeImportRequestRef = useRef({ id: 0, controller: null });
@@ -751,6 +756,34 @@ export default function DocumentComparisonCreate() {
     docAFiles: [],
     docBFiles: [],
   });
+
+  // ── Helper: update one document in the documents array ───────────────────
+  const updateDocument = useCallback((id, changes) => {
+    setDocuments((prev) => prev.map((d) => (d.id === id ? { ...d, ...changes } : d)));
+  }, []);
+
+  // ── Derived bundles (replaces old docA/docB state) ──────────────────────
+  // All downstream logic (save, coach, evaluation) still uses docAText/docBText
+  // which are now exposed as const aliases from the compiled bundles.
+  const confidentialBundle = useMemo(
+    () => compileBundleForVisibility(documents, VISIBILITY_CONFIDENTIAL),
+    [documents],
+  );
+  const sharedBundle = useMemo(
+    () => compileBundleForVisibility(documents, VISIBILITY_SHARED),
+    [documents],
+  );
+  // Backward-compat aliases — referenced throughout (coach, save payload, etc.)
+  const docAText = confidentialBundle.text;
+  const docBText = sharedBundle.text;
+  const docAHtml = confidentialBundle.html;
+  const docBHtml = sharedBundle.html;
+  const docAJson = confidentialBundle.json;
+  const docBJson = sharedBundle.json;
+  const docASource = confidentialBundle.source;
+  const docBSource = sharedBundle.source;
+  const docAFiles = confidentialBundle.files;
+  const docBFiles = sharedBundle.files;
 
   const markDraftEdited = (timestamp = Date.now()) => {
     const numericTimestamp = Number(timestamp);
@@ -921,34 +954,35 @@ export default function DocumentComparisonCreate() {
         ? comparison.metadata
         : {};
 
-    setDocAText(nextDocAText);
-    setDocBText(nextDocBText);
-    setDocAHtml(nextDocAHtml);
-    setDocBHtml(nextDocBHtml);
-    setDocAJson(nextDocAJson);
-    setDocBJson(nextDocBJson);
-
-    setDocASource(nextDocASource);
-    setDocBSource(nextDocBSource);
-    setDocAFiles(nextDocAFiles);
-    setDocBFiles(nextDocBFiles);
-
-    latestDraftStateRef.current = {
-      title: comparison.title || '',
-      docAText: nextDocAText,
-      docBText: nextDocBText,
-      docAHtml: nextDocAHtml,
-      docBHtml: nextDocBHtml,
-      docAJson: nextDocAJson,
-      docBJson: nextDocBJson,
-      docASource: nextDocASource,
-      docBSource: nextDocBSource,
-      docAFiles: nextDocAFiles,
-      docBFiles: nextDocBFiles,
-    };
-
-    setDocAPreviewSnippet(previewSnippet(nextDocAText));
-    setDocBPreviewSnippet(previewSnippet(nextDocBText));
+    // Build documents array from legacy doc_a/doc_b (backward compat hydration).
+    // Only update documents when this comparison hasn't been hydrated yet in this
+    // session — prevents post-save refetches from overwriting in-progress edits.
+    const comparisonIdForHydration = comparison.id || resolvedDraftId || '';
+    if (comparisonIdForHydration !== lastHydratedComparisonIdRef.current) {
+      lastHydratedComparisonIdRef.current = comparisonIdForHydration;
+      const hydratedDocs = hydrateDocumentsFromComparison({
+        doc_a_text: nextDocAText,
+        doc_a_html: nextDocAHtml,
+        doc_a_json: nextDocAJson,
+        doc_a_source: nextDocASource,
+        doc_a_files: nextDocAFiles,
+        doc_b_text: nextDocBText,
+        doc_b_html: nextDocBHtml,
+        doc_b_json: nextDocBJson,
+        doc_b_source: nextDocBSource,
+        doc_b_files: nextDocBFiles,
+      });
+      // Use a functional updater so we can inspect current docs without extra deps.
+      // If local documents already exist (e.g. created in Step 1 before the draft was
+      // first persisted) preserve them — the server only has compiled bundles anyway.
+      setDocuments((currentDocs) => (currentDocs.length > 0 ? currentDocs : hydratedDocs));
+      setActiveDocId((prevId) => {
+        if (prevId && hydratedDocs.some((d) => d.id === prevId)) {
+          return prevId;
+        }
+        return hydratedDocs[0]?.id || null;
+      });
+    }
 
     const serverResumeStepRaw = Number(comparison.resume_step || comparison.draft_step || 1);
     const serverResumeStep = Number.isFinite(serverResumeStepRaw)
@@ -1071,47 +1105,37 @@ export default function DocumentComparisonCreate() {
   ]);
 
   useEffect(() => {
-    if (!fullscreenSide) {
+    if (!fullscreenDocId) {
       return;
     }
 
     const onKeyDown = (event) => {
       if (event.key === 'Escape') {
-        setFullscreenSide(null);
+        setFullscreenDocId(null);
       }
     };
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [fullscreenSide]);
+  }, [fullscreenDocId]);
 
+  // Keep latestDraftStateRef in sync with the compiled bundles so unmount saves
+  // and background saves always get the latest content.
   useEffect(() => {
     latestDraftStateRef.current = {
       title: asText(title) || 'Untitled Comparison',
-      docAText,
-      docBText,
-      docAHtml,
-      docBHtml,
-      docAJson,
-      docBJson,
-      docASource,
-      docBSource,
-      docAFiles: Array.isArray(docAFiles) ? docAFiles : [],
-      docBFiles: Array.isArray(docBFiles) ? docBFiles : [],
+      docAText: confidentialBundle.text,
+      docBText: sharedBundle.text,
+      docAHtml: confidentialBundle.html,
+      docBHtml: sharedBundle.html,
+      docAJson: confidentialBundle.json,
+      docBJson: sharedBundle.json,
+      docASource: confidentialBundle.source,
+      docBSource: sharedBundle.source,
+      docAFiles: Array.isArray(confidentialBundle.files) ? confidentialBundle.files : [],
+      docBFiles: Array.isArray(sharedBundle.files) ? sharedBundle.files : [],
     };
-  }, [
-    title,
-    docAText,
-    docBText,
-    docAHtml,
-    docBHtml,
-    docAJson,
-    docBJson,
-    docASource,
-    docBSource,
-    docAFiles,
-    docBFiles,
-  ]);
+  }, [title, confidentialBundle, sharedBundle]);
 
   useEffect(() => {
     setCoachResult(null);
@@ -1142,32 +1166,24 @@ export default function DocumentComparisonCreate() {
         linkedProposalId,
         snapshot: {
           title,
-          docAText,
-          docBText,
-          docAHtml,
-          docBHtml,
-          docAJson,
-          docBJson,
-          docASource,
-          docBSource,
-          docAFiles,
-          docBFiles,
+          docAText: confidentialBundle.text,
+          docBText: sharedBundle.text,
+          docAHtml: confidentialBundle.html,
+          docBHtml: sharedBundle.html,
+          docAJson: confidentialBundle.json,
+          docBJson: sharedBundle.json,
+          docASource: confidentialBundle.source,
+          docBSource: sharedBundle.source,
+          docAFiles: confidentialBundle.files,
+          docBFiles: sharedBundle.files,
         },
       }),
     [
       comparisonId,
       linkedProposalId,
       title,
-      docAText,
-      docBText,
-      docAHtml,
-      docBHtml,
-      docAJson,
-      docBJson,
-      docASource,
-      docBSource,
-      docAFiles,
-      docBFiles,
+      confidentialBundle,
+      sharedBundle,
     ],
   );
 
@@ -1273,30 +1289,20 @@ export default function DocumentComparisonCreate() {
         comparison.company_website || comparison.companyWebsite || companyContextWebsite,
       );
       const persistedTitle = asText(comparison.title) || payload.title;
-      const persistedDocAText = String(comparison.doc_a_text || payload.doc_a_text || '');
-      const persistedDocBText = String(comparison.doc_b_text || payload.doc_b_text || '');
-      const persistedDocAHtml =
-        asText(comparison.doc_a_html) || payload.doc_a_html || textToHtml(persistedDocAText);
-      const persistedDocBHtml =
-        asText(comparison.doc_b_html) || payload.doc_b_html || textToHtml(persistedDocBText);
-      const persistedDocAJson = parseDocJson(comparison.doc_a_json);
-      const persistedDocBJson = parseDocJson(comparison.doc_b_json);
-      const persistedDocASource = comparison.doc_a_source || docASource || 'typed';
-      const persistedDocBSource = comparison.doc_b_source || docBSource || 'typed';
-      const persistedDocAFiles = Array.isArray(comparison.doc_a_files) ? comparison.doc_a_files : docAFiles;
-      const persistedDocBFiles = Array.isArray(comparison.doc_b_files) ? comparison.doc_b_files : docBFiles;
-      const persistedSnapshot = {
+      // Build a hash snapshot from the request payload (not server response) so we
+      // don't overwrite the multi-doc documents array with compiled single-doc values.
+      const persistedSnapshotForHash = {
         title: persistedTitle,
-        docAText: persistedDocAText,
-        docBText: persistedDocBText,
-        docAHtml: persistedDocAHtml,
-        docBHtml: persistedDocBHtml,
-        docAJson: persistedDocAJson,
-        docBJson: persistedDocBJson,
-        docASource: persistedDocASource,
-        docBSource: persistedDocBSource,
-        docAFiles: persistedDocAFiles,
-        docBFiles: persistedDocBFiles,
+        docAText: String(payload.doc_a_text || ''),
+        docBText: String(payload.doc_b_text || ''),
+        docAHtml: asText(payload.doc_a_html) || '',
+        docBHtml: asText(payload.doc_b_html) || '',
+        docAJson: parseDocJson(payload.doc_a_json),
+        docBJson: parseDocJson(payload.doc_b_json),
+        docASource: asText(payload.doc_a_source) || 'typed',
+        docBSource: asText(payload.doc_b_source) || 'typed',
+        docAFiles: Array.isArray(payload.doc_a_files) ? payload.doc_a_files : [],
+        docBFiles: Array.isArray(payload.doc_b_files) ? payload.doc_b_files : [],
       };
       docASpansRef.current = Array.isArray(comparison.doc_a_spans)
         ? comparison.doc_a_spans
@@ -1328,27 +1334,15 @@ export default function DocumentComparisonCreate() {
       const hasNewerLocalEdits = lastEditAtRef.current > saveStartedAtMs;
 
       if (!nonBlocking) {
-        latestDraftStateRef.current = persistedSnapshot;
+        // Update title only (documents are the source of truth and not overwritten)
         setTitle(persistedTitle);
-        setDocAText(persistedDocAText);
-        setDocBText(persistedDocBText);
-        setDocAHtml(persistedDocAHtml);
-        setDocBHtml(persistedDocBHtml);
-        setDocAJson(persistedDocAJson);
-        setDocBJson(persistedDocBJson);
-        setDocASource(persistedDocASource);
-        setDocBSource(persistedDocBSource);
-        setDocAFiles(persistedDocAFiles);
-        setDocBFiles(persistedDocBFiles);
-        setDocAPreviewSnippet(previewSnippet(persistedDocAText));
-        setDocBPreviewSnippet(previewSnippet(persistedDocBText));
         setDraftDirty(false);
         setLastEditAt(persistedUpdatedAtMs || Date.now());
         setLastSavedHash(
           buildDraftStateHashFromSnapshot({
             comparisonId: persistedComparisonId,
             linkedProposalId: persistedProposalId,
-            snapshot: persistedSnapshot,
+            snapshot: persistedSnapshotForHash,
           }),
         );
       } else if (!hasNewerLocalEdits) {
@@ -1370,8 +1364,8 @@ export default function DocumentComparisonCreate() {
           comparisonId: persistedComparisonId,
           updated_at:
             comparison?.updated_at || comparison?.updated_date || comparison?.updatedAt || null,
-          persistedDocALength: Number(String(persistedDocAText || '').length),
-          persistedDocBLength: Number(String(persistedDocBText || '').length),
+          persistedDocALength: Number(String(payload.doc_a_text || '').length),
+          persistedDocBLength: Number(String(payload.doc_b_text || '').length),
           timestamp: new Date().toISOString(),
         });
       }
@@ -1597,8 +1591,8 @@ export default function DocumentComparisonCreate() {
   const totalOverLimit = totalCharacters > limits.totalCharacterLimit;
   const exceedsAnySizeLimit = docAOverLimit || docBOverLimit || totalOverLimit;
 
-  const isStep2LoadingDraft = step === 2 && Boolean(resolvedDraftId) && draftQuery.isLoading;
-  const step2LoadError = step === 2 && Boolean(resolvedDraftId) ? draftQuery.error : null;
+  const isStep2LoadingDraft = step >= 2 && Boolean(resolvedDraftId) && draftQuery.isLoading;
+  const step2LoadError = step >= 2 && Boolean(resolvedDraftId) ? draftQuery.error : null;
   const editableSide = String(draftQuery.data?.permissions?.editable_side || 'a').toLowerCase();
   const canUseOwnerCoach = !routeState.token && editableSide !== 'b';
   const coachSuggestions = Array.isArray(coachResult?.suggestions) ? coachResult.suggestions : [];
@@ -1697,7 +1691,8 @@ export default function DocumentComparisonCreate() {
     [],
   );
 
-  const applyImportedContent = (side, file, extracted) => {
+  // ── Multi-document import helpers ──────────────────────────────────────
+  const applyImportedToDocument = (docId, file, extracted) => {
     const rawText = asText(extracted?.text) || htmlToText(extracted?.html || '');
     const html = sanitizeEditorHtml(asText(extracted?.html) || textToHtml(rawText));
     const text = rawText || htmlToText(html);
@@ -1706,54 +1701,44 @@ export default function DocumentComparisonCreate() {
       throw new Error('No readable content was extracted from the selected file');
     }
 
-    if (side === 'a') {
-      latestDraftStateRef.current = {
-        ...latestDraftStateRef.current,
-        docAText: text,
-        docAHtml: html,
-        docAJson: null,
-        docASource: 'uploaded',
-        docAFiles: [fileToMetadata(file)],
-      };
-      setDocAText(text);
-      setDocAHtml(html);
-      setDocAJson(null);
-      setDocASource('uploaded');
-      setDocAFiles([fileToMetadata(file)]);
-      setDocAPreviewSnippet(previewSnippet(text || htmlToText(html)));
-      markDraftEdited();
-      return;
-    }
-
-    latestDraftStateRef.current = {
-      ...latestDraftStateRef.current,
-      docBText: text,
-      docBHtml: html,
-      docBJson: null,
-      docBSource: 'uploaded',
-      docBFiles: [fileToMetadata(file)],
-    };
-    setDocBText(text);
-    setDocBHtml(html);
-    setDocBJson(null);
-    setDocBSource('uploaded');
-    setDocBFiles([fileToMetadata(file)]);
-    setDocBPreviewSnippet(previewSnippet(text || htmlToText(html)));
+    setDocuments((prev) =>
+      prev.map((d) =>
+        d.id === docId
+          ? {
+              ...d,
+              text,
+              html,
+              json: null,
+              source: 'uploaded',
+              files: [fileToMetadata(file)],
+              importStatus: 'imported',
+              importError: '',
+              _pendingFile: null,
+            }
+          : d,
+      ),
+    );
     markDraftEdited();
   };
 
-  const importForSide = async (side, fileOverride = null) => {
-    const selectedFile = fileOverride || (side === 'a' ? docASelectedFile : docBSelectedFile);
-    if (!selectedFile) {
+  /**
+   * Import a file into a specific document. Called from Step 1 (initial upload)
+   * and for re-import actions.
+   */
+  const importForDocument = async (docId, file) => {
+    if (!file) {
       toast.error('Select a .docx or .pdf file first.');
       return;
     }
 
     try {
-      documentComparisonsClient.validateImportFile(selectedFile);
+      documentComparisonsClient.validateImportFile(file);
     } catch (error) {
       const message = error?.message || 'Failed to import file';
-      setUiError(message);
+      updateDocument(docId, {
+        importStatus: 'error',
+        importError: message,
+      });
       toast.error(message);
       return;
     }
@@ -1769,10 +1754,11 @@ export default function DocumentComparisonCreate() {
     };
 
     setUiError('');
-    setImportingSide(side);
+    setImportingDocId(docId);
+    updateDocument(docId, { importStatus: 'importing', importError: '' });
 
     try {
-      const extracted = await documentComparisonsClient.extractDocumentFromFile(selectedFile, {
+      const extracted = await documentComparisonsClient.extractDocumentFromFile(file, {
         signal: nextController.signal,
       });
 
@@ -1783,8 +1769,8 @@ export default function DocumentComparisonCreate() {
         return;
       }
 
-      applyImportedContent(side, selectedFile, extracted);
-      toast.success(`${selectedFile.name} imported`);
+      applyImportedToDocument(docId, file, extracted);
+      toast.success(`${file.name} imported`);
     } catch (error) {
       if (
         nextController.signal.aborted ||
@@ -1794,7 +1780,10 @@ export default function DocumentComparisonCreate() {
         return;
       }
       const message = error?.message || 'Failed to import file';
-      setUiError(message);
+      updateDocument(docId, {
+        importStatus: 'error',
+        importError: message,
+      });
       toast.error(message);
     } finally {
       if (activeImportRequestRef.current.id === nextRequestId) {
@@ -1802,10 +1791,68 @@ export default function DocumentComparisonCreate() {
           id: nextRequestId,
           controller: null,
         };
-        setImportingSide(null);
+        setImportingDocId(null);
       }
     }
   };
+
+  /**
+   * Add new documents from an uploaded FileList.
+   * Each file creates a new entry and starts importing immediately.
+   */
+  const handleAddFiles = (fileList) => {
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
+
+    const newDocs = files.map((f) =>
+      createDocument({
+        title: f.name.replace(/\.[^.]+$/, ''),
+        source: 'uploaded',
+        _pendingFile: f,
+        importStatus: 'importing',
+      }),
+    );
+    setDocuments((prev) => [...prev, ...newDocs]);
+    markDraftEdited();
+
+    // Start importing each file
+    newDocs.forEach((doc, i) => {
+      void importForDocument(doc.id, files[i]);
+    });
+  };
+
+  /**
+   * Add a new typed document to the list.
+   */
+  const handleAddTypedDocument = () => {
+    const newDoc = createDocument({ title: 'Untitled Document', source: 'typed' });
+    setDocuments((prev) => [...prev, newDoc]);
+    markDraftEdited();
+  };
+
+  /** Called by Step2EditSources when the TipTap editor fires onChange for the active doc. */
+  const handleDocumentContentChange = useCallback(
+    (docId, { text, html, json }) => {
+      markDraftEdited();
+      // Single updater: update doc content AND sync latestDraftStateRef in one pass.
+      setDocuments((prev) => {
+        const next = prev.map((d) => (d.id === docId ? { ...d, text, html, json } : d));
+        const { confidential, shared } = compileBundles(next);
+        latestDraftStateRef.current = {
+          ...latestDraftStateRef.current,
+          docAText: confidential.text,
+          docAHtml: confidential.html,
+          docAJson: confidential.json,
+          docBText: shared.text,
+          docBHtml: shared.html,
+          docBJson: shared.json,
+        };
+        return next;
+      });
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
 
   const bestEffortSaveDraft = useCallback(
     async ({ reason = 'navigation', stepToSave = stepRef.current, requireDraftId = false } = {}) => {
@@ -1881,7 +1928,7 @@ export default function DocumentComparisonCreate() {
       await waitForActiveSave();
     }
 
-    if (bounded === 2) {
+    if (bounded >= 2) {
       try {
         await ensureStep2DraftId();
       } catch (error) {
@@ -1910,7 +1957,7 @@ export default function DocumentComparisonCreate() {
 
   const retryStep2Load = () => {
     setUiError('');
-    setFullscreenSide(null);
+    setFullscreenDocId(null);
     updateRouteParams({ nextStep: 2, replace: true });
     if (resolvedDraftId) {
       queryClient.invalidateQueries({ queryKey: ['document-comparison-draft', resolvedDraftId, routeState.token] });
@@ -1932,37 +1979,49 @@ export default function DocumentComparisonCreate() {
   };
 
   const handleStep2SaveDraftClick = async () => {
-    // Capture content directly from Tiptap editor instances for latest, most reliable state
-    const docAEditor = docAEditorRef.current;
-    const docBEditor = docBEditorRef.current;
+    // Capture the active document's content from the Tiptap editor for latest state
+    const editor = activeEditorRef.current;
+    if (editor && activeDocId) {
+      const editorText = editor.getText({ blockSeparator: '\n\n' }).trim() || '';
+      const editorHtml = editor.getHTML() || '';
+      const editorJson = editor.getJSON() || null;
 
-    const editorAText = docAEditor?.getText({ blockSeparator: '\n\n' }).trim() || '';
-    const editorAHtml = docAEditor?.getHTML() || '';
-    const editorAJson = docAEditor?.getJSON() || null;
+      // Update the active document with latest editor content
+      setDocuments((prev) =>
+        prev.map((d) =>
+          d.id === activeDocId
+            ? { ...d, text: editorText, html: editorHtml, json: editorJson }
+            : d,
+        ),
+      );
 
-    const editorBText = docBEditor?.getText({ blockSeparator: '\n\n' }).trim() || '';
-    const editorBHtml = docBEditor?.getHTML() || '';
-    const editorBJson = docBEditor?.getJSON() || null;
+      // Synchronously recompile bundles for the save ref snapshot
+      const docsWithLatest = documents.map((d) =>
+        d.id === activeDocId
+          ? { ...d, text: editorText, html: editorHtml, json: editorJson }
+          : d,
+      );
+      const { confidential: confB, shared: shrB } = compileBundles(docsWithLatest);
+      latestDraftStateRef.current = {
+        ...latestDraftStateRef.current,
+        title,
+        docAText: confB.text,
+        docBText: shrB.text,
+        docAHtml: confB.html,
+        docBHtml: shrB.html,
+        docAJson: confB.json,
+        docBJson: shrB.json,
+        docASource: confB.source,
+        docBSource: shrB.source,
+        docAFiles: confB.files,
+        docBFiles: shrB.files,
+      };
+    }
 
-    // Update state ref with the latest content from editors
-    latestDraftStateRef.current = {
-      ...latestDraftStateRef.current,
-      title,
-      docAText: editorAText,
-      docBText: editorBText,
-      docAHtml: editorAHtml,
-      docBHtml: editorBHtml,
-      docAJson: editorAJson,
-      docBJson: editorBJson,
-      docASource,
-      docBSource,
-      docAFiles: Array.isArray(docAFiles) ? docAFiles : [],
-      docBFiles: Array.isArray(docBFiles) ? docBFiles : [],
-    };
-
-    // Validation: warn if both editors are completely empty when overwriting existing comparison
-    const hasDocAContent = Boolean(editorAText.trim());
-    const hasDocBContent = Boolean(editorBText.trim());
+    // Validation: warn if both bundles are completely empty
+    const snap = latestDraftStateRef.current;
+    const hasDocAContent = Boolean((snap.docAText || '').trim());
+    const hasDocBContent = Boolean((snap.docBText || '').trim());
     const isNewComparison = !comparisonId;
 
     if (!hasDocAContent && !hasDocBContent && !isNewComparison) {
@@ -1970,8 +2029,6 @@ export default function DocumentComparisonCreate() {
       return;
     }
 
-    // Allow saving empty drafts for new comparisons (user can fill in later)
-    // But warn if user tries to save completely empty when creating new
     if (!hasDocAContent && !hasDocBContent && isNewComparison) {
       toast.info('You are creating an empty draft. Add content before proceeding to evaluation.');
     }
@@ -2904,31 +2961,38 @@ export default function DocumentComparisonCreate() {
     const updatedText = String(pendingReviewSuggestion.updatedText || '');
     const updatedHtml = sanitizeEditorHtml(textToHtml(updatedText));
 
-    if (target === 'a') {
-      latestDraftStateRef.current = {
-        ...latestDraftStateRef.current,
-        docAText: updatedText,
-        docAHtml: updatedHtml,
-        docAJson: null,
-        docASource: 'typed',
-      };
-      setDocAText(updatedText);
-      setDocAHtml(updatedHtml);
-      setDocAJson(null);
-      setDocASource('typed');
-    } else {
-      latestDraftStateRef.current = {
-        ...latestDraftStateRef.current,
-        docBText: updatedText,
-        docBHtml: updatedHtml,
-        docBJson: null,
-        docBSource: 'typed',
-      };
-      setDocBText(updatedText);
-      setDocBHtml(updatedHtml);
-      setDocBJson(null);
-      setDocBSource('typed');
-    }
+    // For coach suggestions, apply to the first document matching the target visibility.
+    // target === 'a' → confidential, target === 'b' → shared
+    const targetVisibility = target === 'a' ? VISIBILITY_CONFIDENTIAL : VISIBILITY_SHARED;
+    setDocuments((prev) => {
+      let applied = false;
+      return prev.map((d) => {
+        if (!applied && d.visibility === targetVisibility) {
+          applied = true;
+          return { ...d, text: updatedText, html: updatedHtml, json: null, source: 'typed' };
+        }
+        return d;
+      });
+    });
+
+    // Keep latestDraftStateRef in sync via recompilation
+    const nextDocs = documents.map((d) =>
+      d.visibility === targetVisibility
+        ? { ...d, text: updatedText, html: updatedHtml, json: null, source: 'typed' }
+        : d,
+    );
+    const { confidential: nextConf, shared: nextShared } = compileBundles(nextDocs);
+    latestDraftStateRef.current = {
+      ...latestDraftStateRef.current,
+      docAText: nextConf.text,
+      docAHtml: nextConf.html,
+      docAJson: nextConf.json,
+      docASource: nextConf.source,
+      docBText: nextShared.text,
+      docBHtml: nextShared.html,
+      docBJson: nextShared.json,
+      docBSource: nextShared.source,
+    };
     markDraftEdited();
 
     markSuggestionApplied(suggestionId, suggestionHash);
@@ -2976,7 +3040,7 @@ export default function DocumentComparisonCreate() {
   };
 
   useEffect(() => {
-    if (step !== 2 || !isDirty || saveDraftMutation.isPending || !comparisonId) {
+    if (step < 2 || !isDirty || saveDraftMutation.isPending || !comparisonId) {
       return undefined;
     }
 
@@ -3006,7 +3070,7 @@ export default function DocumentComparisonCreate() {
   }, [bestEffortSaveDraft, comparisonId, currentStateHash, isDirty, saveDraftMutation.isPending, step]);
 
   useEffect(() => () => {
-    if (stepRef.current !== 2 || !isDirtyRef.current || !comparisonIdRef.current) {
+    if (stepRef.current < 2 || !isDirtyRef.current || !comparisonIdRef.current) {
       return;
     }
 
@@ -3018,13 +3082,13 @@ export default function DocumentComparisonCreate() {
 
   useEffect(() => {
     const handlePopState = () => {
-      if (stepRef.current !== 2 || !isDirtyRef.current || saveDraftMutation.isPending) {
+      if (stepRef.current < 2 || !isDirtyRef.current || saveDraftMutation.isPending) {
         return;
       }
 
       void bestEffortSaveDraft({
         reason: 'browser-history-navigation',
-        stepToSave: 2,
+        stepToSave: Math.max(2, stepRef.current),
         requireDraftId: true,
       });
     };
@@ -3047,178 +3111,265 @@ export default function DocumentComparisonCreate() {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [isDirty]);
 
-  const renderImportPanel = ({ side, label, selectedFile, setSelectedFile, preview, source, files, fileRef }) => {
-    const isImporting = importingSide === side;
-    const isAnyImporting = Boolean(importingSide);
+  // renderImportPanel and renderEditorPanel removed — now handled by Step1/Step2/Step3 components
 
-    return (
-      <Card className="border border-slate-200 shadow-sm">
-        <CardHeader>
-          <CardTitle className="text-base">{label} (Upload/Import)</CardTitle>
-          <CardDescription>Upload a DOCX or PDF and import extracted content into this document.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".docx,.pdf"
-            className="hidden"
-            data-testid={`import-file-input-${side}`}
-            onChange={(event) => {
-              const file = event.target.files?.[0] || null;
-              event.target.value = '';
-              setSelectedFile(file);
-              if (!file) {
-                return;
-              }
-              void importForSide(side, file);
-            }}
-          />
-
-          <div className="flex flex-wrap items-center gap-2">
-            <Button type="button" variant="outline" onClick={() => fileRef.current?.click()}>
-              <Upload className="w-4 h-4 mr-2" />
-              Choose File
-            </Button>
-
-            <Button
-              type="button"
-              onClick={() => importForSide(side)}
-              disabled={!selectedFile || isAnyImporting}
-              data-testid={`import-button-${side}`}
-              className="bg-blue-600 hover:bg-blue-700"
-            >
-              {isImporting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <FileText className="w-4 h-4 mr-2" />}
-              {isImporting ? 'Importing...' : 'Import'}
-            </Button>
-
-            <Badge variant="outline">{source || 'typed'}</Badge>
-          </div>
-
-          {selectedFile ? (
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-              <p className="font-medium break-all">{selectedFile.name}</p>
-              <p className="text-xs text-slate-500">{formatFileSize(selectedFile.size)}</p>
+  // Coach panel node — rendered inside Step 2 editor layout
+  const coachPanelNode = canUseOwnerCoach ? (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base flex items-center gap-2">
+          <Sparkles className="w-4 h-4 text-blue-600" />
+          Ask for suggestions
+          {coachCached ? <Badge variant="outline">Cached</Badge> : null}
+        </CardTitle>
+        <CardDescription>
+          Generate suggestions only when you click an action. No background requests.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className="h-full rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="space-y-3">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                    Company
+                  </p>
+                  {companyContextStatusText ? (
+                    <p
+                      className={`text-xs ${companyContextStatusClassName}`}
+                      data-testid="company-context-save-status"
+                    >
+                      {companyContextStatusText}
+                    </p>
+                  ) : null}
+                </div>
+                <div className="space-y-2">
+                  <Input
+                    ref={companyContextNameInputRef}
+                    data-testid="company-context-name-input-inline"
+                    placeholder="Company name"
+                    value={companyContextName}
+                    onChange={handleCompanyContextNameChange}
+                    onBlur={handleCompanyContextBlur}
+                  />
+                  <Input
+                    data-testid="company-context-website-input-inline"
+                    placeholder="Website"
+                    value={companyContextWebsite}
+                    onChange={handleCompanyContextWebsiteChange}
+                    onBlur={handleCompanyContextBlur}
+                  />
+                </div>
+                {companyContextValidationError ? (
+                  <p className="text-xs text-red-700" data-testid="company-context-validation-error">
+                    {companyContextValidationError}
+                  </p>
+                ) : null}
+                {companyContextSaveError ? (
+                  <div className="flex items-center gap-2 text-xs text-red-700" data-testid="company-context-inline-error">
+                    <span>{companyContextSaveError}</span>
+                    <button
+                      type="button"
+                      className="underline underline-offset-2"
+                      onClick={retryCompanyContextSave}
+                      disabled={isSavingCompanyContext}
+                    >
+                      Retry
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {DOCUMENT_COMPARISON_COACH_ACTIONS.map((option) => (
+                  <Button
+                    key={option.id}
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={coachLoading || coachNotConfigured}
+                    onClick={() => {
+                      const request = buildCoachActionRequest(option, selectionContext);
+                      if (!request) return;
+                      runCoach(request);
+                    }}
+                  >
+                    {coachLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
+                    {option.label}
+                  </Button>
+                ))}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={coachLoading || coachNotConfigured}
+                  onClick={handleCompanyBriefAction}
+                  data-testid="coach-company-brief-action"
+                >
+                  {coachLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
+                  Company Brief
+                </Button>
+              </div>
             </div>
-          ) : (
-            <p className="text-sm text-slate-500">No file selected.</p>
-          )}
-
-          {files.length > 0 ? (
-            <p className="text-xs text-slate-500" data-testid={`last-imported-${side}`}>
-              Last imported: {files[0]?.filename || 'Unknown file'}
-            </p>
-          ) : null}
-
-          <div className="space-y-1">
-            <Label className="text-sm font-semibold">Preview</Label>
-            <div
-              className="min-h-[130px] rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 whitespace-pre-wrap"
-              data-testid={`import-preview-${side}`}
-            >
-              {preview || 'Imported content preview will appear here.'}
+          </div>
+          <div className="h-full rounded-lg border border-slate-200 bg-slate-50/60 p-4 shadow-sm" data-testid="coach-custom-prompt-panel">
+            <div className="flex h-full flex-col gap-3">
+              <div className="space-y-1">
+                <Label htmlFor="coach-custom-prompt-input" className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  Custom prompt
+                </Label>
+                <p className="text-xs text-slate-500">Ask for feedback, risks, gaps, strategy…</p>
+              </div>
+              <Textarea
+                id="coach-custom-prompt-input"
+                data-testid="coach-custom-prompt-input"
+                rows={5}
+                className="min-h-[140px] w-full resize-y bg-white"
+                placeholder="Ask for feedback, risks, gaps, strategy…"
+                value={customPromptText}
+                onChange={(event) => setCustomPromptText(event.target.value)}
+                onKeyDown={handleCustomPromptKeyDown}
+                disabled={coachLoading || coachNotConfigured}
+              />
+              <div className="flex justify-end">
+                <Button
+                  type="button"
+                  data-testid="coach-custom-prompt-run"
+                  onClick={runCustomPromptCoach}
+                  disabled={coachLoading || coachNotConfigured || !asText(customPromptText)}
+                >
+                  {coachLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                  {coachLoading ? 'Running...' : 'Run'}
+                </Button>
+              </div>
             </div>
-            {isImporting ? <p className="text-xs text-slate-500">Importing...</p> : null}
-          </div>
-        </CardContent>
-      </Card>
-    );
-  };
-
-  const renderEditorPanel = (side) => {
-    const isA = side === 'a';
-    const label = isA ? CONFIDENTIAL_LABEL : SHARED_LABEL;
-    const source = isA ? docASource : docBSource;
-    const characters = isA ? docACharacters : docBCharacters;
-    const words = isA ? docAWords : docBWords;
-    const nearLimit = isA ? docANearLimit : docBNearLimit;
-    const overLimit = isA ? docAOverLimit : docBOverLimit;
-    const limitTextClass = overLimit ? 'text-red-700' : nearLimit ? 'text-amber-700' : 'text-slate-500';
-
-    const panelModeClass =
-      fullscreenSide === side
-        ? 'fixed inset-5 z-50 bg-white rounded-2xl shadow-2xl border border-slate-300 p-4 overflow-auto'
-        : fullscreenSide
-          ? 'hidden'
-          : 'space-y-3';
-
-    return (
-      <div className={panelModeClass}>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <FileText className="w-4 h-4 text-slate-500" />
-            <h3 className="text-sm font-semibold text-slate-700">{label}</h3>
-            <Badge variant="outline">{source}</Badge>
-          </div>
-          <div className={`text-xs ${limitTextClass}`}>
-            {characters.toLocaleString()} chars • {words.toLocaleString()} words
           </div>
         </div>
 
-        <DocumentRichEditor
-          label={label}
-          content={isA ? docAJson || docAHtml : docBJson || docBHtml}
-          placeholder={`Edit ${label}...`}
-          minHeightClassName={fullscreenSide === side ? 'min-h-[70vh]' : 'min-h-[560px]'}
-          scrollContainerClassName={fullscreenSide === side ? 'h-[72vh]' : 'h-[560px]'}
-          isFullscreen={fullscreenSide === side}
-          maxCharacters={limits.perDocumentCharacterLimit}
-          onToggleFullscreen={() => setFullscreenSide((prev) => (prev === side ? null : side))}
-          shouldFocus={focusEditorRequest.side === side}
-          focusRequestId={focusEditorRequest.side === side ? focusEditorRequest.id : 0}
-          jumpToTextRequest={
-            focusEditorRequest.side === side && focusEditorRequest.jumpText
-              ? { id: focusEditorRequest.id, text: focusEditorRequest.jumpText }
-              : null
-          }
-          replaceSelectionRequest={
-            replaceSelectionRequest.side === side && replaceSelectionRequest.id
-              ? replaceSelectionRequest
-              : null
-          }
-          onReplaceSelectionApplied={handleReplaceSelectionApplied}
-          onSelectionChange={({ text: selectedText, range }) => {
-            const normalized = String(selectedText || '').trim();
-            setSelectionContext({
-              side,
-              text: normalized,
-              range:
-                range && Number.isFinite(range.from) && Number.isFinite(range.to)
-                  ? { from: Number(range.from), to: Number(range.to) }
-                  : null,
-            });
-          }}
-          data-testid={isA ? 'doc-a-editor' : 'doc-b-editor'}
-          editorRef={isA ? docAEditorRef : docBEditorRef}
-          onChange={({ html, text, json }) => {
-            markDraftEdited();
-            if (isA) {
-              latestDraftStateRef.current = {
-                ...latestDraftStateRef.current,
-                docAText: text,
-                docAHtml: html,
-                docAJson: json,
-              };
-              setDocAText(text);
-              setDocAHtml(html);
-              setDocAJson(json);
-              return;
-            }
+        {coachNotConfigured ? (
+          <Alert className="bg-amber-50 border-amber-200">
+            <AlertTriangle className="h-4 w-4 text-amber-700" />
+            <AlertDescription className="text-amber-800">
+              AI suggestions are unavailable because Vertex AI is not configured.
+            </AlertDescription>
+          </Alert>
+        ) : null}
 
-            latestDraftStateRef.current = {
-              ...latestDraftStateRef.current,
-              docBText: text,
-              docBHtml: html,
-              docBJson: json,
-            };
-            setDocBText(text);
-            setDocBHtml(html);
-            setDocBJson(json);
-          }}
-        />
-      </div>
-    );
-  };
+        {!coachNotConfigured && coachError ? (
+          <Alert className="bg-red-50 border-red-200">
+            <AlertTriangle className="h-4 w-4 text-red-700" />
+            <AlertDescription className="text-red-800">{coachError}</AlertDescription>
+          </Alert>
+        ) : null}
+
+        {coachResponseText ? (
+          <div
+            className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm transition-all duration-200"
+            data-testid={isCustomPromptResponse ? 'coach-custom-prompt-feedback' : 'coach-response-feedback'}
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-slate-200 bg-slate-50/70 px-4 py-3">
+              <div className="space-y-1">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">{coachResponseLabel}</p>
+                {coachResponseMeta ? <p className="text-xs text-slate-500">{coachResponseMeta}</p> : null}
+              </div>
+              <div className="flex items-center gap-1">
+                <Button type="button" size="sm" variant="outline" onClick={copyCoachResponse} disabled={!coachResponseText}>
+                  {isCoachResponseCopied ? <Check className="mr-2 h-4 w-4" /> : <Copy className="mr-2 h-4 w-4" />}
+                  {isCoachResponseCopied ? 'Copied' : 'Copy'}
+                </Button>
+                <Button type="button" size="icon" variant="ghost" aria-label="Clear response" onClick={clearCoachResponse}>
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+            <div className="min-h-[132px] px-4 py-4">
+              <CoachResponseText text={coachResponseText} />
+              {coachIntentKey === 'company_brief' && companyBriefSources.length > 0 ? (
+                <div className="mt-4 border-t border-slate-200 pt-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Sources</p>
+                  <ul className="mt-2 space-y-1 text-xs text-slate-600" data-testid="company-brief-sources">
+                    {companyBriefSources.map((source, index) => {
+                      const sourceTitle = asText(source?.title) || `Source ${index + 1}`;
+                      const url = asText(source?.url);
+                      if (!url) {
+                        return (
+                          <li key={`company-brief-source-${index}`}>
+                            [{index + 1}] {sourceTitle}
+                          </li>
+                        );
+                      }
+                      return (
+                        <li key={`company-brief-source-${index}`}>
+                          [{index + 1}]{' '}
+                          <a href={url} target="_blank" rel="noreferrer" className="text-blue-700 underline-offset-2 hover:underline">
+                            {sourceTitle}
+                          </a>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+
+        {visibleCoachSuggestions.length > 0 ? (
+          <div className="space-y-2">
+            {visibleCoachSuggestions.slice(0, 12).map((suggestion, index) => {
+              const suggestionId = getNormalizedSuggestionId(suggestion, index);
+              const expanded = expandedSuggestionIds.includes(suggestionId);
+              const isShared = suggestion?.scope === 'shared' || suggestion?.proposed_change?.target === 'doc_b';
+              const categoryLabel = getSuggestionCategoryLabel(suggestion?.category);
+              return (
+                <div key={suggestionId || `coach-suggestion-${index}`} className="rounded-lg border border-slate-200 bg-white p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline">{String(suggestion?.severity || 'info')}</Badge>
+                      <Badge variant={isShared ? 'secondary' : 'outline'}>
+                        {isShared ? 'Shared-safe' : 'Confidential-only'}
+                      </Badge>
+                      {categoryLabel ? <Badge variant="outline">{categoryLabel}</Badge> : null}
+                      <span className="text-sm font-medium text-slate-800">{suggestion?.title || 'Suggestion'}</span>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button type="button" size="sm" onClick={() => openCoachSuggestionReview(suggestion, suggestionId)}>
+                        Review & Apply
+                      </Button>
+                      <Button type="button" size="sm" variant="outline" onClick={() => toggleSuggestionExpanded(suggestionId)}>
+                        {expanded ? 'Hide' : 'Explain'}
+                      </Button>
+                      <Button type="button" size="sm" variant="ghost" onClick={() => dismissSuggestion(suggestionId)}>
+                        Ignore
+                      </Button>
+                    </div>
+                  </div>
+                  {expanded ? (
+                    <div className="mt-2 space-y-2 text-sm text-slate-600">
+                      <p>{suggestion?.rationale || 'No rationale provided.'}</p>
+                      <div className="rounded border border-slate-200 bg-slate-50 p-2 whitespace-pre-wrap">
+                        {suggestion?.proposed_change?.text || ''}
+                      </div>
+                      {isShared && Array.isArray(suggestion?.evidence?.shared_quotes) && suggestion.evidence.shared_quotes.length ? (
+                        <div>
+                          <p className="text-xs font-semibold text-slate-500 mb-1">Shared evidence</p>
+                          <ul className="list-disc pl-5 text-xs text-slate-600">
+                            {suggestion.evidence.shared_quotes.map((quote) => (
+                              <li key={`${suggestionId}-${quote.slice(0, 24)}`}>{quote}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
+  ) : null;
 
   return (
     <div className="min-h-screen bg-slate-50 py-6">
@@ -3252,7 +3403,7 @@ export default function DocumentComparisonCreate() {
             to={createPageUrl('Proposals')}
             className="inline-flex items-center text-slate-600 hover:text-slate-900 mb-2"
             onClick={async (event) => {
-              if (step === 2) {
+              if (step >= 2) {
                 event.preventDefault();
                 if (isDirty) {
                   const shouldLeave = window.confirm('You have unsaved changes. Leave this page?');
@@ -3262,7 +3413,7 @@ export default function DocumentComparisonCreate() {
                 }
                 await bestEffortSaveDraft({
                   reason: 'back-to-proposals-link',
-                  stepToSave: 2,
+                  stepToSave: Math.max(2, step),
                   requireDraftId: true,
                 });
                 navigate(createPageUrl('Proposals'));
@@ -3291,7 +3442,7 @@ export default function DocumentComparisonCreate() {
           <div className="flex items-center justify-between text-sm mb-3">
             <div className="flex items-center gap-3">
               <span
-                className={`font-semibold ${step === 1 ? 'text-blue-600' : 'text-slate-400'}`}
+                className={`font-semibold text-blue-600`}
                 data-testid="doc-comparison-step-indicator"
               >
                 Step {step} of {TOTAL_WORKFLOW_STEPS}
@@ -3325,103 +3476,41 @@ export default function DocumentComparisonCreate() {
               initial={{ opacity: 0, x: 20 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -20 }}
-              className="space-y-6"
               data-testid="doc-comparison-step-1"
             >
-              <Card>
-                <CardHeader>
-                  <CardTitle>Step 1: Upload and Import</CardTitle>
-                  <CardDescription>
-                    Upload DOCX or PDF files and import extracted content before editing.
-                    {' '}
-                    Uploads are optional - you can also type directly in the editor.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-5">
-                  <div className="space-y-2 max-w-xl">
-                    <Label>Comparison Title</Label>
-                    <Input
-                      value={title}
-                      onChange={(event) => {
-                        const nextTitle = event.target.value;
-                        latestDraftStateRef.current = {
-                          ...latestDraftStateRef.current,
-                          title: nextTitle,
-                        };
-                        setTitle(nextTitle);
-                        markDraftEdited();
-                      }}
-                      placeholder="e.g., Mutual NDA comparison"
-                      data-testid="comparison-title-input"
-                    />
-                    {!asText(title) ? (
-                      <p className="text-xs text-slate-500">
-                        Optional for now. If left empty, this will save as "Untitled Comparison".
-                      </p>
-                    ) : null}
-                  </div>
-
-                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                    {renderImportPanel({
-                      side: 'a',
-                      label: CONFIDENTIAL_LABEL,
-                      selectedFile: docASelectedFile,
-                      setSelectedFile: setDocASelectedFile,
-                      preview: docAPreviewSnippet,
-                      source: docASource,
-                      files: docAFiles,
-                      fileRef: docAInputFileRef,
-                    })}
-
-                    {renderImportPanel({
-                      side: 'b',
-                      label: SHARED_LABEL,
-                      selectedFile: docBSelectedFile,
-                      setSelectedFile: setDocBSelectedFile,
-                      preview: docBPreviewSnippet,
-                      source: docBSource,
-                      files: docBFiles,
-                      fileRef: docBInputFileRef,
-                    })}
-                  </div>
-                </CardContent>
-              </Card>
-
-              <div className="flex justify-end gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => saveDraft(1)}
-                  disabled={saveDraftMutation.isPending || exceedsAnySizeLimit}
-                  data-testid="step1-save-draft-button"
-                >
-                  {saveDraftMutation.isPending ? (
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  ) : (
-                    <Save className="w-4 h-4 mr-2" />
-                  )}
-                  {saveDraftMutation.isPending ? 'Saving...' : 'Save Draft'}
-                </Button>
-                <Button
-                  type="button"
-                  onClick={() => jumpStep(2)}
-                  disabled={saveDraftMutation.isPending}
-                  className="bg-blue-600 hover:bg-blue-700"
-                  data-testid="step1-continue-button"
-                >
-                  {saveDraftMutation.isPending ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Saving...
-                    </>
-                  ) : (
-                    <>
-                      Continue to Editor
-                      <ArrowRight className="w-4 h-4 ml-2" />
-                    </>
-                  )}
-                </Button>
-              </div>
+              <Step1AddSources
+                title={title}
+                onTitleChange={(nextTitle) => {
+                  latestDraftStateRef.current = {
+                    ...latestDraftStateRef.current,
+                    title: nextTitle,
+                  };
+                  setTitle(nextTitle);
+                  markDraftEdited();
+                }}
+                documents={documents}
+                onAddFiles={handleAddFiles}
+                onAddTyped={handleAddTypedDocument}
+                onRemoveDoc={(id) => {
+                  setDocuments((prev) => prev.filter((d) => d.id !== id));
+                  if (activeDocId === id) {
+                    setActiveDocId(documents.find((d) => d.id !== id)?.id || null);
+                  }
+                  markDraftEdited();
+                }}
+                onRenameDoc={(id, newTitle) => {
+                  updateDocument(id, { title: newTitle });
+                  markDraftEdited();
+                }}
+                onSetVisibility={(id, visibility) => {
+                  updateDocument(id, { visibility });
+                  markDraftEdited();
+                }}
+                onImportFile={(docId, file) => importForDocument(docId, file)}
+                saveDraftPending={saveDraftMutation.isPending}
+                onSaveDraft={() => saveDraft(1)}
+                onContinue={() => jumpStep(2)}
+              />
             </motion.div>
           )}
 
@@ -3435,408 +3524,80 @@ export default function DocumentComparisonCreate() {
                 initial={{ opacity: 0, x: 20 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -20 }}
-                className="space-y-6"
                 data-testid="doc-comparison-step-2"
               >
-                {(docANearLimit || docBNearLimit || totalNearLimit) ? (
-                  <Card>
-                    <CardContent className="py-4">
-                      <Alert className={exceedsAnySizeLimit ? 'bg-red-50 border-red-200' : 'bg-amber-50 border-amber-200'}>
-                        <AlertTriangle className={`h-4 w-4 ${exceedsAnySizeLimit ? 'text-red-700' : 'text-amber-700'}`} />
-                        <AlertDescription className={exceedsAnySizeLimit ? 'text-red-800' : 'text-amber-800'}>
-	                          {exceedsAnySizeLimit
-	                            ? 'Editor content is over the safety limit. Reduce text before saving or evaluating.'
-	                            : `Approaching the input limit. Keep each document under ${limits.perDocumentCharacterLimit.toLocaleString()} characters.`}
-	                        </AlertDescription>
-	                      </Alert>
-	                    </CardContent>
-                  </Card>
-                ) : null}
-
-                {canUseOwnerCoach ? (
-                <Card>
-		                  <CardHeader className="pb-2">
-                    <CardTitle className="text-base flex items-center gap-2">
-                      <Sparkles className="w-4 h-4 text-blue-600" />
-                      Ask for suggestions
-                      {coachCached ? <Badge variant="outline">Cached</Badge> : null}
-                    </CardTitle>
-                    <CardDescription>
-                      Generate suggestions only when you click an action. No background requests.
-                    </CardDescription>
-	                  </CardHeader>
-		                  <CardContent className="space-y-4">
-				                    <div className="grid gap-4 lg:grid-cols-2">
-				                      <div className="h-full rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-				                        <div className="space-y-3">
-				                          <div className="space-y-2">
-				                            <div className="flex items-center justify-between gap-2">
-				                              <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-				                                Company
-				                              </p>
-				                              {companyContextStatusText ? (
-				                                <p
-				                                  className={`text-xs ${companyContextStatusClassName}`}
-				                                  data-testid="company-context-save-status"
-				                                >
-				                                  {companyContextStatusText}
-				                                </p>
-				                              ) : null}
-				                            </div>
-				                            <div className="space-y-2">
-				                              <Input
-				                                ref={companyContextNameInputRef}
-				                                data-testid="company-context-name-input-inline"
-				                                placeholder="Company name"
-				                                value={companyContextName}
-				                                onChange={handleCompanyContextNameChange}
-				                                onBlur={handleCompanyContextBlur}
-				                              />
-				                              <Input
-				                                data-testid="company-context-website-input-inline"
-				                                placeholder="Website"
-				                                value={companyContextWebsite}
-				                                onChange={handleCompanyContextWebsiteChange}
-				                                onBlur={handleCompanyContextBlur}
-				                              />
-				                            </div>
-				                            {companyContextValidationError ? (
-				                              <p
-				                                className="text-xs text-red-700"
-				                                data-testid="company-context-validation-error"
-				                              >
-				                                {companyContextValidationError}
-				                              </p>
-				                            ) : null}
-				                            {companyContextSaveError ? (
-				                              <div
-				                                className="flex items-center gap-2 text-xs text-red-700"
-				                                data-testid="company-context-inline-error"
-				                              >
-				                                <span>{companyContextSaveError}</span>
-				                                <button
-				                                  type="button"
-				                                  className="underline underline-offset-2"
-				                                  onClick={retryCompanyContextSave}
-				                                  disabled={isSavingCompanyContext}
-				                                >
-				                                  Retry
-				                                </button>
-				                              </div>
-				                            ) : null}
-				                          </div>
-				                          <div className="flex flex-wrap gap-2">
-				                            {DOCUMENT_COMPARISON_COACH_ACTIONS.map((option) => (
-		                              <Button
-		                                key={option.id}
-		                                type="button"
-		                                variant="outline"
-		                                size="sm"
-		                                disabled={coachLoading || coachNotConfigured}
-		                                onClick={() => {
-		                                  const request = buildCoachActionRequest(option, selectionContext);
-		                                  if (!request) {
-		                                    return;
-		                                  }
-		                                  runCoach(request);
-		                                }}
-		                              >
-		                                {coachLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
-			                                {option.label}
-			                              </Button>
-			                            ))}
-			                            <Button
-			                              type="button"
-			                              variant="outline"
-			                              size="sm"
-			                              disabled={coachLoading || coachNotConfigured}
-			                              onClick={handleCompanyBriefAction}
-			                              data-testid="coach-company-brief-action"
-			                            >
-			                              {coachLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
-			                              Company Brief
-			                            </Button>
-			                          </div>
-				                        </div>
-				                      </div>
-		                      <div
-		                        className="h-full rounded-lg border border-slate-200 bg-slate-50/60 p-4 shadow-sm"
-		                        data-testid="coach-custom-prompt-panel"
-		                      >
-		                        <div className="flex h-full flex-col gap-3">
-		                          <div className="space-y-1">
-		                            <Label htmlFor="coach-custom-prompt-input" className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-		                              Custom prompt
-		                            </Label>
-		                            <p className="text-xs text-slate-500">Ask for feedback, risks, gaps, strategy…</p>
-		                          </div>
-		                          <Textarea
-		                            id="coach-custom-prompt-input"
-		                            data-testid="coach-custom-prompt-input"
-		                            rows={5}
-		                            className="min-h-[140px] w-full resize-y bg-white"
-		                            placeholder="Ask for feedback, risks, gaps, strategy…"
-		                            value={customPromptText}
-		                            onChange={(event) => setCustomPromptText(event.target.value)}
-		                            onKeyDown={handleCustomPromptKeyDown}
-		                            disabled={coachLoading || coachNotConfigured}
-		                          />
-		                          <div className="flex justify-end">
-		                            <Button
-		                              type="button"
-		                              data-testid="coach-custom-prompt-run"
-		                              onClick={runCustomPromptCoach}
-		                              disabled={coachLoading || coachNotConfigured || !asText(customPromptText)}
-		                            >
-		                              {coachLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-		                              {coachLoading ? 'Running...' : 'Run'}
-		                            </Button>
-		                          </div>
-		                        </div>
-		                      </div>
-		                    </div>
-
-                    {coachNotConfigured ? (
-                      <Alert className="bg-amber-50 border-amber-200">
-                        <AlertTriangle className="h-4 w-4 text-amber-700" />
-                        <AlertDescription className="text-amber-800">
-                          AI suggestions are unavailable because Vertex AI is not configured.
-                        </AlertDescription>
-                      </Alert>
-                    ) : null}
-
-                    {!coachNotConfigured && coachError ? (
-                      <Alert className="bg-red-50 border-red-200">
-                        <AlertTriangle className="h-4 w-4 text-red-700" />
-                        <AlertDescription className="text-red-800">{coachError}</AlertDescription>
-                      </Alert>
-                    ) : null}
-
-		                    {coachResponseText ? (
-		                      <div
-		                        className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm transition-all duration-200"
-		                        data-testid={isCustomPromptResponse ? 'coach-custom-prompt-feedback' : 'coach-response-feedback'}
-		                      >
-		                        <div className="flex items-start justify-between gap-3 border-b border-slate-200 bg-slate-50/70 px-4 py-3">
-		                          <div className="space-y-1">
-		                            <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">{coachResponseLabel}</p>
-		                            {coachResponseMeta ? <p className="text-xs text-slate-500">{coachResponseMeta}</p> : null}
-		                          </div>
-		                          <div className="flex items-center gap-1">
-		                            <Button type="button" size="sm" variant="outline" onClick={copyCoachResponse} disabled={!coachResponseText}>
-		                              {isCoachResponseCopied ? <Check className="mr-2 h-4 w-4" /> : <Copy className="mr-2 h-4 w-4" />}
-		                              {isCoachResponseCopied ? 'Copied' : 'Copy'}
-		                            </Button>
-		                            <Button type="button" size="icon" variant="ghost" aria-label="Clear response" onClick={clearCoachResponse}>
-		                              <X className="h-4 w-4" />
-		                            </Button>
-		                          </div>
-		                        </div>
-			                        <div className="min-h-[132px] px-4 py-4">
-			                          <CoachResponseText text={coachResponseText} />
-			                          {coachIntentKey === 'company_brief' && companyBriefSources.length > 0 ? (
-			                            <div className="mt-4 border-t border-slate-200 pt-3">
-			                              <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Sources</p>
-			                              <ul className="mt-2 space-y-1 text-xs text-slate-600" data-testid="company-brief-sources">
-			                                {companyBriefSources.map((source, index) => {
-			                                  const title = asText(source?.title) || `Source ${index + 1}`;
-			                                  const url = asText(source?.url);
-			                                  if (!url) {
-			                                    return (
-			                                      <li key={`company-brief-source-${index}`}>
-			                                        [{index + 1}] {title}
-			                                      </li>
-			                                    );
-			                                  }
-			                                  return (
-			                                    <li key={`company-brief-source-${index}`}>
-			                                      [{index + 1}]{' '}
-			                                      <a
-			                                        href={url}
-			                                        target="_blank"
-			                                        rel="noreferrer"
-			                                        className="text-blue-700 underline-offset-2 hover:underline"
-			                                      >
-			                                        {title}
-			                                      </a>
-			                                    </li>
-			                                  );
-			                                })}
-			                              </ul>
-			                            </div>
-			                          ) : null}
-			                        </div>
-			                      </div>
-			                    ) : null}
-
-	                    {visibleCoachSuggestions.length > 0 ? (
-	                      <div className="space-y-2">
-                        {visibleCoachSuggestions.slice(0, 12).map((suggestion, index) => {
-                          const suggestionId = getNormalizedSuggestionId(suggestion, index);
-                          const expanded = expandedSuggestionIds.includes(suggestionId);
-                          const isShared = suggestion?.scope === 'shared' || suggestion?.proposed_change?.target === 'doc_b';
-                          const categoryLabel = getSuggestionCategoryLabel(suggestion?.category);
-                          return (
-                            <div key={suggestionId || `coach-suggestion-${index}`} className="rounded-lg border border-slate-200 bg-white p-3">
-                              <div className="flex flex-wrap items-center justify-between gap-2">
-                                <div className="flex items-center gap-2">
-                                  <Badge variant="outline">{String(suggestion?.severity || 'info')}</Badge>
-                                  <Badge variant={isShared ? 'secondary' : 'outline'}>
-                                    {isShared ? 'Shared-safe' : 'Confidential-only'}
-                                  </Badge>
-                                  {categoryLabel ? <Badge variant="outline">{categoryLabel}</Badge> : null}
-                                  <span className="text-sm font-medium text-slate-800">{suggestion?.title || 'Suggestion'}</span>
-                                </div>
-                                <div className="flex gap-2">
-                                  <Button type="button" size="sm" onClick={() => openCoachSuggestionReview(suggestion, suggestionId)}>
-                                    Review & Apply
-                                  </Button>
-                                  <Button type="button" size="sm" variant="outline" onClick={() => toggleSuggestionExpanded(suggestionId)}>
-                                    {expanded ? 'Hide' : 'Explain'}
-                                  </Button>
-                                  <Button type="button" size="sm" variant="ghost" onClick={() => dismissSuggestion(suggestionId)}>
-                                    Ignore
-                                  </Button>
-                                </div>
-                              </div>
-                              {expanded ? (
-                                <div className="mt-2 space-y-2 text-sm text-slate-600">
-                                  <p>{suggestion?.rationale || 'No rationale provided.'}</p>
-                                  <div className="rounded border border-slate-200 bg-slate-50 p-2 whitespace-pre-wrap">
-                                    {suggestion?.proposed_change?.text || ''}
-                                  </div>
-                                  {isShared && Array.isArray(suggestion?.evidence?.shared_quotes) && suggestion.evidence.shared_quotes.length ? (
-                                    <div>
-                                      <p className="text-xs font-semibold text-slate-500 mb-1">Shared evidence</p>
-                                      <ul className="list-disc pl-5 text-xs text-slate-600">
-                                        {suggestion.evidence.shared_quotes.map((quote) => (
-                                          <li key={`${suggestionId}-${quote.slice(0, 24)}`}>{quote}</li>
-                                        ))}
-                                      </ul>
-                                    </div>
-                                  ) : null}
-                                </div>
-                              ) : null}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ) : null}
-                  </CardContent>
-                </Card>
-                ) : null}
-
-                {isStep2LoadingDraft ? (
-                  <Card>
-                    <CardContent className="py-10 text-slate-500 flex items-center gap-2">
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      Loading editor...
-                    </CardContent>
-                  </Card>
-                ) : null}
-
-                {step2LoadError ? (
-                  <Card className="border border-amber-200 bg-amber-50">
-                    <CardHeader>
-                      <CardTitle>We couldn&apos;t load the editor yet.</CardTitle>
-                      <CardDescription>
-                        Please retry loading this draft, or return to Step 1.
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent className="flex flex-wrap gap-3">
-                      <Button onClick={retryStep2Load}>
-                        Retry
-                      </Button>
-                      <Button variant="outline" onClick={() => jumpStep(1)}>
-                        Back to Step 1
-                      </Button>
-                    </CardContent>
-                  </Card>
-                ) : null}
-
-                {!isStep2LoadingDraft && !step2LoadError && !comparisonId ? (
-                  <Card className="border border-amber-200 bg-amber-50">
-                    <CardHeader>
-                      <CardTitle>We couldn&apos;t load the editor yet.</CardTitle>
-                      <CardDescription>
-                        Create the comparison draft first, then continue to editing.
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent className="flex flex-wrap gap-3">
-                      <Button onClick={() => jumpStep(2)} disabled={saveDraftMutation.isPending}>
-                        {saveDraftMutation.isPending ? (
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        ) : null}
-                        Retry
-                      </Button>
-                      <Button variant="outline" onClick={() => jumpStep(1)}>
-                        Back to Step 1
-                      </Button>
-                    </CardContent>
-                  </Card>
-                ) : null}
-
-                {!isStep2LoadingDraft && !step2LoadError && comparisonId ? (
-                  <>
-                    {fullscreenSide && (
-                      <button
-                        type="button"
-                        aria-label="Close full screen editor"
-                        className="fixed inset-0 bg-slate-900/45 z-40"
-                        onClick={() => setFullscreenSide(null)}
-                      />
-                    )}
-
-                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
-                      {renderEditorPanel('a')}
-                      {renderEditorPanel('b')}
-                    </div>
-
-                    <div className="flex justify-between pt-2">
-                      <Button variant="outline" onClick={() => jumpStep(1)} data-testid="step2-back-button">
-                        <ArrowLeft className="w-4 h-4 mr-2" />
-                        Back to Upload
-                      </Button>
-                      <div className="flex gap-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={handleStep2SaveDraftClick}
-                          disabled={saveDraftMutation.isPending || exceedsAnySizeLimit}
-                          data-testid="step2-save-draft-button"
-                        >
-                          {saveDraftMutation.isPending ? (
-                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                          ) : (
-                            <Save className="w-4 h-4 mr-2" />
-                          )}
-                          {saveDraftMutation.isPending ? 'Saving...' : 'Save Draft'}
-                        </Button>
-                        <Button
-                          type="button"
-                          onClick={handleFinishClick}
-                          disabled={saveDraftMutation.isPending || isFinishingComparison || isRunningEvaluation}
-                          className="bg-blue-600 hover:bg-blue-700"
-                          data-testid="step2-run-evaluation-button"
-                        >
-                          {isFinishingComparison ? (
-                            <>
-                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                              {finishStage === 'evaluating' ? 'Evaluating...' : 'Saving...'}
-                            </>
-                          ) : (
-                            <>
-                              Run Evaluation
-                              <ArrowRight className="w-4 h-4 ml-2" />
-                            </>
-                          )}
-                        </Button>
-                      </div>
-                    </div>
-                  </>
-                ) : null}
+                <Step2EditSources
+                  documents={documents}
+                  activeDocId={activeDocId}
+                  onSelectDoc={(id) => setActiveDocId(id)}
+                  onDocumentContentChange={handleDocumentContentChange}
+                  editorRef={activeEditorRef}
+                  limits={limits}
+                  isLoadingDraft={isStep2LoadingDraft}
+                  loadError={step2LoadError}
+                  onRetryLoad={retryStep2Load}
+                  fullscreenDocId={fullscreenDocId}
+                  onToggleFullscreen={(docId) =>
+                    setFullscreenDocId((prev) => (prev === docId ? null : docId))
+                  }
+                  saveDraftPending={saveDraftMutation.isPending}
+                  exceedsAnySizeLimit={exceedsAnySizeLimit}
+                  onSaveDraft={handleStep2SaveDraftClick}
+                  onBack={() => jumpStep(1)}
+                  onContinue={() => jumpStep(3)}
+                  coachPanel={coachPanelNode}
+                  totalNearLimit={totalNearLimit}
+                  activeDocNearLimit={
+                    activeDocId
+                      ? (documents.find((d) => d.id === activeDocId)?.text?.length || 0) >=
+                        limits.perDocumentCharacterLimit * 0.85
+                      : false
+                  }
+                  activeDocOverLimit={
+                    activeDocId
+                      ? (documents.find((d) => d.id === activeDocId)?.text?.length || 0) >
+                        limits.perDocumentCharacterLimit
+                      : false
+                  }
+                  focusEditorRequest={focusEditorRequest}
+                  replaceSelectionRequest={replaceSelectionRequest}
+                  onReplaceSelectionApplied={handleReplaceSelectionApplied}
+                  onSelectionChange={({ text: selectedText, range }) => {
+                    const normalized = String(selectedText || '').trim();
+                    setSelectionContext({
+                      side: activeDocId,
+                      text: normalized,
+                      range:
+                        range && Number.isFinite(range.from) && Number.isFinite(range.to)
+                          ? { from: Number(range.from), to: Number(range.to) }
+                          : null,
+                    });
+                  }}
+                />
               </motion.div>
             </DocumentComparisonEditorErrorBoundary>
+          )}
+
+          {step === 3 && (
+            <motion.div
+              key="doc-step-3"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              data-testid="doc-comparison-step-3"
+            >
+              <Step3ReviewPackage
+                documents={documents}
+                confidentialBundle={confidentialBundle}
+                sharedBundle={sharedBundle}
+                isFinishing={isFinishingComparison || isRunningEvaluation}
+                finishStage={finishStage}
+                exceedsAnySizeLimit={exceedsAnySizeLimit}
+                saveDraftPending={saveDraftMutation.isPending}
+                onBack={() => jumpStep(2)}
+                onRunEvaluation={handleFinishClick}
+              />
+            </motion.div>
           )}
 	        </AnimatePresence>
 
