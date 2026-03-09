@@ -5,7 +5,7 @@ import { Link } from 'react-router-dom';
 import { createPageUrl } from './utils';
 import { 
   Menu, X, ChevronDown, User, LogOut, Settings, Building2, 
-  FileText, LayoutDashboard, Shield, Globe, FolderOpen, Home, Package
+  FileText, LayoutDashboard, Shield, Globe, Home
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -77,13 +77,11 @@ export default function Layout({ children, currentPageName }) {
     { label: 'Home', pageKey: 'Landing', href: createPageUrl('Landing'), icon: Home },
     { label: 'Dashboard', pageKey: 'Dashboard', href: createPageUrl('Dashboard'), icon: LayoutDashboard },
     { label: 'Proposals', pageKey: 'Proposals', href: createPageUrl('Proposals'), icon: FileText },
-    { label: 'Products', pageKey: 'Templates', href: createPageUrl('Templates'), icon: Package },
     { label: 'Pricing', pageKey: 'Pricing', href: createPageUrl('Pricing'), icon: CoinSideIcon }
   ] : [];
 
   const publicNavLinks = [
     { label: 'Home', pageKey: 'Landing', href: createPageUrl('Landing'), icon: Home },
-    { label: 'Products', pageKey: 'Templates', href: createPageUrl('Templates'), icon: Package },
     { label: 'Pricing', pageKey: 'Pricing', href: createPageUrl('Pricing'), icon: CoinSideIcon }
   ];
 
@@ -172,12 +170,6 @@ export default function Layout({ children, currentPageName }) {
                         <Link to="/organization" className="flex items-center gap-2 cursor-pointer">
                           <Building2 className="w-4 h-4" />
                           Organization
-                        </Link>
-                      </DropdownMenuItem>
-                      <DropdownMenuItem asChild>
-                        <Link to="/documents" className="flex items-center gap-2 cursor-pointer">
-                          <FolderOpen className="w-4 h-4" />
-                          Documents
                         </Link>
                       </DropdownMenuItem>
                       <DropdownMenuItem asChild>
@@ -291,7 +283,6 @@ export default function Layout({ children, currentPageName }) {
               <div>
                 <h4 className="font-semibold mb-4">Platform</h4>
                 <ul className="space-y-2 text-sm text-slate-400">
-                  <li><Link to="/templates" className="hover:text-white transition-colors">Products</Link></li>
                   <li><Link to={createPageUrl('Pricing')} className="hover:text-white transition-colors">Pricing</Link></li>
                 </ul>
               </div>

@@ -382,7 +382,7 @@ export default function Proposals() {
             <h1 className="text-2xl font-bold text-slate-900">Proposals</h1>
             <p className="text-slate-500 mt-1">Track sent and received proposal activity.</p>
           </div>
-          <Link to="/templates">
+          <Link to={createPageUrl('DocumentComparisonCreate')}>
             <Button className="bg-blue-600 hover:bg-blue-700">
               <Plus className="w-4 h-4 mr-2" />
               New Proposal

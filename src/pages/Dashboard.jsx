@@ -269,7 +269,7 @@ export default function Dashboard() {
             <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
             <p className="text-slate-500 mt-1">Here&apos;s what&apos;s happening with your proposals.</p>
           </div>
-          <Link to={createPageUrl('CreateProposal')}>
+          <Link to={createPageUrl('DocumentComparisonCreate')}>
             <Button className="bg-blue-600 hover:bg-blue-700">
               <Plus className="w-4 h-4 mr-2" />
               New Proposal

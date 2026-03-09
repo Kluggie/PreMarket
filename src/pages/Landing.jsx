@@ -10,7 +10,7 @@ export default function Landing() {
   const navigate = useNavigate();
 
   const handleStartFree = () => {
-    navigate('/templates');
+    navigate('/DocumentComparisonCreate');
   };
 
   const features = [
@@ -91,7 +91,7 @@ export default function Landing() {
               transition={{ duration: 0.6, delay: 0.1 }}
               className="text-5xl sm:text-6xl lg:text-7xl font-bold text-slate-900 tracking-tight mb-6"
             >
-              AI Negotiation
+              AI Business Negotiator
               <br />
               <span className="bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
                 Zero Consulting Fees
@@ -104,7 +104,7 @@ export default function Landing() {
               transition={{ duration: 0.6, delay: 0.2 }}
               className="text-xl text-slate-600 max-w-2xl mx-auto mb-10"
             >
-              PreMarket helps both sides compare positions, surface trade-offs, and propose deals while confidential information stays protected. 
+              When advice is biased toward one side, better outcomes are harder to reach. PreMarket is designed to be objectively neutral, helping both parties negotiate business terms fairly while protecting confidential information. 
             </motion.p>
 
             <motion.div
@@ -121,9 +121,9 @@ export default function Landing() {
                 Start Free
                 <ArrowRight className="ml-2 w-5 h-5" />
               </Button>
-              <Link to="/templates">
+              <Link to="/DocumentComparisonCreate">
                 <Button variant="outline" size="lg" className="px-8 py-6 text-lg h-auto border-slate-200">
-                  Browse Products
+                  Try AI Deal Mediator
                 </Button>
               </Link>
             </motion.div>
