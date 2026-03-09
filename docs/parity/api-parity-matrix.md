@@ -55,26 +55,26 @@ Current `/api/*` routes implemented in `api/index.ts`:
 
 | Legacy callsite (file + usage) | Legacy function/entity | Current replacement endpoint/module | Status | Expected request/response shape gaps |
 |---|---|---|---|---|
-| `src/pages/Proposals.jsx`, `src/pages/ProposalDetail.jsx`, `src/pages/CreateProposalWithDrafts.jsx` | `base44.entities.Proposal.*` | `/api/proposals`, `/api/proposals/:id` via `src/api/proposalsClient.js` | partial | Current schema lacks many baseline fields (`proposal_type`, `template_id`, `document_comparison_id`, reveal fields, latest score/run refs, draft metadata). |
-| `src/pages/Proposals.jsx`, `src/pages/ProposalDetail.jsx` | `base44.entities.ProposalResponse.*` | none | missing | Baseline expected per-question response rows (`question_id`, `value_type`, `visibility`, `claim_type`, range fields). |
-| `src/pages/Templates.jsx`, `src/pages/TemplateBuilder.jsx`, `src/pages/TemplateDedupe.jsx` | `base44.entities.Template.*` | none | missing | No template catalog CRUD endpoint (`status`, `category`, labels, modules, `view_count`). |
-| `src/pages/Dashboard.jsx`, `src/pages/Proposals.jsx`, `src/pages/ProposalDetail.jsx` | `base44.entities.ShareLink.*` | `/api/shared-links`, `/api/shared-links/:token` via `sharedLinksClient` | partial | No list/filter/update endpoints by proposal+recipient; no snapshot version semantics. |
-| `src/pages/Proposals.jsx` | `base44.entities.SnapshotAccess.*` | none | missing | No recipient workspace snapshot access table/API. |
-| `src/pages/Proposals.jsx` | `base44.entities.ProposalSnapshot.*` | none | missing | No snapshot history API for proposal versions. |
-| `src/pages/DocumentComparisonCreate.jsx`, `src/pages/DocumentComparisonDetail.jsx`, `src/pages/ProposalDetail.jsx` | `base44.entities.DocumentComparison.*` | none | missing | No comparison CRUD endpoint for doc text, spans, evaluation artifacts. |
-| `src/pages/ProposalDetail.jsx`, `src/pages/ReportViewer.jsx` | `base44.entities.EvaluationItem.*` | none | missing | Missing eval item linking and access-token relationship. |
-| `src/pages/ProposalDetail.jsx` | `base44.entities.EvaluationRun.*` | none | missing | Missing eval run timeline/status records. |
-| `src/pages/ProposalDetail.jsx` | `base44.entities.EvaluationReport.*` | none | missing | Missing canonical report storage (`output_report_json`, status, error details). |
-| `src/pages/ProposalDetail.jsx` | `base44.entities.EvaluationReportShared.*`, `FitCardReportShared.*` | none | missing | Missing shared/fit report stores and retrieval APIs. |
-| `src/components/NotificationDropdown.jsx` | `base44.entities.Notification.*` | `/api/notifications`, `/api/notifications/:id` via `notificationsClient` | partial | Current list always returns `[]`; mark-read PATCH does not persist state. |
-| `src/pages/Verification.jsx`, `src/pages/ProposalDetail.jsx` | `base44.entities.VerificationItem.*` | `/api/verification-items` via `verificationItemsClient` | partial | Current endpoint echoes payload + generated id/date, but no DB persistence/query endpoint. |
-| `src/pages/Pricing.jsx`, `src/pages/Templates.jsx` | `base44.entities.ContactRequest.create` | none | missing | No contact request intake API/table. |
-| `src/pages/Profile.jsx`, `src/pages/Settings.jsx`, `src/pages/Verification.jsx` | `base44.entities.UserProfile.*` | none | missing | Missing profile CRUD for org/professional metadata fields used by UI. |
-| `src/pages/Organization.jsx` | `base44.entities.Organization.*`, `Membership.*` | none | missing | Missing org/membership management APIs. |
-| `src/pages/Dashboard.jsx`, `src/pages/Profile.jsx` | `base44.entities.AuditLog.*` | none | missing | Missing received-record tracking and audit query pipeline. |
-| `src/pages/ProposalDetail.jsx` | `base44.entities.ProposalComment.*`, `Attachment.*`, `RevealEvent.*` | none | missing | Missing comments/attachments/reveal-event persistence and retrieval APIs. |
-| `src/pages/CreateProposalWithDrafts.jsx` | `base44.entities.GuestProposal.create` | none | missing | Missing guest magic-link persistence for recipient access. |
-| `src/pages/Billing.jsx` | `base44.entities.User.filter` for plan status | `/api/auth/me` + `/api/billing` | partial | Billing now split across `users` + `billing_references`; no checkout/cancel API to move status through billing lifecycle. |
+| `src/pages/Proposals.jsx`, `src/pages/ProposalDetail.jsx`, `src/pages/CreateProposalWithDrafts.jsx` | `legacy.entities.Proposal.*` | `/api/proposals`, `/api/proposals/:id` via `src/api/proposalsClient.js` | partial | Current schema lacks many baseline fields (`proposal_type`, `template_id`, `document_comparison_id`, reveal fields, latest score/run refs, draft metadata). |
+| `src/pages/Proposals.jsx`, `src/pages/ProposalDetail.jsx` | `legacy.entities.ProposalResponse.*` | none | missing | Baseline expected per-question response rows (`question_id`, `value_type`, `visibility`, `claim_type`, range fields). |
+| `src/pages/Templates.jsx`, `src/pages/TemplateBuilder.jsx`, `src/pages/TemplateDedupe.jsx` | `legacy.entities.Template.*` | none | missing | No template catalog CRUD endpoint (`status`, `category`, labels, modules, `view_count`). |
+| `src/pages/Dashboard.jsx`, `src/pages/Proposals.jsx`, `src/pages/ProposalDetail.jsx` | `legacy.entities.ShareLink.*` | `/api/shared-links`, `/api/shared-links/:token` via `sharedLinksClient` | partial | No list/filter/update endpoints by proposal+recipient; no snapshot version semantics. |
+| `src/pages/Proposals.jsx` | `legacy.entities.SnapshotAccess.*` | none | missing | No recipient workspace snapshot access table/API. |
+| `src/pages/Proposals.jsx` | `legacy.entities.ProposalSnapshot.*` | none | missing | No snapshot history API for proposal versions. |
+| `src/pages/DocumentComparisonCreate.jsx`, `src/pages/DocumentComparisonDetail.jsx`, `src/pages/ProposalDetail.jsx` | `legacy.entities.DocumentComparison.*` | none | missing | No comparison CRUD endpoint for doc text, spans, evaluation artifacts. |
+| `src/pages/ProposalDetail.jsx`, `src/pages/ReportViewer.jsx` | `legacy.entities.EvaluationItem.*` | none | missing | Missing eval item linking and access-token relationship. |
+| `src/pages/ProposalDetail.jsx` | `legacy.entities.EvaluationRun.*` | none | missing | Missing eval run timeline/status records. |
+| `src/pages/ProposalDetail.jsx` | `legacy.entities.EvaluationReport.*` | none | missing | Missing canonical report storage (`output_report_json`, status, error details). |
+| `src/pages/ProposalDetail.jsx` | `legacy.entities.EvaluationReportShared.*`, `FitCardReportShared.*` | none | missing | Missing shared/fit report stores and retrieval APIs. |
+| `src/components/NotificationDropdown.jsx` | `legacy.entities.Notification.*` | `/api/notifications`, `/api/notifications/:id` via `notificationsClient` | partial | Current list always returns `[]`; mark-read PATCH does not persist state. |
+| `src/pages/Verification.jsx`, `src/pages/ProposalDetail.jsx` | `legacy.entities.VerificationItem.*` | `/api/verification-items` via `verificationItemsClient` | partial | Current endpoint echoes payload + generated id/date, but no DB persistence/query endpoint. |
+| `src/pages/Pricing.jsx`, `src/pages/Templates.jsx` | `legacy.entities.ContactRequest.create` | none | missing | No contact request intake API/table. |
+| `src/pages/Profile.jsx`, `src/pages/Settings.jsx`, `src/pages/Verification.jsx` | `legacy.entities.UserProfile.*` | none | missing | Missing profile CRUD for org/professional metadata fields used by UI. |
+| `src/pages/Organization.jsx` | `legacy.entities.Organization.*`, `Membership.*` | none | missing | Missing org/membership management APIs. |
+| `src/pages/Dashboard.jsx`, `src/pages/Profile.jsx` | `legacy.entities.AuditLog.*` | none | missing | Missing received-record tracking and audit query pipeline. |
+| `src/pages/ProposalDetail.jsx` | `legacy.entities.ProposalComment.*`, `Attachment.*`, `RevealEvent.*` | none | missing | Missing comments/attachments/reveal-event persistence and retrieval APIs. |
+| `src/pages/CreateProposalWithDrafts.jsx` | `legacy.entities.GuestProposal.create` | none | missing | Missing guest magic-link persistence for recipient access. |
+| `src/pages/Billing.jsx` | `legacy.entities.User.filter` for plan status | `/api/auth/me` + `/api/billing` | partial | Billing now split across `users` + `billing_references`; no checkout/cancel API to move status through billing lifecycle. |
 
 ## Current route quality notes (mapped but degraded)
 - `/api/notifications` and `/api/notifications/:id` are implemented as non-persistent stubs.

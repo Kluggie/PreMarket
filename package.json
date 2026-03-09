@@ -20,10 +20,8 @@
     "test:api:integration": "NODE_ENV=test tsx --test --test-concurrency=1 tests/api/*.test.mjs",
     "test:lib:integration": "NODE_ENV=test tsx --test --test-concurrency=1 tests/lib/*.test.mjs",
     "guard:no-legacy": "node scripts/guard-no-legacy.mjs",
-    "guard:no-base44": "node scripts/guard-no-base44.mjs",
     "guard:db-safety": "node scripts/guard-db-safety.mjs",
     "check:no-legacy": "npm run guard:no-legacy",
-    "check:no-base44": "npm run guard:no-base44",
     "check:db-safety": "npm run guard:db-safety"
   },
   "dependencies": {

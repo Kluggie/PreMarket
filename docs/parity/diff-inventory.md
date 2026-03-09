@@ -3,7 +3,7 @@
 ## Scope summary
 - Total changed files: `123`
 - Renames detected: none
-- Dominant pattern: legacy Base44 pages replaced by DB-minimal pages (`src/pages/db/*`) or `Phase2Placeholder` stubs.
+- Dominant pattern: legacy platform pages replaced by DB-minimal pages (`src/pages/db/*`) or `Phase2Placeholder` stubs.
 
 ## Routing/navigation
 ### Added
@@ -52,10 +52,10 @@
 - `src/lib/AuthContext.jsx`
 
 ### High-impact replacements
-- Base44 token/auth flow replaced with cookie + CSRF + Google token verification flow.
+- Legacy token/auth flow replaced with cookie + CSRF + Google token verification flow.
 
 ### Likely user-visible impact
-- Sign-in flow is different but generally present; auth no longer drives Base44 app-level public settings checks.
+- Sign-in flow is different but generally present; auth no longer drives legacy app-level public settings checks.
 
 ## Dashboard
 ### Added
@@ -182,7 +182,7 @@
   - `server/routes/verification-items/index.ts`
 
 ### Removed
-- `src/api/base44Client.js`
+- Legacy API client module (deprecated app-platform client) removed.
 
 ### Modified/replaced
 - `functions/CreateProposalSnapshot.ts`
@@ -195,7 +195,7 @@
 - `src/api/verificationItemsClient.js`
 
 ### High-impact replacements
-- Legacy `base44.functions.invoke` and `base44.entities.*` frontend integration removed from current clients.
+- Legacy `functions.invoke` and `entities.*` frontend integration removed from current clients.
 - Stub endpoints introduced for notifications/app-logs/verification-items.
 
 ### Likely user-visible impact
@@ -213,12 +213,12 @@
   - `scripts/db-migrate.mjs`
   - `scripts/db-smoke.mjs`
   - `scripts/backfill-legacy-export.mjs`
-  - `scripts/guard-no-base44.mjs`
   - `scripts/guard-no-legacy.mjs`
+  - `scripts/guard-db-safety.mjs`
 
 ### Removed
 - `src/lib/app-params.js`
-- `src/api/base44Client.js`
+- Legacy API client module (deprecated app-platform client) removed.
 
 ### Modified/replaced
 - none beyond migration additions

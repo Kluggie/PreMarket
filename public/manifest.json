@@ -1,6 +1,9 @@
 {
   "name": "PreMarket",
   "short_name": "PreMarket",
+  "description": "PreMarket helps teams compare proposals, evaluate terms, and move negotiations forward faster.",
   "start_url": "/",
-  "display": "standalone"
+  "display": "standalone",
+  "theme_color": "#2563eb",
+  "background_color": "#f8fafc"
 }

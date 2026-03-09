@@ -34,7 +34,7 @@ CREATE INDEX IF NOT EXISTS "contact_requests_user_idx" ON "contact_requests" USI
 CREATE INDEX IF NOT EXISTS "contact_requests_status_idx" ON "contact_requests" USING btree ("status", "created_at");
 --> statement-breakpoint
 
--- Legacy Base44 table compatibility: older schemas keep a required "title" column.
+-- Legacy table compatibility: older schemas keep a required "title" column.
 DO $$ BEGIN
   IF EXISTS (
     SELECT 1

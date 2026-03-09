@@ -97,10 +97,10 @@ async function loadServiceAccountJson(correlationId: string): Promise<string | n
   }
 
   const fallbackFiles: (string | URL)[] = [
-    '../base44-vertex-key.json',
-    '/Users/mac/Desktop/PreMarket/base44-vertex-key.json',
-    new URL('../../base44-vertex-key.json', import.meta.url),
-    new URL('../base44-vertex-key.json', import.meta.url)
+    '../premarket-vertex-key.json',
+    '/Users/mac/Desktop/PreMarket/premarket-vertex-key.json',
+    new URL('../../premarket-vertex-key.json', import.meta.url),
+    new URL('../premarket-vertex-key.json', import.meta.url)
   ];
   for (const fallback of fallbackFiles) {
     try {
@@ -347,7 +347,7 @@ Deno.serve(async (req) => {
         errorCode: 'VERTEX_MISCONFIGURED',
         error: 'Missing or invalid GCP service account credentials',
         message: 'Vertex credentials are not configured.',
-        detailsSafe: 'Set GCP_SERVICE_ACCOUNT_JSON (or GOOGLE_APPLICATION_CREDENTIALS file path) in Base44 secrets.',
+        detailsSafe: 'Set GCP_SERVICE_ACCOUNT_JSON (or GOOGLE_APPLICATION_CREDENTIALS file path) in PreMarket secrets.',
         correlationId
       }, { status: 200 });
     }
@@ -361,7 +361,7 @@ Deno.serve(async (req) => {
         errorCode: 'VERTEX_MISCONFIGURED',
         error: 'Missing or invalid GCP service account credentials',
         message: 'Vertex credentials are not configured.',
-        detailsSafe: 'Set GCP_SERVICE_ACCOUNT_JSON (or GOOGLE_APPLICATION_CREDENTIALS file path) in Base44 secrets.',
+        detailsSafe: 'Set GCP_SERVICE_ACCOUNT_JSON (or GOOGLE_APPLICATION_CREDENTIALS file path) in PreMarket secrets.',
         correlationId
       }, { status: 200 });
     }

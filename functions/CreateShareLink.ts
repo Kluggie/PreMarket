@@ -50,8 +50,8 @@ function extractRecipientEmail(source: any): string | null {
 }
 
 function buildShareContextQuery(req: Request) {
-  const appIdFromHeader = req.headers.get('Base44-App-Id');
-  const functionsVersion = req.headers.get('Base44-Functions-Version');
+  const appIdFromHeader = req.headers.get('PreMarket-App-Id');
+  const functionsVersion = req.headers.get('PreMarket-Functions-Version');
 
   return {
     app_id: appIdFromHeader || undefined,
