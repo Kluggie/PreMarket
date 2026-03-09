@@ -1145,7 +1145,7 @@ export default function DocumentComparisonCreate() {
   // and background saves always get the latest content.
   useEffect(() => {
     latestDraftStateRef.current = {
-      title: asText(title) || 'Untitled Comparison',
+      title: asText(title) || 'Untitled',
       docAText: confidentialBundle.text,
       docBText: sharedBundle.text,
       docAHtml: confidentialBundle.html,
@@ -1242,7 +1242,7 @@ export default function DocumentComparisonCreate() {
         sanitizeHtml: sanitizeEditorHtml,
       });
       const requestedSnapshot = {
-        title: asText(payload.title) || 'Untitled Comparison',
+        title: asText(payload.title) || 'Untitled',
         docAText: String(payload.doc_a_text || ''),
         docBText: String(payload.doc_b_text || ''),
         docAHtml: asText(payload.doc_a_html) || textToHtml(payload.doc_a_text || ''),
@@ -2125,7 +2125,7 @@ export default function DocumentComparisonCreate() {
 
   const buildEvaluationPayload = () => {
     const snapshot = latestDraftStateRef.current || {};
-    const normalizedTitle = asText(snapshot.title || title) || 'Untitled Comparison';
+    const normalizedTitle = asText(snapshot.title || title) || 'Untitled';
     const sanitizedDocAHtml = sanitizeEditorHtml(snapshot.docAHtml || docAHtml || textToHtml(snapshot.docAText || docAText));
     const sanitizedDocBHtml = sanitizeEditorHtml(snapshot.docBHtml || docBHtml || textToHtml(snapshot.docBText || docBText));
     const normalizedDocAText = String(snapshot.docAText || docAText || htmlToText(sanitizedDocAHtml) || '');

@@ -380,7 +380,7 @@ function buildIntentSpecificRules(params: GenerateCoachParams) {
 }
 
 export function buildCoachPrompt(params: GenerateCoachParams) {
-  const title = params.title || 'Untitled Comparison';
+  const title = params.title || 'Untitled';
   const companyName = asText(params.companyName) || 'unknown';
   const companyWebsite = asText(params.companyWebsite) || 'unknown';
   const selectionTarget = params.selectionTarget || 'shared';

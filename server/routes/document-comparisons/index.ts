@@ -81,7 +81,7 @@ export default async function handler(req: any, res: any) {
     const body = await readJsonBody(req);
     const now = new Date();
 
-    const title = asText(body.title) || 'Untitled Comparison';
+    const title = asText(body.title) || 'Untitled';
     const proposalId = asText(body.proposalId || body.proposal_id) || null;
     const createLinkedProposal = Boolean(body.createProposal || body.create_proposal);
     const partyALabel = CONFIDENTIAL_LABEL;

@@ -294,7 +294,7 @@ function resolveEvaluationDraft(params: {
       ? (existing.inputs as Record<string, unknown>)
       : {};
 
-  const title = asText(body.title) || asText(existing?.title) || 'Untitled Comparison';
+  const title = asText(body.title) || asText(existing?.title) || 'Untitled';
   const rawDocAText =
     body.docAText !== undefined || body.doc_a_text !== undefined
       ? String(body.docAText || body.doc_a_text || '')

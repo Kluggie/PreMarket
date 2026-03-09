@@ -411,7 +411,7 @@ export default function Templates() {
                       }))
                     }
                     placeholder="Describe your use case and what fields/criteria you need..."
-                    className="min-h-[100px]"
+                    className="min-h-[6.25rem]"
                   />
                 </div>
                 <Button type="submit" className="w-full bg-blue-600 hover:bg-blue-700" disabled={customTemplateMutation.isPending}>

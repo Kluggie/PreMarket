@@ -3311,7 +3311,7 @@ function normalizeProposalInput(input: ProposalInput): ProposalInput {
 
 function normalizeComparisonInput(input: ComparisonInput): ComparisonInput {
   return {
-    title: asText(input.title) || 'Untitled Comparison',
+    title: asText(input.title) || 'Untitled',
     partyALabel: asText(input.partyALabel) || 'Confidential Information',
     partyBLabel: asText(input.partyBLabel) || 'Shared Information',
     docAText: String(input.docAText || ''),

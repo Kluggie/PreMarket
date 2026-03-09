@@ -273,7 +273,7 @@ export default function Step1AddSources({
             />
             {!title.trim() && (
               <p className="text-xs text-slate-500">
-                Optional — saves as "Untitled Comparison" if left blank.
+                Optional — saves as "Untitled" if left blank.
               </p>
             )}
           </div>

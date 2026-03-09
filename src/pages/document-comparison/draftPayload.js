@@ -60,7 +60,7 @@ export function buildComparisonDraftSavePayload({
   docBSpans = [],
   sanitizeHtml = (value) => String(value || ''),
 }) {
-  const nextTitle = asText(snapshot.title || fallback.title) || 'Untitled Comparison';
+  const nextTitle = asText(snapshot.title || fallback.title) || 'Untitled';
   const nextDocAText = String(snapshot.docAText || fallback.docAText || '');
   const nextDocBText = String(snapshot.docBText || fallback.docBText || '');
   const nextDocAHtml =

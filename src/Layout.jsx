@@ -18,7 +18,7 @@ import {
 import NotificationDropdown from './components/NotificationDropdown';
 import GoogleSignInButton from '@/components/auth/GoogleSignInButton';
 
-const DESKTOP_GOOGLE_SIGNIN_WIDTH = 189;
+const DESKTOP_GOOGLE_SIGNIN_WIDTH = 170;
 
 function CoinSideIcon({ className = '', ...props }) {
   return (

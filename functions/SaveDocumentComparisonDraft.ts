@@ -163,7 +163,7 @@ Deno.serve(async (req) => {
 
     const nowIso = new Date().toISOString();
 
-    const title = asString(body?.title) || asString(existingComparison?.title) || 'Untitled Comparison';
+    const title = asString(body?.title) || asString(existingComparison?.title) || 'Untitled';
     const partyALabel = asString(body?.partyALabel) || asString(body?.party_a_label) || asString(existingComparison?.party_a_label) || 'Document A';
     const partyBLabel = asString(body?.partyBLabel) || asString(body?.party_b_label) || asString(existingComparison?.party_b_label) || 'Document B';
     const docASource = asString(body?.docASource) || asString(body?.doc_a_source) || asString(existingComparison?.doc_a_source) || 'typed';

@@ -165,7 +165,7 @@ Deno.serve(async (req) => {
       }, { status: 404 });
     }
 
-    const baseTitle = asString(sourceProposal?.title) || asString(sourceComparison?.title) || 'Untitled Comparison';
+    const baseTitle = asString(sourceProposal?.title) || asString(sourceComparison?.title) || 'Untitled';
     const sourcePartyAUserId = asString(sourceProposal?.party_a_user_id || sourceProposalData?.party_a_user_id);
     const sourcePartyAEmail = normalizeEmail(sourceProposal?.party_a_email || sourceProposalData?.party_a_email);
 
