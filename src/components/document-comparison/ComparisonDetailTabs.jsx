@@ -32,50 +32,6 @@ function stripHtml(value) {
     .trim();
 }
 
-export function toSummaryLines(value) {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value
-    .map((entry) => {
-      if (typeof entry === 'string') {
-        return asText(entry);
-      }
-      if (entry && typeof entry === 'object') {
-        return asText(entry.text || entry.title || '');
-      }
-      return '';
-    })
-    .filter(Boolean);
-}
-
-export function buildOverviewBullets(report, maxBullets = 6) {
-  const safeReport = report && typeof report === 'object' && !Array.isArray(report) ? report : {};
-  const collected = [];
-  const pushUnique = (line) => {
-    const normalized = asText(line);
-    if (!normalized || collected.includes(normalized)) {
-      return;
-    }
-    collected.push(normalized);
-  };
-
-  toSummaryLines(safeReport?.summary?.top_fit_reasons).forEach(pushUnique);
-  toSummaryLines(safeReport?.summary?.top_blockers).forEach(pushUnique);
-  toSummaryLines(safeReport?.summary?.next_actions).forEach(pushUnique);
-
-  if (collected.length === 0) {
-    const sections = Array.isArray(safeReport?.sections) ? safeReport.sections : [];
-    sections.forEach((section) => {
-      const bullets = Array.isArray(section?.bullets) ? section.bullets : [];
-      bullets.forEach(pushUnique);
-    });
-  }
-
-  return collected.slice(0, Math.max(1, Number(maxBullets) || 6));
-}
-
 export function renderDocumentReadOnly({ text, html }) {
   const safeText = String(text || '').trim();
   const safeHtml = asText(html);
@@ -111,121 +67,6 @@ const TIMELINE_TONE_CLASS_MAP = {
   danger: 'bg-red-100 text-red-700',
 };
 
-export function ComparisonOverviewTab({
-  recommendation = '',
-  overviewBullets = [],
-  isEvaluationRunning = false,
-  isPollingTimedOut = false,
-  isEvaluationNotConfigured = false,
-  showConfidentialityWarning = false,
-  confidentialityWarningMessage = '',
-  confidentialityWarningDetails = '',
-  isEvaluationFailed = false,
-  evaluationFailureBannerMessage = '',
-  hasReport = false,
-  noReportMessage = 'No evaluation yet.',
-  timelineItems = [],
-}) {
-  return (
-    <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-6 items-start">
-      <Card className="border border-slate-200 shadow-sm">
-        <CardHeader>
-          <CardTitle>Overview</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {isEvaluationRunning ? (
-            <div className="space-y-2">
-              <div className="flex items-center gap-2 text-slate-700">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                <span className="font-medium">Evaluation is running...</span>
-              </div>
-              <p className="text-sm text-slate-500">
-                {isPollingTimedOut
-                  ? 'Still processing. Refresh to check for updates.'
-                  : 'This page refreshes automatically while evaluation is in progress.'}
-              </p>
-            </div>
-          ) : null}
-
-          {isEvaluationNotConfigured ? (
-            <Alert className="bg-amber-50 border-amber-200">
-              <AlertDescription className="text-amber-900">
-                Vertex AI integration is not configured.
-              </AlertDescription>
-            </Alert>
-          ) : null}
-
-          {showConfidentialityWarning ? (
-            <Alert className="bg-amber-50 border-amber-200">
-              <AlertDescription className="text-amber-900">
-                {confidentialityWarningMessage}
-                {confidentialityWarningDetails ? ` ${confidentialityWarningDetails}` : ''}
-              </AlertDescription>
-            </Alert>
-          ) : null}
-
-          {isEvaluationFailed ? (
-            <Alert className="bg-red-50 border-red-200">
-              <AlertDescription className="text-red-900">
-                {evaluationFailureBannerMessage}
-              </AlertDescription>
-            </Alert>
-          ) : null}
-
-          {!isEvaluationRunning && !isEvaluationNotConfigured && !isEvaluationFailed && hasReport ? (
-            <>
-              <p className="text-slate-700">
-                Latest recommendation:{' '}
-                <span className="font-semibold capitalize">{recommendation || 'not provided'}</span>
-              </p>
-              {overviewBullets.length > 0 ? (
-                <ul className="list-disc pl-5 space-y-1 text-sm text-slate-700">
-                  {overviewBullets.map((line, index) => (
-                    <li key={`overview-bullet-${index}`}>{line}</li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="text-sm text-slate-600">Evaluation completed. Open AI Report for full details.</p>
-              )}
-            </>
-          ) : null}
-
-          {!isEvaluationRunning && !isEvaluationNotConfigured && !isEvaluationFailed && !hasReport ? (
-            <p className="text-sm text-slate-600">{noReportMessage}</p>
-          ) : null}
-        </CardContent>
-      </Card>
-
-      <Card className="border border-slate-200 shadow-sm">
-        <CardHeader>
-          <CardTitle>Activity Timeline</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {timelineItems.length > 0 ? (
-            timelineItems.map((item, index) => {
-              const Icon = TIMELINE_ICON_MAP[item?.kind] || FileText;
-              const toneClass = TIMELINE_TONE_CLASS_MAP[item?.tone] || TIMELINE_TONE_CLASS_MAP.neutral;
-              return (
-                <div key={item?.id || `timeline-${index}`} className="flex items-start gap-3">
-                  <div className={`w-9 h-9 rounded-full flex items-center justify-center ${toneClass}`}>
-                    <Icon className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <p className="font-medium text-slate-900">{item?.title || 'Update'}</p>
-                    <p className="text-slate-500">{item?.timestamp || '—'}</p>
-                  </div>
-                </div>
-              );
-            })
-          ) : (
-            <p className="text-sm text-slate-500">No activity yet.</p>
-          )}
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
 export function ComparisonAiReportTab({
   isEvaluationRunning = false,
   isPollingTimedOut = false,
@@ -241,14 +82,17 @@ export function ComparisonAiReportTab({
   runDetailsHref = '',
   report = {},
   recommendation = '',
+  timelineItems = [],
 }) {
   const safeReport = report && typeof report === 'object' && !Array.isArray(report) ? report : {};
   const isV2 = hasV2Report(safeReport);
   const reportSections = Array.isArray(safeReport?.sections) ? safeReport.sections : [];
   const reportSectionsFiltered = isV2 ? [] : filterLegacySectionsForDisplay(reportSections);
   const showRunDetailsLink = Boolean(runDetailsHref) && (hasReport || hasEvaluations);
+  const normalizedTimelineItems = Array.isArray(timelineItems) ? timelineItems : [];
 
   return (
+    <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-6 items-start">
     <div className="space-y-6">
       {isEvaluationRunning ? (
         <Card className="border border-slate-200 shadow-sm">
@@ -297,88 +141,135 @@ export function ComparisonAiReportTab({
         </Card>
       ) : null}
 
-      {showRunDetailsLink ? (
-        <div className="flex justify-end">
-          <Link
-            to={runDetailsHref}
-            className="inline-flex items-center text-sm text-slate-500 hover:text-slate-700 gap-1.5"
-          >
-            <BarChart3 className="w-3.5 h-3.5" />
-            Run details
-          </Link>
-        </div>
-      ) : null}
-
       {hasReport ? (
         <>
-          <Card className="border border-slate-200 shadow-sm">
-            <CardHeader>
-              <CardTitle>Executive Summary</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
+          {/* Compact metadata row — lighter alternative to heavy dark strip */}
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Recommendation</span>
               <Badge variant="outline" className="capitalize">
-                {recommendation || safeReport?.fit_level || 'No recommendation provided'}
+                {recommendation || safeReport?.fit_level || 'Pending'}
               </Badge>
-              {isV2 ? (
-                <div className="space-y-4" data-testid="v2-full-report">
-                  {safeReport.why.map((entry, index) => {
-                    const { heading, body } = parseV2WhyEntry(entry);
-                    return (
-                      <div
-                        key={index}
-                        className="rounded-xl border border-slate-200 p-4"
-                      >
-                        {heading ? (
-                          <p className="font-semibold text-slate-900 mb-1">{heading}</p>
-                        ) : null}
-                        <p className="text-sm text-slate-700 leading-relaxed">{body}</p>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : reportSectionsFiltered.length > 0 ? (
-                <div className="space-y-4">
-                  {reportSectionsFiltered.map((section, index) => (
-                    <div
-                      key={`${section.key || section.heading || 'section'}-${index}`}
-                      className="rounded-xl border border-slate-200 p-4"
-                    >
-                      <p className="font-semibold text-slate-900 mb-2">
-                        {section.heading || section.key || `Section ${index + 1}`}
-                      </p>
-                      <ul className="list-disc pl-5 space-y-1 text-slate-700">
-                        {(Array.isArray(section.bullets) ? section.bullets : []).map((line, lineIndex) => (
-                          <li key={`${index}-${lineIndex}`}>{line}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-slate-600">AI report content is not available yet.</p>
-              )}
-            </CardContent>
-          </Card>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Status</span>
+              <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200">Complete</Badge>
+            </div>
+            {isV2 && Array.isArray(safeReport.missing) && safeReport.missing.length > 0 ? (
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Suggested Additions</span>
+                <Badge className="bg-amber-100 text-amber-700 border-amber-200">
+                  {safeReport.missing.length} item{safeReport.missing.length !== 1 ? 's' : ''}
+                </Badge>
+              </div>
+            ) : null}
+            {showRunDetailsLink ? (
+              <div className="ml-auto">
+                <Link
+                  to={runDetailsHref}
+                  className="inline-flex items-center text-sm text-slate-500 hover:text-slate-700 gap-1.5"
+                >
+                  <BarChart3 className="w-3.5 h-3.5" />
+                  Run details
+                </Link>
+              </div>
+            ) : null}
+          </div>
 
-          {isV2 && Array.isArray(safeReport.missing) && safeReport.missing.length > 0 ? (
-            <Card className="border border-slate-200 shadow-sm" data-testid="v2-missing-info">
-              <CardHeader>
-                <CardTitle>Key Missing Info</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ul className="space-y-2">
-                  {safeReport.missing.map((item, index) => (
-                    <li key={index} className="flex items-start gap-2 text-sm text-slate-700">
-                      <span className="mt-0.5 text-amber-500 flex-shrink-0" aria-hidden="true">⚠</span>
-                      <span>{item}</span>
-                    </li>
-                  ))}
-                </ul>
-              </CardContent>
-            </Card>
-          ) : null}
+          {/* Report document — white paper surface */}
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm">
+            <div className="px-6 py-7 space-y-7">
+
+              {/* Executive Summary */}
+              <div>
+                <h2 className="text-xl font-bold text-slate-900 mb-5">Executive Summary</h2>
+                {isV2 ? (
+                  <div className="space-y-5" data-testid="v2-full-report">
+                    {safeReport.why.map((entry, index) => {
+                      const { heading, body } = parseV2WhyEntry(entry);
+                      return (
+                        <div key={index}>
+                          {heading ? (
+                            <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">{heading}</h3>
+                          ) : null}
+                          <p className="text-sm text-slate-700 leading-relaxed">{body}</p>
+                          {index < safeReport.why.length - 1 && <div className="mt-5 border-t border-slate-100" />}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : reportSectionsFiltered.length > 0 ? (
+                  <div className="space-y-5">
+                    {reportSectionsFiltered.map((section, index) => (
+                      <div key={`${section.key || section.heading || 'section'}-${index}`}>
+                        <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
+                          {section.heading || section.key || `Section ${index + 1}`}
+                        </h3>
+                        <ul className="space-y-1.5 text-sm text-slate-700">
+                          {(Array.isArray(section.bullets) ? section.bullets : []).map((line, lineIndex) => (
+                            <li key={`${index}-${lineIndex}`} className="flex items-start gap-2">
+                              <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-slate-400 flex-shrink-0" />
+                              {line}
+                            </li>
+                          ))}
+                        </ul>
+                        {index < reportSectionsFiltered.length - 1 && <div className="mt-5 border-t border-slate-100" />}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-slate-600">AI report content is not available yet.</p>
+                )}
+              </div>
+
+              {/* Suggested Additions */}
+              {isV2 && Array.isArray(safeReport.missing) && safeReport.missing.length > 0 ? (
+                <div className="border-t border-slate-100 pt-6" data-testid="v2-missing-info">
+                  <h2 className="text-sm font-semibold text-slate-700 mb-3">Suggested Additions</h2>
+                  <ul className="space-y-2.5">
+                    {safeReport.missing.map((item, index) => (
+                      <li key={index} className="flex items-start gap-2.5 text-sm text-slate-700">
+                        <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" />
+                        <span>{item}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+
+            </div>
+          </div>
         </>
       ) : null}
+    </div>
+
+    {/* Activity Timeline sidebar */}
+    <Card className="border border-slate-200 shadow-sm">
+      <CardHeader>
+        <CardTitle>Activity Timeline</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {normalizedTimelineItems.length > 0 ? (
+          normalizedTimelineItems.map((item, index) => {
+            const Icon = TIMELINE_ICON_MAP[item?.kind] || FileText;
+            const toneClass = TIMELINE_TONE_CLASS_MAP[item?.tone] || TIMELINE_TONE_CLASS_MAP.neutral;
+            return (
+              <div key={item?.id || `timeline-${index}`} className="flex items-start gap-3">
+                <div className={`w-9 h-9 rounded-full flex items-center justify-center ${toneClass}`}>
+                  <Icon className="w-4 h-4" />
+                </div>
+                <div>
+                  <p className="font-medium text-slate-900">{item?.title || 'Update'}</p>
+                  <p className="text-slate-500">{item?.timestamp || '—'}</p>
+                </div>
+              </div>
+            );
+          })
+        ) : (
+          <p className="text-sm text-slate-500">No activity yet.</p>
+        )}
+      </CardContent>
+    </Card>
     </div>
   );
 }
@@ -412,7 +303,7 @@ function DocumentPanel({ label, text, html, badges = [] }) {
 }
 
 export function ComparisonProposalDetailsTab({
-  title = 'Complete Proposal Details',
+  title = 'Proposal',
   description = 'Read-only document content for both information documents.',
   documents = [],
   leftLabel = 'Confidential Information',
@@ -466,36 +357,22 @@ export function ComparisonProposalDetailsTab({
 }
 
 export function ComparisonDetailTabs({
-  activeTab = 'overview',
+  activeTab = 'report',
   onTabChange,
   hasReportBadge = false,
-  tabOrder = ['overview', 'report', 'details'],
-  detailsTabLabel = 'Complete Proposal Details',
-  overviewProps = {},
+  tabOrder = ['report', 'details'],
+  detailsTabLabel = 'Proposal',
   aiReportProps = {},
   proposalDetailsProps = {},
 }) {
   const orderedTabs = Array.isArray(tabOrder)
-    ? tabOrder.filter((tab, index, source) => ['overview', 'report', 'details'].includes(tab) && source.indexOf(tab) === index)
-    : ['overview', 'report', 'details'];
+    ? tabOrder.filter((tab, index, source) => ['report', 'details'].includes(tab) && source.indexOf(tab) === index)
+    : ['report', 'details'];
 
   return (
     <Tabs value={activeTab} onValueChange={onTabChange}>
       <TabsList className="bg-white border border-slate-200 p-1">
         {orderedTabs.map((tab) => {
-          if (tab === 'overview') {
-            return (
-              <TabsTrigger
-                key="overview"
-                value="overview"
-                className="data-[state=active]:bg-slate-900 data-[state=active]:text-white"
-              >
-                <FileText className="w-4 h-4 mr-2" />
-                Overview
-              </TabsTrigger>
-            );
-          }
-
           if (tab === 'report') {
             return (
               <TabsTrigger
@@ -524,10 +401,6 @@ export function ComparisonDetailTabs({
           );
         })}
       </TabsList>
-
-      <TabsContent value="overview" className="mt-6">
-        <ComparisonOverviewTab {...overviewProps} />
-      </TabsContent>
 
       <TabsContent value="report" className="mt-6">
         <ComparisonAiReportTab {...aiReportProps} />

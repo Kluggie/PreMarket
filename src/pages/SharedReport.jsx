@@ -13,7 +13,6 @@ import {
 import { sanitizeEditorHtml } from '@/components/document-comparison/editorSanitization';
 import {
   ComparisonDetailTabs,
-  buildOverviewBullets,
 } from '@/components/document-comparison/ComparisonDetailTabs';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -1149,8 +1148,6 @@ export default function SharedReport() {
     asText(updatedRecipientReport?.recommendation) ||
     asText(latestEvaluation?.summary) ||
     asText(comparison?.evaluation_result?.recommendation);
-  const step0OverviewBullets = buildOverviewBullets(baselineReport);
-  const step3OverviewBullets = buildOverviewBullets(updatedRecipientReport);
   const latestEvaluationStatus = asText(latestEvaluation?.status).toLowerCase();
   const latestEvaluationErrorCode = asText(
     latestEvaluation?.error_code ||
@@ -1523,23 +1520,8 @@ export default function SharedReport() {
               activeTab={recipientDetailTab}
               onTabChange={setRecipientDetailTab}
               hasReportBadge={hasStep0Report}
-              tabOrder={['details', 'overview', 'report']}
+              tabOrder={['details', 'report']}
               detailsTabLabel="Proposal"
-              overviewProps={{
-                recommendation: step0Recommendation,
-                overviewBullets: step0OverviewBullets,
-                isEvaluationRunning: false,
-                isPollingTimedOut: false,
-                isEvaluationNotConfigured: false,
-                showConfidentialityWarning: false,
-                confidentialityWarningMessage: '',
-                confidentialityWarningDetails: '',
-                isEvaluationFailed: false,
-                evaluationFailureBannerMessage: '',
-                hasReport: hasStep0Report,
-                noReportMessage: 'No baseline evaluation is available yet for this proposal.',
-                timelineItems: baseTimelineItems,
-              }}
               aiReportProps={{
                 isEvaluationRunning: false,
                 isPollingTimedOut: false,
@@ -1554,6 +1536,7 @@ export default function SharedReport() {
                 noReportMessage: 'No baseline AI report is available yet for this proposal.',
                 report: baselineReport,
                 recommendation: step0Recommendation,
+                timelineItems: baseTimelineItems,
               }}
               proposalDetailsProps={{
                 description: 'Read-only baseline proposal content shared by the proposer.',
@@ -1970,23 +1953,8 @@ export default function SharedReport() {
               activeTab={recipientDetailTab}
               onTabChange={setRecipientDetailTab}
               hasReportBadge={hasStep3Report}
-              tabOrder={['details', 'overview', 'report']}
+              tabOrder={['details', 'report']}
               detailsTabLabel="Proposal"
-              overviewProps={{
-                recommendation: step3Recommendation,
-                overviewBullets: step3OverviewBullets,
-                isEvaluationRunning: step3IsEvaluationRunning,
-                isPollingTimedOut: false,
-                isEvaluationNotConfigured: step3IsEvaluationNotConfigured,
-                showConfidentialityWarning: false,
-                confidentialityWarningMessage: '',
-                confidentialityWarningDetails: '',
-                isEvaluationFailed: step3IsEvaluationFailed,
-                evaluationFailureBannerMessage: step3EvaluationFailureMessage,
-                hasReport: hasStep3Report,
-                noReportMessage: 'No recipient evaluation is available yet. Run evaluation to generate one.',
-                timelineItems: step3TimelineItems,
-              }}
               aiReportProps={{
                 isEvaluationRunning: step3IsEvaluationRunning,
                 isPollingTimedOut: false,
@@ -2001,6 +1969,7 @@ export default function SharedReport() {
                 noReportMessage: 'No recipient evaluation is available yet. Run evaluation to generate one.',
                 report: updatedRecipientReport,
                 recommendation: step3Recommendation,
+                timelineItems: step3TimelineItems,
               }}
               proposalDetailsProps={{
                 description: 'Read-only current proposal state after recipient edits.',

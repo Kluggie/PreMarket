@@ -15,14 +15,10 @@ import {
   ArrowRight,
   BarChart3,
   CheckCircle2,
-  Clock,
   Download,
   FileText,
-  MessageSquare,
   Send,
   Sparkles,
-  Trophy,
-  Upload,
   XCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -216,7 +212,7 @@ export default function ProposalDetail() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const proposalId = useProposalId();
-  const [activeTab, setActiveTab] = useState('overview');
+  const [activeTab, setActiveTab] = useState('report');
 
   const detailQuery = useQuery({
     queryKey: ['proposal-detail', proposalId],
@@ -254,6 +250,10 @@ export default function ProposalDetail() {
     : Array.isArray(latestResult?.sections)
       ? latestResult.sections
       : [];
+  const suggestedAdditionsCount =
+    Array.isArray(latestResult?.missing) ? latestResult.missing.length
+    : Array.isArray(latestResult?.report?.missing) ? latestResult.report.missing.length
+    : 0;
 
   const runEvaluationMutation = useMutation({
     mutationFn: () => proposalsClient.evaluate(proposalId, {}),
@@ -408,6 +408,52 @@ export default function ProposalDetail() {
                   <span className="text-slate-800">{formatDate(proposal.updated_date)}</span>
                 </div>
               </div>
+
+              {/* Report metadata — only shown once there's been at least one evaluation */}
+              {evaluations.length > 0 && (
+                <>
+                  <div className="h-px bg-slate-200" />
+                  <div className="space-y-3 text-sm">
+                    <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">AI Report</p>
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-500 font-medium">Recommendation</span>
+                      <Badge className="capitalize bg-slate-100 text-slate-700 border-slate-200">
+                        {latestResult?.recommendation || '—'}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-500 font-medium">Status</span>
+                      <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200">Complete</Badge>
+                    </div>
+                    {suggestedAdditionsCount > 0 && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-500 font-medium">Suggested Additions</span>
+                        <Badge className="bg-amber-100 text-amber-700 border-amber-200">
+                          {suggestedAdditionsCount} item{suggestedAdditionsCount !== 1 ? 's' : ''}
+                        </Badge>
+                      </div>
+                    )}
+                    {latestEvaluation && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-500 font-medium">Last Run</span>
+                        <span className="text-slate-700 text-xs">{formatDate(latestEvaluation.created_date)}</span>
+                      </div>
+                    )}
+                    {proposal.document_comparison_id && (
+                      <div className="pt-1">
+                        <button
+                          type="button"
+                          className="text-xs text-slate-500 hover:text-slate-700 inline-flex items-center gap-1"
+                          onClick={() => navigate(createPageUrl(`DocumentComparisonRunDetails?id=${encodeURIComponent(proposal.document_comparison_id)}`))}
+                        >
+                          <BarChart3 className="w-3 h-3" />
+                          Run details
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
             </CardContent>
           </Card>
 
@@ -446,363 +492,164 @@ export default function ProposalDetail() {
 
             <Tabs value={activeTab} onValueChange={setActiveTab}>
               <TabsList className="bg-white border border-slate-200 p-1">
-                <TabsTrigger value="overview" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
-                  <FileText className="w-4 h-4 mr-2" />
-                  Overview
-                </TabsTrigger>
                 <TabsTrigger value="report" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
                   <BarChart3 className="w-4 h-4 mr-2" />
                   AI Report
                   {evaluations.length > 0 && <Badge className="ml-2 bg-green-100 text-green-700 text-xs">Complete</Badge>}
                 </TabsTrigger>
+                <TabsTrigger value="proposal" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
+                  <FileText className="w-4 h-4 mr-2" />
+                  Proposal
+                </TabsTrigger>
               </TabsList>
 
-              <TabsContent value="overview" className="mt-6 space-y-6">
-                <div className="grid grid-cols-1 xl:grid-cols-[2fr_1fr] gap-6">
-                  <Card className="border border-slate-200 shadow-sm">
-                    <CardHeader>
-                      <CardTitle>Parties</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div className="rounded-xl border border-slate-200 p-4 bg-slate-50">
-                          <p className="text-xs font-semibold tracking-wide uppercase text-slate-500 mb-2">Party A (Proposer)</p>
-                          <p className="font-semibold text-slate-900">{proposal.party_a_email || 'Not specified'}</p>
-                          <Badge variant="outline" className="mt-3">You</Badge>
-                        </div>
-                        <div className="rounded-xl border border-slate-200 p-4 bg-slate-50">
-                          <p className="text-xs font-semibold tracking-wide uppercase text-slate-500 mb-2">Party B (Recipient)</p>
-                          <p className="font-semibold text-slate-900">{proposal.party_b_email || 'Not specified'}</p>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
 
-                  <div className="space-y-6">
-                    <Card className="border border-slate-200 shadow-sm">
-                      <CardHeader>
-                        <CardTitle>Quick Actions</CardTitle>
-                      </CardHeader>
-                      <CardContent className="space-y-3">
-                        <Button variant="outline" className="w-full justify-center" disabled>
-                          <MessageSquare className="w-4 h-4 mr-2" />
-                          Add Comment
-                        </Button>
-                        <Button variant="outline" className="w-full justify-center" disabled>
-                          <Upload className="w-4 h-4 mr-2" />
-                          Upload Document
-                        </Button>
-                        {proposal.document_comparison_id && (
-                          <Button
-                            variant="outline"
-                            className="w-full justify-center"
-                            onClick={() =>
-                              navigate(
-                                createPageUrl(
-                                  `DocumentComparisonDetail?id=${encodeURIComponent(proposal.document_comparison_id)}`,
-                                ),
-                              )
-                            }
-                          >
-                            <FileText className="w-4 h-4 mr-2" />
-                            Open Comparison
+              <TabsContent value="report" className="mt-6 space-y-5">
+
+                {/* Outcome row */}
+                {(() => {
+                  const currentStatus = String(proposal.status || '').toLowerCase();
+                  const isWon = currentStatus === 'won';
+                  const isLost = currentStatus === 'lost';
+                  const isClosed = isWon || isLost;
+                  return (
+                    <div className="flex flex-wrap items-center gap-3">
+                      {isClosed ? (
+                        <>
+                          <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg font-semibold text-sm border ${isWon ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-600 border-rose-200'}`}>
+                            {isWon ? <CheckCircle2 className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
+                            {isWon ? 'Won' : 'Lost'}
+                            {proposal.closed_at && <span className="text-xs opacity-70 ml-1">· {formatDate(proposal.closed_at)}</span>}
+                          </div>
+                          <Button size="sm" variant="outline" disabled={markOutcomeMutation.isPending || isWon} onClick={() => markOutcomeMutation.mutate('won')}>
+                            <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" /> Won
                           </Button>
-                        )}
-                      </CardContent>
-                    </Card>
+                          <Button size="sm" variant="outline" disabled={markOutcomeMutation.isPending || isLost} onClick={() => markOutcomeMutation.mutate('lost')}>
+                            <XCircle className="w-3.5 h-3.5 mr-1.5" /> Lost
+                          </Button>
+                        </>
+                      ) : (
+                        <>
+                          <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white" disabled={markOutcomeMutation.isPending} onClick={() => markOutcomeMutation.mutate('won')}>
+                            <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" /> Mark as Won
+                          </Button>
+                          <Button size="sm" variant="outline" className="text-rose-600 border-rose-200 hover:bg-rose-50" disabled={markOutcomeMutation.isPending} onClick={() => markOutcomeMutation.mutate('lost')}>
+                            <XCircle className="w-3.5 h-3.5 mr-1.5" /> Mark as Lost
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  );
+                })()}
 
-                    {/* Outcome panel: Step 3 - Mark Won / Lost */}
-                    {(() => {
-                      const currentStatus = String(proposal.status || '').toLowerCase();
-                      const isWon = currentStatus === 'won';
-                      const isLost = currentStatus === 'lost';
-                      const isClosed = isWon || isLost;
-                      const isOwner = proposal.user_id === proposal.owner_user_id;
-                      return (
-                        <Card className={`border shadow-sm ${
-                          isWon ? 'border-emerald-200 bg-emerald-50' :
-                          isLost ? 'border-rose-200 bg-rose-50' :
-                          'border-slate-200'
-                        }`}>
-                          <CardHeader className="pb-3">
-                            <CardTitle className="flex items-center gap-2 text-base">
-                              <Trophy className={`w-4 h-4 ${isWon ? 'text-emerald-600' : isLost ? 'text-rose-500' : 'text-slate-400'}`} />
-                              Outcome
-                            </CardTitle>
-                          </CardHeader>
-                          <CardContent className="space-y-3">
-                            {isClosed ? (
-                              <>
-                                <div className={`flex items-center gap-2 font-semibold ${
-                                  isWon ? 'text-emerald-700' : 'text-rose-600'
-                                }`}>
-                                  {isWon ? (
-                                    <CheckCircle2 className="w-5 h-5" />
-                                  ) : (
-                                    <XCircle className="w-5 h-5" />
-                                  )}
-                                  {isWon ? 'Won' : 'Lost'}
-                                </div>
-                                {proposal.closed_at && (
-                                  <p className="text-xs text-slate-500">Closed {formatDate(proposal.closed_at)}</p>
-                                )}
-                                <div className="flex gap-2 pt-1">
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    className="flex-1"
-                                    disabled={markOutcomeMutation.isPending || isWon}
-                                    onClick={() => markOutcomeMutation.mutate('won')}
-                                  >
-                                    <CheckCircle2 className="w-3 h-3 mr-1" />
-                                    Won
-                                  </Button>
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    className="flex-1"
-                                    disabled={markOutcomeMutation.isPending || isLost}
-                                    onClick={() => markOutcomeMutation.mutate('lost')}
-                                  >
-                                    <XCircle className="w-3 h-3 mr-1" />
-                                    Lost
-                                  </Button>
-                                </div>
-                              </>
-                            ) : (
-                              <>
-                                <p className="text-sm text-slate-500">Mark the final outcome for this proposal.</p>
-                                <Button
-                                  className="w-full bg-emerald-600 hover:bg-emerald-700 text-white"
-                                  disabled={markOutcomeMutation.isPending}
-                                  onClick={() => markOutcomeMutation.mutate('won')}
-                                >
-                                  <CheckCircle2 className="w-4 h-4 mr-2" />
-                                  Mark as Won
-                                </Button>
-                                <Button
-                                  variant="outline"
-                                  className="w-full text-rose-600 border-rose-200 hover:bg-rose-50"
-                                  disabled={markOutcomeMutation.isPending}
-                                  onClick={() => markOutcomeMutation.mutate('lost')}
-                                >
-                                  <XCircle className="w-4 h-4 mr-2" />
-                                  Mark as Lost
-                                </Button>
-                              </>
-                            )}
-                          </CardContent>
-                        </Card>
-                      );
-                    })()}
+                {/* Report document — white paper surface */}
+                <div className="bg-white rounded-xl border border-slate-200 shadow-sm">
+                  <div className="px-6 py-7 space-y-7">
 
-                    <Card className="border border-slate-200 shadow-sm">
-                      <CardHeader>
-                        <CardTitle>Activity Timeline</CardTitle>
-                      </CardHeader>
-                      <CardContent className="space-y-4">
-                        <div className="flex items-start gap-3">
-                          <div className="w-9 h-9 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center">
-                            <FileText className="w-4 h-4" />
+                    {/* Executive Summary */}
+                    <div>
+                      <h2 className="text-xl font-bold text-slate-900 mb-5">Executive Summary</h2>
+                      {evaluations.length === 0 ? (
+                        <p className="text-slate-500">Run evaluation to generate the AI report.</p>
+                      ) : (
+                        <div className="space-y-5">
+                          {asText(latestResult?.summary || latestEvaluation?.summary) ? (
+                            <>
+                              <p className="text-slate-700 leading-relaxed">{latestResult?.summary || latestEvaluation?.summary}</p>
+                              {reportSections.length > 0 && <div className="border-t border-slate-100" />}
+                            </>
+                          ) : null}
+                          {reportSections.length > 0 ? (
+                            <div className="space-y-5">
+                              {reportSections.map((section, sectionIndex) => (
+                                <div key={`${section.key || section.heading || 'section'}-${sectionIndex}`}>
+                                  <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
+                                    {section.heading || section.title || `Section ${sectionIndex + 1}`}
+                                  </h3>
+                                  <ul className="space-y-1.5 text-sm text-slate-700">
+                                    {(Array.isArray(section.bullets) ? section.bullets : []).map((line, lineIndex) => (
+                                      <li key={`${sectionIndex}-${lineIndex}`} className="flex items-start gap-2">
+                                        <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-slate-400 flex-shrink-0" />
+                                        {line}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                  {sectionIndex < reportSections.length - 1 && <div className="mt-5 border-t border-slate-100" />}
+                                </div>
+                              ))}
+                            </div>
+                          ) : !asText(latestResult?.summary) ? (
+                            <p className="text-slate-500">No report sections available.</p>
+                          ) : null}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Suggested Additions */}
+                    {suggestedAdditionsCount > 0 && (
+                      <div className="border-t border-slate-100 pt-6">
+                        <h2 className="text-sm font-semibold text-slate-700 mb-3">Suggested Additions</h2>
+                        <ul className="space-y-2">
+                          {(Array.isArray(latestResult?.missing)
+                            ? latestResult.missing
+                            : Array.isArray(latestResult?.report?.missing)
+                              ? latestResult.report.missing
+                              : []
+                          ).map((item, index) => (
+                            <li key={index} className="flex items-start gap-2.5 text-sm text-slate-700">
+                              <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" />
+                              {item}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {/* Evaluation Details (compact) */}
+                    {evaluations.length > 0 && (
+                      <div className="border-t border-slate-100 pt-6 space-y-4">
+                        <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Evaluation Details</h2>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                          <div>
+                            <p className="text-xs text-slate-500 mb-0.5">Confidence</p>
+                            <p className="text-2xl font-bold text-slate-900">{Math.max(0, Math.min(Number(latestEvaluation?.score || latestResult?.score || 0), 100))}%</p>
                           </div>
                           <div>
-                            <p className="font-medium text-slate-900">Proposal Created</p>
-                            <p className="text-slate-500">{formatDateTime(proposal.created_date)}</p>
-                          </div>
-                        </div>
-                        <div className="flex items-start gap-3">
-                          <div className="w-9 h-9 rounded-full bg-slate-100 text-slate-700 flex items-center justify-center">
-                            <Clock className="w-4 h-4" />
+                            <p className="text-xs text-slate-500 mb-0.5">Evaluations run</p>
+                            <p className="text-2xl font-bold text-slate-900">{evaluations.length}</p>
                           </div>
                           <div>
-                            <p className="font-medium text-slate-900">Last Updated</p>
-                            <p className="text-slate-500">{formatDateTime(proposal.updated_date)}</p>
+                            <p className="text-xs text-slate-500 mb-0.5">{CONFIDENTIAL_LABEL}</p>
+                            <p className="text-2xl font-bold text-slate-900">{confidentialWordCount} <span className="text-sm font-normal text-slate-500">words</span></p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-slate-500 mb-0.5">{SHARED_LABEL}</p>
+                            <p className="text-2xl font-bold text-slate-900">{sharedWordCount} <span className="text-sm font-normal text-slate-500">words</span></p>
                           </div>
                         </div>
-                        {latestEvaluation && (
-                          <div className="flex items-start gap-3">
-                            <div className="w-9 h-9 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center">
-                              <Sparkles className="w-4 h-4" />
-                            </div>
-                            <div>
-                              <p className="font-medium text-slate-900">Latest Evaluation</p>
-                              <p className="text-slate-500">{formatDateTime(latestEvaluation.created_date)}</p>
-                            </div>
+                        {evaluations.length > 1 && (
+                          <div className="space-y-0">
+                            {evaluations.slice(1).map((evaluation, index) => {
+                              const providerMeta = getEvaluationProviderMeta(evaluation);
+                              return (
+                                <div key={evaluation.id || `eval-old-${index}`} className="flex items-center justify-between text-xs text-slate-500 py-1.5 border-b border-slate-100 last:border-0">
+                                  <span>{formatDateTime(evaluation.created_date)}</span>
+                                  <span className="font-mono">{providerMeta.provider}{providerMeta.model ? ` · ${providerMeta.model}` : ''}</span>
+                                  <span>{Number(evaluation.score || 0)}% confidence</span>
+                                </div>
+                              );
+                            })}
                           </div>
                         )}
-                      </CardContent>
-                    </Card>
+                      </div>
+                    )}
+
                   </div>
                 </div>
 
-                <Card className="border border-slate-200 shadow-sm">
-                  <CardHeader>
-                    <CardTitle>Complete Proposal Details</CardTitle>
-                    <p className="text-slate-500">Read-only content for confidential and shared information documents.</p>
-                  </CardHeader>
-                  <CardContent className="space-y-6">
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2 text-slate-700 font-semibold">
-                          <FileText className="w-4 h-4" />
-                          {comparison?.party_a_label || CONFIDENTIAL_LABEL}
-                        </div>
-                        <div className="flex gap-2">
-                          <Badge variant="outline">{comparison?.doc_a_source || 'typed'}</Badge>
-                          <Badge variant="outline">{confidentialWordCount} words</Badge>
-                        </div>
-                      </div>
-                      <div className="rounded-xl border border-slate-200 bg-white p-4 max-h-[280px] overflow-auto">
-                        {renderDocumentReadOnly({
-                          text: comparison?.doc_a_text || '',
-                          html: comparison?.doc_a_html || '',
-                        })}
-                      </div>
-                    </div>
 
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2 text-slate-700 font-semibold">
-                          <FileText className="w-4 h-4" />
-                          {comparison?.party_b_label || SHARED_LABEL}
-                        </div>
-                        <div className="flex gap-2">
-                          <Badge variant="outline">{comparison?.doc_b_source || 'typed'}</Badge>
-                          <Badge variant="outline">{sharedWordCount} words</Badge>
-                        </div>
-                      </div>
-                      <div className="rounded-xl border border-slate-200 bg-white p-4 max-h-[280px] overflow-auto">
-                        {renderDocumentReadOnly({
-                          text: comparison?.doc_b_text || '',
-                          html: comparison?.doc_b_html || '',
-                        })}
-                      </div>
-                    </div>
-
-                    {!comparison && (
-                      <Alert className="bg-slate-50 border-slate-200">
-                        <AlertDescription className="text-slate-700">
-                          No linked document comparison data was found for this proposal.
-                        </AlertDescription>
-                      </Alert>
-                    )}
-                  </CardContent>
-                </Card>
-              </TabsContent>
-
-              <TabsContent value="report" className="mt-6 space-y-6">
-                <Card className="border border-slate-200 shadow-sm">
-                  <CardHeader>
-                    <CardTitle>Evaluation History ({evaluations.length})</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    {evaluations.length > 0 ? (
-                      <div className="space-y-3">
-                        {evaluations.map((evaluation, index) => {
-                          const providerMeta = getEvaluationProviderMeta(evaluation);
-                          return (
-                            <div
-                              key={evaluation.id || `evaluation-${index}`}
-                              className="flex items-center justify-between rounded-xl border border-blue-200 bg-blue-50 p-3"
-                            >
-                              <div className="space-y-1">
-                                <div className="flex items-center gap-3">
-                                  <Badge className="bg-green-100 text-green-700">succeeded</Badge>
-                                  <span className="text-slate-700">{formatDateTime(evaluation.created_date)}</span>
-                                  {index === 0 && <Badge variant="outline">Latest</Badge>}
-                                </div>
-                                <p className="text-xs text-slate-500">
-                                  Provider:{' '}
-                                  <span className="font-mono text-slate-700">
-                                    {providerMeta.provider}
-                                    {providerMeta.model ? ` · ${providerMeta.model}` : ''}
-                                  </span>
-                                  {providerMeta.provider !== 'vertex' && providerMeta.reason ? (
-                                    <span className="text-slate-500"> ({providerMeta.reason})</span>
-                                  ) : null}
-                                </p>
-                              </div>
-                              <span className="text-blue-600 font-semibold">{Number(evaluation.score || 0)}% confidence</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <p className="text-slate-500">No evaluations recorded yet.</p>
-                    )}
-                  </CardContent>
-                </Card>
-
-                <Card className="border border-slate-200 shadow-sm">
-                  <CardHeader>
-                    <CardTitle>Quality Assessment</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-5">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <div>
-                        <p className="text-slate-500">{CONFIDENTIAL_LABEL} Words</p>
-                        <p className="text-4xl font-bold text-slate-900">{confidentialWordCount}</p>
-                      </div>
-                      <div>
-                        <p className="text-slate-500">{SHARED_LABEL} Words</p>
-                        <p className="text-4xl font-bold text-slate-900">{sharedWordCount}</p>
-                      </div>
-                    </div>
-                    <div>
-                      <p className="text-slate-500 mb-2">Overall Confidence</p>
-                      <div className="h-3 bg-slate-200 rounded-full overflow-hidden">
-                        <div
-                          className="h-3 bg-slate-500 rounded-full"
-                          style={{
-                            width: `${Math.max(0, Math.min(Number(latestEvaluation?.score || latestResult?.score || 0), 100))}%`,
-                          }}
-                        />
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card className="border border-slate-200 shadow-sm">
-                  <CardHeader>
-                    <CardTitle>Executive Summary</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <Badge variant="outline" className="capitalize">
-                      {latestResult?.recommendation || 'unknown fit'}
-                    </Badge>
-                    <p className="text-sm text-slate-600">
-                      Provider:{' '}
-                      <span className="font-mono text-slate-800">
-                        {latestProviderMeta.provider}
-                        {latestProviderMeta.model ? ` · ${latestProviderMeta.model}` : ''}
-                      </span>
-                      {latestProviderMeta.provider !== 'vertex' && latestProviderMeta.reason ? (
-                        <span className="text-slate-500"> ({latestProviderMeta.reason})</span>
-                      ) : null}
-                    </p>
-                    {asText(latestResult?.summary || latestEvaluation?.summary) ? (
-                      <p className="text-slate-700">{latestResult?.summary || latestEvaluation?.summary}</p>
-                    ) : (
-                      <p className="text-slate-600">Run evaluation to generate the AI report output.</p>
-                    )}
-                    {reportSections.length > 0 && (
-                      <div className="space-y-4">
-                        {reportSections.map((section, sectionIndex) => (
-                          <div key={`${section.key || section.heading || 'section'}-${sectionIndex}`} className="rounded-xl border border-slate-200 p-4">
-                            <p className="font-semibold text-slate-900 mb-2">{section.heading || section.title || `Section ${sectionIndex + 1}`}</p>
-                            <ul className="list-disc pl-5 space-y-1 text-slate-700">
-                              {(Array.isArray(section.bullets) ? section.bullets : []).map((line, lineIndex) => (
-                                <li key={`${sectionIndex}-${lineIndex}`}>{line}</li>
-                              ))}
-                            </ul>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-
-                <div className="flex flex-wrap gap-3">
+                {/* Action buttons */}
+                <div className="flex flex-wrap gap-3 pt-2">
                   <Button onClick={() => runEvaluationMutation.mutate()} disabled={runEvaluationMutation.isPending}>
                     <Sparkles className="w-4 h-4 mr-2" />
                     {runEvaluationMutation.isPending ? 'Running Evaluation...' : evaluations.length > 0 ? 'Re-run Evaluation' : 'Run Evaluation'}
@@ -837,6 +684,59 @@ export default function ProposalDetail() {
                   </Button>
                 </div>
               </TabsContent>
+
+              <TabsContent value="proposal" className="mt-6">
+                <div className="space-y-8">
+                  {comparison ? (
+                    <>
+                      <div>
+                        <div className="flex items-center justify-between mb-3">
+                          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+                            {comparison?.party_a_label || CONFIDENTIAL_LABEL}
+                          </h2>
+                          <div className="flex gap-2">
+                            <Badge variant="outline">{comparison?.doc_a_source || 'typed'}</Badge>
+                            <Badge variant="outline">{confidentialWordCount} words</Badge>
+                          </div>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 bg-white p-4 max-h-[400px] overflow-auto">
+                          {renderDocumentReadOnly({
+                            text: comparison?.doc_a_text || '',
+                            html: comparison?.doc_a_html || '',
+                          })}
+                        </div>
+                      </div>
+
+                      <div className="border-t border-slate-200" />
+
+                      <div>
+                        <div className="flex items-center justify-between mb-3">
+                          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+                            {comparison?.party_b_label || SHARED_LABEL}
+                          </h2>
+                          <div className="flex gap-2">
+                            <Badge variant="outline">{comparison?.doc_b_source || 'typed'}</Badge>
+                            <Badge variant="outline">{sharedWordCount} words</Badge>
+                          </div>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 bg-white p-4 max-h-[400px] overflow-auto">
+                          {renderDocumentReadOnly({
+                            text: comparison?.doc_b_text || '',
+                            html: comparison?.doc_b_html || '',
+                          })}
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <Alert className="bg-slate-50 border-slate-200">
+                      <AlertDescription className="text-slate-700">
+                        No linked document comparison data was found for this proposal.
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                </div>
+              </TabsContent>
+
             </Tabs>
           </div>
         </div>

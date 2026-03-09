@@ -13,7 +13,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
   ComparisonDetailTabs,
-  buildOverviewBullets,
 } from '@/components/document-comparison/ComparisonDetailTabs';
 import {
   Dialog,
@@ -338,10 +337,10 @@ function useComparisonId() {
 function parseDetailTab(search) {
   const params = new URLSearchParams(search || '');
   const requested = asLower(params.get('tab'));
-  if (requested === 'report' || requested === 'details' || requested === 'overview') {
+  if (requested === 'report' || requested === 'details') {
     return requested;
   }
-  return 'overview';
+  return 'report';
 }
 
 export default function DocumentComparisonDetail() {
@@ -729,7 +728,6 @@ export default function DocumentComparisonDetail() {
     asText(report?.recommendation) ||
     asText(comparison?.evaluation_result?.recommendation) ||
     asText(latestEvaluation?.summary);
-  const overviewBullets = buildOverviewBullets(report);
   const timelineTone =
     latestEvaluationMeta.label === 'Succeeded'
       ? 'success'
@@ -851,21 +849,6 @@ export default function DocumentComparisonDetail() {
             activeTab={activeTab}
             onTabChange={setActiveTab}
             hasReportBadge={hasReport}
-            overviewProps={{
-              recommendation,
-              overviewBullets,
-              isEvaluationRunning,
-              isPollingTimedOut,
-              isEvaluationNotConfigured,
-              showConfidentialityWarning,
-              confidentialityWarningMessage,
-              confidentialityWarningDetails,
-              isEvaluationFailed,
-              evaluationFailureBannerMessage,
-              hasReport,
-              noReportMessage: 'No evaluation yet. Use Run Evaluation from the editor to generate it.',
-              timelineItems,
-            }}
             aiReportProps={{
               isEvaluationRunning,
               isPollingTimedOut,
@@ -881,6 +864,7 @@ export default function DocumentComparisonDetail() {
               runDetailsHref: createPageUrl(`DocumentComparisonRunDetails?id=${encodeURIComponent(comparisonId)}`),
               report,
               recommendation,
+              timelineItems,
             }}
             proposalDetailsProps={{
               description: 'Read-only document content for both information documents.',

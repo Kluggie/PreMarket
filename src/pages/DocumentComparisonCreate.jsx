@@ -758,8 +758,30 @@ export default function DocumentComparisonCreate() {
   });
 
   // ── Helper: update one document in the documents array ───────────────────
+  // Uses the same synchronous ref-update pattern as handleDocumentContentChange
+  // so that any save triggered immediately after (e.g. ensureStep2DraftId on the
+  // Step 1 → Step 2 transition) always reads the latest compiled bundles.
   const updateDocument = useCallback((id, changes) => {
-    setDocuments((prev) => prev.map((d) => (d.id === id ? { ...d, ...changes } : d)));
+    setDocuments((prev) => {
+      const next = prev.map((d) => (d.id === id ? { ...d, ...changes } : d));
+      // Synchronously recompile bundles and update the draft-state ref so that
+      // saves never read stale (empty) content from latestDraftStateRef.
+      const { confidential, shared } = compileBundles(next);
+      latestDraftStateRef.current = {
+        ...latestDraftStateRef.current,
+        docAText: confidential.text,
+        docAHtml: confidential.html,
+        docAJson: confidential.json,
+        docASource: confidential.source,
+        docAFiles: Array.isArray(confidential.files) ? confidential.files : [],
+        docBText: shared.text,
+        docBHtml: shared.html,
+        docBJson: shared.json,
+        docBSource: shared.source,
+        docBFiles: Array.isArray(shared.files) ? shared.files : [],
+      };
+      return next;
+    });
   }, []);
 
   // ── Derived bundles (replaces old docA/docB state) ──────────────────────
@@ -1701,8 +1723,8 @@ export default function DocumentComparisonCreate() {
       throw new Error('No readable content was extracted from the selected file');
     }
 
-    setDocuments((prev) =>
-      prev.map((d) =>
+    setDocuments((prev) => {
+      const next = prev.map((d) =>
         d.id === docId
           ? {
               ...d,
@@ -1716,8 +1738,25 @@ export default function DocumentComparisonCreate() {
               _pendingFile: null,
             }
           : d,
-      ),
-    );
+      );
+      // Synchronously sync the draft-state ref so saves right after import
+      // (e.g. ensureStep2DraftId on Step 1→2 transition) see the imported content.
+      const { confidential, shared } = compileBundles(next);
+      latestDraftStateRef.current = {
+        ...latestDraftStateRef.current,
+        docAText: confidential.text,
+        docAHtml: confidential.html,
+        docAJson: confidential.json,
+        docASource: confidential.source,
+        docAFiles: Array.isArray(confidential.files) ? confidential.files : [],
+        docBText: shared.text,
+        docBHtml: shared.html,
+        docBJson: shared.json,
+        docBSource: shared.source,
+        docBFiles: Array.isArray(shared.files) ? shared.files : [],
+      };
+      return next;
+    });
     markDraftEdited();
   };
 
@@ -1812,7 +1851,24 @@ export default function DocumentComparisonCreate() {
         importStatus: 'importing',
       }),
     );
-    setDocuments((prev) => [...prev, ...newDocs]);
+    setDocuments((prev) => {
+      const next = [...prev, ...newDocs];
+      const { confidential, shared } = compileBundles(next);
+      latestDraftStateRef.current = {
+        ...latestDraftStateRef.current,
+        docAText: confidential.text,
+        docAHtml: confidential.html,
+        docAJson: confidential.json,
+        docASource: confidential.source,
+        docAFiles: Array.isArray(confidential.files) ? confidential.files : [],
+        docBText: shared.text,
+        docBHtml: shared.html,
+        docBJson: shared.json,
+        docBSource: shared.source,
+        docBFiles: Array.isArray(shared.files) ? shared.files : [],
+      };
+      return next;
+    });
     markDraftEdited();
 
     // Start importing each file
@@ -1826,7 +1882,24 @@ export default function DocumentComparisonCreate() {
    */
   const handleAddTypedDocument = () => {
     const newDoc = createDocument({ title: 'Untitled Document', source: 'typed' });
-    setDocuments((prev) => [...prev, newDoc]);
+    setDocuments((prev) => {
+      const next = [...prev, newDoc];
+      const { confidential, shared } = compileBundles(next);
+      latestDraftStateRef.current = {
+        ...latestDraftStateRef.current,
+        docAText: confidential.text,
+        docAHtml: confidential.html,
+        docAJson: confidential.json,
+        docASource: confidential.source,
+        docAFiles: Array.isArray(confidential.files) ? confidential.files : [],
+        docBText: shared.text,
+        docBHtml: shared.html,
+        docBJson: shared.json,
+        docBSource: shared.source,
+        docBFiles: Array.isArray(shared.files) ? shared.files : [],
+      };
+      return next;
+    });
     markDraftEdited();
   };
 
@@ -3493,7 +3566,24 @@ export default function DocumentComparisonCreate() {
                 onAddFiles={handleAddFiles}
                 onAddTyped={handleAddTypedDocument}
                 onRemoveDoc={(id) => {
-                  setDocuments((prev) => prev.filter((d) => d.id !== id));
+                  setDocuments((prev) => {
+                    const next = prev.filter((d) => d.id !== id);
+                    const { confidential, shared } = compileBundles(next);
+                    latestDraftStateRef.current = {
+                      ...latestDraftStateRef.current,
+                      docAText: confidential.text,
+                      docAHtml: confidential.html,
+                      docAJson: confidential.json,
+                      docASource: confidential.source,
+                      docAFiles: Array.isArray(confidential.files) ? confidential.files : [],
+                      docBText: shared.text,
+                      docBHtml: shared.html,
+                      docBJson: shared.json,
+                      docBSource: shared.source,
+                      docBFiles: Array.isArray(shared.files) ? shared.files : [],
+                    };
+                    return next;
+                  });
                   if (activeDocId === id) {
                     setActiveDocId(documents.find((d) => d.id !== id)?.id || null);
                   }
