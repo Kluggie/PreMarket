@@ -10,7 +10,12 @@ export const templatesClient = {
 
     const query = searchParams.toString();
     const response = await request(`/api/templates${query ? `?${query}` : ''}`);
-    return response.templates || [];
+    if (!Array.isArray(response.templates)) {
+      const err = new Error('Server response missing "templates" array');
+      err.code = 'invalid_response';
+      throw err;
+    }
+    return response.templates;
   },
 
   async useTemplate(templateId, input = {}) {

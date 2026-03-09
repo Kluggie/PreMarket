@@ -3,7 +3,12 @@ import { request } from '@/api/httpClient';
 export const sharedLinksClient = {
   async list() {
     const response = await request('/api/shared-links');
-    return response.sharedLinks || [];
+    if (!Array.isArray(response.sharedLinks)) {
+      const err = new Error('Server response missing "sharedLinks" array');
+      err.code = 'invalid_response';
+      throw err;
+    }
+    return response.sharedLinks;
   },
 
   async create(input) {
@@ -29,8 +34,8 @@ export const sharedLinksClient = {
     if (includeDetails) {
       return {
         sharedLink: response.sharedLink || null,
-        responses: response.responses || [],
-        evaluations: response.evaluations || [],
+        responses: Array.isArray(response.responses) ? response.responses : [],
+        evaluations: Array.isArray(response.evaluations) ? response.evaluations : [],
         documentComparison: response.documentComparison || null,
       };
     }
@@ -53,7 +58,7 @@ export const sharedLinksClient = {
     });
     return {
       sharedLink: response.sharedLink || null,
-      savedResponses: Number(response.savedResponses || 0),
+      savedResponses: typeof response.savedResponses === 'number' ? response.savedResponses : 0,
       evaluation: response.evaluation || null,
     };
   },

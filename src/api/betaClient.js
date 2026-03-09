@@ -1,11 +1,23 @@
 import { request } from '@/api/httpClient';
 
+function requireCount(response, field) {
+  if (typeof response[field] !== 'number') {
+    const err = new Error(`Server response missing "${field}" count`);
+    err.code = 'invalid_response';
+    throw err;
+  }
+  return response[field];
+}
+
 export const betaClient = {
   async getCount() {
     const response = await request('/api/beta-signups/stats');
+    // Throw if seatsClaimed is absent — returning 0 would be indistinguishable
+    // from "no one has signed up", hiding DB/deploy failures from the UI.
+    const claimed = requireCount(response, 'seatsClaimed');
     return {
-      claimed: Number(response.seatsClaimed || 0),
-      limit: Number(response.seatsTotal || 50),
+      claimed,
+      limit: typeof response.seatsTotal === 'number' ? response.seatsTotal : 50,
     };
   },
 
@@ -14,10 +26,11 @@ export const betaClient = {
       method: 'POST',
       body: JSON.stringify(input || {}),
     });
-
+    // Throw if seatsClaimed is absent on a successful signup response.
+    const claimed = requireCount(response, 'seatsClaimed');
     return {
-      claimed: Number(response.seatsClaimed || 0),
-      limit: Number(response.seatsTotal || 50),
+      claimed,
+      limit: typeof response.seatsTotal === 'number' ? response.seatsTotal : 50,
       applied: true,
     };
   },

@@ -39,16 +39,20 @@ export const documentsClient = {
 
   async list() {
     const response = await request('/api/documents');
-    return {
-      documents: response.documents || [],
-      usage: response.usage || {
-        file_count: 0,
-        total_bytes: 0,
-        max_files: MAX_FILES,
-        max_total_bytes: MAX_TOTAL_BYTES,
-        max_file_bytes: MAX_FILE_BYTES,
-      },
-    };
+    // Throw explicitly if the server returned a 2xx with missing fields.
+    // Do NOT fall back to zeros — that would make "API failure" look like
+    // "no documents / zero bytes used", silently hiding the real error.
+    if (!Array.isArray(response.documents)) {
+      const error = new Error('Documents list missing from server response');
+      error.code = 'invalid_response';
+      throw error;
+    }
+    if (!response.usage || typeof response.usage !== 'object') {
+      const error = new Error('Documents usage stats missing from server response');
+      error.code = 'invalid_response';
+      throw error;
+    }
+    return { documents: response.documents, usage: response.usage };
   },
 
   async upload(file) {

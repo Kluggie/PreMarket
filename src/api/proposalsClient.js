@@ -1,4 +1,11 @@
-import { request } from '@/api/httpClient';
+function requireArray(response, field) {
+  if (!Array.isArray(response[field])) {
+    const err = new Error(`Server response missing "${field}" array`);
+    err.code = 'invalid_response';
+    throw err;
+  }
+  return response[field];
+}
 
 export const proposalsClient = {
   buildQuery(params = {}) {
@@ -29,15 +36,18 @@ export const proposalsClient = {
 
   async list(params = {}) {
     const query = this.buildQuery(params);
+    // request() throws on non-2xx (auth failure, DB error → 503, etc.).
+    // requireArray() throws if proposals is absent on a 2xx response — that
+    // would be a server-side bug, and should not silently look like "no data".
     const response = await request(`/api/proposals${query ? `?${query}` : ''}`);
-    return response.proposals || [];
+    return requireArray(response, 'proposals');
   },
 
   async listWithMeta(params = {}) {
     const query = this.buildQuery(params);
     const response = await request(`/api/proposals${query ? `?${query}` : ''}`);
     return {
-      proposals: response.proposals || [],
+      proposals: requireArray(response, 'proposals'),
       page: response.page || {
         limit: Number(params.limit || 25),
         nextCursor: null,
@@ -64,9 +74,9 @@ export const proposalsClient = {
     const response = await request(`/api/proposals/${encodeURIComponent(String(id || ''))}`);
     return {
       proposal: response.proposal || null,
-      responses: response.responses || [],
-      evaluations: response.evaluations || [],
-      sharedLinks: response.shared_links || [],
+      responses: requireArray(response, 'responses'),
+      evaluations: requireArray(response, 'evaluations'),
+      sharedLinks: requireArray(response, 'shared_links'),
     };
   },
 
@@ -87,7 +97,7 @@ export const proposalsClient = {
 
   async getResponses(id) {
     const response = await request(`/api/proposals/${encodeURIComponent(String(id || ''))}/responses`);
-    return response.responses || [];
+    return requireArray(response, 'responses');
   },
 
   async saveResponses(id, responses = []) {
@@ -97,8 +107,7 @@ export const proposalsClient = {
         responses: Array.isArray(responses) ? responses : [],
       }),
     });
-
-    return response.responses || [];
+    return requireArray(response, 'responses');
   },
 
   async send(id, input = {}) {
@@ -127,7 +136,7 @@ export const proposalsClient = {
 
   async getEvaluations(id) {
     const response = await request(`/api/proposals/${encodeURIComponent(String(id || ''))}/evaluations`);
-    return response.evaluations || [];
+    return requireArray(response, 'evaluations');
   },
 
   async archive(id) {

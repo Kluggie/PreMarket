@@ -19,9 +19,14 @@ export const accountClient = {
 
   async getOrganizations() {
     const response = await request('/api/account/organizations');
+    if (!Array.isArray(response.organizations) || !Array.isArray(response.memberships)) {
+      const err = new Error('Server response missing "organizations" or "memberships" arrays');
+      err.code = 'invalid_response';
+      throw err;
+    }
     return {
-      organizations: response.organizations || [],
-      memberships: response.memberships || [],
+      organizations: response.organizations,
+      memberships: response.memberships,
     };
   },
 

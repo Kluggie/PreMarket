@@ -22,6 +22,11 @@ async function importDebugDbHandler() {
   return mod.default;
 }
 
+async function importBetaSignupsStatsHandler() {
+  const mod = await import('../../server/routes/beta-signups/stats.ts');
+  return mod.default;
+}
+
 async function createProposalViaHandler(cookie, body) {
   const handler = await importProposalsHandler();
   const req = createMockReq({
@@ -164,5 +169,83 @@ if (!hasDatabaseUrl()) {
     assert.ok(typeof diagnostics.dbSchemaVersion === 'object', 'dbSchemaVersion must be an object');
     // Note: schemaVersion.available can be false in test environments with rapid sequential
     // resetTable calls, but the field must always be present.
+  });
+
+  test('CRITICAL: beta seat count correct after simulated redeploy', async () => {
+    // Regression test for the beta_signups persistence bug:
+    // If the beta_signups table rows survive a simulated cold start (globalThis reset),
+    // the seat count must remain the same after "redeploy".
+    // This would also catch if the seat count is computed from in-memory state.
+
+    await ensureMigrated();
+    await resetTables();
+
+    const betaStatsHandler = await importBetaSignupsStatsHandler();
+
+    async function getStats() {
+      const req = createMockReq({ method: 'GET', url: '/api/beta-signups/stats' });
+      const res = createMockRes();
+      await betaStatsHandler(req, res);
+      return res;
+    }
+
+    // Seed some beta signups directly into the DB
+    const db = getDb();
+    await db.execute(sql`
+      insert into beta_signups (id, email, email_normalized, user_id, source, created_at)
+      values
+        (gen_random_uuid(), 'alpha@example.com', 'alpha@example.com', null, 'landing', now()),
+        (gen_random_uuid(), 'bravo@example.com', 'bravo@example.com', null, 'landing', now()),
+        (gen_random_uuid(), 'charlie@example.com', 'charlie@example.com', null, 'landing', now())
+      on conflict (email_normalized) do nothing
+    `);
+
+    const statsBefore = await getStats();
+    assert.equal(statsBefore.statusCode, 200);
+    assert.equal(statsBefore.jsonBody().seatsClaimed, 3, 'Should show 3 seats claimed before simulated redeploy');
+
+    // Simulate redeploy: clear the memoized DB client
+    delete globalThis.__pm_drizzle_db;
+
+    const statsAfter = await getStats();
+    assert.equal(statsAfter.statusCode, 200, 'Stats endpoint must return 200 after simulated redeploy');
+    assert.equal(
+      statsAfter.jsonBody().seatsClaimed,
+      3,
+      'Beta seat count MUST remain 3 after simulated redeploy. ' +
+        'This failure means seat count is NOT persisted in the DB, or a different DB is being used.',
+    );
+    assert.equal(statsAfter.jsonBody().seatsTotal, 50);
+  });
+
+  test('REGRESSION: beta stats endpoint returns 503 db_schema_missing (not 200 with seatsClaimed=0) when table absent', async () => {
+    // This test verifies the key regression guard: if the beta_signups table
+    // does not exist (migration not applied), the API must return 503
+    // db_schema_missing — NOT a 200 with seatsClaimed=0.
+    //
+    // A silent empty-list response would look to users and operators like
+    // "data was wiped" when actually the migration just wasn't applied.
+    // A 503 db_schema_missing is immediately actionable: run db:migrate.
+    //
+    // We test this by simulating the PG error via toApiError() directly,
+    // since we cannot drop the real table in an integration test.
+
+    const { toApiError } = await import('../../server/_lib/errors.js');
+
+    const undefinedTableError = new Error('relation "beta_signups" does not exist');
+    undefinedTableError.code = '42P01';
+
+    const apiError = toApiError(undefinedTableError);
+
+    assert.equal(
+      apiError.statusCode,
+      503,
+      'A missing table must produce a 503, not a 200 with empty data.',
+    );
+    assert.equal(
+      apiError.code,
+      'db_schema_missing',
+      'Error code must be db_schema_missing so operators know to run db:migrate.',
+    );
   });
 }

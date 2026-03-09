@@ -174,6 +174,96 @@ if (fs.existsSync('package.json')) {
     }
   }
   console.log(`[OK] package.json build scripts are safe: build="${buildScript}"`);
+
+  // ── CHECK 6b: vercel-build must include db:migrate ───────────────────────
+  // Without this, schema migrations are NEVER applied automatically during
+  // Vercel deployments. New tables (like beta_signups) won't exist in the
+  // deployed DB, causing persistent "0/50" beta counts and API 503 errors that
+  // look like data loss to users.
+  if (!vercelBuildScript) {
+    const msg =
+      'package.json is missing a "vercel-build" script. ' +
+      'Vercel uses this script when it exists instead of "build". ' +
+      'Without it, Drizzle migrations never run automatically during deployment. ' +
+      'Fix: add "vercel-build": "npm run db:migrate && npm run build" to package.json scripts.';
+    if (isProduction) {
+      errors.push(`[CRITICAL] ${msg}`);
+    } else {
+      warnings.push(`[WARNING] ${msg}`);
+    }
+  } else if (!vercelBuildScript.includes('db:migrate')) {
+    const msg =
+      `package.json "vercel-build" script does not include db:migrate: "${vercelBuildScript}". ` +
+      'Drizzle migrations will not run automatically during Vercel deployments. ' +
+      'Fix: add "npm run db:migrate &&" to the beginning of the vercel-build script.';
+    if (isProduction) {
+      errors.push(`[CRITICAL] ${msg}`);
+    } else {
+      warnings.push(`[WARNING] ${msg}`);
+    }
+  } else {
+    console.log(`[OK] package.json "vercel-build" includes db:migrate: "${vercelBuildScript}"`);
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// CHECK 7: Scan API client files for dangerous silent fallback patterns
+//          on server response fields that can mask backend failures.
+//
+// WHY: Patterns like `response.summary || { sentCount: 0 }` or
+// `response.proposals || []` convert any missing field in a 2xx response into
+// fake "no data". This makes DB unavailability or schema errors look identical
+// to "the user has no proposals / zero signups".
+//
+// The correct pattern is to throw (with code: 'invalid_response') when expected
+// fields are absent from a 2xx response body, so React Query sets isError=true
+// and the UI shows a proper error state.
+//
+// Scans for:
+//   (A) response.FIELD || { ...: 0 }   — silent zero-count object fallback
+//   (B) Number(response.FIELD || 0)    — silent zero-count numeric fallback
+//   (C) response.FIELD || []           — silent empty-array fallback
+// ──────────────────────────────────────────────────────────────────────────────
+const API_CLIENT_DIR = path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'src', 'api');
+if (fs.existsSync(API_CLIENT_DIR)) {
+  const silentZeroObjectPattern = /response\.\w+\s*\|\|\s*\{[^}]*:\s*0[^}]*\}/s;
+  const silentZeroNumericPattern = /Number\s*\(\s*response\.\w+\s*\|\|\s*0\s*\)/;
+  const silentArrayFallbackPattern = /response\.\w+\s*\|\|\s*\[\]/;
+
+  const apiClientFiles = fs.readdirSync(API_CLIENT_DIR)
+    .filter((f) => f.endsWith('.js') || f.endsWith('.ts'))
+    .map((f) => path.join(API_CLIENT_DIR, f));
+
+  for (const filePath of apiClientFiles) {
+    const content = fs.readFileSync(filePath, 'utf8');
+    const rel = path.relative(process.cwd(), filePath);
+
+    if (silentZeroObjectPattern.test(content)) {
+      warnings.push(
+        `[WARN] Silent zero-count object fallback in ${rel}: ` +
+        'Found "response.FIELD || { ...: 0 }" pattern. ' +
+        'Throw when expected response fields are absent instead of returning fake zeros.',
+      );
+    }
+
+    if (silentZeroNumericPattern.test(content)) {
+      warnings.push(
+        `[WARN] Silent zero-count numeric fallback in ${rel}: ` +
+        'Found "Number(response.FIELD || 0)" pattern. ' +
+        'Throw when expected numeric response fields are absent instead of returning 0.',
+      );
+    }
+
+    if (silentArrayFallbackPattern.test(content)) {
+      warnings.push(
+        `[WARN] Silent empty-array fallback in ${rel}: ` +
+        'Found "response.FIELD || []" pattern. ' +
+        'An empty array is indistinguishable from "no data" when the real cause is a backend failure. ' +
+        'Throw when expected array fields are absent instead of returning [].',
+      );
+    }
+  }
+  console.log('[OK] API client files scanned for silent fallbacks (Check 7: zero-count, empty-array)');
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

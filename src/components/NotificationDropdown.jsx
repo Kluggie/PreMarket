@@ -16,7 +16,7 @@ import { toast } from 'sonner';
 export default function NotificationDropdown({ user }) {
   const queryClient = useQueryClient();
 
-  const { data: notifications = [] } = useQuery({
+  const { data: notifications = [], isError: notificationsError } = useQuery({
     queryKey: ['notifications', user?.email],
     enabled: Boolean(user?.email),
     queryFn: () => notificationsClient.list(),
@@ -155,7 +155,11 @@ export default function NotificationDropdown({ user }) {
           {displayedNotifications.length === 0 ? (
             <div className="py-8 text-center">
               <Bell className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-              <p className="text-sm text-slate-500">No notifications yet</p>
+              {notificationsError ? (
+                <p className="text-sm text-amber-700">Could not load notifications</p>
+              ) : (
+                <p className="text-sm text-slate-500">No notifications yet</p>
+              )}
             </div>
           ) : (
             displayedNotifications.map((notification) => (

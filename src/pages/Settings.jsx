@@ -155,13 +155,13 @@ export default function Settings() {
     enabled: !!user?.email,
   });
 
-  const { data: sessions = [], isLoading: sessionsLoading } = useQuery({
+  const { data: sessions = [], isLoading: sessionsLoading, isError: sessionsError } = useQuery({
     queryKey: ['securitySessions'],
     queryFn: () => securityClient.getSessions(),
     enabled: !!user?.id,
   });
 
-  const { data: securityActivity = [] } = useQuery({
+  const { data: securityActivity = [], isError: securityActivityError } = useQuery({
     queryKey: ['securityActivity'],
     queryFn: () => securityClient.getActivity(50),
     enabled: !!user?.id,
@@ -683,6 +683,10 @@ export default function Settings() {
 
                 {sessionsLoading ? (
                   <p className="text-sm text-slate-500">Loading sessions...</p>
+                ) : sessionsError ? (
+                  <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+                    Could not load sessions — your proposals and data are unaffected. Refresh to retry.
+                  </p>
                 ) : sessions.length === 0 ? (
                   <p className="text-sm text-slate-500">No active sessions found.</p>
                 ) : (
@@ -722,7 +726,11 @@ export default function Settings() {
                   <p className="text-sm text-slate-500">Recent sign-ins, session changes, and 2FA events.</p>
                 </div>
                 <div className="space-y-2">
-                  {securityActivity.length === 0 ? (
+                  {securityActivityError ? (
+                    <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+                      Could not load security activity. Refresh to retry.
+                    </p>
+                  ) : securityActivity.length === 0 ? (
                     <p className="text-sm text-slate-500">No security activity available yet.</p>
                   ) : (
                     securityActivity.map((event) => (

@@ -142,13 +142,13 @@ export const sharedReportsClient = {
       comparison: response.comparison || null,
       baseline: response.baseline || null,
       baselineShared: response.baseline_shared || null,
-      baselineAiReport: response.baseline_ai_report || {},
+      baselineAiReport: response.baseline_ai_report || null,
       recipientDraft: response.recipientDraft || null,
       latestEvaluation: response.latestEvaluation || null,
       latestSentRevision: response.latestSentRevision || null,
-      latestReport: response.latestReport || {},
+      latestReport: response.latestReport || null,
       currentDraft: response.currentDraft || null,
-      defaults: response.defaults || {},
+      defaults: response.defaults || null,
     };
   },
 
@@ -190,7 +190,7 @@ export const sharedReportsClient = {
       promptVersion: typeof response.prompt_version === 'string' ? response.prompt_version : null,
       coach: response.coach || null,
       createdAt: response.created_at || null,
-      withheldCount: Number(response.withheld_count || 0),
+      withheldCount: typeof response.withheld_count === 'number' ? response.withheld_count : 0,
     };
   },
 
@@ -242,7 +242,7 @@ export const sharedReportsClient = {
 
     return {
       sharedReport: response.sharedReport || null,
-      savedResponses: Number(response.savedResponses || 0),
+      savedResponses: typeof response.savedResponses === 'number' ? response.savedResponses : 0,
     };
   },
 

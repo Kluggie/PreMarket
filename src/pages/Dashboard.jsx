@@ -105,9 +105,16 @@ function ActionRequiredBucket({ title, proposals, onOpen }) {
 export default function Dashboard() {
   const navigate = useNavigate();
 
-  const { data: summary, isLoading: summaryLoading } = useQuery({
+  const {
+    data: summary,
+    isLoading: summaryLoading,
+    isError: summaryError,
+    error: summaryErrorObj,
+    refetch: refetchSummary,
+  } = useQuery({
     queryKey: ['dashboard-summary'],
     queryFn: () => dashboardClient.getSummary(),
+    retry: 2,
   });
 
   const { data: allProposals = [], isLoading: loadingProposals, isError: proposalsError, error: proposalsErrorObj, refetch: refetchProposals } = useQuery({
@@ -272,13 +279,13 @@ export default function Dashboard() {
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
           {stats.map((stat) => (
-            <Card key={stat.label} className="border-0 shadow-sm">
+            <Card key={stat.label} className={`border-0 shadow-sm${summaryError ? ' opacity-60' : ''}`}>
               <CardContent className="p-5">
                 <div className="flex items-start justify-between">
                   <div>
                     <p className="text-sm text-slate-500">{stat.label}</p>
-                    <p className="text-3xl font-bold text-slate-900 mt-1">
-                      {summaryLoading ? '...' : stat.value}
+                    <p className="text-3xl font-bold text-slate-900 mt-1" title={summaryError ? (summaryErrorObj?.message || 'Could not load stats') : undefined}>
+                      {summaryLoading ? '...' : summaryError ? '—' : stat.value}
                     </p>
                   </div>
                   <div
@@ -291,6 +298,12 @@ export default function Dashboard() {
             </Card>
           ))}
         </div>
+        {summaryError && (
+          <div className="flex items-center gap-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 mb-6">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span>Summary stats could not be loaded. Your proposals are unaffected — <button type="button" className="underline font-medium" onClick={() => refetchSummary()}>retry</button>.</span>
+          </div>
+        )}
 
         <div className="mb-8">
           <ProposalsChart />

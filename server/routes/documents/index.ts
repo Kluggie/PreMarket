@@ -51,6 +51,18 @@ const ALLOWED_EXTENSIONS = new Set(['pdf', 'docx', 'xlsx', 'pptx', 'txt', 'md'])
 
 // ---------------------------------------------------------------------------
 // In-memory upload rate limiter: 10 uploads per user per 60s window
+//
+// INTENTIONALLY EPHEMERAL: This Map lives in serverless function memory.
+// It resets on cold start, function recycle, and every new deployment.
+// This is by design — the rate limiter is a best-effort abuse guard for
+// burst uploads within a single warm invocation window, not a durable quota.
+//
+// Implications:
+//   • A user could bypass the per-minute limit by waiting for a cold start
+//     (rare in practice, acceptable since upload costs are per-file).
+//   • If you need a durable rate limit, track upload timestamps in Postgres
+//     (e.g., a `user_upload_events` table queried per user per window).
+//   • DO NOT store anything here that needs to survive redeploys.
 // ---------------------------------------------------------------------------
 const _uploadTimestamps = new Map<string, number[]>();
 

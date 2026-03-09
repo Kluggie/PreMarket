@@ -57,14 +57,27 @@ export default function Pricing() {
     setBetaEmail((prev) => prev || user.email || '');
   }, [user]);
 
-  const { data: betaCount } = useQuery({
+  const {
+    data: betaCount,
+    isPending: betaCountLoading,
+    isError: betaCountError,
+  } = useQuery({
     queryKey: ['beta-signups-stats'],
     queryFn: () => betaClient.getCount(),
+    // Retry 2x with exponential back-off before declaring failure.
+    // This prevents transient network hiccups from showing a misleading zero.
+    retry: 2,
   });
 
-  const betaSeatsTotal = Number(betaCount?.limit || 50);
-  const betaSeatsClaimed = Number(betaCount?.claimed || 0);
-  const betaProgress = Math.min(100, Math.round((betaSeatsClaimed / Math.max(betaSeatsTotal, 1)) * 100));
+  // IMPORTANT: only use the DB-derived value when the query has actually
+  // succeeded. Never fall back to a static "0" — that is indistinguishable
+  // from "data was reset" and has previously caused support confusion.
+  const betaCountReady = !betaCountLoading && !betaCountError && betaCount != null;
+  const betaSeatsTotal = betaCountReady ? Number(betaCount.limit || 50) : 50;
+  const betaSeatsClaimed = betaCountReady ? Number(betaCount.claimed ?? 0) : null;
+  const betaProgress = betaCountReady
+    ? Math.min(100, Math.round(((betaCount.claimed ?? 0) / Math.max(betaSeatsTotal, 1)) * 100))
+    : 0;
 
   const submitSalesMutation = useMutation({
     mutationFn: async (data) =>
@@ -237,7 +250,13 @@ export default function Pricing() {
               <div className="flex items-center justify-between text-sm mb-2">
                 <span className="text-slate-600">Beta seats claimed</span>
                 <span className="font-semibold text-slate-900">
-                  {betaSeatsClaimed}/{betaSeatsTotal}
+                  {betaCountLoading ? (
+                    <span className="text-slate-400">Loading…</span>
+                  ) : betaCountError ? (
+                    <span className="text-slate-400" title="Could not load seat count — please refresh">—/50</span>
+                  ) : (
+                    `${betaSeatsClaimed}/${betaSeatsTotal}`
+                  )}
                 </span>
               </div>
               <Progress value={betaProgress} className="h-2 bg-white" />

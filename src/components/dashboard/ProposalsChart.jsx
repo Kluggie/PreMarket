@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { Calendar } from 'lucide-react';
+import { AlertCircle, Calendar } from 'lucide-react';
 import { dashboardClient } from '@/api/dashboardClient';
 
 export default function ProposalsChart() {
@@ -26,9 +26,10 @@ export default function ProposalsChart() {
     { value: 'all', label: 'All Time' },
   ];
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError: activityError, error: activityErrorObj, refetch: refetchActivity } = useQuery({
     queryKey: ['dashboard-activity', timeRange],
     queryFn: () => dashboardClient.getActivity(timeRange),
+    retry: 2,
   });
 
   const chartData = Array.isArray(data?.points) ? data.points : [];
@@ -73,6 +74,19 @@ export default function ProposalsChart() {
         {isLoading ? (
           <div className="py-12 text-center">
             <p className="text-slate-500">Loading activity chart...</p>
+          </div>
+        ) : activityError ? (
+          <div className="py-10 text-center space-y-2">
+            <AlertCircle className="w-6 h-6 text-amber-500 mx-auto" />
+            <p className="text-sm text-slate-600">
+              Could not load activity chart.{' '}
+              <button type="button" className="underline text-blue-600" onClick={() => refetchActivity()}>
+                Retry
+              </button>
+            </p>
+            {activityErrorObj?.message && (
+              <p className="text-xs text-slate-400">{activityErrorObj.message}</p>
+            )}
           </div>
         ) : !hasData ? (
           <div className="py-12 text-center">

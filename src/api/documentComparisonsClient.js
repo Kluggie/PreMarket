@@ -208,7 +208,12 @@ export const documentComparisonsClient = {
 
     const query = searchParams.toString();
     const response = await request(`/api/document-comparisons${query ? `?${query}` : ''}`);
-    return response.comparisons || [];
+    if (!Array.isArray(response.comparisons)) {
+      const err = new Error('Server response missing "comparisons" array');
+      err.code = 'invalid_response';
+      throw err;
+    }
+    return response.comparisons;
   },
 
   async create(input = {}) {
@@ -280,7 +285,7 @@ export const documentComparisonsClient = {
       proposal: response.proposal || null,
       evaluationInputTrace: response.evaluation_input_trace || null,
       requestId: response.request_id || null,
-      attemptCount: Number(response.attempt_count || 0),
+      attemptCount: typeof response.attempt_count === 'number' ? response.attempt_count : 0,
     };
   },
 
@@ -298,7 +303,7 @@ export const documentComparisonsClient = {
       promptVersion: typeof response.prompt_version === 'string' ? response.prompt_version : null,
       coach: response.coach || null,
       createdAt: response.created_at || null,
-      withheldCount: Number(response.withheld_count || 0),
+      withheldCount: typeof response.withheld_count === 'number' ? response.withheld_count : 0,
     };
   },
 
@@ -333,17 +338,30 @@ export const documentComparisonsClient = {
 
   async downloadJson(id) {
     const response = await request(`/api/document-comparisons/${encodeId(id)}/download/json`);
+    // Throw if report is absent — silently returning {} would give the user an
+    // empty JSON file with no indication that the report was not returned.
+    if (!response.report || typeof response.report !== 'object') {
+      const err = new Error('Server response missing "report" for JSON download');
+      err.code = 'invalid_response';
+      throw err;
+    }
     return {
       filename: response.filename || 'document-comparison.json',
-      report: response.report || {},
+      report: response.report,
     };
   },
 
   async downloadInputs(id) {
     const response = await request(`/api/document-comparisons/${encodeId(id)}/download/inputs`);
+    // Throw if inputs are absent — same reasoning as downloadJson.
+    if (!response.inputs || typeof response.inputs !== 'object') {
+      const err = new Error('Server response missing "inputs" for inputs download');
+      err.code = 'invalid_response';
+      throw err;
+    }
     return {
       filename: response.filename || 'document-comparison-inputs.json',
-      inputs: response.inputs || {},
+      inputs: response.inputs,
     };
   },
 

@@ -204,9 +204,11 @@ export default function Proposals() {
     setCursorHistory([]);
   }, [activeTab, statusFilter, normalizedSearch]);
 
-  const { data: summary, isLoading: summaryLoading } = useQuery({
+  const { data: summary, isLoading: summaryLoading, isError: summaryError } = useQuery({
     queryKey: ['dashboard-summary'],
     queryFn: () => dashboardClient.getSummary(),
+    // Retry 2x before surfacing error — prevents transient blips from wiping counts.
+    retry: 2,
   });
 
   const { data, isLoading, isError, error, refetch } = useQuery({
@@ -249,9 +251,11 @@ export default function Proposals() {
   const proposals = data?.proposals || [];
   const page = data?.page || { hasMore: false, nextCursor: null };
 
-  // Counts are null while loading so we can show '…' instead of misleading '0'.
+  // Counts are null while loading OR on error so we show '…' instead of misleading '0'.
+  // Never fall back to 0 for server-derived counts — a silent zero is
+  // indistinguishable from "data was wiped" when a user reports a bug.
   const tabCounts = useMemo(() => {
-    if (summaryLoading || !summary) return null;
+    if (summaryLoading || summaryError || !summary) return null;
     return {
       all: summary.totalCount || 0,
       sent: summary.sentCount || 0,
@@ -455,7 +459,7 @@ export default function Proposals() {
                         <AlertCircle className="w-8 h-8 text-amber-500 mx-auto" />
                         <p className="text-amber-800 font-medium">Session expired</p>
                         <p className="text-sm text-slate-500">
-                          Your session has expired or is invalid. Please sign in again to see your proposals.
+                          Your session has expired or is invalid. Sign in again &mdash; your proposals are still saved and will reappear immediately.
                         </p>
                         <Button variant="outline" onClick={() => navigateToLogin()}>
                           Sign in again

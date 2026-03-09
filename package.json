@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "vercel-build": "npm run db:migrate && npm run build",
     "prebuild": "npm run guard:no-legacy && npm run guard:db-safety",
     "build": "vite build",
     "lint": "eslint . --quiet",
