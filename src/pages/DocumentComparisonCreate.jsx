@@ -3181,6 +3181,7 @@ export default function DocumentComparisonCreate() {
                 ) : null}
               </div>
               <div className="flex flex-wrap gap-2">
+                <p className="w-full text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">Suggested Prompts</p>
                 {DOCUMENT_COMPARISON_COACH_ACTIONS.map((option) => (
                   <Button
                     key={option.id}
@@ -3432,9 +3433,9 @@ export default function DocumentComparisonCreate() {
             <ArrowLeft className="w-4 h-4 mr-2" />
             Back to Proposals
           </Link>
-          <h1 className="text-2xl font-bold text-slate-900">Document Comparison</h1>
+          <h1 className="text-2xl font-bold text-slate-900">AI Negotiator</h1>
           <p className="text-slate-500 mt-1">
-            Compare confidential and shared information with a recipient-safe workflow.
+            Review your documents, refine your position, and generate negotiation guidance — all in a confidential workflow.
           </p>
         </div>
 
