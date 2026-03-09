@@ -1,3 +1,5 @@
+import { request } from '@/api/httpClient';
+
 function requireArray(response, field) {
   if (!Array.isArray(response[field])) {
     const err = new Error(`Server response missing "${field}" array`);

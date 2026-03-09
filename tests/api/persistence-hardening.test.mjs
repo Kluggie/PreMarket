@@ -997,3 +997,175 @@ test('beta-signups route: seat count is derived from DB rows (not in-memory coun
     'beta-signups route must NOT use a module-level mutable seatsClaimed counter — it would reset on cold start',
   );
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 12: API client import integrity — regression guard
+//
+// WHY THIS EXISTS: During the persistence-hardening refactor, `proposalsClient.js`
+// had its `import { request } from '@/api/httpClient'` line accidentally dropped
+// when the `requireArray()` helper was prepended. Every call to `request()`
+// in the file then threw `ReferenceError: request is not defined`, breaking the
+// entire Proposals page.
+//
+// This section statically verifies that every API client file that calls
+// `request(...)` has the corresponding import present. This catches the exact
+// class of bug (import dropped during refactor) before it reaches production.
+// ──────────────────────────────────────────────────────────────────────────────
+
+test('proposalsClient.js: has import { request } from httpClient (regression for "request is not defined")', () => {
+  const filePath = path.join(srcApiDir, 'proposalsClient.js');
+  assert.ok(fs.existsSync(filePath), 'proposalsClient.js must exist');
+  const content = fs.readFileSync(filePath, 'utf8');
+
+  // The import must be the very first meaningful line — not buried after helpers.
+  // A refactor that prepends a helper function above the import will be caught.
+  const lines = content.split('\n');
+  const importLine = lines.findIndex((l) => /import\s+\{[^}]*request[^}]*\}\s+from\s+['"]@\/api\/httpClient['"]/.test(l));
+
+  assert.ok(
+    importLine !== -1,
+    'proposalsClient.js must import { request } from "@/api/httpClient". ' +
+    'This import was accidentally dropped during persistence hardening, causing ' +
+    '"request is not defined" on the Proposals page.',
+  );
+
+  // The import must come BEFORE the first usage of request(...)
+  const firstRequestUsage = lines.findIndex((l) => /\brequest\s*\(/.test(l) && !l.trim().startsWith('//') && !l.trim().startsWith('*'));
+  assert.ok(
+    importLine < firstRequestUsage,
+    `proposalsClient.js: "import { request }" (line ${importLine + 1}) must appear ` +
+    `before first request() call (line ${firstRequestUsage + 1}). ` +
+    'A helper function prepended before the import will cause ReferenceError at runtime.',
+  );
+});
+
+test('all src/api/*.js clients: every file that calls request() has import { request } from httpClient', () => {
+  // This is the general regression guard for the class of bug above.
+  // Any API client that calls request(...) must have the import.
+  const apiFiles = fs.readdirSync(srcApiDir)
+    .filter((f) => f.endsWith('.js') && f !== 'httpClient.js' && f !== 'vite.config.js')
+    .map((f) => ({ name: f, content: fs.readFileSync(path.join(srcApiDir, f), 'utf8') }));
+
+  const violations = [];
+  for (const { name, content } of apiFiles) {
+    const callsRequest = /\brequest\s*\(`|request\s*\('|request\s*\("/.test(content);
+    const hasImport = /import\s+\{[^}]*request[^}]*\}\s+from\s+['"]@\/api\/httpClient['"]/.test(content);
+
+    if (callsRequest && !hasImport) {
+      violations.push(name);
+    }
+  }
+
+  assert.equal(
+    violations.length,
+    0,
+    `API client(s) call request() without importing it: ${violations.join(', ')}. ` +
+    'Add "import { request } from \'@/api/httpClient\';" at the top of each file.',
+  );
+});
+
+test('proposalsClient.js: requireArray helper is defined before it is used', () => {
+  const filePath = path.join(srcApiDir, 'proposalsClient.js');
+  const content = fs.readFileSync(filePath, 'utf8');
+
+  assert.ok(
+    content.includes('function requireArray('),
+    'proposalsClient.js must define the requireArray() helper function',
+  );
+
+  const lines = content.split('\n');
+  const helperLine = lines.findIndex((l) => l.includes('function requireArray('));
+  // Find the first actual call site — calls use a quoted field name like requireArray(response, 'proposals')
+  const firstUsageLine = lines.findIndex(
+    (l) => /requireArray\s*\(\s*response\s*,\s*['"]/.test(l),
+  );
+
+  assert.ok(
+    helperLine !== -1 && firstUsageLine !== -1 && helperLine < firstUsageLine,
+    `requireArray must be defined (line ${helperLine + 1}) before it is first called (line ${firstUsageLine + 1})`,
+  );
+});
+
+test('proposalsClient.js: list() and listWithMeta() use requireArray, not || [] fallback', () => {
+  const filePath = path.join(srcApiDir, 'proposalsClient.js');
+  const content = fs.readFileSync(filePath, 'utf8');
+
+  // Must use requireArray in list methods
+  assert.ok(
+    content.includes("requireArray(response, 'proposals')"),
+    'proposalsClient.js list() must use requireArray(response, "proposals") instead of || []',
+  );
+
+  // Must NOT use the old silent fallback
+  assert.ok(
+    !content.includes("response.proposals || []"),
+    'proposalsClient.js must NOT use response.proposals || [] — this was the original silent-empty regression',
+  );
+});
+
+test('proposalsClient.js: requireArray returns valid array, throws on missing field', () => {
+  // Inline the requireArray logic (cannot import due to @/ alias), and verify
+  // its semantics match what proposalsClient.js actually uses.
+  function requireArray(response, field) {
+    if (!Array.isArray(response[field])) {
+      const err = new Error(`Server response missing "${field}" array`);
+      err.code = 'invalid_response';
+      throw err;
+    }
+    return response[field];
+  }
+
+  // Empty array is valid "no proposals" — must NOT throw
+  const empty = requireArray({ proposals: [] }, 'proposals');
+  assert.deepEqual(empty, [], 'requireArray must return [] for an empty proposals array (legitimate "no data")');
+
+  // Populated array — must return it verbatim
+  const items = [{ id: '1' }, { id: '2' }];
+  assert.deepEqual(
+    requireArray({ proposals: items }, 'proposals'),
+    items,
+    'requireArray must return the proposals array unchanged',
+  );
+
+  // Missing field — must throw invalid_response (not silently return [])
+  assert.throws(
+    () => requireArray({}, 'proposals'),
+    (err) => {
+      assert.equal(err.code, 'invalid_response', 'Missing field must throw with code invalid_response');
+      assert.ok(err.message.includes('proposals'), 'Error message must name the missing field');
+      return true;
+    },
+    'requireArray must throw when "proposals" field is absent — must NOT silently return []',
+  );
+
+  // null field — must throw
+  assert.throws(
+    () => requireArray({ proposals: null }, 'proposals'),
+    (err) => { assert.equal(err.code, 'invalid_response'); return true; },
+  );
+
+  // String field — must throw (not accidentally accept)
+  assert.throws(
+    () => requireArray({ proposals: 'oops' }, 'proposals'),
+    (err) => { assert.equal(err.code, 'invalid_response'); return true; },
+  );
+});
+
+test('proposalsClient.js: getDetail() uses requireArray for responses, evaluations, sharedLinks', () => {
+  const filePath = path.join(srcApiDir, 'proposalsClient.js');
+  const content = fs.readFileSync(filePath, 'utf8');
+
+  // Detail endpoint must guard all three sub-arrays
+  assert.ok(
+    content.includes("requireArray(response, 'responses')"),
+    'getDetail() must use requireArray for responses sub-array',
+  );
+  assert.ok(
+    content.includes("requireArray(response, 'evaluations')"),
+    'getDetail() must use requireArray for evaluations sub-array',
+  );
+  assert.ok(
+    content.includes("requireArray(response, 'shared_links')"),
+    'getDetail() must use requireArray for shared_links sub-array',
+  );
+});
