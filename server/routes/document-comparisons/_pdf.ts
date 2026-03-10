@@ -4,6 +4,8 @@ export type PdfSection = {
   level?: 1 | 2;
   paragraphs?: string[];
   bullets?: string[];
+  /** When true, bullets are rendered as a numbered list (1. 2. 3.) instead of em-dash list. */
+  numberedBullets?: boolean;
   /** Force a page break before this section. */
   breakBefore?: boolean;
   /** Small italic caption rendered below the heading. */
@@ -269,16 +271,24 @@ export async function renderProfessionalPdfBuffer(document: PdfDocument): Promis
   const tLines: string[] = pdf.splitTextToSize(titleSafe, colW - 10);
   pdf.text(tLines[0] ?? titleSafe, mL, 27);
 
-  const subtitleUpper = normalizePdfText(document.subtitle ?? '').toUpperCase();
-  if (subtitleUpper) {
-    setFont('bold', 8, C.indigo);
-    pdf.text(subtitleUpper, mL, 43);
+  // Subtitle: comparison/document name — shown in muted white-blue, NOT uppercased
+  const subtitleSafe = normalizePdfText(document.subtitle ?? '');
+  if (subtitleSafe) {
+    const subLines: string[] = pdf.splitTextToSize(subtitleSafe, colW - 10);
+    setFont('normal', 9, [185, 198, 220] as [number, number, number]);
+    pdf.text(subLines[0] ?? subtitleSafe, mL, 43);
   }
 
+  // Metadata: date + truncated ID
   const generatedAt = document.generatedAt || new Date();
+  const rawId = asText(document.comparisonId);
+  // Truncate UUID-style IDs to first 8 hex chars for clean display
+  const shortId = rawId
+    ? rawId.replace(/^[a-z_-]+/i, '').replace(/^[-_]/, '').slice(0, 8) || rawId.slice(0, 12)
+    : '';
   const metaText = normalizePdfText(
-    `Generated ${formatGeneratedAt(generatedAt)}` +
-    (asText(document.comparisonId) ? `   |   ID: ${asText(document.comparisonId)}` : ''),
+    `Generated: ${formatGeneratedAt(generatedAt)}` +
+    (shortId ? `  \u00B7  ID: ${shortId}` : ''),
   );
   setFont('normal', 7.5, C.headerMeta);
   pdf.text(metaText, mL, 57);
@@ -532,9 +542,10 @@ export async function renderProfessionalPdfBuffer(document: PdfDocument): Promis
       y += (pi < paragraphs.length - 1 ? 5 : 4);
     });
 
-    // Bullets — em-dash in accent color, text in body color
+    // Bullets — em-dash or numbered list, accent color prefix, text in body color
     const bullets = Array.isArray(section.bullets) ? section.bullets : [];
-    const bulletW = bodyW - 16;
+    const useNumbered = section.numberedBullets === true;
+    const bulletW = bodyW - (useNumbered ? 20 : 16);
     if (bullets.length > 0) {
       // Pre-compute per-bullet heights so we can decide atomicity up-front.
       pdf.setFontSize(10.5);
@@ -555,7 +566,7 @@ export async function renderProfessionalPdfBuffer(document: PdfDocument): Promis
         ensureSpace(twoItemH);
       }
 
-      bullets.forEach((bullet, _bi) => {
+      bullets.forEach((bullet, bi) => {
         const norm = normalizeBullet(bullet);
         if (!norm) return;
         pdf.setFontSize(10.5);
@@ -564,10 +575,18 @@ export async function renderProfessionalPdfBuffer(document: PdfDocument): Promis
         // For long lists allow mid-list page breaks, but keep each item's
         // wrapped lines together (never split one bullet entry across pages).
         if (bullets.length > 6) ensureSpace(itemH);
-        setFont('normal', 10.5, C.indigo);
-        pdf.text('\u2013', bodyX + 2, y);
-        setFont('normal', 10.5, C.bodyText);
-        lines.forEach((line: string) => { pdf.text(line, bodyX + 14, y); y += 15; });
+        if (useNumbered) {
+          // Numbered list: "1." in accent color
+          setFont('bold', 10.5, C.indigo);
+          pdf.text(`${bi + 1}.`, bodyX + 2, y);
+          setFont('normal', 10.5, C.bodyText);
+          lines.forEach((line: string) => { pdf.text(line, bodyX + 18, y); y += 15; });
+        } else {
+          setFont('normal', 10.5, C.indigo);
+          pdf.text('\u2013', bodyX + 2, y);
+          setFont('normal', 10.5, C.bodyText);
+          lines.forEach((line: string) => { pdf.text(line, bodyX + 14, y); y += 15; });
+        }
         y += 2;
       });
     }

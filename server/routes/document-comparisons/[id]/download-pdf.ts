@@ -169,6 +169,8 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       useBullets?: boolean;
       /** Parse "1) ... 2) ..." into option bullets */
       splitOptions?: boolean;
+      /** Render bullets as a numbered list (1. 2. 3.) */
+      numberedBullets?: boolean;
       /** Parse numbered questions "1. Question 2. Question" into bullet questions */
       splitQuestions?: boolean;
       /** Render the body as a highlight callout box */
@@ -184,24 +186,32 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
 
     const SECTION_MAP: Record<string, SectionSpec> = {
       // ─ Level 1 standalone sections ─
-      snapshot:          { level: 1, displayHeading: 'Executive Summary' },
+      snapshot:            { level: 1, displayHeading: 'Executive Summary' },
       'executive summary': { level: 1, displayHeading: 'Executive Summary' },
-      // ─ Executive Assessment (analysis group) ─
-      'key strengths':   { level: 2, displayHeading: 'Key Strengths',            group: 'Executive Assessment', useBullets: true },
-      'key risks':       { level: 2, displayHeading: 'Risk Summary',             group: 'Executive Assessment', useBullets: true },
-      'commercial notes':        { level: 2, displayHeading: 'Commercial Considerations', group: 'Executive Assessment' },
-      'commercial considerations': { level: 2, displayHeading: 'Commercial Considerations', group: 'Executive Assessment' },
-      'decision readiness': { level: 2, displayHeading: 'Decision Readiness',   group: 'Executive Assessment' },
+      // ─ Decision Assessment (analysis group: strengths + risks + commercial) ─
+      'key strengths':   { level: 2, displayHeading: 'Key Strengths',            group: 'Decision Assessment', useBullets: true },
+      'key risks':       { level: 2, displayHeading: 'Risk Summary',             group: 'Decision Assessment', useBullets: true },
+      'risk summary':    { level: 2, displayHeading: 'Risk Summary',             group: 'Decision Assessment', useBullets: true },
+      'key risks  assumptions': { level: 2, displayHeading: 'Risk Summary',      group: 'Decision Assessment', useBullets: true },
+      'commercial notes':          { level: 2, displayHeading: 'Commercial Considerations', group: 'Decision Assessment' },
+      'commercial considerations': { level: 2, displayHeading: 'Commercial Considerations', group: 'Decision Assessment' },
+      'commercial posture':        { level: 2, displayHeading: 'Commercial Considerations', group: 'Decision Assessment' },
+      // ─ Decision Readiness — standalone L1 section (not grouped) ─
+      'decision readiness': { level: 1, displayHeading: 'Decision Readiness' },
       // ─ Recommended Path (action group) ─
-      'assumptions / dependencies': { level: 2, displayHeading: 'Key Dependencies',            group: 'Recommended Path' },
-      'assumptions  dependencies':  { level: 2, displayHeading: 'Key Dependencies',            group: 'Recommended Path' },
-      options:           { level: 2, displayHeading: 'Strategic Options',        group: 'Recommended Path', splitOptions: true },
-      recommendations:   { level: 2, displayHeading: 'Contract Guidance',        group: 'Recommended Path', callout: true },
-      'first 2 weeks plan':         { level: 2, displayHeading: 'Discovery & Execution Plan',  group: 'Recommended Path' },
-      'next call: what i d ask for': { level: 2, displayHeading: 'Questions for Next Discussion', group: 'Recommended Path', splitQuestions: true },
-      'next call':       { level: 2, displayHeading: 'Questions for Next Discussion', group: 'Recommended Path', splitQuestions: true },
-      'likely pushback & response': { level: 2, displayHeading: 'Negotiation Posture', group: 'Recommended Path' },
-      'likely pushback  response':  { level: 2, displayHeading: 'Negotiation Posture', group: 'Recommended Path' },
+      'assumptions / dependencies': { level: 2, displayHeading: 'Key Dependencies',               group: 'Recommended Path' },
+      'assumptions  dependencies':  { level: 2, displayHeading: 'Key Dependencies',               group: 'Recommended Path' },
+      options:             { level: 2, displayHeading: 'Strategic Options',       group: 'Recommended Path', splitOptions: true, numberedBullets: true },
+      recommendations:     { level: 2, displayHeading: 'Contract Guidance',       group: 'Recommended Path', callout: true },
+      'first 2 weeks plan':          { level: 2, displayHeading: 'Discovery & Execution Plan',   group: 'Recommended Path', useBullets: true },
+      'next call: what i d ask for': { level: 2, displayHeading: 'Questions for Next Discussion', group: 'Recommended Path', splitQuestions: true, numberedBullets: true },
+      'next call':         { level: 2, displayHeading: 'Questions for Next Discussion', group: 'Recommended Path', splitQuestions: true, numberedBullets: true },
+      'likely pushback & response': { level: 2, displayHeading: 'Negotiation Posture',             group: 'Recommended Path' },
+      'likely pushback  response':  { level: 2, displayHeading: 'Negotiation Posture',             group: 'Recommended Path' },
+      // ─ Optional / conditional headings ─
+      'implementation notes':  { level: 2, displayHeading: 'Implementation Notes',   group: 'Recommended Path' },
+      'data & security notes': { level: 2, displayHeading: 'Data & Security Notes',  group: 'Recommended Path' },
+      'vendor fit notes':      { level: 2, displayHeading: 'Vendor Fit Notes',        group: 'Decision Assessment' },
     };
 
     const lookupSection = (rawHeading: string): SectionSpec | undefined => {
@@ -254,11 +264,37 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     const maybeInjectGroupL1 = (group: string | undefined) => {
       if (!group) return;
       if (injectedL1Groups.has(group)) return;
-      if (group === 'Executive Assessment' || group === 'Recommended Path') {
+      if (group === 'Decision Assessment' || group === 'Recommended Path') {
         injectedL1Groups.add(group);
         const breakBefore = group === 'Recommended Path';
         reportSections.push({ heading: group, level: 1, paragraphs: [], breakBefore });
       }
+    };
+
+    /**
+     * Light deduplication pass: removes paragraphs and bullets that are identical
+     * (after normalisation) to content already seen in earlier sections.
+     * Short phrases (<40 chars) and callout sections are left intact.
+     */
+    const deduplicateSections = (sections: PdfSection[]): PdfSection[] => {
+      const seen = new Set<string>();
+      const normKey = (s: string) =>
+        s.toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+      const isSeen = (text: string): boolean => {
+        const k = normKey(text);
+        if (k.length < 40) return false;  // too short to deduplicate reliably
+        if (seen.has(k)) return true;
+        seen.add(k);
+        return false;
+      };
+      return sections.map((s) => {
+        if (s.callout) return s;  // preserve callout bodies
+        return {
+          ...s,
+          paragraphs: s.paragraphs?.filter((p) => !isSeen(p)) ?? s.paragraphs,
+          bullets: s.bullets?.filter((b) => !isSeen(b)) ?? s.bullets,
+        };
+      });
     };
 
     if (isV2) {
@@ -283,8 +319,8 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
 
         let bullets: string[] | undefined;
         let paragraphs: string[] | undefined;
-
         let callout: boolean | undefined;
+        let numberedBullets: boolean | undefined;
 
         if (spec?.callout && body) {
           // Callout box — render the full body without any truncation
@@ -294,10 +330,12 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
           const opts = parseOptionsBullets(body);
           bullets = opts.length > 1 ? opts : undefined;
           if (!bullets) paragraphs = [body];
+          else numberedBullets = spec.numberedBullets;
         } else if (spec?.splitQuestions && body) {
           const qs = parseQuestionsBullets(body);
           bullets = qs.length > 1 ? qs : undefined;
           if (!bullets) paragraphs = [body];
+          else numberedBullets = spec.numberedBullets;
         } else if (spec?.useBullets && body) {
           const buls = splitIntoBullets(body);
           bullets = buls.length > 1 ? buls : undefined;
@@ -306,25 +344,26 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
           paragraphs = [body];
         }
 
-        reportSections.push({ heading: displayHeading, level, paragraphs, bullets, callout });
+        reportSections.push({ heading: displayHeading, level, paragraphs, bullets, callout, numberedBullets });
       });
 
-      // Open Questions — formatted as short questions, one per bullet
+      // Open Questions — formatted as short numbered questions, one per bullet
       if (missingItems.length > 0) {
         reportSections.push({
           heading: 'Open Questions',
           level: 1,
           bullets: missingItems.map(shortenMissingItem),
+          numberedBullets: true,
         });
       }
 
-      // Redacted / Not Provided
+      // Missing or Redacted Information
       const redactions = Array.isArray(report.redactions)
         ? (report.redactions as unknown[]).map((e) => asText(e)).filter(Boolean)
         : [];
       if (redactions.length > 0) {
         reportSections.push({
-          heading: 'Redacted / Not Provided',
+          heading: 'Missing or Redacted Information',
           level: 1,
           bullets: redactions,
         });
@@ -385,13 +424,15 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     }
 
     const filename = `${slugify(comparison.title)}-ai-report.pdf`;
+    const finalSections = isV2 ? deduplicateSections(reportSections) : reportSections;
     const pdfBuffer = await renderProfessionalPdfBuffer({
-      title: comparison.title || 'Document Comparison',
-      subtitle: 'AI Evaluation Report',
+      // Report type label is the primary heading; comparison name is secondary
+      title: 'AI Evaluation Report',
+      subtitle: comparison.title || 'Untitled Comparison',
       comparisonId: comparison.id,
       decisionPanel: isV2 ? decisionPanel : undefined,
       footerNote: 'Confidential -- Generated by PreMarket AI',
-      sections: reportSections,
+      sections: finalSections,
     });
     sendPdf(res, filename, pdfBuffer);
   });
