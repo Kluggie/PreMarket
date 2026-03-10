@@ -540,6 +540,57 @@ export default function SharedReport() {
     [recipientDocuments],
   );
 
+  // ── Step 3 bundles: full proposal state (proposer shared + recipient docs) ──
+  // For the Proposal tab on Step 3 we need the FULL current shared state,
+  // which includes proposer shared content + any recipient shared content.
+  // Confidential stays recipient-only (never reveal the other party's private data).
+  const step3Bundles = useMemo(() => {
+    const recipientBundles = compileBundles(recipientDocuments);
+    // Build the combined shared text/html by prepending proposer shared content
+    const proposerText = proposerSharedDoc?.text || '';
+    const proposerHtml = proposerSharedDoc?.html || '';
+    const recipientSharedText = recipientBundles.shared.text || '';
+    const recipientSharedHtml = recipientBundles.shared.html || '';
+
+    let combinedSharedText = '';
+    let combinedSharedHtml = '';
+    let combinedSource = recipientBundles.shared.source || 'typed';
+    let combinedFiles = [...(recipientBundles.shared.files || [])];
+
+    if (proposerText || htmlToText(proposerHtml)) {
+      const proposerLabel = proposerSharedDoc?.title || 'Proposer Shared Information';
+      const proposerSection = `${proposerLabel}\n\n${proposerText}`;
+      const proposerSectionHtml = `<p><strong>${proposerLabel}</strong></p>${proposerHtml}`;
+      if (recipientSharedText) {
+        combinedSharedText = proposerSection + '\n\n---\n\n' + recipientSharedText;
+        combinedSharedHtml = proposerSectionHtml + '<hr/><p></p>' + recipientSharedHtml;
+      } else {
+        combinedSharedText = proposerSection;
+        combinedSharedHtml = proposerSectionHtml;
+      }
+      if (proposerSharedDoc?.source === 'uploaded' || recipientBundles.shared.source === 'uploaded') {
+        combinedSource = 'uploaded';
+      }
+      if (Array.isArray(proposerSharedDoc?.files)) {
+        combinedFiles = [...proposerSharedDoc.files, ...combinedFiles];
+      }
+    } else {
+      combinedSharedText = recipientSharedText;
+      combinedSharedHtml = recipientSharedHtml;
+    }
+
+    return {
+      confidential: recipientBundles.confidential,
+      shared: {
+        text: combinedSharedText,
+        html: combinedSharedHtml || '<p></p>',
+        json: null,
+        source: combinedSource,
+        files: combinedFiles,
+      },
+    };
+  }, [recipientDocuments, proposerSharedDoc]);
+
   // ── Locked / read-only doc IDs ──
   const lockedDocIds = useMemo(() => {
     const ids = [];
@@ -726,8 +777,62 @@ export default function SharedReport() {
         }));
       }
       setRecipientDocuments(docs);
+    } else if (latestSentRevision) {
+      // No active draft but a sent revision exists — hydrate from the sent state.
+      // This prevents documents from being erased after a send-back.
+      const sentEditorState = latestSentRevision.editor_state || {};
+      const sentDocs = sentEditorState.documents;
+      if (Array.isArray(sentDocs) && sentDocs.length > 0) {
+        setRecipientDocuments(deserializeDocumentsFromDraft(sentDocs));
+      } else {
+        // Legacy sent revision: rebuild from payloads
+        const sentDocs2 = [];
+        const sentConfPayload = latestSentRevision.recipient_confidential_payload || {};
+        const sentConfText = sentConfPayload.text || sentConfPayload.notes || '';
+        const sentConfHtml = sentConfPayload.html || '';
+        if (sentConfText || htmlToText(sentConfHtml)) {
+          sentDocs2.push(createDocument({
+            id: 'sent-conf',
+            title: CONFIDENTIAL_LABEL,
+            visibility: VISIBILITY_CONFIDENTIAL,
+            owner: OWNER_RECIPIENT,
+            source: sentConfPayload.source || 'typed',
+            text: sentConfText,
+            html: sentConfHtml,
+            json: sentConfPayload.json || null,
+            files: sentConfPayload.files || [],
+            importStatus: (sentConfPayload.files || []).length > 0 ? 'imported' : 'idle',
+          }));
+        }
+        const sentSharedPayload = latestSentRevision.shared_payload || {};
+        const sentSharedText = sentSharedPayload.text || '';
+        const sentSharedHtml = sentSharedPayload.html || '';
+        const baseText = baselineSharedDocument.text || '';
+        if (sentSharedText && sentSharedText !== baseText) {
+          sentDocs2.push(createDocument({
+            id: 'sent-shared',
+            title: SHARED_LABEL,
+            visibility: VISIBILITY_SHARED,
+            owner: OWNER_RECIPIENT,
+            source: sentSharedPayload.source || 'typed',
+            text: sentSharedText,
+            html: sentSharedHtml,
+            json: sentSharedPayload.json || null,
+            files: sentSharedPayload.files || [],
+            importStatus: (sentSharedPayload.files || []).length > 0 ? 'imported' : 'idle',
+          }));
+        }
+        if (sentDocs2.length === 0) {
+          sentDocs2.push(createDocument({
+            title: 'My Confidential Notes',
+            visibility: VISIBILITY_CONFIDENTIAL,
+            owner: OWNER_RECIPIENT,
+          }));
+        }
+        setRecipientDocuments(sentDocs2);
+      }
     } else {
-      // No draft — start with empty (user can add documents)
+      // No draft and no sent revision — start with empty (user can add documents)
       setRecipientDocuments([]);
     }
 
@@ -741,7 +846,9 @@ export default function SharedReport() {
       }
     }
 
-    const hydratedStep = isAuthenticated ? clampStep(recipientDraft?.workflow_step, 0) : 0;
+    const hydratedStep = isAuthenticated
+      ? clampStep(recipientDraft?.workflow_step ?? latestSentRevision?.workflow_step, 0)
+      : 0;
     if (!stepHydrated) {
       setStep(hydratedStep);
       setStepHydrated(true);
@@ -755,6 +862,7 @@ export default function SharedReport() {
     isAuthenticated,
     parent?.title,
     recipientDraft,
+    latestSentRevision,
     recipientConfidentialDocument,
     recipientSharedDocument,
     baselineSharedDocument,
@@ -1957,15 +2065,6 @@ export default function SharedReport() {
               <>
                 <Button
                   type="button"
-                  onClick={() => evaluateMutation.mutate()}
-                  disabled={evaluateMutation.isPending || !canReevaluate || requiresRecipientVerification}
-                  className="bg-blue-600 hover:bg-blue-700"
-                >
-                  {evaluateMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-                  {evaluateMutation.isPending ? 'Evaluating...' : 'Re-run Evaluation'}
-                </Button>
-                <Button
-                  type="button"
                   onClick={sendToProposer}
                   disabled={
                     sendBackMutation.isPending ||
@@ -2015,12 +2114,12 @@ export default function SharedReport() {
               description: 'Read-only current proposal state after recipient edits.',
               leftLabel: CONFIDENTIAL_LABEL,
               rightLabel: SHARED_LABEL,
-              leftText: compiledRecipientBundles.confidential.text,
-              leftHtml: compiledRecipientBundles.confidential.html,
-              rightText: compiledRecipientBundles.shared.text,
-              rightHtml: compiledRecipientBundles.shared.html,
-              leftBadges: [compiledRecipientBundles.confidential.source || 'typed'],
-              rightBadges: [compiledRecipientBundles.shared.source || 'typed'],
+              leftText: step3Bundles.confidential.text,
+              leftHtml: step3Bundles.confidential.html,
+              rightText: step3Bundles.shared.text,
+              rightHtml: step3Bundles.shared.html,
+              leftBadges: [step3Bundles.confidential.source || 'typed'],
+              rightBadges: [step3Bundles.shared.source || 'typed'],
             }}
             onBack={() => setStep(2)}
             backLabel="Back to Editor"
