@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { sharedReportsClient } from '@/api/sharedReportsClient';
@@ -6,10 +6,15 @@ import { documentComparisonsClient } from '@/api/documentComparisonsClient';
 import { useAuth } from '@/lib/AuthContext';
 import DocumentRichEditor from '@/components/document-comparison/DocumentRichEditor';
 import DocumentComparisonEditorErrorBoundary from '@/components/document-comparison/DocumentComparisonEditorErrorBoundary';
+import ComparisonWorkflowShell from '@/components/document-comparison/ComparisonWorkflowShell';
+import Step1AddSources from '@/components/document-comparison/Step1AddSources';
+import Step2EditSources from '@/components/document-comparison/Step2EditSources';
+import ComparisonEvaluationStep from '@/components/document-comparison/ComparisonEvaluationStep';
 import {
   buildCoachActionRequest,
   DOCUMENT_COMPARISON_COACH_ACTIONS,
 } from '@/components/document-comparison/coachActions';
+import { VISIBILITY_CONFIDENTIAL, VISIBILITY_SHARED, OWNER_PROPOSER, OWNER_RECIPIENT, createDocument, compileBundles, serializeDocumentsForDraft, deserializeDocumentsFromDraft } from '@/pages/document-comparison/documentsModel';
 import { sanitizeEditorHtml } from '@/components/document-comparison/editorSanitization';
 import {
   ComparisonDetailTabs,
@@ -40,7 +45,6 @@ import {
 
 const CONFIDENTIAL_LABEL = 'Confidential Information';
 const SHARED_LABEL = 'Shared Information';
-const MAX_PREVIEW_CHARS = 500;
 const TOTAL_WORKFLOW_STEPS = 3;
 const COACH_INTENT_LABELS = {
   improve_shared: 'Improve shared writing',
@@ -49,6 +53,7 @@ const COACH_INTENT_LABELS = {
   rewrite_selection: 'Rewrite selection',
   general: 'General improvements',
   custom_prompt: 'Custom prompt',
+  company_brief: 'Company Brief',
 };
 
 function asText(value) {
@@ -243,31 +248,6 @@ function textToHtml(value) {
     .join('');
 }
 
-function previewSnippet(value) {
-  const text = String(value || '').trim();
-  if (!text) {
-    return '';
-  }
-  if (text.length <= MAX_PREVIEW_CHARS) {
-    return text;
-  }
-  return `${text.slice(0, MAX_PREVIEW_CHARS)}...`;
-}
-
-function formatFileSize(bytes) {
-  const numeric = Number(bytes || 0);
-  if (!Number.isFinite(numeric) || numeric <= 0) {
-    return '0 B';
-  }
-  if (numeric < 1024) {
-    return `${numeric} B`;
-  }
-  if (numeric < 1024 * 1024) {
-    return `${(numeric / 1024).toFixed(1)} KB`;
-  }
-  return `${(numeric / (1024 * 1024)).toFixed(1)} MB`;
-}
-
 function fileToMetadata(file) {
   return {
     filename: file.name,
@@ -324,30 +304,6 @@ function coercePayloadToDocument(payload, fallbackLabel, fallbackText = '') {
     json,
     source,
     files,
-  };
-}
-
-function buildSharedPayloadFromState(state) {
-  return {
-    label: SHARED_LABEL,
-    text: String(state.docBText || ''),
-    html: sanitizeEditorHtml(state.docBHtml || textToHtml(state.docBText || '')),
-    json: state.docBJson || null,
-    source: asText(state.docBSource) || 'typed',
-    files: Array.isArray(state.docBFiles) ? state.docBFiles : [],
-  };
-}
-
-function buildConfidentialPayloadFromState(state) {
-  const text = String(state.docAText || '');
-  return {
-    label: CONFIDENTIAL_LABEL,
-    text,
-    notes: text,
-    html: sanitizeEditorHtml(state.docAHtml || textToHtml(text)),
-    json: state.docAJson || null,
-    source: asText(state.docASource) || 'typed',
-    files: Array.isArray(state.docAFiles) ? state.docAFiles : [],
   };
 }
 
@@ -461,21 +417,7 @@ export default function SharedReport() {
 
   const [step, setStep] = useState(0);
   const [title, setTitle] = useState('Shared Report');
-  const [docAText, setDocAText] = useState('');
-  const [docBText, setDocBText] = useState('');
-  const [docAHtml, setDocAHtml] = useState('<p></p>');
-  const [docBHtml, setDocBHtml] = useState('<p></p>');
-  const [docAJson, setDocAJson] = useState(null);
-  const [docBJson, setDocBJson] = useState(null);
-  const [docASource, setDocASource] = useState('typed');
-  const [docBSource, setDocBSource] = useState('typed');
-  const [docAFiles, setDocAFiles] = useState([]);
-  const [docBFiles, setDocBFiles] = useState([]);
-  const [docASelectedFile, setDocASelectedFile] = useState(null);
-  const [docBSelectedFile, setDocBSelectedFile] = useState(null);
-  const [docAPreviewSnippet, setDocAPreviewSnippet] = useState('');
-  const [docBPreviewSnippet, setDocBPreviewSnippet] = useState('');
-  const [importingSide, setImportingSide] = useState(null);
+  const [recipientDocuments, setRecipientDocuments] = useState([]);
   const [draftDirty, setDraftDirty] = useState(false);
   const [latestEvaluatedReport, setLatestEvaluatedReport] = useState(null);
   const [stepHydrated, setStepHydrated] = useState(false);
@@ -483,6 +425,7 @@ export default function SharedReport() {
   const [verificationRequested, setVerificationRequested] = useState(false);
   const [forcedMismatchInvitedEmail, setForcedMismatchInvitedEmail] = useState('');
   const [recipientDetailTab, setRecipientDetailTab] = useState('details');
+  const [recipientActiveDocId, setRecipientActiveDocId] = useState(null);
   const [customPromptText, setCustomPromptText] = useState('');
   const [coachResult, setCoachResult] = useState(null);
   const [coachLoading, setCoachLoading] = useState(false);
@@ -492,9 +435,9 @@ export default function SharedReport() {
   const [coachWithheldCount, setCoachWithheldCount] = useState(0);
   const [coachRequestMeta, setCoachRequestMeta] = useState(null);
   const [isCoachResponseCopied, setIsCoachResponseCopied] = useState(false);
+  const [companyContextName, setCompanyContextName] = useState('');
+  const [companyContextWebsite, setCompanyContextWebsite] = useState('');
 
-  const docAInputFileRef = useRef(null);
-  const docBInputFileRef = useRef(null);
   const activeImportRequestRef = useRef({ id: 0, controller: null });
 
   const workspaceQuery = useQuery({
@@ -564,6 +507,112 @@ export default function SharedReport() {
   const canReevaluate = Boolean(share?.permissions?.can_reevaluate);
   const canSendBack = Boolean(share?.permissions?.can_send_back);
 
+  // ── Proposer shared document (locked, read-only baseline from comparison) ──
+  const proposerSharedDoc = useMemo(() => {
+    const text = baselineSharedDocument.text || '';
+    const html = baselineSharedDocument.html || '';
+    if (!text && !htmlToText(html)) return null;
+    return createDocument({
+      id: 'proposer-shared',
+      title: baselineSharedDocument.label || SHARED_LABEL,
+      visibility: VISIBILITY_SHARED,
+      owner: OWNER_PROPOSER,
+      source: baselineSharedDocument.source || 'typed',
+      text,
+      html,
+      json: baselineSharedDocument.json || null,
+      files: baselineSharedDocument.files || [],
+      importStatus: (baselineSharedDocument.files || []).length > 0 ? 'imported' : 'idle',
+    });
+  }, [baselineSharedDocument]);
+
+  // ── Combined documents for display (proposer shared + recipient documents) ──
+  const allDisplayDocuments = useMemo(() => {
+    const all = [];
+    if (proposerSharedDoc) all.push(proposerSharedDoc);
+    all.push(...recipientDocuments);
+    return all;
+  }, [proposerSharedDoc, recipientDocuments]);
+
+  // ── Compiled bundles from recipient documents (for draft persistence + coach) ──
+  const compiledRecipientBundles = useMemo(
+    () => compileBundles(recipientDocuments),
+    [recipientDocuments],
+  );
+
+  // ── Locked / read-only doc IDs ──
+  const lockedDocIds = useMemo(() => {
+    const ids = [];
+    if (proposerSharedDoc) ids.push('proposer-shared');
+    return ids;
+  }, [proposerSharedDoc]);
+
+  const readOnlyDocIds = useMemo(() => {
+    const ids = [];
+    if (proposerSharedDoc) ids.push('proposer-shared');
+    if (requiresRecipientVerification) {
+      recipientDocuments.forEach((d) => ids.push(d.id));
+    }
+    return ids;
+  }, [proposerSharedDoc, recipientDocuments, requiresRecipientVerification]);
+
+  // ── Recipient CRUD handlers ──
+  const handleAddFiles = useCallback((files) => {
+    const newDocs = Array.from(files).map((file) =>
+      createDocument({
+        title: file.name.replace(/\.(docx|pdf)$/i, ''),
+        source: 'uploaded',
+        owner: OWNER_RECIPIENT,
+        _pendingFile: file,
+      }),
+    );
+    setRecipientDocuments((prev) => [...prev, ...newDocs]);
+    setDraftDirty(true);
+    // Trigger import for each new file document
+    newDocs.forEach((doc) => {
+      if (doc._pendingFile) {
+        importForDocument(doc.id, doc._pendingFile);
+      }
+    });
+  }, []);
+
+  const handleAddTypedDocument = useCallback(() => {
+    const doc = createDocument({ owner: OWNER_RECIPIENT });
+    setRecipientDocuments((prev) => [...prev, doc]);
+    setDraftDirty(true);
+  }, []);
+
+  const handleRemoveDoc = useCallback((id) => {
+    setRecipientDocuments((prev) => prev.filter((d) => d.id !== id));
+    setDraftDirty(true);
+  }, []);
+
+  const handleRenameDoc = useCallback((id, newTitle) => {
+    setRecipientDocuments((prev) =>
+      prev.map((d) => (d.id === id ? { ...d, title: newTitle } : d)),
+    );
+    setDraftDirty(true);
+  }, []);
+
+  const handleSetVisibility = useCallback((id, visibility) => {
+    setRecipientDocuments((prev) =>
+      prev.map((d) => (d.id === id ? { ...d, visibility } : d)),
+    );
+    setDraftDirty(true);
+  }, []);
+
+  const handleRecipientDocumentContentChange = useCallback((id, { html, text, json }) => {
+    // Don't allow editing proposer documents
+    if (id === 'proposer-shared') return;
+    if (requiresRecipientVerification) return;
+    setRecipientDocuments((prev) =>
+      prev.map((d) =>
+        d.id === id ? { ...d, text, html, json, source: d.source === 'uploaded' ? 'uploaded' : 'typed' } : d,
+      ),
+    );
+    setDraftDirty(true);
+  }, [requiresRecipientVerification]);
+
   const hasActiveDraft = Boolean(recipientDraft && asText(recipientDraft.status).toLowerCase() === 'draft');
   const isSentToProposer =
     Boolean(latestSentRevision && asText(latestSentRevision.status).toLowerCase() === 'sent') && !hasActiveDraft;
@@ -571,6 +620,8 @@ export default function SharedReport() {
   useEffect(() => {
     setStep(0);
     setStepHydrated(false);
+    setRecipientDocuments([]);
+    setRecipientActiveDocId(null);
     setVerificationCode('');
     setVerificationRequested(false);
     setForcedMismatchInvitedEmail('');
@@ -614,23 +665,81 @@ export default function SharedReport() {
 
     setTitle(asText(comparison?.title) || asText(parent?.title) || 'Shared Report');
 
-    setDocAText(recipientConfidentialDocument.text);
-    setDocAHtml(recipientConfidentialDocument.html);
-    setDocAJson(recipientConfidentialDocument.json);
-    setDocASource(recipientConfidentialDocument.source);
-    setDocAFiles(recipientConfidentialDocument.files);
-    setDocAPreviewSnippet(
-      previewSnippet(recipientConfidentialDocument.text || htmlToText(recipientConfidentialDocument.html)),
-    );
+    // Pre-populate company context from comparison data (if the proposer set it)
+    if (!companyContextName) {
+      const savedName = asText(comparison?.company_name);
+      if (savedName) setCompanyContextName(savedName);
+    }
+    if (!companyContextWebsite) {
+      const savedWebsite = asText(comparison?.company_website);
+      if (savedWebsite) setCompanyContextWebsite(savedWebsite);
+    }
 
-    setDocBText(recipientSharedDocument.text);
-    setDocBHtml(recipientSharedDocument.html);
-    setDocBJson(recipientSharedDocument.json);
-    setDocBSource(recipientSharedDocument.source);
-    setDocBFiles(recipientSharedDocument.files);
-    setDocBPreviewSnippet(
-      previewSnippet(recipientSharedDocument.text || htmlToText(recipientSharedDocument.html)),
-    );
+    // ── Hydrate recipient documents ──
+    const editorState = recipientDraft?.editor_state || {};
+    const savedDocs = editorState.documents;
+
+    if (Array.isArray(savedDocs) && savedDocs.length > 0) {
+      // New multi-document model: restore from editor_state.documents
+      setRecipientDocuments(deserializeDocumentsFromDraft(savedDocs));
+    } else if (recipientDraft) {
+      // Legacy model: create docs from shared_payload + recipient_confidential_payload
+      const docs = [];
+      const confText = recipientConfidentialDocument.text || '';
+      const confHtml = recipientConfidentialDocument.html || '';
+      if (confText || htmlToText(confHtml)) {
+        docs.push(createDocument({
+          id: 'legacy-conf',
+          title: CONFIDENTIAL_LABEL,
+          visibility: VISIBILITY_CONFIDENTIAL,
+          owner: OWNER_RECIPIENT,
+          source: recipientConfidentialDocument.source || 'typed',
+          text: confText,
+          html: confHtml,
+          json: recipientConfidentialDocument.json || null,
+          files: recipientConfidentialDocument.files || [],
+          importStatus: (recipientConfidentialDocument.files || []).length > 0 ? 'imported' : 'idle',
+        }));
+      }
+      // Only create a recipient shared doc if content differs from baseline
+      const baseText = baselineSharedDocument.text || '';
+      const draftSharedText = recipientSharedDocument.text || '';
+      if (draftSharedText && draftSharedText !== baseText) {
+        docs.push(createDocument({
+          id: 'legacy-shared',
+          title: SHARED_LABEL,
+          visibility: VISIBILITY_SHARED,
+          owner: OWNER_RECIPIENT,
+          source: recipientSharedDocument.source || 'typed',
+          text: draftSharedText,
+          html: recipientSharedDocument.html || '',
+          json: recipientSharedDocument.json || null,
+          files: recipientSharedDocument.files || [],
+          importStatus: (recipientSharedDocument.files || []).length > 0 ? 'imported' : 'idle',
+        }));
+      }
+      if (docs.length === 0) {
+        docs.push(createDocument({
+          title: 'My Confidential Notes',
+          visibility: VISIBILITY_CONFIDENTIAL,
+          owner: OWNER_RECIPIENT,
+        }));
+      }
+      setRecipientDocuments(docs);
+    } else {
+      // No draft — start with empty (user can add documents)
+      setRecipientDocuments([]);
+    }
+
+    // Auto-select first recipient document for Step 2 editor
+    if (!recipientActiveDocId) {
+      const editorDocs = Array.isArray(savedDocs) && savedDocs.length > 0
+        ? savedDocs
+        : recipientDocuments;
+      if (editorDocs.length > 0) {
+        setRecipientActiveDocId(editorDocs[0].id);
+      }
+    }
 
     const hydratedStep = isAuthenticated ? clampStep(recipientDraft?.workflow_step, 0) : 0;
     if (!stepHydrated) {
@@ -648,6 +757,7 @@ export default function SharedReport() {
     recipientDraft,
     recipientConfidentialDocument,
     recipientSharedDocument,
+    baselineSharedDocument,
     step,
     stepHydrated,
   ]);
@@ -680,28 +790,36 @@ export default function SharedReport() {
     );
   };
 
-  const buildDraftInput = (stepToSave = step) => ({
-    shared_payload: buildSharedPayloadFromState({
-      docBText,
-      docBHtml,
-      docBJson,
-      docBSource,
-      docBFiles,
-    }),
-    recipient_confidential_payload: buildConfidentialPayloadFromState({
-      docAText,
-      docAHtml,
-      docAJson,
-      docASource,
-      docAFiles,
-    }),
-    workflow_step: clampStep(stepToSave, 0),
-    editor_state: {
-      step: clampStep(stepToSave, 0),
-      mode: 'recipient_document_comparison_v1',
-      updated_at: new Date().toISOString(),
-    },
-  });
+  const buildDraftInput = (stepToSave = step) => {
+    const sharedBundle = compiledRecipientBundles.shared;
+    const confBundle = compiledRecipientBundles.confidential;
+    return {
+      shared_payload: {
+        label: SHARED_LABEL,
+        text: sharedBundle.text || '',
+        html: sanitizeEditorHtml(sharedBundle.html || textToHtml(sharedBundle.text || '')),
+        json: sharedBundle.json || null,
+        source: sharedBundle.source || 'typed',
+        files: sharedBundle.files || [],
+      },
+      recipient_confidential_payload: {
+        label: CONFIDENTIAL_LABEL,
+        text: confBundle.text || '',
+        notes: confBundle.text || '',
+        html: sanitizeEditorHtml(confBundle.html || textToHtml(confBundle.text || '')),
+        json: confBundle.json || null,
+        source: confBundle.source || 'typed',
+        files: confBundle.files || [],
+      },
+      workflow_step: clampStep(stepToSave, 0),
+      editor_state: {
+        step: clampStep(stepToSave, 0),
+        mode: 'recipient_document_comparison_v2',
+        updated_at: new Date().toISOString(),
+        documents: serializeDocumentsForDraft(recipientDocuments),
+      },
+    };
+  };
 
   const saveDraftMutation = useMutation({
     mutationFn: async ({ stepToSave, silent: _silent = false } = {}) => {
@@ -822,43 +940,14 @@ export default function SharedReport() {
     },
   });
 
-  const applyImportedContent = (side, file, extracted) => {
-    const rawText = asText(extracted?.text) || htmlToText(extracted?.html || '');
-    const html = sanitizeEditorHtml(asText(extracted?.html) || textToHtml(rawText));
-    const text = rawText || htmlToText(html);
-
-    if (!text && !html) {
-      throw new Error('No readable content was extracted from the selected file');
-    }
-
-    if (side === 'a') {
-      setDocAText(text);
-      setDocAHtml(html);
-      setDocAJson(null);
-      setDocASource('uploaded');
-      setDocAFiles([fileToMetadata(file)]);
-      setDocAPreviewSnippet(previewSnippet(text || htmlToText(html)));
-    } else {
-      setDocBText(text);
-      setDocBHtml(html);
-      setDocBJson(null);
-      setDocBSource('uploaded');
-      setDocBFiles([fileToMetadata(file)]);
-      setDocBPreviewSnippet(previewSnippet(text || htmlToText(html)));
-    }
-
-    setDraftDirty(true);
-  };
-
-  const importForSide = async (side, fileOverride = null) => {
-    const selectedFile = fileOverride || (side === 'a' ? docASelectedFile : docBSelectedFile);
-    if (!selectedFile) {
+  const importForDocument = async (docId, file) => {
+    if (!file) {
       toast.error('Select a .docx or .pdf file first.');
       return;
     }
 
     try {
-      documentComparisonsClient.validateImportFile(selectedFile);
+      documentComparisonsClient.validateImportFile(file);
     } catch (error) {
       toast.error(error?.message || 'Failed to import file');
       return;
@@ -874,9 +963,15 @@ export default function SharedReport() {
       controller: nextController,
     };
 
-    setImportingSide(side);
+    // Mark document as importing
+    setRecipientDocuments((prev) =>
+      prev.map((d) =>
+        d.id === docId ? { ...d, importStatus: 'importing', importError: '' } : d,
+      ),
+    );
+
     try {
-      const extracted = await documentComparisonsClient.extractDocumentFromFile(selectedFile, {
+      const extracted = await documentComparisonsClient.extractDocumentFromFile(file, {
         signal: nextController.signal,
       });
 
@@ -887,8 +982,33 @@ export default function SharedReport() {
         return;
       }
 
-      applyImportedContent(side, selectedFile, extracted);
-      toast.success(`${selectedFile.name} imported`);
+      const rawText = asText(extracted?.text) || htmlToText(extracted?.html || '');
+      const html = sanitizeEditorHtml(asText(extracted?.html) || textToHtml(rawText));
+      const text = rawText || htmlToText(html);
+
+      if (!text && !html) {
+        throw new Error('No readable content was extracted from the selected file');
+      }
+
+      setRecipientDocuments((prev) =>
+        prev.map((d) =>
+          d.id === docId
+            ? {
+                ...d,
+                text,
+                html,
+                json: null,
+                source: 'uploaded',
+                files: [fileToMetadata(file)],
+                importStatus: 'imported',
+                importError: '',
+                _pendingFile: null,
+              }
+            : d,
+        ),
+      );
+      setDraftDirty(true);
+      toast.success(`${file.name} imported`);
     } catch (error) {
       if (
         nextController.signal.aborted ||
@@ -897,6 +1017,13 @@ export default function SharedReport() {
       ) {
         return;
       }
+      setRecipientDocuments((prev) =>
+        prev.map((d) =>
+          d.id === docId
+            ? { ...d, importStatus: 'error', importError: error?.message || 'Import failed' }
+            : d,
+        ),
+      );
       toast.error(error?.message || 'Failed to import file');
     } finally {
       if (activeImportRequestRef.current.id === nextRequestId) {
@@ -904,7 +1031,6 @@ export default function SharedReport() {
           id: nextRequestId,
           controller: null,
         };
-        setImportingSide(null);
       }
     }
   };
@@ -1000,12 +1126,16 @@ export default function SharedReport() {
         promptText: isCustomPromptRequest ? String(promptText || '').trim() : undefined,
         selectionText: selectionText || undefined,
         selectionTarget: selectionTarget || undefined,
+        company_name: asText(companyContextName) || undefined,
+        company_website: asText(companyContextWebsite) || undefined,
       };
       if (!isCustomPromptRequest) {
-        const sanitizedDocAHtml = sanitizeEditorHtml(docAHtml || textToHtml(docAText));
-        const sanitizedDocBHtml = sanitizeEditorHtml(docBHtml || textToHtml(docBText));
-        const normalizedDocAText = asText(docAText) || htmlToText(sanitizedDocAHtml);
-        const normalizedDocBText = asText(docBText) || htmlToText(sanitizedDocBHtml);
+        const confBundle = compiledRecipientBundles.confidential;
+        const sharedBundle = compiledRecipientBundles.shared;
+        const sanitizedDocAHtml = sanitizeEditorHtml(confBundle.html || textToHtml(confBundle.text || ''));
+        const sanitizedDocBHtml = sanitizeEditorHtml(sharedBundle.html || textToHtml(sharedBundle.text || ''));
+        const normalizedDocAText = asText(confBundle.text) || htmlToText(sanitizedDocAHtml);
+        const normalizedDocBText = asText(sharedBundle.text) || htmlToText(sanitizedDocBHtml);
         payload.doc_a_text = normalizedDocAText;
         payload.doc_b_text = normalizedDocBText;
         payload.doc_a_html = sanitizedDocAHtml;
@@ -1073,6 +1203,73 @@ export default function SharedReport() {
       intent: 'custom_prompt',
       promptText: prompt,
     });
+  };
+
+  const runCompanyBrief = async () => {
+    const name = asText(companyContextName);
+    if (!name) {
+      toast.error('Enter a company name first.');
+      return null;
+    }
+    if (!isAuthenticated) {
+      if (!requireSignInForEditing()) return null;
+    }
+    if (requiresRecipientVerification) {
+      toast.error('Verify access before using AI support.');
+      setStep(0);
+      return null;
+    }
+    if (coachNotConfigured) return null;
+
+    setCoachLoading(true);
+    setCoachError('');
+    setIsCoachResponseCopied(false);
+
+    try {
+      const response = await sharedReportsClient.companyBriefRecipient(token, {
+        company_name: name,
+        company_website: asText(companyContextWebsite) || undefined,
+        lens: 'risk_negotiation',
+      });
+
+      const brief = response?.companyBrief || {};
+      setCoachResult({
+        version: 'coach-v1',
+        summary: brief.content ? { overall: brief.content } : null,
+        suggestions: [],
+        custom_feedback: brief.content || '',
+        company_brief_sources: brief.sources || [],
+        company_brief_searches: brief.searches || [],
+        company_brief_limited: Boolean(brief.limited),
+      });
+      setCoachCached(false);
+      setCoachWithheldCount(0);
+      setCoachRequestMeta({
+        action: 'company_brief',
+        mode: 'full',
+        intent: 'company_brief',
+        promptText: '',
+        model: response?.model || 'unknown',
+        provider: response?.provider || 'vertex',
+      });
+      toast.success('Company Brief ready');
+      return response;
+    } catch (error) {
+      const status = Number(error?.status || 0);
+      const code = asText(error?.body?.error?.code || error?.body?.code || error?.code);
+      if (status === 501 || code === 'not_configured') {
+        setCoachNotConfigured(true);
+        setCoachError('AI suggestions are unavailable because Vertex AI is not configured.');
+        toast.error('AI is not configured.');
+        return null;
+      }
+      const message = error?.message || 'Company Brief request failed';
+      setCoachError(message);
+      toast.error(message);
+      return null;
+    } finally {
+      setCoachLoading(false);
+    }
   };
 
   const handleCustomPromptKeyDown = (event) => {
@@ -1253,6 +1450,7 @@ export default function SharedReport() {
   }
   const coachResponseMeta = coachResponseMetaParts.join(' · ');
   const canRunCoach = Boolean(canReevaluate) && !requiresRecipientVerification;
+  const companyBriefSources = Array.isArray(coachResult?.company_brief_sources) ? coachResult.company_brief_sources : [];
 
   if (!token) {
     return (
@@ -1295,213 +1493,329 @@ export default function SharedReport() {
     );
   }
 
-  const renderImportPanel = ({ side, label, selectedFile, setSelectedFile, preview, source, files, fileRef }) => {
-    const isImporting = importingSide === side;
-    const isAnyImporting = Boolean(importingSide);
-    const canEditSide = (side === 'a' ? canEditConfidential : canEditShared) && !requiresRecipientVerification;
-
-    return (
-      <Card className="border border-slate-200 shadow-sm">
-        <CardHeader>
-          <CardTitle className="text-base">{label} (Upload/Import)</CardTitle>
-          <CardDescription>Upload a DOCX or PDF and import extracted content into this document.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".docx,.pdf"
-            className="hidden"
-            data-testid={`import-file-input-${side}`}
-            onChange={(event) => {
-              const file = event.target.files?.[0] || null;
-              event.target.value = '';
-              setSelectedFile(file);
-              if (!file || !canEditSide) {
-                return;
-              }
-              void importForSide(side, file);
-            }}
-          />
-
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => fileRef.current?.click()}
-              disabled={!canEditSide}
-            >
-              <Upload className="w-4 h-4 mr-2" />
-              Choose File
-            </Button>
-
-            <Button
-              type="button"
-              onClick={() => importForSide(side)}
-              disabled={!canEditSide || !selectedFile || isAnyImporting}
-              data-testid={`import-button-${side}`}
-              className="bg-blue-600 hover:bg-blue-700"
-            >
-              {isImporting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <FileText className="w-4 h-4 mr-2" />}
-              {isImporting ? 'Importing...' : 'Import'}
-            </Button>
-
-            <Badge variant="outline">{source || 'typed'}</Badge>
-          </div>
-
-          {selectedFile ? (
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-              <p className="font-medium break-all">{selectedFile.name}</p>
-              <p className="text-xs text-slate-500">{formatFileSize(selectedFile.size)}</p>
+  // ── Coach panel node ─────────────────────────────────────────────────────
+  // Extracted so it can be passed as `coachPanel` prop to Step2EditSources,
+  // matching the proposer flow where the coach panel renders at the top of Step 2.
+  const coachPanelNode = (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base flex items-center gap-2">
+          <Sparkles className="w-4 h-4 text-blue-600" />
+          Ask for suggestions
+          {coachCached ? <Badge variant="outline">Cached</Badge> : null}
+        </CardTitle>
+        <CardDescription>
+          Generate suggestions only when you click an action. No background requests.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className="h-full rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="space-y-3">
+              <div className="space-y-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  Company
+                </p>
+                <div className="space-y-2">
+                  <Input
+                    data-testid="company-context-name-input-inline"
+                    placeholder="Company name"
+                    value={companyContextName}
+                    onChange={(e) => setCompanyContextName(e.target.value)}
+                  />
+                  <Input
+                    data-testid="company-context-website-input-inline"
+                    placeholder="Website"
+                    value={companyContextWebsite}
+                    onChange={(e) => setCompanyContextWebsite(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <p className="w-full text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">Suggested Prompts</p>
+                {DOCUMENT_COMPARISON_COACH_ACTIONS.map((option) => (
+                  <Button
+                    key={option.id}
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={coachLoading || coachNotConfigured || !canRunCoach}
+                    onClick={() => {
+                      const request = buildCoachActionRequest(option, null);
+                      if (!request) return;
+                      runCoach(request);
+                    }}
+                  >
+                    {coachLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
+                    {option.label}
+                  </Button>
+                ))}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={coachLoading || coachNotConfigured || !canRunCoach}
+                  onClick={() => { if (!coachLoading && !coachNotConfigured) runCompanyBrief(); }}
+                  data-testid="coach-company-brief-action"
+                >
+                  {coachLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
+                  Company Brief
+                </Button>
+              </div>
+              {!canReevaluate ? (
+                <p className="text-xs text-amber-700">AI support is disabled for this shared link.</p>
+              ) : null}
             </div>
-          ) : (
-            <p className="text-sm text-slate-500">No file selected.</p>
-          )}
-
-          {files.length > 0 ? (
-            <p className="text-xs text-slate-500">Last imported: {files[0]?.filename || 'Unknown file'}</p>
-          ) : null}
-
-          <div className="space-y-1">
-            <Label className="text-sm font-semibold">Preview</Label>
-            <div
-              className="min-h-[130px] rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 whitespace-pre-wrap"
-              data-testid={`import-preview-${side}`}
-            >
-              {preview || 'Imported content preview will appear here.'}
-            </div>
-            {isImporting ? <p className="text-xs text-slate-500">Importing...</p> : null}
           </div>
-          {!canEditSide ? (
-            <p className="text-xs text-amber-700">
-              {requiresRecipientVerification
-                ? 'Verify access to edit this section.'
-                : 'This section is read-only for this link.'}
-            </p>
-          ) : null}
-        </CardContent>
-      </Card>
-    );
-  };
+          <div
+            className="h-full rounded-lg border border-slate-200 bg-slate-50/60 p-4 shadow-sm"
+            data-testid="coach-custom-prompt-panel"
+          >
+            <div className="flex h-full flex-col gap-3">
+              <div className="space-y-1">
+                <Label htmlFor="coach-custom-prompt-input" className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  Custom prompt
+                </Label>
+                <p className="text-xs text-slate-500">Ask for feedback, risks, gaps, strategy...</p>
+              </div>
+              <Textarea
+                id="coach-custom-prompt-input"
+                data-testid="coach-custom-prompt-input"
+                rows={5}
+                className="min-h-[140px] w-full resize-y bg-white"
+                placeholder="Ask for feedback, risks, gaps, strategy..."
+                value={customPromptText}
+                onChange={(event) => setCustomPromptText(event.target.value)}
+                onKeyDown={handleCustomPromptKeyDown}
+                disabled={coachLoading || coachNotConfigured || !canRunCoach}
+              />
+              <div className="flex justify-end">
+                <Button
+                  type="button"
+                  data-testid="coach-custom-prompt-run"
+                  onClick={runCustomPromptCoach}
+                  disabled={coachLoading || coachNotConfigured || !canRunCoach || !asText(customPromptText)}
+                >
+                  {coachLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                  {coachLoading ? 'Running...' : 'Run'}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {coachNotConfigured ? (
+          <Alert className="bg-amber-50 border-amber-200">
+            <AlertTriangle className="h-4 w-4 text-amber-700" />
+            <AlertDescription className="text-amber-800">
+              AI suggestions are unavailable because Vertex AI is not configured.
+            </AlertDescription>
+          </Alert>
+        ) : null}
+
+        {!coachNotConfigured && coachError ? (
+          <Alert className="bg-red-50 border-red-200">
+            <AlertTriangle className="h-4 w-4 text-red-700" />
+            <AlertDescription className="text-red-800">{coachError}</AlertDescription>
+          </Alert>
+        ) : null}
+
+        {coachResponseText ? (
+          <div
+            className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm transition-all duration-200"
+            data-testid={coachIntentKey === 'custom_prompt' ? 'coach-custom-prompt-feedback' : 'coach-response-feedback'}
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-slate-200 bg-slate-50/70 px-4 py-3">
+              <div className="space-y-1">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">{coachResponseLabel}</p>
+                {coachResponseMeta ? <p className="text-xs text-slate-500">{coachResponseMeta}</p> : null}
+              </div>
+              <div className="flex items-center gap-1">
+                <Button type="button" size="sm" variant="outline" onClick={copyCoachResponse} disabled={!coachResponseText}>
+                  {isCoachResponseCopied ? <Check className="mr-2 h-4 w-4" /> : <Copy className="mr-2 h-4 w-4" />}
+                  {isCoachResponseCopied ? 'Copied' : 'Copy'}
+                </Button>
+                <Button type="button" size="icon" variant="ghost" aria-label="Clear response" onClick={clearCoachResponse}>
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+            <div className="min-h-[132px] px-4 py-4">
+              <CoachResponseText text={coachResponseText} />
+              {coachIntentKey === 'company_brief' && companyBriefSources.length > 0 ? (
+                <div className="mt-4 border-t border-slate-200 pt-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Sources</p>
+                  <ul className="mt-2 space-y-1 text-xs text-slate-600" data-testid="company-brief-sources">
+                    {companyBriefSources.map((source, index) => {
+                      const sourceTitle = asText(source?.title) || `Source ${index + 1}`;
+                      const url = asText(source?.url);
+                      if (!url) {
+                        return (
+                          <li key={`company-brief-source-${index}`}>
+                            [{index + 1}] {sourceTitle}
+                          </li>
+                        );
+                      }
+                      return (
+                        <li key={`company-brief-source-${index}`}>
+                          [{index + 1}]{' '}
+                          <a href={url} target="_blank" rel="noreferrer" className="text-blue-700 underline-offset-2 hover:underline">
+                            {sourceTitle}
+                          </a>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+
+        {visibleCoachSuggestions.length > 0 ? (
+          <div className="space-y-2">
+            {visibleCoachSuggestions.slice(0, 12).map((suggestion, index) => {
+              const isShared = suggestion?.scope === 'shared' || suggestion?.proposed_change?.target === 'doc_b';
+              return (
+                <div key={`coach-suggestion-${index}`} className="rounded-lg border border-slate-200 bg-white p-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="outline">{String(suggestion?.severity || 'info')}</Badge>
+                    <Badge variant={isShared ? 'secondary' : 'outline'}>
+                      {isShared ? 'Shared-safe' : 'Confidential-only'}
+                    </Badge>
+                    <span className="text-sm font-medium text-slate-800">{suggestion?.title || 'Suggestion'}</span>
+                  </div>
+                  {asText(suggestion?.explanation || suggestion?.rationale) ? (
+                    <p className="mt-2 text-sm text-slate-600">
+                      {asText(suggestion?.explanation || suggestion?.rationale)}
+                    </p>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
 
   return (
     <div className="min-h-screen bg-slate-50 py-6">
-      <div className="max-w-[1400px] mx-auto px-6 md:px-10 xl:px-12 space-y-6">
-        <div className="space-y-2">
-          <h1 className="text-2xl font-bold text-slate-900">Document Comparison</h1>
-          <p className="text-slate-500">
-            Compare Shared Information and Confidential Information with recipient-safe reporting.
-          </p>
-        </div>
-
-        <Card>
-          <CardHeader>
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <CardTitle>{title || 'Shared Report'}</CardTitle>
-              <Badge variant="outline">{asText(share.status) || 'active'}</Badge>
-            </div>
-            <CardDescription>
-              Created: {formatDateTime(parent.created_at)} • Expires: {formatDateTime(share.expires_at)}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="pt-0">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Sent by</p>
-                <p className="text-sm font-medium text-slate-900 break-all">
-                  {senderEmail || 'Unavailable'}
-                </p>
-              </div>
-              <div className="space-y-1">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Sent to</p>
-                <p className="text-sm font-medium text-slate-900 break-all">
-                  {recipientEmailDisplay || 'Unavailable until verification'}
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <div className="space-y-2">
-          <div className="flex items-center justify-between text-sm">
-            <span className="font-semibold text-slate-700">Step {step} of {TOTAL_WORKFLOW_STEPS}</span>
-            <span className="text-slate-500">{Math.round(progress)}% complete</span>
-          </div>
-          <Progress value={progress} className="h-3" />
-        </div>
-
-        {isAuthenticated &&
-        authorizedForCurrentUser &&
-        asText(share?.authorization?.authorized_email) &&
-        invitedEmail &&
-        asText(share.authorization.authorized_email).toLowerCase() !== invitedEmail ? (
-          <Alert className="bg-slate-50 border-slate-200">
-            <AlertDescription className="text-slate-700">
-              Responding as: <span className="font-semibold">{share.authorization.authorized_email}</span>{' '}
-              (verified for {invitedEmail})
-            </AlertDescription>
-          </Alert>
-        ) : null}
-
-        {requiresRecipientVerification ? (
-          <Alert className="bg-amber-50 border-amber-200">
-            <AlertDescription className="text-amber-900 space-y-3">
-              <p>
-                This link was sent to <span className="font-semibold">{invitedEmail}</span>.
-                {currentUserEmail
-                  ? ` You are currently signed in as ${currentUserEmail}.`
-                  : ''}
-              </p>
-              <div className="flex flex-wrap gap-2">
-                <Button type="button" variant="outline" onClick={switchAccount}>
-                  Switch account
-                </Button>
-                <Button
-                  type="button"
-                  onClick={() => verifyStartMutation.mutate()}
-                  disabled={verifyStartMutation.isPending}
-                  className="bg-blue-600 hover:bg-blue-700"
-                >
-                  {verifyStartMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-                  Verify access
-                </Button>
-              </div>
-              {verificationRequested ? (
-                <div className="flex flex-wrap items-end gap-2">
-                  <div className="space-y-1">
-                    <Label htmlFor="shared-report-verify-code">Verification code</Label>
-                    <Input
-                      id="shared-report-verify-code"
-                      inputMode="numeric"
-                      autoComplete="one-time-code"
-                      placeholder="6-digit code"
-                      value={verificationCode}
-                      onChange={(event) => setVerificationCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
-                      className="w-[180px]"
-                    />
-                  </div>
-                  <Button
-                    type="button"
-                    onClick={() => verifyConfirmMutation.mutate()}
-                    disabled={verifyConfirmMutation.isPending || verificationCode.length !== 6}
-                  >
-                    {verifyConfirmMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-                    Confirm
-                  </Button>
+      <ComparisonWorkflowShell
+        title="Document Comparison"
+        subtitle="Compare Shared Information and Confidential Information with recipient-safe reporting."
+        step={step}
+        totalSteps={TOTAL_WORKFLOW_STEPS}
+        progress={progress}
+        extraHeader={
+          <>
+            {/* ── Share metadata card ────────────────────────────────── */}
+            <Card>
+              <CardHeader>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <CardTitle>{title || 'Shared Report'}</CardTitle>
+                  <Badge variant="outline">{asText(share.status) || 'active'}</Badge>
                 </div>
-              ) : null}
-            </AlertDescription>
-          </Alert>
-        ) : null}
+                <CardDescription>
+                  Created: {formatDateTime(parent.created_at)} • Expires: {formatDateTime(share.expires_at)}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-1">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Sent by</p>
+                    <p className="text-sm font-medium text-slate-900 break-all">
+                      {senderEmail || 'Unavailable'}
+                    </p>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Sent to</p>
+                    <p className="text-sm font-medium text-slate-900 break-all">
+                      {recipientEmailDisplay || 'Unavailable until verification'}
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
 
-        {isSentToProposer ? (
-          <Alert className="bg-emerald-50 border-emerald-200">
-            <AlertDescription className="text-emerald-800">
-              Sent to proposer on {formatDateTime(latestSentRevision?.updated_at)}.
-            </AlertDescription>
-          </Alert>
-        ) : null}
+            {/* ── Cross-account confirmation ──────────────────────────── */}
+            {isAuthenticated &&
+            authorizedForCurrentUser &&
+            asText(share?.authorization?.authorized_email) &&
+            invitedEmail &&
+            asText(share.authorization.authorized_email).toLowerCase() !== invitedEmail ? (
+              <Alert className="bg-slate-50 border-slate-200">
+                <AlertDescription className="text-slate-700">
+                  Responding as: <span className="font-semibold">{share.authorization.authorized_email}</span>{' '}
+                  (verified for {invitedEmail})
+                </AlertDescription>
+              </Alert>
+            ) : null}
 
+            {/* ── Recipient verification gate ─────────────────────────── */}
+            {requiresRecipientVerification ? (
+              <Alert className="bg-amber-50 border-amber-200">
+                <AlertDescription className="text-amber-900 space-y-3">
+                  <p>
+                    This link was sent to <span className="font-semibold">{invitedEmail}</span>.
+                    {currentUserEmail ? ` You are currently signed in as ${currentUserEmail}.` : ''}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="button" variant="outline" onClick={switchAccount}>
+                      Switch account
+                    </Button>
+                    <Button
+                      type="button"
+                      onClick={() => verifyStartMutation.mutate()}
+                      disabled={verifyStartMutation.isPending}
+                      className="bg-blue-600 hover:bg-blue-700"
+                    >
+                      {verifyStartMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                      Verify access
+                    </Button>
+                  </div>
+                  {verificationRequested ? (
+                    <div className="flex flex-wrap items-end gap-2">
+                      <div className="space-y-1">
+                        <Label htmlFor="shared-report-verify-code">Verification code</Label>
+                        <Input
+                          id="shared-report-verify-code"
+                          inputMode="numeric"
+                          autoComplete="one-time-code"
+                          placeholder="6-digit code"
+                          value={verificationCode}
+                          onChange={(event) => setVerificationCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
+                          className="w-[180px]"
+                        />
+                      </div>
+                      <Button
+                        type="button"
+                        onClick={() => verifyConfirmMutation.mutate()}
+                        disabled={verifyConfirmMutation.isPending || verificationCode.length !== 6}
+                      >
+                        {verifyConfirmMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                        Confirm
+                      </Button>
+                    </div>
+                  ) : null}
+                </AlertDescription>
+              </Alert>
+            ) : null}
+
+            {/* ── Sent to proposer confirmation ───────────────────────── */}
+            {isSentToProposer ? (
+              <Alert className="bg-emerald-50 border-emerald-200">
+                <AlertDescription className="text-emerald-800">
+                  Sent to proposer on {formatDateTime(latestSentRevision?.updated_at)}.
+                </AlertDescription>
+              </Alert>
+            ) : null}
+          </>
+        }
+      >
+        {/* ════════════════════════════════════════════════════════════
+            STEP 0 — Baseline overview (read-only proposer report)
+            ════════════════════════════════════════════════════════════ */}
         {step === 0 ? (
           <div className="space-y-6">
             <div className="flex flex-wrap gap-2">
@@ -1511,9 +1825,7 @@ export default function SharedReport() {
                 onClick={() => downloadSharedProposalPdfMutation.mutate()}
                 disabled={downloadSharedProposalPdfMutation.isPending}
               >
-                {downloadSharedProposalPdfMutation.isPending ? (
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                ) : null}
+                {downloadSharedProposalPdfMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
                 Download Proposal PDF
               </Button>
               <Button
@@ -1522,9 +1834,7 @@ export default function SharedReport() {
                 onClick={() => downloadSharedAiReportPdfMutation.mutate()}
                 disabled={downloadSharedAiReportPdfMutation.isPending}
               >
-                {downloadSharedAiReportPdfMutation.isPending ? (
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                ) : null}
+                {downloadSharedAiReportPdfMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
                 Download AI Report PDF
               </Button>
             </div>
@@ -1584,421 +1894,140 @@ export default function SharedReport() {
           </div>
         ) : null}
 
+        {/* ════════════════════════════════════════════════════════════
+            STEP 1 — Upload / import  (shared Step1AddSources layout)
+            ════════════════════════════════════════════════════════════ */}
         {step === 1 ? (
-          <div className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Step 1: Upload and Import</CardTitle>
-                <CardDescription>
-                  Upload DOCX or PDF files and import extracted content before editing.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-5">
-                <div className="space-y-2 max-w-xl">
-                  <Label>Comparison Title</Label>
-                  <Input
-                    value={title}
-                    onChange={(event) => {
-                      setTitle(event.target.value);
-                      setDraftDirty(true);
-                    }}
-                    placeholder="e.g., Mutual NDA comparison"
-                    disabled={requiresRecipientVerification}
-                  />
-                </div>
-
-                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                  {renderImportPanel({
-                    side: 'a',
-                    label: CONFIDENTIAL_LABEL,
-                    selectedFile: docASelectedFile,
-                    setSelectedFile: setDocASelectedFile,
-                    preview: docAPreviewSnippet,
-                    source: docASource,
-                    files: docAFiles,
-                    fileRef: docAInputFileRef,
-                  })}
-                  {renderImportPanel({
-                    side: 'b',
-                    label: SHARED_LABEL,
-                    selectedFile: docBSelectedFile,
-                    setSelectedFile: setDocBSelectedFile,
-                    preview: docBPreviewSnippet,
-                    source: docBSource,
-                    files: docBFiles,
-                    fileRef: docBInputFileRef,
-                  })}
-                </div>
-              </CardContent>
-            </Card>
-
-            <div className="flex justify-between gap-2">
-              <Button variant="outline" onClick={() => setStep(0)}>
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                Back to Overview
-              </Button>
-              <div className="flex gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => saveDraftMutation.mutate({ stepToSave: 1 })}
-                  disabled={saveDraftMutation.isPending || requiresRecipientVerification}
-                >
-                  {saveDraftMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
-                  {saveDraftMutation.isPending ? 'Saving...' : 'Save Draft'}
-                </Button>
-                <Button
-                  type="button"
-                  onClick={() => jumpStep(2)}
-                  disabled={saveDraftMutation.isPending || requiresRecipientVerification}
-                  className="bg-blue-600 hover:bg-blue-700"
-                >
-                  Continue to Editor
-                  <ArrowRight className="w-4 h-4 ml-2" />
-                </Button>
-              </div>
-            </div>
-          </div>
+          <Step1AddSources
+            title={title}
+            onTitleChange={(v) => { setTitle(v); setDraftDirty(true); }}
+            documents={allDisplayDocuments}
+            showAddActions={!requiresRecipientVerification}
+            onAddFiles={handleAddFiles}
+            onAddTyped={handleAddTypedDocument}
+            onRemoveDoc={handleRemoveDoc}
+            onRenameDoc={handleRenameDoc}
+            onSetVisibility={handleSetVisibility}
+            lockedDocIds={lockedDocIds}
+            readOnlyDocIds={readOnlyDocIds}
+            onImportFile={(docId, file) => importForDocument(docId, file)}
+            showBack
+            onBack={() => setStep(0)}
+            saveDraftPending={saveDraftMutation.isPending || requiresRecipientVerification}
+            onSaveDraft={() => saveDraftMutation.mutate({ stepToSave: 1 })}
+            onContinue={() => jumpStep(2)}
+          />
         ) : null}
 
+        {/* ════════════════════════════════════════════════════════════
+            STEP 2 — Editor  (shared Step2EditSources layout)
+            ════════════════════════════════════════════════════════════ */}
         {step === 2 ? (
           <DocumentComparisonEditorErrorBoundary
             onRetry={() => setStep(2)}
             onBackToStep1={() => setStep(1)}
           >
-            <div className="space-y-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Step 2: Editor</CardTitle>
-                  <CardDescription>Shared Information is prefilled from proposer baseline until you edit it.</CardDescription>
-                </CardHeader>
-              </Card>
-
-              <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
-                <Card className="border border-slate-200 shadow-sm">
-                  <CardHeader>
-                    <CardTitle className="text-base">{CONFIDENTIAL_LABEL}</CardTitle>
-                    <CardDescription>Private to you and used in AI analysis.</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <DocumentRichEditor
-                      label={CONFIDENTIAL_LABEL}
-                      content={docAJson || docAHtml}
-                      placeholder={`Edit ${CONFIDENTIAL_LABEL}...`}
-                      minHeightClassName="min-h-[500px]"
-                      scrollContainerClassName="h-[500px]"
-                      maxCharacters={300000}
-                      data-testid="doc-a-editor"
-                      onChange={({ html, text, json }) => {
-                        if (!canEditConfidential || requiresRecipientVerification) return;
-                        setDocAText(text);
-                        setDocAHtml(html);
-                        setDocAJson(json);
-                        setDocASource('typed');
-                        setDraftDirty(true);
-                      }}
-                    />
-                  </CardContent>
-                </Card>
-
-                <Card className="border border-slate-200 shadow-sm">
-                  <CardHeader>
-                    <CardTitle className="text-base">{SHARED_LABEL}</CardTitle>
-                    <CardDescription>Visible to both sides.</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <DocumentRichEditor
-                      label={SHARED_LABEL}
-                      content={docBJson || docBHtml}
-                      placeholder={`Edit ${SHARED_LABEL}...`}
-                      minHeightClassName="min-h-[500px]"
-                      scrollContainerClassName="h-[500px]"
-                      maxCharacters={300000}
-                      data-testid="doc-b-editor"
-                      onChange={({ html, text, json }) => {
-                        if (!canEditShared || requiresRecipientVerification) return;
-                        setDocBText(text);
-                        setDocBHtml(html);
-                        setDocBJson(json);
-                        setDocBSource('typed');
-                        setDraftDirty(true);
-                      }}
-                    />
-                  </CardContent>
-                </Card>
-              </div>
-
-              <Card className="border border-slate-200 shadow-sm">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-base flex items-center gap-2">
-                    <Sparkles className="w-4 h-4 text-blue-600" />
-                    Ask for suggestions
-                    {coachCached ? <Badge variant="outline">Cached</Badge> : null}
-                  </CardTitle>
-                  <CardDescription>
-                    Run targeted AI assistance for negotiation strategy, risks, and improvement suggestions.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="grid gap-4 lg:grid-cols-2">
-                    <div className="h-full rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-                      <div className="space-y-3">
-                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Quick actions</p>
-                        <div className="flex flex-wrap gap-2">
-                          {DOCUMENT_COMPARISON_COACH_ACTIONS.map((option) => (
-                            <Button
-                              key={option.id}
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              disabled={coachLoading || coachNotConfigured || !canRunCoach}
-                              onClick={() => {
-                                const request = buildCoachActionRequest(option, null);
-                                if (!request) {
-                                  return;
-                                }
-                                runCoach(request);
-                              }}
-                            >
-                              {coachLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
-                              {option.label}
-                            </Button>
-                          ))}
-                        </div>
-                        {!canReevaluate ? (
-                          <p className="text-xs text-amber-700">
-                            AI support is disabled for this shared link.
-                          </p>
-                        ) : null}
-                      </div>
-                    </div>
-                    <div
-                      className="h-full rounded-lg border border-slate-200 bg-slate-50/60 p-4 shadow-sm"
-                      data-testid="coach-custom-prompt-panel"
-                    >
-                      <div className="flex h-full flex-col gap-3">
-                        <div className="space-y-1">
-                          <Label htmlFor="coach-custom-prompt-input" className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                            Custom prompt
-                          </Label>
-                          <p className="text-xs text-slate-500">Ask for feedback, risks, gaps, strategy...</p>
-                        </div>
-                        <Textarea
-                          id="coach-custom-prompt-input"
-                          data-testid="coach-custom-prompt-input"
-                          rows={5}
-                          className="min-h-[140px] w-full resize-y bg-white"
-                          placeholder="Ask for feedback, risks, gaps, strategy..."
-                          value={customPromptText}
-                          onChange={(event) => setCustomPromptText(event.target.value)}
-                          onKeyDown={handleCustomPromptKeyDown}
-                          disabled={coachLoading || coachNotConfigured || !canRunCoach}
-                        />
-                        <div className="flex justify-end">
-                          <Button
-                            type="button"
-                            data-testid="coach-custom-prompt-run"
-                            onClick={runCustomPromptCoach}
-                            disabled={coachLoading || coachNotConfigured || !canRunCoach || !asText(customPromptText)}
-                          >
-                            {coachLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-                            {coachLoading ? 'Running...' : 'Run'}
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {coachNotConfigured ? (
-                    <Alert className="bg-amber-50 border-amber-200">
-                      <AlertTriangle className="h-4 w-4 text-amber-700" />
-                      <AlertDescription className="text-amber-800">
-                        AI suggestions are unavailable because Vertex AI is not configured.
-                      </AlertDescription>
-                    </Alert>
-                  ) : null}
-
-                  {!coachNotConfigured && coachError ? (
-                    <Alert className="bg-red-50 border-red-200">
-                      <AlertTriangle className="h-4 w-4 text-red-700" />
-                      <AlertDescription className="text-red-800">{coachError}</AlertDescription>
-                    </Alert>
-                  ) : null}
-
-                  {coachResponseText ? (
-                    <div
-                      className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm transition-all duration-200"
-                      data-testid={coachIntentKey === 'custom_prompt' ? 'coach-custom-prompt-feedback' : 'coach-response-feedback'}
-                    >
-                      <div className="flex items-start justify-between gap-3 border-b border-slate-200 bg-slate-50/70 px-4 py-3">
-                        <div className="space-y-1">
-                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">{coachResponseLabel}</p>
-                          {coachResponseMeta ? <p className="text-xs text-slate-500">{coachResponseMeta}</p> : null}
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <Button type="button" size="sm" variant="outline" onClick={copyCoachResponse} disabled={!coachResponseText}>
-                            {isCoachResponseCopied ? <Check className="mr-2 h-4 w-4" /> : <Copy className="mr-2 h-4 w-4" />}
-                            {isCoachResponseCopied ? 'Copied' : 'Copy'}
-                          </Button>
-                          <Button type="button" size="icon" variant="ghost" aria-label="Clear response" onClick={clearCoachResponse}>
-                            <X className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </div>
-                      <div className="min-h-[132px] px-4 py-4">
-                        <CoachResponseText text={coachResponseText} />
-                      </div>
-                    </div>
-                  ) : null}
-
-                  {visibleCoachSuggestions.length > 0 ? (
-                    <div className="space-y-2">
-                      {visibleCoachSuggestions.slice(0, 8).map((suggestion, index) => {
-                        const isShared = suggestion?.scope === 'shared' || suggestion?.proposed_change?.target === 'doc_b';
-                        return (
-                          <div key={`coach-suggestion-${index}`} className="rounded-lg border border-slate-200 bg-white p-3">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <Badge variant="outline">{String(suggestion?.severity || 'info')}</Badge>
-                              <Badge variant={isShared ? 'secondary' : 'outline'}>
-                                {isShared ? 'Shared-safe' : 'Confidential-only'}
-                              </Badge>
-                              <span className="text-sm font-medium text-slate-800">{suggestion?.title || 'Suggestion'}</span>
-                            </div>
-                            {asText(suggestion?.explanation || suggestion?.rationale) ? (
-                              <p className="mt-2 text-sm text-slate-600">
-                                {asText(suggestion?.explanation || suggestion?.rationale)}
-                              </p>
-                            ) : null}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : null}
-                </CardContent>
-              </Card>
-
-              <div className="flex justify-between pt-2">
-                <Button variant="outline" onClick={() => setStep(1)}>
-                  <ArrowLeft className="w-4 h-4 mr-2" />
-                  Back to Upload
-                </Button>
-                <div className="flex gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => saveDraftMutation.mutate({ stepToSave: 2 })}
-                    disabled={saveDraftMutation.isPending || requiresRecipientVerification}
-                  >
-                    {saveDraftMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
-                    {saveDraftMutation.isPending ? 'Saving...' : 'Save Draft'}
-                  </Button>
-                  <Button
-                    type="button"
-                    onClick={runEvaluationFromStep2}
-                    disabled={evaluateMutation.isPending || !canReevaluate || requiresRecipientVerification}
-                    className="bg-blue-600 hover:bg-blue-700"
-                  >
-                    {evaluateMutation.isPending ? (
-                      <>
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        Evaluating...
-                      </>
-                    ) : (
-                      <>
-                        Run Evaluation
-                        <ArrowRight className="w-4 h-4 ml-2" />
-                      </>
-                    )}
-                  </Button>
-                </div>
-              </div>
-            </div>
+            <Step2EditSources
+              documents={allDisplayDocuments}
+              activeDocId={recipientActiveDocId || (allDisplayDocuments[0]?.id ?? null)}
+              onSelectDoc={setRecipientActiveDocId}
+              onDocumentContentChange={handleRecipientDocumentContentChange}
+              readOnlyDocIds={readOnlyDocIds}
+              limits={{ perDocumentCharacterLimit: 300000, warningCharacterThreshold: 255000 }}
+              saveDraftPending={saveDraftMutation.isPending}
+              exceedsAnySizeLimit={false}
+              onSaveDraft={() => saveDraftMutation.mutate({ stepToSave: 2 })}
+              onBack={() => setStep(1)}
+              onContinue={runEvaluationFromStep2}
+              continueLabel="Run Evaluation"
+              continueDisabled={evaluateMutation.isPending || !canReevaluate || requiresRecipientVerification}
+              coachPanel={coachPanelNode}
+            />
           </DocumentComparisonEditorErrorBoundary>
         ) : null}
 
+        {/* ════════════════════════════════════════════════════════════
+            STEP 3 — Evaluation results  (shared ComparisonEvaluationStep)
+            ════════════════════════════════════════════════════════════ */}
         {step === 3 ? (
-          <div className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Step 3: Evaluation</CardTitle>
-                <CardDescription>Run and review the latest recipient-side evaluation.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    type="button"
-                    onClick={() => evaluateMutation.mutate()}
-                    disabled={evaluateMutation.isPending || !canReevaluate || requiresRecipientVerification}
-                    className="bg-blue-600 hover:bg-blue-700"
-                  >
-                    {evaluateMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-                    {evaluateMutation.isPending ? 'Evaluating...' : 'Re-run Evaluation'}
-                  </Button>
-
-                  <Button
-                    type="button"
-                    onClick={sendToProposer}
-                    disabled={
-                      sendBackMutation.isPending ||
-                      saveDraftMutation.isPending ||
-                      !canSendBack ||
-                      isSentToProposer ||
-                      requiresRecipientVerification
-                    }
-                  >
-                    {sendBackMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Send className="w-4 h-4 mr-2" />}
-                    {isSentToProposer ? 'Sent to proposer' : sendBackMutation.isPending ? 'Sending...' : 'Send to proposer'}
-                  </Button>
-
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => setStep(2)}
-                    disabled={requiresRecipientVerification}
-                  >
-                    Edit again
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-
-            <ComparisonDetailTabs
-              activeTab={recipientDetailTab}
-              onTabChange={setRecipientDetailTab}
-              hasReportBadge={hasStep3Report}
-              tabOrder={['details', 'report']}
-              detailsTabLabel="Proposal"
-              aiReportProps={{
-                isEvaluationRunning: step3IsEvaluationRunning,
-                isPollingTimedOut: false,
-                isEvaluationNotConfigured: step3IsEvaluationNotConfigured,
-                showConfidentialityWarning: false,
-                confidentialityWarningMessage: '',
-                confidentialityWarningDetails: '',
-                isEvaluationFailed: step3IsEvaluationFailed,
-                evaluationFailureBannerMessage: step3EvaluationFailureMessage,
-                hasReport: hasStep3Report,
-                hasEvaluations: Boolean(latestEvaluation),
-                noReportMessage: 'No recipient evaluation is available yet. Run evaluation to generate one.',
-                report: updatedRecipientReport,
-                recommendation: step3Recommendation,
-                timelineItems: step3TimelineItems,
-              }}
-              proposalDetailsProps={{
-                description: 'Read-only current proposal state after recipient edits.',
-                leftLabel: CONFIDENTIAL_LABEL,
-                rightLabel: SHARED_LABEL,
-                leftText: docAText,
-                leftHtml: docAHtml,
-                rightText: docBText,
-                rightHtml: docBHtml,
-                leftBadges: [docASource || 'typed'],
-                rightBadges: [docBSource || 'typed'],
-              }}
-            />
-          </div>
+          <ComparisonEvaluationStep
+            stepTitle="Step 3: Evaluation"
+            stepDescription="Run and review the latest recipient-side evaluation."
+            actionSlot={
+              <>
+                <Button
+                  type="button"
+                  onClick={() => evaluateMutation.mutate()}
+                  disabled={evaluateMutation.isPending || !canReevaluate || requiresRecipientVerification}
+                  className="bg-blue-600 hover:bg-blue-700"
+                >
+                  {evaluateMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                  {evaluateMutation.isPending ? 'Evaluating...' : 'Re-run Evaluation'}
+                </Button>
+                <Button
+                  type="button"
+                  onClick={sendToProposer}
+                  disabled={
+                    sendBackMutation.isPending ||
+                    saveDraftMutation.isPending ||
+                    !canSendBack ||
+                    isSentToProposer ||
+                    requiresRecipientVerification
+                  }
+                >
+                  {sendBackMutation.isPending
+                    ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    : <Send className="w-4 h-4 mr-2" />}
+                  {isSentToProposer ? 'Sent to proposer' : sendBackMutation.isPending ? 'Sending...' : 'Send to proposer'}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setStep(2)}
+                  disabled={requiresRecipientVerification}
+                >
+                  Edit again
+                </Button>
+              </>
+            }
+            activeTab={recipientDetailTab}
+            onTabChange={setRecipientDetailTab}
+            hasReportBadge={hasStep3Report}
+            tabOrder={['details', 'report']}
+            detailsTabLabel="Proposal"
+            aiReportProps={{
+              isEvaluationRunning: step3IsEvaluationRunning,
+              isPollingTimedOut: false,
+              isEvaluationNotConfigured: step3IsEvaluationNotConfigured,
+              showConfidentialityWarning: false,
+              confidentialityWarningMessage: '',
+              confidentialityWarningDetails: '',
+              isEvaluationFailed: step3IsEvaluationFailed,
+              evaluationFailureBannerMessage: step3EvaluationFailureMessage,
+              hasReport: hasStep3Report,
+              hasEvaluations: Boolean(latestEvaluation),
+              noReportMessage: 'No recipient evaluation is available yet. Run evaluation to generate one.',
+              report: updatedRecipientReport,
+              recommendation: step3Recommendation,
+              timelineItems: step3TimelineItems,
+            }}
+            proposalDetailsProps={{
+              description: 'Read-only current proposal state after recipient edits.',
+              leftLabel: CONFIDENTIAL_LABEL,
+              rightLabel: SHARED_LABEL,
+              leftText: compiledRecipientBundles.confidential.text,
+              leftHtml: compiledRecipientBundles.confidential.html,
+              rightText: compiledRecipientBundles.shared.text,
+              rightHtml: compiledRecipientBundles.shared.html,
+              leftBadges: [compiledRecipientBundles.confidential.source || 'typed'],
+              rightBadges: [compiledRecipientBundles.shared.source || 'typed'],
+            }}
+            onBack={() => setStep(2)}
+            backLabel="Back to Editor"
+          />
         ) : null}
-      </div>
+      </ComparisonWorkflowShell>
     </div>
   );
 }
+

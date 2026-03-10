@@ -269,6 +269,13 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       docBText,
     });
 
+    // Recipient can supply company context inline (not persisted to the comparison).
+    // Falls back to the comparison's saved company context.
+    const companyName = asText(body.company_name || body.companyName)
+      || asText(resolved.comparison?.companyName);
+    const companyWebsite = asText(body.company_website || body.companyWebsite)
+      || asText(resolved.comparison?.companyWebsite);
+
     const modelForHash = String(process.env.VERTEX_COACH_MODEL || process.env.VERTEX_MODEL || '').trim();
     const cacheHash = buildCoachCacheHash({
       docAText,
@@ -279,6 +286,8 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       selectionTarget: selectionTarget || undefined,
       selectionText: selectionText || undefined,
       promptText: promptText || undefined,
+      companyName: companyName || undefined,
+      companyWebsite: companyWebsite || undefined,
     });
 
     const [cached] = await resolved.db
@@ -316,6 +325,8 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       selectionTarget: selectionTarget || undefined,
       selectionText: selectionText || undefined,
       promptText: promptText || undefined,
+      companyName: companyName || undefined,
+      companyWebsite: companyWebsite || undefined,
     });
     const relevanceGuarded = applyCoachRelevanceGuard({
       coachResult: generated.result,

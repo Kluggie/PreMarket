@@ -4,14 +4,16 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { createPageUrl } from '@/utils';
 import { proposalsClient } from '@/api/proposalsClient';
 import { documentComparisonsClient } from '@/api/documentComparisonsClient';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Textarea } from '@/components/ui/textarea';
-import { Label } from '@/components/ui/label';
-import { Progress } from '@/components/ui/progress';
-import { Badge } from '@/components/ui/badge';
+import { Card, CardContent } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { ArrowLeft, ArrowRight, Loader2, AlertTriangle, Save } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Loader2 } from 'lucide-react';
+import ComparisonWorkflowShell from '@/components/document-comparison/ComparisonWorkflowShell';
+import Step2EditSources from '@/components/document-comparison/Step2EditSources';
+import DocumentComparisonEditorErrorBoundary from '@/components/document-comparison/DocumentComparisonEditorErrorBoundary';
+import {
+  VISIBILITY_CONFIDENTIAL,
+  VISIBILITY_SHARED,
+} from '@/pages/document-comparison/documentsModel';
 
 function useSharedToken() {
   const location = useLocation();
@@ -25,8 +27,12 @@ export default function RecipientEditStep2() {
   const navigate = useNavigate();
   const { proposalId } = useParams();
   const sharedToken = useSharedToken();
+
   const [title, setTitle] = useState('');
   const [docBText, setDocBText] = useState('');
+  const [docBHtml, setDocBHtml] = useState('');
+  const [docBJson, setDocBJson] = useState(null);
+  const [activeDocId, setActiveDocId] = useState('doc-b');
 
   const proposalQuery = useQuery({
     queryKey: ['recipient-edit-proposal', proposalId],
@@ -48,13 +54,48 @@ export default function RecipientEditStep2() {
     if (!comparison) return;
     setTitle(comparison.title || '');
     setDocBText(comparison.doc_b_text || '');
+    setDocBHtml(comparison.doc_b_html || '');
+    setDocBJson(comparison.doc_b_json || null);
   }, [comparison]);
+
+  const documents = useMemo(() => {
+    if (!comparison) return [];
+    return [
+      {
+        id: 'doc-a',
+        label: comparison.party_a_label || 'Document A',
+        json: comparison.doc_a_json || null,
+        html: comparison.doc_a_html || '',
+        text: comparison.doc_a_text || '',
+        source: comparison.doc_a_source || 'typed',
+        visibility: VISIBILITY_CONFIDENTIAL,
+      },
+      {
+        id: 'doc-b',
+        label: comparison.party_b_label || 'Document B',
+        json: docBJson,
+        html: docBHtml,
+        text: docBText,
+        source: comparison.doc_b_source || 'typed',
+        visibility: VISIBILITY_SHARED,
+      },
+    ];
+  }, [comparison, docBJson, docBHtml, docBText]);
+
+  const handleDocumentContentChange = React.useCallback((id, { json, html, text } = {}) => {
+    if (id !== 'doc-b') return;
+    if (json !== undefined) setDocBJson(json);
+    if (html !== undefined) setDocBHtml(html);
+    if (text !== undefined) setDocBText(text);
+  }, []);
 
   const saveMutation = useMutation({
     mutationFn: () =>
       documentComparisonsClient.update(comparisonId, {
         title,
         doc_b_text: docBText,
+        doc_b_html: docBHtml || '',
+        ...(docBJson ? { doc_b_json: docBJson } : {}),
         draft_step: 2,
         status: 'draft',
       }),
@@ -73,25 +114,38 @@ export default function RecipientEditStep2() {
     ? createPageUrl(`SharedReport?token=${encodeURIComponent(sharedToken)}`)
     : createPageUrl('Proposals');
 
+  const backLabel = sharedToken ? 'Back to Shared Report' : 'Back to Proposals';
+
+  const backSlot = (
+    <button
+      type="button"
+      onClick={() => navigate(backTarget)}
+      className="inline-flex items-center text-slate-600 hover:text-slate-900"
+    >
+      <ArrowLeft className="w-4 h-4 mr-2" />
+      {backLabel}
+    </button>
+  );
+
   if (proposalQuery.isLoading || comparisonQuery.isLoading) {
     return (
-      <div className="min-h-screen bg-slate-50 py-8">
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div className="min-h-screen bg-slate-50 py-6">
+        <ComparisonWorkflowShell title="Document Comparison" step={2} totalSteps={4} progress={50} backSlot={backSlot}>
           <Card>
             <CardContent className="py-16 text-center">
               <Loader2 className="w-8 h-8 text-blue-600 mx-auto mb-4 animate-spin" />
               <p className="text-slate-700">Loading recipient draft...</p>
             </CardContent>
           </Card>
-        </div>
+        </ComparisonWorkflowShell>
       </div>
     );
   }
 
   if (proposalQuery.error || comparisonQuery.error || !proposalQuery.data || !comparison) {
     return (
-      <div className="min-h-screen bg-slate-50 py-8">
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div className="min-h-screen bg-slate-50 py-6">
+        <ComparisonWorkflowShell title="Document Comparison" step={2} totalSteps={4} progress={50} backSlot={backSlot}>
           <Alert className="bg-red-50 border-red-200">
             <AlertTriangle className="h-4 w-4 text-red-700" />
             <AlertDescription className="text-red-800">
@@ -100,77 +154,45 @@ export default function RecipientEditStep2() {
                 'Unable to load recipient draft.'}
             </AlertDescription>
           </Alert>
-        </div>
+        </ComparisonWorkflowShell>
       </div>
     );
   }
 
   return (
     <div className="min-h-screen bg-slate-50 py-6">
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 space-y-5">
-        <Button variant="ghost" onClick={() => navigate(backTarget)} className="px-0">
-          <ArrowLeft className="w-4 h-4 mr-2" />
-          {sharedToken ? 'Back to Shared Report' : 'Back to Proposals'}
-        </Button>
-
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900">Document Comparison</h1>
-            <p className="text-slate-500 mt-1">{title || 'Recipient Draft'}</p>
-          </div>
-          <Badge className="bg-slate-100 text-slate-700">Draft</Badge>
-        </div>
-
-        <div>
-          <div className="flex items-center justify-between text-sm mb-2">
-            <span className="font-semibold text-blue-600">Step 2 of 4</span>
-            <span className="text-slate-500">50% complete</span>
-          </div>
-          <Progress value={50} className="h-2" />
-        </div>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Step 2: Content Input</CardTitle>
-            <CardDescription>Document A is read-only. Update Document B and save your draft.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-1">
-              <Label>{comparison.party_a_label}</Label>
-              <div className="p-3 rounded-lg border border-slate-200 bg-slate-50 whitespace-pre-wrap text-sm text-slate-700 max-h-64 overflow-auto">
-                {comparison.doc_a_text || 'No text available.'}
-              </div>
-            </div>
-            <div className="space-y-1">
-              <Label>{comparison.party_b_label}</Label>
-              <Textarea rows={12} value={docBText} onChange={(event) => setDocBText(event.target.value)} />
-            </div>
-            {saveMutation.error ? (
-              <Alert className="bg-red-50 border-red-200">
-                <AlertTriangle className="h-4 w-4 text-red-700" />
-                <AlertDescription className="text-red-800">{saveMutation.error.message}</AlertDescription>
-              </Alert>
-            ) : null}
-          </CardContent>
-        </Card>
-
-        <div className="flex justify-end gap-3">
-          <Button variant="outline" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
-            <Save className="w-4 h-4 mr-2" />
-            {saveMutation.isPending ? 'Saving...' : 'Save Draft'}
-          </Button>
-          <Button
-            onClick={async () => {
+      <ComparisonWorkflowShell
+        title="Document Comparison"
+        subtitle={title || 'Recipient Draft'}
+        step={2}
+        totalSteps={4}
+        progress={50}
+        backSlot={backSlot}
+        saveStatusLabel={saveMutation.isPending ? 'Saving\u2026' : saveMutation.isSuccess ? 'Saved' : undefined}
+      >
+        <DocumentComparisonEditorErrorBoundary
+          onRetry={() => {}}
+          onBackToStep1={() => navigate(backTarget)}
+        >
+          <Step2EditSources
+            documents={documents}
+            activeDocId={activeDocId}
+            onSelectDoc={setActiveDocId}
+            onDocumentContentChange={handleDocumentContentChange}
+            readOnlyDocIds={['doc-a']}
+            limits={{ perDocumentCharacterLimit: 300000, warningCharacterThreshold: 255000 }}
+            saveDraftPending={saveMutation.isPending}
+            exceedsAnySizeLimit={false}
+            onSaveDraft={() => saveMutation.mutate()}
+            onBack={() => navigate(backTarget)}
+            onContinue={async () => {
               await saveMutation.mutateAsync();
               navigate(step3Url);
             }}
-            disabled={saveMutation.isPending}
-          >
-            Continue to Highlighting
-            <ArrowRight className="w-4 h-4 ml-2" />
-          </Button>
-        </div>
-      </div>
+            continueLabel="Continue to Highlighting"
+          />
+        </DocumentComparisonEditorErrorBoundary>
+      </ComparisonWorkflowShell>
     </div>
   );
 }

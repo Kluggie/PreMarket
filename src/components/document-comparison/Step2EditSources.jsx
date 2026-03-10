@@ -158,6 +158,9 @@ function DocumentSidebar({ documents, activeDocId, onSelectDoc }) {
  *   totalNearLimit          boolean
  *   activeDocNearLimit      boolean
  *   activeDocOverLimit      boolean
+ *
+ *   // Recipient role — optional
+ *   readOnlyDocIds          string[]  - doc IDs that should be non-editable (e.g. read-only for recipient)
  */
 export default function Step2EditSources({
   documents = [],
@@ -185,9 +188,15 @@ export default function Step2EditSources({
   replaceSelectionRequest = null,
   onReplaceSelectionApplied,
   onSelectionChange,
+  // Recipient mode: list of doc IDs that should be non-editable
+  readOnlyDocIds = [],
+  // Label / disabled override for the Continue button
+  continueLabel,
+  continueDisabled,
 }) {
   const activeDoc = documents.find((d) => d.id === activeDocId) || null;
   const isFullscreen = Boolean(fullscreenDocId && fullscreenDocId === activeDocId);
+  const isActiveDocReadOnly = activeDocId ? readOnlyDocIds.includes(activeDocId) : false;
   const totalOverLimit = exceedsAnySizeLimit;
   const limitTextClass = activeDocOverLimit
     ? 'text-red-700'
@@ -296,7 +305,8 @@ export default function Step2EditSources({
                   onReplaceSelectionApplied={onReplaceSelectionApplied}
                   onSelectionChange={onSelectionChange}
                   data-testid="active-doc-editor"
-                  onChange={({ html, text, json }) => {
+                  readOnly={isActiveDocReadOnly}
+                  onChange={isActiveDocReadOnly ? undefined : ({ html, text, json }) => {
                     if (activeDocId) {
                       onDocumentContentChange(activeDocId, { html, text, json });
                     }
@@ -342,7 +352,7 @@ export default function Step2EditSources({
             <Button
               type="button"
               onClick={onContinue}
-              disabled={saveDraftPending || exceedsAnySizeLimit}
+              disabled={saveDraftPending || exceedsAnySizeLimit || continueDisabled}
               className="bg-blue-600 hover:bg-blue-700"
               data-testid="step2-continue-button"
             >
@@ -353,7 +363,7 @@ export default function Step2EditSources({
                 </>
               ) : (
                 <>
-                  Review Package
+                  {continueLabel || 'Review Package'}
                   <ArrowRight className="w-4 h-4 ml-2" />
                 </>
               )}

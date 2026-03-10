@@ -6,12 +6,11 @@ import { proposalsClient } from '@/api/proposalsClient';
 import { documentComparisonsClient } from '@/api/documentComparisonsClient';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Progress } from '@/components/ui/progress';
-import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ArrowLeft, Save, Loader2, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import ComparisonWorkflowShell from '@/components/document-comparison/ComparisonWorkflowShell';
 
 function useSharedToken() {
   const location = useLocation();
@@ -106,23 +105,53 @@ export default function RecipientEditStep3() {
 
   if (proposalQuery.isLoading || comparisonQuery.isLoading) {
     return (
-      <div className="min-h-screen bg-slate-50 py-8">
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div className="min-h-screen bg-slate-50 py-6">
+        <ComparisonWorkflowShell
+          title="Highlight Confidential Content"
+          step={3}
+          totalSteps={4}
+          progress={75}
+          backSlot={
+            <button
+              type="button"
+              onClick={() => navigate(backTarget)}
+              className="inline-flex items-center text-slate-600 hover:text-slate-900"
+            >
+              <ArrowLeft className="w-4 h-4 mr-2" />
+              Back to Step 2
+            </button>
+          }
+        >
           <Card>
             <CardContent className="py-16 text-center">
               <Loader2 className="w-8 h-8 text-blue-600 mx-auto mb-4 animate-spin" />
               <p className="text-slate-700">Loading recipient highlighting draft...</p>
             </CardContent>
           </Card>
-        </div>
+        </ComparisonWorkflowShell>
       </div>
     );
   }
 
   if (proposalQuery.error || comparisonQuery.error || !proposalQuery.data || !comparison) {
     return (
-      <div className="min-h-screen bg-slate-50 py-8">
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div className="min-h-screen bg-slate-50 py-6">
+        <ComparisonWorkflowShell
+          title="Highlight Confidential Content"
+          step={3}
+          totalSteps={4}
+          progress={75}
+          backSlot={
+            <button
+              type="button"
+              onClick={() => navigate(backTarget)}
+              className="inline-flex items-center text-slate-600 hover:text-slate-900"
+            >
+              <ArrowLeft className="w-4 h-4 mr-2" />
+              Back to Step 2
+            </button>
+          }
+        >
           <Alert className="bg-red-50 border-red-200">
             <AlertTriangle className="h-4 w-4 text-red-700" />
             <AlertDescription className="text-red-800">
@@ -131,34 +160,31 @@ export default function RecipientEditStep3() {
                 'Unable to load highlighting draft.'}
             </AlertDescription>
           </Alert>
-        </div>
+        </ComparisonWorkflowShell>
       </div>
     );
   }
 
   return (
     <div className="min-h-screen bg-slate-50 py-6">
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 space-y-5">
-        <Button variant="ghost" onClick={() => navigate(backTarget)} className="px-0">
-          <ArrowLeft className="w-4 h-4 mr-2" />
-          Back to Step 2
-        </Button>
-
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900">Highlight Confidential Content</h1>
-            <p className="text-slate-500 mt-1">{comparison.title}</p>
-          </div>
-          <Badge className="bg-slate-100 text-slate-700">Step 3 of 4</Badge>
-        </div>
-
-        <div>
-          <div className="flex items-center justify-between text-sm mb-2">
-            <span className="font-semibold text-blue-600">Step 3 of 4</span>
-            <span className="text-slate-500">75% complete</span>
-          </div>
-          <Progress value={75} className="h-2" />
-        </div>
+      <ComparisonWorkflowShell
+        title="Highlight Confidential Content"
+        subtitle={comparison.title || ''}
+        step={3}
+        totalSteps={4}
+        progress={75}
+        backSlot={
+          <button
+            type="button"
+            onClick={() => navigate(backTarget)}
+            className="inline-flex items-center text-slate-600 hover:text-slate-900"
+          >
+            <ArrowLeft className="w-4 h-4 mr-2" />
+            Back to Step 2
+          </button>
+        }
+        saveStatusLabel={saveMutation.isPending ? 'Saving…' : saveMutation.isSuccess ? 'Saved' : undefined}
+      >
 
         <Card>
           <CardHeader>
@@ -243,7 +269,7 @@ export default function RecipientEditStep3() {
             Finish
           </Button>
         </div>
-      </div>
+      </ComparisonWorkflowShell>
     </div>
   );
 }

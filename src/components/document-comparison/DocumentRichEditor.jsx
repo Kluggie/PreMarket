@@ -179,6 +179,8 @@ export default function DocumentRichEditor({
   jumpToTextRequest = null,
   'data-testid': testId = null,
   editorRef = null,
+  /** When true the editor is non-editable (toolbar hidden, typing blocked). */
+  readOnly = false,
 }) {
   const onSelectionTextChangeRef = useRef(onSelectionTextChange);
   const onSelectionChangeRef = useRef(onSelectionChange);
@@ -279,6 +281,12 @@ export default function DocumentRichEditor({
       editorRef.current = editor;
     }
   }, [editor, editorRef]);
+
+  // Sync TipTap editable flag with the readOnly prop
+  useEffect(() => {
+    if (!editor) return;
+    editor.setEditable(!readOnly);
+  }, [editor, readOnly]);
 
   useEffect(() => {
     onSelectionTextChangeRef.current = onSelectionTextChange;
@@ -543,7 +551,14 @@ export default function DocumentRichEditor({
     <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
       <div className="border-b border-slate-200 bg-slate-50 px-3 py-2 space-y-2">
         <div className="flex items-center justify-between gap-2 flex-wrap">
-          <div className="text-sm font-semibold text-slate-700">{label}</div>
+          <div className="flex items-center gap-2">
+            <div className="text-sm font-semibold text-slate-700">{label}</div>
+            {readOnly && (
+              <span className="inline-flex items-center rounded-full border border-slate-300 bg-slate-100 px-2 py-0.5 text-xs text-slate-500">
+                Read only
+              </span>
+            )}
+          </div>
           <div className="flex items-center gap-2">
             {maxCharacters ? (
               <span className="text-xs text-slate-500">
@@ -557,6 +572,7 @@ export default function DocumentRichEditor({
           </div>
         </div>
 
+        {!readOnly && (
         <div className="flex flex-wrap gap-2 items-center">
           <ToolbarButton
             title="Bold"
@@ -836,6 +852,7 @@ export default function DocumentRichEditor({
             <Redo2 className="w-4 h-4" />
           </ToolbarButton>
         </div>
+        )}
       </div>
 
       <div className={`bg-white overflow-y-auto ${scrollContainerClassName}`} data-testid="doc-rich-editor-scroll">

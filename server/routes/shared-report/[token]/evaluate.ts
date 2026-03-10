@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { ok } from '../../../_lib/api-response.js';
 import { requireUser } from '../../../_lib/auth.js';
 import { schema } from '../../../_lib/db/client.js';
@@ -21,6 +21,7 @@ import { assertDocumentComparisonWithinLimits } from '../../document-comparisons
 import {
   DRAFT_STATUS,
   RECIPIENT_ROLE,
+  SENT_STATUS,
   SHARED_REPORT_ROUTE,
   assertPayloadSize,
   buildDefaultConfidentialPayload,
@@ -205,6 +206,120 @@ function buildConfidentialBundle(params: {
   return parts.join('\n\n').trim();
 }
 
+// ── Exchange history helpers ────────────────────────────────────────────────
+
+/**
+ * Maximum characters to include from each prior round's shared text snapshot
+ * when building the exchange-history preamble. Keeps total input within the
+ * V2 engine's 12 000-char shared budget without crowding out the current round.
+ */
+const HISTORY_SNAPSHOT_MAX_CHARS = 2000;
+
+/**
+ * Maximum number of previous rounds to include in the exchange-history
+ * preamble. Older rounds are omitted to stay within input limits.
+ */
+const MAX_HISTORY_ROUNDS = 4;
+
+interface ExchangeHistoryRound {
+  round: number;
+  evaluationRunId: string;
+  sharedTextSnapshot: string;
+  sharedTextLength: number;
+  confidentialLength: number;
+  createdAt: Date | string;
+}
+
+/**
+ * Queries previous successful evaluation runs for this shared link and
+ * extracts their shared-text snapshots from `resultJson.shared_snapshot.text`.
+ * Returns rounds ordered oldest-first, limited to MAX_HISTORY_ROUNDS most
+ * recent rounds.
+ */
+async function getExchangeHistory(
+  db: any,
+  linkId: string,
+): Promise<ExchangeHistoryRound[]> {
+  const runs = await db
+    .select({
+      id: schema.sharedReportEvaluationRuns.id,
+      resultJson: schema.sharedReportEvaluationRuns.resultJson,
+      createdAt: schema.sharedReportEvaluationRuns.createdAt,
+    })
+    .from(schema.sharedReportEvaluationRuns)
+    .where(
+      and(
+        eq(schema.sharedReportEvaluationRuns.sharedLinkId, linkId),
+        eq(schema.sharedReportEvaluationRuns.actorRole, RECIPIENT_ROLE),
+        eq(schema.sharedReportEvaluationRuns.status, 'success'),
+      ),
+    )
+    .orderBy(desc(schema.sharedReportEvaluationRuns.createdAt))
+    .limit(MAX_HISTORY_ROUNDS + 1); // +1 to trim last after reversing
+
+  // Reverse to oldest-first and drop the oldest if over MAX_HISTORY_ROUNDS
+  const ordered = runs.reverse();
+  const trimmed = ordered.length > MAX_HISTORY_ROUNDS
+    ? ordered.slice(ordered.length - MAX_HISTORY_ROUNDS)
+    : ordered;
+
+  return trimmed.map((run: any, index: number) => {
+    const json = toObject(run.resultJson);
+    const snapshot = toObject(json?.shared_snapshot);
+    const inputTrace = toObject(json?.input_trace);
+    return {
+      round: index + 1,
+      evaluationRunId: run.id,
+      sharedTextSnapshot: asText(snapshot?.text),
+      sharedTextLength: Number(inputTrace?.shared_length || 0) || 0,
+      confidentialLength: Number(inputTrace?.confidential_length || 0) || 0,
+      createdAt: run.createdAt,
+    };
+  });
+}
+
+/**
+ * Builds the evaluation shared text with exchange history prepended.
+ *
+ * When there are previous evaluation rounds, a preamble is added before the
+ * current shared text so the AI model can see how shared information has
+ * evolved across rounds. Each prior round's shared text is truncated to
+ * HISTORY_SNAPSHOT_MAX_CHARS to stay within input budgets.
+ *
+ * If the recipient moved text from confidential to shared in a later round,
+ * that text naturally appears in the shared section and the AI treats it as
+ * shared — satisfying the "if confidential info is later revealed, treat as
+ * shared" requirement.
+ */
+function buildHistoryAwareSharedText(
+  currentSharedText: string,
+  history: ExchangeHistoryRound[],
+): string {
+  if (history.length === 0) {
+    return currentSharedText;
+  }
+
+  const historyParts = history.map((round) => {
+    const snapshot = round.sharedTextSnapshot;
+    const truncated = snapshot.length > HISTORY_SNAPSHOT_MAX_CHARS
+      ? snapshot.slice(0, HISTORY_SNAPSHOT_MAX_CHARS) + '…'
+      : snapshot;
+    return `[Exchange Round ${round.round} — Previously Shared Information]\n${truncated}`;
+  });
+
+  const currentRound = history.length + 1;
+  return [
+    `=== EXCHANGE HISTORY ===`,
+    `This shared report is in evaluation round ${currentRound}.`,
+    `${history.length} previous round(s) of shared information are included below for context.`,
+    ``,
+    historyParts.join('\n\n---\n\n'),
+    ``,
+    `=== CURRENT ROUND (Round ${currentRound}) — CURRENT SHARED INFORMATION ===`,
+    currentSharedText,
+  ].join('\n');
+}
+
 function toApiError(error: any) {
   if (error instanceof ApiError) {
     return error;
@@ -296,6 +411,10 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       recipientConfidentialText,
     });
 
+    // ── Exchange history: include previous rounds' shared text ──────────────
+    const exchangeHistory = await getExchangeHistory(resolved.db, resolved.link.id);
+    const evaluationSharedText = buildHistoryAwareSharedText(sharedText, exchangeHistory);
+
     if (sharedText.length < MIN_SHARED_EVALUATION_TEXT_LENGTH) {
       throw new ApiError(
         400,
@@ -335,7 +454,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         let v2Result: any;
         try {
           v2Result = await evaluateWithVertexV2({
-            sharedText,
+            sharedText: evaluationSharedText,
             confidentialText: confidentialBundle,
             requestId: context?.requestId || undefined,
             generationModel: asText(process.env.VERTEX_DOC_COMPARE_GENERATION_MODEL) || undefined,
@@ -419,7 +538,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
           {
             title: asText(resolved.comparison?.title) || asText(resolved.proposal.title) || 'Shared Report',
             docAText: confidentialBundle,
-            docBText: sharedText,
+            docBText: evaluationSharedText,
             docASpans: [],
             docBSpans: [],
             partyALabel: CONFIDENTIAL_LABEL,
@@ -452,10 +571,20 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
             evaluation_result: projection.evaluation_result || {},
             input_trace: {
               shared_length: sharedText.length,
+              evaluation_shared_length: evaluationSharedText.length,
               confidential_length: confidentialBundle.length,
               proposer_confidential_length: proposerConfidentialText.length,
               recipient_confidential_length: recipientConfidentialText.length,
+              exchange_round: exchangeHistory.length + 1,
+              previous_rounds: exchangeHistory.length,
             },
+            exchange_history: exchangeHistory.map((round) => ({
+              round: round.round,
+              evaluation_run_id: round.evaluationRunId,
+              shared_text_length: round.sharedTextLength,
+              confidential_length: round.confidentialLength,
+              created_at: round.createdAt,
+            })),
             shared_snapshot: {
               text: sharedText,
               html: sharedHtml,

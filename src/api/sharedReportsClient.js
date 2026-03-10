@@ -194,6 +194,20 @@ export const sharedReportsClient = {
     };
   },
 
+  async companyBriefRecipient(token, input = {}) {
+    const response = await request(`/api/shared-report/${encodeToken(token)}/company-brief`, {
+      method: 'POST',
+      body: JSON.stringify(input || {}),
+    });
+    return {
+      comparisonId: response.comparison_id || null,
+      provider: typeof response.provider === 'string' ? response.provider : 'vertex',
+      model: typeof response.model === 'string' ? response.model : 'unknown',
+      companyBrief: response.company_brief || null,
+      generatedAt: response.generated_at || null,
+    };
+  },
+
   async sendBackRecipient(token) {
     const response = await request(`/api/shared-report/${encodeToken(token)}/send-back`, {
       method: 'POST',

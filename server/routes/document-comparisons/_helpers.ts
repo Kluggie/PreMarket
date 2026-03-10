@@ -567,6 +567,169 @@ function buildFallbackRecipientReport(params: {
   };
 }
 
+function buildFallbackRecipientV2Report(params: {
+  title: string;
+  generatedAt: string;
+  score: number;
+  confidence: number;
+  recommendation: 'High' | 'Medium' | 'Low';
+}) {
+  const fitLevel = params.recommendation.toLowerCase() as 'high' | 'medium' | 'low';
+  const normalizedConfidence = clampConfidence(params.confidence, 0.35);
+  const why = [
+    'Decision Snapshot: Recipient-safe evaluation generated from Shared Information only. Some content was excluded for confidentiality.',
+    'Key Strengths: Shared Information provides the basis for this recipient-safe fit summary.',
+    'Key Risks: Some risk details are excluded from the recipient-facing report due to confidentiality.',
+    'Decision Readiness: Review Shared Information and request clarification for unresolved areas.',
+    'Recommendations: Review Shared Information details and request clarification where needed.',
+  ];
+  const missing = [
+    'Review Shared Information details and request clarification where needed.',
+  ];
+  return {
+    report_format: 'v2' as const,
+    fit_level: fitLevel,
+    confidence_0_1: normalizedConfidence,
+    why,
+    missing,
+    redactions: [] as string[],
+    generated_at_iso: params.generatedAt,
+    summary: {
+      fit_level: fitLevel,
+      top_fit_reasons: [
+        { text: 'Shared Information provides the basis for this recipient-safe fit summary.' },
+      ],
+      top_blockers: [] as { text: string }[],
+      next_actions: ['Review Shared Information details and request clarification where needed.'],
+    },
+    sections: [
+      { key: 'why', heading: 'Why', bullets: why },
+      { key: 'missing', heading: 'Missing', bullets: missing },
+      { key: 'redactions', heading: 'Redactions', bullets: [] as string[] },
+    ],
+    recommendation: params.recommendation,
+  };
+}
+
+function buildV2RecipientProjection(params: {
+  evaluation: Record<string, any>;
+  sourceReport: Record<string, any>;
+  markers: string[];
+  generatedAt: string;
+  score: number;
+  confidence: number;
+  recommendation: 'High' | 'Medium' | 'Low';
+  topFitReasons: any[];
+  topBlockers: any[];
+  nextActions: string[];
+  title: string;
+}) {
+  const {
+    evaluation,
+    sourceReport,
+    markers,
+    generatedAt,
+    score,
+    confidence,
+    recommendation,
+    topFitReasons,
+    topBlockers,
+    nextActions,
+    title,
+  } = params;
+
+  const why = scrubStringArray(sourceReport.why, markers);
+  const missing = scrubStringArray(sourceReport.missing, markers);
+  const redactions = scrubStringArray(sourceReport.redactions, markers);
+  const fitLevel = scrubString(
+    sourceReport.fit_level,
+    markers,
+    recommendation.toLowerCase(),
+  );
+
+  const safeReport = {
+    report_format: 'v2' as const,
+    fit_level: fitLevel,
+    confidence_0_1: clampConfidence(sourceReport.confidence_0_1, confidence / 100),
+    why,
+    missing,
+    redactions,
+    generated_at_iso: generatedAt,
+    summary: {
+      fit_level: fitLevel,
+      top_fit_reasons:
+        topFitReasons.length > 0
+          ? topFitReasons
+          : why.map((text: string) => ({ text })),
+      top_blockers:
+        topBlockers.length > 0
+          ? topBlockers
+          : missing.map((text: string) => ({ text })),
+      next_actions:
+        nextActions.length > 0
+          ? nextActions
+          : missing.length > 0
+            ? ['Resolve missing items and re-run evaluation.']
+            : [],
+    },
+    sections: [
+      { key: 'why', heading: 'Why', bullets: why },
+      { key: 'missing', heading: 'Missing', bullets: missing },
+      { key: 'redactions', heading: 'Redactions', bullets: redactions },
+    ],
+    recommendation,
+  } as Record<string, any>;
+
+  const projectedReport = redactConfidentialStrings(safeReport, markers);
+  const projectionHasLeak = hasLeakAfterProjection(projectedReport, markers);
+  const fallbackReport = buildFallbackRecipientV2Report({
+    title,
+    generatedAt,
+    score,
+    confidence: confidence / 100,
+    recommendation,
+  });
+  const finalReport = projectionHasLeak ? fallbackReport : projectedReport;
+  const summary =
+    scrubString(
+      evaluation.summary || (Array.isArray(finalReport.why) && finalReport.why[0]) || '',
+      markers,
+      '',
+    ) || 'Recipient-safe evaluation generated from Shared Information only.';
+
+  const recipientEvaluation = {
+    provider: scrubString(evaluation.provider, markers, 'projection'),
+    model: scrubString(evaluation.model, markers, 'recipient-safe'),
+    generatedAt,
+    score,
+    confidence,
+    recommendation,
+    summary,
+    report: finalReport,
+  };
+
+  if (hasLeakAfterProjection(recipientEvaluation, markers)) {
+    return {
+      evaluation_result: {
+        provider: 'projection',
+        model: 'recipient-safe',
+        generatedAt,
+        score,
+        confidence,
+        recommendation,
+        summary: 'Recipient-safe evaluation generated from Shared Information only.',
+        report: fallbackReport,
+      },
+      public_report: fallbackReport,
+    };
+  }
+
+  return {
+    evaluation_result: recipientEvaluation,
+    public_report: finalReport,
+  };
+}
+
 export function buildRecipientSafeEvaluationProjection(params: {
   evaluationResult: unknown;
   publicReport?: unknown;
@@ -595,6 +758,24 @@ export function buildRecipientSafeEvaluationProjection(params: {
   const topFitReasons = sanitizeEvidenceEntryArray(sourceReport.summary?.top_fit_reasons, markers);
   const topBlockers = sanitizeEvidenceEntryArray(sourceReport.summary?.top_blockers, markers);
   const nextActions = scrubStringArray(sourceReport.summary?.next_actions, markers);
+
+  // V2-format source report: preserve why/missing/redactions structure so the
+  // renderer's hasV2Report() check succeeds and headings display correctly.
+  if (sourceReport.report_format === 'v2' || (Array.isArray(sourceReport.why) && sourceReport.why.length > 0)) {
+    return buildV2RecipientProjection({
+      evaluation,
+      sourceReport,
+      markers,
+      generatedAt,
+      score,
+      confidence,
+      recommendation,
+      topFitReasons,
+      topBlockers,
+      nextActions,
+      title: scrubString(params?.title, markers, 'Document Comparison'),
+    });
+  }
 
   const safeReport = {
     template_id: scrubString(sourceReport.template_id, markers, 'document_comparison_template'),

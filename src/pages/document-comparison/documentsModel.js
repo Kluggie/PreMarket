@@ -17,6 +17,12 @@ export const VISIBILITY_CONFIDENTIAL = 'confidential';
 export const VISIBILITY_SHARED = 'shared';
 
 // ─────────────────────────────────────────────
+//  Owner constants
+// ─────────────────────────────────────────────
+export const OWNER_PROPOSER = 'proposer';
+export const OWNER_RECIPIENT = 'recipient';
+
+// ─────────────────────────────────────────────
 //  Helpers
 // ─────────────────────────────────────────────
 function generateId() {
@@ -85,6 +91,7 @@ export function createDocument(overrides = {}) {
     id: generateId(),
     title: 'Untitled Document',
     visibility: VISIBILITY_UNCLASSIFIED,
+    owner: OWNER_RECIPIENT,
     source: 'typed',
     text: '',
     html: '<p></p>',
@@ -293,5 +300,60 @@ export function buildDocumentsStateHash(documents) {
       html: d.html || '',
       files: Array.isArray(d.files) ? d.files : [],
     })),
+  );
+}
+
+// ─────────────────────────────────────────────
+//  Recipient draft serialization
+// ─────────────────────────────────────────────
+
+/**
+ * Serialize recipient-owned documents for persistence in editor_state.documents.
+ * Strips transient UI fields (_pendingFile, etc.) and normalises import status.
+ *
+ * @param {SourceDocument[]} documents
+ * @returns {object[]}
+ */
+export function serializeDocumentsForDraft(documents) {
+  return (documents || [])
+    .filter((d) => d.owner === OWNER_RECIPIENT)
+    .map((d) => ({
+      id: d.id,
+      title: d.title || 'Untitled Document',
+      visibility: d.visibility || VISIBILITY_UNCLASSIFIED,
+      owner: OWNER_RECIPIENT,
+      source: d.source || 'typed',
+      text: d.text || '',
+      html: d.html || '<p></p>',
+      json: d.json || null,
+      files: Array.isArray(d.files) ? d.files : [],
+      importStatus: d.importStatus === 'importing' ? 'idle' : (d.importStatus || 'idle'),
+      importError: '',
+    }));
+}
+
+/**
+ * Deserialize documents stored in editor_state.documents back into
+ * SourceDocument objects.
+ *
+ * @param {object[]} serialized
+ * @returns {SourceDocument[]}
+ */
+export function deserializeDocumentsFromDraft(serialized) {
+  if (!Array.isArray(serialized)) return [];
+  return serialized.map((d) =>
+    createDocument({
+      id: d.id,
+      title: d.title || 'Untitled Document',
+      visibility: d.visibility || VISIBILITY_UNCLASSIFIED,
+      owner: OWNER_RECIPIENT,
+      source: d.source || 'typed',
+      text: d.text || '',
+      html: d.html || '<p></p>',
+      json: d.json || null,
+      files: Array.isArray(d.files) ? d.files : [],
+      importStatus: d.importStatus || 'idle',
+      importError: '',
+    }),
   );
 }

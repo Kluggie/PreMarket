@@ -94,7 +94,7 @@ function importStatusBadge(doc) {
 // ─────────────────────────────────────────────
 //  Individual document row
 // ─────────────────────────────────────────────
-function DocumentRow({ doc, onRemove, onRename, onSetVisibility, onImportFile }) {
+function DocumentRow({ doc, onRemove, onRename, onSetVisibility, onImportFile, locked = false, readOnly = false }) {
   const fileRef = useRef(null);
   const isImporting = doc.importStatus === 'importing';
 
@@ -116,30 +116,36 @@ function DocumentRow({ doc, onRemove, onRename, onSetVisibility, onImportFile })
             doc.visibility === VISIBILITY_SHARED ? 'text-emerald-500' :
             'text-slate-400'
           }`} />
-          <Input
-            className="h-7 text-sm font-medium border-transparent shadow-none bg-transparent hover:border-slate-200 focus:border-slate-300 px-1 focus-visible:ring-0 focus-visible:ring-offset-0"
-            value={doc.title}
-            onChange={(e) => onRename(doc.id, e.target.value)}
-            onBlur={(e) => {
-              if (!e.target.value.trim()) {
-                onRename(doc.id, 'Untitled Document');
-              }
-            }}
-            aria-label="Document title"
-          />
+          {locked ? (
+            <span className="h-7 text-sm font-medium px-1 flex items-center">{doc.title || 'Untitled Document'}</span>
+          ) : (
+            <Input
+              className="h-7 text-sm font-medium border-transparent shadow-none bg-transparent hover:border-slate-200 focus:border-slate-300 px-1 focus-visible:ring-0 focus-visible:ring-offset-0"
+              value={doc.title}
+              onChange={(e) => onRename(doc.id, e.target.value)}
+              onBlur={(e) => {
+                if (!e.target.value.trim()) {
+                  onRename(doc.id, 'Untitled Document');
+                }
+              }}
+              aria-label="Document title"
+            />
+          )}
           <div className="ml-1 flex-shrink-0">
             {importStatusBadge(doc)}
           </div>
         </div>
-        <button
-          type="button"
-          className="text-slate-400 hover:text-red-600 transition-colors flex-shrink-0 mt-0.5"
-          onClick={() => onRemove(doc.id)}
-          aria-label="Remove document"
-          title="Remove document"
-        >
-          <Trash2 className="w-4 h-4" />
-        </button>
+        {!locked && (
+          <button
+            type="button"
+            className="text-slate-400 hover:text-red-600 transition-colors flex-shrink-0 mt-0.5"
+            onClick={() => onRemove(doc.id)}
+            aria-label="Remove document"
+            title="Remove document"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        )}
       </div>
 
       {/* Row: import file (only for non-typed, or all to allow re-import) */}
@@ -169,7 +175,7 @@ function DocumentRow({ doc, onRemove, onRename, onSetVisibility, onImportFile })
             type="button"
             variant="outline"
             size="sm"
-            disabled={isImporting}
+            disabled={isImporting || readOnly}
             onClick={() => fileRef.current?.click()}
             className="h-7 text-xs"
           >
@@ -180,6 +186,9 @@ function DocumentRow({ doc, onRemove, onRename, onSetVisibility, onImportFile })
             )}
             {isImporting ? 'Importing…' : 'Re-import'}
           </Button>
+          {readOnly && (
+            <span className="text-xs text-amber-700">Read-only</span>
+          )}
         </div>
       )}
 
@@ -189,6 +198,25 @@ function DocumentRow({ doc, onRemove, onRename, onSetVisibility, onImportFile })
       )}
 
       {/* Row: visibility selector */}
+      {locked ? (
+        <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+          <span className="text-xs font-semibold text-slate-600 w-24 flex-shrink-0">
+            Visibility:
+          </span>
+          <Badge
+            variant="outline"
+            className={doc.visibility === VISIBILITY_CONFIDENTIAL
+              ? 'text-rose-700 border-rose-300 bg-rose-50'
+              : 'text-emerald-700 border-emerald-300 bg-emerald-50'}
+          >
+            {doc.visibility === VISIBILITY_CONFIDENTIAL ? (
+              <><Lock className="w-2.5 h-2.5 mr-1" /> Confidential</>
+            ) : (
+              <><Users className="w-2.5 h-2.5 mr-1" /> Shared</>
+            )}
+          </Badge>
+        </div>
+      ) : (
       <div className="flex flex-col sm:flex-row sm:items-center gap-2">
         <span className="text-xs font-semibold text-slate-600 w-24 flex-shrink-0">
           Visibility:
@@ -204,6 +232,7 @@ function DocumentRow({ doc, onRemove, onRename, onSetVisibility, onImportFile })
           </span>
         )}
       </div>
+      )}
     </div>
   );
 }
@@ -215,19 +244,29 @@ function DocumentRow({ doc, onRemove, onRename, onSetVisibility, onImportFile })
 /**
  * Step1AddSources
  *
- * Props:
+ * Used by BOTH the proposer (DocumentComparisonCreate) and the recipient
+ * (SharedReport step 1).  Role-specific differences are driven by props:
+ *
+ *   showAddActions    boolean     – show Upload Files / Create Typed buttons (default true)
+ *   showDocumentRows  boolean     – show the document list (default true)
+ *   contentSlot       ReactNode   – rendered in place of the document list when
+ *                                   showDocumentRows=false  (recipient import panels)
+ *   showBack          boolean     – show a Back button in the footer (default false)
+ *   onBack            fn          – callback for Back button
+ *
+ * Core proposer props (all still supported):
  *   title           string
  *   onTitleChange   (value: string) => void
  *   documents       SourceDocument[]
- *   onAddFiles      (files: FileList) => void    — triggers import automatically
+ *   onAddFiles      (files: FileList) => void
  *   onAddTyped      () => void
  *   onRemoveDoc     (id: string) => void
  *   onRenameDoc     (id: string, title: string) => void
  *   onSetVisibility (id: string, visibility: string) => void
- *   onImportFile    (id: string, file: File) => void   — re-import for existing doc
+ *   onImportFile    (id: string, file: File) => void
  *   saveDraftPending  boolean
  *   onSaveDraft     () => void
- *   onContinue      () => void    — only enabled when all docs classified
+ *   onContinue      () => void
  */
 export default function Step1AddSources({
   title = '',
@@ -242,6 +281,14 @@ export default function Step1AddSources({
   saveDraftPending = false,
   onSaveDraft,
   onContinue,
+  // ── Recipient-mode / slot props ─────────────────────────
+  showAddActions = true,
+  showDocumentRows = true,
+  contentSlot = null,
+  showBack = false,
+  onBack,
+  lockedDocIds = [],
+  readOnlyDocIds = [],
 }) {
   const uploadRef = useRef(null);
   const counts = getDocumentCounts(documents);
@@ -278,41 +325,43 @@ export default function Step1AddSources({
             )}
           </div>
 
-          {/* Action bar */}
-          <div className="flex flex-wrap items-center gap-2">
-            <input
-              ref={uploadRef}
-              type="file"
-              accept=".docx,.pdf"
-              multiple
-              className="hidden"
-              onChange={(e) => {
-                if (e.target.files && e.target.files.length > 0) {
-                  onAddFiles(e.target.files);
-                }
-                e.target.value = '';
-              }}
-            />
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => uploadRef.current?.click()}
-            >
-              <Upload className="w-4 h-4 mr-2" />
-              Upload Files
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={onAddTyped}
-            >
-              <PenLine className="w-4 h-4 mr-2" />
-              Create Typed Document
-            </Button>
-          </div>
+          {/* Action bar — hidden in recipient mode */}
+          {showAddActions && (
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                ref={uploadRef}
+                type="file"
+                accept=".docx,.pdf"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  if (e.target.files && e.target.files.length > 0) {
+                    onAddFiles(e.target.files);
+                  }
+                  e.target.value = '';
+                }}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => uploadRef.current?.click()}
+              >
+                <Upload className="w-4 h-4 mr-2" />
+                Upload Files
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={onAddTyped}
+              >
+                <PenLine className="w-4 h-4 mr-2" />
+                Create Typed Document
+              </Button>
+            </div>
+          )}
 
-          {/* Summary badges */}
-          {documents.length > 0 && (
+          {/* Summary badges — only in proposer mode */}
+          {showDocumentRows && documents.length > 0 && (
             <div className="flex flex-wrap gap-2 text-xs">
               <Badge variant="outline">{counts.total} document{counts.total !== 1 ? 's' : ''}</Badge>
               {counts.confidential > 0 && (
@@ -336,26 +385,32 @@ export default function Step1AddSources({
             </div>
           )}
 
-          {/* Document list */}
-          {documents.length === 0 ? (
-            <div className="rounded-xl border-2 border-dashed border-slate-200 py-12 text-center text-slate-400">
-              <FileText className="w-8 h-8 mx-auto mb-2 opacity-40" />
-              <p className="text-sm">No documents yet.</p>
-              <p className="text-xs mt-1">Upload a file or create a typed document to get started.</p>
-            </div>
+          {/* Document list (proposer) OR contentSlot (recipient) */}
+          {showDocumentRows ? (
+            documents.length === 0 ? (
+              <div className="rounded-xl border-2 border-dashed border-slate-200 py-12 text-center text-slate-400">
+                <FileText className="w-8 h-8 mx-auto mb-2 opacity-40" />
+                <p className="text-sm">No documents yet.</p>
+                <p className="text-xs mt-1">Upload a file or create a typed document to get started.</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {documents.map((doc) => (
+                  <DocumentRow
+                    key={doc.id}
+                    doc={doc}
+                    onRemove={onRemoveDoc}
+                    onRename={onRenameDoc}
+                    onSetVisibility={onSetVisibility}
+                    onImportFile={onImportFile}
+                    locked={lockedDocIds.includes(doc.id)}
+                    readOnly={readOnlyDocIds.includes(doc.id)}
+                  />
+                ))}
+              </div>
+            )
           ) : (
-            <div className="space-y-3">
-              {documents.map((doc) => (
-                <DocumentRow
-                  key={doc.id}
-                  doc={doc}
-                  onRemove={onRemoveDoc}
-                  onRename={onRenameDoc}
-                  onSetVisibility={onSetVisibility}
-                  onImportFile={onImportFile}
-                />
-              ))}
-            </div>
+            contentSlot || null
           )}
 
           {/* Validation notice */}
@@ -386,7 +441,22 @@ export default function Step1AddSources({
       </Card>
 
       {/* Navigation */}
-      <div className="flex justify-end gap-2">
+      <div className="flex items-center justify-between gap-2">
+        {showBack ? (
+          <Button
+            type="button"
+            variant="outline"
+            onClick={onBack}
+            disabled={saveDraftPending}
+            data-testid="step1-back-button"
+          >
+            <ArrowRight className="w-4 h-4 mr-2 rotate-180" />
+            Back
+          </Button>
+        ) : (
+          <span />
+        )}
+        <div className="flex gap-2">
         <Button
           type="button"
           variant="outline"
@@ -421,6 +491,7 @@ export default function Step1AddSources({
             </>
           )}
         </Button>
+        </div>
       </div>
     </div>
   );

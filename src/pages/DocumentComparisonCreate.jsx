@@ -12,7 +12,6 @@ import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Progress } from '@/components/ui/progress';
 import {
   Dialog,
   DialogContent,
@@ -54,6 +53,7 @@ import {
 import Step1AddSources from '@/components/document-comparison/Step1AddSources';
 import Step2EditSources from '@/components/document-comparison/Step2EditSources';
 import Step3ReviewPackage from '@/components/document-comparison/Step3ReviewPackage';
+import ComparisonWorkflowShell from '@/components/document-comparison/ComparisonWorkflowShell';
 import { countWords, getDocumentComparisonTextLimits } from '@/config/aiLimits';
 import { toast } from 'sonner';
 import {
@@ -3471,11 +3471,11 @@ export default function DocumentComparisonCreate() {
           </Card>
         </div>
       ) : null}
-      <div className="max-w-[1400px] mx-auto px-6 md:px-10 xl:px-12">
-        <div className="mb-5">
+      <ComparisonWorkflowShell
+        backSlot={
           <Link
             to={createPageUrl('Proposals')}
-            className="inline-flex items-center text-slate-600 hover:text-slate-900 mb-2"
+            className="inline-flex items-center text-slate-600 hover:text-slate-900"
             onClick={async (event) => {
               if (step >= 2) {
                 event.preventDefault();
@@ -3506,29 +3506,15 @@ export default function DocumentComparisonCreate() {
             <ArrowLeft className="w-4 h-4 mr-2" />
             Back to Proposals
           </Link>
-          <h1 className="text-2xl font-bold text-slate-900">AI Negotiator</h1>
-          <p className="text-slate-500 mt-1">
-            Review your documents, refine your position, and generate negotiation guidance — all in a confidential workflow.
-          </p>
-        </div>
-
-        <div className="mb-5">
-          <div className="flex items-center justify-between text-sm mb-3">
-            <div className="flex items-center gap-3">
-              <span
-                className={`font-semibold text-blue-600`}
-                data-testid="doc-comparison-step-indicator"
-              >
-                Step {step} of {TOTAL_WORKFLOW_STEPS}
-              </span>
-              <span className={`text-xs ${saveStatusClassName}`} data-testid="doc-comparison-save-status">
-                {saveStatusLabel}
-              </span>
-            </div>
-            <span className="text-slate-500">{Math.round(progress)}% complete</span>
-          </div>
-          <Progress value={progress} className="h-3" />
-        </div>
+        }
+        title="AI Negotiator"
+        subtitle="Review your documents, refine your position, and generate negotiation guidance — all in a confidential workflow."
+        step={step}
+        totalSteps={TOTAL_WORKFLOW_STEPS}
+        progress={progress}
+        saveStatusLabel={saveStatusLabel}
+        saveStatusClassName={saveStatusClassName}
+      >
 
         {(draftQuery.isLoading || proposalLookup.isLoading) && (
           <Card>
@@ -3870,7 +3856,7 @@ export default function DocumentComparisonCreate() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
-      </div>
+      </ComparisonWorkflowShell>
     </div>
   );
 }

@@ -133,6 +133,8 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         id: resolved.comparison?.id || resolved.proposal.documentComparisonId || null,
         title: resolved.comparison?.title || resolved.proposal.title || 'Shared Report',
         status: resolved.comparison?.status || resolved.proposal.status || null,
+        company_name: resolved.comparison?.companyName || null,
+        company_website: resolved.comparison?.companyWebsite || null,
         created_at: resolved.comparison?.createdAt || resolved.proposal.createdAt || null,
         updated_at: resolved.comparison?.updatedAt || resolved.proposal.updatedAt || null,
       },

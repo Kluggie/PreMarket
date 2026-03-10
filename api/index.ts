@@ -34,6 +34,7 @@ import sharedReportWorkspaceHandler from '../server/routes/shared-report/[token]
 import sharedReportDraftHandler from '../server/routes/shared-report/[token]/draft.js';
 import sharedReportEvaluateHandler from '../server/routes/shared-report/[token]/evaluate.js';
 import sharedReportCoachHandler from '../server/routes/shared-report/[token]/coach.js';
+import sharedReportCompanyBriefHandler from '../server/routes/shared-report/[token]/company-brief.js';
 import sharedReportSendBackHandler from '../server/routes/shared-report/[token]/send-back.js';
 import sharedReportDownloadPdfHandler from '../server/routes/shared-report/[token]/download-pdf.js';
 import sharedReportDownloadProposalPdfHandler from '../server/routes/shared-report/[token]/download-proposal-pdf.js';
@@ -408,6 +409,12 @@ export default async function handler(req: any, res: any) {
   if (sharedReportCoachMatch && method === 'POST') {
     const token = decodeURIComponent(sharedReportCoachMatch[1]);
     return sharedReportCoachHandler(req, res, token);
+  }
+
+  const sharedReportCompanyBriefMatch = pathname.match(/^\/api\/shared-report\/([^/]+)\/company-brief$/);
+  if (sharedReportCompanyBriefMatch && method === 'POST') {
+    const token = decodeURIComponent(sharedReportCompanyBriefMatch[1]);
+    return sharedReportCompanyBriefHandler(req, res, token);
   }
 
   const sharedReportSendBackMatch = pathname.match(/^\/api\/shared-report\/([^/]+)\/send-back$/);
