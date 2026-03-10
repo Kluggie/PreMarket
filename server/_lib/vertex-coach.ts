@@ -650,7 +650,7 @@ async function callVertexCoach(prompt: string, preferredModel = '') {
   const location = asText(process.env.GCP_LOCATION) || vertex.location;
   const preferred =
     asText(preferredModel) || asText(process.env.VERTEX_COACH_MODEL) || asText(process.env.VERTEX_MODEL) || vertex.model;
-  const modelCandidates = [preferred, 'gemini-2.0-flash-001', 'gemini-1.5-flash-002', 'gemini-1.5-flash-001']
+  const modelCandidates = [preferred, 'gemini-2.5-flash', 'gemini-2.5-flash', 'gemini-2.5-flash']
     .map((value) => asText(value))
     .filter(Boolean)
     .filter((value, index, values) => values.indexOf(value) === index);
