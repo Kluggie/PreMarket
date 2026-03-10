@@ -599,6 +599,19 @@ export default function SharedReport() {
   useEffect(() => {
     if (!workspaceQuery.data) return;
 
+    // Diagnostic: confirm what shared info and report data arrived from the server.
+    // Check browser console (DevTools → Console) to verify values.
+    const bp = baseline?.shared_payload || {};
+    console.log('[SharedReport] comparisonId', workspaceQuery.data?.comparison?.id);
+    console.log('[SharedReport] docBText length', String(bp?.text || '').length);
+    console.log('[SharedReport] baseline.shared_payload keys', Object.keys(bp));
+    const br = baseline?.ai_report || workspaceQuery.data?.baselineAiReport || comparison?.public_report || {};
+    console.log('[SharedReport] report sections', Object.keys(br));
+  }, [workspaceQuery.data]);
+
+  useEffect(() => {
+    if (!workspaceQuery.data) return;
+
     setTitle(asText(comparison?.title) || asText(parent?.title) || 'Shared Report');
 
     setDocAText(recipientConfidentialDocument.text);

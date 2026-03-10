@@ -57,6 +57,25 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     const currentDraft = await getCurrentRecipientDraft(resolved.db, resolved.link.id);
     const latestEvaluation = await getLatestRecipientEvaluationRun(resolved.db, resolved.link.id);
     const latestSentRevision = await getLatestRecipientSentRevision(resolved.db, resolved.link.id);
+
+    if (process.env.NODE_ENV !== 'production') {
+      console.info(
+        JSON.stringify({
+          level: 'info',
+          route: 'shared-report/[token]',
+          event: 'workspace_build_start',
+          comparisonId: resolved.comparison?.id || null,
+          docBTextLength: String(resolved.comparison?.docBText || '').length,
+          docBTextPreview: String(resolved.comparison?.docBText || '').slice(0, 80) || '(empty)',
+          publicReportKeys: resolved.comparison?.publicReport
+            ? Object.keys(resolved.comparison.publicReport)
+            : [],
+          proposalId: resolved.proposal?.id || null,
+          reportMetadata: resolved.link?.reportMetadata || {},
+        }),
+      );
+    }
+
     const baselineSharedPayload = buildDefaultSharedPayload({
       proposal: resolved.proposal,
       comparison: resolved.comparison,

@@ -35,9 +35,111 @@ export function parseV2WhyEntry(text) {
   // Body is everything after; use `s` flag so `.` matches newlines in body.
   const match = str.match(/^([A-Z][^:\n]{0,60}?):\s+(.+)$/s);
   if (match) {
-    return { heading: match[1].trim(), body: match[2].trim() };
+    return { heading: normalizeV2Heading(match[1].trim()), body: match[2].trim() };
   }
   return { heading: null, body: str };
+}
+
+/**
+ * Canonical heading display names for V2 report sections.
+ * Maps AI-generated heading variants to the single authoritative label
+ * shown in every AI report view (proposer, recipient, PDF, shared link).
+ *
+ * Rules:
+ *  - Match is case-insensitive and trims surrounding whitespace.
+ *  - First matching alias wins.
+ *  - Unrecognised headings are returned as-is so no content is ever lost.
+ *
+ * @param {string} raw  Heading text extracted by parseV2WhyEntry
+ * @returns {string}   Canonical heading or the original raw string
+ */
+export function normalizeV2Heading(raw) {
+  const normalized = String(raw ?? '').trim();
+  const lower = normalized.toLowerCase();
+
+  /** @type {[string[], string][]} — [aliases, canonical] */
+  const HEADING_MAP = [
+    [['executive summary', 'summary', 'overview', 'intro', 'introduction'], 'Executive Summary'],
+    [
+      ['decision snapshot', 'snapshot', 'situation', 'context', 'background'],
+      'Decision Snapshot',
+    ],
+    [
+      [
+        'key strengths',
+        'strengths',
+        'top strengths',
+        'match reasons',
+        'top match reasons',
+        'fit reasons',
+        'positives',
+        'pros',
+      ],
+      'Key Strengths',
+    ],
+    [
+      [
+        'key risks',
+        'risks',
+        'risk summary',
+        'key gaps',
+        'gaps',
+        'concerns',
+        'flags',
+        'top blockers',
+        'blockers',
+        'cons',
+        'downsides',
+      ],
+      'Key Risks',
+    ],
+    [
+      ['decision readiness', 'readiness', 'readiness assessment', 'data completeness'],
+      'Decision Readiness',
+    ],
+    [
+      [
+        'recommended path',
+        'recommendation',
+        'recommended next step',
+        'next steps',
+        'options',
+        'path forward',
+        'next actions',
+        'actions',
+      ],
+      'Recommended Path',
+    ],
+    [
+      [
+        'open questions',
+        'follow-up questions',
+        'followup questions',
+        'clarifying questions',
+        'questions',
+      ],
+      'Open Questions',
+    ],
+    [
+      [
+        'redacted / missing info',
+        'redacted',
+        'missing info',
+        'missing information',
+        'suggested additions',
+        'information gaps',
+      ],
+      'Redacted / Missing Info',
+    ],
+  ];
+
+  for (const [aliases, canonical] of HEADING_MAP) {
+    if (aliases.some((alias) => lower === alias || lower.startsWith(alias + ' '))) {
+      return canonical;
+    }
+  }
+
+  return normalized;
 }
 
 /**

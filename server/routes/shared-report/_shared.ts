@@ -182,13 +182,53 @@ export async function resolveSharedReportToken(params: ResolveParams) {
   const reportMetadataComparisonId = asText(reportMetadata.comparison_id);
   const linkedComparisonId = asText(proposal.documentComparisonId);
   const comparisonId = reportMetadataComparisonId || linkedComparisonId || null;
-  const [comparison] = comparisonId
-    ? await db
-        .select()
-        .from(schema.documentComparisons)
-        .where(and(eq(schema.documentComparisons.id, comparisonId), eq(schema.documentComparisons.proposalId, proposal.id)))
-        .limit(1)
-    : [null];
+
+  // When comparisonId comes from reportMetadata.comparison_id ownership was verified at
+  // link-creation time, so query by ID alone.  A null/mismatched proposalId column must
+  // never silently drop the comparison and empty shared information for the recipient.
+  // When falling back to proposal.documentComparisonId, keep the proposalId constraint
+  // as an extra consistency guard.
+  let comparison: any = null;
+  if (comparisonId) {
+    const whereClause = reportMetadataComparisonId
+      ? eq(schema.documentComparisons.id, comparisonId)
+      : and(
+          eq(schema.documentComparisons.id, comparisonId),
+          eq(schema.documentComparisons.proposalId, proposal.id),
+        );
+    const [found] = await db
+      .select()
+      .from(schema.documentComparisons)
+      .where(whereClause)
+      .limit(1);
+    comparison = found || null;
+
+    console.info(
+      JSON.stringify({
+        level: 'info',
+        fn: 'resolveSharedReportToken',
+        comparisonId,
+        source: reportMetadataComparisonId ? 'reportMetadata' : 'proposalLink',
+        found: Boolean(comparison),
+        docBTextLen: comparison ? String(comparison.docBText || '').length : null,
+        publicReportKeys: comparison?.publicReport ? Object.keys(comparison.publicReport) : null,
+        proposalId: proposal.id,
+        reportMetadata,
+      }),
+    );
+  } else {
+    console.info(
+      JSON.stringify({
+        level: 'warn',
+        fn: 'resolveSharedReportToken',
+        warning: 'no_comparison_id',
+        reportMetadataComparisonId: reportMetadataComparisonId || null,
+        linkedComparisonId: linkedComparisonId || null,
+        proposalId: proposal.id,
+        reportMetadata,
+      }),
+    );
+  }
 
   return {
     db,
@@ -240,15 +280,57 @@ export function buildParentView(params: { proposal: any; comparison: any; owner:
 export function buildDefaultSharedPayload(params: { proposal: any; comparison: any }) {
   const { proposal, comparison } = params;
   const comparisonInputs = toObject(comparison?.inputs);
+
+  // Every storage path the save flow ever writes to.  The column (docBText) is
+  // canonical; fall through to every inputs key that the update handler writes.
+  const sources = {
+    column_docBText:        asText(comparison?.docBText),
+    inputs_shared_doc:      asText(comparisonInputs.shared_doc_content as string),
+    inputs_doc_b_text:      asText(comparisonInputs.doc_b_text as string),
+    inputs_docBText:        asText((comparisonInputs as any).docBText),
+    inputs_shared_doc_html: asText(comparisonInputs.doc_b_html as string),
+  };
+
+  const resolvedText =
+    sources.column_docBText ||
+    sources.inputs_shared_doc ||
+    sources.inputs_doc_b_text ||
+    sources.inputs_docBText;
+
+  const resolvedHtml =
+    asText(comparisonInputs.doc_b_html as string) || '';
+
+  // Always log in dev so we can confirm what ended up being served.
+  console.info(
+    JSON.stringify({
+      level: 'info',
+      fn: 'buildDefaultSharedPayload',
+      comparisonId: comparison?.id || null,
+      sources: {
+        column_docBText_len:        sources.column_docBText.length,
+        inputs_shared_doc_len:      sources.inputs_shared_doc.length,
+        inputs_doc_b_text_len:      sources.inputs_doc_b_text.length,
+        inputs_docBText_len:        sources.inputs_docBText.length,
+        inputs_doc_b_html_len:      resolvedHtml.length,
+      },
+      resolvedTextLen:   resolvedText.length,
+      resolvedHtmlLen:   resolvedHtml.length,
+      inputsKeys:        Object.keys(comparisonInputs),
+    }),
+  );
+
   const defaultPayload: Record<string, unknown> = {
     label: 'Shared Information',
     title: asText(comparison?.title) || asText(proposal.title) || 'Shared Report',
-    text: String(comparison?.docBText || ''),
+    text: resolvedText,
   };
 
-  if (typeof comparisonInputs.doc_b_html === 'string') {
-    defaultPayload.html = comparisonInputs.doc_b_html;
+  // Always include html if available — renderDocumentReadOnly can use it even
+  // when the plain-text field is empty (e.g. rich-text editors storing only HTML).
+  if (resolvedHtml) {
+    defaultPayload.html = resolvedHtml;
   }
+
   if (
     comparisonInputs.doc_b_json &&
     typeof comparisonInputs.doc_b_json === 'object' &&
@@ -272,15 +354,49 @@ export function buildDefaultConfidentialPayload() {
 
 export function buildLatestReport(params: { proposal: any; comparison: any }) {
   const { proposal, comparison } = params;
-  const projection = buildRecipientSafeEvaluationProjection({
-    evaluationResult: comparison?.evaluationResult || {},
-    publicReport: comparison?.publicReport || {},
-    confidentialText: comparison?.docAText || '',
-    sharedText: comparison?.docBText || '',
-    title: asText(comparison?.title) || asText(proposal.title) || 'Shared Report',
-  });
 
-  return projection.public_report || {};
+  // comparison.publicReport is already the "public" version of the report —
+  // it is set explicitly by the evaluate route as the recipient-safe object.
+  // Running it through buildRecipientSafeEvaluationProjection again strips the
+  // v2 `why` and `missing` arrays, breaking the shared report layout.
+  // Return it directly so ComparisonAiReportTab receives the same structure on
+  // all views (proposer, recipient Step 0, recipient Step 3, PDF).
+  const publicReport = comparison?.publicReport;
+  if (
+    publicReport &&
+    typeof publicReport === 'object' &&
+    !Array.isArray(publicReport) &&
+    Object.keys(publicReport).length > 0
+  ) {
+    if (process.env.NODE_ENV !== 'production') {
+      console.info(
+        JSON.stringify({
+          level: 'info',
+          fn: 'buildLatestReport',
+          comparisonId: comparison?.id || null,
+          publicReportKeys: Object.keys(publicReport),
+          hasWhy: Array.isArray((publicReport as any).why),
+          whyLength: Array.isArray((publicReport as any).why) ? (publicReport as any).why.length : 0,
+          recommendation: (publicReport as any).recommendation || null,
+        }),
+      );
+    }
+    return publicReport;
+  }
+
+  // Fallback for comparisons that have never been evaluated.
+  if (process.env.NODE_ENV !== 'production') {
+    console.info(
+      JSON.stringify({
+        level: 'info',
+        fn: 'buildLatestReport',
+        comparisonId: comparison?.id || null,
+        result: 'no_public_report',
+        proposalId: proposal?.id || null,
+      }),
+    );
+  }
+  return {};
 }
 
 export async function getCurrentRecipientDraft(db: any, linkId: string) {

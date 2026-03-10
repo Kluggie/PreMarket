@@ -22,6 +22,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { ComparisonAiReportTab } from '@/components/document-comparison/ComparisonDetailTabs';
 
 const CONFIDENTIAL_LABEL = 'Confidential Information';
 const SHARED_LABEL = 'Shared Information';
@@ -243,20 +244,43 @@ export default function ProposalDetail() {
     .split(/\s+/g)
     .filter(Boolean).length;
   const latestEvaluation = evaluations[0] || null;
-  const latestProviderMeta = getEvaluationProviderMeta(latestEvaluation);
   const latestResult = latestEvaluation?.result || {};
-  const reportSections = Array.isArray(latestResult?.report?.sections)
-    ? latestResult.report.sections
-    : Array.isArray(latestResult?.sections)
-      ? latestResult.sections
-      : [];
+  // Primary source: comparison.public_report — this is exactly what SharedReport's
+  // buildLatestReport() reads, so the proposer and recipient always see the same
+  // stored object rendered through the same ComparisonAiReportTab component.
+  // Fallback to proposalEvaluations.result.report for proposals without a linked
+  // comparison (legacy / standard proposals).
+  const comparisonPublicReport =
+    comparison?.public_report &&
+    typeof comparison.public_report === 'object' &&
+    !Array.isArray(comparison.public_report) &&
+    Object.keys(comparison.public_report).length > 0
+      ? comparison.public_report
+      : null;
+  const latestResultReport =
+    latestResult?.report &&
+    typeof latestResult.report === 'object' &&
+    !Array.isArray(latestResult.report) &&
+    Object.keys(latestResult.report).length > 0
+      ? latestResult.report
+      : null;
+  const latestReportData = comparisonPublicReport || latestResultReport || latestResult;
   const suggestedAdditionsCount =
-    Array.isArray(latestResult?.missing) ? latestResult.missing.length
+    Array.isArray(latestReportData?.missing) ? latestReportData.missing.length
     : Array.isArray(latestResult?.report?.missing) ? latestResult.report.missing.length
     : 0;
 
   const runEvaluationMutation = useMutation({
-    mutationFn: () => proposalsClient.evaluate(proposalId, {}),
+    mutationFn: () => {
+      // When a document comparison is linked, run evaluation via the comparison
+      // pipeline (vertex-evaluation-v2 full path).  This stores publicReport in
+      // the exact same format that SharedReport reads — ensuring the AI report
+      // renders identically for proposer and recipient.
+      if (proposal?.document_comparison_id) {
+        return documentComparisonsClient.evaluate(proposal.document_comparison_id, {});
+      }
+      return proposalsClient.evaluate(proposalId, {});
+    },
     onSuccess: () => {
       queryClient.invalidateQueries(['proposal-detail', proposalId]);
       queryClient.invalidateQueries(['proposal-linked-comparison', proposal?.document_comparison_id || 'none']);
@@ -542,110 +566,41 @@ export default function ProposalDetail() {
                   );
                 })()}
 
-                {/* Report document — white paper surface */}
-                <div className="bg-white rounded-xl border border-slate-200 shadow-sm">
-                  <div className="px-6 py-7 space-y-7">
-
-                    {/* Executive Summary */}
-                    <div>
-                      <h2 className="text-xl font-bold text-slate-900 mb-5">Executive Summary</h2>
-                      {evaluations.length === 0 ? (
-                        <p className="text-slate-500">Run evaluation to generate the AI report.</p>
-                      ) : (
-                        <div className="space-y-5">
-                          {asText(latestResult?.summary || latestEvaluation?.summary) ? (
-                            <>
-                              <p className="text-slate-700 leading-relaxed">{latestResult?.summary || latestEvaluation?.summary}</p>
-                              {reportSections.length > 0 && <div className="border-t border-slate-100" />}
-                            </>
-                          ) : null}
-                          {reportSections.length > 0 ? (
-                            <div className="space-y-5">
-                              {reportSections.map((section, sectionIndex) => (
-                                <div key={`${section.key || section.heading || 'section'}-${sectionIndex}`}>
-                                  <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
-                                    {section.heading || section.title || `Section ${sectionIndex + 1}`}
-                                  </h3>
-                                  <ul className="space-y-1.5 text-sm text-slate-700">
-                                    {(Array.isArray(section.bullets) ? section.bullets : []).map((line, lineIndex) => (
-                                      <li key={`${sectionIndex}-${lineIndex}`} className="flex items-start gap-2">
-                                        <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-slate-400 flex-shrink-0" />
-                                        {line}
-                                      </li>
-                                    ))}
-                                  </ul>
-                                  {sectionIndex < reportSections.length - 1 && <div className="mt-5 border-t border-slate-100" />}
-                                </div>
-                              ))}
-                            </div>
-                          ) : !asText(latestResult?.summary) ? (
-                            <p className="text-slate-500">No report sections available.</p>
-                          ) : null}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Suggested Additions */}
-                    {suggestedAdditionsCount > 0 && (
-                      <div className="border-t border-slate-100 pt-6">
-                        <h2 className="text-sm font-semibold text-slate-700 mb-3">Suggested Additions</h2>
-                        <ul className="space-y-2">
-                          {(Array.isArray(latestResult?.missing)
-                            ? latestResult.missing
-                            : Array.isArray(latestResult?.report?.missing)
-                              ? latestResult.report.missing
-                              : []
-                          ).map((item, index) => (
-                            <li key={index} className="flex items-start gap-2.5 text-sm text-slate-700">
-                              <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" />
-                              {item}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-
-                    {/* Evaluation Details (compact) */}
-                    {evaluations.length > 0 && (
-                      <div className="border-t border-slate-100 pt-6 space-y-4">
-                        <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Evaluation Details</h2>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                          <div>
-                            <p className="text-xs text-slate-500 mb-0.5">Confidence</p>
-                            <p className="text-2xl font-bold text-slate-900">{Math.max(0, Math.min(Number(latestEvaluation?.score || latestResult?.score || 0), 100))}%</p>
-                          </div>
-                          <div>
-                            <p className="text-xs text-slate-500 mb-0.5">Evaluations run</p>
-                            <p className="text-2xl font-bold text-slate-900">{evaluations.length}</p>
-                          </div>
-                          <div>
-                            <p className="text-xs text-slate-500 mb-0.5">{CONFIDENTIAL_LABEL}</p>
-                            <p className="text-2xl font-bold text-slate-900">{confidentialWordCount} <span className="text-sm font-normal text-slate-500">words</span></p>
-                          </div>
-                          <div>
-                            <p className="text-xs text-slate-500 mb-0.5">{SHARED_LABEL}</p>
-                            <p className="text-2xl font-bold text-slate-900">{sharedWordCount} <span className="text-sm font-normal text-slate-500">words</span></p>
-                          </div>
-                        </div>
-                        {evaluations.length > 1 && (
-                          <div className="space-y-0">
-                            {evaluations.slice(1).map((evaluation, index) => {
-                              const providerMeta = getEvaluationProviderMeta(evaluation);
-                              return (
-                                <div key={evaluation.id || `eval-old-${index}`} className="flex items-center justify-between text-xs text-slate-500 py-1.5 border-b border-slate-100 last:border-0">
-                                  <span>{formatDateTime(evaluation.created_date)}</span>
-                                  <span className="font-mono">{providerMeta.provider}{providerMeta.model ? ` · ${providerMeta.model}` : ''}</span>
-                                  <span>{Number(evaluation.score || 0)}% confidence</span>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                  </div>
-                </div>
+                {/* Shared AI report — same ComparisonAiReportTab used by recipient Step 0 and Step 3.
+                   Only the data changes; the layout is structurally identical across all roles.
+                   latestReportData = comparison.public_report (primary) so proposer reads the
+                   same stored object that SharedReport reads via buildLatestReport(). */}
+                <ComparisonAiReportTab
+                  isEvaluationRunning={runEvaluationMutation.isPending}
+                  isPollingTimedOut={false}
+                  isEvaluationNotConfigured={false}
+                  showConfidentialityWarning={false}
+                  confidentialityWarningMessage=""
+                  confidentialityWarningDetails=""
+                  isEvaluationFailed={false}
+                  evaluationFailureBannerMessage=""
+                  hasReport={Boolean(comparisonPublicReport) || evaluations.length > 0}
+                  hasEvaluations={evaluations.length > 0}
+                  noReportMessage="Run evaluation to generate the AI report."
+                  runDetailsHref={
+                    proposal.document_comparison_id
+                      ? createPageUrl(`DocumentComparisonRunDetails?id=${encodeURIComponent(proposal.document_comparison_id)}`)
+                      : ''
+                  }
+                  report={latestReportData}
+                  recommendation={asText(
+                    comparisonPublicReport?.recommendation ||
+                    latestResult?.recommendation ||
+                    latestReportData?.recommendation,
+                  )}
+                  timelineItems={evaluations.map((ev, i) => ({
+                    id: `eval-${ev.id || i}`,
+                    kind: 'sparkles',
+                    tone: 'success',
+                    title: i === 0 ? 'Latest Evaluation' : `Evaluation ${evaluations.length - i}`,
+                    timestamp: formatDateTime(ev.created_date || ''),
+                  }))}
+                />
 
 
                 {/* Action buttons */}
