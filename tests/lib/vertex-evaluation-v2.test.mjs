@@ -252,8 +252,13 @@ test('v2 retries once (tight mode) then falls back with truncated_output', async
       outcome._internal.warnings.some((w) => w.includes('truncated')),
       '_internal.warnings must contain a truncated-output warning key',
     );
-    assert.equal(outcome.data.fit_level, 'unknown', 'fallback fit_level must be unknown');
-    assert.ok(outcome.data.confidence_0_1 <= 0.65, 'fallback confidence must be clamped <= 0.65');
+    assert.equal(outcome._internal.fallback_mode, 'salvaged_memo', 'full fact-sheet fallback should be classified as salvageable');
+    assert.equal(outcome.data.fit_level, 'medium', 'salvaged fallback should surface a coherent conditional fit level');
+    assert.ok(outcome.data.confidence_0_1 > 0.2, 'salvaged fallback confidence must not stay at the incomplete 0.2 floor');
+    assert.ok(
+      outcome.data.why.some((entry) => entry.includes('Paths to agreement') || entry.includes('Conditionally viable')),
+      'salvaged fallback should return a substantive negotiator memo',
+    );
     assert.ok(Array.isArray(outcome.data.missing) && outcome.data.missing.length >= 3,
       'fallback must provide at least 3 missing items');
   } finally {
@@ -340,8 +345,9 @@ test('v2 falls back after persistent vertex_http_error (retries exhausted)', asy
       outcome._internal.warnings.some((w) => w.includes('request_failed')),
       '_internal.warnings must contain a vertex_request_failed warning key',
     );
-    assert.equal(outcome.data.fit_level, 'unknown', 'fallback fit_level must be unknown');
-    assert.ok(outcome.data.confidence_0_1 <= 0.65, 'fallback confidence must be clamped <= 0.65');
+    assert.equal(outcome._internal.fallback_mode, 'salvaged_memo', 'full fact-sheet fallback should be salvageable');
+    assert.equal(outcome.data.fit_level, 'medium', 'salvaged fallback should not surface as unknown');
+    assert.ok(outcome.data.confidence_0_1 > 0.2, 'salvaged fallback confidence must be above the incomplete floor');
   } finally {
     cleanup();
   }
@@ -382,8 +388,49 @@ test('v2 falls back on persistent json_parse_error (tight retry also fails)', as
       outcome._internal.warnings.some((w) => w.includes('invalid_response') || w.includes('fallback')),
       '_internal.warnings must contain an invalid_response fallback key',
     );
-    assert.equal(outcome.data.fit_level, 'unknown', 'fallback fit_level must be unknown');
-    assert.ok(outcome.data.confidence_0_1 <= 0.65, 'fallback confidence must be clamped <= 0.65');
+    assert.equal(outcome._internal.fallback_mode, 'salvaged_memo', 'full fact-sheet parse fallback should be salvageable');
+    assert.equal(outcome.data.fit_level, 'medium', 'salvaged parse fallback should not surface as unknown');
+    assert.ok(outcome.data.confidence_0_1 > 0.2, 'salvaged parse fallback confidence must be above 0.2');
+  } finally {
+    cleanup();
+  }
+});
+
+test('v2 true incomplete fallback stays minimal and explicitly incomplete when extraction is too thin', async () => {
+  const badJsonResponse = {
+    model: 'gemini-2.0-flash-001',
+    text: 'still not valid json',
+    finishReason: 'STOP',
+    httpStatus: 200,
+  };
+
+  const cleanup = setVertexV2MockSequence([
+    // Pass A — extraction fails immediately, leaving only the thin fallback fact sheet
+    { throw: new Error('pass-a-failed') },
+    // Pass B attempt 1 — invalid JSON
+    { response: badJsonResponse },
+    // Pass B attempt 2 — invalid JSON again → fallback used
+    { response: badJsonResponse },
+  ]);
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Short shared text.',
+      confidentialText: 'Short confidential text.',
+      requestId: 'req-incomplete-fallback-1',
+    });
+
+    assert.equal(outcome.ok, true, 'fallback must still return ok:true');
+    if (!outcome.ok) return;
+
+    assert.equal(outcome._internal.fallback_mode, 'incomplete', 'thin fallback must be marked as incomplete');
+    assert.equal(outcome.data.fit_level, 'unknown', 'true incomplete fallback must remain unknown');
+    assert.equal(outcome.data.confidence_0_1, 0.2, 'true incomplete fallback confidence must remain at 0.2');
+
+    const whyText = outcome.data.why.join('\n');
+    assert.equal(whyText.includes('Assessment incomplete'), true, 'incomplete fallback body must say the assessment is incomplete');
+    assert.equal(whyText.includes('Conditionally viable'), false, 'incomplete fallback must not be rewritten into a substantive memo');
+    assert.equal(whyText.includes('Paths to agreement'), false, 'incomplete fallback must not contain bridge-to-agreement memo content');
   } finally {
     cleanup();
   }
@@ -664,7 +711,7 @@ test('2-pass: two Vertex calls are made (Pass A fact sheet + Pass B eval)', asyn
   }
 });
 
-test('2-pass clamps: vague input → coverageCount < 3 → confidence capped at 0.65 and fit_level not high', async () => {
+test('2-pass clamps: vague input → coverageCount < 3 plus material blockers → low confidence and low fit', async () => {
   // Pass A returns a fact sheet with only 1 out of 5 coverage fields true (scope only).
   // coverageCount = 1 < 3 → cap_0.65 + downgrade_high fires.
   const lowCoverageFactSheet = validFactSheetPayload({
@@ -714,12 +761,13 @@ test('2-pass clamps: vague input → coverageCount < 3 → confidence capped at 
     assert.equal(outcome.ok, true, 'Should still succeed (clamps, not failure)');
     if (!outcome.ok) return;
 
-    // fit_level must be downgraded from high
+    // fit_level must be downgraded from high and land at low once the
+    // contradiction pass sees multiple unresolved core blockers.
     assert.notEqual(outcome.data.fit_level, 'high', 'fit_level must not be high when coverage < 3');
-    assert.equal(outcome.data.fit_level, 'medium', 'fit_level must be downgraded to medium');
+    assert.equal(outcome.data.fit_level, 'low', 'fit_level must be downgraded to low for materially unbounded proposals');
 
-    // confidence must be capped at 0.65
-    assert.equal(outcome.data.confidence_0_1 <= 0.65, true, 'confidence_0_1 must be capped at <= 0.65');
+    // confidence must be materially reduced, not left near the old 0.65/0.75 ceilings.
+    assert.equal(outcome.data.confidence_0_1 <= 0.45, true, 'confidence_0_1 must be capped at <= 0.45');
 
     // _internal must record the caps applied
     assert.equal(
@@ -731,6 +779,16 @@ test('2-pass clamps: vague input → coverageCount < 3 → confidence capped at 
       outcome._internal?.caps_applied.includes('downgrade_high_low_coverage'),
       true,
       'downgrade_high_low_coverage must be recorded in caps_applied',
+    );
+    assert.equal(
+      outcome._internal?.caps_applied.includes('downgrade_medium_severe_uncertainty'),
+      true,
+      'downgrade_medium_severe_uncertainty must be recorded in caps_applied',
+    );
+    assert.equal(
+      outcome._internal?.caps_applied.includes('cap_0.45_severe_uncertainty'),
+      true,
+      'cap_0.45_severe_uncertainty must be recorded in caps_applied',
     );
     assert.equal(outcome._internal?.coverage_count, 1, 'coverage_count must be 1');
   } finally {
@@ -829,9 +887,460 @@ test('2-pass clamps: full coverage + detailed proposal → high/medium preserved
     assert.equal(outcome.data.fit_level, 'medium', 'fit_level must be exactly as model returned');
     assert.equal(outcome.data.confidence_0_1, 0.78, 'confidence_0_1 must be exactly as model returned (no clamp)');
 
-    // caps_applied must be empty
-    assert.equal(outcome._internal?.caps_applied.length, 0, 'No caps should have been applied for full coverage');
+    // Structural normalization is acceptable, but readiness/confidence caps
+    // must not fire when the proposal is fully covered and non-contradictory.
+    const caps = outcome._internal?.caps_applied || [];
+    assert.equal(caps.includes('cap_0.65_low_coverage'), false, 'low-coverage cap must not fire');
+    assert.equal(caps.includes('cap_0.75_missing_critical'), false, 'missing-critical cap must not fire');
+    assert.equal(caps.includes('cap_0.62_material_uncertainty'), false, 'material-uncertainty cap must not fire');
+    assert.equal(caps.includes('cap_0.45_severe_uncertainty'), false, 'severe-uncertainty cap must not fire');
+    assert.equal(caps.includes('downgrade_high_low_coverage'), false, 'low-coverage downgrade must not fire');
+    assert.equal(caps.includes('downgrade_high_missing_critical'), false, 'missing-critical downgrade must not fire');
+    assert.equal(caps.includes('downgrade_high_material_uncertainty'), false, 'material-uncertainty downgrade must not fire');
+    assert.equal(caps.includes('downgrade_medium_severe_uncertainty'), false, 'severe-uncertainty downgrade must not fire');
     assert.equal(outcome._internal?.coverage_count, 5, 'coverage_count must be 5 for full-coverage sheet');
+  } finally {
+    cleanup();
+  }
+});
+
+test('consistency calibration: unresolved data cleanup, acceptance, and change-order risk force a conditional verdict', async () => {
+  const riskyButStructuredFactSheet = validFactSheetPayload({
+    missing_info: [
+      'Source data quality and cleanup effort are not quantified.',
+      'Acceptance criteria for the MVP are not defined.',
+      'Change-order triggers for remediation work are undefined.',
+    ],
+    open_questions: [
+      'Who owns legacy data remediation before migration?',
+    ],
+  });
+
+  const cleanup = setVertexV2MockSequence([
+    {
+      response: {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(riskyButStructuredFactSheet),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+    {
+      response: {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(validPayload({
+          fit_level: 'high',
+          confidence_0_1: 0.95,
+          why: [
+            'Snapshot: The proposal looks polished and broadly workable.',
+            'Key Risks: Data dependencies are mentioned but not fully resolved.',
+            'Key Strengths: Scope and timeline are presented clearly.',
+            'Decision Readiness: Ready to proceed, although source data quality must be defined and remediation depends on the client team.',
+            'Recommendations: Proceed and tighten details during delivery.',
+          ],
+          missing: [
+            'Source data quality is unquantified.',
+          ],
+          redactions: [],
+        })),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+  ]);
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Shared proposal defines MVP modules, milestones, and headline success metrics.',
+      confidentialText: 'Confidential notes mention legacy data cleanup and customer-side remediation ownership.',
+      requestId: 'req-conditional-calibration-1',
+    });
+
+    assert.equal(outcome.ok, true, 'Should succeed');
+    if (!outcome.ok) return;
+
+    assert.equal(outcome.data.fit_level, 'medium', 'material unresolved risk should force a conditional medium verdict');
+    assert.equal(outcome.data.confidence_0_1 <= 0.58, true, 'confidence must not remain near 0.95 when contradictions remain');
+    assert.equal(
+      outcome._internal?.caps_applied.includes('downgrade_high_material_uncertainty'),
+      true,
+      'material-uncertainty downgrade must be recorded',
+    );
+    assert.equal(
+      outcome._internal?.caps_applied.includes('cap_0.58_contradiction_confidence'),
+      true,
+      'contradiction confidence cap must be recorded',
+    );
+    assert.equal(
+      outcome.data.why.some((entry) => entry.includes('Conditionally viable') || entry.includes('Decision readiness is conditional')),
+      true,
+      'Decision language must be rewritten to a conditional posture',
+    );
+    assert.equal(
+      outcome.data.why.some((entry) => entry.includes('Conditions to proceed')),
+      true,
+      'Recommendations must front-load the conditions to proceed',
+    );
+    assert.equal(
+      outcome.data.missing.some((entry) => entry.includes('data cleanup') && entry.includes('who owns it')),
+      true,
+      'missing[] must contain a source-grounded data-remediation question',
+    );
+    assert.equal(
+      outcome.data.missing.some((entry) => entry.includes('acceptance criteria')),
+      true,
+      'missing[] must contain an acceptance-criteria question',
+    );
+    assert.equal(
+      outcome.data.missing.some((entry) => entry.includes('change-order triggers')),
+      true,
+      'missing[] must contain a change-order question',
+    );
+  } finally {
+    cleanup();
+  }
+});
+
+test('conditional viable calibration: workable structure with unresolved conditions is upgraded from low to medium and de-duplicated', async () => {
+  const conditionalFactSheet = validFactSheetPayload({
+    project_goal: 'Launch a reporting MVP for finance and operations.',
+    scope_deliverables: ['MVP dashboards', 'source-system ingestion', 'phase-two reporting extensions'],
+    timeline: {
+      start: '2026-Q3',
+      duration: '12 weeks',
+      milestones: ['Discovery', 'MVP release', 'Phase 2 review'],
+    },
+    constraints: ['Phased rollout required', 'Commercial approval depends on scope lock'],
+    success_criteria_kpis: ['Dashboard load time under 2 seconds', 'Core user adoption above 75%'],
+    missing_info: [
+      'Acceptance criteria for phase 1 are not defined.',
+      'Data cleanup and reconciliation effort are not quantified.',
+      'Change-order triggers for remediation work are undefined.',
+    ],
+    open_questions: [
+      'Which party owns remediation of legacy source data before the MVP release?',
+    ],
+  });
+
+  const repeatedBlocker = 'Data cleanup is still unknown and prevents a clean commitment.';
+  const cleanup = setVertexV2MockSequence([
+    {
+      response: {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(conditionalFactSheet),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+    {
+      response: {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(validPayload({
+          fit_level: 'low',
+          confidence_0_1: 0.64,
+          why: [
+            `Snapshot: ${repeatedBlocker}`,
+            `Key Risks: ${repeatedBlocker}`,
+            'Key Strengths: The phased structure is sensible and the commercial posture looks workable.',
+            `Decision Readiness: ${repeatedBlocker}`,
+            `Recommendations: ${repeatedBlocker}`,
+          ],
+          missing: [
+            'Clarify data cleanup and acceptance.',
+          ],
+          redactions: [],
+        })),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+  ]);
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Shared proposal defines phased delivery, named MVP modules, and measurable performance targets.',
+      confidentialText: 'Confidential notes mention data remediation uncertainty and dependency assumptions.',
+      requestId: 'req-conditional-viable-upgrade-1',
+    });
+
+    assert.equal(outcome.ok, true, 'Should succeed');
+    if (!outcome.ok) return;
+
+    assert.equal(outcome.data.fit_level, 'medium', 'workable but unbounded proposals should normalize to medium rather than low');
+    assert.equal(
+      outcome._internal?.caps_applied.includes('upgrade_low_conditional_viable'),
+      true,
+      'upgrade_low_conditional_viable must be recorded',
+    );
+
+    const whyText = outcome.data.why.join('\n');
+    assert.equal(
+      (whyText.match(/Data cleanup is still unknown and prevents a clean commitment\./g) || []).length <= 1,
+      true,
+      'the same blocker sentence must not be repeated across sections',
+    );
+    assert.equal(
+      outcome.data.why.some((entry) => entry.includes('Areas of alignment include') || entry.includes('Alignment exists around')),
+      true,
+      'Key Strengths should be reframed as bilateral alignment',
+    );
+    assert.equal(
+      outcome.data.why.some((entry) => entry.includes('Paths to agreement')),
+      true,
+      'Recommendations should include a bridge-to-agreement path',
+    );
+    assert.equal(
+      outcome.data.why.some((entry) => entry.includes('Next negotiation agenda')),
+      true,
+      'Recommendations should include a next negotiation agenda',
+    );
+    assert.equal(
+      outcome.data.why.some((entry) => entry.includes('What must be agreed now vs later')),
+      true,
+      'Decision Readiness should distinguish what must be fixed now versus deferred',
+    );
+    assert.equal(/lock define\b/i.test(whyText), false, 'Decision Readiness prose must stay grammatical');
+    assert.equal(
+      outcome.data.missing.length >= 4,
+      true,
+      'missing[] should be fuller for conditional-but-viable cases',
+    );
+  } finally {
+    cleanup();
+  }
+});
+
+test('generalization: service outsourcing proposal with workable structure but open service-level ownership lands as medium', async () => {
+  const serviceFactSheet = validFactSheetPayload({
+    project_goal: 'Provide facilities maintenance coverage across two operating sites.',
+    scope_deliverables: ['Preventive maintenance visits', 'Emergency callout coverage', 'Monthly service reports'],
+    timeline: {
+      start: '2026-07-01',
+      duration: '12 months',
+      milestones: ['Mobilization', 'Quarterly review'],
+    },
+    constraints: ['Work must comply with site safety rules', 'Service windows must avoid production downtime'],
+    success_criteria_kpis: ['Response time under 4 hours', 'Completion rate above 95%'],
+    vendor_preferences: ['Fixed monthly service fee preferred'],
+    risks: [{ risk: 'after-hours access delays', impact: 'med', likelihood: 'med' }],
+    missing_info: [
+      'Service acceptance thresholds for completed work orders are not defined.',
+      'Out-of-scope repair approval and change-order treatment are undefined.',
+      'Ownership of site access dependencies is unclear.',
+    ],
+  });
+
+  const cleanup = setVertexV2MockSequence([
+    {
+      response: {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(serviceFactSheet),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+    {
+      response: {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(validPayload({
+          fit_level: 'low',
+          confidence_0_1: 0.7,
+          why: [
+            'Snapshot: The current structure is a workable starting point once service-level ownership is clarified.',
+            'Key Risks: Access dependencies and out-of-scope repairs are not fully allocated.',
+            'Key Strengths: The service cadence and commercial posture are workable.',
+            'Decision Readiness: Not yet bounded tightly enough for commitment.',
+            'Recommendations: Resolve the operating conditions before signature.',
+          ],
+          missing: ['Clarify service-level ownership.'],
+          redactions: [],
+        })),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+  ]);
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Shared proposal covers preventive maintenance visits, emergency callout coverage, and monthly reporting for two sites.',
+      confidentialText: 'Confidential notes mention access approvals and change-order assumptions.',
+      requestId: 'req-generalization-service-medium-1',
+    });
+
+    assert.equal(outcome.ok, true, 'Should succeed');
+    if (!outcome.ok) return;
+
+    assert.equal(outcome.data.fit_level, 'medium', 'a workable non-software proposal should normalize to medium when the issue is boundedness, not viability');
+    assert.equal(
+      outcome.data.why.some((entry) => entry.includes('Conditionally viable') || entry.includes('workable starting point')),
+      true,
+      'the body should reflect a viable-but-conditional interpretation',
+    );
+  } finally {
+    cleanup();
+  }
+});
+
+test('generalization: genuinely weak non-software proposal remains low', async () => {
+  const weakPartnershipFactSheet = validFactSheetPayload({
+    project_goal: 'Explore an exclusive distribution partnership.',
+    scope_deliverables: [],
+    timeline: { start: null, duration: null, milestones: [] },
+    constraints: ['Immediate exclusivity requested with no committed volume or territory definition'],
+    success_criteria_kpis: [],
+    risks: [],
+    open_questions: [
+      'Which territories are exclusive?',
+      'How will revenue be shared?',
+    ],
+    missing_info: [
+      'No defined obligations for either party.',
+      'No revenue-sharing or pricing structure is stated.',
+      'No timeline, term, or exit conditions are defined.',
+    ],
+    source_coverage: {
+      has_scope: false,
+      has_timeline: false,
+      has_kpis: false,
+      has_constraints: true,
+      has_risks: false,
+    },
+  });
+
+  const cleanup = setVertexV2MockSequence([
+    {
+      response: {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(weakPartnershipFactSheet),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+    {
+      response: {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(validPayload({
+          fit_level: 'medium',
+          confidence_0_1: 0.72,
+          why: [
+            'Snapshot: The proposal is exploratory but broad.',
+            'Key Risks: Scope, commercial structure, and timing are unresolved.',
+            'Key Strengths: The parties have at least identified an interest in partnering.',
+            'Decision Readiness: The current materials are not bounded enough to support commitment.',
+            'Recommendations: Clarify the partnership mechanics.',
+          ],
+          missing: ['Clarify the commercial structure.'],
+          redactions: [],
+        })),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+  ]);
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Shared proposal requests immediate exclusivity under a future commercial partnership.',
+      confidentialText: 'Confidential notes show no defined volume, territory, or revenue model.',
+      requestId: 'req-generalization-weak-low-1',
+    });
+
+    assert.equal(outcome.ok, true, 'Should succeed');
+    if (!outcome.ok) return;
+
+    assert.equal(outcome.data.fit_level, 'low', 'genuinely weak non-software proposals should remain low');
+  } finally {
+    cleanup();
+  }
+});
+
+test('visibility-aware normalization removes already visible categories from missing and redactions', async () => {
+  const facilitiesFactSheet = validFactSheetPayload({
+    project_goal: 'Provide routine facilities inspections across named sites.',
+    scope_deliverables: ['North Plant inspections', 'South Depot inspections', 'Weekly inspection reports'],
+    timeline: {
+      start: '2026-08-01',
+      duration: '12 months',
+      milestones: ['Mobilization', 'First monthly review'],
+    },
+    constraints: ['Service windows must avoid production downtime'],
+    success_criteria_kpis: ['Response time under 4 hours'],
+    missing_info: [
+      'Service-level acceptance thresholds are not defined.',
+      'Rework approval rules are undefined.',
+    ],
+  });
+
+  const cleanup = setVertexV2MockSequence([
+    {
+      response: {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(facilitiesFactSheet),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+    {
+      response: {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(validPayload({
+          fit_level: 'medium',
+          confidence_0_1: 0.66,
+          why: [
+            'Snapshot: North Plant and South Depot are both named in the current service scope.',
+            'Key Risks: Weekly inspection reports are listed, but sign-off thresholds remain open.',
+            'Key Strengths: The proposal names the covered sites and reporting cadence.',
+            'Decision Readiness: The remaining issue is bounded service-level sign-off, not identification of the sites or reports.',
+            'Recommendations: Resolve the acceptance thresholds and rework rules.',
+          ],
+          missing: [
+            'What sites are in scope? — determines service coverage.',
+            'What reporting deliverables are in scope? — determines operational coverage.',
+            'What service-level acceptance thresholds define satisfactory completion? — determines sign-off and dispute exposure.',
+          ],
+          redactions: [
+            'site names',
+            'weekly inspection reports',
+            'internal margin assumptions',
+          ],
+        })),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+  ]);
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Shared proposal names North Plant and South Depot and includes weekly inspection reports.',
+      confidentialText: 'Confidential notes include internal margin assumptions.',
+      requestId: 'req-visibility-normalization-1',
+    });
+
+    assert.equal(outcome.ok, true, 'Should succeed');
+    if (!outcome.ok) return;
+
+    assert.equal(
+      outcome.data.missing.some((entry) => /\bsites\b/i.test(entry) || /\breporting deliverables\b/i.test(entry)),
+      false,
+      'missing[] must not claim already visible sites or deliverables are missing',
+    );
+    assert.equal(
+      outcome.data.missing.some((entry) => /acceptance thresholds/i.test(entry)),
+      true,
+      'missing[] should retain genuinely unresolved detail inside a visible category',
+    );
+    assert.equal(
+      outcome.data.redactions.includes('site names') || outcome.data.redactions.includes('weekly inspection reports'),
+      false,
+      'redactions[] must not repeat already visible categories',
+    );
+    assert.equal(
+      outcome.data.redactions.includes('internal margin assumptions'),
+      true,
+      'redactions[] may keep genuinely non-visible protected detail',
+    );
   } finally {
     cleanup();
   }
@@ -1147,8 +1656,15 @@ for (const fixture of goldenFixtures.cases) {
 
       // ── required headings in why[] ──────────────────────────────────────
       if (Array.isArray(exp.mustContainHeadings)) {
+        const headingAliases = {
+          'Executive Summary': ['Executive Summary', 'Snapshot'],
+          'Risk Summary': ['Risk Summary', 'Key Risks'],
+        };
         for (const heading of exp.mustContainHeadings) {
-          const found = outcome.data.why.some((s) => s.toLowerCase().includes(heading.toLowerCase()));
+          const acceptable = headingAliases[heading] || [heading];
+          const found = acceptable.some((candidate) =>
+            outcome.data.why.some((s) => s.toLowerCase().includes(candidate.toLowerCase())),
+          );
           assert.equal(found, true, `[${fixture.name}] why[] must contain heading '${heading}'`);
         }
       }
@@ -1472,7 +1988,75 @@ test('anti-leak: fallback path output does not contain confidential canary', asy
       Array.isArray(outcome._internal.warnings) && outcome._internal.warnings.length > 0,
       '_internal.warnings must be non-empty on fallback path',
     );
-    assert.equal(outcome.data.fit_level, 'unknown', 'fallback fit_level must be unknown');
+    assert.equal(outcome._internal.fallback_mode, 'salvaged_memo', 'full fact-sheet fallback should be classified as salvageable');
+    assert.notEqual(outcome.data.fit_level, 'unknown', 'salvaged fallback must not surface as unknown');
+  } finally {
+    cleanup();
+  }
+});
+
+test('section-safe truncation drops lower-priority content without cutting locked prefixes', async () => {
+  const longSentence = 'This paragraph adds grounded detail about the remaining scope, data, acceptance, and commercial posture without resolving the blocker. ';
+  const oversized = longSentence.repeat(60).trim();
+  const factSheet = validFactSheetPayload({
+    missing_info: [
+      'Acceptance criteria are not defined.',
+      'Data cleanup is unquantified.',
+      'Change-order triggers are undefined.',
+    ],
+    open_questions: [
+      'Who owns data remediation before delivery?',
+    ],
+  });
+
+  const cleanup = setVertexV2MockSequence([
+    {
+      response: {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(factSheet),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+    {
+      response: {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(validPayload({
+          fit_level: 'high',
+          confidence_0_1: 0.94,
+          why: [
+            `Snapshot: ${oversized}`,
+            `Key Risks: ${oversized}`,
+            `Key Strengths: ${oversized}`,
+            `Decision Readiness: ${oversized}`,
+            `Recommendations: ${oversized}`,
+          ],
+          missing: ['Acceptance criteria are undefined.'],
+          redactions: [],
+        })),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+  ]);
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Shared proposal with phased deliverables, timeline, and KPI references.',
+      confidentialText: 'Confidential notes mention data remediation and commercial caveats.',
+      requestId: 'req-truncation-guard-1',
+    });
+
+    assert.equal(outcome.ok, true, 'Evaluation must succeed');
+    if (!outcome.ok) return;
+
+    const whyText = outcome.data.why.join('\n');
+    const totalChars = outcome.data.why.reduce((sum, entry) => sum + entry.length + 1, 0);
+    assert.equal(totalChars <= 3000, true, 'why[] must still respect the max character budget');
+    assert.equal(whyText.includes('…'), false, 'truncation must drop content instead of blind character slicing');
+    assert.equal(/Conditions to proc(?!eed)/i.test(whyText), false, 'Conditions to proceed prefix must not be cut mid-label');
+    assert.equal(/Paths to agre(?!ement)/i.test(whyText), false, 'Paths to agreement prefix must not be cut mid-label');
+    assert.equal(/Next negotiation agen(?!da)/i.test(whyText), false, 'Next negotiation agenda prefix must not be cut mid-label');
   } finally {
     cleanup();
   }
@@ -1480,7 +2064,7 @@ test('anti-leak: fallback path output does not contain confidential canary', asy
 
 // ─── Memo-prose prompt constraints ────────────────────────────────────────────
 
-test('memo-prose: Pass B prompt contains multi-paragraph, prose-first, if/then, and First 2 weeks plan requirements', async () => {
+test('memo-prose: Pass B prompt contains bilateral negotiator guardrails instead of coaching artifacts', async () => {
   let passBPrompt = '';
   let callCount = 0;
 
@@ -1535,10 +2119,20 @@ test('memo-prose: Pass B prompt contains multi-paragraph, prose-first, if/then, 
       'Pass B prompt must require explicit if/then tradeoff statements',
     );
 
-    // First 2 weeks plan mandatory element
+    // Bilateral shareability guardrail
     assert.ok(
-      passBPrompt.includes('First 2 weeks plan'),
-      'Pass B prompt must require a First 2 weeks plan paragraph in Recommendations',
+      passBPrompt.includes('both parties will read the report') || passBPrompt.includes('shared neutral artifact'),
+      'Pass B prompt must explicitly frame Step 3 as a bilateral shareable artifact',
+    );
+
+    assert.ok(
+      passBPrompt.includes('Section roles are strict'),
+      'Pass B prompt must define distinct section roles to reduce repetition',
+    );
+
+    assert.ok(
+      passBPrompt.includes('Avoid exaggerated language'),
+      'Pass B prompt must explicitly ban overstated severity language unless supported',
     );
 
     // Assumptions / Dependencies mandatory element
@@ -1547,22 +2141,56 @@ test('memo-prose: Pass B prompt contains multi-paragraph, prose-first, if/then, 
       'Pass B prompt must require an Assumptions / Dependencies paragraph',
     );
 
-    // Options mandatory element
+    // Paths to agreement mandatory element
     assert.ok(
-      passBPrompt.includes('"Options:"') || passBPrompt.includes('starting with "Options:"'),
-      'Pass B prompt must require an Options paragraph with concrete paths',
+      passBPrompt.includes('Paths to agreement'),
+      'Pass B prompt must require a Paths to agreement paragraph with bilateral paths',
     );
 
-    // Next call: what I'd ask for — mediator/negotiator flavor
+    // Conditions to proceed mandatory element
     assert.ok(
+      passBPrompt.includes('Conditions to proceed'),
+      'Pass B prompt must require a Conditions to proceed paragraph',
+    );
+
+    // Next negotiation agenda
+    assert.ok(
+      passBPrompt.includes('Next negotiation agenda'),
+      'Pass B prompt must require a Next negotiation agenda paragraph',
+    );
+
+    // Likely sticking points & bridges — with if/then language
+    assert.ok(
+      passBPrompt.includes('Likely sticking points & bridges'),
+      "Pass B prompt must require a 'Likely sticking points & bridges' paragraph",
+    );
+
+    // Explicit anti-coaching language
+    assert.ok(
+      passBPrompt.includes('DO NOT coach one side'),
+      'Pass B prompt must explicitly ban one-sided coaching',
+    );
+
+    assert.ok(
+      passBPrompt.includes('medium = viable but conditional / pause pending clarification'),
+      'Pass B prompt must define medium as the home for conditional-but-viable cases',
+    );
+
+    // Old unilateral Step 3 artifacts must be gone
+    assert.equal(
+      passBPrompt.includes('First 2 weeks plan'),
+      false,
+      'Pass B prompt must not require the old First 2 weeks plan advisory block',
+    );
+    assert.equal(
       passBPrompt.includes("Next call: what I'd ask for"),
-      "Pass B prompt must require a 'Next call: what I'd ask for' paragraph",
+      false,
+      "Pass B prompt must not require the old 'Next call: what I'd ask for' advisory block",
     );
-
-    // Likely pushback & response — with if/then language
-    assert.ok(
+    assert.equal(
       passBPrompt.includes('Likely pushback & response'),
-      "Pass B prompt must require a 'Likely pushback & response' paragraph",
+      false,
+      "Pass B prompt must not require the old 'Likely pushback & response' wording",
     );
   } finally {
     delete globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__;
@@ -1695,5 +2323,79 @@ test('memo-prose: commercial posture included in Pass B prompt when vendor_prefe
     );
   } finally {
     delete globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__;
+  }
+});
+
+test('neutralizer: one-sided coaching language is rewritten into bilateral negotiator language', async () => {
+  const factSheet = validFactSheetPayload({
+    missing_info: [
+      'Acceptance criteria are not defined.',
+      'Pricing assumptions remain open.',
+    ],
+  });
+
+  const cleanup = setVertexV2MockSequence([
+    {
+      response: {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(factSheet),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+    {
+      response: {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(validPayload({
+          fit_level: 'medium',
+          confidence_0_1: 0.74,
+          why: [
+            'Snapshot: Your proposal would be better if you narrowed the commercial scope.',
+            'Key Risks: Before sending, add stronger wording around pricing and acceptance.',
+            'Key Strengths: The timeline is clear.',
+            'Decision Readiness: You should define acceptance criteria more clearly before sending.',
+            'Recommendations: You should rewrite the pricing section and strengthen the remediation language.',
+          ],
+          missing: [
+            'Before sending, add acceptance criteria.',
+          ],
+          redactions: [],
+        })),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+  ]);
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Shared proposal defines timeline, pricing structure, and deliverables.',
+      confidentialText: 'Confidential notes mention remediation assumptions and commercial caveats.',
+      requestId: 'req-neutralizer-1',
+    });
+
+    assert.equal(outcome.ok, true, 'Should succeed');
+    if (!outcome.ok) return;
+
+    const whyText = outcome.data.why.join('\n');
+    const whyTextLower = whyText.toLowerCase();
+    assert.equal(/\byou should\b/i.test(whyText), false, 'customer-facing why[] must not contain "you should"');
+    assert.equal(/\byour proposal\b/i.test(whyText), false, 'customer-facing why[] must not contain "your proposal"');
+    assert.equal(/\bbefore sending\b/i.test(whyText), false, 'customer-facing why[] must not contain "before sending"');
+    assert.equal(
+      whyTextLower.includes('the parties would need to') || whyTextLower.includes('the current proposal becomes easier for both sides'),
+      true,
+      'customer-facing why[] must be rewritten into bilateral neutral phrasing',
+    );
+
+    const missingText = outcome.data.missing.join('\n');
+    assert.equal(/\bbefore sending\b/i.test(missingText), false, 'missing[] must not contain private editing instructions');
+    assert.equal(
+      outcome.data.missing.some((entry) => entry.includes('acceptance criteria')),
+      true,
+      'missing[] must be rewritten as negotiation-relevant questions',
+    );
+  } finally {
+    cleanup();
   }
 });

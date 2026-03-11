@@ -54,6 +54,9 @@ type EvaluationChunks = {
   confidentialChunks: Array<{ evidence_id: string; text: string }>;
 };
 
+type FallbackMode = 'salvaged_memo' | 'incomplete';
+type PostProcessMode = 'normal' | 'salvaged_fallback' | 'incomplete_fallback';
+
 type VertexCallOverride = (params: {
   prompt: string;
   requestId?: string;
@@ -226,6 +229,8 @@ export interface VertexEvaluationV2Internal {
   warnings?: string[];
   /** Set when fallback was used due to a model failure. */
   failure_kind?: string;
+  /** Internal-only fallback classification. */
+  fallback_mode?: FallbackMode;
   /** Actual models used for each step (server-side only). */
   models_used?: {
     generation: string;
@@ -373,7 +378,8 @@ function buildFactSheetPrompt(proposalTextExcerpt: string, strict = false): stri
     '',
     'INSTRUCTIONS:',
     '- For each field, extract what the text explicitly supports. If a field is not supported, leave it null or empty [].',
-    '- For missing_info: list any critical fields that are absent or too vague to extract.',
+    '- For open_questions: include ONLY unresolved questions that materially affect scope, price, timeline, acceptance criteria, dependency ownership, or technical feasibility.',
+    '- For missing_info: list only material gaps or ambiguities. Prioritise scope boundaries, data remediation assumptions, acceptance criteria, change-order triggers, dependency ownership, and technical unknowns.',
     '- For source_coverage: set each boolean to true ONLY if the proposal contains concrete, specific information',
     '  (not vague/placeholder language) for that dimension.',
     '  - has_scope: concrete deliverables or scope items are present.',
@@ -543,31 +549,307 @@ function containsAny(arr: string[], keywords: string[]): boolean {
   return keywords.some((kw) => lower.some((s) => s.includes(kw)));
 }
 
-const WHY_MAX_CHARS_STANDARD = 2400;
-const WHY_MAX_CHARS_TIGHT = 1400;
+const WHY_MAX_CHARS_STANDARD = 3000;
+const WHY_MAX_CHARS_TIGHT = 1800;
 const MISSING_MAX_ITEMS = 10;
 const REDACTIONS_MAX_ITEMS = 8;
+const GENERIC_MISSING_WHY = 'it materially affects scope, delivery risk, or commercial terms';
+
+type MissingRule = {
+  id: string;
+  priority: number;
+  severity: 'material' | 'severe';
+  patterns: string[];
+  label: string;
+  question: string;
+  why: string;
+  condition: string;
+  confidenceUp: string;
+  confidenceDown: string;
+};
+
+const MISSING_RULES: MissingRule[] = [
+  {
+    id: 'scope',
+    priority: 110,
+    severity: 'severe',
+    patterns: ['scope', 'deliverable', 'deliverables', 'mvp', 'requirements', 'use case', 'workflow', 'out of scope'],
+    label: 'core scope is not bounded tightly enough',
+    question: 'What is included in the MVP scope, and what is explicitly out of scope?',
+    why: 'scope boundaries determine pricing, delivery sequencing, and change exposure',
+    condition: 'define the MVP boundary and explicit exclusions',
+    confidenceUp: 'a narrower MVP definition with explicit in-scope and out-of-scope items',
+    confidenceDown: 'scope stays open-ended while the proposal still implies a firm commitment',
+  },
+  {
+    id: 'data_cleanup',
+    priority: 108,
+    severity: 'severe',
+    patterns: ['data quality', 'data cleanup', 'cleanup', 'cleansing', 'remediation', 'source data', 'migration', 'historical data'],
+    label: 'unquantified data cleanup or remediation risk remains with no clear owner',
+    question: 'What data cleanup, remediation, or migration work is assumed before MVP, and who owns it?',
+    why: 'data-condition assumptions can materially change effort, budget, and change-order exposure',
+    condition: 'quantify the data remediation scope and assign ownership before locking pricing or timeline',
+    confidenceUp: 'a scoped audit that quantifies data cleanup effort, assumptions, and ownership',
+    confidenceDown: 'the proposal continues to assume usable source data without evidence or ownership',
+  },
+  {
+    id: 'acceptance',
+    priority: 106,
+    severity: 'material',
+    patterns: ['acceptance criteria', 'definition of done', 'sign-off', 'sign off', 'uat', 'success criteria', 'kpi', 'baseline'],
+    label: 'acceptance criteria are not concrete enough for sign-off',
+    question: 'What measurable acceptance criteria will define completion for the key deliverables and MVP?',
+    why: 'sign-off, payment exposure, and scope control depend on objective acceptance criteria',
+    condition: 'agree measurable acceptance criteria for the key deliverables',
+    confidenceUp: 'measurable success and acceptance criteria tied to the core deliverables',
+    confidenceDown: 'completion stays subjective or depends on informal approval',
+  },
+  {
+    id: 'dependency',
+    priority: 104,
+    severity: 'severe',
+    patterns: ['dependency', 'dependencies', 'owner', 'ownership', 'approval', 'approvals', 'third party', 'third-party', 'client side', 'customer side', 'access', 'out of vendor control'],
+    label: 'ownership of major dependencies or approvals is still unclear',
+    question: 'Which party owns the major dependencies, approvals, and third-party inputs, and what happens if they slip?',
+    why: 'unclear ownership distorts timeline risk, resourcing assumptions, and dispute exposure',
+    condition: 'name dependency owners and define the fallback if they slip',
+    confidenceUp: 'named owners, dates, and contingencies for the major dependencies and approvals',
+    confidenceDown: 'critical dependencies remain external, unowned, or out of the vendor’s control',
+  },
+  {
+    id: 'change_order',
+    priority: 102,
+    severity: 'material',
+    patterns: ['change order', 'change-order', 'variation', 'scope creep', 'fixed price', 'fixed-price', 'out of scope'],
+    label: 'change-order triggers are not defined for known uncertainty',
+    question: 'What change-order triggers apply if assumptions, inputs, or scope expand during delivery?',
+    why: 'known uncertainty must be priced and allocated rather than silently pushed onto one side',
+    condition: 'define contractual change-order triggers tied to the known uncertainty',
+    confidenceUp: 'change-control terms that map directly to the unresolved assumptions',
+    confidenceDown: 'price or timeline is treated as fixed while uncertainty remains unbounded',
+  },
+  {
+    id: 'technical',
+    priority: 100,
+    severity: 'severe',
+    patterns: ['architecture', 'integration', 'api', 'schema', 'security', 'performance', 'scalability', 'infrastructure'],
+    label: 'critical technical assumptions remain unvalidated',
+    question: 'Which technical assumptions around architecture, integrations, data handling, or performance still need validation?',
+    why: 'technical unknowns can materially alter implementation effort, architecture, and budget',
+    condition: 'run discovery or a technical spike to validate the unresolved technical assumptions',
+    confidenceUp: 'technical discovery outputs that validate the integration, architecture, or data assumptions',
+    confidenceDown: 'the proposal keeps a firm delivery position while key technical assumptions stay untested',
+  },
+  {
+    id: 'phase_boundary',
+    priority: 98,
+    severity: 'material',
+    patterns: ['phase 2', 'phase two', 'phase 1', 'phase one', 'later phase', 'future phase', 'next phase', 'rollout'],
+    label: 'phase boundaries and deferrable work are not yet explicit',
+    question: 'What belongs in the current MVP or phase, and what is intentionally deferred to later phases?',
+    why: 'phase boundaries determine what must be priced, accepted, and protected now versus deferred without dispute',
+    condition: 'separate the current phase scope from later-phase options with measurable exit gates',
+    confidenceUp: 'explicit phase boundaries and measurable outputs for later-phase work',
+    confidenceDown: 'later-phase aspirations stay mixed into current commitments',
+  },
+  {
+    id: 'timeline',
+    priority: 96,
+    severity: 'material',
+    patterns: ['timeline', 'deadline', 'milestone', 'duration', 'go live', 'go-live', 'schedule'],
+    label: 'timeline assumptions are not reliable enough yet',
+    question: 'What is the confirmed timeline, including milestones, dependencies, and any non-negotiable deadline?',
+    why: 'timeline assumptions drive staffing, sequencing, and feasibility',
+    condition: 'confirm the delivery timeline and dependency-linked milestones',
+    confidenceUp: 'a timeline tied to explicit milestones, dependencies, and contingency assumptions',
+    confidenceDown: 'delivery timing remains aspirational or detached from dependency reality',
+  },
+  {
+    id: 'commercial',
+    priority: 94,
+    severity: 'material',
+    patterns: ['budget', 'price', 'pricing', 'cost', 'commercial', 'contract', 'payment', 'billing', 'estimate'],
+    label: 'commercial assumptions are not fully tied to defined scope and risk',
+    question: 'What commercial model applies, and which assumptions underpin the current pricing or budget expectation?',
+    why: 'commercial terms are unreliable if scope, dependencies, or risk allocation stay open',
+    condition: 'tie pricing and contract posture to explicit scope and risk assumptions',
+    confidenceUp: 'pricing tied to explicit assumptions, exclusions, and risk ownership',
+    confidenceDown: 'commercial terms remain optimistic while key assumptions are still open',
+  },
+  {
+    id: 'risk',
+    priority: 92,
+    severity: 'material',
+    patterns: ['risk', 'risks', 'mitigation', 'risk register', 'risk owner'],
+    label: 'risk allocation is still too vague',
+    question: 'Which material delivery risks are known now, and how will each be mitigated or allocated between the parties?',
+    why: 'unallocated risk weakens the recommendation and increases dispute exposure',
+    condition: 'document the material risks, mitigations, and risk owners',
+    confidenceUp: 'a risk register with mitigations, owners, and commercial treatment',
+    confidenceDown: 'material risks stay implicit or are carried without agreement',
+  },
+];
+
+const CONDITIONAL_CONFIDENCE_PATTERNS = [
+  'must be defined',
+  'must be quantified',
+  'depends on',
+  'dependent on',
+  'unquantified',
+  'undefined',
+  'unclear',
+  'not defined',
+  'not yet defined',
+  'needs discovery',
+  'requires discovery',
+  'out of vendor control',
+  'out of the vendor s control',
+  'critical risk',
+  'pending clarification',
+  'to be confirmed',
+  'tbd',
+  'open question',
+  'pause pending clarification',
+  'proceed with conditions',
+  'conditionally ready',
+];
+
+const BODY_VIABLE_PATH_PATTERNS = [
+  'workable starting point',
+  'credible path to agreement',
+  'plausible path to agreement',
+  'commercially workable',
+  'usable structure',
+  'conditionally viable',
+  'workable if',
+  'bridge to agreement',
+  'strong foundation',
+];
+
+const BODY_WEAK_PATH_PATTERNS = [
+  'no credible path',
+  'not commercially viable',
+  'not feasible',
+  'structurally weak',
+  'fundamentally misaligned',
+  'no realistic path to agreement',
+  'no viable path',
+];
+
+const NEUTRAL_TONE_REPLACEMENTS: Array<{ pattern: RegExp; replacement: string }> = [
+  { pattern: /\bImprove your position\b/gi, replacement: 'Build a more balanced path to agreement' },
+  { pattern: /\b[Yy]ou should strengthen\b/g, replacement: 'The parties would need clearer bilateral treatment of' },
+  { pattern: /\b[Yy]ou should rewrite\b/g, replacement: 'The parties would need to restate' },
+  { pattern: /\b[Yy]ou should\b/g, replacement: 'The parties would need to' },
+  { pattern: /\b[Yy]ou need to\b/g, replacement: 'The parties need to' },
+  { pattern: /\b[Yy]our proposal would be better if\b/g, replacement: 'The current proposal becomes easier for both sides to accept if' },
+  { pattern: /\b[Yy]our proposal would be stronger if\b/g, replacement: 'The current proposal becomes easier for both sides to rely on if' },
+  { pattern: /\b[Yy]our proposal\b/g, replacement: 'the current proposal' },
+  { pattern: /\b[Yy]our submission\b/g, replacement: 'the current proposal' },
+  { pattern: /\b[Yy]our wording\b/g, replacement: 'the current wording' },
+  { pattern: /\bif you\b/gi, replacement: 'if the parties' },
+  { pattern: /\b[Bb]efore sending\b/g, replacement: 'Before either side treats this as ready to proceed' },
+  { pattern: /\badd stronger wording around\b/gi, replacement: 'define more concrete bilateral treatment of' },
+  { pattern: /\bstrengthen the remediation language\b/gi, replacement: 'define the bilateral treatment of remediation more explicitly' },
+  { pattern: /\b[Tt]his makes your proposal look weak\b/g, replacement: 'This creates bilateral credibility and scope risk' },
+  { pattern: /\b[Tt]o improve credibility\b/g, replacement: 'To reduce credibility risk for both sides' },
+  { pattern: /\b[Tt]o increase your chances\b/g, replacement: 'To improve the path to agreement' },
+  { pattern: /\bOptions:\b/g, replacement: 'Paths to agreement:' },
+  { pattern: /\bFirst 2 weeks plan:\b/g, replacement: 'Immediate negotiation agenda:' },
+  { pattern: /\bNext call: what I'?d ask for:\b/g, replacement: 'Next negotiation agenda:' },
+  { pattern: /\bLikely pushback & response:\b/g, replacement: 'Likely sticking points & bridges:' },
+];
+
+const COACHING_GUARD_PATTERNS = [
+  /\bimprove your position\b/i,
+  /\byou should\b/i,
+  /\byou need to\b/i,
+  /\byour proposal\b/i,
+  /\byour submission\b/i,
+  /\bif you\b/i,
+  /\bbefore sending\b/i,
+  /\badd stronger wording\b/i,
+  /\bstrengthen the remediation language\b/i,
+  /\bincrease your chances\b/i,
+  /\blook weak\b/i,
+];
+
+function trimParagraphAtSentenceBoundary(paragraph: string, maxChars: number) {
+  const text = normalizeSpaces(paragraph);
+  if (!text) return '';
+  if (text.length <= maxChars) return text;
+  if (maxChars <= 0 || isRoleLockedParagraph(text)) return '';
+
+  const sentences = text
+    .split(/(?<=[.!?])\s+/g)
+    .map((sentence) => normalizeSpaces(sentence))
+    .filter(Boolean);
+  const kept: string[] = [];
+  let total = 0;
+  for (const sentence of sentences) {
+    const addition = kept.length === 0 ? sentence.length : sentence.length + 1;
+    if (total + addition > maxChars) break;
+    kept.push(sentence);
+    total += addition;
+  }
+  if (kept.length > 0) return kept.join(' ');
+
+  const candidate = text.slice(0, maxChars);
+  const cutIndex = Math.max(candidate.lastIndexOf('. '), candidate.lastIndexOf('? '), candidate.lastIndexOf('! '));
+  if (cutIndex > 40) {
+    return candidate.slice(0, cutIndex + 1).trim();
+  }
+  return '';
+}
 
 /**
- * Safely truncates the why[] array so total chars stay under maxChars.
- * Each element is kept whole if it fits; truncated with "…" otherwise.
+ * Section-aware truncation for why[].
+ * Preserves heading labels, prefers dropping lower-priority paragraphs, and only
+ * trims at sentence boundaries when a section would otherwise be omitted.
  */
 function truncateWhyOutput(why: string[], maxChars: number): string[] {
   if (!Array.isArray(why)) return [];
+  const sections = parseWhySections(why);
   const result: string[] = [];
   let total = 0;
-  for (const entry of why) {
-    const text = String(entry || '');
-    if (total + text.length + 1 > maxChars) {
-      const remaining = maxChars - total - 1;
-      if (remaining > 40) {
-        result.push(text.slice(0, remaining) + '…');
+
+  for (const section of sections) {
+    const heading = asText(section.heading) || canonicalWhyHeading(section.key);
+    const paragraphs = splitParagraphs(section.body);
+    if (!heading || paragraphs.length === 0) continue;
+
+    const formatEntry = (paragraphList: string[]) => `${heading}: ${combineParagraphs(paragraphList)}`;
+    let keptParagraphs = [...paragraphs];
+    let candidate = formatEntry(keptParagraphs);
+
+    while (keptParagraphs.length > 0 && total + candidate.length + 1 > maxChars) {
+      if (keptParagraphs.length > 1) {
+        keptParagraphs = keptParagraphs.slice(0, -1);
+        candidate = formatEntry(keptParagraphs);
+        continue;
+      }
+
+      const remaining = maxChars - total - heading.length - 3 - 1;
+      const trimmedParagraph = trimParagraphAtSentenceBoundary(keptParagraphs[0], remaining);
+      if (trimmedParagraph) {
+        keptParagraphs = [trimmedParagraph];
+        candidate = formatEntry(keptParagraphs);
+      } else {
+        keptParagraphs = [];
       }
       break;
     }
-    result.push(text);
-    total += text.length + 1;
+
+    if (keptParagraphs.length === 0) {
+      continue;
+    }
+
+    result.push(candidate);
+    total += candidate.length + 1;
+    if (total >= maxChars - 20) break;
   }
+
   return result;
 }
 
@@ -583,6 +865,1431 @@ const GENERIC_FALLBACK_MISSING: string[] = [
   'What are the key project risks and their proposed mitigations?',
 ];
 
+type WhySection = {
+  heading: string;
+  key: string;
+  body: string;
+};
+
+const REQUIRED_WHY_SECTION_KEYS = [
+  'snapshot',
+  'key risks',
+  'key strengths',
+  'decision readiness',
+  'recommendations',
+];
+
+type CalibrationSignals = {
+  rules: MissingRule[];
+  ruleIds: Set<string>;
+  blockerLabels: string[];
+  conditions: string[];
+  confidenceUp: string[];
+  confidenceDown: string[];
+  hasConditionalLanguage: boolean;
+  highEligible: boolean;
+  shouldBeConditional: boolean;
+  shouldBeLow: boolean;
+  conditionallyViable: boolean;
+  fixedPriceSignal: boolean;
+  coverageCount: number;
+  alignmentPoints: string[];
+  hasCrediblePath: boolean;
+  structuralViabilityScore: number;
+  bodySuggestsViablePath: boolean;
+};
+
+function normalizeKeywordText(value: string) {
+  return asLower(value).replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function keywordMatch(text: string, pattern: string) {
+  const haystack = normalizeKeywordText(text);
+  const needle = normalizeKeywordText(pattern);
+  return Boolean(haystack && needle && haystack.includes(needle));
+}
+
+function findMatchingMissingRules(text: string) {
+  const normalized = asText(text);
+  if (!normalized) {
+    return [] as MissingRule[];
+  }
+  return MISSING_RULES.filter((rule) => rule.patterns.some((pattern) => keywordMatch(normalized, pattern)));
+}
+
+function getMissingRuleById(id: string) {
+  return MISSING_RULES.find((rule) => rule.id === id) || null;
+}
+
+function lowerFirst(value: string) {
+  if (!value) return '';
+  return value.charAt(0).toLowerCase() + value.slice(1);
+}
+
+function stripTrailingPunctuation(value: string) {
+  return String(value || '').replace(/[.?!]+$/g, '').trim();
+}
+
+function joinNatural(items: string[]) {
+  const clean = items.map((item) => asText(item)).filter(Boolean);
+  if (clean.length === 0) return '';
+  if (clean.length === 1) return clean[0];
+  if (clean.length === 2) return `${clean[0]} and ${clean[1]}`;
+  return `${clean.slice(0, -1).join(', ')}, and ${clean[clean.length - 1]}`;
+}
+
+function neutralizeShareableText(value: string) {
+  let next = String(value || '');
+  NEUTRAL_TONE_REPLACEMENTS.forEach(({ pattern, replacement }) => {
+    next = next.replace(pattern, replacement);
+  });
+  return next.trim();
+}
+
+function hasCoachingLanguage(value: string) {
+  return COACHING_GUARD_PATTERNS.some((pattern) => pattern.test(String(value || '')));
+}
+
+function normalizeWhyHeadingKey(value: string) {
+  const normalized = normalizeKeywordText(value);
+  if (!normalized) return '';
+  if (normalized === 'executive summary' || normalized === 'decision snapshot') return 'snapshot';
+  if (normalized === 'risk summary') return 'key risks';
+  return normalized;
+}
+
+function canonicalWhyHeading(key: string) {
+  const normalized = normalizeWhyHeadingKey(key);
+  if (normalized === 'snapshot') return 'Snapshot';
+  if (normalized === 'key risks') return 'Key Risks';
+  if (normalized === 'key strengths') return 'Key Strengths';
+  if (normalized === 'decision readiness') return 'Decision Readiness';
+  if (normalized === 'recommendations') return 'Recommendations';
+  if (normalized === 'implementation notes') return 'Implementation Notes';
+  if (normalized === 'commercial notes') return 'Commercial Notes';
+  if (normalized === 'data security notes') return 'Data & Security Notes';
+  if (normalized === 'vendor fit notes') return 'Vendor Fit Notes';
+  return key || 'Section';
+}
+
+function splitParagraphs(value: string) {
+  return String(value || '')
+    .split(/\n{2,}/g)
+    .map((paragraph) => normalizeSpaces(paragraph))
+    .filter(Boolean);
+}
+
+const DEDUPE_STOPWORDS = new Set([
+  'the', 'and', 'for', 'with', 'that', 'this', 'from', 'into', 'than', 'then',
+  'both', 'side', 'sides', 'party', 'parties', 'their', 'there', 'what', 'when',
+  'where', 'which', 'will', 'would', 'could', 'should', 'must', 'have', 'has',
+  'had', 'not', 'yet', 'still', 'more', 'less', 'only', 'very', 'much', 'because',
+  'while', 'under', 'over', 'they', 'them', 'also', 'does', 'doesn', 'being',
+  'ready', 'proceed', 'proposal', 'current', 'agreement', 'against', 'between',
+  'around', 'about', 'before', 'after', 'until', 'through', 'needs', 'need',
+]);
+
+function paragraphKeywords(value: string) {
+  return normalizeKeywordText(value)
+    .split(/\s+/g)
+    .filter((token) => token.length > 2 && !DEDUPE_STOPWORDS.has(token));
+}
+
+function paragraphsAreNearDuplicates(a: string, b: string) {
+  const left = normalizeSpaces(a).toLowerCase();
+  const right = normalizeSpaces(b).toLowerCase();
+  if (!left || !right) return false;
+  if (left === right) return true;
+  if (left.slice(0, 140) === right.slice(0, 140)) return true;
+
+  const leftTokens = paragraphKeywords(left);
+  const rightTokens = paragraphKeywords(right);
+  if (leftTokens.length === 0 || rightTokens.length === 0) return false;
+
+  const leftSet = new Set(leftTokens);
+  const rightSet = new Set(rightTokens);
+  let overlap = 0;
+  leftSet.forEach((token) => {
+    if (rightSet.has(token)) overlap += 1;
+  });
+  const denominator = Math.max(1, Math.min(leftSet.size, rightSet.size));
+  return overlap / denominator >= 0.72;
+}
+
+function isRoleLockedParagraph(value: string) {
+  return /^(Assumptions \/ Dependencies|Paths to agreement|Conditions to proceed|Next negotiation agenda|Likely sticking points & bridges|What must be agreed now vs later|What would change the verdict|Commercial posture):/i.test(
+    normalizeSpaces(value),
+  );
+}
+
+function isLowSignalParagraph(value: string) {
+  const text = normalizeSpaces(value);
+  if (!text) return false;
+  return [
+    /looks polished/i,
+    /broadly workable/i,
+    /presented clearly/i,
+    /mentioned but not fully resolved/i,
+    /tighten details during delivery/i,
+    /^proceed and /i,
+    /^ready to proceed/i,
+  ].some((pattern) => pattern.test(text));
+}
+
+function parseWhySections(why: string[]) {
+  return (Array.isArray(why) ? why : [])
+    .map((entry, index) => {
+      const raw = asText(entry);
+      if (!raw) return null;
+      const separator = raw.indexOf(': ');
+      if (separator > 0) {
+        const heading = raw.slice(0, separator).trim();
+        return {
+          heading,
+          key: normalizeWhyHeadingKey(heading),
+          body: raw.slice(separator + 2).trim(),
+        } as WhySection;
+      }
+      const fallbackHeading = index === 0 ? 'Snapshot' : `Section ${index + 1}`;
+      return {
+        heading: fallbackHeading,
+        key: normalizeWhyHeadingKey(fallbackHeading),
+        body: raw,
+      } as WhySection;
+    })
+    .filter(Boolean) as WhySection[];
+}
+
+function combineParagraphs(paragraphs: string[]) {
+  const result: string[] = [];
+  paragraphs.forEach((paragraph) => {
+    const trimmed = String(paragraph || '').trim();
+    if (!trimmed) return;
+    if (result.some((existing) => paragraphsAreNearDuplicates(existing, trimmed))) return;
+    result.push(trimmed);
+  });
+  return result.join('\n\n');
+}
+
+function upsertWhySection(sections: WhySection[], key: string, body: string) {
+  const normalizedKey = normalizeWhyHeadingKey(key);
+  const existing = sections.find((section) => section.key === normalizedKey);
+  if (existing) {
+    existing.body = body;
+    if (!existing.heading) {
+      existing.heading = canonicalWhyHeading(normalizedKey);
+    }
+    return;
+  }
+  sections.push({
+    heading: canonicalWhyHeading(normalizedKey),
+    key: normalizedKey,
+    body,
+  });
+}
+
+function serializeWhySections(sections: WhySection[]) {
+  return sections
+    .map((section) => {
+      const heading = asText(section.heading) || canonicalWhyHeading(section.key);
+      const body = asText(section.body);
+      return body ? `${heading}: ${body}` : `${heading}:`;
+    })
+    .filter(Boolean);
+}
+
+function isFixedPriceSignal(factSheet: ProposalFactSheet) {
+  return containsAny(factSheet.vendor_preferences, [
+    'fixed', 'fixed-price', 'fixed price', 'lump sum', 'firm fixed', 'firm price',
+  ]) || containsAny(factSheet.constraints, [
+    'fixed price', 'fixed-price', 'fixed contract',
+  ]);
+}
+
+function toActionableMissingQuestion(raw: string, forcedRule?: MissingRule | null) {
+  const text = normalizeSpaces(String(raw || '').replace(/^[\d\s.)-]+/, ''));
+  const rule = forcedRule || findMatchingMissingRules(text)[0] || null;
+  const normalized = asLower(text);
+
+  if (
+    normalized.includes('shared and confidential appear identical') ||
+    normalized.includes('confidentiality separation may not be meaningful')
+  ) {
+    return 'Are the shared and confidential inputs materially different? — identical tiers reduce confidence because confidentiality separation may not be meaningful.';
+  }
+
+  if (!text) {
+    if (!rule) return '';
+    return `${rule.question} — ${rule.why}.`;
+  }
+
+  const emDashIndex = text.indexOf('—');
+  const hyphenDashIndex = emDashIndex >= 0 ? -1 : text.indexOf(' - ');
+  const splitIndex = emDashIndex >= 0 ? emDashIndex : hyphenDashIndex;
+  const left = splitIndex >= 0 ? text.slice(0, splitIndex).trim() : text;
+  const right = splitIndex >= 0 ? text.slice(splitIndex + (emDashIndex >= 0 ? 1 : 3)).trim() : '';
+
+  let question = left;
+  if (question.endsWith('?')) {
+    question = question;
+  } else if (/^(what|who|which|when|where|why|how)\b/i.test(question)) {
+    question = `${stripTrailingPunctuation(question)}?`;
+  } else if (rule) {
+    question = rule.question;
+  } else {
+    const stem = stripTrailingPunctuation(question)
+      .replace(/^(no|missing|undefined|unclear|clarify|confirm|define)\s+/i, '')
+      .trim();
+    question = `What is the agreed position on ${lowerFirst(stem || 'this unresolved issue')}?`;
+  }
+
+  const why = stripTrailingPunctuation(right || rule?.why || GENERIC_MISSING_WHY);
+  return `${question} — ${why}.`;
+}
+
+function buildDerivedRuleIds(factSheet: ProposalFactSheet) {
+  const ids: string[] = [];
+  const sc = factSheet.source_coverage;
+  if (!sc.has_scope) ids.push('scope');
+  if (!sc.has_timeline) ids.push('timeline');
+  if (!sc.has_kpis) ids.push('acceptance');
+  if (!sc.has_constraints) ids.push('commercial');
+  if (!sc.has_risks) ids.push('risk');
+  if (isFixedPriceSignal(factSheet)) ids.push('change_order');
+  return ids;
+}
+
+function collectCalibrationRules(params: {
+  factSheet: ProposalFactSheet;
+  texts: string[];
+}) {
+  const rules: MissingRule[] = [];
+  const seen = new Set<string>();
+
+  const addRule = (rule: MissingRule | null) => {
+    if (!rule || seen.has(rule.id)) return;
+    seen.add(rule.id);
+    rules.push(rule);
+  };
+
+  params.texts.forEach((text) => {
+    findMatchingMissingRules(text).forEach((rule) => addRule(rule));
+  });
+
+  buildDerivedRuleIds(params.factSheet).forEach((id) => {
+    addRule(getMissingRuleById(id));
+  });
+
+  return rules.sort((a, b) => b.priority - a.priority);
+}
+
+function normalizeMissingQuestions(params: {
+  factSheet: ProposalFactSheet;
+  missing: string[];
+}) {
+  const sourceItems = [
+    ...params.missing,
+    ...params.factSheet.open_questions,
+    ...params.factSheet.missing_info,
+  ].map((item) => asText(neutralizeShareableText(asText(item)))).filter(Boolean);
+  const rules = collectCalibrationRules({
+    factSheet: params.factSheet,
+    texts: sourceItems,
+  });
+
+  if (sourceItems.length === 0 && rules.length === 0) {
+    return [] as string[];
+  }
+
+  const entries: Array<{ text: string; priority: number; key: string }> = [];
+  const seen = new Set<string>();
+
+  const addEntry = (text: string, rule?: MissingRule | null, dedupeMode: 'text' | 'rule' = 'text') => {
+    const cleaned = asText(text);
+    if (!cleaned) return;
+    const dedupeKey =
+      dedupeMode === 'rule' && rule
+        ? `rule:${rule.id}`
+        : `text:${normalizeKeywordText(cleaned).slice(0, 120)}`;
+    if (seen.has(dedupeKey)) return;
+    seen.add(dedupeKey);
+    entries.push({
+      text: cleaned,
+      priority: rule?.priority ?? 40,
+      key: dedupeKey,
+    });
+  };
+
+  sourceItems.forEach((item) => {
+    const matchedRule = findMatchingMissingRules(item)[0] || null;
+    addEntry(toActionableMissingQuestion(item, matchedRule), matchedRule, 'text');
+  });
+
+  rules.forEach((rule) => {
+    addEntry(toActionableMissingQuestion('', rule), rule, 'rule');
+  });
+
+  if (entries.length === 0) {
+    GENERIC_FALLBACK_MISSING.forEach((item) => addEntry(toActionableMissingQuestion(item), null));
+  }
+
+  return entries
+    .sort((a, b) => b.priority - a.priority)
+    .slice(0, MISSING_MAX_ITEMS)
+    .map((entry) => entry.text);
+}
+
+type VisibilityIndex = {
+  visibleText: string;
+  entityPhrases: string[];
+};
+
+const PROTECTED_REDACTION_PATTERNS = [
+  'internal',
+  'confidential',
+  'private',
+  'non-public',
+  'sensitive',
+  'proprietary',
+  'margin',
+  'cost basis',
+  'pricing floor',
+];
+
+const DETAIL_HINT_PATTERNS = [
+  'acceptance',
+  'criteria',
+  'threshold',
+  'thresholds',
+  'measurable',
+  'metric',
+  'metrics',
+  'kpi',
+  'logic',
+  'rule',
+  'rules',
+  'reconciliation',
+  'variance',
+  'schema',
+  'format',
+  'mapping',
+  'owner',
+  'ownership',
+  'responsibility',
+  'trigger',
+  'assumption',
+  'assumptions',
+  'quality',
+  'scale',
+  'detailed',
+  'detail',
+  'exact',
+  'contingency',
+  'exclusion',
+  'exclusions',
+  'out of scope',
+  'out-of-scope',
+  'sign off',
+  'sign-off',
+  'pricing assumptions',
+  'payment terms',
+  'milestones',
+  'deadline',
+  'renewal',
+  'termination',
+  'liability',
+  'indemnity',
+  'warranty',
+  'service level',
+  'sla',
+];
+
+const VISIBILITY_CATEGORY_RULES: Array<{
+  patterns: string[];
+  isVisible: (params: { factSheet: ProposalFactSheet; visibility: VisibilityIndex }) => boolean;
+}> = [
+  {
+    patterns: ['scope', 'deliverable', 'deliverables', 'mvp', 'phase'],
+    isVisible: ({ factSheet }) => Boolean(factSheet.project_goal) || factSheet.source_coverage.has_scope,
+  },
+  {
+    patterns: ['timeline', 'schedule', 'milestone', 'milestones', 'deadline', 'duration', 'dates'],
+    isVisible: ({ factSheet }) => factSheet.source_coverage.has_timeline,
+  },
+  {
+    patterns: ['metric', 'metrics', 'kpi', 'kpis', 'success criteria', 'target', 'targets'],
+    isVisible: ({ factSheet }) => factSheet.source_coverage.has_kpis,
+  },
+  {
+    patterns: ['budget', 'price', 'pricing', 'commercial model', 'commercial', 'payment', 'contract'],
+    isVisible: ({ factSheet, visibility }) =>
+      factSheet.source_coverage.has_constraints
+      || ['budget', 'pricing', 'commercial', 'payment', 'contract'].some((pattern) => keywordMatch(visibility.visibleText, pattern)),
+  },
+  {
+    patterns: ['risk', 'risks', 'mitigation'],
+    isVisible: ({ factSheet }) => factSheet.source_coverage.has_risks,
+  },
+  {
+    patterns: ['system', 'systems', 'tool', 'tools', 'platform', 'platforms', 'application', 'applications', 'site', 'sites', 'stakeholder', 'stakeholders', 'names', 'name'],
+    isVisible: ({ visibility }) => visibility.entityPhrases.length > 0,
+  },
+  {
+    patterns: ['architecture', 'technical architecture', 'integration', 'integrations', 'api', 'schema', 'governance'],
+    isVisible: ({ visibility }) =>
+      ['architecture', 'integration', 'api', 'schema', 'governance'].some((pattern) => keywordMatch(visibility.visibleText, pattern)),
+  },
+];
+
+function addVisiblePhrase(target: Set<string>, value: string) {
+  const normalized = normalizeKeywordText(value);
+  if (!normalized || normalized.length < 3) return;
+  target.add(normalized);
+}
+
+function extractEntityPhrases(text: string) {
+  const matches = String(text || '').match(/\b(?:[A-Z][A-Za-z0-9&+._/-]*\s+){0,2}[A-Z][A-Za-z0-9&+._/-]*\b/g) || [];
+  const stopwords = new Set(['Snapshot', 'Key', 'Risks', 'Strengths', 'Decision', 'Readiness', 'Recommendations']);
+  const phrases = new Set<string>();
+  matches.forEach((match) => {
+    const cleaned = normalizeSpaces(match);
+    if (!cleaned) return;
+    const parts = cleaned.split(' ');
+    if (parts.every((part) => stopwords.has(part))) return;
+    addVisiblePhrase(phrases, cleaned);
+  });
+  return [...phrases];
+}
+
+function buildVisibilityIndex(params: {
+  factSheet: ProposalFactSheet;
+  sharedText: string;
+  why: string[];
+}) {
+  const phraseSet = new Set<string>();
+  const addList = (items: string[]) => {
+    items.forEach((item) => addVisiblePhrase(phraseSet, item));
+  };
+
+  if (params.factSheet.source_coverage.has_scope) {
+    addList(params.factSheet.scope_deliverables);
+  }
+  if (params.factSheet.source_coverage.has_timeline) {
+    addList([
+      params.factSheet.timeline.start || '',
+      params.factSheet.timeline.duration || '',
+      ...params.factSheet.timeline.milestones,
+    ]);
+  }
+  if (params.factSheet.source_coverage.has_constraints) {
+    addList([...params.factSheet.constraints, ...params.factSheet.vendor_preferences]);
+  }
+  if (params.factSheet.source_coverage.has_kpis) {
+    addList(params.factSheet.success_criteria_kpis);
+  }
+  if (params.factSheet.source_coverage.has_risks) {
+    addList(params.factSheet.risks.map((item) => item.risk));
+  }
+  addList([
+    params.factSheet.project_goal || '',
+    ...params.factSheet.assumptions,
+    ...params.factSheet.open_questions,
+  ]);
+  extractEntityPhrases(params.sharedText).forEach((item) => addVisiblePhrase(phraseSet, item));
+  params.why.forEach((entry) => extractEntityPhrases(entry).forEach((item) => addVisiblePhrase(phraseSet, item)));
+
+  return {
+    visibleText: normalizeSpaces([
+      params.sharedText,
+      params.factSheet.project_goal || '',
+      ...(params.factSheet.source_coverage.has_scope ? params.factSheet.scope_deliverables : []),
+      ...(params.factSheet.source_coverage.has_timeline
+        ? [params.factSheet.timeline.start || '', params.factSheet.timeline.duration || '', ...params.factSheet.timeline.milestones]
+        : []),
+      ...(params.factSheet.source_coverage.has_constraints ? [...params.factSheet.constraints, ...params.factSheet.vendor_preferences] : []),
+      ...(params.factSheet.source_coverage.has_kpis ? params.factSheet.success_criteria_kpis : []),
+      ...params.factSheet.assumptions,
+      ...params.factSheet.open_questions,
+      ...(params.factSheet.source_coverage.has_risks ? params.factSheet.risks.map((item) => item.risk) : []),
+      ...params.why,
+    ].join(' ')),
+    entityPhrases: [...phraseSet],
+  } as VisibilityIndex;
+}
+
+function hasDetailHint(text: string) {
+  return DETAIL_HINT_PATTERNS.some((pattern) => keywordMatch(text, pattern));
+}
+
+function extractMissingSubject(text: string) {
+  const left = asText(text).split('—')[0] || '';
+  return stripTrailingPunctuation(left)
+    .replace(/^(what|which|who|where|when|how)\b/i, '')
+    .replace(/^(is|are|the|a|an)\b/i, '')
+    .trim();
+}
+
+function isAlreadyVisibleCategory(params: {
+  subject: string;
+  factSheet: ProposalFactSheet;
+  visibility: VisibilityIndex;
+}) {
+  return VISIBILITY_CATEGORY_RULES.some((rule) =>
+    rule.patterns.some((pattern) => keywordMatch(params.subject, pattern)) && rule.isVisible(params),
+  );
+}
+
+function isVisiblePhrase(params: {
+  subject: string;
+  visibility: VisibilityIndex;
+}) {
+  const normalizedSubject = normalizeKeywordText(params.subject);
+  if (!normalizedSubject) return false;
+  return params.visibility.entityPhrases.some((phrase) =>
+    normalizedSubject.includes(phrase) || phrase.includes(normalizedSubject),
+  );
+}
+
+function filterVisibleMissingItems(params: {
+  factSheet: ProposalFactSheet;
+  sharedText: string;
+  why: string[];
+  missing: string[];
+}) {
+  const visibility = buildVisibilityIndex({
+    factSheet: params.factSheet,
+    sharedText: params.sharedText,
+    why: params.why,
+  });
+  const kept: string[] = [];
+  const seen = new Set<string>();
+
+  params.missing.forEach((item) => {
+    const text = asText(item);
+    if (!text) return;
+    if (/shared and confidential inputs materially different|identical tiers/i.test(text)) {
+      kept.push(text);
+      return;
+    }
+    const subject = extractMissingSubject(text);
+    const detailSpecific = hasDetailHint(text);
+    const alreadyVisible =
+      !detailSpecific
+      && (
+        isVisiblePhrase({ subject, visibility })
+        || isAlreadyVisibleCategory({ subject, factSheet: params.factSheet, visibility })
+      );
+    if (alreadyVisible) return;
+    const dedupeKey = normalizeKeywordText(text).slice(0, 120);
+    if (!dedupeKey || seen.has(dedupeKey)) return;
+    seen.add(dedupeKey);
+    kept.push(text);
+  });
+
+  return kept.slice(0, MISSING_MAX_ITEMS);
+}
+
+function normalizeRedactions(params: {
+  factSheet: ProposalFactSheet;
+  sharedText: string;
+  why: string[];
+  missing: string[];
+  redactions: string[];
+}) {
+  const visibility = buildVisibilityIndex({
+    factSheet: params.factSheet,
+    sharedText: params.sharedText,
+    why: params.why,
+  });
+  const seen = new Set<string>();
+
+  return params.redactions
+    .map((item) => asText(neutralizeShareableText(item)))
+    .filter((item) => {
+      if (!item) return false;
+      if (params.missing.some((missingItem) => paragraphsAreNearDuplicates(missingItem, item))) return false;
+      const subject = extractMissingSubject(item);
+      const detailSpecific = hasDetailHint(item);
+      const protectedDetail = PROTECTED_REDACTION_PATTERNS.some((pattern) => keywordMatch(item, pattern));
+      if (!protectedDetail && isVisiblePhrase({ subject, visibility })) return false;
+      if (!detailSpecific && isAlreadyVisibleCategory({ subject, factSheet: params.factSheet, visibility })) return false;
+      const dedupeKey = normalizeKeywordText(item).slice(0, 120);
+      if (!dedupeKey || seen.has(dedupeKey)) return false;
+      seen.add(dedupeKey);
+      return true;
+    })
+    .slice(0, REDACTIONS_MAX_ITEMS);
+}
+
+function buildPositiveEvidenceSummary(factSheet: ProposalFactSheet) {
+  const evidence: string[] = [];
+  if (factSheet.scope_deliverables.length > 0) {
+    evidence.push(
+      `${Math.min(factSheet.scope_deliverables.length, 3)} named deliverable${factSheet.scope_deliverables.length === 1 ? '' : 's'}`,
+    );
+  }
+  if (factSheet.timeline.duration || factSheet.timeline.milestones.length > 0) {
+    evidence.push('a defined delivery timeline');
+  }
+  if (factSheet.success_criteria_kpis.length > 0) {
+    evidence.push('measurable success criteria');
+  }
+  if (factSheet.constraints.length > 0) {
+    evidence.push('stated delivery constraints');
+  }
+  if (factSheet.risks.length > 0) {
+    evidence.push('an explicit risk list');
+  }
+  return joinNatural(evidence.slice(0, 3));
+}
+
+function hasCommercialSignal(factSheet: ProposalFactSheet) {
+  return containsAny([...factSheet.constraints, ...factSheet.vendor_preferences], [
+    'budget', 'price', 'pricing', 'commercial', 'payment', 'billing', 'contract', 'fixed', 'fixed-price', 'estimate',
+  ]);
+}
+
+function buildAlignmentPoints(factSheet: ProposalFactSheet) {
+  const points: string[] = [];
+  const addPoint = (value: string) => {
+    const text = asText(value);
+    if (!text || points.includes(text)) return;
+    points.push(text);
+  };
+
+  if (factSheet.project_goal) {
+    addPoint('a shared high-level objective');
+  }
+  if (factSheet.scope_deliverables.length > 0) {
+    const deliverables = factSheet.scope_deliverables
+      .slice(0, 2)
+      .map((item) => stripTrailingPunctuation(item))
+      .filter(Boolean);
+    if (deliverables.length > 0) {
+      addPoint(
+        deliverables.length === 1
+          ? `a named core deliverable (${deliverables[0]})`
+          : `named deliverables such as ${joinNatural(deliverables)}`,
+      );
+    }
+  }
+  if (factSheet.timeline.milestones.length > 1) {
+    addPoint('a phased structure with named milestones');
+  } else if (factSheet.timeline.duration || factSheet.timeline.start || factSheet.timeline.milestones.length > 0) {
+    addPoint('a stated delivery timeline');
+  }
+  if (factSheet.success_criteria_kpis.length > 0) {
+    addPoint('measurable success criteria');
+  }
+  if (hasCommercialSignal(factSheet)) {
+    addPoint('a commercially workable starting posture');
+  } else if (factSheet.constraints.length > 0) {
+    addPoint('visible delivery constraints');
+  }
+  if (factSheet.risks.length > 0) {
+    addPoint('identified delivery risks');
+  }
+  return points.slice(0, 4);
+}
+
+function buildAssumptionsSummary(params: {
+  factSheet: ProposalFactSheet;
+  signals: CalibrationSignals;
+}) {
+  const clauses: string[] = [];
+  params.factSheet.assumptions
+    .slice(0, 2)
+    .map((item) => stripTrailingPunctuation(item))
+    .filter(Boolean)
+    .forEach((item) => clauses.push(item));
+
+  if (params.signals.ruleIds.has('dependency')) {
+    clauses.push('major approvals, access, or third-party inputs still need named owners and fallback treatment');
+  }
+  if (params.signals.ruleIds.has('data_cleanup')) {
+    clauses.push('data quality is being assumed rather than quantified');
+  }
+  if (params.signals.ruleIds.has('technical')) {
+    clauses.push('integration or architecture assumptions remain to be validated');
+  }
+  if (params.signals.ruleIds.has('phase_boundary')) {
+    clauses.push('the proposal still needs a cleaner line between the current phase and later-phase work');
+  }
+
+  return joinNatural(clauses.slice(0, 2))
+    || 'the remaining scope, dependency, and commercial assumptions still need explicit bilateral treatment';
+}
+
+function buildRiskTransferSummary(signals: CalibrationSignals) {
+  const clauses: string[] = [];
+  const addClause = (value: string) => {
+    if (!value || clauses.includes(value)) return;
+    clauses.push(value);
+  };
+
+  if (signals.ruleIds.has('data_cleanup')) {
+    addClause('data remediation risk is not yet assigned cleanly');
+  }
+  if (signals.ruleIds.has('acceptance')) {
+    addClause('sign-off risk remains subjective');
+  }
+  if (signals.ruleIds.has('dependency')) {
+    addClause('timeline risk still sits with whichever party controls access or approvals');
+  }
+  if (signals.ruleIds.has('change_order')) {
+    addClause('price certainty is being asked for before uncertainty is bounded');
+  }
+  if (signals.ruleIds.has('scope')) {
+    addClause('scope interpretation risk remains open between scope, effort, and price');
+  }
+  if (signals.ruleIds.has('technical')) {
+    addClause('architecture and budget assumptions remain untested');
+  }
+  if (signals.ruleIds.has('commercial')) {
+    addClause('commercial exposure is not yet tied tightly enough to defined assumptions');
+  }
+  if (signals.ruleIds.has('timeline')) {
+    addClause('delivery timing is still broader than a clean contractual commitment');
+  }
+  if (signals.ruleIds.has('phase_boundary')) {
+    addClause('later-phase aspirations are still mixed into the current commitment');
+  }
+  if (signals.ruleIds.has('risk')) {
+    addClause('known risks are not yet allocated with owners and mitigations');
+  }
+
+  return joinNatural(clauses.slice(0, 2));
+}
+
+function buildPathsToAgreement(params: {
+  factSheet: ProposalFactSheet;
+  signals: CalibrationSignals;
+}) {
+  const paths: string[] = [];
+  const addPath = (value: string) => {
+    const text = asText(value);
+    if (!text || paths.includes(text)) return;
+    paths.push(text);
+  };
+
+  if (params.signals.ruleIds.has('data_cleanup') || params.signals.ruleIds.has('technical')) {
+    addPath('use a discovery-first or audit-first phase before any fixed-scope commitment');
+  }
+  if (params.signals.ruleIds.has('scope') || params.signals.ruleIds.has('acceptance') || params.signals.ruleIds.has('phase_boundary')) {
+    addPath('narrow the MVP and attach measurable acceptance gates before broader rollout');
+  }
+  if (params.signals.ruleIds.has('change_order') || params.signals.ruleIds.has('commercial') || params.signals.ruleIds.has('dependency') || params.signals.ruleIds.has('timeline')) {
+    addPath('tie price, timing, and change-order treatment to named assumptions, owners, and contingency triggers');
+  }
+  if (paths.length === 0 && params.factSheet.timeline.milestones.length > 1) {
+    addPath('phase the commitment so the first milestone is bounded now and later milestones are confirmed after early evidence');
+  }
+  if (paths.length === 0) {
+    addPath('convert the current structure into explicit bilateral conditions to proceed before treating it as commit-ready');
+  }
+
+  return paths.slice(0, 3);
+}
+
+function buildNowVsLaterSummary(params: {
+  factSheet: ProposalFactSheet;
+  signals: CalibrationSignals;
+}) {
+  const nowItems = params.signals.conditions.slice(0, 3);
+  const nowText = nowItems.length > 0
+    ? `the parties should ${joinNatural(nowItems)} now`
+    : 'the parties should settle the remaining scope, acceptance, and dependency conditions now';
+
+  const laterText =
+    params.factSheet.timeline.milestones.length > 1 || params.signals.ruleIds.has('phase_boundary')
+      ? 'broader rollout items can wait until the earlier phase proves out against agreed gates'
+      : params.factSheet.scope_deliverables.length > 2
+      ? 'secondary deliverables can be deferred until the core deliverables are accepted'
+      : 'secondary optimizations or expansion items can wait until the core deliverables are accepted';
+
+  return `What must be agreed now vs later: ${nowText}; ${laterText}.`;
+}
+
+function buildNegotiationAgendaItems(signals: CalibrationSignals) {
+  const items: string[] = [];
+  const addItem = (value: string) => {
+    const text = stripTrailingPunctuation(value);
+    if (!text || items.includes(text)) return;
+    items.push(text);
+  };
+
+  signals.rules.forEach((rule) => {
+    if (rule.id === 'scope') addItem('define the MVP boundary and explicit exclusions');
+    if (rule.id === 'data_cleanup') addItem('assign remediation ownership and quantify cleanup effort');
+    if (rule.id === 'acceptance') addItem('agree measurable acceptance criteria for the key deliverables');
+    if (rule.id === 'dependency') addItem('name dependency owners, approvals, and fallback treatment');
+    if (rule.id === 'change_order') addItem('set change-order triggers for the known uncertainty');
+    if (rule.id === 'technical') addItem('validate the core technical and integration assumptions');
+    if (rule.id === 'timeline') addItem('confirm milestones and any non-negotiable deadline assumptions');
+    if (rule.id === 'commercial') addItem('tie pricing posture to explicit assumptions and exclusions');
+    if (rule.id === 'phase_boundary') addItem('separate current-phase obligations from later-phase options');
+  });
+
+  if (items.length < 3) addItem('confirm which issues must be fixed now versus deferred to a later phase');
+  if (items.length < 3) addItem('align the commercial posture with the actual risk ownership');
+  if (items.length < 3) addItem('confirm the narrowest commit-ready version of the current proposal');
+
+  return items.slice(0, 3);
+}
+
+function buildStickingPointsParagraph(signals: CalibrationSignals) {
+  const scenarios: string[] = [];
+
+  if (signals.ruleIds.has('data_cleanup') || signals.ruleIds.has('change_order') || signals.ruleIds.has('technical')) {
+    scenarios.push(
+      'If either side wants firm pricing before the data or technical assumptions are validated, then the bridge is a discovery-first phase or a capped allowance tied to agreed change-order triggers.',
+    );
+  }
+  if (signals.ruleIds.has('scope') || signals.ruleIds.has('timeline') || signals.ruleIds.has('acceptance') || signals.ruleIds.has('dependency')) {
+    scenarios.push(
+      'If one side wants a faster timeline while scope, acceptance, or dependency ownership stays broad, then the bridge is a narrower MVP with named owners and milestone-specific acceptance gates.',
+    );
+  }
+  if (scenarios.length < 2) {
+    scenarios.push(
+      'If the parties disagree on what must be locked now, then the bridge is to separate current-phase obligations from later-phase options and price only the bounded portion.',
+    );
+  }
+
+  return scenarios.slice(0, 2).join(' ');
+}
+
+function buildSectionRoleDefaults(params: {
+  factSheet: ProposalFactSheet;
+  data: VertexEvaluationV2Response;
+  signals: CalibrationSignals;
+}) {
+  const positiveEvidence = buildPositiveEvidenceSummary(params.factSheet);
+  const alignmentSummary = joinNatural(params.signals.alignmentPoints.slice(0, 2)) || positiveEvidence;
+  const strengthsPoints = params.signals.alignmentPoints.slice(1, 3).length > 0
+    ? params.signals.alignmentPoints.slice(1, 3)
+    : params.signals.alignmentPoints.slice(0, 2);
+  const blockerSummary =
+    params.signals.blockerLabels.length > 0
+      ? joinNatural(params.signals.blockerLabels.slice(0, 2))
+      : 'material scope, delivery, or commercial questions remain open';
+  const conditionSummary =
+    params.signals.conditions.length > 0
+      ? joinNatural(params.signals.conditions.slice(0, 2))
+      : 'define the unresolved scope, acceptance, and dependency terms';
+  const confidenceUp =
+    params.signals.confidenceUp.length > 0
+      ? params.signals.confidenceUp[0]
+      : 'explicit scope, acceptance criteria, and dependency ownership';
+  const confidenceDown =
+    params.signals.confidenceDown.length > 0
+      ? params.signals.confidenceDown[0]
+      : 'the same assumptions stay open while the commercial posture stays firm';
+  const riskTransferSummary = buildRiskTransferSummary(params.signals);
+  const pathsToAgreement = buildPathsToAgreement(params);
+  const agendaItems = buildNegotiationAgendaItems(params.signals);
+  const assumptionsSummary = buildAssumptionsSummary(params);
+  const cleanBounded =
+    params.signals.highEligible
+    && !params.signals.shouldBeConditional
+    && !params.signals.shouldBeLow
+    && params.signals.ruleIds.size === 0;
+  const snapshotLead =
+    params.data.fit_level === 'low'
+      ? `${alignmentSummary ? `There are still some visible alignment points around ${alignmentSummary}, but ` : ''}the current materials do not yet show a credible bounded path to commitment because ${blockerSummary}.`
+      : cleanBounded && params.data.fit_level === 'high'
+      ? `Sign-ready on the current record: alignment exists around ${alignmentSummary}, and the proposal is bounded enough for both sides to treat it as a clean commitment.`
+      : cleanBounded
+      ? `Substantive structure is already in place around ${alignmentSummary}, and the current materials support a credible commitment path without a material structural blocker.`
+      : params.signals.conditionallyViable
+      ? `Conditionally viable: alignment exists around ${alignmentSummary}, but the deal is still not bounded tightly enough around ${blockerSummary}.`
+      : `Conditionally ready rather than fully commit-ready: ${blockerSummary}.`;
+  const snapshotSupport = params.data.fit_level === 'low'
+    ? 'Some deal elements are visible, but the remaining gaps still leave scope, dependency, or commercial exposure too open for either side to rely on the current draft.'
+    : cleanBounded
+    ? 'The current record already contains concrete scope, timing, success, and constraint signals, so the remaining judgment is about commitment posture rather than missing structural facts.'
+    : params.signals.conditionallyViable
+    ? 'The current structure looks commercially workable if the open items are converted into explicit bilateral conditions to proceed rather than left to later interpretation.'
+    : positiveEvidence
+    ? `The current proposal still gives both sides a workable starting point because it includes ${positiveEvidence}.`
+    : 'The current proposal still gives both sides enough structure to frame the next negotiation step.';
+
+  const strengthsLead = params.data.fit_level === 'low'
+    ? strengthsPoints.length > 0
+      ? `Some alignment still exists around ${joinNatural(strengthsPoints)}, but those positives are not enough to offset the unresolved structural gaps.`
+      : 'The parties have at least identified a common objective, but the current structure still lacks a dependable path to agreement.'
+    : strengthsPoints.length > 0
+    ? `Areas of alignment include ${joinNatural(strengthsPoints)}.`
+    : positiveEvidence
+    ? `The current proposal still gives both sides usable structure through ${positiveEvidence}.`
+    : 'The current proposal still provides a workable starting point for bilateral discussion.';
+
+  const defaults: Record<string, string[]> = {
+    snapshot: [snapshotLead, snapshotSupport],
+    'key risks': [
+      cleanBounded
+        ? 'The remaining negotiation exposure is limited and sits mainly in execution governance, handoff sequencing, and confirmation of the written assumptions rather than in core feasibility.'
+        : `The main negotiation pressure points sit around ${blockerSummary}.${riskTransferSummary ? ` As drafted, ${riskTransferSummary}.` : ''}`,
+      cleanBounded
+        ? 'Assumptions / Dependencies: the current record mainly assumes routine stakeholder availability and normal execution coordination rather than an unresolved structural blocker.'
+        : `Assumptions / Dependencies: ${assumptionsSummary}.`,
+    ],
+    'key strengths': [
+      strengthsLead,
+      params.signals.conditionallyViable
+        ? 'That structure matters because it creates a plausible path to agreement once the unresolved conditions are tied to scope, sign-off, and commercial treatment.'
+        : '',
+    ].filter(Boolean),
+    'decision readiness': [
+      cleanBounded && params.data.fit_level === 'high'
+        ? 'Decision readiness is strong: remaining discussion can focus on execution governance and final confirmations rather than bounding core feasibility.'
+        : cleanBounded
+        ? 'Decision readiness is broadly supported by the current record: the remaining discussion is about confirming the present structure, not resolving a core blocker.'
+        : params.data.fit_level === 'low'
+        ? `Decision readiness remains low because the parties still need to ${conditionSummary}.`
+        : `Decision readiness is conditional: before either side treats this as commit-ready, the parties still need to ${conditionSummary}.`,
+      buildNowVsLaterSummary(params),
+      `What would change the verdict: confidence would increase with ${confidenceUp}; it would fall further if ${confidenceDown}.`,
+    ],
+    recommendations: [
+      cleanBounded
+        ? 'Paths to agreement: move from principle to execution by confirming the named milestones, governance cadence, and sign-off mechanics already visible in the current record.'
+        : `Paths to agreement: ${pathsToAgreement.join('; ')}.`,
+      cleanBounded
+        ? 'Conditions to proceed: keep the current scope, timing, commercial posture, and sign-off mechanics aligned as drafted rather than reopening them through later interpretation.'
+        : `Conditions to proceed: ${conditionSummary}.`,
+      cleanBounded
+        ? 'Next negotiation agenda: confirm milestone ownership and governance cadence; confirm sign-off mechanics and operating handoffs; confirm any residual assumptions that sit outside the written scope.'
+        : `Next negotiation agenda: ${agendaItems.join('; ')}.`,
+      `Likely sticking points & bridges: ${buildStickingPointsParagraph(params.signals)}`,
+    ],
+  };
+
+  if (params.signals.fixedPriceSignal) {
+    defaults.recommendations.push(
+      'Commercial posture: keep any fixed-price or fixed-scope posture tied to explicit acceptance criteria, change-order triggers, and risk ownership.',
+    );
+  }
+
+  return defaults;
+}
+
+function orderedWhySections(sections: WhySection[]) {
+  const order = new Map(REQUIRED_WHY_SECTION_KEYS.map((key, index) => [key, index]));
+  return [...sections].sort((left, right) => {
+    const leftIndex = order.has(left.key) ? (order.get(left.key) as number) : REQUIRED_WHY_SECTION_KEYS.length + 1;
+    const rightIndex = order.has(right.key) ? (order.get(right.key) as number) : REQUIRED_WHY_SECTION_KEYS.length + 1;
+    if (leftIndex !== rightIndex) return leftIndex - rightIndex;
+    return 0;
+  });
+}
+
+function buildWhyEntriesFromRoleDefaults(roleDefaults: Record<string, string[]>) {
+  return REQUIRED_WHY_SECTION_KEYS
+    .map((key) => {
+      const body = combineParagraphs(roleDefaults[key] || []);
+      if (!body) return '';
+      return `${canonicalWhyHeading(key)}: ${body}`;
+    })
+    .filter(Boolean);
+}
+
+function classifyFallbackMode(factSheet: ProposalFactSheet) {
+  const coverageCount = computeCoverageCount(factSheet.source_coverage);
+  const alignmentPoints = buildAlignmentPoints(factSheet);
+  const hasMaterialQuestions = factSheet.missing_info.length > 0 || factSheet.open_questions.length > 0;
+
+  if (coverageCount >= 3 && alignmentPoints.length >= 2) return 'salvaged_memo' as FallbackMode;
+  if (coverageCount >= 2 && alignmentPoints.length >= 2 && hasMaterialQuestions) return 'salvaged_memo' as FallbackMode;
+  return 'incomplete' as FallbackMode;
+}
+
+function buildCalibrationSignals(params: {
+  factSheet: ProposalFactSheet;
+  data: VertexEvaluationV2Response;
+}) {
+  const whySections = parseWhySections(params.data.why);
+  const whyBodiesAll = whySections.map((section) => section.body);
+  const whyBodies = whySections
+    .filter((section) => ['key risks', 'decision readiness', 'recommendations'].includes(section.key))
+    .map((section) => section.body);
+  const issueTexts = [
+    ...params.factSheet.missing_info,
+    ...params.factSheet.open_questions,
+    ...params.factSheet.assumptions,
+    ...params.data.missing,
+    ...whyBodies,
+  ].map((text) => asText(text)).filter(Boolean);
+  const rules = collectCalibrationRules({
+    factSheet: params.factSheet,
+    texts: issueTexts,
+  });
+  const ruleIds = new Set(rules.map((rule) => rule.id));
+  const sc = params.factSheet.source_coverage;
+  const coverageCount = computeCoverageCount(sc);
+  const conditionalCorpus = issueTexts.join(' ');
+  const bodyCorpus = whyBodiesAll.join(' ');
+  const hasConditionalLanguage = CONDITIONAL_CONFIDENCE_PATTERNS.some((pattern) => keywordMatch(conditionalCorpus, pattern));
+  const bodySuggestsViablePath = BODY_VIABLE_PATH_PATTERNS.some((pattern) => keywordMatch(bodyCorpus, pattern));
+  const bodySuggestsWeakPath = BODY_WEAK_PATH_PATTERNS.some((pattern) => keywordMatch(bodyCorpus, pattern));
+  const fixedPriceSignal = isFixedPriceSignal(params.factSheet);
+  const alignmentPoints = buildAlignmentPoints(params.factSheet);
+  const structuralViabilityScore = [
+    Boolean(params.factSheet.project_goal),
+    sc.has_scope,
+    sc.has_timeline,
+    sc.has_constraints,
+    sc.has_kpis,
+    sc.has_risks,
+  ].filter(Boolean).length;
+  const hasCrediblePath =
+    structuralViabilityScore >= 3 ||
+    (alignmentPoints.length >= 2 && sc.has_scope && (sc.has_timeline || sc.has_constraints)) ||
+    (bodySuggestsViablePath && structuralViabilityScore >= 2);
+
+  const highEligible =
+    sc.has_scope &&
+    sc.has_timeline &&
+    sc.has_kpis &&
+    sc.has_constraints &&
+    sc.has_risks &&
+    !ruleIds.has('scope') &&
+    !ruleIds.has('data_cleanup') &&
+    !ruleIds.has('acceptance') &&
+    !ruleIds.has('dependency') &&
+    !ruleIds.has('technical') &&
+    (!fixedPriceSignal || !ruleIds.has('change_order')) &&
+    params.factSheet.missing_info.length === 0 &&
+    params.factSheet.open_questions.length === 0;
+
+  const severeUnbounded =
+    (!sc.has_scope && !sc.has_timeline && structuralViabilityScore <= 2) ||
+    (ruleIds.has('technical') && (ruleIds.has('data_cleanup') || ruleIds.has('dependency')) && !hasCrediblePath) ||
+    (coverageCount <= 1 && rules.length >= 3);
+
+  const shouldBeLow =
+    bodySuggestsWeakPath ||
+    severeUnbounded ||
+    (!hasCrediblePath && (rules.length >= 3 || coverageCount <= 2));
+
+  const shouldBeConditional =
+    !highEligible &&
+    (
+      rules.length > 0 ||
+      hasConditionalLanguage ||
+      params.factSheet.missing_info.length > 0 ||
+      params.factSheet.open_questions.length > 0 ||
+      !sc.has_kpis ||
+      !sc.has_risks ||
+      !sc.has_constraints
+    );
+
+  const conditionallyViable =
+    shouldBeConditional &&
+    !shouldBeLow &&
+    hasCrediblePath &&
+    (
+      alignmentPoints.length >= 2 ||
+      structuralViabilityScore >= 3 ||
+      bodySuggestsViablePath
+    );
+
+  return {
+    rules,
+    ruleIds,
+    blockerLabels: rules.map((rule) => rule.label),
+    conditions: rules.map((rule) => rule.condition),
+    confidenceUp: rules.map((rule) => rule.confidenceUp),
+    confidenceDown: rules.map((rule) => rule.confidenceDown),
+    hasConditionalLanguage,
+    highEligible,
+    shouldBeConditional,
+    shouldBeLow,
+    conditionallyViable,
+    fixedPriceSignal,
+    coverageCount,
+    alignmentPoints,
+    hasCrediblePath,
+    structuralViabilityScore,
+    bodySuggestsViablePath,
+  } as CalibrationSignals;
+}
+
+function rewriteWhyForCalibration(params: {
+  factSheet: ProposalFactSheet;
+  data: VertexEvaluationV2Response;
+  signals: CalibrationSignals;
+  postProcessMode?: PostProcessMode;
+}) {
+  const sections = parseWhySections(params.data.why);
+  if (sections.length === 0) {
+    return params.data.why;
+  }
+  REQUIRED_WHY_SECTION_KEYS.forEach((key) => {
+    if (!sections.some((section) => section.key === key)) {
+      upsertWhySection(sections, key, '');
+    }
+  });
+
+  sections.forEach((section) => {
+    let nextBody = neutralizeShareableText(section.body);
+    if (hasCoachingLanguage(nextBody)) {
+      if (section.key === 'key strengths') {
+        nextBody = combineParagraphs([
+          'Alignment exists where the current proposal already gives both sides concrete structure on scope, timing, success metrics, or commercial treatment.',
+          nextBody,
+        ]);
+      } else if (section.key === 'key risks') {
+        nextBody = combineParagraphs([
+          'Tension is likely where one party is implicitly being asked to absorb open scope, dependency, or commercial risk.',
+          nextBody,
+        ]);
+      } else if (section.key === 'decision readiness') {
+        nextBody = combineParagraphs([
+          'Readiness depends on what the parties can bound now versus defer to a later phase.',
+          nextBody,
+        ]);
+      } else if (section.key === 'recommendations') {
+        nextBody = combineParagraphs([
+          'A realistic path to agreement is to turn the remaining gaps into explicit conditions to proceed rather than one-sided drafting advice.',
+          nextBody,
+        ]);
+      }
+    }
+    section.body = nextBody;
+  });
+
+  const roleDefaults = buildSectionRoleDefaults(params);
+  const needsRichRewrite =
+    (params.postProcessMode || 'normal') === 'normal'
+    && (
+      params.signals.shouldBeConditional
+      || params.signals.shouldBeLow
+      || params.signals.conditionallyViable
+    );
+
+  const globallySeenParagraphs: string[] = [];
+  const rewrittenSections = orderedWhySections(sections).map((section) => {
+    const existingParagraphs = splitParagraphs(section.body);
+    const candidateParagraphs = [
+      ...(needsRichRewrite ? (roleDefaults[section.key] || []) : []),
+      ...existingParagraphs,
+    ];
+
+    const finalParagraphs: string[] = [];
+    candidateParagraphs.forEach((paragraph) => {
+      const trimmed = asText(paragraph);
+      if (!trimmed) return;
+      if (needsRichRewrite && isLowSignalParagraph(trimmed)) return;
+      const roleLocked = isRoleLockedParagraph(trimmed);
+      if (finalParagraphs.some((existing) => paragraphsAreNearDuplicates(existing, trimmed))) return;
+      if (!roleLocked && globallySeenParagraphs.some((existing) => paragraphsAreNearDuplicates(existing, trimmed))) return;
+      finalParagraphs.push(trimmed);
+      globallySeenParagraphs.push(trimmed);
+    });
+
+    if (finalParagraphs.length === 0) {
+      const fallbackParagraph = (roleDefaults[section.key] || [])[0] || section.body;
+      const trimmedFallback = asText(fallbackParagraph);
+      if (trimmedFallback) {
+        finalParagraphs.push(trimmedFallback);
+        globallySeenParagraphs.push(trimmedFallback);
+      }
+    }
+
+    return {
+      ...section,
+      heading: canonicalWhyHeading(section.key || section.heading),
+      body: combineParagraphs(finalParagraphs),
+    };
+  });
+
+  return truncateWhyOutput(serializeWhySections(rewrittenSections), WHY_MAX_CHARS_STANDARD);
+}
+
+function alignFitLevelToSignals(params: {
+  fit_level: FitLevel;
+  signals: CalibrationSignals;
+}) {
+  let fit_level = params.fit_level;
+  const capsApplied: string[] = [];
+
+  if (params.signals.highEligible) {
+    if (fit_level === 'medium' || fit_level === 'low' || fit_level === 'unknown') {
+      fit_level = fit_level === 'unknown' ? 'medium' : fit_level;
+    }
+    return { fit_level, capsApplied };
+  }
+
+  if (params.signals.shouldBeLow && !params.signals.hasCrediblePath) {
+    if (fit_level === 'high') {
+      fit_level = 'low';
+      capsApplied.push('downgrade_high_severe_uncertainty');
+    } else if (fit_level === 'medium') {
+      fit_level = 'low';
+      capsApplied.push('downgrade_medium_severe_uncertainty');
+    }
+    return { fit_level, capsApplied };
+  }
+
+  if (params.signals.conditionallyViable && fit_level === 'low') {
+    fit_level = 'medium';
+    capsApplied.push('upgrade_low_conditional_viable');
+  } else if (params.signals.shouldBeConditional && fit_level === 'high') {
+    fit_level = 'medium';
+    capsApplied.push('downgrade_high_material_uncertainty');
+  }
+
+  return { fit_level, capsApplied };
+}
+
+function capConfidenceToSignals(params: {
+  confidence_0_1: number;
+  signals: CalibrationSignals;
+}) {
+  let confidence_0_1 = params.confidence_0_1;
+  let confidenceCap = 1;
+  let confidenceCapReason = '';
+  const capsApplied: string[] = [];
+
+  const applyCap = (value: number, reason: string) => {
+    if (value < confidenceCap) {
+      confidenceCap = value;
+      confidenceCapReason = reason;
+    }
+  };
+
+  if (params.signals.shouldBeLow && !params.signals.hasCrediblePath) {
+    applyCap(0.45, 'cap_0.45_severe_uncertainty');
+  } else if (params.signals.shouldBeConditional) {
+    applyCap(0.62, 'cap_0.62_material_uncertainty');
+  }
+
+  if (params.signals.hasConditionalLanguage) {
+    applyCap(0.68, 'cap_0.68_conditional_language');
+  }
+
+  if (confidence_0_1 > 0.85 && (params.signals.shouldBeConditional || params.signals.hasConditionalLanguage)) {
+    applyCap(0.58, 'cap_0.58_contradiction_confidence');
+  }
+
+  if (confidenceCapReason && confidence_0_1 > confidenceCap) {
+    confidence_0_1 = confidenceCap;
+    capsApplied.push(confidenceCapReason);
+  }
+
+  return { confidence_0_1, capsApplied };
+}
+
+function applyConsistencyCalibration(params: {
+  data: VertexEvaluationV2Response;
+  factSheet: ProposalFactSheet;
+  sharedText: string;
+  postProcessMode?: PostProcessMode;
+}): ClampResult {
+  let { fit_level, confidence_0_1, why, missing, redactions } = params.data;
+  const capsApplied: string[] = [];
+  const signals = buildCalibrationSignals({
+    factSheet: params.factSheet,
+    data: { fit_level, confidence_0_1, why, missing, redactions },
+  });
+
+  const normalizedMissing = normalizeMissingQuestions({
+    factSheet: params.factSheet,
+    missing,
+  });
+  if (JSON.stringify(normalizedMissing) !== JSON.stringify(missing)) {
+    missing = normalizedMissing;
+    capsApplied.push('normalize_missing_questions');
+  }
+
+  const alignedFit = alignFitLevelToSignals({ fit_level, signals });
+  fit_level = alignedFit.fit_level;
+  capsApplied.push(...alignedFit.capsApplied);
+
+  const alignedConfidence = capConfidenceToSignals({ confidence_0_1, signals });
+  confidence_0_1 = alignedConfidence.confidence_0_1;
+  capsApplied.push(...alignedConfidence.capsApplied);
+
+  const rewrittenWhy = rewriteWhyForCalibration({
+    factSheet: params.factSheet,
+    data: { fit_level, confidence_0_1, why, missing, redactions },
+    signals,
+    postProcessMode: params.postProcessMode,
+  });
+  if (JSON.stringify(rewrittenWhy) !== JSON.stringify(why)) {
+    why = rewrittenWhy;
+    capsApplied.push('rewrite_conditional_decision_language');
+  }
+
+  const visibleMissing = filterVisibleMissingItems({
+    factSheet: params.factSheet,
+    sharedText: params.sharedText,
+    why,
+    missing,
+  });
+  const missingChangedAfterVisibility = JSON.stringify(visibleMissing) !== JSON.stringify(missing);
+  if (JSON.stringify(visibleMissing) !== JSON.stringify(missing)) {
+    missing = visibleMissing;
+    capsApplied.push('filter_visible_missing_items');
+  }
+
+  const normalizedRedactions = normalizeRedactions({
+    factSheet: params.factSheet,
+    sharedText: params.sharedText,
+    why,
+    missing,
+    redactions,
+  });
+  const redactionsChangedAfterVisibility = JSON.stringify(normalizedRedactions) !== JSON.stringify(redactions);
+  if (JSON.stringify(normalizedRedactions) !== JSON.stringify(redactions)) {
+    redactions = normalizedRedactions;
+    capsApplied.push('filter_visible_redactions');
+  }
+
+  const requiresFinalSemanticAlignment =
+    (params.postProcessMode || 'normal') === 'normal'
+    && (
+      signals.shouldBeConditional
+      || signals.shouldBeLow
+      || signals.conditionallyViable
+      || signals.bodySuggestsViablePath
+      || fit_level === 'unknown'
+      || (
+        !signals.highEligible
+        && (missingChangedAfterVisibility || redactionsChangedAfterVisibility)
+      )
+    );
+
+  if (requiresFinalSemanticAlignment) {
+    const finalizedSignals = buildCalibrationSignals({
+      factSheet: params.factSheet,
+      data: { fit_level, confidence_0_1, why, missing, redactions },
+    });
+    const finalFit = alignFitLevelToSignals({ fit_level, signals: finalizedSignals });
+    if (finalFit.fit_level !== fit_level) {
+      fit_level = finalFit.fit_level;
+      capsApplied.push(...finalFit.capsApplied.map((item) => `${item}_post_normalization`));
+    }
+    const finalConfidence = capConfidenceToSignals({ confidence_0_1, signals: finalizedSignals });
+    if (finalConfidence.confidence_0_1 !== confidence_0_1) {
+      confidence_0_1 = finalConfidence.confidence_0_1;
+      capsApplied.push(...finalConfidence.capsApplied.map((item) => `${item}_post_normalization`));
+    }
+  }
+
+  return {
+    data: {
+      fit_level,
+      confidence_0_1: clamp01(confidence_0_1),
+      why,
+      missing,
+      redactions,
+    },
+    capsApplied,
+  };
+}
+
 /**
  * Produces a safe, clamped fallback VertexEvaluationV2Response when all Vertex
  * attempts have failed. Never returns raw confidential text.
@@ -596,7 +2303,7 @@ function safeFallbackEvaluationFromFactSheet(
     sharedChars: number;
     confidentialChars: number;
   },
-): { data: VertexEvaluationV2Response; warnings: string[] } {
+): { data: VertexEvaluationV2Response; warnings: string[]; fallbackMode: FallbackMode } {
   const warningKey =
     params.failureKind === 'truncated_output'
       ? 'vertex_truncated_output_fallback_used'
@@ -605,39 +2312,67 @@ function safeFallbackEvaluationFromFactSheet(
       : params.failureKind === 'not_configured'
       ? 'vertex_not_configured_fallback_used'
       : 'vertex_invalid_response_fallback_used';
+  const missing = normalizeMissingQuestions({
+    factSheet,
+    missing: factSheet.missing_info,
+  });
+  const fallbackMode = classifyFallbackMode(factSheet);
+  const fallbackMissing =
+    missing.length > 0 ? missing : normalizeMissingQuestions({ factSheet, missing: GENERIC_FALLBACK_MISSING });
 
-  // Build missing[] from fact sheet's missing_info, falling back to generic questions.
-  const extractedMissing = factSheet.missing_info
-    .filter(Boolean)
-    .map((item) => {
-      const text = String(item).trim();
-      // Convert statement-style items to question format if not already a question.
-      return text.endsWith('?') ? text : `${text} — please clarify.`;
-    })
-    .slice(0, MISSING_MAX_ITEMS);
+  if (fallbackMode === 'incomplete') {
+    return {
+      data: {
+        fit_level: 'unknown',
+        confidence_0_1: 0.2,
+        why: [
+          'Snapshot: Assessment incomplete: generation failed and the extracted material is too thin for a reliable bilateral negotiator memo.',
+          'Key Risks: Too many deal-critical details remain unverified to allocate scope, dependency, or commercial risk with confidence.',
+          'Key Strengths: The current materials provide only a limited basis for bilateral assessment.',
+          'Decision Readiness: Do not treat this as decision-ready; a fuller source record or a successful rerun is needed before a substantive neutral memo can be issued.',
+          'Recommendations: Re-run the evaluation after more complete material is available, or review the missing items below before using this report as a negotiation aid.',
+        ],
+        missing: fallbackMissing,
+        redactions: [],
+      },
+      warnings: [warningKey],
+      fallbackMode,
+    };
+  }
 
-  const missing =
-    extractedMissing.length >= 3
-      ? extractedMissing
-      : [...extractedMissing, ...GENERIC_FALLBACK_MISSING].slice(0, Math.max(3, extractedMissing.length));
-
-  const why = [
-    'Executive Summary: AI report could not be fully generated due to a model output issue. Key missing inputs are listed below to help guide next steps.',
-    'Key Risks: Unable to fully assess — model did not return a complete report. Review missing items for critical gaps.',
-    'Key Strengths: Unable to fully assess — insufficient model output received.',
-    'Decision Readiness: Evaluation incomplete. Please address the missing items below and re-run evaluation for a fuller report.',
-    'Recommendations: Ensure all required fields (scope, timeline, KPIs, constraints, risks) are populated before re-running.',
-  ];
+  const provisionalData: VertexEvaluationV2Response = {
+    fit_level: 'medium',
+    confidence_0_1: 0.48,
+    why: [],
+    missing: fallbackMissing,
+    redactions: [],
+  };
+  const fallbackSignals = buildCalibrationSignals({
+    factSheet,
+    data: provisionalData,
+  });
+  const fit_level = fallbackSignals.shouldBeLow ? 'low' : 'medium';
+  const confidence_0_1 = fit_level === 'medium' ? 0.48 : 0.38;
+  const fallbackData: VertexEvaluationV2Response = {
+    fit_level,
+    confidence_0_1,
+    why: [],
+    missing: fallbackMissing,
+    redactions: [],
+  };
+  const roleDefaults = buildSectionRoleDefaults({
+    factSheet,
+    data: fallbackData,
+    signals: buildCalibrationSignals({ factSheet, data: fallbackData }),
+  });
 
   return {
     data: {
-      fit_level: 'unknown',
-      confidence_0_1: 0.2,
-      why,
-      missing: missing.length > 0 ? missing : GENERIC_FALLBACK_MISSING.slice(0, 3),
-      redactions: [],
+      ...fallbackData,
+      why: buildWhyEntriesFromRoleDefaults(roleDefaults),
     },
     warnings: [warningKey],
+    fallbackMode,
   };
 }
 
@@ -674,16 +2409,10 @@ function buildEvalPromptFromFactSheet(params: {
   ]);
 
   // ── Required headings (always) ───────────────────────────────────────────
-  const firstStrengthOrRisk =
-    reportStyle.ordering === 'risks_first' ? 'Key Risks' : 'Key Strengths';
-  const secondStrengthOrRisk =
-    reportStyle.ordering === 'risks_first' ? 'Key Strengths' : 'Key Risks';
   const requiredHeadings = [
-    // Use 'Snapshot' not 'Executive Summary' — the page header already reads 'Executive Summary';
-    // using a distinct first-heading avoids a duplicated label in the rendered report.
     'Snapshot',
-    firstStrengthOrRisk,
-    secondStrengthOrRisk,
+    'Key Risks',
+    'Key Strengths',
     'Decision Readiness',
     'Recommendations',
   ];
@@ -714,10 +2443,10 @@ function buildEvalPromptFromFactSheet(params: {
 
   const orderingGuide =
     reportStyle.ordering === 'risks_first'
-      ? 'Ordering: lead with risks, then follow with strengths.'
+      ? 'Ordering: front-load the main blocker and conditions to proceed before upside or polish.'
       : reportStyle.ordering === 'strengths_first'
-      ? 'Ordering: lead with strengths, then follow with risks.'
-      : 'Ordering: balance strengths and risks throughout.';
+      ? 'Ordering: acknowledge strengths, but the first paragraph of Snapshot and Decision Readiness must still lead with the main blocker and the condition to proceed.'
+      : 'Ordering: balance strengths and risks, but front-load the main blocker and negotiation implication.';
 
   const whyMaxChars = tightMode ? WHY_MAX_CHARS_TIGHT : WHY_MAX_CHARS_STANDARD;
 
@@ -758,8 +2487,10 @@ function buildEvalPromptFromFactSheet(params: {
     tightMode
       ? 'STRICT COMPACT MODE: Return JSON only. No markdown. No code fences. No commentary. Output must be short.'
       : '',
-    'SYSTEM: You are an expert business consultant and neutral mediator evaluating a business proposal.',
+    'SYSTEM: You are an expert commercial negotiator and neutral intermediary evaluating a business proposal.',
     'Your task is: evaluate the overall business proposal quality and decision-readiness.',
+    'Act like a bilateral middleman: show where both sides align, where friction is likely, who is carrying risk, and what must be agreed before proceeding.',
+    'This Step 3 report is a shared neutral artifact that may be viewed by both parties, emailed, or forwarded.',
     '',
     'IMPORTANT — input structure:',
     '- The fact_sheet is a structured extraction of the full proposal (shared + confidential tiers combined).',
@@ -773,13 +2504,13 @@ function buildEvalPromptFromFactSheet(params: {
     '- Output must be safe to share publicly.',
     '',
     'EVALUATION RUBRIC — evaluate all dimensions from the fact_sheet:',
-    '1. Clarity & specificity: scope_deliverables, project_goal — concrete and specific?',
+    '1. Scope boundary & evidence: scope_deliverables, project_goal — are the deliverables, MVP boundary, and exclusions concrete enough to price and sequence?',
     '   Flag vague language: "ASAP", "scalable", "world-class", "top N" without definitions, "TBD".',
-    '2. Feasibility / realism: timeline and assumptions — realistic and grounded?',
-    '3. Completeness: KPIs, timeline, constraints, risks, deliverables all present and non-empty?',
+    '2. Feasibility / realism: timeline, constraints, and assumptions — realistic, contractable, and grounded?',
+    '3. Acceptance & measurability: KPIs / success criteria — is there an objective basis for sign-off and MVP success?',
+    '4. Risk allocation: risks, assumptions, and constraints — who is implicitly carrying data, dependency, or change-order risk?',
+    '5. Decision-readiness: is this ready for a clean commitment, only for a conditional/discovery-first path, or not yet ready?',
     '   Use source_coverage flags to guide your assessment.',
-    '4. Risks & assumptions: risks array — key risks identified with impact/likelihood?',
-    '5. Decision-readiness: sufficient information for a confident go / no-go decision?',
     '',
     'REPORT STYLE:',
     voiceGuide,
@@ -792,32 +2523,43 @@ function buildEvalPromptFromFactSheet(params: {
     '- Bullets are acceptable sparingly when they genuinely improve clarity (e.g., a short action list).',
     '  If bullets are used: any list must be <= 4 items; each bullet must be actionable, not a rephrased paragraph.',
     "  Do NOT produce a \u201cbullet-disguised-as-paragraphs\u201d report.",
-    '- Write as a human consultant/mediator — NOT as auto-filled template fields.',
+    '- Write as a human neutral intermediary — NOT as auto-filled template fields or a salesy consultant summary.',
     '- Natural language, varied sentence length, show nuanced tradeoffs.',
     '- Include at least 2 explicit if/then tradeoff statements distributed across sections.',
     '  Example: "If the timeline is compressed, then scope must be reduced or budget increased."',
+    '- Every material strength, risk, and recommendation MUST be grounded in concrete fact_sheet evidence.',
+    '  Cite the actual deliverables, milestones, KPIs, constraints, risks, pricing posture, or dependencies that justify the point.',
+    '- Prefer concrete deal mechanics, scope boundaries, acceptance gaps, dependency ownership, change-order triggers, and negotiation leverage over generic praise.',
+    '- Write as if both parties will read the report. Use neutral bilateral phrasing such as "the parties", "both sides", "the current proposal", "alignment exists where", and "tension is likely around".',
+    '- Key Strengths = areas of bilateral alignment or usable deal structure, NOT praise for one side’s drafting or wording.',
+    '- Recommendations = neutral mediation guidance, conditions to proceed, or next negotiation agenda items, NOT one-sided tactical advice.',
+    '- Missing information = deal-critical questions that either side would need answered, NOT editing notes or submission coaching.',
+    '- DO NOT coach one side. Do NOT tell one side how to improve, strengthen, rewrite, or increase the chances of the proposal.',
+    '- Explicitly avoid phrases such as "Improve your position", "You should strengthen", "Your proposal would be better if", "Before sending", or "You should rewrite".',
+    '- If you use phrases like "clear", "specific", "mature", or "decision-ready", you MUST immediately explain which concrete facts justify that claim.',
+    '- Ban empty filler such as "clarity and specificity", "decision-ready", "mature approach", or "thoughtfully separates" unless the phrase adds new evidence-based meaning.',
+    '- Avoid exaggerated language such as "almost entirely undefined" unless the fact_sheet truly supports that level of severity.',
+    '- Do NOT repeat the same conclusion in Snapshot, Decision Readiness, and Recommendations unless each section adds new justification or a new negotiation implication.',
+    '- Front-load the main blocker, the condition to proceed, and the negotiation implication inside Snapshot, Key Risks, and Decision Readiness.',
+    '- Section roles are strict: Snapshot = one-line verdict plus balanced negotiation snapshot; Key Risks = concrete risk mechanics and who is carrying them; Key Strengths = areas of alignment or usable structure; Decision Readiness = what must be agreed now versus later and what would change confidence; Recommendations = bridge-to-agreement plan and next negotiation agenda.',
     '',
-    'MANDATORY ADVISOR ELEMENTS (every report must include ALL of these):',
+    'MANDATORY NEGOTIATOR ELEMENTS (every report must include ALL of these):',
     '1. Assumptions / Dependencies — inside "Key Risks" OR "Decision Readiness", include a paragraph',
     '   starting with "Assumptions / Dependencies:" listing the key assumptions the project relies on.',
     '   If source_coverage is thin (multiple false fields), make assumptions explicit and conservative.',
-    '2. Options — inside "Decision Readiness" OR "Recommendations", include a paragraph starting with "Options:"',
-    '   presenting 2-3 concrete paths (e.g., fast MVP, discovery-first, narrow scope) grounded in the fact sheet.',
+    '2. Paths to agreement — inside "Decision Readiness" OR "Recommendations", include a paragraph starting with "Paths to agreement:"',
+    '   presenting 2-3 concrete bilateral paths (e.g., discovery-first, narrow MVP, phased commitment) grounded in the fact sheet.',
     '   Do not invent specific numbers — reference the fact_sheet where available.',
-    '3. First 2 weeks plan — inside "Recommendations", include a paragraph starting with "First 2 weeks plan:"',
-    '   covering: who to interview (Finance/Sales/CS/Eng as relevant), discovery/audit tasks',
-    '   (data profiling, source audit, technical spike or PoC), and measurable success criteria for exiting discovery.',
-    '   Keep it specific to the proposal domain (reference systems, integrations, or workstreams named in fact_sheet).',
-    '4. Next call: what I\'d ask for — inside "Decision Readiness" OR "Recommendations", include a short paragraph',
-    '   starting with "Next call: what I\'d ask for:" followed by exactly 3 pointed, proposal-specific',
-    '   questions or requests, phrased like a mediator steering a negotiation meeting (not generic;',
-    '   reference the specific domain, systems, or constraints visible in the fact_sheet).',
-    '5. Likely pushback & response — immediately after the "Next call" paragraph (same heading section),',
-    '   include a paragraph starting with "Likely pushback & response:" with 2 concise pushback',
-    '   scenarios and counter-moves. Each scenario MUST use If…then… language.',
-    '   Example shape (do NOT copy verbatim): "If the vendor pushes for fixed-price now, then anchor on a',
-    '   time-boxed discovery phase first. If the buyer insists on the hard deadline, then surface the scope',
-    '   trade-offs explicitly and ask them to prioritise."',
+    '3. Conditions to proceed — inside "Recommendations", include a paragraph starting with "Conditions to proceed:"',
+    '   covering the narrowest set of scope, acceptance, dependency, remediation, change-order, or commercial conditions that both sides need to lock now.',
+    '4. Next negotiation agenda — inside "Decision Readiness" OR "Recommendations", include a short paragraph',
+    '   starting with "Next negotiation agenda:" followed by exactly 3 pointed, proposal-specific agenda items',
+    '   for the next discussion between the parties. These must focus on bridging the gap, not editing one side’s wording.',
+    '5. Likely sticking points & bridges — immediately after the "Next negotiation agenda" paragraph (same heading section),',
+    '   include a paragraph starting with "Likely sticking points & bridges:" with 2 concise sticking-point scenarios and bridge moves.',
+    '   Each scenario MUST use If…then… language and frame the move as a path to agreement, not one-sided leverage.',
+    '6. What would change the verdict — inside "Decision Readiness" OR "Recommendations", include a short paragraph',
+    '   explaining what evidence would increase confidence and what evidence would lower it further.',
     '',
     hasFixedPriceContract
       ? 'CONDITIONAL — fixed-price signals detected: inside "Key Risks" or "Recommendations", include a paragraph starting with "Commercial posture:" covering acceptance criteria, change-order triggers, and risk allocation between parties.'
@@ -846,26 +2588,36 @@ function buildEvalPromptFromFactSheet(params: {
     '  Example: "What is the event schema and retention policy for the source data? — determines ingestion approach and governance risk."',
     '- Order by criticality: contract/deal-blockers first, then technical unknowns, then operational gaps.',
     '- Avoid generic questions. Reference the specific proposal context (systems, vendors, integrations named in fact_sheet).',
+    '- missing[] should capture the most material unavailable facts. Do not duplicate open questions verbatim and do not include trivial admin asks.',
+    '- Prioritise questions about scope boundary, acceptance criteria, data remediation, dependency ownership, change-order triggers, and critical technical assumptions over admin or process questions.',
     '- Paraphrase all items from fact_sheet.missing_info and fact_sheet.open_questions as actionable questions with why-matters clauses.',
     coverageCount < 3
       ? '- Coverage is thin (multiple false source_coverage fields): missing[] MUST contain at least 6 decision-blocking items with em-dash why clauses.'
       : '',
     '',
+    'CALIBRATION RULES:',
+    '- Treat confidence as confidence in the recommendation, NOT confidence in the prose quality.',
+    '- "high" / decision-ready is only appropriate when core scope is bounded, acceptance criteria are defined, major dependencies are quantified or contract-bounded, and open questions are not central blockers.',
+    '- If the proposal still has unquantified data cleanup or remediation risk, unresolved acceptance criteria, unclear dependency ownership, undefined change-order triggers, or critical technical unknowns, default to "medium" or "low" rather than "high".',
+    '- When material uncertainty remains, the narrative MUST explicitly read as conditional: "proceed with conditions", "conditionally ready", or "pause pending clarification".',
+    '- If missing or redacted information materially affects scope, cost, architecture, or timeline, confidence_0_1 MUST stay conservative and should not approach 0.95.',
+    '',
     'OUTPUT FIELD SEMANTICS:',
     '- fit_level: Overall proposal quality / readiness.',
-    '  high = decision-ready; medium = promising but gaps exist; low = major gaps; unknown = insufficient info.',
+    '  high = clean commitment is supportable; medium = viable but conditional / pause pending clarification; low = structurally weak, poor-fit, or too unbounded even for a sensible conditional path; unknown = insufficient info.',
     '- confidence_0_1: Your confidence in the assessment (0 = no basis, 1 = very confident).',
     '- why: Consultant memo narrative per heading (multi-paragraph prose). Total chars <= why_max_chars.',
     '- missing: Actionable questions with em-dash why-it-matters, ranked by criticality. Max missing_max_items items.',
     '- redactions: Array of strings — topics that must remain confidential. Max redactions_max_items items.',
     '',
     'HARD GUARDRAILS — follow these without exception:',
-    '- "high" fit_level is RARE. Only when specific, quantified, coherent, risks addressed, decision-ready.',
+    '- "high" fit_level is RARE. Only when scope, acceptance criteria, dependencies, and risk allocation are sufficiently bounded for a clean commitment.',
     '  When in doubt, use "medium".',
     '- If source_coverage shows has_kpis, has_timeline, has_constraints, or has_risks is false:',
     '  fit_level CANNOT be "high" AND confidence_0_1 MUST be <= 0.75.',
     '- If multiple source_coverage fields are false: confidence_0_1 MUST be lower still (<= 0.55).',
     '- Each item in fact_sheet.missing_info MUST appear in missing[] and MUST lower confidence.',
+    '- If fact_sheet.missing_info or fact_sheet.open_questions include material blockers, fit_level CANNOT be "high".',
     '- Identical or heavily overlapping tiers: NOT a quality signal — do NOT reward this.',
     '',
     'Output MUST be valid JSON only. No markdown, no backticks, no preamble.',
@@ -907,6 +2659,7 @@ function applyCoverageClamps(params: {
   factSheet: ProposalFactSheet;
   sharedText: string;
   confidentialText: string;
+  postProcessMode?: PostProcessMode;
 }): ClampResult {
   const { factSheet, sharedText, confidentialText } = params;
   let { fit_level, confidence_0_1, why, missing, redactions } = params.data;
@@ -946,16 +2699,24 @@ function applyCoverageClamps(params: {
   const sharedNorm = sharedText.trim();
   const confNorm = confidentialText.trim();
   if (sharedNorm && confNorm && sharedNorm === confNorm) {
-    const warning = 'Shared and confidential appear identical; confidentiality separation may not be meaningful.';
+    const warning =
+      'Are the shared and confidential inputs materially different? — identical tiers reduce confidence because confidentiality separation may not be meaningful.';
     if (!missing.includes(warning)) {
       missing = [...missing, warning];
       capsApplied.push('warn_identical_tiers');
     }
   }
 
+  const calibrated = applyConsistencyCalibration({
+    data: { fit_level, confidence_0_1, why, missing, redactions },
+    factSheet,
+    sharedText,
+    postProcessMode: params.postProcessMode,
+  });
+
   return {
-    data: { fit_level, confidence_0_1: clamp01(confidence_0_1), why, missing, redactions },
-    capsApplied,
+    data: calibrated.data,
+    capsApplied: [...capsApplied, ...calibrated.capsApplied],
   };
 }
 
@@ -2200,6 +3961,7 @@ export async function evaluateWithVertexV2(
       factSheet,
       sharedText,
       confidentialText,
+      postProcessMode: 'normal',
     });
 
     // ── Build safe telemetry (counts/booleans/enums only) ─────────────────
@@ -2268,6 +4030,7 @@ export async function evaluateWithVertexV2(
     factSheet,
     sharedText,
     confidentialText,
+    postProcessMode: fallback.fallbackMode === 'salvaged_memo' ? 'salvaged_fallback' : 'incomplete_fallback',
   });
 
   const fallbackTelemetry = buildTelemetry({
@@ -2298,6 +4061,7 @@ export async function evaluateWithVertexV2(
       telemetry: fallbackTelemetry,
       warnings: fallback.warnings,
       failure_kind: lastParseFailureKind,
+      fallback_mode: fallback.fallbackMode,
       models_used: {
         generation: generationModel,
         extract: extractModel,
