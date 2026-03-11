@@ -7,7 +7,9 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { BarChart3, Clock, FileText, Loader2, Sparkles } from 'lucide-react';
 import {
   hasV2Report,
+  getDecisionStatusInfo,
   MEDIATION_REVIEW_LABEL,
+  MISSING_OR_REDACTED_INFO_LABEL,
   OPEN_QUESTIONS_LABEL,
   parseV2WhyEntry,
   filterLegacySectionsForDisplay,
@@ -32,6 +34,13 @@ function stripHtml(value) {
     .replace(/&#39;/gi, "'")
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function splitWhyBodyParagraphs(value) {
+  return String(value ?? '')
+    .split(/\n{2,}/g)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
 }
 
 export function renderDocumentReadOnly({ text, html }) {
@@ -92,6 +101,16 @@ export function ComparisonAiReportTab({
   const reportSectionsFiltered = isV2 ? [] : filterLegacySectionsForDisplay(reportSections);
   const showRunDetailsLink = Boolean(runDetailsHref) && (hasReport || hasEvaluations);
   const normalizedTimelineItems = Array.isArray(timelineItems) ? timelineItems : [];
+  const decisionStatus = getDecisionStatusInfo(safeReport);
+  const decisionToneClass =
+    decisionStatus.tone === 'success'
+      ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
+      : decisionStatus.tone === 'warning'
+      ? 'bg-amber-100 text-amber-700 border-amber-200'
+      : decisionStatus.tone === 'danger'
+      ? 'bg-rose-100 text-rose-700 border-rose-200'
+      : 'bg-slate-100 text-slate-700 border-slate-200';
+  const redactionItems = Array.isArray(safeReport.redactions) ? safeReport.redactions : [];
 
   return (
     <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-6 items-start">
@@ -155,7 +174,7 @@ export function ComparisonAiReportTab({
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Status</span>
-              <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200">Mediation Ready</Badge>
+              <Badge className={decisionToneClass}>{decisionStatus.label}</Badge>
             </div>
             {isV2 && Array.isArray(safeReport.missing) && safeReport.missing.length > 0 ? (
               <div className="flex items-center gap-2">
@@ -189,12 +208,17 @@ export function ComparisonAiReportTab({
                   <div className="space-y-5" data-testid="v2-full-report">
                     {safeReport.why.map((entry, index) => {
                       const { heading, body } = parseV2WhyEntry(entry);
+                      const paragraphs = splitWhyBodyParagraphs(body);
                       return (
                         <div key={index}>
                           {heading ? (
                             <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">{heading}</h3>
                           ) : null}
-                          <p className="text-sm text-slate-700 leading-relaxed">{body}</p>
+                          <div className="space-y-3">
+                            {(paragraphs.length > 0 ? paragraphs : [body]).map((paragraph, paragraphIndex) => (
+                              <p key={paragraphIndex} className="text-sm text-slate-700 leading-relaxed">{paragraph}</p>
+                            ))}
+                          </div>
                           {index < safeReport.why.length - 1 && <div className="mt-5 border-t border-slate-100" />}
                         </div>
                       );
@@ -232,6 +256,20 @@ export function ComparisonAiReportTab({
                     {safeReport.missing.map((item, index) => (
                       <li key={index} className="flex items-start gap-2.5 text-sm text-slate-700">
                         <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" />
+                        <span>{item}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+
+              {isV2 && redactionItems.length > 0 ? (
+                <div className="border-t border-slate-100 pt-6" data-testid="v2-redacted-info">
+                  <h2 className="text-sm font-semibold text-slate-700 mb-3">{MISSING_OR_REDACTED_INFO_LABEL}</h2>
+                  <ul className="space-y-2.5">
+                    {redactionItems.map((item, index) => (
+                      <li key={index} className="flex items-start gap-2.5 text-sm text-slate-700">
+                        <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-slate-400 flex-shrink-0" />
                         <span>{item}</span>
                       </li>
                     ))}

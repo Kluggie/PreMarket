@@ -96,16 +96,6 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         ? recommendation.charAt(0).toUpperCase() + recommendation.slice(1)
         : 'N/A';
 
-    const FIT_STATUS: Record<string, { status: string; color: [number, number, number] }> = {
-      high: { status: 'READY TO PROCEED', color: [22, 163, 74] },
-      medium: { status: 'PROCEED WITH CONDITIONS', color: [180, 83, 9] },
-      low: { status: 'NOT RECOMMENDED', color: [220, 38, 38] },
-    };
-    const fitStatusInfo = FIT_STATUS[fitLevel] ?? {
-      status: 'ASSESSMENT INCOMPLETE',
-      color: [100, 116, 139],
-    };
-
     const whyBodyMap = new Map<string, string>();
     if (isV2) {
       (report.why as unknown[]).forEach((entry) => {
@@ -124,11 +114,24 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       return match ? match[1].trim() : (body.length > 100 ? `${body.slice(0, 97)}...` : body);
     };
 
+    const missingItems = Array.isArray(report.missing)
+      ? (report.missing as unknown[]).map((e) => asText(e)).filter(Boolean)
+      : [];
+
+    const fitStatusInfo =
+      fitLevel === 'high'
+        ? { status: 'Ready to finalize', color: [22, 163, 74] as [number, number, number] }
+        : fitLevel === 'low'
+        ? { status: 'Not viable', color: [220, 38, 38] as [number, number, number] }
+        : fitLevel === 'medium' && confidence >= 62 && missingItems.length <= 4
+        ? { status: 'Proceed with conditions', color: [180, 83, 9] as [number, number, number] }
+        : { status: 'Explore further', color: [100, 116, 139] as [number, number, number] };
+
     const primaryDrivers: string[] = [];
-    const strengthsSentence = firstSentence('key strengths');
-    if (strengthsSentence) primaryDrivers.push(strengthsSentence);
-    const risksSentence = firstSentence('key risks');
-    if (risksSentence) primaryDrivers.push(risksSentence);
+    const assessmentSentence = firstSentence('decision assessment') || firstSentence('key risks');
+    if (assessmentSentence) primaryDrivers.push(assessmentSentence);
+    const leverageSentence = firstSentence('leverage signals') || firstSentence('key strengths');
+    if (leverageSentence) primaryDrivers.push(leverageSentence);
     const readinessSentence = firstSentence('decision readiness');
     if (readinessSentence && primaryDrivers.length < 3) primaryDrivers.push(readinessSentence);
 
@@ -161,8 +164,13 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         .trim();
 
     const SECTION_MAP: Record<string, SectionSpec> = {
-      snapshot: { level: 1, displayHeading: 'Executive Summary' },
       'executive summary': { level: 1, displayHeading: 'Executive Summary' },
+      snapshot: { level: 1, displayHeading: 'Executive Summary' },
+      'decision assessment': { level: 1, displayHeading: 'Decision Assessment' },
+      'negotiation insights': { level: 1, displayHeading: 'Negotiation Insights' },
+      'leverage signals': { level: 1, displayHeading: 'Leverage Signals' },
+      'potential deal structures': { level: 1, displayHeading: 'Potential Deal Structures', splitOptions: true, numberedBullets: true },
+      'recommended path': { level: 1, displayHeading: 'Recommended Path', callout: true },
       // ─ Decision Assessment (analysis group) ─
       'key strengths': { level: 2, displayHeading: 'Key Strengths',            group: 'Decision Assessment', useBullets: true },
       'key risks':     { level: 2, displayHeading: 'Risk Summary',             group: 'Decision Assessment', useBullets: true },
@@ -212,6 +220,10 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     };
 
     const parseOptionsBullets = (text: string): string[] => {
+      const byLetter = text.split(/\s*(?=Option [A-Z]\s*[—:-])/);
+      if (byLetter.length > 1) {
+        return byLetter.map((entry) => entry.replace(/\.$/, '').trim()).filter((entry) => entry.length > 5);
+      }
       const parts = text.split(/\s*\d+[).]\s+(?=[A-Z])/);
       return parts.map((entry) => entry.replace(/\.$/, '').trim()).filter((entry) => entry.length > 5);
     };

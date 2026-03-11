@@ -549,8 +549,9 @@ function containsAny(arr: string[], keywords: string[]): boolean {
   return keywords.some((kw) => lower.some((s) => s.includes(kw)));
 }
 
-const WHY_MAX_CHARS_STANDARD = 3000;
-const WHY_MAX_CHARS_TIGHT = 1800;
+const WHY_MAX_CHARS_STANDARD = 4200;
+const WHY_MAX_CHARS_TIGHT = 2600;
+const MISSING_MIN_ITEMS = 6;
 const MISSING_MAX_ITEMS = 10;
 const REDACTIONS_MAX_ITEMS = 8;
 const GENERIC_MISSING_WHY = 'it materially affects scope, delivery risk, or commercial terms';
@@ -575,10 +576,10 @@ const MISSING_RULES: MissingRule[] = [
     severity: 'severe',
     patterns: ['scope', 'deliverable', 'deliverables', 'mvp', 'requirements', 'use case', 'workflow', 'out of scope'],
     label: 'the initial scope still needs a tighter commitment boundary',
-    question: 'What is included in the MVP scope, and what is explicitly out of scope?',
+    question: 'What is included in the initial committed scope or current phase, and what is explicitly out of scope?',
     why: 'scope boundaries determine pricing, delivery sequencing, and change exposure',
-    condition: 'define the MVP boundary and explicit exclusions',
-    confidenceUp: 'a narrower MVP definition with explicit in-scope and out-of-scope items',
+    condition: 'define the current commitment boundary and explicit exclusions',
+    confidenceUp: 'a narrower initial scope or phase definition with explicit in-scope and out-of-scope items',
     confidenceDown: 'scope stays open-ended while the proposal still implies a firm commitment',
   },
   {
@@ -587,7 +588,7 @@ const MISSING_RULES: MissingRule[] = [
     severity: 'severe',
     patterns: ['data quality', 'data cleanup', 'cleanup', 'cleansing', 'remediation', 'source data', 'migration', 'historical data'],
     label: 'unquantified data cleanup or remediation risk remains with no clear owner',
-    question: 'What data cleanup, remediation, or migration work is assumed before MVP, and who owns it?',
+    question: 'What data cleanup, remediation, or migration work is assumed before the initial commitment, and who owns it?',
     why: 'data-condition assumptions can materially change effort, budget, and change-order exposure',
     condition: 'quantify the data remediation scope and assign ownership before locking pricing or timeline',
     confidenceUp: 'a scoped audit that quantifies data cleanup effort, assumptions, and ownership',
@@ -599,7 +600,7 @@ const MISSING_RULES: MissingRule[] = [
     severity: 'material',
     patterns: ['acceptance criteria', 'definition of done', 'sign-off', 'sign off', 'uat', 'success criteria', 'kpi', 'baseline'],
     label: 'acceptance criteria are not concrete enough for sign-off',
-    question: 'What measurable acceptance criteria will define completion for the key deliverables and MVP?',
+    question: 'What measurable acceptance criteria will define completion for the key deliverables or current phase?',
     why: 'sign-off, payment exposure, and scope control depend on objective acceptance criteria',
     condition: 'agree measurable acceptance criteria for the key deliverables',
     confidenceUp: 'measurable success and acceptance criteria tied to the core deliverables',
@@ -647,7 +648,7 @@ const MISSING_RULES: MissingRule[] = [
     severity: 'material',
     patterns: ['phase 2', 'phase two', 'phase 1', 'phase one', 'later phase', 'future phase', 'next phase', 'rollout'],
     label: 'phase boundaries and deferrable work are not yet explicit',
-    question: 'What belongs in the current MVP or phase, and what is intentionally deferred to later phases?',
+    question: 'What belongs in the current phase, and what is intentionally deferred to later phases?',
     why: 'phase boundaries determine what must be priced, accepted, and protected now versus deferred without dispute',
     condition: 'separate the current phase scope from later-phase options with measurable exit gates',
     confidenceUp: 'explicit phase boundaries and measurable outputs for later-phase work',
@@ -865,6 +866,77 @@ function truncateWhyOutput(why: string[], maxChars: number): string[] {
   return result;
 }
 
+function compressWhySectionsForRequiredCoverage(sections: WhySection[], maxChars: number) {
+  const ordered = orderedWhySections(sections)
+    .filter((section) => REQUIRED_WHY_SECTION_KEYS.includes(section.key))
+    .filter((section) => splitParagraphs(section.body).length > 0);
+  if (ordered.length === 0) return [] as string[];
+
+  const result: string[] = [];
+  let remaining = maxChars;
+
+  ordered.forEach((section, index) => {
+    const heading = asText(section.heading) || canonicalWhyHeading(section.key);
+    const paragraphs = splitParagraphs(section.body);
+    if (!heading || paragraphs.length === 0) return;
+
+    const sectionsLeft = Math.max(1, ordered.length - index);
+    const reservedPerSection = Math.max(140, Math.floor(remaining / sectionsLeft));
+    const bodyBudget = Math.max(90, reservedPerSection - heading.length - 2);
+    const preferredParagraphs = (() => {
+      if (section.key === 'decision assessment') {
+        const selected: string[] = [];
+        const riskIndex = paragraphs.findIndex((paragraph) => /^Risk Summary:/i.test(paragraph));
+        const strengthsIndex = paragraphs.findIndex((paragraph) => /^Key Strengths:/i.test(paragraph));
+        if (riskIndex >= 0) selected.push(paragraphs[riskIndex]);
+        if (strengthsIndex >= 0) {
+          selected.push(paragraphs[strengthsIndex]);
+          const followUp = paragraphs[strengthsIndex + 1];
+          if (followUp && !/^[A-Z][A-Za-z ]+:/i.test(followUp)) {
+            selected.push(followUp);
+          }
+        }
+        return selected.length > 0 ? selected : [paragraphs[0]];
+      }
+      if (section.key === 'negotiation insights') {
+        const selected = [
+          paragraphs.find((paragraph) => /^Likely priorities:/i.test(paragraph)) || '',
+          paragraphs.find((paragraph) => /^Possible concessions:/i.test(paragraph)) || '',
+          paragraphs.find((paragraph) => /^Structural tensions:/i.test(paragraph)) || '',
+        ].filter(Boolean);
+        return selected.length > 0 ? selected : [paragraphs[0]];
+      }
+      if (section.key === 'decision readiness') {
+        const selected = [
+          paragraphs.find((paragraph) => /^Decision status:/i.test(paragraph)) || '',
+          paragraphs.find((paragraph) => /^What must be agreed now vs later:/i.test(paragraph)) || '',
+          paragraphs.find((paragraph) => /^What would change the verdict:/i.test(paragraph)) || '',
+        ].filter(Boolean);
+        return selected.length > 0 ? selected : [paragraphs[0]];
+      }
+      return [paragraphs[0]];
+    })();
+
+    const perParagraphBudget = Math.max(70, Math.floor(bodyBudget / preferredParagraphs.length));
+    const compressedParagraphs = preferredParagraphs
+      .map((paragraph) => {
+        let next = trimParagraphAtSentenceBoundary(paragraph, perParagraphBudget);
+        if (!next) {
+          next = sanitizeNarrativeParagraph(paragraph).slice(0, perParagraphBudget).trim();
+        }
+        return next;
+      })
+      .filter(Boolean);
+    if (compressedParagraphs.length === 0) return;
+
+    const entry = `${heading}: ${combineParagraphs(compressedParagraphs)}`;
+    result.push(entry);
+    remaining = Math.max(0, remaining - entry.length - 1);
+  });
+
+  return result;
+}
+
 /**
  * Generic actionable questions used when the fact sheet has no extracted missing_info.
  * Covers the five core decision-blocking dimensions.
@@ -875,6 +947,8 @@ const GENERIC_FALLBACK_MISSING: string[] = [
   'What are the measurable success criteria (KPIs) that define project success?',
   'What budget, resource, or technical constraints apply to delivery?',
   'What are the key project risks and their proposed mitigations?',
+  'Who owns the major approvals, dependencies, and third-party inputs that the deal relies on?',
+  'What change-order, variation, or repricing mechanism applies if assumptions or scope move during execution?',
 ];
 
 type WhySection = {
@@ -884,11 +958,13 @@ type WhySection = {
 };
 
 const REQUIRED_WHY_SECTION_KEYS = [
-  'snapshot',
-  'key risks',
-  'key strengths',
+  'executive summary',
+  'decision assessment',
+  'negotiation insights',
+  'leverage signals',
+  'potential deal structures',
   'decision readiness',
-  'recommendations',
+  'recommended path',
 ];
 
 type CalibrationSignals = {
@@ -968,23 +1044,92 @@ function hasCoachingLanguage(value: string) {
 function normalizeWhyHeadingKey(value: string) {
   const normalized = normalizeKeywordText(value);
   if (!normalized) return '';
-  if (normalized === 'executive summary' || normalized === 'decision snapshot') return 'snapshot';
-  if (normalized === 'risk summary') return 'key risks';
+  if (['executive summary', 'decision snapshot', 'snapshot'].includes(normalized)) return 'executive summary';
+  if (['decision assessment', 'assessment'].includes(normalized)) return 'decision assessment';
+  if (['negotiation insights', 'negotiation insight'].includes(normalized)) return 'negotiation insights';
+  if (['leverage signals', 'leverage', 'leverage signal'].includes(normalized)) return 'leverage signals';
+  if (['potential deal structures', 'deal structures', 'deal structure', 'options'].includes(normalized)) return 'potential deal structures';
+  if (['recommendation', 'recommendations', 'recommended next step', 'next steps', 'path forward'].includes(normalized)) {
+    return 'recommended path';
+  }
   return normalized;
 }
 
 function canonicalWhyHeading(key: string) {
   const normalized = normalizeWhyHeadingKey(key);
-  if (normalized === 'snapshot') return 'Snapshot';
+  if (normalized === 'executive summary') return 'Executive Summary';
+  if (normalized === 'decision assessment') return 'Decision Assessment';
+  if (normalized === 'negotiation insights') return 'Negotiation Insights';
+  if (normalized === 'leverage signals') return 'Leverage Signals';
+  if (normalized === 'potential deal structures') return 'Potential Deal Structures';
+  if (normalized === 'recommended path') return 'Recommended Path';
+  if (normalized === 'snapshot') return 'Executive Summary';
+  if (normalized === 'risk summary') return 'Risk Summary';
   if (normalized === 'key risks') return 'Key Risks';
   if (normalized === 'key strengths') return 'Key Strengths';
   if (normalized === 'decision readiness') return 'Decision Readiness';
-  if (normalized === 'recommendations') return 'Recommendations';
+  if (normalized === 'recommendations') return 'Recommended Path';
   if (normalized === 'implementation notes') return 'Implementation Notes';
   if (normalized === 'commercial notes') return 'Commercial Notes';
   if (normalized === 'data security notes') return 'Data & Security Notes';
   if (normalized === 'vendor fit notes') return 'Vendor Fit Notes';
   return key || 'Section';
+}
+
+function coalesceLegacyWhySections(sections: WhySection[]) {
+  if (!Array.isArray(sections) || sections.length === 0) return [] as WhySection[];
+
+  const next = sections.map((section) => ({
+    ...section,
+    key: normalizeWhyHeadingKey(section.key || section.heading),
+    heading: asText(section.heading) || canonicalWhyHeading(section.key),
+    body: asText(section.body),
+  }));
+
+  next.forEach((section) => {
+    if (section.key === 'snapshot') {
+      section.key = 'executive summary';
+      section.heading = 'Executive Summary';
+    } else if (section.key === 'recommendations') {
+      section.key = 'recommended path';
+      section.heading = 'Recommended Path';
+    }
+  });
+
+  const decisionAssessmentParagraphs: string[] = [];
+  const retained = next.filter((section) => {
+    if (section.key === 'key risks' || section.key === 'risk summary') {
+      const body = combineParagraphs(splitParagraphs(section.body));
+      if (body) decisionAssessmentParagraphs.push(`Risk Summary: ${body}`);
+      return false;
+    }
+    if (section.key === 'key strengths') {
+      const body = combineParagraphs(splitParagraphs(section.body));
+      if (body) decisionAssessmentParagraphs.push(`Key Strengths: ${body}`);
+      return false;
+    }
+    return true;
+  });
+
+  if (decisionAssessmentParagraphs.length > 0) {
+    const existing = retained.find((section) => section.key === 'decision assessment');
+    const mergedBody = combineParagraphs([
+      ...(existing ? splitParagraphs(existing.body) : []),
+      ...decisionAssessmentParagraphs,
+    ]);
+    if (existing) {
+      existing.heading = 'Decision Assessment';
+      existing.body = mergedBody;
+    } else {
+      retained.push({
+        heading: 'Decision Assessment',
+        key: 'decision assessment',
+        body: mergedBody,
+      });
+    }
+  }
+
+  return retained;
 }
 
 function splitParagraphs(value: string) {
@@ -1033,21 +1178,37 @@ function paragraphsAreNearDuplicates(a: string, b: string) {
 
 function paragraphDropPriority(sectionKey: string, paragraph: string, index: number) {
   const text = normalizeSpaces(paragraph);
-  if (sectionKey === 'recommendations') {
-    if (/^Commercial posture:/i.test(text)) return 6;
-    if (/^Likely sticking points & bridges:/i.test(text)) return 5;
-    if (/^Paths to agreement:/i.test(text)) return 4;
-    if (/^Next negotiation agenda:/i.test(text)) return 2;
-    if (/^Conditions to proceed:/i.test(text)) return 1;
+  if (sectionKey === 'decision assessment') {
+    if (/^Risk Summary:/i.test(text)) return 1;
+    if (/^Key Strengths:/i.test(text)) return 2;
+    return 3 + index / 10;
+  }
+  if (sectionKey === 'negotiation insights') {
+    if (/^Structural tensions:/i.test(text)) return 1;
+    if (/^Likely priorities:/i.test(text)) return 2;
+    if (/^Possible concessions:/i.test(text)) return 3;
+    return 4 + index / 10;
+  }
+  if (sectionKey === 'leverage signals') {
+    if (/^Leverage signal:/i.test(text)) return 1;
+    return 2 + index / 10;
+  }
+  if (sectionKey === 'potential deal structures') {
+    if (/^Option A/i.test(text)) return 1;
+    if (/^Option B/i.test(text)) return 2;
+    if (/^Option C/i.test(text)) return 3;
+    return 4 + index / 10;
+  }
+  if (sectionKey === 'recommended path') {
+    if (/^Recommended path:/i.test(text)) return 1;
+    if (/^Immediate next step:/i.test(text)) return 2;
     return 3 + index / 10;
   }
   if (sectionKey === 'decision readiness') {
+    if (/^Decision status:/i.test(text)) return 1;
     if (/^What would change the verdict:/i.test(text)) return 4;
     if (/^What must be agreed now vs later:/i.test(text)) return 2;
-    return 1 + index / 10;
-  }
-  if (sectionKey === 'key strengths') {
-    return index === 0 ? 1 : 2 + index / 10;
+    return 3 + index / 10;
   }
   return 1 + index / 10;
 }
@@ -1067,16 +1228,18 @@ function dropLowestPriorityParagraph(sectionKey: string, paragraphs: string[]) {
 }
 
 function maxParagraphsForSection(sectionKey: string) {
-  if (sectionKey === 'snapshot') return 2;
-  if (sectionKey === 'key risks') return 2;
-  if (sectionKey === 'key strengths') return 2;
+  if (sectionKey === 'executive summary') return 3;
+  if (sectionKey === 'decision assessment') return 3;
+  if (sectionKey === 'negotiation insights') return 3;
+  if (sectionKey === 'leverage signals') return 3;
+  if (sectionKey === 'potential deal structures') return 3;
   if (sectionKey === 'decision readiness') return 3;
-  if (sectionKey === 'recommendations') return 3;
-  return 3;
+  if (sectionKey === 'recommended path') return 2;
+  return 2;
 }
 
 function isRoleLockedParagraph(value: string) {
-  return /^(Assumptions \/ Dependencies|Paths to agreement|Conditions to proceed|Next negotiation agenda|Likely sticking points & bridges|What must be agreed now vs later|What would change the verdict|Commercial posture):/i.test(
+  return /^(Risk Summary|Key Strengths|Likely priorities|Possible concessions|Structural tensions|Leverage signal|Option [A-C]|Decision status|What must be agreed now vs later|What would change the verdict|Recommended path|Immediate next step):/i.test(
     normalizeSpaces(value),
   );
 }
@@ -1096,7 +1259,7 @@ function isLowSignalParagraph(value: string) {
 }
 
 function parseWhySections(why: string[]) {
-  return (Array.isArray(why) ? why : [])
+  return coalesceLegacyWhySections((Array.isArray(why) ? why : [])
     .map((entry, index) => {
       const raw = asText(entry);
       if (!raw) return null;
@@ -1116,7 +1279,7 @@ function parseWhySections(why: string[]) {
         body: raw,
       } as WhySection;
     })
-    .filter(Boolean) as WhySection[];
+    .filter(Boolean) as WhySection[]);
 }
 
 function combineParagraphs(paragraphs: string[]) {
@@ -1358,6 +1521,8 @@ function normalizeMissingQuestions(params: {
 
   if (entries.length === 0) {
     GENERIC_FALLBACK_MISSING.forEach((item) => addEntry(toActionableMissingQuestion(item), null));
+  } else if (entries.length < MISSING_MIN_ITEMS) {
+    GENERIC_FALLBACK_MISSING.forEach((item) => addEntry(toActionableMissingQuestion(item), null));
   }
 
   return dedupeMissingEntries(
@@ -1483,7 +1648,11 @@ function addVisiblePhrase(target: Set<string>, value: string) {
 
 function extractEntityPhrases(text: string) {
   const matches = String(text || '').match(/\b(?:[A-Z][A-Za-z0-9&+._/-]*\s+){0,2}[A-Z][A-Za-z0-9&+._/-]*\b/g) || [];
-  const stopwords = new Set(['Snapshot', 'Key', 'Risks', 'Strengths', 'Decision', 'Readiness', 'Recommendations']);
+  const stopwords = new Set([
+    'Executive', 'Summary', 'Decision', 'Assessment', 'Negotiation', 'Insights',
+    'Leverage', 'Signals', 'Potential', 'Deal', 'Structures', 'Key', 'Risks',
+    'Risk', 'Strengths', 'Readiness', 'Recommended', 'Path',
+  ]);
   const phrases = new Set<string>();
   matches.forEach((match) => {
     const cleaned = normalizeSpaces(match);
@@ -2043,10 +2212,10 @@ function buildPathsToAgreement(params: {
   };
 
   if (params.signals.ruleIds.has('data_cleanup') || params.signals.ruleIds.has('technical')) {
-    addPath('use a discovery-first or audit-first phase before any fixed-scope commitment');
+    addPath('use a discovery-first or diligence-first tranche before any broad commitment is treated as final');
   }
   if (params.signals.ruleIds.has('scope') || params.signals.ruleIds.has('acceptance') || params.signals.ruleIds.has('phase_boundary')) {
-    addPath('narrow the MVP and attach measurable acceptance gates before broader rollout');
+    addPath('narrow the initial scope and attach measurable acceptance gates before broader expansion');
   }
   if (params.signals.ruleIds.has('change_order') || params.signals.ruleIds.has('commercial') || params.signals.ruleIds.has('dependency') || params.signals.ruleIds.has('timeline')) {
     addPath('tie price, timing, and change-order treatment to named assumptions, owners, and contingency triggers');
@@ -2055,7 +2224,7 @@ function buildPathsToAgreement(params: {
     addPath('phase the commitment so the first milestone is bounded now and later milestones are confirmed after early evidence');
   }
   if (paths.length === 0) {
-    addPath('convert the current structure into explicit bilateral conditions to proceed before treating it as commit-ready');
+    addPath('convert the current structure into explicit bilateral conditions to proceed before treating it as sign-ready');
   }
 
   return paths.slice(0, 3);
@@ -2074,8 +2243,8 @@ function buildNowVsLaterSummary(params: {
     params.factSheet.timeline.milestones.length > 1 || params.signals.ruleIds.has('phase_boundary')
       ? 'broader rollout items can wait until the earlier phase proves out against agreed gates'
       : params.factSheet.scope_deliverables.length > 2
-      ? 'secondary deliverables can be deferred until the core deliverables are accepted'
-      : 'secondary optimizations or expansion items can wait until the core deliverables are accepted';
+      ? 'secondary deliverables can be deferred until the initial commitment is accepted'
+      : 'secondary optimizations or expansion items can wait until the initial commitment is accepted';
 
   return `What must be agreed now vs later: ${nowText}; ${laterText}.`;
 }
@@ -2089,7 +2258,7 @@ function buildNegotiationAgendaItems(signals: CalibrationSignals) {
   };
 
   signals.rules.forEach((rule) => {
-    if (rule.id === 'scope') addItem('define the MVP boundary and explicit exclusions');
+    if (rule.id === 'scope') addItem('define the current commitment boundary and explicit exclusions');
     if (rule.id === 'data_cleanup') addItem('assign remediation ownership and quantify cleanup effort');
     if (rule.id === 'acceptance') addItem('agree measurable acceptance criteria for the key deliverables');
     if (rule.id === 'dependency') addItem('name dependency owners, approvals, and fallback treatment');
@@ -2117,7 +2286,7 @@ function buildStickingPointsParagraph(signals: CalibrationSignals) {
   }
   if (signals.ruleIds.has('scope') || signals.ruleIds.has('timeline') || signals.ruleIds.has('acceptance') || signals.ruleIds.has('dependency')) {
     scenarios.push(
-      'If one side wants a faster timeline while scope, acceptance, or dependency ownership stays broad, then the bridge is a narrower MVP with named owners and milestone-specific acceptance gates.',
+      'If one side wants a faster timeline while scope, acceptance, or dependency ownership stays broad, then the bridge is a narrower initial phase with named owners and milestone-specific acceptance gates.',
     );
   }
   if (scenarios.length < 2) {
@@ -2127,6 +2296,168 @@ function buildStickingPointsParagraph(signals: CalibrationSignals) {
   }
 
   return scenarios.slice(0, 2).join(' ');
+}
+
+function buildLikelyPrioritiesParagraph(params: {
+  factSheet: ProposalFactSheet;
+  signals: CalibrationSignals;
+}) {
+  const proposingSide: string[] = [];
+  const counterparty: string[] = [];
+  const add = (target: string[], value: string) => {
+    if (!value || target.includes(value)) return;
+    target.push(value);
+  };
+
+  if (hasCommercialSignal(params.factSheet) || params.signals.fixedPriceSignal) {
+    add(proposingSide, 'commercial certainty and protection against scope drift');
+    add(counterparty, 'economics that stay tied to validated assumptions and risk ownership');
+  }
+  if (params.factSheet.timeline.milestones.length > 0 || params.signals.ruleIds.has('timeline')) {
+    add(proposingSide, 'implementation timing and milestone credibility');
+    add(counterparty, 'delivery dates that have contingency treatment if dependencies slip');
+  }
+  if (params.factSheet.success_criteria_kpis.length > 0 || params.signals.ruleIds.has('acceptance')) {
+    add(proposingSide, 'objective acceptance and measurable outcomes');
+    add(counterparty, 'sign-off mechanics that match the actual commitment boundary');
+  }
+  if (params.signals.ruleIds.has('dependency')) {
+    add(proposingSide, 'named owners for approvals, access, and third-party inputs');
+    add(counterparty, 'relief if external dependencies move outside the committed plan');
+  }
+
+  if (proposingSide.length === 0) add(proposingSide, 'clarity on scope, timing, and execution accountability');
+  if (counterparty.length === 0) add(counterparty, 'confidence that the commitment is bounded and governable');
+
+  return `Likely priorities: the proposing side may prioritize ${joinNatural(proposingSide.slice(0, 2))}; the counterparty may prioritize ${joinNatural(counterparty.slice(0, 2))}.`;
+}
+
+function buildPossibleConcessionsParagraph(params: {
+  factSheet: ProposalFactSheet;
+  signals: CalibrationSignals;
+}) {
+  const concessions: string[] = [];
+  const add = (value: string) => {
+    if (!value || concessions.includes(value)) return;
+    concessions.push(value);
+  };
+
+  if (params.signals.ruleIds.has('scope') || params.signals.ruleIds.has('phase_boundary')) {
+    add('one side could accept a narrower initial phase if the other side accepts a clearer expansion path once agreed gates are met');
+  }
+  if (params.signals.ruleIds.has('commercial') || params.signals.ruleIds.has('change_order')) {
+    add('commercial certainty could be traded for staged pricing, capped allowances, or a defined variation mechanism');
+  }
+  if (params.signals.ruleIds.has('timeline') || params.signals.ruleIds.has('dependency')) {
+    add('tighter timing commitments could be exchanged for named dependency owners and escalation paths');
+  }
+  if (concessions.length === 0) {
+    add('either side may need to trade some flexibility on scope, timing, or governance to convert the draft into a signable structure');
+  }
+
+  return `Possible concessions: ${concessions.slice(0, 2).join('; ')}.`;
+}
+
+function buildStructuralTensionsParagraph(params: {
+  signals: CalibrationSignals;
+  cleanBounded: boolean;
+  riskBlockerSummary: string;
+  riskTransferSummary: string;
+}) {
+  if (params.cleanBounded) {
+    return 'Structural tensions: the remaining tension sits mainly in execution governance, papering discipline, and final approval sequencing rather than in core feasibility.';
+  }
+  const bridge = buildStickingPointsParagraph(params.signals);
+  return `Structural tensions: the main tension is that ${params.riskBlockerSummary}.${params.riskTransferSummary ? ` As drafted, ${params.riskTransferSummary}.` : ''} ${bridge}`;
+}
+
+function buildLeverageSignalParagraphs(params: {
+  factSheet: ProposalFactSheet;
+  signals: CalibrationSignals;
+}) {
+  const items: string[] = [];
+  const add = (value: string) => {
+    if (!value || items.includes(value)) return;
+    items.push(value);
+  };
+
+  if (params.signals.ruleIds.has('timeline') || containsAny(params.factSheet.constraints, ['deadline', 'urgent', 'asap', 'hard deadline'])) {
+    add('Leverage signal: timing pressure appears to exist, which can favor the side able to offer a credible phased timetable or dependency relief.');
+  }
+  if (params.signals.ruleIds.has('dependency')) {
+    add('Leverage signal: approvals, access, and third-party inputs appear to be controlled asymmetrically, which gives the controlling party influence over sequencing and contingency language.');
+  }
+  if (
+    containsAny(params.factSheet.scope_deliverables, ['integration', 'api', 'system', 'platform', 'reporting', 'workflow'])
+    || containsAny(params.factSheet.constraints, ['existing infrastructure', 'existing system', 'existing process'])
+  ) {
+    add('Leverage signal: switching or restart costs may be meaningful because the proposal appears to depend on continuity with existing systems, workflows, or operating processes.');
+  }
+  if (hasCommercialSignal(params.factSheet) || params.signals.fixedPriceSignal) {
+    add('Leverage signal: budget discipline or pricing posture appears to be shaping the negotiation, which can favor structures that trade certainty for narrower scope or staged commitment.');
+  }
+  if (params.factSheet.vendor_preferences.length > 0) {
+    add('Leverage signal: stated provider or operating preferences narrow the feasible option set and can shift leverage toward counterparties that already fit those constraints.');
+  }
+
+  if (items.length === 0) {
+    add('Leverage signal: the main leverage appears to sit with whichever party can either narrow the commitment quickly or absorb uncertainty without reopening the commercial structure.');
+  }
+
+  return items.slice(0, 3);
+}
+
+function buildDealStructureParagraphs(params: {
+  factSheet: ProposalFactSheet;
+  signals: CalibrationSignals;
+  cleanBounded: boolean;
+}) {
+  const optionA = params.cleanBounded
+    ? 'Option A — Standard structure: proceed on the current scope with the written milestones, acceptance criteria, governance cadence, and risk treatment preserved into final papering.'
+    : 'Option A — Standard structure: proceed only if the current scope, acceptance criteria, dependency owners, and commercial assumptions are locked before signature.';
+  const optionB =
+    params.signals.ruleIds.has('technical') || params.signals.ruleIds.has('data_cleanup')
+      ? 'Option B — Diligence-led structure: use a discovery, audit, or pilot tranche to validate the unresolved technical or remediation assumptions before the broader commitment becomes binding.'
+      : 'Option B — Phased structure: commit the initial phase now and defer later scope until agreed exit gates are met.';
+  const optionC =
+    hasCommercialSignal(params.factSheet) || params.signals.fixedPriceSignal
+      ? 'Option C — Contingent commercial structure: use milestone-based pricing, capped allowances, or a defined variation mechanism so the economics move only when the unresolved assumptions move.'
+      : 'Option C — Conditional expansion structure: keep the base commitment narrow and add later scope through pre-agreed expansion triggers once performance or governance conditions are met.';
+
+  return [optionA, optionB, optionC];
+}
+
+function buildRecommendedPathParagraphs(params: {
+  factSheet: ProposalFactSheet;
+  signals: CalibrationSignals;
+  data: VertexEvaluationV2Response;
+  cleanBounded: boolean;
+  conditionSummary: string;
+  agendaItems: string[];
+}) {
+  if (params.cleanBounded && params.data.fit_level === 'high') {
+    return [
+      'Recommended path: move to final papering, final approvals, and signature preparation without reopening the bounded scope, acceptance, dependency, or governance mechanics already visible in the record.',
+      'Immediate next step: confirm final approvals, lock the execution governance cadence, and preserve the current commercial assumptions in the final documentation.',
+    ];
+  }
+
+  if (params.data.fit_level === 'low') {
+    return [
+      `Recommended path: pause signature and convert the discussion into a restructuring or diligence step focused on what is needed to ${params.conditionSummary}.`,
+      `Immediate next step: ${params.agendaItems.join('; ')}.`,
+    ];
+  }
+
+  const lead =
+    params.signals.ruleIds.has('technical') || params.signals.ruleIds.has('data_cleanup')
+      ? `Recommended path: run a short discovery or diligence phase to ${params.conditionSummary}, then reconvene to lock the bounded commitment.`
+      : `Recommended path: use the next negotiation round to ${params.conditionSummary} before either side treats the current draft as final.`;
+
+  return [
+    lead,
+    `Immediate next step: ${params.agendaItems.join('; ')}.`,
+  ];
 }
 
 function buildSectionRoleDefaults(params: {
@@ -2168,25 +2499,6 @@ function buildSectionRoleDefaults(params: {
     && !params.signals.shouldBeConditional
     && !params.signals.shouldBeLow
     && params.signals.ruleIds.size === 0;
-  const snapshotLead =
-    params.data.fit_level === 'low'
-      ? `${alignmentSummary ? `There are still some visible alignment points around ${alignmentSummary}, but ` : ''}the current materials do not yet show a credible bounded path to commitment because ${snapshotBlockerSummary}.`
-      : cleanBounded && params.data.fit_level === 'high'
-      ? `Sign-ready on the current record: alignment exists around ${alignmentSummary}, and the proposal is bounded enough for both sides to treat it as a clean commitment.`
-      : cleanBounded
-      ? `Substantive structure is already in place around ${alignmentSummary}, and the current materials support a credible commitment path without a material structural blocker.`
-      : params.signals.conditionallyViable
-      ? `Conditionally viable: alignment exists around ${alignmentSummary}, but ${snapshotBlockerSummary}.`
-      : `Conditionally ready rather than fully commit-ready: ${snapshotBlockerSummary}.`;
-  const snapshotSupport = params.data.fit_level === 'low'
-    ? 'Some deal elements are visible, but the remaining gaps still leave scope, dependency, or commercial exposure too open for either side to rely on the current draft.'
-    : cleanBounded
-    ? 'The current record already contains concrete scope, timing, success, and constraint signals, so the remaining judgment is about commitment posture rather than missing structural facts.'
-    : params.signals.conditionallyViable
-    ? 'The current structure looks commercially workable if the open items are converted into explicit bilateral conditions to proceed rather than left to later interpretation.'
-    : positiveEvidence
-    ? `The current proposal still gives both sides a workable starting point because it includes ${positiveEvidence}.`
-    : 'The current proposal still gives both sides enough structure to frame the next negotiation step.';
 
   const strengthParagraphs = buildStrengthParagraphs({
     factSheet: params.factSheet,
@@ -2196,45 +2508,96 @@ function buildSectionRoleDefaults(params: {
     strengthsPoints,
   });
 
+  const decisionStatus =
+    cleanBounded && params.data.fit_level === 'high'
+      ? {
+          label: 'Ready to finalize',
+          explanation: 'The current record is bounded enough on scope, timing, acceptance, dependencies, and risk treatment to support final commitment.',
+        }
+      : params.data.fit_level === 'low'
+      ? {
+          label: 'Not viable',
+          explanation: `The current draft still leaves too much structural uncertainty because ${snapshotBlockerSummary}.`,
+        }
+      : params.signals.conditionallyViable
+      ? {
+          label: 'Proceed with conditions',
+          explanation: `A credible path exists, but the parties still need to ${conditionSummary} before commitment is defensible.`,
+        }
+      : {
+          label: 'Explore further',
+          explanation: `The deal may be workable, but the present record is still too conditional or incomplete because ${snapshotBlockerSummary}.`,
+        };
+
+  const executiveSummaryLead =
+    params.data.fit_level === 'low'
+      ? `${alignmentSummary ? `Some alignment is still visible around ${alignmentSummary}, but ` : ''}the deal is not yet workable on the current record because ${snapshotBlockerSummary}.`
+      : cleanBounded && params.data.fit_level === 'high'
+      ? `The deal is fundamentally workable and close to executable: alignment exists around ${alignmentSummary}, and the proposal is bounded enough for both sides to treat it as a final commitment structure.`
+      : params.signals.conditionallyViable
+      ? `The deal appears fundamentally workable, but not yet sign-ready: alignment exists around ${alignmentSummary}, while ${snapshotBlockerSummary}.`
+      : `The deal merits further work rather than immediate commitment because ${snapshotBlockerSummary}.`;
+
+  const executiveSummaryTension =
+    params.data.fit_level === 'low'
+      ? 'The core negotiation tension is that the current materials still leave scope, dependency, or commercial exposure too open for either side to rely on the draft.'
+      : cleanBounded
+      ? 'The remaining negotiation tension sits mainly in final approvals, execution governance, and preserving the current assumptions in papering rather than in core feasibility.'
+      : params.signals.conditionallyViable
+      ? `The core negotiation tension is between the visible alignment and the fact that ${riskBlockerSummary}.${riskTransferSummary ? ` As drafted, ${riskTransferSummary}.` : ''}`
+      : `The core tension is that ${riskBlockerSummary}.${riskTransferSummary ? ` As drafted, ${riskTransferSummary}.` : ''}`;
+
+  const executiveSummaryNext =
+    cleanBounded && params.data.fit_level === 'high'
+      ? 'Before commitment, the remaining work is to preserve the bounded structure through final approvals and clean documentation rather than renegotiate the commercial foundation.'
+      : `Before commitment, the parties still need to ${conditionSummary}. One realistic bridge is to ${lowerFirst(pathsToAgreement[0] || 'convert the current draft into explicit bilateral conditions to proceed')}.`;
+
   const defaults: Record<string, string[]> = {
-    snapshot: [snapshotLead, snapshotSupport],
-    'key risks': [
-      cleanBounded
-        ? 'The remaining negotiation exposure is limited and sits mainly in execution governance, handoff sequencing, and confirmation of the written assumptions rather than in core feasibility.'
-        : `The main negotiation pressure points sit where ${riskBlockerSummary}.${riskTransferSummary ? ` As drafted, ${riskTransferSummary}.` : ''}`,
-      cleanBounded
-        ? 'Assumptions / Dependencies: the current record mainly assumes routine stakeholder availability and normal execution coordination rather than an unresolved structural blocker.'
-        : `Assumptions / Dependencies: ${assumptionsSummary}.`,
+    'executive summary': [
+      executiveSummaryLead,
+      executiveSummaryTension,
+      executiveSummaryNext,
     ],
-    'key strengths': strengthParagraphs,
+    'decision assessment': [
+      cleanBounded
+        ? 'Risk Summary: Remaining risk is concentrated in execution governance, handoff sequencing, and final confirmation of the written assumptions rather than in core feasibility.'
+        : `Risk Summary: The primary risks sit where ${riskBlockerSummary}.${riskTransferSummary ? ` As drafted, ${riskTransferSummary}.` : ''} Assumptions / Dependencies remain around ${assumptionsSummary}.`,
+      `Key Strengths: ${combineParagraphs(strengthParagraphs)}`,
+    ],
+    'negotiation insights': [
+      buildLikelyPrioritiesParagraph(params),
+      buildPossibleConcessionsParagraph(params),
+      buildStructuralTensionsParagraph({
+        signals: params.signals,
+        cleanBounded,
+        riskBlockerSummary,
+        riskTransferSummary,
+      }),
+    ],
+    'leverage signals': buildLeverageSignalParagraphs(params),
+    'potential deal structures': buildDealStructureParagraphs({
+      factSheet: params.factSheet,
+      signals: params.signals,
+      cleanBounded,
+    }),
     'decision readiness': [
-      cleanBounded && params.data.fit_level === 'high'
-        ? 'Decision readiness is strong: remaining discussion can focus on execution governance and final confirmations rather than bounding core feasibility.'
-        : cleanBounded
-        ? 'Decision readiness is broadly supported by the current record: the remaining discussion is about confirming the present structure, not resolving a core blocker.'
-        : params.data.fit_level === 'low'
-        ? `Decision readiness remains low because the parties still need to ${conditionSummary}.`
-        : `Decision readiness is conditional: before either side treats this as commit-ready, the parties still need to ${conditionSummary}.`,
+      `Decision status: ${decisionStatus.label}. ${decisionStatus.explanation}`,
       buildNowVsLaterSummary(params),
       `What would change the verdict: confidence would increase with ${confidenceUp}; it would fall further if ${confidenceDown}.`,
     ],
-    recommendations: [
-      cleanBounded
-        ? 'Paths to agreement: move from principle to execution by confirming the named milestones, governance cadence, and sign-off mechanics already visible in the current record.'
-        : `Paths to agreement: ${pathsToAgreement.join('; ')}.`,
-      cleanBounded
-        ? 'Conditions to proceed: keep the current scope, timing, commercial posture, and sign-off mechanics aligned as drafted rather than reopening them through later interpretation.'
-        : `Conditions to proceed: ${conditionSummary}.`,
-      cleanBounded
-        ? 'Next negotiation agenda: confirm milestone ownership and governance cadence; confirm sign-off mechanics and operating handoffs; confirm any residual assumptions that sit outside the written scope.'
-        : `Next negotiation agenda: ${agendaItems.join('; ')}.`,
-      `Likely sticking points & bridges: ${buildStickingPointsParagraph(params.signals)}`,
-    ],
+    'recommended path': buildRecommendedPathParagraphs({
+      factSheet: params.factSheet,
+      signals: params.signals,
+      data: params.data,
+      cleanBounded,
+      conditionSummary,
+      agendaItems,
+    }),
   };
 
-  if (params.signals.fixedPriceSignal) {
-    defaults.recommendations.push(
-      'Commercial posture: keep any fixed-price or fixed-scope posture tied to explicit acceptance criteria, change-order triggers, and risk ownership.',
+  if (params.signals.fixedPriceSignal && defaults['leverage signals'].length < 3) {
+    defaults['leverage signals'].push(
+      'Leverage signal: any fixed-price or fixed-scope posture appears to depend on tighter acceptance criteria, change-order triggers, and risk ownership than the current draft may yet provide.',
     );
   }
 
@@ -2280,7 +2643,13 @@ function buildCalibrationSignals(params: {
   const whySections = parseWhySections(params.data.why);
   const whyBodiesAll = whySections.map((section) => section.body);
   const whyBodies = whySections
-    .filter((section) => ['key risks', 'decision readiness', 'recommendations'].includes(section.key))
+    .filter((section) => [
+      'decision assessment',
+      'negotiation insights',
+      'leverage signals',
+      'decision readiness',
+      'recommended path',
+    ].includes(section.key))
     .map((section) => section.body);
   const issueTexts = [
     ...params.factSheet.missing_info,
@@ -2403,14 +2772,19 @@ function rewriteWhyForCalibration(params: {
   sections.forEach((section) => {
     let nextBody = neutralizeShareableText(section.body);
     if (hasCoachingLanguage(nextBody)) {
-      if (section.key === 'key strengths') {
+      if (section.key === 'decision assessment') {
         nextBody = combineParagraphs([
-          'Alignment exists where the current proposal already gives both sides concrete structure on scope, timing, success metrics, or commercial treatment.',
+          'Decision assessment should stay grounded in the current proposal mechanics rather than praise or one-sided drafting advice.',
           nextBody,
         ]);
-      } else if (section.key === 'key risks') {
+      } else if (section.key === 'negotiation insights') {
         nextBody = combineParagraphs([
-          'Tension is likely where one party is implicitly being asked to absorb open scope, dependency, or commercial risk.',
+          'Negotiation insight should stay neutral and explain how each side may respond to the current structure.',
+          nextBody,
+        ]);
+      } else if (section.key === 'leverage signals') {
+        nextBody = combineParagraphs([
+          'Leverage should be described as an abstract signal in the deal dynamics, not as a confidential fact or one-sided tactic.',
           nextBody,
         ]);
       } else if (section.key === 'decision readiness') {
@@ -2418,9 +2792,9 @@ function rewriteWhyForCalibration(params: {
           'Readiness depends on what the parties can bound now versus defer to a later phase.',
           nextBody,
         ]);
-      } else if (section.key === 'recommendations') {
+      } else if (section.key === 'recommended path') {
         nextBody = combineParagraphs([
-          'A realistic path to agreement is to turn the remaining gaps into explicit conditions to proceed rather than one-sided drafting advice.',
+          'The recommended path should turn the remaining gaps into a neutral next negotiation step rather than one-sided drafting advice.',
           nextBody,
         ]);
       }
@@ -2478,9 +2852,16 @@ function rewriteWhyForCalibration(params: {
     };
   });
 
-  return sanitizeWhyEntries(
-    truncateWhyOutput(serializeWhySections(rewrittenSections), WHY_MAX_CHARS_STANDARD),
-  );
+  const truncated = truncateWhyOutput(serializeWhySections(rewrittenSections), WHY_MAX_CHARS_STANDARD);
+  const truncatedKeys = new Set(parseWhySections(truncated).map((section) => section.key));
+  const missingRequiredSections = REQUIRED_WHY_SECTION_KEYS.some((key) => !truncatedKeys.has(key));
+  if (missingRequiredSections) {
+    return sanitizeWhyEntries(
+      compressWhySectionsForRequiredCoverage(rewrittenSections, WHY_MAX_CHARS_STANDARD),
+    );
+  }
+
+  return sanitizeWhyEntries(truncated);
 }
 
 function alignFitLevelToSignals(params: {
@@ -2702,11 +3083,13 @@ function safeFallbackEvaluationFromFactSheet(
         fit_level: 'unknown',
         confidence_0_1: 0.2,
         why: [
-          'Snapshot: Assessment incomplete: generation failed and the extracted material is too thin for a reliable bilateral negotiator memo.',
-          'Key Risks: Too many deal-critical details remain unverified to allocate scope, dependency, or commercial risk with confidence.',
-          'Key Strengths: The current materials provide only a limited basis for bilateral assessment.',
-          'Decision Readiness: Do not treat this as decision-ready; a fuller source record or a successful rerun is needed before a substantive neutral memo can be issued.',
-          'Recommendations: Re-run the evaluation after more complete material is available, or review the missing items below before using this report as a negotiation aid.',
+          'Executive Summary: Assessment incomplete: generation failed and the extracted material is too thin for a reliable bilateral negotiation brief.',
+          'Decision Assessment: Risk Summary: too many deal-critical details remain unverified to allocate scope, dependency, or commercial risk with confidence.\n\nKey Strengths: the current materials provide only a limited basis for bilateral assessment.',
+          'Negotiation Insights: Likely priorities remain hard to infer with confidence because the record is too thin.\n\nPossible concessions cannot yet be assessed reliably.\n\nStructural tensions are visible, but not bounded well enough for a substantive neutral memo.',
+          'Leverage Signals: Leverage signal: the current information gap itself is the main constraint, because either side could be carrying material unknowns that are not yet visible in the shared record.',
+          'Potential Deal Structures: Option A — Re-run the evaluation after more complete materials are available.\n\nOption B — Use a short diligence step to fill the missing items below before resuming negotiation.\n\nOption C — Pause the process until a fuller source record exists.',
+          'Decision Readiness: Decision status: Explore further. Do not treat this as decision-ready; a fuller source record or a successful rerun is needed before a substantive neutral memo can be issued.',
+          'Recommended Path: Recommended path: collect the missing information below and rerun the mediation before using this report as a negotiation aid.',
         ],
         missing: fallbackMissing,
         redactions: [],
@@ -2764,12 +3147,6 @@ function buildEvalPromptFromFactSheet(params: {
   const sc = factSheet.source_coverage;
   const coverageCount = computeCoverageCount(sc);
 
-  // ── Conditional module detection (deterministic from fact sheet) ─────────
-  const hasTimeline = sc.has_timeline;
-  const hasVendorPrefs = factSheet.vendor_preferences.length > 0;
-  const hasCommercialSignals = containsAny(factSheet.constraints, [
-    'budget', 'cost', 'price', 'pricing', 'commercial', 'contract', 'payment', 'billing', '$',
-  ]);
   const hasDataSecurity = containsAny(factSheet.scope_deliverables, [
     'data', 'api', 'system', 'database', 'integration', 'security', 'cloud', 'storage', 'pipeline',
   ]);
@@ -2784,21 +3161,15 @@ function buildEvalPromptFromFactSheet(params: {
     'aggressive', 'tight timeline', 'hard deadline', 'asap', 'urgent',
   ]);
 
-  // ── Required headings (always) ───────────────────────────────────────────
   const requiredHeadings = [
-    'Snapshot',
-    'Key Risks',
-    'Key Strengths',
+    'Executive Summary',
+    'Decision Assessment',
+    'Negotiation Insights',
+    'Leverage Signals',
+    'Potential Deal Structures',
     'Decision Readiness',
-    'Recommendations',
+    'Recommended Path',
   ];
-
-  // ── Optional headings (conditional on fact sheet content) ───────────────
-  const optionalHeadings: string[] = [];
-  if (hasTimeline) optionalHeadings.push('Implementation Notes');
-  if (hasCommercialSignals) optionalHeadings.push('Commercial Notes');
-  if (hasDataSecurity) optionalHeadings.push('Data & Security Notes');
-  if (hasVendorPrefs) optionalHeadings.push('Vendor Fit Notes');
 
   // ── Voice + depth guidance ───────────────────────────────────────────────
   const voiceGuide =
@@ -2821,7 +3192,7 @@ function buildEvalPromptFromFactSheet(params: {
     reportStyle.ordering === 'risks_first'
       ? 'Ordering: front-load the main blocker and conditions to proceed before upside or polish.'
       : reportStyle.ordering === 'strengths_first'
-      ? 'Ordering: acknowledge strengths, but the first paragraph of Snapshot and Decision Readiness must still lead with the main blocker and the condition to proceed.'
+      ? 'Ordering: acknowledge strengths, but the first paragraph of Executive Summary and Decision Readiness must still lead with the main blocker and the condition to proceed.'
       : 'Ordering: balance strengths and risks, but front-load the main blocker and negotiation implication.';
 
   const whyMaxChars = tightMode ? WHY_MAX_CHARS_TIGHT : WHY_MAX_CHARS_STANDARD;
@@ -2844,6 +3215,7 @@ function buildEvalPromptFromFactSheet(params: {
       has_aggressive_timeline: hasAggressiveTimeline,
       // Output size limits — strictly enforced to avoid truncation.
       why_max_chars: whyMaxChars,
+      missing_min_items: MISSING_MIN_ITEMS,
       missing_max_items: MISSING_MAX_ITEMS,
       redactions_max_items: REDACTIONS_MAX_ITEMS,
       report_style: {
@@ -2855,17 +3227,15 @@ function buildEvalPromptFromFactSheet(params: {
     },
   };
 
-  // ── Paragraph depth requirement line (matches depthGuide for test assertions) ──
-  // Paragraph *count* is fixed (2–4); depthGuide varies prose density per verbosity.
   const paragraphReq = '2–4 short paragraphs per required heading';
 
   return [
     tightMode
       ? 'STRICT COMPACT MODE: Return JSON only. No markdown. No code fences. No commentary. Output must be short.'
       : '',
-    'SYSTEM: You are an expert commercial negotiator and neutral intermediary evaluating a business proposal.',
+    'SYSTEM: You are the AI Mediator for PreMarket, a neutral business negotiation advisor and intermediary evaluating a business proposal.',
     'Your task is: evaluate the overall business proposal quality and decision-readiness.',
-    'Act like a bilateral middleman: show where both sides align, where friction is likely, who is carrying risk, and what must be agreed before proceeding.',
+    'Act like a bilateral middleman: show whether a deal is viable, where friction is likely, who is carrying risk, what leverage exists, and what must be agreed before proceeding.',
     'This Step 3 report is a shared neutral artifact that may be viewed by both parties, emailed, or forwarded.',
     '',
     'IMPORTANT — input structure:',
@@ -2877,16 +3247,18 @@ function buildEvalPromptFromFactSheet(params: {
     '- Never quote confidential text verbatim in your output.',
     '- Never disclose confidential numbers, IDs, dates, emails, pricing, or exact identifiers.',
     '- Use only generic, safely-derived conclusions when drawing on confidential context.',
+    '- If confidential information affects your reasoning, refer to it abstractly (example: "internal pricing flexibility appears to exist").',
     '- Output must be safe to share publicly.',
     '',
     'EVALUATION RUBRIC — evaluate all dimensions from the fact_sheet:',
-    '1. Scope boundary & evidence: scope_deliverables, project_goal — are the deliverables, MVP boundary, and exclusions concrete enough to price and sequence?',
+    '1. Scope boundary & evidence: scope_deliverables, project_goal — are the deliverables, scope boundary, service boundary, phase boundary, or MVP boundary (only if relevant) concrete enough to price and sequence?',
     '   Flag vague language: "ASAP", "scalable", "world-class", "top N" without definitions, "TBD".',
     '2. Feasibility / realism: timeline, constraints, and assumptions — realistic, contractable, and grounded?',
-    '3. Acceptance & measurability: KPIs / success criteria — is there an objective basis for sign-off and MVP success?',
+    '3. Acceptance & measurability: KPIs / success criteria — is there an objective basis for sign-off and value realization?',
     '4. Risk allocation: risks, assumptions, and constraints — who is implicitly carrying data, dependency, or change-order risk?',
     '5. Decision-readiness: is this ready for a clean commitment, only for a conditional/discovery-first path, or not yet ready?',
     '   Use source_coverage flags to guide your assessment.',
+    '6. Negotiation dynamics: what leverage, tradeoffs, urgency, switching costs, or dependency signals are shaping the negotiation?',
     '',
     'REPORT STYLE:',
     voiceGuide,
@@ -2906,70 +3278,68 @@ function buildEvalPromptFromFactSheet(params: {
     '- Every material strength, risk, and recommendation MUST be grounded in concrete fact_sheet evidence.',
     '  Cite the actual deliverables, milestones, KPIs, constraints, risks, pricing posture, or dependencies that justify the point.',
     '- Prefer concrete deal mechanics, scope boundaries, acceptance gaps, dependency ownership, change-order triggers, and negotiation leverage over generic praise.',
+    '- Adapt terminology to the proposal domain (software, services, supply chain, investment, partnership, etc.). Avoid software-specific phrasing unless the fact_sheet supports it.',
     '- Write as if both parties will read the report. Use neutral bilateral phrasing such as "the parties", "both sides", "the current proposal", "alignment exists where", and "tension is likely around".',
-    '- Key Strengths = areas of bilateral alignment or usable deal structure, NOT praise for one side’s drafting or wording.',
-    '- Recommendations = neutral mediation guidance, conditions to proceed, or next negotiation agenda items, NOT one-sided tactical advice.',
+    '- Decision Assessment must stay neutral: Risk Summary = concrete risk mechanics and who is carrying them; Key Strengths = areas of bilateral alignment or usable deal structure, NOT praise for one side’s drafting or wording.',
+    '- Recommended Path = neutral mediation guidance, not one-sided tactical advice.',
     '- Missing information = deal-critical questions that either side would need answered, NOT editing notes or submission coaching.',
     '- DO NOT coach one side. Do NOT tell one side how to improve, strengthen, rewrite, or increase the chances of the proposal.',
     '- Explicitly avoid phrases such as "Improve your position", "You should strengthen", "Your proposal would be better if", "Before sending", or "You should rewrite".',
     '- If you use phrases like "clear", "specific", "mature", or "decision-ready", you MUST immediately explain which concrete facts justify that claim.',
     '- Ban empty filler such as "clarity and specificity", "decision-ready", "mature approach", or "thoughtfully separates" unless the phrase adds new evidence-based meaning.',
     '- Avoid exaggerated language such as "almost entirely undefined" unless the fact_sheet truly supports that level of severity.',
-    '- Do NOT repeat the same conclusion in Snapshot, Decision Readiness, and Recommendations unless each section adds new justification or a new negotiation implication.',
-    '- Front-load the main blocker, the condition to proceed, and the negotiation implication inside Snapshot, Key Risks, and Decision Readiness.',
-    '- Section roles are strict: Snapshot = one-line verdict plus balanced negotiation snapshot; Key Risks = concrete risk mechanics and who is carrying them; Key Strengths = areas of alignment or usable structure; Decision Readiness = what must be agreed now versus later and what would change confidence; Recommendations = bridge-to-agreement plan and next negotiation agenda.',
+    '- Do NOT repeat the same conclusion in Executive Summary, Decision Readiness, and Recommended Path unless each section adds new justification or a new negotiation implication.',
+    '- Front-load the main blocker, the condition to proceed, and the negotiation implication inside Executive Summary, Decision Assessment, and Decision Readiness.',
+    '- Section roles are strict: Executive Summary = deal memo on overall workability and core tensions; Decision Assessment = Risk Summary plus Key Strengths; Negotiation Insights = likely priorities of each side, possible concessions, and structural tensions; Leverage Signals = hidden negotiation leverage described abstractly; Potential Deal Structures = 2-3 realistic unlock paths; Decision Readiness = explicit decision status and what must be agreed now versus later; Recommended Path = the clearest next negotiation step.',
     '',
-    'MANDATORY NEGOTIATOR ELEMENTS (every report must include ALL of these):',
-    '1. Assumptions / Dependencies — inside "Key Risks" OR "Decision Readiness", include a paragraph',
-    '   starting with "Assumptions / Dependencies:" listing the key assumptions the project relies on.',
-    '   If source_coverage is thin (multiple false fields), make assumptions explicit and conservative.',
-    '2. Paths to agreement — inside "Decision Readiness" OR "Recommendations", include a paragraph starting with "Paths to agreement:"',
-    '   presenting 2-3 concrete bilateral paths (e.g., discovery-first, narrow MVP, phased commitment) grounded in the fact sheet.',
-    '   Do not invent specific numbers — reference the fact_sheet where available.',
-    '3. Conditions to proceed — inside "Recommendations", include a paragraph starting with "Conditions to proceed:"',
-    '   covering the narrowest set of scope, acceptance, dependency, remediation, change-order, or commercial conditions that both sides need to lock now.',
-    '4. Next negotiation agenda — inside "Decision Readiness" OR "Recommendations", include a short paragraph',
-    '   starting with "Next negotiation agenda:" followed by exactly 3 pointed, proposal-specific agenda items',
-    '   for the next discussion between the parties. These must focus on bridging the gap, not editing one side’s wording.',
-    '5. Likely sticking points & bridges — immediately after the "Next negotiation agenda" paragraph (same heading section),',
-    '   include a paragraph starting with "Likely sticking points & bridges:" with 2 concise sticking-point scenarios and bridge moves.',
-    '   Each scenario MUST use If…then… language and frame the move as a path to agreement, not one-sided leverage.',
-    '6. What would change the verdict — inside "Decision Readiness" OR "Recommendations", include a short paragraph',
-    '   explaining what evidence would increase confidence and what evidence would lower it further.',
+    'MANDATORY REPORT STRUCTURE (every report must include ALL of these):',
+    '1. "Executive Summary" must be 2-3 paragraphs and read like a professional deal memo.',
+    '2. "Decision Assessment" must include one paragraph starting with "Risk Summary:" and one paragraph starting with "Key Strengths:".',
+    '3. "Negotiation Insights" must include paragraphs starting with "Likely priorities:", "Possible concessions:", and "Structural tensions:".',
+    '4. "Leverage Signals" must describe urgency, switching costs, dependency control, competitive pressure, or resource constraints abstractly without revealing confidential facts.',
+    '5. "Potential Deal Structures" must provide 2-3 realistic options labeled "Option A —", "Option B —", and "Option C —" reflecting real tradeoffs or paths to agreement.',
+    '6. "Decision Readiness" must start with "Decision status:" and use exactly one of these statuses: "Not viable", "Explore further", "Proceed with conditions", or "Ready to finalize".',
+    '7. "Decision Readiness" must also include "What must be agreed now vs later:" and "What would change the verdict:".',
+    '8. "Recommended Path" must start with "Recommended path:" and provide the clearest next negotiation step.',
     '',
     hasFixedPriceContract
-      ? 'CONDITIONAL — fixed-price signals detected: inside "Key Risks" or "Recommendations", include a paragraph starting with "Commercial posture:" covering acceptance criteria, change-order triggers, and risk allocation between parties.'
+      ? 'CONDITIONAL — fixed-price signals detected: discuss how commercial certainty, acceptance criteria, change-order triggers, and risk allocation shape the Leverage Signals or Potential Deal Structures sections.'
       : '',
     hasAggressiveTimeline
-      ? 'CONDITIONAL — urgency signals detected: inside "Decision Readiness" or "Recommendations", include a paragraph starting with "Negotiation lever:" covering scope-time-budget tradeoffs and phased delivery options.'
+      ? 'CONDITIONAL — urgency signals detected: include an explicit scope-time-budget tradeoff in Negotiation Insights, Leverage Signals, or Potential Deal Structures.'
       : '',
     hasDataSecurity
-      ? 'CONDITIONAL — data/integration systems detected: inside "Key Risks" or the data security heading, include a paragraph starting with "Risk containment:" covering access controls, data handling assumptions, and relevant compliance (SOC2, GDPR, etc.).'
+      ? 'CONDITIONAL — data/integration systems detected: reflect data handling, access control, or compliance containment in Decision Assessment or Leverage Signals using abstract public-safe wording.'
       : '',
     '',
     'WHY FIELD — FORMAT INSTRUCTIONS:',
     `- Total combined length of all why[] entries MUST NOT exceed ${whyMaxChars} characters.`,
     '- The "why" array must contain one element per heading below, in the order listed.',
     '- Each element must start with its heading name followed by ": "',
-    '  (e.g., "Snapshot: The proposal defines three concrete deliverables...").',
+    '  (e.g., "Executive Summary: The proposal defines three concrete deliverables...").',
     '- Separate paragraphs within a single heading entry with \\n\\n.',
     `- Required headings (always include, in this order): ${requiredHeadings.join(', ')}.`,
-    optionalHeadings.length > 0
-      ? `- Conditional headings (relevant to this proposal — include after required ones): ${optionalHeadings.join(', ')}.`
-      : '- No conditional headings apply to this proposal.',
+    '- No extra why[] headings are required beyond the list above unless the proposal truly needs them.',
     '',
     'MISSING FIELD — QUALITY RULES:',
-    `- Maximum ${MISSING_MAX_ITEMS} items. Include ONLY items that materially change feasibility, cost, timeline, or risk.`,
+    `- Generate 6-10 items. Maximum ${MISSING_MAX_ITEMS} items. Include ONLY items that materially change feasibility, cost, timeline, or risk.`,
     '- Each item must be an actionable question AND include a "why it matters" clause after an em-dash (—).',
     '  Example: "What is the event schema and retention policy for the source data? — determines ingestion approach and governance risk."',
+    '- Questions must address scope clarity, risk allocation, ownership of responsibilities, pricing assumptions, and operational execution.',
     '- Order by criticality: contract/deal-blockers first, then technical unknowns, then operational gaps.',
-    '- Avoid generic questions. Reference the specific proposal context (systems, vendors, integrations named in fact_sheet).',
+    '- Avoid generic questions. Reference the specific proposal context (systems, vendors, integrations, service levels, governance steps, or counterparties named in fact_sheet).',
     '- missing[] should capture the most material unavailable facts. Do not duplicate open questions verbatim and do not include trivial admin asks.',
     '- Prioritise questions about scope boundary, acceptance criteria, data remediation, dependency ownership, change-order triggers, and critical technical assumptions over admin or process questions.',
     '- Paraphrase all items from fact_sheet.missing_info and fact_sheet.open_questions as actionable questions with why-matters clauses.',
+    '- If information appears to exist privately but cannot be shared, prefer placing it in redactions[] rather than restating it as missing[].',
     coverageCount < 3
-      ? '- Coverage is thin (multiple false source_coverage fields): missing[] MUST contain at least 6 decision-blocking items with em-dash why clauses.'
+      ? '- Coverage is thin (multiple false source_coverage fields): missing[] MUST still contain at least 6 decision-blocking items with em-dash why clauses.'
       : '',
+    '',
+    'REDACTIONS FIELD — QUALITY RULES:',
+    `- Maximum ${REDACTIONS_MAX_ITEMS} items.`,
+    '- redactions[] should list information that appears intentionally withheld, confidential, or unsafe to disclose publicly.',
+    '- Use abstract topic labels only, such as "internal pricing flexibility", "non-public approval path", or "confidential resource constraint".',
     '',
     'CALIBRATION RULES:',
     '- Treat confidence as confidence in the recommendation, NOT confidence in the prose quality.',
@@ -2984,7 +3354,7 @@ function buildEvalPromptFromFactSheet(params: {
     '- confidence_0_1: Your confidence in the assessment (0 = no basis, 1 = very confident).',
     '- why: Consultant memo narrative per heading (multi-paragraph prose). Total chars <= why_max_chars.',
     '- missing: Actionable questions with em-dash why-it-matters, ranked by criticality. Max missing_max_items items.',
-    '- redactions: Array of strings — topics that must remain confidential. Max redactions_max_items items.',
+    '- redactions: Array of strings — topics that must remain confidential or are intentionally withheld. Max redactions_max_items items.',
     '',
     'HARD GUARDRAILS — follow these without exception:',
     '- "high" fit_level is RARE. Only when scope, acceptance criteria, dependencies, and risk allocation are sufficiently bounded for a clean commitment.',

@@ -256,7 +256,7 @@ test('v2 retries once (tight mode) then falls back with truncated_output', async
     assert.equal(outcome.data.fit_level, 'medium', 'salvaged fallback should surface a coherent conditional fit level');
     assert.ok(outcome.data.confidence_0_1 > 0.2, 'salvaged fallback confidence must not stay at the incomplete 0.2 floor');
     assert.ok(
-      outcome.data.why.some((entry) => entry.includes('Paths to agreement') || entry.includes('Conditionally viable')),
+      outcome.data.why.some((entry) => entry.includes('Decision Assessment') || entry.includes('Recommended path:')),
       'salvaged fallback should return a substantive negotiator memo',
     );
     assert.ok(Array.isArray(outcome.data.missing) && outcome.data.missing.length >= 3,
@@ -972,14 +972,14 @@ test('consistency calibration: unresolved data cleanup, acceptance, and change-o
       'contradiction confidence cap must be recorded',
     );
     assert.equal(
-      outcome.data.why.some((entry) => entry.includes('Conditionally viable') || entry.includes('Decision readiness is conditional')),
+      outcome.data.why.some((entry) => entry.includes('Decision status: Proceed with conditions') || entry.includes('Decision status: Explore further')),
       true,
       'Decision language must be rewritten to a conditional posture',
     );
     assert.equal(
-      outcome.data.why.some((entry) => entry.includes('Conditions to proceed')),
+      outcome.data.why.some((entry) => entry.includes('Recommended path:')),
       true,
-      'Recommendations must front-load the conditions to proceed',
+      'Recommended Path must be populated for conditional cases',
     );
     assert.equal(
       outcome.data.missing.some((entry) => entry.includes('data cleanup') && entry.includes('who owns it')),
@@ -1080,19 +1080,19 @@ test('conditional viable calibration: workable structure with unresolved conditi
       'the same blocker sentence must not be repeated across sections',
     );
     assert.equal(
-      outcome.data.why.some((entry) => entry.includes('Areas of alignment include') || entry.includes('Alignment exists around')),
+      outcome.data.why.some((entry) => entry.includes('Key Strengths: Areas of alignment include') || entry.includes('Key Strengths: The current proposal already gives both sides usable structure')),
       true,
-      'Key Strengths should be reframed as bilateral alignment',
+      'Decision Assessment should retain bilateral alignment language inside Key Strengths',
     );
     assert.equal(
-      outcome.data.why.some((entry) => entry.includes('Paths to agreement')),
+      outcome.data.why.some((entry) => entry.includes('Potential Deal Structures:') || entry.includes('Option A —')),
       true,
-      'Recommendations should include a bridge-to-agreement path',
+      'Potential Deal Structures should include bridge-to-agreement options',
     );
     assert.equal(
-      outcome.data.why.some((entry) => entry.includes('Next negotiation agenda')),
+      outcome.data.why.some((entry) => entry.includes('Likely priorities:') && entry.includes('Possible concessions:')),
       true,
-      'Recommendations should include a next negotiation agenda',
+      'Negotiation Insights should include likely priorities and possible concessions',
     );
     assert.equal(
       outcome.data.why.some((entry) => entry.includes('What must be agreed now vs later')),
@@ -1173,7 +1173,7 @@ test('generalization: service outsourcing proposal with workable structure but o
 
     assert.equal(outcome.data.fit_level, 'medium', 'a workable non-software proposal should normalize to medium when the issue is boundedness, not viability');
     assert.equal(
-      outcome.data.why.some((entry) => entry.includes('Conditionally viable') || entry.includes('workable starting point')),
+      outcome.data.why.some((entry) => entry.includes('Decision status: Proceed with conditions') || entry.includes('fundamentally workable')),
       true,
       'the body should reflect a viable-but-conditional interpretation',
     );
@@ -1542,15 +1542,15 @@ test('presentation hygiene: key strengths becomes more substantive when multiple
     assert.equal(outcome.ok, true, 'Should succeed');
     if (!outcome.ok) return;
 
-    const strengthsEntry = outcome.data.why.find((entry) => entry.startsWith('Key Strengths:')) || '';
-    assert.equal(strengthsEntry.includes('Areas of alignment include'), true, 'Key Strengths should lead with concrete alignment points');
+    const assessmentEntry = outcome.data.why.find((entry) => entry.startsWith('Decision Assessment:')) || '';
+    assert.equal(assessmentEntry.includes('Key Strengths: Areas of alignment include'), true, 'Decision Assessment should lead with concrete alignment points inside Key Strengths');
     assert.equal(
-      strengthsEntry.includes('The current materials also provide') || strengthsEntry.includes('Those positives matter because'),
+      assessmentEntry.includes('The current materials also provide') || assessmentEntry.includes('Those positives matter because'),
       true,
       'Key Strengths should add a second concrete point when the fact sheet supports it',
     );
     assert.equal(
-      /clear and specific|well thought out|clear\./i.test(strengthsEntry),
+      /clear and specific|well thought out|clear\./i.test(assessmentEntry),
       false,
       'Key Strengths should not collapse into generic praise',
     );
@@ -1817,7 +1817,7 @@ test('style: report_style appears in Pass B prompt payload and _internal', async
   }
 });
 
-test('style: has_timeline=false → "Implementation Notes" not instructed; has_timeline=true → it is', async () => {
+test('style: legacy optional headings are not instructed even when timeline data exists', async () => {
   async function capturePassBPrompt(factSheetOverrides) {
     let passBPrompt = '';
     let callCount = 0;
@@ -1848,30 +1848,23 @@ test('style: has_timeline=false → "Implementation Notes" not instructed; has_t
     return passBPrompt;
   }
 
-  // has_timeline=false → Implementation Notes must NOT be instructed
-  const promptNoTimeline = await capturePassBPrompt({
-    source_coverage: { has_scope: true, has_timeline: false, has_kpis: true, has_constraints: true, has_risks: true },
-    vendor_preferences: [],
-  });
-  assert.equal(
-    promptNoTimeline.includes('Implementation Notes'),
-    false,
-    'Implementation Notes must not appear in Pass B prompt when has_timeline=false',
-  );
-
-  // has_timeline=true → Implementation Notes must be instructed
   const promptWithTimeline = await capturePassBPrompt({
     source_coverage: { has_scope: true, has_timeline: true, has_kpis: true, has_constraints: true, has_risks: true },
     vendor_preferences: [],
   });
   assert.equal(
     promptWithTimeline.includes('Implementation Notes'),
+    false,
+    'Implementation Notes must not appear in the revised mediation prompt',
+  );
+  assert.equal(
+    promptWithTimeline.includes('Potential Deal Structures'),
     true,
-    'Implementation Notes must appear in Pass B prompt when has_timeline=true',
+    'Potential Deal Structures must appear in the revised mediation prompt',
   );
 });
 
-test('style: vendor_preferences empty → "Vendor Fit Notes" absent; non-empty → present', async () => {
+test('style: legacy vendor-fit heading is absent while leverage headings remain', async () => {
   async function capturePassBPrompt(factSheetOverrides) {
     let passBPrompt = '';
     let callCount = 0;
@@ -1902,22 +1895,18 @@ test('style: vendor_preferences empty → "Vendor Fit Notes" absent; non-empty �
     return passBPrompt;
   }
 
-  // No vendor preferences → Vendor Fit Notes must NOT be instructed
-  const promptNoVendor = await capturePassBPrompt({ vendor_preferences: [] });
-  assert.equal(
-    promptNoVendor.includes('Vendor Fit Notes'),
-    false,
-    'Vendor Fit Notes must not appear when vendor_preferences is empty',
-  );
-
-  // Vendor preferences present → Vendor Fit Notes must be instructed
   const promptWithVendor = await capturePassBPrompt({
     vendor_preferences: ['Preferred: AWS', 'Excluded: on-premise only vendors'],
   });
   assert.equal(
     promptWithVendor.includes('Vendor Fit Notes'),
+    false,
+    'Vendor Fit Notes must not appear in the revised mediation prompt',
+  );
+  assert.equal(
+    promptWithVendor.includes('Leverage Signals'),
     true,
-    'Vendor Fit Notes must appear in Pass B prompt when vendor_preferences is non-empty',
+    'Leverage Signals must remain a required heading',
   );
 });
 
@@ -2013,7 +2002,8 @@ for (const fixture of goldenFixtures.cases) {
       if (Array.isArray(exp.mustContainHeadings)) {
         const headingAliases = {
           'Executive Summary': ['Executive Summary', 'Snapshot'],
-          'Risk Summary': ['Risk Summary', 'Key Risks'],
+          'Decision Assessment': ['Decision Assessment', 'Risk Summary', 'Key Risks'],
+          'Recommended Path': ['Recommended Path', 'Recommendations'],
         };
         for (const heading of exp.mustContainHeadings) {
           const acceptable = headingAliases[heading] || [heading];
@@ -2024,16 +2014,6 @@ for (const fixture of goldenFixtures.cases) {
         }
       }
 
-      // ── optional headings in Pass B prompt (conditional logic) ──────────
-      if (Array.isArray(exp.shouldIncludeOptionalHeadings)) {
-        for (const heading of exp.shouldIncludeOptionalHeadings) {
-          assert.equal(
-            passBPrompt.includes(heading),
-            true,
-            `[${fixture.name}] Pass B prompt must instruct optional heading '${heading}'`,
-          );
-        }
-      }
       if (Array.isArray(exp.shouldExcludeOptionalHeadings)) {
         for (const heading of exp.shouldExcludeOptionalHeadings) {
           assert.equal(
@@ -2407,11 +2387,11 @@ test('section-safe truncation drops lower-priority content without cutting locke
 
     const whyText = outcome.data.why.join('\n');
     const totalChars = outcome.data.why.reduce((sum, entry) => sum + entry.length + 1, 0);
-    assert.equal(totalChars <= 3000, true, 'why[] must still respect the max character budget');
+    assert.equal(totalChars <= 4200, true, 'why[] must still respect the max character budget');
     assert.equal(whyText.includes('…'), false, 'truncation must drop content instead of blind character slicing');
-    assert.equal(/Conditions to proc(?!eed)/i.test(whyText), false, 'Conditions to proceed prefix must not be cut mid-label');
-    assert.equal(/Paths to agre(?!ement)/i.test(whyText), false, 'Paths to agreement prefix must not be cut mid-label');
-    assert.equal(/Next negotiation agen(?!da)/i.test(whyText), false, 'Next negotiation agenda prefix must not be cut mid-label');
+    assert.equal(/Decision stat(?!us)/i.test(whyText), false, 'Decision status prefix must not be cut mid-label');
+    assert.equal(/Recommended pat(?!h)/i.test(whyText), false, 'Recommended path prefix must not be cut mid-label');
+    assert.equal(/Option [A-C]\s*[—-](?!\s)/i.test(whyText), false, 'Option labels must not be cut mid-label');
   } finally {
     cleanup();
   }
@@ -2490,34 +2470,29 @@ test('memo-prose: Pass B prompt contains bilateral negotiator guardrails instead
       'Pass B prompt must explicitly ban overstated severity language unless supported',
     );
 
-    // Assumptions / Dependencies mandatory element
     assert.ok(
-      passBPrompt.includes('Assumptions / Dependencies'),
-      'Pass B prompt must require an Assumptions / Dependencies paragraph',
+      passBPrompt.includes('Negotiation Insights'),
+      'Pass B prompt must require the Negotiation Insights section',
     );
-
-    // Paths to agreement mandatory element
     assert.ok(
-      passBPrompt.includes('Paths to agreement'),
-      'Pass B prompt must require a Paths to agreement paragraph with bilateral paths',
+      passBPrompt.includes('Leverage Signals'),
+      'Pass B prompt must require the Leverage Signals section',
     );
-
-    // Conditions to proceed mandatory element
     assert.ok(
-      passBPrompt.includes('Conditions to proceed'),
-      'Pass B prompt must require a Conditions to proceed paragraph',
+      passBPrompt.includes('Potential Deal Structures'),
+      'Pass B prompt must require the Potential Deal Structures section',
     );
-
-    // Next negotiation agenda
     assert.ok(
-      passBPrompt.includes('Next negotiation agenda'),
-      'Pass B prompt must require a Next negotiation agenda paragraph',
+      passBPrompt.includes('Decision status'),
+      'Pass B prompt must require an explicit Decision status paragraph',
     );
-
-    // Likely sticking points & bridges — with if/then language
     assert.ok(
-      passBPrompt.includes('Likely sticking points & bridges'),
-      "Pass B prompt must require a 'Likely sticking points & bridges' paragraph",
+      passBPrompt.includes('Likely priorities:'),
+      'Pass B prompt must require a Likely priorities paragraph',
+    );
+    assert.ok(
+      passBPrompt.includes('Possible concessions:'),
+      'Pass B prompt must require a Possible concessions paragraph',
     );
 
     // Explicit anti-coaching language
@@ -2673,8 +2648,8 @@ test('memo-prose: commercial posture included in Pass B prompt when vendor_prefe
     assert.ok(passBPrompt.length > 0, 'Pass B prompt must have been captured');
 
     assert.ok(
-      passBPrompt.includes('Commercial posture'),
-      'Pass B prompt must instruct "Commercial posture:" paragraph when fixed-price vendor preference is detected',
+      passBPrompt.includes('fixed-price signals detected'),
+      'Pass B prompt must add fixed-price-specific guidance when the fact sheet implies fixed-price posture',
     );
   } finally {
     delete globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__;
@@ -2738,7 +2713,7 @@ test('neutralizer: one-sided coaching language is rewritten into bilateral negot
     assert.equal(/\byour proposal\b/i.test(whyText), false, 'customer-facing why[] must not contain "your proposal"');
     assert.equal(/\bbefore sending\b/i.test(whyText), false, 'customer-facing why[] must not contain "before sending"');
     assert.equal(
-      whyTextLower.includes('the parties would need to') || whyTextLower.includes('the current proposal becomes easier for both sides'),
+      whyTextLower.includes('the parties') || whyTextLower.includes('the current proposal') || whyTextLower.includes('the proposing side'),
       true,
       'customer-facing why[] must be rewritten into bilateral neutral phrasing',
     );

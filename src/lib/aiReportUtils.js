@@ -10,6 +10,7 @@ export const RUN_AI_MEDIATION_LABEL = 'Run AI Mediation';
 export const RERUN_AI_MEDIATION_LABEL = 'Re-run AI Mediation';
 export const RUNNING_AI_MEDIATION_LABEL = 'Running AI Mediation...';
 export const OPEN_QUESTIONS_LABEL = 'Open Questions';
+export const MISSING_OR_REDACTED_INFO_LABEL = 'Missing or Redacted Information';
 
 const PLACEHOLDER_REVIEW_TITLES = new Set([
   'untitled',
@@ -23,6 +24,26 @@ export function getRunAiMediationLabel({ isPending = false, hasExisting = false 
     return RUNNING_AI_MEDIATION_LABEL;
   }
   return hasExisting ? RERUN_AI_MEDIATION_LABEL : RUN_AI_MEDIATION_LABEL;
+}
+
+export function getDecisionStatusInfo(report) {
+  const fit = String(report?.fit_level ?? '').trim().toLowerCase();
+  const confidence = Number(report?.confidence_0_1);
+  const missingCount = Array.isArray(report?.missing) ? report.missing.length : 0;
+
+  if (fit === 'high') {
+    return { label: 'Ready to finalize', tone: 'success' };
+  }
+  if (fit === 'low') {
+    return { label: 'Not viable', tone: 'danger' };
+  }
+  if (fit === 'medium') {
+    if (Number.isFinite(confidence) && confidence >= 0.62 && missingCount <= 4) {
+      return { label: 'Proceed with conditions', tone: 'warning' };
+    }
+    return { label: 'Explore further', tone: 'neutral' };
+  }
+  return { label: 'Explore further', tone: 'neutral' };
 }
 
 export function getMediationReviewTitle(...candidates) {
@@ -89,7 +110,8 @@ export function normalizeV2Heading(raw) {
 
   /** @type {[string[], string][]} — [aliases, canonical] */
   const HEADING_MAP = [
-    [['executive summary', 'summary', 'overview', 'intro', 'introduction'], 'Executive Summary'],
+    [['executive summary', 'summary', 'overview', 'intro', 'introduction', 'snapshot', 'decision snapshot'], 'Executive Summary'],
+    [['decision assessment', 'assessment'], 'Decision Assessment'],
     [
       ['decision snapshot', 'snapshot', 'situation', 'context', 'background'],
       'Decision Snapshot',
@@ -123,6 +145,9 @@ export function normalizeV2Heading(raw) {
       ],
       'Key Risks',
     ],
+    [['negotiation insights', 'negotiation insight'], 'Negotiation Insights'],
+    [['leverage signals', 'leverage', 'leverage signal'], 'Leverage Signals'],
+    [['potential deal structures', 'deal structures', 'deal structure'], 'Potential Deal Structures'],
     [
       ['decision readiness', 'readiness', 'readiness assessment', 'data completeness'],
       'Decision Readiness',
@@ -153,13 +178,15 @@ export function normalizeV2Heading(raw) {
     [
       [
         'redacted / missing info',
+        'missing or redacted information',
+        'missing or redacted info',
         'redacted',
         'missing info',
         'missing information',
         'suggested additions',
         'information gaps',
       ],
-      'Redacted / Missing Info',
+      'Missing or Redacted Information',
     ],
   ];
 
