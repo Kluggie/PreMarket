@@ -368,7 +368,7 @@ export const documentComparisonsClient = {
   async downloadPdf(id) {
     return downloadPdfFile(
       `/api/document-comparisons/${encodeId(id)}/download/pdf`,
-      'document-comparison-ai-report.pdf',
+      'document-comparison-ai-mediation-review.pdf',
     );
   },
 

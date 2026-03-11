@@ -1,6 +1,10 @@
 import { ApiError } from '../../../_lib/errors.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
-import { buildRecipientSafeEvaluationProjection } from '../../document-comparisons/_helpers.js';
+import {
+  buildMediationReviewTitle,
+  buildRecipientSafeEvaluationProjection,
+  MEDIATION_REVIEW_TITLE,
+} from '../../document-comparisons/_helpers.js';
 import {
   asText,
   getToken,
@@ -311,7 +315,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       reportSections.push({
         heading: 'Executive Summary',
         level: 1,
-        paragraphs: [asText(evaluationResult.summary) || 'No AI summary is available yet.'],
+        paragraphs: [asText(evaluationResult.summary) || 'No AI mediation summary is available yet.'],
       });
 
       legacySections.forEach((section: any, index: number) => {
@@ -332,18 +336,26 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       reportSections.push({
         heading: 'Executive Summary',
         level: 1,
-        paragraphs: ['No AI report content is available yet.'],
+        paragraphs: ['No AI mediation review content is available yet.'],
       });
     }
 
-    const title = asText(resolved.comparison?.title) || asText(resolved.proposal?.title) || 'Shared Report';
+    const title = buildMediationReviewTitle(
+      resolved.comparison?.title,
+      resolved.proposal?.title,
+      report.title,
+      evaluationResult.title,
+    );
     const comparisonId = asText(resolved.comparison?.id) || asText(resolved.proposal?.documentComparisonId) || 'shared-report';
-    const filename = `${slugify(title)}-ai-report.pdf`;
+    const filenameBase = slugify(title) || 'ai-mediation-review';
+    const filename =
+      filenameBase === 'ai-mediation-review'
+        ? 'ai-mediation-review.pdf'
+        : `${filenameBase}-ai-mediation-review.pdf`;
     const finalSections = isV2 ? deduplicateSections(reportSections) : reportSections;
     const pdfBuffer = await renderProfessionalPdfBuffer({
-      // Report type is the primary heading; comparison name is the secondary subtitle
-      title: 'AI Evaluation Report',
-      subtitle: title !== 'Shared Report' ? title : 'Shared Report',
+      title: MEDIATION_REVIEW_TITLE,
+      subtitle: title,
       comparisonId,
       footerNote: 'Shared report -- recipient-safe content only',
       decisionPanel,

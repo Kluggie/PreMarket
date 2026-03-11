@@ -574,7 +574,7 @@ const MISSING_RULES: MissingRule[] = [
     priority: 110,
     severity: 'severe',
     patterns: ['scope', 'deliverable', 'deliverables', 'mvp', 'requirements', 'use case', 'workflow', 'out of scope'],
-    label: 'core scope is not bounded tightly enough',
+    label: 'the initial scope still needs a tighter commitment boundary',
     question: 'What is included in the MVP scope, and what is explicitly out of scope?',
     why: 'scope boundaries determine pricing, delivery sequencing, and change exposure',
     condition: 'define the MVP boundary and explicit exclusions',
@@ -1584,12 +1584,75 @@ function sanitizeMissingEntry(value: string) {
   return `${nextQuestion} — ${nextWhy}.`;
 }
 
+function keywordOverlapRatio(left: string, right: string) {
+  const stopwords = new Set([
+    'what',
+    'which',
+    'who',
+    'where',
+    'when',
+    'why',
+    'how',
+    'the',
+    'and',
+    'for',
+    'with',
+    'that',
+    'this',
+    'from',
+    'into',
+    'than',
+    'then',
+    'will',
+    'would',
+    'should',
+    'must',
+  ]);
+  const tokenize = (value: string) =>
+    new Set(
+      normalizeKeywordText(value)
+        .split(' ')
+        .filter((token) => token.length >= 4 && !stopwords.has(token)),
+    );
+
+  const leftTokens = tokenize(left);
+  const rightTokens = tokenize(right);
+  if (leftTokens.size === 0 || rightTokens.size === 0) {
+    return 0;
+  }
+
+  let shared = 0;
+  leftTokens.forEach((token) => {
+    if (rightTokens.has(token)) {
+      shared += 1;
+    }
+  });
+
+  return shared / Math.min(leftTokens.size, rightTokens.size);
+}
+
 function missingEntriesOverlap(left: string, right: string) {
   const leftParts = splitMissingEntry(left);
   const rightParts = splitMissingEntry(right);
-  return (
+  const questionOverlap =
     paragraphsAreNearDuplicates(leftParts.question, rightParts.question)
-    || (leftParts.why && rightParts.why && paragraphsAreNearDuplicates(leftParts.why, rightParts.why))
+    || keywordOverlapRatio(leftParts.question, rightParts.question) >= 0.8;
+  const whyOverlap =
+    Boolean(leftParts.why && rightParts.why)
+    && (
+      paragraphsAreNearDuplicates(leftParts.why, rightParts.why)
+      || keywordOverlapRatio(leftParts.why, rightParts.why) >= 0.72
+    );
+  const subjectOverlap =
+    keywordOverlapRatio(extractMissingSubject(left), extractMissingSubject(right)) >= 0.8;
+  return (
+    questionOverlap
+    || whyOverlap
+    || (
+      subjectOverlap
+      && Boolean(leftParts.why && rightParts.why)
+      && keywordOverlapRatio(leftParts.why, rightParts.why) >= 0.55
+    )
   );
 }
 

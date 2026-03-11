@@ -1,7 +1,7 @@
 /**
  * Unit tests for src/lib/aiReportUtils.js
  *
- * Tests the pure helper functions that drive the AI Report V2 display.
+ * Tests the pure helper functions that drive the AI mediation review display.
  * No DOM or React needed — plain node:test.
  *
  * Run with:
@@ -12,10 +12,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   hasV2Report,
+  getMediationReviewTitle,
+  getRunAiMediationLabel,
   parseV2WhyEntry,
   filterLegacySectionsForDisplay,
   getConfidencePercent,
+  MEDIATION_REVIEW_LABEL,
 } from '../../src/lib/aiReportUtils.js';
+import {
+  buildMediationReviewSections,
+  buildMediationReviewTitle,
+  MEDIATION_REVIEW_TITLE,
+} from '../../server/routes/document-comparisons/_helpers.ts';
 
 // ─── hasV2Report ─────────────────────────────────────────────────────────────
 
@@ -76,6 +84,42 @@ test('parseV2WhyEntry: handles Recommendations with long body', () => {
   const result = parseV2WhyEntry(`Recommendations: ${body}`);
   assert.equal(result.heading, 'Recommendations');
   assert.equal(result.body, body);
+});
+
+test('mediation review copy helpers: expose mediation-oriented labels', () => {
+  assert.equal(MEDIATION_REVIEW_LABEL, 'AI Mediation Review');
+  assert.equal(getRunAiMediationLabel(), 'Run AI Mediation');
+  assert.equal(getRunAiMediationLabel({ hasExisting: true }), 'Re-run AI Mediation');
+  assert.equal(getRunAiMediationLabel({ isPending: true }), 'Running AI Mediation...');
+});
+
+test('mediation review title helpers: avoid Untitled-style placeholders', () => {
+  assert.equal(getMediationReviewTitle('', 'Untitled', 'Northwind Services Renewal'), 'Northwind Services Renewal');
+  assert.equal(getMediationReviewTitle('', 'Shared Report'), 'AI Mediation Review');
+  assert.equal(buildMediationReviewTitle('', 'Untitled proposal', 'Northwind Services Renewal'), 'Northwind Services Renewal');
+  assert.equal(buildMediationReviewTitle('', 'Shared Report'), MEDIATION_REVIEW_TITLE);
+});
+
+test('mediation review section helper: omits empty redactions headings while preserving why and missing', () => {
+  assert.deepEqual(
+    buildMediationReviewSections({
+      why: ['Executive Summary: Alignment exists around the phased rollout.'],
+      missing: ['What acceptance criteria define completion?'],
+      redactions: [],
+    }),
+    [
+      {
+        key: 'why',
+        heading: 'Why',
+        bullets: ['Executive Summary: Alignment exists around the phased rollout.'],
+      },
+      {
+        key: 'missing',
+        heading: 'Missing',
+        bullets: ['What acceptance criteria define completion?'],
+      },
+    ],
+  );
 });
 
 // ─── filterLegacySectionsForDisplay ──────────────────────────────────────────

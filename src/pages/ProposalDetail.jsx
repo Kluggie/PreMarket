@@ -23,6 +23,11 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ComparisonAiReportTab } from '@/components/document-comparison/ComparisonDetailTabs';
+import {
+  getRunAiMediationLabel,
+  MEDIATION_REVIEW_LABEL,
+  OPEN_QUESTIONS_LABEL,
+} from '@/lib/aiReportUtils';
 
 const CONFIDENTIAL_LABEL = 'Confidential Information';
 const SHARED_LABEL = 'Shared Information';
@@ -274,7 +279,7 @@ export default function ProposalDetail() {
     mutationFn: () => {
       // When a document comparison is linked, run evaluation via the comparison
       // pipeline (vertex-evaluation-v2 full path).  This stores publicReport in
-      // the exact same format that SharedReport reads — ensuring the AI report
+      // the exact same format that SharedReport reads — ensuring the mediation review
       // renders identically for proposer and recipient.
       if (proposal?.document_comparison_id) {
         return documentComparisonsClient.evaluate(proposal.document_comparison_id, {});
@@ -285,10 +290,10 @@ export default function ProposalDetail() {
       queryClient.invalidateQueries(['proposal-detail', proposalId]);
       queryClient.invalidateQueries(['proposal-linked-comparison', proposal?.document_comparison_id || 'none']);
       queryClient.invalidateQueries(['proposals']);
-      toast.success('Evaluation completed');
+      toast.success('AI mediation review ready');
     },
     onError: (error) => {
-      toast.error(error?.message || 'Evaluation failed');
+      toast.error(error?.message || 'AI mediation could not be completed');
     },
   });
 
@@ -338,7 +343,7 @@ export default function ProposalDetail() {
   const downloadAiReportMutation = useMutation({
     mutationFn: async () => {
       if (!proposal?.document_comparison_id) {
-        const notConfigured = new Error('AI report PDF renderer is not configured');
+        const notConfigured = new Error('AI mediation review PDF is not configured');
         notConfigured.code = 'not_configured';
         notConfigured.status = 501;
         throw notConfigured;
@@ -346,10 +351,10 @@ export default function ProposalDetail() {
       return documentComparisonsClient.downloadPdf(proposal.document_comparison_id);
     },
     onSuccess: () => {
-      toast.success('AI report PDF download started');
+      toast.success('AI mediation review PDF download started');
     },
     onError: (error) => {
-      toast.error(error?.message || 'AI report PDF renderer is not configured');
+      toast.error(error?.message || 'AI mediation review PDF is not configured');
     },
   });
 
@@ -438,7 +443,7 @@ export default function ProposalDetail() {
                 <>
                   <div className="h-px bg-slate-200" />
                   <div className="space-y-3 text-sm">
-                    <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">AI Report</p>
+                    <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">{MEDIATION_REVIEW_LABEL}</p>
                     <div className="flex items-center justify-between">
                       <span className="text-slate-500 font-medium">Recommendation</span>
                       <Badge className="capitalize bg-slate-100 text-slate-700 border-slate-200">
@@ -451,7 +456,7 @@ export default function ProposalDetail() {
                     </div>
                     {suggestedAdditionsCount > 0 && (
                       <div className="flex items-center justify-between">
-                        <span className="text-slate-500 font-medium">Suggested Additions</span>
+                        <span className="text-slate-500 font-medium">{OPEN_QUESTIONS_LABEL}</span>
                         <Badge className="bg-amber-100 text-amber-700 border-amber-200">
                           {suggestedAdditionsCount} item{suggestedAdditionsCount !== 1 ? 's' : ''}
                         </Badge>
@@ -510,7 +515,7 @@ export default function ProposalDetail() {
               </Button>
               <Button variant="outline" onClick={() => downloadAiReportMutation.mutate()} disabled={downloadAiReportMutation.isPending}>
                 <Download className="w-4 h-4 mr-2" />
-                Download AI Report PDF
+                Download AI Mediation Review PDF
               </Button>
             </div>
 
@@ -518,7 +523,7 @@ export default function ProposalDetail() {
               <TabsList className="bg-white border border-slate-200 p-1">
                 <TabsTrigger value="report" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
                   <BarChart3 className="w-4 h-4 mr-2" />
-                  AI Report
+                  {MEDIATION_REVIEW_LABEL}
                   {evaluations.length > 0 && <Badge className="ml-2 bg-green-100 text-green-700 text-xs">Complete</Badge>}
                 </TabsTrigger>
                 <TabsTrigger value="proposal" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
@@ -566,7 +571,7 @@ export default function ProposalDetail() {
                   );
                 })()}
 
-                {/* Shared AI report — same ComparisonAiReportTab used by recipient Step 0 and Step 3.
+                {/* Shared AI mediation review — same ComparisonAiReportTab used by recipient Step 0 and Step 3.
                    Only the data changes; the layout is structurally identical across all roles.
                    latestReportData = comparison.public_report (primary) so proposer reads the
                    same stored object that SharedReport reads via buildLatestReport(). */}
@@ -581,7 +586,7 @@ export default function ProposalDetail() {
                   evaluationFailureBannerMessage=""
                   hasReport={Boolean(comparisonPublicReport) || evaluations.length > 0}
                   hasEvaluations={evaluations.length > 0}
-                  noReportMessage="Run evaluation to generate the AI report."
+                  noReportMessage="Run AI Mediation to generate the mediation review."
                   runDetailsHref={
                     proposal.document_comparison_id
                       ? createPageUrl(`DocumentComparisonRunDetails?id=${encodeURIComponent(proposal.document_comparison_id)}`)
@@ -597,7 +602,7 @@ export default function ProposalDetail() {
                     id: `eval-${ev.id || i}`,
                     kind: 'sparkles',
                     tone: 'success',
-                    title: i === 0 ? 'Latest Evaluation' : `Evaluation ${evaluations.length - i}`,
+                    title: i === 0 ? 'Latest Mediation Review' : `Mediation Review ${evaluations.length - i}`,
                     timestamp: formatDateTime(ev.created_date || ''),
                   }))}
                 />
@@ -607,7 +612,10 @@ export default function ProposalDetail() {
                 <div className="flex flex-wrap gap-3 pt-2">
                   <Button onClick={() => runEvaluationMutation.mutate()} disabled={runEvaluationMutation.isPending}>
                     <Sparkles className="w-4 h-4 mr-2" />
-                    {runEvaluationMutation.isPending ? 'Running Evaluation...' : evaluations.length > 0 ? 'Re-run Evaluation' : 'Run Evaluation'}
+                    {getRunAiMediationLabel({
+                      isPending: runEvaluationMutation.isPending,
+                      hasExisting: evaluations.length > 0,
+                    })}
                   </Button>
                   {proposal.document_comparison_id && (
                     <Button
@@ -628,14 +636,14 @@ export default function ProposalDetail() {
                     variant="outline"
                     onClick={() => {
                       if (!latestResult || Object.keys(latestResult).length === 0) {
-                        toast.error('No AI report payload to download yet');
+                        toast.error('No AI mediation review payload is available to download yet');
                         return;
                       }
-                      triggerJsonDownload('proposal-ai-report.json', latestResult);
+                      triggerJsonDownload('proposal-ai-mediation-review.json', latestResult);
                     }}
                   >
                     <Download className="w-4 h-4 mr-2" />
-                    Download AI Report JSON
+                    Download AI Mediation Review JSON
                   </Button>
                 </div>
               </TabsContent>

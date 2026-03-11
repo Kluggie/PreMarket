@@ -29,6 +29,10 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Progress } from '@/components/ui/progress';
 import { toast } from 'sonner';
 import {
+  MEDIATION_REVIEW_LABEL,
+  RUN_AI_MEDIATION_LABEL,
+} from '@/lib/aiReportUtils';
+import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
@@ -343,12 +347,12 @@ function toFriendlySaveError(error) {
 function toFriendlyEvaluateError(error) {
   const code = asText(error?.code).toLowerCase();
   if (code === 'reevaluation_not_allowed') {
-    return 'This link does not allow evaluation.';
+    return 'This link does not allow AI mediation.';
   }
   if (code === 'not_configured') {
-    return 'Evaluation is not configured in this environment yet.';
+    return 'AI mediation is not configured in this environment yet.';
   }
-  return error?.message || 'Unable to run evaluation.';
+  return error?.message || 'Unable to run AI mediation.';
 }
 
 function toFriendlySendBackError(error) {
@@ -965,7 +969,7 @@ export default function SharedReport() {
     onSuccess: async (result) => {
       setLatestEvaluatedReport(result?.evaluation?.public_report || null);
       setStep(3);
-      toast.success('Evaluation complete');
+      toast.success('AI mediation review ready');
       await workspaceQuery.refetch();
     },
     onError: (error) => {
@@ -1037,14 +1041,14 @@ export default function SharedReport() {
   const downloadSharedAiReportPdfMutation = useMutation({
     mutationFn: () => sharedReportsClient.downloadRecipientAiReportPdf(token),
     onSuccess: () => {
-      toast.success('AI report PDF download started');
+      toast.success('AI mediation review PDF download started');
     },
     onError: (error) => {
       if (error?.code === 'not_configured' || Number(error?.status || 0) === 501) {
-        toast.error('AI report PDF is not configured in this environment yet.');
+        toast.error('AI mediation review PDF is not configured in this environment yet.');
         return;
       }
-      toast.error(error?.message || 'Unable to download AI report PDF');
+      toast.error(error?.message || 'Unable to download AI mediation review PDF');
     },
   });
 
@@ -1189,7 +1193,7 @@ export default function SharedReport() {
 
   const runEvaluationFromStep2 = async () => {
     if (requiresRecipientVerification) {
-      toast.error('Verify access before running evaluation.');
+      toast.error('Verify access before running AI mediation.');
       setStep(0);
       return;
     }
@@ -1490,7 +1494,7 @@ export default function SharedReport() {
       latestEvaluation?.error_message ||
         latestEvaluation?.result_json?.error?.message ||
         latestEvaluation?.result?.error?.message,
-    ) || 'Evaluation failed. Please retry.';
+    ) || 'AI mediation could not be completed. Please retry.';
   const baseTimelineItems = [
     {
       id: 'created',
@@ -1522,12 +1526,12 @@ export default function SharedReport() {
                   ? 'warning'
                   : 'success',
             title: step3IsEvaluationFailed
-              ? 'Evaluation Failed'
+              ? 'AI Mediation Failed'
               : step3IsEvaluationRunning
-                ? 'Evaluation Running'
+                ? 'AI Mediation Running'
                 : step3IsEvaluationNotConfigured
-                  ? 'AI Not Configured'
-                  : 'Evaluation Complete',
+                  ? 'AI Mediation Unavailable'
+                  : 'AI Mediation Ready',
             timestamp: formatDateTime(latestEvaluation?.created_at || latestEvaluation?.updated_at),
           },
         ]
@@ -1943,7 +1947,7 @@ export default function SharedReport() {
                 disabled={downloadSharedAiReportPdfMutation.isPending}
               >
                 {downloadSharedAiReportPdfMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-                Download AI Report PDF
+                Download AI Mediation Review PDF
               </Button>
             </div>
 
@@ -1964,7 +1968,7 @@ export default function SharedReport() {
                 evaluationFailureBannerMessage: '',
                 hasReport: hasStep0Report,
                 hasEvaluations: false,
-                noReportMessage: 'No baseline AI report is available yet for this proposal.',
+                noReportMessage: 'No baseline AI mediation review is available yet for this proposal.',
                 report: baselineReport,
                 recommendation: step0Recommendation,
                 timelineItems: baseTimelineItems,
@@ -2047,7 +2051,7 @@ export default function SharedReport() {
               onSaveDraft={() => saveDraftMutation.mutate({ stepToSave: 2 })}
               onBack={() => setStep(1)}
               onContinue={runEvaluationFromStep2}
-              continueLabel="Run Evaluation"
+              continueLabel={RUN_AI_MEDIATION_LABEL}
               continueDisabled={evaluateMutation.isPending || !canReevaluate || requiresRecipientVerification}
               coachPanel={coachPanelNode}
             />
@@ -2059,8 +2063,8 @@ export default function SharedReport() {
             ════════════════════════════════════════════════════════════ */}
         {step === 3 ? (
           <ComparisonEvaluationStep
-            stepTitle="Step 3: Evaluation"
-            stepDescription="Run and review the latest recipient-side evaluation."
+            stepTitle={`Step 3: ${MEDIATION_REVIEW_LABEL}`}
+            stepDescription="Run and review the latest recipient-side AI mediation review."
             actionSlot={
               <>
                 <Button
@@ -2105,7 +2109,7 @@ export default function SharedReport() {
               evaluationFailureBannerMessage: step3EvaluationFailureMessage,
               hasReport: hasStep3Report,
               hasEvaluations: Boolean(latestEvaluation),
-              noReportMessage: 'No recipient evaluation is available yet. Run evaluation to generate one.',
+              noReportMessage: 'No recipient mediation review is available yet. Run AI Mediation to generate one.',
               report: updatedRecipientReport,
               recommendation: step3Recommendation,
               timelineItems: step3TimelineItems,
@@ -2129,4 +2133,3 @@ export default function SharedReport() {
     </div>
   );
 }
-

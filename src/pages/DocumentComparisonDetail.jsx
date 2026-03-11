@@ -74,7 +74,7 @@ function extractEvaluationFailureDetails(rawError) {
   const failureStage = asLower(
     rawError.failure_stage || details.failure_stage || rawError.stage || details.stage,
   );
-  const message = asText(rawError.message) || 'Evaluation failed';
+  const message = asText(rawError.message) || 'AI mediation failed';
   const requestId = asText(
     rawError.requestId ||
       rawError.request_id ||
@@ -195,12 +195,12 @@ function toFailureBannerMessage(failure) {
     return 'Vertex returned a generic report. Please retry with richer shared content.';
   }
   if (code === 'db_write_failed') {
-    return 'Evaluation could not be saved. Please retry.';
+    return 'AI mediation could not be saved. Please retry.';
   }
   if (code === 'not_configured') {
     return 'Vertex AI integration is not configured.';
   }
-  return 'Evaluation failed. Please retry from the editor.';
+  return 'AI mediation could not be completed. Please retry from the editor.';
 }
 
 function getEvaluationRowMeta(evaluation) {
@@ -214,7 +214,7 @@ function getEvaluationRowMeta(evaluation) {
       badgeClassName: 'bg-amber-100 text-amber-800',
       rowClassName: 'rounded-xl border border-amber-200 bg-amber-50 p-3',
       scoreLabel: '—',
-      timelineTitle: 'AI Not Configured',
+      timelineTitle: 'AI Mediation Unavailable',
     };
   }
 
@@ -224,7 +224,7 @@ function getEvaluationRowMeta(evaluation) {
       badgeClassName: 'bg-red-100 text-red-700',
       rowClassName: 'rounded-xl border border-red-200 bg-red-50 p-3',
       scoreLabel: '—',
-      timelineTitle: 'Evaluation Failed',
+      timelineTitle: 'AI Mediation Failed',
     };
   }
 
@@ -234,7 +234,7 @@ function getEvaluationRowMeta(evaluation) {
       badgeClassName: 'bg-blue-100 text-blue-700',
       rowClassName: 'rounded-xl border border-blue-200 bg-blue-50 p-3',
       scoreLabel: '—',
-      timelineTitle: 'Evaluation Running',
+      timelineTitle: 'AI Mediation Running',
     };
   }
 
@@ -245,7 +245,7 @@ function getEvaluationRowMeta(evaluation) {
       badgeClassName: 'bg-green-100 text-green-700',
       rowClassName: 'rounded-xl border border-green-200 bg-green-50 p-3',
       scoreLabel: Number.isFinite(numericScore) ? `${Math.max(0, Math.round(numericScore))}% confidence` : '—',
-      timelineTitle: 'Evaluation Complete',
+      timelineTitle: 'AI Mediation Ready',
     };
   }
 
@@ -254,7 +254,7 @@ function getEvaluationRowMeta(evaluation) {
     badgeClassName: 'bg-slate-100 text-slate-700',
     rowClassName: 'rounded-xl border border-slate-200 bg-slate-50 p-3',
     scoreLabel: '—',
-    timelineTitle: 'Evaluation Update',
+    timelineTitle: 'AI Mediation Update',
   };
 }
 
@@ -486,7 +486,7 @@ export default function DocumentComparisonDetail() {
     ? `${toFailureBannerMessage(latestFailureDetails)}${
         latestFailureDetails.requestId ? ` (requestId: ${latestFailureDetails.requestId})` : ''
       }`
-    : `Evaluation failed. ${evaluationFailureMessage || 'Please retry from the editor.'}`;
+    : `AI mediation could not be completed. ${evaluationFailureMessage || 'Please retry from the editor.'}`;
   const hasReportData = hasObjectContent(report);
   const isEvaluationSucceeded =
     !isEvaluationRunning &&
@@ -553,14 +553,14 @@ export default function DocumentComparisonDetail() {
   const downloadAiReportMutation = useMutation({
     mutationFn: () => documentComparisonsClient.downloadPdf(comparisonId),
     onSuccess: () => {
-      toast.success('AI report PDF download started');
+      toast.success('AI mediation review PDF download started');
     },
     onError: (error) => {
       if (error?.code === 'not_configured' || Number(error?.status || 0) === 501) {
-        toast.error('AI report PDF is not configured in this environment yet.');
+        toast.error('AI mediation review PDF is not configured in this environment yet.');
         return;
       }
-      toast.error(error?.message || 'AI report PDF download unavailable');
+      toast.error(error?.message || 'AI mediation review PDF download unavailable');
     },
   });
 
@@ -812,7 +812,7 @@ export default function DocumentComparisonDetail() {
               disabled={downloadAiReportMutation.isPending}
             >
               <Download className="w-4 h-4 mr-2" />
-              AI report
+              Download AI Mediation Review PDF
             </Button>
             <Button onClick={() => setIsShareDialogOpen(true)} disabled={!proposal?.id}>
               <Send className="w-4 h-4 mr-2" />
@@ -860,7 +860,7 @@ export default function DocumentComparisonDetail() {
               evaluationFailureBannerMessage,
               hasReport,
               hasEvaluations: evaluationHistory.length > 0,
-              noReportMessage: 'No evaluation yet. Go to the editor and use Run Evaluation to generate it.',
+              noReportMessage: 'No mediation review yet. Go to the editor and use Run AI Mediation to generate it.',
               runDetailsHref: createPageUrl(`DocumentComparisonRunDetails?id=${encodeURIComponent(comparisonId)}`),
               report,
               recommendation,

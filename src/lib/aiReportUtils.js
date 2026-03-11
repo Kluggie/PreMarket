@@ -1,9 +1,39 @@
 /**
- * Pure utility functions for AI Report V2 display.
+ * Pure utility functions for AI mediation review display.
  *
  * These are intentionally dependency-free so they can be unit-tested
  * with node:test without needing a DOM or React.
  */
+
+export const MEDIATION_REVIEW_LABEL = 'AI Mediation Review';
+export const RUN_AI_MEDIATION_LABEL = 'Run AI Mediation';
+export const RERUN_AI_MEDIATION_LABEL = 'Re-run AI Mediation';
+export const RUNNING_AI_MEDIATION_LABEL = 'Running AI Mediation...';
+export const OPEN_QUESTIONS_LABEL = 'Open Questions';
+
+const PLACEHOLDER_REVIEW_TITLES = new Set([
+  'untitled',
+  'untitled comparison',
+  'untitled proposal',
+  'shared report',
+]);
+
+export function getRunAiMediationLabel({ isPending = false, hasExisting = false } = {}) {
+  if (isPending) {
+    return RUNNING_AI_MEDIATION_LABEL;
+  }
+  return hasExisting ? RERUN_AI_MEDIATION_LABEL : RUN_AI_MEDIATION_LABEL;
+}
+
+export function getMediationReviewTitle(...candidates) {
+  for (const candidate of candidates) {
+    const text = String(candidate ?? '').trim();
+    if (!text) continue;
+    if (PLACEHOLDER_REVIEW_TITLES.has(text.toLowerCase())) continue;
+    return text;
+  }
+  return MEDIATION_REVIEW_LABEL;
+}
 
 /**
  * Returns true if the report object contains V2-format data
@@ -43,7 +73,7 @@ export function parseV2WhyEntry(text) {
 /**
  * Canonical heading display names for V2 report sections.
  * Maps AI-generated heading variants to the single authoritative label
- * shown in every AI report view (proposer, recipient, PDF, shared link).
+ * shown in every AI mediation review view (proposer, recipient, PDF, shared link).
  *
  * Rules:
  *  - Match is case-insensitive and trims surrounding whitespace.

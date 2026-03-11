@@ -12,6 +12,7 @@ import {
 } from '../../../_lib/vertex-evaluation.js';
 import { evaluateWithVertexV2 } from '../../../_lib/vertex-evaluation-v2.js';
 import { selectRelevantDocuments } from '../../../_lib/user-documents-context.js';
+import { buildMediationReviewSections } from '../../document-comparisons/_helpers.js';
 
 function getProposalId(req: any, proposalIdParam?: string) {
   if (proposalIdParam && proposalIdParam.trim().length > 0) {
@@ -254,7 +255,7 @@ function convertV2ResponseToEvaluation(v2Result: any): Record<string, unknown> {
     score: Math.round(normalizedConfidence * 100),
     confidence: normalizedConfidence,
     recommendation,
-    summary: why[0] || 'Evaluation complete',
+    summary: why[0] || 'AI mediation review complete',
     report: {
       fit_level: fitLevel === 'high' || fitLevel === 'medium' || fitLevel === 'low' ? fitLevel : 'unknown',
       confidence_0_1: normalizedConfidence,
@@ -266,13 +267,9 @@ function convertV2ResponseToEvaluation(v2Result: any): Record<string, unknown> {
         fit_level: fitLevel === 'high' || fitLevel === 'medium' || fitLevel === 'low' ? fitLevel : 'unknown',
         top_fit_reasons: why.map((text: string) => ({ text })),
         top_blockers: missing.map((text: string) => ({ text })),
-        next_actions: missing.length > 0 ? ['Resolve missing items and re-run evaluation.'] : [],
+        next_actions: missing.length > 0 ? ['Resolve the open questions and re-run AI mediation.'] : [],
       },
-      sections: [
-        { key: 'why', heading: 'Why', bullets: why },
-        { key: 'missing', heading: 'Missing', bullets: missing },
-        { key: 'redactions', heading: 'Redactions', bullets: redactions },
-      ],
+      sections: buildMediationReviewSections({ why, missing, redactions }),
       recommendation,
     },
     evaluation_provider: 'vertex',
@@ -328,27 +325,27 @@ function toV2ApiError(error: any) {
 function toFailedResult(error: any) {
   const statusCode = Number(error?.statusCode || error?.status || 500);
   const code = asText(error?.code) || 'evaluation_failed';
-  const message = asText(error?.message) || 'Evaluation failed';
+  const message = asText(error?.message) || 'AI mediation failed';
   const parseErrorKind = asText(error?.extra?.parseErrorKind || error?.extra?.reasonCode) || null;
   const parseErrorMessage = error?.extra?.parseErrorMessage ? JSON.parse(String(error.extra.parseErrorMessage)) : null;
   const attemptHistory = Array.isArray(error?.extra?.attempt_history) ? error.extra.attempt_history : null;
   const attemptCount = Array.isArray(attemptHistory) ? attemptHistory.length : 0;
   
   // Build user-friendly error message
-  let userMessage = 'Evaluation failed. Please try again.';
+  let userMessage = 'AI mediation could not be completed. Please try again.';
   let details_safe = parseErrorKind ? `${parseErrorKind}: ` : '';
   
   if (parseErrorKind === 'truncated_output') {
-    userMessage = 'AI response was cut off due to size limits. Please retry the evaluation.';
+    userMessage = 'AI response was cut off due to size limits. Please retry AI mediation.';
     details_safe += 'The model output was truncated and incomplete.';
   } else if (parseErrorKind === 'empty_output') {
-    userMessage = 'AI returned no content. Please retry the evaluation.';
+    userMessage = 'AI returned no content. Please retry AI mediation.';
     details_safe += 'The model generated no output.';
   } else if (parseErrorKind === 'json_parse_error') {
-    userMessage = 'AI output was not valid JSON. Please retry the evaluation.';
+    userMessage = 'AI output was not valid JSON. Please retry AI mediation.';
     details_safe += 'The response could not be parsed as JSON.';
   } else if (parseErrorKind === 'schema_validation_error') {
-    userMessage = 'AI response was incomplete (missing sections). Please retry the evaluation.';
+    userMessage = 'AI response was incomplete (missing sections). Please retry AI mediation.';
     details_safe += 'The response was missing required schema fields.';
   } else if (parseErrorKind === 'confidential_leak_detected') {
     userMessage = 'A confidentiality check failed. Please review your input and retry.';
@@ -387,7 +384,7 @@ async function persistFailedEvaluation(params: {
     source: params.source,
     status: 'failed',
     score: null,
-    summary: asText(params.error?.message) || 'Evaluation failed',
+    summary: asText(params.error?.message) || 'AI mediation failed',
     result: toFailedResult(params.error),
     createdAt: now,
     updatedAt: now,
@@ -678,16 +675,16 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         eventType: 'evaluation_update',
         emailCategory: 'evaluation_complete',
         dedupeKey: `evaluation_update:${proposal.id}:${saved.id}`,
-        title: 'Evaluation complete',
-        message: `Evaluation finished for "${proposal.title || 'your proposal'}".`,
+        title: 'AI mediation review ready',
+        message: `An AI mediation review is ready for "${proposal.title || 'your proposal'}".`,
         actionUrl: `/ProposalDetail?id=${encodeURIComponent(proposal.id)}`,
-        emailSubject: 'Proposal evaluation complete',
+        emailSubject: 'AI mediation review ready',
         emailText: [
-          `Your proposal "${proposal.title || 'Untitled Proposal'}" has a new evaluation.`,
+          `Your proposal "${proposal.title || 'Untitled Proposal'}" has a new AI mediation review.`,
           '',
           `Score: ${saved.score ?? 'N/A'}`,
           '',
-          'Sign in to PreMarket to review the full report.',
+          'Sign in to PreMarket to review the full mediation review.',
         ].join('\n'),
       });
     } catch {

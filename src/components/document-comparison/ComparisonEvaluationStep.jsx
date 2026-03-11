@@ -32,8 +32,8 @@ import { ComparisonDetailTabs } from '@/components/document-comparison/Compariso
  *   backLabel           string       – default "Back to Editor"
  */
 export default function ComparisonEvaluationStep({
-  stepTitle = 'Step 3: Evaluation',
-  stepDescription = 'Run and review the latest evaluation.',
+  stepTitle = 'Step 3: AI Mediation Review',
+  stepDescription = 'Run and review the latest AI mediation review.',
   actionSlot,
   activeTab,
   onTabChange,
@@ -62,7 +62,7 @@ export default function ComparisonEvaluationStep({
         )}
       </Card>
 
-      {/* ── AI report + proposal detail tabs ─────────────────── */}
+      {/* ── AI mediation review + proposal detail tabs ───────── */}
       <ComparisonDetailTabs
         activeTab={activeTab}
         onTabChange={onTabChange}

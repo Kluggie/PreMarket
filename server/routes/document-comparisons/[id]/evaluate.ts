@@ -22,7 +22,11 @@ import {
   sanitizeEditorHtml,
   sanitizeEditorText,
 } from '../../../_lib/document-editor-sanitization.js';
-import { ensureComparisonFound, mapComparisonRow } from '../_helpers.js';
+import {
+  buildMediationReviewSections,
+  ensureComparisonFound,
+  mapComparisonRow,
+} from '../_helpers.js';
 import { assertDocumentComparisonWithinLimits } from '../_limits.js';
 
 const CONFIDENTIAL_LABEL = 'Confidential Information';
@@ -797,13 +801,9 @@ function convertV2ResponseToEvaluation(v2Result: any): Record<string, unknown> {
       fit_level: fitLevel === 'high' || fitLevel === 'medium' || fitLevel === 'low' ? fitLevel : 'unknown',
       top_fit_reasons: why.map((text: string) => ({ text })),
       top_blockers: missing.map((text: string) => ({ text })),
-      next_actions: missing.length > 0 ? ['Resolve missing items and re-run evaluation.'] : [],
+      next_actions: missing.length > 0 ? ['Resolve the open questions and re-run AI mediation.'] : [],
     },
-    sections: [
-      { key: 'why', heading: 'Why', bullets: why },
-      { key: 'missing', heading: 'Missing', bullets: missing },
-      { key: 'redactions', heading: 'Redactions', bullets: redactions },
-    ],
+    sections: buildMediationReviewSections({ why, missing, redactions }),
     recommendation,
   };
   return {
@@ -813,7 +813,7 @@ function convertV2ResponseToEvaluation(v2Result: any): Record<string, unknown> {
     score: Math.round(normalizedConfidence * 100),
     confidence: normalizedConfidence,
     recommendation,
-    summary: why[0] || 'Evaluation complete',
+    summary: why[0] || 'AI mediation review complete',
     report,
     evaluation_provider: 'vertex',
     evaluation_model: generationModel,
@@ -836,7 +836,7 @@ function classifyEvaluationFailure(error: any): ClassifiedEvaluationFailure {
   const sourceCode = asLower(error?.code);
   const statusCode = toHttpStatus(error?.statusCode || error?.status || 0, 500);
   const upstreamStatus = toHttpStatus(error?.extra?.upstreamStatus || error?.extra?.status || 0, 0);
-  const normalizedMessage = asText(error?.message) || 'Evaluation failed';
+  const normalizedMessage = asText(error?.message) || 'AI mediation failed';
   const loweredMessage = normalizedMessage.toLowerCase();
   const safeConfiguredMessage = normalizedMessage.slice(0, 200);
 
@@ -1418,11 +1418,11 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
                 fit_level: 'unknown',
                 confidence_0_1: 0.2,
                 why: [
-                  'Executive Summary: AI report could not be generated due to an unexpected internal error.',
+                  'Executive Summary: The AI mediation review could not be generated due to an unexpected internal error.',
                   'Key Strengths: Unable to assess — model call failed unexpectedly.',
                   'Key Risks: Unable to assess — insufficient data.',
                   'Decision Readiness: Incomplete. Please address missing items and retry.',
-                  'Recommendations: Review missing items below and re-run evaluation.',
+                  'Recommendations: Review the missing items below and re-run AI mediation.',
                 ],
                 missing: [
                   'What is the confirmed scope and set of deliverables?',
@@ -1490,11 +1490,11 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
                 fit_level: 'unknown',
                 confidence_0_1: 0.2,
                 why: [
-                  'Executive Summary: AI report could not be generated. This evaluation is incomplete.',
+                  'Executive Summary: The AI mediation review could not be generated. This review is incomplete.',
                   'Key Strengths: Unable to assess due to model configuration or availability issue.',
                   'Key Risks: Unable to assess — please retry or contact support if issue persists.',
                   'Decision Readiness: Incomplete. Address missing items below.',
-                  'Recommendations: Retry evaluation once the underlying issue is resolved.',
+                  'Recommendations: Retry AI mediation once the underlying issue is resolved.',
                 ],
                 missing: [
                   'What is the confirmed scope and set of deliverables?',
@@ -1624,7 +1624,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
         latestFailedClassification || {
           failureCode: 'unknown_error',
           failureStage: 'unknown',
-          failureMessage: 'Evaluation failed',
+          failureMessage: 'AI mediation failed',
           httpStatus: 500,
           retryable: false,
           sourceCode: 'unknown_error',
@@ -1892,16 +1892,16 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
             eventType: 'evaluation_update',
             emailCategory: 'evaluation_complete',
             dedupeKey: `evaluation_update:${proposal.id}:${existing.id}:${savedEvaluation?.id || 'document_comparison'}`,
-            title: 'Evaluation complete',
-            message: `Evaluation finished for "${proposal.title || 'your proposal'}".`,
+            title: 'AI mediation review ready',
+            message: `An AI mediation review is ready for "${proposal.title || 'your proposal'}".`,
             actionUrl: `/ProposalDetail?id=${encodeURIComponent(proposal.id)}`,
-            emailSubject: 'Proposal evaluation complete',
+            emailSubject: 'AI mediation review ready',
             emailText: [
-              `Your proposal "${proposal.title || 'Untitled Proposal'}" has a new evaluation.`,
+              `Your proposal "${proposal.title || 'Untitled Proposal'}" has a new AI mediation review.`,
               '',
               `Score: ${evaluation.score ?? 'N/A'}`,
               '',
-              'Sign in to PreMarket to review the full report.',
+              'Sign in to PreMarket to review the full mediation review.',
             ].join('\n'),
           });
         } catch {

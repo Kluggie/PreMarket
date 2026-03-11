@@ -14,6 +14,7 @@ import {
   Users,
 } from 'lucide-react';
 import { VISIBILITY_CONFIDENTIAL, VISIBILITY_SHARED, getDocumentCounts } from '@/pages/document-comparison/documentsModel';
+import { RUN_AI_MEDIATION_LABEL, RUNNING_AI_MEDIATION_LABEL } from '@/lib/aiReportUtils';
 
 // ─────────────────────────────────────────────
 //  Bundle section
@@ -149,10 +150,10 @@ export default function Step3ReviewPackage({
   const isRunning = isFinishing || saveDraftPending;
 
   const finishLabel = finishStage === 'evaluating'
-    ? 'Evaluating…'
+    ? RUNNING_AI_MEDIATION_LABEL
     : finishStage === 'saving'
       ? 'Saving…'
-      : 'Run Evaluation';
+      : RUN_AI_MEDIATION_LABEL;
 
   const totalChars = (confidentialBundle.text?.length || 0) + (sharedBundle.text?.length || 0);
 
@@ -164,8 +165,8 @@ export default function Step3ReviewPackage({
         <CardHeader>
           <CardTitle>Step 3: Review Package</CardTitle>
           <CardDescription>
-            Review the compiled Shared and Confidential bundles before running AI evaluation.
-            This is exactly what the AI will use.
+            Review the compiled Shared and Confidential bundles before running AI mediation.
+            This is exactly what the mediation review will use.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -203,7 +204,7 @@ export default function Step3ReviewPackage({
         <Alert className="bg-red-50 border-red-200">
           <AlertTriangle className="h-4 w-4 text-red-700" />
           <AlertDescription className="text-red-800">
-            Content is over the AI size limit. Go back and reduce text before running evaluation.
+            Content is over the AI size limit. Go back and reduce text before running AI mediation.
           </AlertDescription>
         </Alert>
       )}
@@ -212,7 +213,7 @@ export default function Step3ReviewPackage({
       <Alert className="bg-blue-50 border-blue-200">
         <Lock className="h-4 w-4 text-blue-600" />
         <AlertDescription className="text-blue-800 text-xs">
-          <strong>Privacy reminder:</strong> Confidential content is used by the AI during evaluation
+          <strong>Privacy reminder:</strong> Confidential content is used during AI mediation
           but will never appear in the recipient-facing shared report.
           Only Shared content is publicly accessible.
         </AlertDescription>
@@ -245,7 +246,7 @@ export default function Step3ReviewPackage({
         <Alert className="bg-amber-50 border-amber-200">
           <AlertTriangle className="h-4 w-4 text-amber-700" />
           <AlertDescription className="text-amber-800">
-            Both bundles are empty. Go back to Step 2 and add content before evaluating.
+            Both bundles are empty. Go back to Step 2 and add content before running AI mediation.
           </AlertDescription>
         </Alert>
       )}
@@ -276,7 +277,7 @@ export default function Step3ReviewPackage({
           ) : (
             <>
               <Sparkles className="w-4 h-4 mr-2" />
-              Run Evaluation
+              {RUN_AI_MEDIATION_LABEL}
             </>
           )}
         </Button>

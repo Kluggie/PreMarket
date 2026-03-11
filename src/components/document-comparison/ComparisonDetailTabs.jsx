@@ -7,6 +7,8 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { BarChart3, Clock, FileText, Loader2, Sparkles } from 'lucide-react';
 import {
   hasV2Report,
+  MEDIATION_REVIEW_LABEL,
+  OPEN_QUESTIONS_LABEL,
   parseV2WhyEntry,
   filterLegacySectionsForDisplay,
 } from '@/lib/aiReportUtils';
@@ -78,7 +80,7 @@ export function ComparisonAiReportTab({
   evaluationFailureBannerMessage = '',
   hasReport = false,
   hasEvaluations = false,
-  noReportMessage = 'No evaluation yet.',
+  noReportMessage = 'No AI mediation review yet.',
   runDetailsHref = '',
   report = {},
   recommendation = '',
@@ -99,12 +101,12 @@ export function ComparisonAiReportTab({
           <CardContent className="py-6">
             <div className="flex items-center gap-2 text-slate-700">
               <Loader2 className="w-4 h-4 animate-spin" />
-              <span className="font-medium">Evaluation in progress...</span>
+              <span className="font-medium">AI mediation in progress...</span>
             </div>
             <p className="text-sm text-slate-500 mt-2">
               {isPollingTimedOut
                 ? 'Still processing. Refresh to check status.'
-                : 'Report updates automatically when processing finishes.'}
+                : 'The mediation review updates automatically when processing finishes.'}
             </p>
           </CardContent>
         </Card>
@@ -113,7 +115,7 @@ export function ComparisonAiReportTab({
       {isEvaluationNotConfigured ? (
         <Alert className="bg-amber-50 border-amber-200">
           <AlertDescription className="text-amber-900">
-            Vertex AI integration is not configured. AI report not available (AI not configured).
+            Vertex AI integration is not configured. AI mediation review not available.
           </AlertDescription>
         </Alert>
       ) : null}
@@ -153,11 +155,11 @@ export function ComparisonAiReportTab({
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Status</span>
-              <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200">Complete</Badge>
+              <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200">Mediation Ready</Badge>
             </div>
             {isV2 && Array.isArray(safeReport.missing) && safeReport.missing.length > 0 ? (
               <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Suggested Additions</span>
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">{OPEN_QUESTIONS_LABEL}</span>
                 <Badge className="bg-amber-100 text-amber-700 border-amber-200">
                   {safeReport.missing.length} item{safeReport.missing.length !== 1 ? 's' : ''}
                 </Badge>
@@ -218,14 +220,14 @@ export function ComparisonAiReportTab({
                     ))}
                   </div>
                 ) : (
-                  <p className="text-slate-600">AI report content is not available yet.</p>
+                  <p className="text-slate-600">AI mediation review content is not available yet.</p>
                 )}
               </div>
 
-              {/* Suggested Additions */}
+              {/* Open Questions */}
               {isV2 && Array.isArray(safeReport.missing) && safeReport.missing.length > 0 ? (
                 <div className="border-t border-slate-100 pt-6" data-testid="v2-missing-info">
-                  <h2 className="text-sm font-semibold text-slate-700 mb-3">Suggested Additions</h2>
+                  <h2 className="text-sm font-semibold text-slate-700 mb-3">{OPEN_QUESTIONS_LABEL}</h2>
                   <ul className="space-y-2.5">
                     {safeReport.missing.map((item, index) => (
                       <li key={index} className="flex items-start gap-2.5 text-sm text-slate-700">
@@ -381,7 +383,7 @@ export function ComparisonDetailTabs({
                 className="data-[state=active]:bg-slate-900 data-[state=active]:text-white"
               >
                 <BarChart3 className="w-4 h-4 mr-2" />
-                AI Report
+                {MEDIATION_REVIEW_LABEL}
                 {hasReportBadge ? (
                   <Badge className="ml-2 bg-green-100 text-green-700 text-xs">Complete</Badge>
                 ) : null}

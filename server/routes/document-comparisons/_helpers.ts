@@ -2,9 +2,44 @@ import { ApiError } from '../../_lib/errors.js';
 
 export const CONFIDENTIAL_LABEL = 'Confidential Information';
 export const SHARED_LABEL = 'Shared Information';
+export const MEDIATION_REVIEW_TITLE = 'AI Mediation Review';
+
+const PLACEHOLDER_MEDIATION_TITLES = new Set([
+  'untitled',
+  'untitled comparison',
+  'untitled proposal',
+  'shared report',
+]);
 
 function normalizeComparisonLabel(side: 'a' | 'b') {
   return side === 'a' ? CONFIDENTIAL_LABEL : SHARED_LABEL;
+}
+
+export function buildMediationReviewTitle(...candidates: unknown[]) {
+  for (const candidate of candidates) {
+    const text = asText(candidate);
+    if (!text) continue;
+    if (PLACEHOLDER_MEDIATION_TITLES.has(text.toLowerCase())) continue;
+    return text;
+  }
+  return MEDIATION_REVIEW_TITLE;
+}
+
+export function buildMediationReviewSections(params: {
+  why: string[];
+  missing: string[];
+  redactions: string[];
+}) {
+  const sections = [
+    { key: 'why', heading: 'Why', bullets: params.why },
+    { key: 'missing', heading: 'Missing', bullets: params.missing },
+  ];
+
+  if (params.redactions.length > 0) {
+    sections.push({ key: 'redactions', heading: 'Redactions', bullets: params.redactions });
+  }
+
+  return sections;
 }
 
 function asHtml(value: unknown) {
@@ -602,11 +637,11 @@ function buildFallbackRecipientV2Report(params: {
       top_blockers: [] as { text: string }[],
       next_actions: ['Review Shared Information details and request clarification where needed.'],
     },
-    sections: [
-      { key: 'why', heading: 'Why', bullets: why },
-      { key: 'missing', heading: 'Missing', bullets: missing },
-      { key: 'redactions', heading: 'Redactions', bullets: [] as string[] },
-    ],
+    sections: buildMediationReviewSections({
+      why,
+      missing,
+      redactions: [],
+    }),
     recommendation: params.recommendation,
   };
 }
@@ -669,14 +704,14 @@ function buildV2RecipientProjection(params: {
         nextActions.length > 0
           ? nextActions
           : missing.length > 0
-            ? ['Resolve missing items and re-run evaluation.']
+            ? ['Resolve the open questions and re-run AI mediation.']
             : [],
     },
-    sections: [
-      { key: 'why', heading: 'Why', bullets: why },
-      { key: 'missing', heading: 'Missing', bullets: missing },
-      { key: 'redactions', heading: 'Redactions', bullets: redactions },
-    ],
+    sections: buildMediationReviewSections({
+      why,
+      missing,
+      redactions,
+    }),
     recommendation,
   } as Record<string, any>;
 

@@ -263,7 +263,7 @@ export const sharedReportsClient = {
   async downloadRecipientAiReportPdf(token) {
     return downloadPdfFile(
       `/api/shared-report/${encodeToken(token)}/download/pdf`,
-      'shared-report-ai-report.pdf',
+      'shared-report-ai-mediation-review.pdf',
     );
   },
 

@@ -3,7 +3,7 @@
  *
  * Shows provider/model, evaluation history (with input hashes), inputs used, and
  * quality assessment for a document comparison.  This view is intentionally kept
- * separate from the AI Report so the report screen stays clean.  It is never
+ * separate from the mediation review so the report screen stays clean. It is never
  * included in any PDF export.
  *
  * Access control: the route sits inside the authenticated app shell so it already
@@ -84,7 +84,7 @@ function extractEvaluationFailureDetails(rawError) {
   const failureStage = asLower(
     rawError.failure_stage || details.failure_stage || rawError.stage || details.stage,
   );
-  const message = asText(rawError.message) || 'Evaluation failed';
+  const message = asText(rawError.message) || 'AI mediation failed';
   const requestId = asText(
     rawError.requestId || rawError.request_id || details.requestId || details.request_id,
   );
@@ -367,7 +367,7 @@ export default function DocumentComparisonRunDetails() {
             className="inline-flex items-center text-slate-600 hover:text-slate-900"
           >
             <ArrowLeft className="w-4 h-4 mr-2" />
-            Back to AI Report
+            Back to Mediation Review
           </Link>
         </div>
 
@@ -378,7 +378,7 @@ export default function DocumentComparisonRunDetails() {
             <h1 className="text-2xl font-bold text-slate-900">Run Details</h1>
           </div>
           <p className="text-sm text-slate-500">
-            Internal evaluation metadata for <span className="font-medium text-slate-700">{comparison.title}</span>.
+            Internal AI mediation run metadata for <span className="font-medium text-slate-700">{comparison.title}</span>.
             This page is not included in PDF exports or shared reports.
           </p>
         </div>
@@ -399,11 +399,11 @@ export default function DocumentComparisonRunDetails() {
           </CardContent>
         </Card>
 
-        {/* Evaluation History */}
+        {/* Mediation history */}
         {evaluationHistory.length > 0 ? (
           <Card className="border border-slate-200 shadow-sm">
             <CardHeader>
-              <CardTitle>Evaluation History ({evaluationHistory.length})</CardTitle>
+              <CardTitle>AI Mediation History ({evaluationHistory.length})</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="space-y-3">
@@ -497,7 +497,7 @@ export default function DocumentComparisonRunDetails() {
           <Card className="border border-slate-200 shadow-sm">
             <CardContent className="py-5 flex items-center gap-2 text-slate-500 text-sm">
               <Loader2 className="w-4 h-4 animate-spin" />
-              Loading evaluation history…
+              Loading AI mediation history…
             </CardContent>
           </Card>
         ) : null}
@@ -507,7 +507,7 @@ export default function DocumentComparisonRunDetails() {
           <Card className="border border-red-200 bg-red-50 shadow-sm">
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
-                <CardTitle className="text-base text-red-800">Evaluation Failure Details</CardTitle>
+                <CardTitle className="text-base text-red-800">AI Mediation Failure Details</CardTitle>
                 <Button
                   variant="ghost"
                   size="sm"
@@ -528,7 +528,7 @@ export default function DocumentComparisonRunDetails() {
               <div>
                 <p className="text-slate-500">Failure message</p>
                 <p className="text-slate-900">
-                  {asText(selectedFailureEntry.failure?.message) || 'Evaluation failed'}
+                  {asText(selectedFailureEntry.failure?.message) || 'AI mediation failed'}
                 </p>
               </div>
               <div>
@@ -648,7 +648,7 @@ export default function DocumentComparisonRunDetails() {
         {!isEvaluationSucceeded && evaluationHistory.length === 0 && !evaluationsQuery.isLoading ? (
           <Card className="border border-slate-200 shadow-sm">
             <CardContent className="py-6 text-slate-600 text-sm">
-              No evaluation data yet. Run an evaluation from the editor first.
+              No AI mediation data yet. Run AI Mediation from the editor first.
             </CardContent>
           </Card>
         ) : null}
