@@ -761,6 +761,18 @@ const NEUTRAL_TONE_REPLACEMENTS: Array<{ pattern: RegExp; replacement: string }>
   { pattern: /\bLikely pushback & response:\b/g, replacement: 'Likely sticking points & bridges:' },
 ];
 
+const STOCK_PHRASE_POLISH_REPLACEMENTS: Array<{ pattern: RegExp; replacement: string }> = [
+  { pattern: /\bcore scope is not bounded tightly enough\b/gi, replacement: 'the initial scope still needs a tighter commitment boundary' },
+  { pattern: /\bacceptance criteria are not concrete enough for sign-off\b/gi, replacement: 'acceptance criteria still need to be defined more concretely for reliable sign-off' },
+  { pattern: /\bownership of major dependencies or approvals is still unclear\b/gi, replacement: 'major dependencies and approvals still need named owners and fallback treatment' },
+  { pattern: /\bchange-order triggers are not defined for known uncertainty\b/gi, replacement: 'change-order treatment is still loose around known uncertainty' },
+  { pattern: /\bcritical technical assumptions remain unvalidated\b/gi, replacement: 'key technical assumptions still need validation' },
+  { pattern: /\bphase boundaries and deferrable work are not yet explicit\b/gi, replacement: 'the line between the current phase and later work still needs to be defined more clearly' },
+  { pattern: /\btimeline assumptions are not reliable enough yet\b/gi, replacement: 'timeline assumptions still need firmer confirmation' },
+  { pattern: /\bcommercial assumptions are not fully tied to defined scope and risk\b/gi, replacement: 'commercial terms are not yet tied cleanly to the current assumptions and risk allocation' },
+  { pattern: /\brisk allocation is still too vague\b/gi, replacement: 'risk ownership and mitigation treatment are still too vague' },
+];
+
 const COACHING_GUARD_PATTERNS = [
   /\bimprove your position\b/i,
   /\byou should\b/i,
@@ -825,7 +837,7 @@ function truncateWhyOutput(why: string[], maxChars: number): string[] {
 
     while (keptParagraphs.length > 0 && total + candidate.length + 1 > maxChars) {
       if (keptParagraphs.length > 1) {
-        keptParagraphs = keptParagraphs.slice(0, -1);
+        keptParagraphs = dropLowestPriorityParagraph(section.key, keptParagraphs);
         candidate = formatEntry(keptParagraphs);
         continue;
       }
@@ -943,6 +955,9 @@ function neutralizeShareableText(value: string) {
   NEUTRAL_TONE_REPLACEMENTS.forEach(({ pattern, replacement }) => {
     next = next.replace(pattern, replacement);
   });
+  STOCK_PHRASE_POLISH_REPLACEMENTS.forEach(({ pattern, replacement }) => {
+    next = next.replace(pattern, replacement);
+  });
   return next.trim();
 }
 
@@ -1014,6 +1029,50 @@ function paragraphsAreNearDuplicates(a: string, b: string) {
   });
   const denominator = Math.max(1, Math.min(leftSet.size, rightSet.size));
   return overlap / denominator >= 0.72;
+}
+
+function paragraphDropPriority(sectionKey: string, paragraph: string, index: number) {
+  const text = normalizeSpaces(paragraph);
+  if (sectionKey === 'recommendations') {
+    if (/^Commercial posture:/i.test(text)) return 6;
+    if (/^Likely sticking points & bridges:/i.test(text)) return 5;
+    if (/^Paths to agreement:/i.test(text)) return 4;
+    if (/^Next negotiation agenda:/i.test(text)) return 2;
+    if (/^Conditions to proceed:/i.test(text)) return 1;
+    return 3 + index / 10;
+  }
+  if (sectionKey === 'decision readiness') {
+    if (/^What would change the verdict:/i.test(text)) return 4;
+    if (/^What must be agreed now vs later:/i.test(text)) return 2;
+    return 1 + index / 10;
+  }
+  if (sectionKey === 'key strengths') {
+    return index === 0 ? 1 : 2 + index / 10;
+  }
+  return 1 + index / 10;
+}
+
+function dropLowestPriorityParagraph(sectionKey: string, paragraphs: string[]) {
+  if (paragraphs.length <= 1) return [];
+  let removeIndex = paragraphs.length - 1;
+  let highestPriority = -1;
+  paragraphs.forEach((paragraph, index) => {
+    const priority = paragraphDropPriority(sectionKey, paragraph, index);
+    if (priority >= highestPriority) {
+      highestPriority = priority;
+      removeIndex = index;
+    }
+  });
+  return paragraphs.filter((_, index) => index !== removeIndex);
+}
+
+function maxParagraphsForSection(sectionKey: string) {
+  if (sectionKey === 'snapshot') return 2;
+  if (sectionKey === 'key risks') return 2;
+  if (sectionKey === 'key strengths') return 2;
+  if (sectionKey === 'decision readiness') return 3;
+  if (sectionKey === 'recommendations') return 3;
+  return 3;
 }
 
 function isRoleLockedParagraph(value: string) {
@@ -1093,9 +1152,77 @@ function serializeWhySections(sections: WhySection[]) {
     .map((section) => {
       const heading = asText(section.heading) || canonicalWhyHeading(section.key);
       const body = asText(section.body);
-      return body ? `${heading}: ${body}` : `${heading}:`;
+      return body ? `${heading}: ${body}` : '';
     })
     .filter(Boolean);
+}
+
+function lastSentenceBoundaryIndex(value: string) {
+  const text = String(value || '');
+  let lastIndex = -1;
+  const matches = text.matchAll(/[.!?](?=\s|$)/g);
+  for (const match of matches) {
+    lastIndex = match.index ?? lastIndex;
+  }
+  return lastIndex >= 0 ? lastIndex + 1 : -1;
+}
+
+const TRAILING_FRAGMENT_PATTERN =
+  /\b(and|or|but|because|if|then|with|for|to|of|in|on|by|versus|vs|than|around|about|under|over|through|including|depending|based)\b$/i;
+
+function sanitizeNarrativeParagraph(value: string) {
+  let next = normalizeSpaces(value);
+  if (!next) return '';
+
+  const ellipsisIndex = next.search(/(?:\.\.\.|…)/);
+  if (ellipsisIndex >= 0) {
+    const beforeEllipsis = next.slice(0, ellipsisIndex).trim();
+    const sentenceBoundary = lastSentenceBoundaryIndex(beforeEllipsis);
+    if (sentenceBoundary > 0) {
+      next = beforeEllipsis.slice(0, sentenceBoundary).trim();
+    } else {
+      return '';
+    }
+  }
+
+  if (/[,:;–—-]$/.test(next) || TRAILING_FRAGMENT_PATTERN.test(next)) {
+    const sentenceBoundary = lastSentenceBoundaryIndex(next);
+    if (sentenceBoundary > 0) {
+      next = next.slice(0, sentenceBoundary).trim();
+    } else {
+      return '';
+    }
+  }
+
+  return normalizeSpaces(next);
+}
+
+function sanitizeWhyEntries(why: string[]) {
+  const sections = parseWhySections(why);
+  return orderedWhySections(sections)
+    .map((section) => {
+      const heading = asText(section.heading) || canonicalWhyHeading(section.key);
+      const paragraphs = splitParagraphs(section.body)
+        .map((paragraph) => sanitizeNarrativeParagraph(paragraph))
+        .filter(Boolean);
+      const body = combineParagraphs(paragraphs);
+      return body ? `${heading}: ${body}` : '';
+    })
+    .filter(Boolean);
+}
+
+function splitMissingEntry(value: string) {
+  const text = normalizeSpaces(value);
+  const emDashIndex = text.indexOf('—');
+  const hyphenDashIndex = emDashIndex >= 0 ? -1 : text.indexOf(' - ');
+  const splitIndex = emDashIndex >= 0 ? emDashIndex : hyphenDashIndex;
+  if (splitIndex < 0) {
+    return { question: text, why: '' };
+  }
+  return {
+    question: text.slice(0, splitIndex).trim(),
+    why: text.slice(splitIndex + (emDashIndex >= 0 ? 1 : 3)).trim(),
+  };
 }
 
 function isFixedPriceSignal(factSheet: ProposalFactSheet) {
@@ -1233,8 +1360,15 @@ function normalizeMissingQuestions(params: {
     GENERIC_FALLBACK_MISSING.forEach((item) => addEntry(toActionableMissingQuestion(item), null));
   }
 
-  return entries
-    .sort((a, b) => b.priority - a.priority)
+  return dedupeMissingEntries(
+    entries
+      .sort((a, b) => b.priority - a.priority)
+      .map((entry) => ({
+        ...entry,
+        text: sanitizeMissingEntry(entry.text),
+      }))
+      .filter((entry) => entry.text),
+  )
     .slice(0, MISSING_MAX_ITEMS)
     .map((entry) => entry.text);
 }
@@ -1421,6 +1555,81 @@ function hasDetailHint(text: string) {
   return DETAIL_HINT_PATTERNS.some((pattern) => keywordMatch(text, pattern));
 }
 
+function countDetailHints(text: string) {
+  return DETAIL_HINT_PATTERNS.filter((pattern) => keywordMatch(text, pattern)).length;
+}
+
+function sanitizeMissingEntry(value: string) {
+  const text = normalizeSpaces(value);
+  if (!text) return '';
+  const { question, why } = splitMissingEntry(text);
+  let nextQuestion = sanitizeNarrativeParagraph(stripTrailingPunctuation(question));
+  if (!nextQuestion) return '';
+  nextQuestion = stripTrailingPunctuation(nextQuestion);
+  if (!nextQuestion.endsWith('?')) {
+    if (/^(what|which|who|where|when|why|how)\b/i.test(nextQuestion)) {
+      nextQuestion = `${nextQuestion}?`;
+    } else {
+      nextQuestion = `What is the agreed position on ${lowerFirst(nextQuestion)}?`;
+    }
+  }
+
+  let nextWhy = sanitizeNarrativeParagraph(stripTrailingPunctuation(why));
+  if (!nextWhy) {
+    nextWhy = GENERIC_MISSING_WHY;
+  }
+  nextWhy = stripTrailingPunctuation(nextWhy);
+  if (!nextWhy) return '';
+
+  return `${nextQuestion} — ${nextWhy}.`;
+}
+
+function missingEntriesOverlap(left: string, right: string) {
+  const leftParts = splitMissingEntry(left);
+  const rightParts = splitMissingEntry(right);
+  return (
+    paragraphsAreNearDuplicates(leftParts.question, rightParts.question)
+    || (leftParts.why && rightParts.why && paragraphsAreNearDuplicates(leftParts.why, rightParts.why))
+  );
+}
+
+function isMoreSpecificMissingEntry(left: string, right: string) {
+  const leftHints = countDetailHints(left);
+  const rightHints = countDetailHints(right);
+  if (leftHints !== rightHints) return leftHints > rightHints;
+  return left.length > right.length;
+}
+
+function dedupeMissingEntries(entries: Array<{ text: string; priority: number; key: string }>) {
+  const deduped: Array<{ text: string; priority: number; key: string }> = [];
+
+  entries.forEach((entry) => {
+    const duplicateIndex = deduped.findIndex((existing) => missingEntriesOverlap(existing.text, entry.text));
+    if (duplicateIndex < 0) {
+      deduped.push(entry);
+      return;
+    }
+
+    const existing = deduped[duplicateIndex];
+    if (
+      entry.priority > existing.priority
+      || (entry.priority === existing.priority && isMoreSpecificMissingEntry(entry.text, existing.text))
+    ) {
+      deduped[duplicateIndex] = entry;
+    }
+  });
+
+  return deduped;
+}
+
+function sanitizeRedactionEntry(value: string) {
+  let next = normalizeSpaces(asText(value));
+  if (!next) return '';
+  if (/(?:\.\.\.|…)/.test(next)) return '';
+  next = next.replace(/[,:;–—-]+$/g, '').trim();
+  return next;
+}
+
 function extractMissingSubject(text: string) {
   const left = asText(text).split('—')[0] || '';
   return stripTrailingPunctuation(left)
@@ -1504,7 +1713,7 @@ function normalizeRedactions(params: {
   const seen = new Set<string>();
 
   return params.redactions
-    .map((item) => asText(neutralizeShareableText(item)))
+    .map((item) => sanitizeRedactionEntry(neutralizeShareableText(item)))
     .filter((item) => {
       if (!item) return false;
       if (params.missing.some((missingItem) => paragraphsAreNearDuplicates(missingItem, item))) return false;
@@ -1661,6 +1870,104 @@ function buildRiskTransferSummary(signals: CalibrationSignals) {
   return joinNatural(clauses.slice(0, 2));
 }
 
+function describeBlockerForContext(ruleId: string, context: 'snapshot' | 'risk') {
+  const snapshotMap: Record<string, string> = {
+    scope: 'the initial scope still needs a tighter commitment boundary',
+    data_cleanup: 'data remediation remains unquantified and unowned',
+    acceptance: 'sign-off criteria are still too loose for reliable acceptance',
+    dependency: 'major dependencies still lack clear owners and fallback treatment',
+    change_order: 'change-order treatment is still undefined around known uncertainty',
+    technical: 'key technical assumptions still need validation',
+    phase_boundary: 'the line between the current phase and later work is still too loose',
+    timeline: 'timeline assumptions remain unconfirmed',
+    commercial: 'commercial terms are not yet tied cleanly to the current assumptions',
+    risk: 'risk ownership remains too vague',
+  };
+  const riskMap: Record<string, string> = {
+    scope: 'scope interpretation remains broad enough to create pricing and delivery dispute risk',
+    data_cleanup: 'data remediation could shift material effort onto one side without an agreed owner',
+    acceptance: 'subjective sign-off still leaves payment and completion exposure open',
+    dependency: 'dependency slippage can still spill directly into delivery and budget risk',
+    change_order: 'known uncertainty can still trigger disputes because change-control treatment is loose',
+    technical: 'untested technical assumptions could still move architecture, effort, or cost',
+    phase_boundary: 'later-phase ambitions are still close enough to the current phase to create spillover risk',
+    timeline: 'delivery timing can still move if milestones and dependencies stay loosely tied',
+    commercial: 'commercial posture can still drift away from the actual risk allocation',
+    risk: 'known risks still lack clear mitigation and owner treatment',
+  };
+
+  return (context === 'snapshot' ? snapshotMap : riskMap)[ruleId] || '';
+}
+
+function buildBlockerSummary(params: {
+  signals: CalibrationSignals;
+  context: 'snapshot' | 'risk';
+}) {
+  const clauses = params.signals.rules
+    .slice(0, 2)
+    .map((rule) => describeBlockerForContext(rule.id, params.context))
+    .filter(Boolean);
+
+  if (clauses.length > 0) {
+    return joinNatural(clauses);
+  }
+
+  return params.context === 'snapshot'
+    ? 'the current materials are not yet bounded tightly enough for commitment'
+    : 'scope, dependency, or commercial exposure still remains too open';
+}
+
+function buildStrengthParagraphs(params: {
+  factSheet: ProposalFactSheet;
+  data: VertexEvaluationV2Response;
+  signals: CalibrationSignals;
+  positiveEvidence: string;
+  strengthsPoints: string[];
+}) {
+  if (params.data.fit_level === 'low') {
+    if (params.strengthsPoints.length > 0) {
+      const paragraphs = [
+        `Some alignment still exists around ${joinNatural(params.strengthsPoints)}, but those positives are not enough to offset the unresolved structural gaps.`,
+      ];
+      if (params.positiveEvidence) {
+        paragraphs.push(
+          `The strongest usable positives are ${params.positiveEvidence}, but they still do not create a dependable commitment path on the current record.`,
+        );
+      }
+      return paragraphs;
+    }
+    return ['The parties have at least identified a common objective, but the current structure still lacks a dependable path to agreement.'];
+  }
+
+  const primary = params.strengthsPoints.slice(0, 2);
+  const secondary = params.signals.alignmentPoints.slice(2, 4);
+  const paragraphs: string[] = [];
+
+  if (primary.length > 0) {
+    paragraphs.push(`Areas of alignment include ${joinNatural(primary)}.`);
+  } else if (params.positiveEvidence) {
+    paragraphs.push(`The current proposal already gives both sides usable structure through ${params.positiveEvidence}.`);
+  }
+
+  if (secondary.length > 0) {
+    paragraphs.push(
+      `The current materials also provide ${joinNatural(secondary)}, which gives the parties a more concrete base for sequencing, governance, or sign-off.`,
+    );
+  } else if (params.positiveEvidence) {
+    paragraphs.push(
+      `Those positives matter because the discussion is already anchored in ${params.positiveEvidence} rather than broad intent alone.`,
+    );
+  }
+
+  if (params.signals.conditionallyViable) {
+    paragraphs.push(
+      'That structure matters because it creates a plausible path to agreement once the unresolved conditions are tied to scope, sign-off, and commercial treatment.',
+    );
+  }
+
+  return paragraphs.filter(Boolean);
+}
+
 function buildPathsToAgreement(params: {
   factSheet: ProposalFactSheet;
   signals: CalibrationSignals;
@@ -1769,10 +2076,14 @@ function buildSectionRoleDefaults(params: {
   const strengthsPoints = params.signals.alignmentPoints.slice(1, 3).length > 0
     ? params.signals.alignmentPoints.slice(1, 3)
     : params.signals.alignmentPoints.slice(0, 2);
-  const blockerSummary =
-    params.signals.blockerLabels.length > 0
-      ? joinNatural(params.signals.blockerLabels.slice(0, 2))
-      : 'material scope, delivery, or commercial questions remain open';
+  const snapshotBlockerSummary = buildBlockerSummary({
+    signals: params.signals,
+    context: 'snapshot',
+  });
+  const riskBlockerSummary = buildBlockerSummary({
+    signals: params.signals,
+    context: 'risk',
+  });
   const conditionSummary =
     params.signals.conditions.length > 0
       ? joinNatural(params.signals.conditions.slice(0, 2))
@@ -1796,14 +2107,14 @@ function buildSectionRoleDefaults(params: {
     && params.signals.ruleIds.size === 0;
   const snapshotLead =
     params.data.fit_level === 'low'
-      ? `${alignmentSummary ? `There are still some visible alignment points around ${alignmentSummary}, but ` : ''}the current materials do not yet show a credible bounded path to commitment because ${blockerSummary}.`
+      ? `${alignmentSummary ? `There are still some visible alignment points around ${alignmentSummary}, but ` : ''}the current materials do not yet show a credible bounded path to commitment because ${snapshotBlockerSummary}.`
       : cleanBounded && params.data.fit_level === 'high'
       ? `Sign-ready on the current record: alignment exists around ${alignmentSummary}, and the proposal is bounded enough for both sides to treat it as a clean commitment.`
       : cleanBounded
       ? `Substantive structure is already in place around ${alignmentSummary}, and the current materials support a credible commitment path without a material structural blocker.`
       : params.signals.conditionallyViable
-      ? `Conditionally viable: alignment exists around ${alignmentSummary}, but the deal is still not bounded tightly enough around ${blockerSummary}.`
-      : `Conditionally ready rather than fully commit-ready: ${blockerSummary}.`;
+      ? `Conditionally viable: alignment exists around ${alignmentSummary}, but ${snapshotBlockerSummary}.`
+      : `Conditionally ready rather than fully commit-ready: ${snapshotBlockerSummary}.`;
   const snapshotSupport = params.data.fit_level === 'low'
     ? 'Some deal elements are visible, but the remaining gaps still leave scope, dependency, or commercial exposure too open for either side to rely on the current draft.'
     : cleanBounded
@@ -1814,32 +2125,25 @@ function buildSectionRoleDefaults(params: {
     ? `The current proposal still gives both sides a workable starting point because it includes ${positiveEvidence}.`
     : 'The current proposal still gives both sides enough structure to frame the next negotiation step.';
 
-  const strengthsLead = params.data.fit_level === 'low'
-    ? strengthsPoints.length > 0
-      ? `Some alignment still exists around ${joinNatural(strengthsPoints)}, but those positives are not enough to offset the unresolved structural gaps.`
-      : 'The parties have at least identified a common objective, but the current structure still lacks a dependable path to agreement.'
-    : strengthsPoints.length > 0
-    ? `Areas of alignment include ${joinNatural(strengthsPoints)}.`
-    : positiveEvidence
-    ? `The current proposal still gives both sides usable structure through ${positiveEvidence}.`
-    : 'The current proposal still provides a workable starting point for bilateral discussion.';
+  const strengthParagraphs = buildStrengthParagraphs({
+    factSheet: params.factSheet,
+    data: params.data,
+    signals: params.signals,
+    positiveEvidence,
+    strengthsPoints,
+  });
 
   const defaults: Record<string, string[]> = {
     snapshot: [snapshotLead, snapshotSupport],
     'key risks': [
       cleanBounded
         ? 'The remaining negotiation exposure is limited and sits mainly in execution governance, handoff sequencing, and confirmation of the written assumptions rather than in core feasibility.'
-        : `The main negotiation pressure points sit around ${blockerSummary}.${riskTransferSummary ? ` As drafted, ${riskTransferSummary}.` : ''}`,
+        : `The main negotiation pressure points sit where ${riskBlockerSummary}.${riskTransferSummary ? ` As drafted, ${riskTransferSummary}.` : ''}`,
       cleanBounded
         ? 'Assumptions / Dependencies: the current record mainly assumes routine stakeholder availability and normal execution coordination rather than an unresolved structural blocker.'
         : `Assumptions / Dependencies: ${assumptionsSummary}.`,
     ],
-    'key strengths': [
-      strengthsLead,
-      params.signals.conditionallyViable
-        ? 'That structure matters because it creates a plausible path to agreement once the unresolved conditions are tied to scope, sign-off, and commercial treatment.'
-        : '',
-    ].filter(Boolean),
+    'key strengths': strengthParagraphs,
     'decision readiness': [
       cleanBounded && params.data.fit_level === 'high'
         ? 'Decision readiness is strong: remaining discussion can focus on execution governance and final confirmations rather than bounding core feasibility.'
@@ -1885,13 +2189,15 @@ function orderedWhySections(sections: WhySection[]) {
 }
 
 function buildWhyEntriesFromRoleDefaults(roleDefaults: Record<string, string[]>) {
-  return REQUIRED_WHY_SECTION_KEYS
-    .map((key) => {
-      const body = combineParagraphs(roleDefaults[key] || []);
-      if (!body) return '';
-      return `${canonicalWhyHeading(key)}: ${body}`;
-    })
-    .filter(Boolean);
+  return sanitizeWhyEntries(
+    REQUIRED_WHY_SECTION_KEYS
+      .map((key) => {
+        const body = combineParagraphs(roleDefaults[key] || []);
+        if (!body) return '';
+        return `${canonicalWhyHeading(key)}: ${body}`;
+      })
+      .filter(Boolean),
+  );
 }
 
 function classifyFallbackMode(factSheet: ProposalFactSheet) {
@@ -2088,11 +2394,16 @@ function rewriteWhyForCalibration(params: {
       globallySeenParagraphs.push(trimmed);
     });
 
-    if (finalParagraphs.length === 0) {
+    let cappedParagraphs = [...finalParagraphs];
+    while (cappedParagraphs.length > maxParagraphsForSection(section.key)) {
+      cappedParagraphs = dropLowestPriorityParagraph(section.key, cappedParagraphs);
+    }
+
+    if (cappedParagraphs.length === 0) {
       const fallbackParagraph = (roleDefaults[section.key] || [])[0] || section.body;
       const trimmedFallback = asText(fallbackParagraph);
       if (trimmedFallback) {
-        finalParagraphs.push(trimmedFallback);
+        cappedParagraphs.push(trimmedFallback);
         globallySeenParagraphs.push(trimmedFallback);
       }
     }
@@ -2100,11 +2411,13 @@ function rewriteWhyForCalibration(params: {
     return {
       ...section,
       heading: canonicalWhyHeading(section.key || section.heading),
-      body: combineParagraphs(finalParagraphs),
+      body: combineParagraphs(cappedParagraphs),
     };
   });
 
-  return truncateWhyOutput(serializeWhySections(rewrittenSections), WHY_MAX_CHARS_STANDARD);
+  return sanitizeWhyEntries(
+    truncateWhyOutput(serializeWhySections(rewrittenSections), WHY_MAX_CHARS_STANDARD),
+  );
 }
 
 function alignFitLevelToSignals(params: {

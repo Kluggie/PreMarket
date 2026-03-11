@@ -1346,6 +1346,361 @@ test('visibility-aware normalization removes already visible categories from mis
   }
 });
 
+test('presentation hygiene: visible fragment artifacts are removed from why, missing, and redactions', async () => {
+  const factSheet = validFactSheetPayload({
+    project_goal: 'Coordinate a site-services mobilization across three facilities.',
+    scope_deliverables: ['Mobilization plan', 'Service schedule', 'Site reporting pack'],
+    constraints: ['Mobilization must avoid operational downtime'],
+    missing_info: [
+      'Acceptance criteria are not defined.',
+      'Dependency ownership is unclear.',
+    ],
+    open_questions: [
+      'Who owns site-access approvals before mobilization?',
+    ],
+  });
+
+  const cleanup = setVertexV2MockSequence([
+    {
+      response: {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(factSheet),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+    {
+      response: {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(validPayload({
+          fit_level: 'medium',
+          confidence_0_1: 0.68,
+          why: [
+            'Snapshot: The structure is workable. condi...',
+            'Key Risks: Conditions to proc...',
+            'Key Strengths: The phased structure is workable.',
+            'Decision Readiness: The parties still need to define the initial scope. Next negotiation agenda: define sign-off condi...',
+            'Recommendations: Paths to agreement: use a discovery-first phase. Conditions to proceed: define scope and acceptance...',
+          ],
+          missing: [
+            'What acceptance criteria define sign-off? — determines payment and completion condi...',
+            'What party owns site-access dependencies? — determines timeline risk.',
+          ],
+          redactions: [
+            'internal pricing floor...',
+          ],
+        })),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+  ]);
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Shared proposal covers site mobilization, service scheduling, and reporting across three facilities.',
+      confidentialText: 'Confidential notes mention pricing floor and approval dependencies.',
+      requestId: 'req-presentation-fragments-1',
+    });
+
+    assert.equal(outcome.ok, true, 'Should succeed');
+    if (!outcome.ok) return;
+
+    const whyText = outcome.data.why.join('\n');
+    const missingText = outcome.data.missing.join('\n');
+    const redactionsText = outcome.data.redactions.join('\n');
+
+    assert.equal(/(?:\.\.\.|…)/.test(whyText), false, 'why[] must not expose visible ellipsis fragments');
+    assert.equal(/(?:\.\.\.|…)/.test(missingText), false, 'missing[] must not expose visible ellipsis fragments');
+    assert.equal(/(?:\.\.\.|…)/.test(redactionsText), false, 'redactions[] must not expose visible ellipsis fragments');
+    assert.equal(/Conditions to proc(?!eed)/i.test(whyText), false, 'partial locked prefixes must not survive in why[]');
+  } finally {
+    cleanup();
+  }
+});
+
+test('presentation hygiene: awkward stock blocker wording is rewritten into natural phrasing', async () => {
+  const factSheet = validFactSheetPayload({
+    missing_info: [
+      'Scope is broad and out-of-scope items are not defined.',
+      'Acceptance criteria are not defined.',
+    ],
+  });
+
+  const cleanup = setVertexV2MockSequence([
+    {
+      response: {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(factSheet),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+    {
+      response: {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(validPayload({
+          fit_level: 'medium',
+          confidence_0_1: 0.71,
+          why: [
+            'Snapshot: core scope is not bounded tightly enough.',
+            'Key Risks: core scope is not bounded tightly enough.',
+            'Key Strengths: There is a phased structure.',
+            'Decision Readiness: core scope is not bounded tightly enough.',
+            'Recommendations: core scope is not bounded tightly enough.',
+          ],
+          missing: ['Clarify scope boundary.'],
+          redactions: [],
+        })),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+  ]);
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Shared proposal defines phases, milestones, and a headline delivery target.',
+      confidentialText: 'Confidential notes mention unresolved scope and sign-off assumptions.',
+      requestId: 'req-presentation-phrase-cleanup-1',
+    });
+
+    assert.equal(outcome.ok, true, 'Should succeed');
+    if (!outcome.ok) return;
+
+    const whyText = outcome.data.why.join('\n').toLowerCase();
+    assert.equal(
+      whyText.includes('core scope is not bounded tightly enough'),
+      false,
+      'raw stock blocker phrasing must be rewritten into natural sentence forms',
+    );
+    assert.equal(
+      whyText.includes('tighter commitment boundary') || whyText.includes('not yet bounded tightly enough'),
+      true,
+      'cleaned prose should still express the same blocker in a natural way',
+    );
+  } finally {
+    cleanup();
+  }
+});
+
+test('presentation hygiene: key strengths becomes more substantive when multiple concrete positives exist', async () => {
+  const facilitiesFactSheet = validFactSheetPayload({
+    project_goal: 'Provide planned maintenance coverage across two manufacturing sites.',
+    scope_deliverables: ['Preventive maintenance plan', 'Emergency callout coverage', 'Monthly operations reporting'],
+    timeline: {
+      start: '2026-09-01',
+      duration: '12 months',
+      milestones: ['Mobilization', 'Quarterly review'],
+    },
+    constraints: ['Site work must avoid production downtime'],
+    success_criteria_kpis: ['Response time under 4 hours', 'Completion rate above 95%'],
+    risks: [{ risk: 'after-hours access approvals', impact: 'med', likelihood: 'med' }],
+    missing_info: [
+      'Rework approval rules are undefined.',
+    ],
+  });
+
+  const cleanup = setVertexV2MockSequence([
+    {
+      response: {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(facilitiesFactSheet),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+    {
+      response: {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(validPayload({
+          fit_level: 'medium',
+          confidence_0_1: 0.7,
+          why: [
+            'Snapshot: The structure is workable but still conditional.',
+            'Key Risks: Rework approval remains open.',
+            'Key Strengths: The proposal is clear.',
+            'Decision Readiness: The parties still need to define rework handling.',
+            'Recommendations: Resolve the remaining approval condition.',
+          ],
+          missing: ['Clarify rework approval rules.'],
+          redactions: [],
+        })),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+  ]);
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Shared proposal covers preventive maintenance, emergency callouts, monthly reporting, milestones, and response targets.',
+      confidentialText: 'Confidential notes mention access approvals and rework caveats.',
+      requestId: 'req-presentation-strengths-1',
+    });
+
+    assert.equal(outcome.ok, true, 'Should succeed');
+    if (!outcome.ok) return;
+
+    const strengthsEntry = outcome.data.why.find((entry) => entry.startsWith('Key Strengths:')) || '';
+    assert.equal(strengthsEntry.includes('Areas of alignment include'), true, 'Key Strengths should lead with concrete alignment points');
+    assert.equal(
+      strengthsEntry.includes('The current materials also provide') || strengthsEntry.includes('Those positives matter because'),
+      true,
+      'Key Strengths should add a second concrete point when the fact sheet supports it',
+    );
+    assert.equal(
+      /clear and specific|well thought out|clear\./i.test(strengthsEntry),
+      false,
+      'Key Strengths should not collapse into generic praise',
+    );
+  } finally {
+    cleanup();
+  }
+});
+
+test('presentation hygiene: empty redactions collapse to an empty array so no visible redactions section is emitted downstream', async () => {
+  const factSheet = validFactSheetPayload({
+    missing_info: ['Acceptance criteria are not defined.'],
+  });
+
+  const cleanup = setVertexV2MockSequence([
+    {
+      response: {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(factSheet),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+    {
+      response: {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(validPayload({
+          fit_level: 'medium',
+          confidence_0_1: 0.69,
+          why: [
+            'Snapshot: The proposal is workable but conditional.',
+            'Key Risks: Acceptance remains open.',
+            'Key Strengths: There is a phased rollout.',
+            'Decision Readiness: The parties still need to define sign-off.',
+            'Recommendations: Resolve the acceptance condition.',
+          ],
+          missing: ['Clarify acceptance criteria.'],
+          redactions: ['   ', '...', '—'],
+        })),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+  ]);
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Shared proposal includes phases, milestones, and sign-off references.',
+      confidentialText: 'Confidential notes contain no extra protected topics.',
+      requestId: 'req-presentation-empty-redactions-1',
+    });
+
+    assert.equal(outcome.ok, true, 'Should succeed');
+    if (!outcome.ok) return;
+
+    assert.equal(outcome.data.redactions.length, 0, 'redactions[] should collapse to empty when only blank or fragment entries remain');
+    assert.equal(
+      outcome.data.why.some((entry) => /^Redactions:/i.test(entry)),
+      false,
+      'customer-facing why[] must not emit an empty redactions heading',
+    );
+  } finally {
+    cleanup();
+  }
+});
+
+test('presentation hygiene: open questions are deduped when two items resolve the same acceptance uncertainty', async () => {
+  const serviceFactSheet = validFactSheetPayload({
+    project_goal: 'Provide warehousing and dispatch coverage for a regional distribution program.',
+    scope_deliverables: ['Inbound receiving', 'Dispatch handling', 'Monthly service reporting'],
+    timeline: {
+      start: '2026-10-01',
+      duration: '9 months',
+      milestones: ['Mobilization', 'Quarterly review'],
+    },
+    constraints: ['Operations must remain live during transition'],
+    success_criteria_kpis: ['Dispatch accuracy above 98%'],
+    missing_info: [
+      'Acceptance criteria for completed service volumes are not defined.',
+      'Definition of done for the initial service phase is unclear.',
+      'Change-order triggers for out-of-scope handling are undefined.',
+    ],
+    open_questions: [
+      'Who signs off on completed service volumes each month?',
+      'What measurable acceptance criteria determine whether the initial phase is complete?',
+    ],
+  });
+
+  const cleanup = setVertexV2MockSequence([
+    {
+      response: {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(serviceFactSheet),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+    {
+      response: {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(validPayload({
+          fit_level: 'medium',
+          confidence_0_1: 0.68,
+          why: [
+            'Snapshot: The service structure is workable once sign-off and variation handling are bounded.',
+            'Key Risks: Acceptance and change-order treatment remain open.',
+            'Key Strengths: The core service cadence is defined.',
+            'Decision Readiness: The parties still need to define sign-off and change handling.',
+            'Recommendations: Resolve the acceptance and change-order mechanics.',
+          ],
+          missing: [
+            'What measurable acceptance criteria define completion for the initial service phase? — determines sign-off and payment exposure.',
+            'Who signs off on completed service volumes each month? — determines sign-off and payment exposure.',
+            'What change-order triggers apply to out-of-scope handling? — determines commercial protection and dispute exposure.',
+          ],
+          redactions: [],
+        })),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+  ]);
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Shared proposal covers inbound receiving, dispatch handling, service reporting, and a mobilization timeline.',
+      confidentialText: 'Confidential notes mention sign-off and variation assumptions.',
+      requestId: 'req-presentation-open-question-dedupe-1',
+    });
+
+    assert.equal(outcome.ok, true, 'Should succeed');
+    if (!outcome.ok) return;
+
+    const acceptanceQuestionCount = outcome.data.missing.filter((entry) =>
+      /(acceptance criteria|definition of done|signs off|sign-off)/i.test(entry),
+    ).length;
+    assert.equal(
+      acceptanceQuestionCount <= 1,
+      true,
+      'missing[] should keep a single highest-value acceptance/sign-off question when multiple prompts resolve the same uncertainty',
+    );
+    assert.equal(
+      outcome.data.missing.some((entry) => /change-order triggers/i.test(entry)),
+      true,
+      'distinct commercial protection questions must remain after dedupe',
+    );
+  } finally {
+    cleanup();
+  }
+});
+
 // ─── Report style: determinism + conditional modules (Prompt 3) ───────────────
 
 test('style: computeReportStyleSeed + selectReportStyle are deterministic', () => {
