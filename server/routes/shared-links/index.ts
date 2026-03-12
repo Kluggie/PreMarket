@@ -7,6 +7,7 @@ import { toCanonicalAppUrl } from '../../_lib/env.js';
 import { ApiError } from '../../_lib/errors.js';
 import { readJsonBody } from '../../_lib/http.js';
 import { newId, newToken } from '../../_lib/ids.js';
+import { appendProposalHistory } from '../../_lib/proposal-history.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 
 function buildSharedReportUrl(token: string) {
@@ -199,6 +200,26 @@ export default async function handler(req: any, res: any) {
         updatedAt: now,
       })
       .where(eq(schema.proposals.id, proposalId));
+
+    await appendProposalHistory(db, {
+      proposal: {
+        ...proposal,
+        lastSharedAt: now,
+        updatedAt: now,
+      },
+      actorUserId: auth.user.id,
+      actorRole: 'party_a',
+      milestone: 'share_link_created',
+      eventType: 'proposal.share_link.created',
+      sharedLinks: [created],
+      includeVersion: false,
+      createdAt: now,
+      requestId: context.requestId,
+      eventData: {
+        share_id: created.id,
+        mode,
+      },
+    });
 
     await logAuditEventBestEffort({
       eventType: 'share.link.created',

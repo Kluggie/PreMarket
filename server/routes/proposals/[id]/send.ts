@@ -9,6 +9,7 @@ import { readJsonBody } from '../../../_lib/http.js';
 import { newId, newToken } from '../../../_lib/ids.js';
 import { getResendConfig } from '../../../_lib/integrations.js';
 import { createNotificationEvent } from '../../../_lib/notifications.js';
+import { buildProposalHistoryQueries } from '../../../_lib/proposal-history.js';
 import { assertProposalOpenForNegotiation, buildPendingWonReset } from '../../../_lib/proposal-outcomes.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 
@@ -184,50 +185,78 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
 
     const sentAt = new Date();
     const pendingWonReset = buildPendingWonReset(existing, sentAt) || {};
-    const [updatedProposal] = await db
-      .update(schema.proposals)
-      .set({
-        status: 'sent',
-        draftStep: 4,
-        partyBEmail: recipientEmail,
-        sentAt,
-        ...pendingWonReset,
-        updatedAt: sentAt,
-      })
-      .where(eq(schema.proposals.id, existing.id))
-      .returning();
+    const nextProposal = {
+      ...existing,
+      status: 'sent',
+      draftStep: 4,
+      partyBEmail: recipientEmail,
+      sentAt,
+      lastSharedAt: createShareLink ? sentAt : existing.lastSharedAt || null,
+      ...pendingWonReset,
+      updatedAt: sentAt,
+    };
 
-    let sharedLink = null;
+    let updatedProposal = null;
+    let createdSharedLink = null;
 
     if (createShareLink) {
-      let created = null;
       for (let attempt = 0; attempt < 3; attempt += 1) {
         try {
-          const rows = await db
-            .insert(schema.sharedLinks)
-            .values({
-              id: newId('share'),
-              token: newToken(24),
-              userId: auth.user.id,
-              proposalId: updatedProposal.id,
-              recipientEmail,
-              status: 'active',
-              mode: 'workspace',
-              canView: true,
-              canEdit: true,
-              canEditConfidential: true,
-              canReevaluate: true,
-              canSendBack: true,
-              maxUses: 50,
-              uses: 0,
-              expiresAt: null,
-              idempotencyKey: null,
-              reportMetadata: {},
-              createdAt: sentAt,
-              updatedAt: sentAt,
-            })
-            .returning();
-          created = rows[0];
+          const sharedLinkValues = {
+            id: newId('share'),
+            token: newToken(24),
+            userId: auth.user.id,
+            proposalId: existing.id,
+            recipientEmail,
+            status: 'active',
+            mode: 'workspace',
+            canView: true,
+            canEdit: true,
+            canEditConfidential: true,
+            canReevaluate: true,
+            canSendBack: true,
+            maxUses: 50,
+            uses: 0,
+            expiresAt: null,
+            idempotencyKey: null,
+            reportMetadata: {},
+            createdAt: sentAt,
+            updatedAt: sentAt,
+          };
+          const { queries: historyQueries } = buildProposalHistoryQueries(db, {
+            proposal: nextProposal,
+            actorUserId: auth.user.id,
+            actorRole: 'party_a',
+            milestone: 'send',
+            eventType: 'proposal.sent',
+            eventData: {
+              recipient_email: recipientEmail,
+              has_shared_link: true,
+            },
+            sharedLinks: [sharedLinkValues],
+            createdAt: sentAt,
+            requestId: context.requestId,
+          });
+
+          const [proposalRows, sharedLinkRows] = await db.batch([
+            db
+              .update(schema.proposals)
+              .set({
+                status: nextProposal.status,
+                draftStep: nextProposal.draftStep,
+                partyBEmail: nextProposal.partyBEmail,
+                sentAt: nextProposal.sentAt,
+                lastSharedAt: nextProposal.lastSharedAt,
+                ...pendingWonReset,
+                updatedAt: nextProposal.updatedAt,
+              })
+              .where(eq(schema.proposals.id, existing.id))
+              .returning(),
+            db.insert(schema.sharedLinks).values(sharedLinkValues).returning(),
+            ...historyQueries,
+          ]);
+          updatedProposal = proposalRows[0];
+          createdSharedLink = sharedLinkRows[0];
           break;
         } catch (error) {
           if (String(error?.message || '').toLowerCase().includes('shared_links_token_unique')) {
@@ -237,47 +266,71 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         }
       }
 
-      if (!created) {
+      if (!createdSharedLink) {
         throw new ApiError(500, 'token_generation_failed', 'Unable to create shared link');
       }
-
-      await db
-        .update(schema.proposals)
-        .set({
-          lastSharedAt: sentAt,
-          updatedAt: sentAt,
-        })
-        .where(eq(schema.proposals.id, updatedProposal.id));
-
-      sharedLink = {
-        id: created.id,
-        token: created.token,
-        url: buildSharedReportUrl(created.token),
-        status: created.status,
-        mode: created.mode,
-        recipient_email: created.recipientEmail,
-        can_view: Boolean(created.canView),
-        can_edit: Boolean(created.canEdit),
-        can_edit_confidential: Boolean(created.canEditConfidential),
-        can_reevaluate: Boolean(created.canReevaluate),
-        can_send_back: Boolean(created.canSendBack),
-        max_uses: created.maxUses,
-        uses: created.uses,
-        expires_at: created.expiresAt,
-        created_date: created.createdAt,
-      };
 
       await logAuditEventBestEffort({
         eventType: 'share.link.created',
         userId: auth.user.id,
         req,
         metadata: {
-          share_id: created.id,
+          share_id: createdSharedLink.id,
           proposal_id: updatedProposal.id,
-          mode: created.mode,
+          mode: createdSharedLink.mode,
         },
       });
+    } else {
+      const { queries: historyQueries } = buildProposalHistoryQueries(db, {
+        proposal: nextProposal,
+        actorUserId: auth.user.id,
+        actorRole: 'party_a',
+        milestone: 'send',
+        eventType: 'proposal.sent',
+        eventData: {
+          recipient_email: recipientEmail,
+          has_shared_link: false,
+        },
+        createdAt: sentAt,
+        requestId: context.requestId,
+      });
+      const [proposalRows] = await db.batch([
+        db
+          .update(schema.proposals)
+          .set({
+            status: nextProposal.status,
+            draftStep: nextProposal.draftStep,
+            partyBEmail: nextProposal.partyBEmail,
+            sentAt: nextProposal.sentAt,
+            ...pendingWonReset,
+            updatedAt: nextProposal.updatedAt,
+          })
+          .where(eq(schema.proposals.id, existing.id))
+          .returning(),
+        ...historyQueries,
+      ]);
+      updatedProposal = proposalRows[0];
     }
+
+    const sharedLink = createdSharedLink
+      ? {
+          id: createdSharedLink.id,
+          token: createdSharedLink.token,
+          url: buildSharedReportUrl(createdSharedLink.token),
+          status: createdSharedLink.status,
+          mode: createdSharedLink.mode,
+          recipient_email: createdSharedLink.recipientEmail,
+          can_view: Boolean(createdSharedLink.canView),
+          can_edit: Boolean(createdSharedLink.canEdit),
+          can_edit_confidential: Boolean(createdSharedLink.canEditConfidential),
+          can_reevaluate: Boolean(createdSharedLink.canReevaluate),
+          can_send_back: Boolean(createdSharedLink.canSendBack),
+          max_uses: createdSharedLink.maxUses,
+          uses: createdSharedLink.uses,
+          expires_at: createdSharedLink.expiresAt,
+          created_date: createdSharedLink.createdAt,
+        }
+      : null;
 
     console.info(
       JSON.stringify({

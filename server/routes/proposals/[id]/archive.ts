@@ -3,6 +3,7 @@ import { ok } from '../../../_lib/api-response.js';
 import { requireUser } from '../../../_lib/auth.js';
 import { getDatabaseIdentitySnapshot, getDb, schema } from '../../../_lib/db/client.js';
 import { ApiError } from '../../../_lib/errors.js';
+import { buildProposalHistoryQueries } from '../../../_lib/proposal-history.js';
 import {
   getProposalAccessContext,
   getProposalArchivedAtForActor,
@@ -79,12 +80,29 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
       actorRole === PROPOSAL_PARTY_A
         ? { archivedByPartyAAt: now, updatedAt: now }
         : { archivedByPartyBAt: now, updatedAt: now };
+    const nextProposal = {
+      ...access.proposal,
+      ...archiveValues,
+    };
+    const { queries: historyQueries } = buildProposalHistoryQueries(db, {
+      proposal: nextProposal,
+      actorUserId: auth.user.id,
+      actorRole,
+      milestone: 'archive',
+      eventType: 'proposal.archived',
+      createdAt: now,
+      requestId: context.requestId,
+    });
 
-    const [updated] = await db
-      .update(schema.proposals)
-      .set(archiveValues)
-      .where(eq(schema.proposals.id, proposalId))
-      .returning();
+    const [updatedRows] = await db.batch([
+      db
+        .update(schema.proposals)
+        .set(archiveValues)
+        .where(eq(schema.proposals.id, proposalId))
+        .returning(),
+      ...historyQueries,
+    ]);
+    const [updated] = updatedRows;
 
     console.info(
       JSON.stringify({

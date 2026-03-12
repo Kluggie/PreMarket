@@ -269,6 +269,9 @@ export const proposals = pgTable(
     partyBOutcomeAt: timestamp('party_b_outcome_at', { withTimezone: true }),
     deletedByPartyAAt: timestamp('deleted_by_party_a_at', { withTimezone: true }),
     deletedByPartyBAt: timestamp('deleted_by_party_b_at', { withTimezone: true }),
+    reconstructedAt: timestamp('reconstructed_at', { withTimezone: true }),
+    reconstructedFromVersionId: text('reconstructed_from_version_id'),
+    recoverySource: text('recovery_source'),
     payload: jsonb('payload').notNull().default(sql`'{}'::jsonb`),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -309,6 +312,8 @@ export const proposals = pgTable(
     proposalsDeletedByPartyBAtIdx: index('proposals_deleted_by_party_b_at_idx').on(
       table.deletedByPartyBAt,
     ),
+    proposalsReconstructedAtIdx: index('proposals_reconstructed_at_idx').on(table.reconstructedAt),
+    proposalsRecoverySourceIdx: index('proposals_recovery_source_idx').on(table.recoverySource),
   }),
 );
 
@@ -585,6 +590,75 @@ export const proposalSnapshots = pgTable(
       table.createdAt,
     ),
     proposalSnapshotsUserIdx: index('proposal_snapshots_user_idx').on(table.userId, table.createdAt),
+  }),
+);
+
+export const proposalVersions = pgTable(
+  'proposal_versions',
+  {
+    id: text('id').primaryKey(),
+    proposalId: text('proposal_id').notNull(),
+    proposalUserId: text('proposal_user_id'),
+    actorUserId: text('actor_user_id'),
+    actorRole: text('actor_role'),
+    milestone: text('milestone').notNull().default('snapshot'),
+    status: text('status').notNull().default('active'),
+    snapshotData: jsonb('snapshot_data').notNull().default(sql`'{}'::jsonb`),
+    snapshotMeta: jsonb('snapshot_meta').notNull().default(sql`'{}'::jsonb`),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    proposalVersionsProposalIdx: index('proposal_versions_proposal_idx').on(
+      table.proposalId,
+      table.createdAt,
+    ),
+    proposalVersionsProposalUserIdx: index('proposal_versions_proposal_user_idx').on(
+      table.proposalUserId,
+      table.createdAt,
+    ),
+    proposalVersionsActorUserIdx: index('proposal_versions_actor_user_idx').on(
+      table.actorUserId,
+      table.createdAt,
+    ),
+    proposalVersionsMilestoneIdx: index('proposal_versions_milestone_idx').on(
+      table.milestone,
+      table.createdAt,
+    ),
+  }),
+);
+
+export const proposalEvents = pgTable(
+  'proposal_events',
+  {
+    id: text('id').primaryKey(),
+    proposalId: text('proposal_id').notNull(),
+    proposalUserId: text('proposal_user_id'),
+    actorUserId: text('actor_user_id'),
+    actorRole: text('actor_role'),
+    proposalVersionId: text('proposal_version_id'),
+    requestId: text('request_id'),
+    eventType: text('event_type').notNull(),
+    eventData: jsonb('event_data').notNull().default(sql`'{}'::jsonb`),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    proposalEventsProposalIdx: index('proposal_events_proposal_idx').on(
+      table.proposalId,
+      table.createdAt,
+    ),
+    proposalEventsProposalUserIdx: index('proposal_events_proposal_user_idx').on(
+      table.proposalUserId,
+      table.createdAt,
+    ),
+    proposalEventsActorUserIdx: index('proposal_events_actor_user_idx').on(
+      table.actorUserId,
+      table.createdAt,
+    ),
+    proposalEventsTypeIdx: index('proposal_events_type_idx').on(
+      table.eventType,
+      table.createdAt,
+    ),
+    proposalEventsVersionIdx: index('proposal_events_version_idx').on(table.proposalVersionId),
   }),
 );
 

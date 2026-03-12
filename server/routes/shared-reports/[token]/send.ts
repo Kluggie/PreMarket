@@ -7,6 +7,7 @@ import { ApiError } from '../../../_lib/errors.js';
 import { readJsonBody } from '../../../_lib/http.js';
 import { newId } from '../../../_lib/ids.js';
 import { getResendConfig } from '../../../_lib/integrations.js';
+import { appendProposalHistory } from '../../../_lib/proposal-history.js';
 import { assertProposalOpenForNegotiation, buildPendingWonReset } from '../../../_lib/proposal-outcomes.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 import { buildRecipientSafeEvaluationProjection } from '../../document-comparisons/_helpers.js';
@@ -628,17 +629,48 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       })
       .where(eq(schema.sharedLinks.id, link.id));
 
+    const proposalSentAt = new Date();
+    const proposalPendingWonReset = buildPendingWonReset(proposal, proposalSentAt) || {};
+
     await db
       .update(schema.proposals)
       .set({
         status: 'sent',
-        sentAt: new Date(),
+        sentAt: proposalSentAt,
         partyBEmail: recipientEmail,
-        lastSharedAt: new Date(),
-        ...(buildPendingWonReset(proposal, new Date()) || {}),
-        updatedAt: new Date(),
+        lastSharedAt: proposalSentAt,
+        ...proposalPendingWonReset,
+        updatedAt: proposalSentAt,
       })
       .where(eq(schema.proposals.id, proposal.id));
+
+    await appendProposalHistory(db, {
+      proposal: {
+        ...proposal,
+        status: 'sent',
+        sentAt: proposalSentAt,
+        partyBEmail: recipientEmail,
+        lastSharedAt: proposalSentAt,
+        ...proposalPendingWonReset,
+        updatedAt: proposalSentAt,
+      },
+      actorUserId: auth.user.id,
+      actorRole: 'party_a',
+      milestone: 'send',
+      eventType: 'proposal.sent',
+      sharedLinks: [
+        {
+          ...link,
+          recipientEmail,
+        },
+      ],
+      createdAt: proposalSentAt,
+      requestId: context.requestId,
+      eventData: {
+        recipient_email: recipientEmail,
+        source: 'shared_report_email',
+      },
+    });
 
     ok(res, 200, {
       sent: true,

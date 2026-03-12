@@ -7,6 +7,7 @@ import { ApiError } from '../../../_lib/errors.js';
 import { readJsonBody } from '../../../_lib/http.js';
 import { newId } from '../../../_lib/ids.js';
 import { createNotificationEvent } from '../../../_lib/notifications.js';
+import { appendProposalHistory } from '../../../_lib/proposal-history.js';
 import { assertProposalOpenForNegotiation, buildPendingWonReset } from '../../../_lib/proposal-outcomes.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 import { evaluateDocumentComparisonWithVertex } from '../../../_lib/vertex-evaluation.js';
@@ -1898,6 +1899,42 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
               }),
         });
         const savedEvaluation = firstRow(savedEvaluationRows);
+
+        await appendProposalHistory(db, {
+          proposal,
+          actorUserId: user.id,
+          actorRole: 'party_a',
+          milestone: 'evaluate',
+          eventType: 'proposal.evaluated',
+          documentComparison: updated,
+          evaluations: savedEvaluation
+            ? [
+                {
+                  id: savedEvaluation.id,
+                  proposalId: proposal.id,
+                  userId: proposal.userId,
+                  source: 'document_comparison_vertex',
+                  status: 'completed',
+                  score: evaluation.score,
+                  summary: evaluation.summary,
+                  inputSharedHash: savedEvaluation.inputSharedHash,
+                  inputConfHash: savedEvaluation.inputConfHash,
+                  inputSharedLen: savedEvaluation.inputSharedLen,
+                  inputConfLen: savedEvaluation.inputConfLen,
+                  inputVersion: savedEvaluation.inputVersion,
+                  result: evaluation,
+                  createdAt: now,
+                  updatedAt: now,
+                },
+              ]
+            : [],
+          createdAt: now,
+          requestId: context.requestId,
+          eventData: {
+            source: 'document_comparison_vertex',
+            evaluation_score: evaluation.score,
+          },
+        });
 
         try {
           await createNotificationEvent({

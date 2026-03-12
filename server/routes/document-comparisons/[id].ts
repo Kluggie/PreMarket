@@ -4,6 +4,7 @@ import { requireUser } from '../../_lib/auth.js';
 import { getDb, schema } from '../../_lib/db/client.js';
 import { ApiError } from '../../_lib/errors.js';
 import { readJsonBody } from '../../_lib/http.js';
+import { appendProposalHistory } from '../../_lib/proposal-history.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 import {
   htmlToEditorText,
@@ -622,6 +623,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     }
 
     if (existing.proposalId) {
+      const proposalUpdatedAt = new Date();
       await db
         .update(schema.proposals)
         .set({
@@ -630,9 +632,35 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
           draftStep: updated.draftStep,
           proposalType: 'document_comparison',
           documentComparisonId: updated.id,
-          updatedAt: new Date(),
+          updatedAt: proposalUpdatedAt,
         })
         .where(eq(schema.proposals.id, existing.proposalId));
+
+      if (proposal) {
+        await appendProposalHistory(db, {
+          proposal: {
+            ...proposal,
+            title: updated.title,
+            status: updated.status === 'evaluated' ? 'under_verification' : 'draft',
+            draftStep: updated.draftStep,
+            proposalType: 'document_comparison',
+            documentComparisonId: updated.id,
+            updatedAt: proposalUpdatedAt,
+          },
+          actorUserId: auth?.user?.id || proposal.userId,
+          actorRole: editableSide === 'b' ? 'party_b' : 'party_a',
+          milestone: 'update',
+          eventType: 'proposal.updated',
+          documentComparison: updated,
+          createdAt: proposalUpdatedAt,
+          requestId: context.requestId,
+          eventData: {
+            source: 'document_comparison',
+            access_mode: accessMode,
+            editable_side: editableSide,
+          },
+        });
+      }
     }
 
     const mappedUpdated = mapComparisonRow(updated);

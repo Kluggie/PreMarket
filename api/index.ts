@@ -67,6 +67,7 @@ import accountProfileHandler from '../server/routes/account/profile.js';
 import accountOrganizationsHandler from '../server/routes/account/organizations.js';
 import accountOrganizationsIdHandler from '../server/routes/account/organizations/[id].js';
 import accountEmailConfigStatusHandler from '../server/routes/account/email-config-status.js';
+import adminProposalRecoveryHandler from '../server/routes/admin/proposals/recovery.js';
 import accountVerificationStatusHandler from '../server/routes/account/verification/status.js';
 import accountVerificationSendHandler from '../server/routes/account/verification/send.js';
 import accountVerificationConfirmHandler from '../server/routes/account/verification/confirm.js';
@@ -289,6 +290,10 @@ export default async function handler(req: any, res: any) {
 
   if (pathname === '/api/contact' && method === 'POST') {
     return contactHandler(req, res);
+  }
+
+  if (pathname === '/api/admin/proposals/recovery' && (method === 'GET' || method === 'POST')) {
+    return adminProposalRecoveryHandler(req, res);
   }
 
   if (pathname === '/api/beta-signups/stats' && method === 'GET') {

@@ -6,6 +6,7 @@ import { getDatabaseIdentitySnapshot, getDb, schema } from '../../_lib/db/client
 import { ApiError } from '../../_lib/errors.js';
 import { readJsonBody } from '../../_lib/http.js';
 import { createNotificationEvent } from '../../_lib/notifications.js';
+import { buildProposalHistoryQueries } from '../../_lib/proposal-history.js';
 import {
   getProposalAccessContext,
   getProposalArchivedAtForActor,
@@ -219,18 +220,57 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
           throw new ApiError(403, 'forbidden', 'Only the proposer can delete an unsent draft');
         }
 
-        if (existing.documentComparisonId) {
-          await db
-            .delete(schema.documentComparisons)
-            .where(
-              and(
-                eq(schema.documentComparisons.id, existing.documentComparisonId),
-                eq(schema.documentComparisons.userId, auth.user.id),
-              ),
-            );
-        }
+        const linkedComparison =
+          existing.documentComparisonId
+            ? await db
+                .select()
+                .from(schema.documentComparisons)
+                .where(
+                  and(
+                    eq(schema.documentComparisons.id, existing.documentComparisonId),
+                    eq(schema.documentComparisons.userId, auth.user.id),
+                  ),
+                )
+                .limit(1)
+                .then((rows) => rows[0] || null)
+            : null;
 
-        await db.delete(schema.proposals).where(eq(schema.proposals.id, proposalId));
+        const { queries: historyQueries } = buildProposalHistoryQueries(db, {
+          proposal: {
+            ...existing,
+            updatedAt: now,
+          },
+          actorUserId: auth.user.id,
+          actorRole,
+          milestone: 'delete_hard',
+          eventType: 'proposal.deleted.hard',
+          eventData: {
+            document_comparison_id: existing.documentComparisonId || null,
+          },
+          documentComparison: linkedComparison,
+          createdAt: now,
+          requestId: context.requestId,
+          snapshotMeta: {
+            deletion_mode: 'hard',
+          },
+        });
+
+        const queries = [];
+        if (linkedComparison) {
+          queries.push(
+            db
+              .delete(schema.documentComparisons)
+              .where(
+                and(
+                  eq(schema.documentComparisons.id, existing.documentComparisonId),
+                  eq(schema.documentComparisons.userId, auth.user.id),
+                ),
+              ),
+          );
+        }
+        queries.push(db.delete(schema.proposals).where(eq(schema.proposals.id, proposalId)));
+        queries.push(...historyQueries);
+        await db.batch(queries);
         ok(res, 200, { deleted: true, mode: 'hard' });
         return;
       }
@@ -246,10 +286,33 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
               updatedAt: now,
             };
 
-      await db
-        .update(schema.proposals)
-        .set(deleteValues)
-        .where(eq(schema.proposals.id, proposalId));
+      const updatedProposal = {
+        ...existing,
+        ...deleteValues,
+      };
+      const { queries: historyQueries } = buildProposalHistoryQueries(db, {
+        proposal: updatedProposal,
+        actorUserId: auth.user.id,
+        actorRole,
+        milestone: 'delete_soft',
+        eventType: 'proposal.deleted.soft',
+        eventData: {
+          deletion_mode: 'soft',
+        },
+        createdAt: now,
+        requestId: context.requestId,
+        snapshotMeta: {
+          deletion_mode: 'soft',
+        },
+      });
+
+      await db.batch([
+        db
+          .update(schema.proposals)
+          .set(deleteValues)
+          .where(eq(schema.proposals.id, proposalId)),
+        ...historyQueries,
+      ]);
 
       ok(res, 200, {
         deleted: true,
@@ -367,11 +430,33 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
     const previousStatus = String(existing.status || '').trim().toLowerCase();
     const nextStatus = String(updateValues.status || '').trim().toLowerCase();
 
-    const [updated] = await db
-      .update(schema.proposals)
-      .set(updateValues)
-      .where(eq(schema.proposals.id, proposalId))
-      .returning();
+    const projectedProposal = {
+      ...existing,
+      ...updateValues,
+    };
+    const { queries: historyQueries } = buildProposalHistoryQueries(db, {
+      proposal: projectedProposal,
+      actorUserId: auth.user.id,
+      actorRole: PROPOSAL_PARTY_A,
+      milestone: 'update',
+      eventType: 'proposal.updated',
+      eventData: {
+        previous_status: previousStatus || null,
+        next_status: nextStatus || null,
+      },
+      createdAt: updateValues.updatedAt,
+      requestId: context.requestId,
+    });
+
+    const [updatedRows] = await db.batch([
+      db
+        .update(schema.proposals)
+        .set(updateValues)
+        .where(eq(schema.proposals.id, proposalId))
+        .returning(),
+      ...historyQueries,
+    ]);
+    const [updated] = updatedRows;
 
     console.info(
       JSON.stringify({

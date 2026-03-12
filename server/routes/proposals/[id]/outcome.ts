@@ -7,6 +7,7 @@ import { sendCategorizedEmail } from '../../../_lib/email-delivery.js';
 import { ApiError } from '../../../_lib/errors.js';
 import { readJsonBody } from '../../../_lib/http.js';
 import { createNotificationEvent } from '../../../_lib/notifications.js';
+import { buildProposalHistoryQueries } from '../../../_lib/proposal-history.js';
 import {
   buildContinueNegotiationReset,
   buildOutcomeMutation,
@@ -234,11 +235,29 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         );
       }
 
-      const [updated] = await db
-        .update(schema.proposals)
-        .set(buildContinueNegotiationReset(existing, now))
-        .where(eq(schema.proposals.id, proposalId))
-        .returning();
+      const continueValues = buildContinueNegotiationReset(existing, now);
+      const nextProposal = {
+        ...existing,
+        ...continueValues,
+      };
+      const { queries: historyQueries } = buildProposalHistoryQueries(db, {
+        proposal: nextProposal,
+        actorUserId: auth.user.id,
+        actorRole,
+        milestone: 'continue_negotiation',
+        eventType: 'proposal.outcome.continue_negotiation',
+        createdAt: now,
+        requestId: context.requestId,
+      });
+      const [updatedRows] = await db.batch([
+        db
+          .update(schema.proposals)
+          .set(continueValues)
+          .where(eq(schema.proposals.id, proposalId))
+          .returning(),
+        ...historyQueries,
+      ]);
+      const [updated] = updatedRows;
 
       await logAuditEventBestEffort({
         eventType: 'proposal.outcome.continue_negotiation',
@@ -278,11 +297,49 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
       return;
     }
 
-    const [updated] = await db
-      .update(schema.proposals)
-      .set(buildOutcomeMutation(existing, actorRole, requestedAction, now))
-      .where(eq(schema.proposals.id, proposalId))
-      .returning();
+    const outcomeValues = buildOutcomeMutation(existing, actorRole, requestedAction, now);
+    const nextProposal = {
+      ...existing,
+      ...outcomeValues,
+    };
+    const nextOutcomeState = getProposalOutcomeState(nextProposal);
+    const historyEventType =
+      requestedAction === PROPOSAL_OUTCOME_LOST
+        ? 'proposal.outcome.lost'
+        : nextOutcomeState.state === PROPOSAL_OUTCOME_PENDING_WON
+          ? 'proposal.outcome.won_requested'
+          : nextOutcomeState.state === PROPOSAL_OUTCOME_WON
+            ? 'proposal.outcome.won_confirmed'
+            : 'proposal.outcome.updated';
+    const historyMilestone =
+      requestedAction === PROPOSAL_OUTCOME_LOST
+        ? 'lost'
+        : nextOutcomeState.state === PROPOSAL_OUTCOME_PENDING_WON
+          ? 'won_requested'
+          : nextOutcomeState.state === PROPOSAL_OUTCOME_WON
+            ? 'won_confirmed'
+            : 'outcome_update';
+    const { queries: historyQueries } = buildProposalHistoryQueries(db, {
+      proposal: nextProposal,
+      actorUserId: auth.user.id,
+      actorRole,
+      milestone: historyMilestone,
+      eventType: historyEventType,
+      eventData: {
+        requested_action: requestedAction,
+      },
+      createdAt: now,
+      requestId: context.requestId,
+    });
+    const [updatedRows] = await db.batch([
+      db
+        .update(schema.proposals)
+        .set(outcomeValues)
+        .where(eq(schema.proposals.id, proposalId))
+        .returning(),
+      ...historyQueries,
+    ]);
+    const [updated] = updatedRows;
 
     const nextOutcome = getProposalOutcomeState(updated);
     const actionUrl = `/ProposalDetail?id=${encodeURIComponent(updated.id)}`;

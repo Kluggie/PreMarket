@@ -5,6 +5,7 @@ import { getDb, schema } from '../../_lib/db/client.js';
 import { ApiError } from '../../_lib/errors.js';
 import { readJsonBody } from '../../_lib/http.js';
 import { newId } from '../../_lib/ids.js';
+import { appendProposalHistory } from '../../_lib/proposal-history.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 import {
   htmlToEditorText,
@@ -242,6 +243,28 @@ export default async function handler(req: any, res: any) {
           updatedAt: now,
         })
         .where(eq(schema.proposals.id, linkedProposalId));
+
+      const [proposal] = await db
+        .select()
+        .from(schema.proposals)
+        .where(eq(schema.proposals.id, linkedProposalId))
+        .limit(1);
+
+      if (proposal) {
+        await appendProposalHistory(db, {
+          proposal,
+          actorUserId: auth.user.id,
+          actorRole: 'party_a',
+          milestone: 'create',
+          eventType: 'proposal.created',
+          documentComparison: created,
+          createdAt: now,
+          requestId: context.requestId,
+          eventData: {
+            source: 'document_comparison',
+          },
+        });
+      }
     }
 
     ok(res, 201, {

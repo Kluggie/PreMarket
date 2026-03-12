@@ -1,6 +1,11 @@
-import { and, desc, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { getDb, schema } from './db/client.js';
 import { ApiError } from './errors.js';
+import {
+  getProposalActorRoleFromVisibility,
+  getRecipientSharedProposalIds,
+  listRecipientSharedReportLinks,
+} from './proposal-visibility.js';
 
 export const PROPOSAL_OUTCOME_WON = 'won';
 export const PROPOSAL_OUTCOME_LOST = 'lost';
@@ -107,23 +112,28 @@ export function getProposalOutcomeState(proposal) {
 
 export function getProposalActorRole(proposal, currentUser, options = {}) {
   const currentUserId = asText(currentUser?.id || currentUser?.sub);
-  const currentEmail = normalizeEmail(currentUser?.email);
-  const partyAEmail = normalizeEmail(proposal?.partyAEmail);
-  const partyBEmail = normalizeEmail(proposal?.partyBEmail);
+  const sharedReceivedProposalIdSet =
+    options.sharedReceivedProposalIdSet instanceof Set
+      ? options.sharedReceivedProposalIdSet
+      : new Set(
+          Array.isArray(options.sharedReceivedProposalIds) ? options.sharedReceivedProposalIds : [],
+        );
   const authorizedRecipientUserId = asText(options.authorizedRecipientUserId);
 
-  const isPartyA =
-    Boolean(currentUserId && asText(proposal?.userId) === currentUserId) ||
-    Boolean(currentEmail && partyAEmail && partyAEmail === currentEmail);
-  if (isPartyA) {
-    return PROPOSAL_PARTY_A;
+  const actorRole = getProposalActorRoleFromVisibility(
+    proposal,
+    currentUser,
+    sharedReceivedProposalIdSet,
+  );
+  if (actorRole) {
+    return actorRole;
   }
 
-  const isPartyB =
-    Boolean(currentEmail && partyBEmail && partyBEmail === currentEmail) ||
-    Boolean(currentUserId && authorizedRecipientUserId && authorizedRecipientUserId === currentUserId);
-
-  return isPartyB ? PROPOSAL_PARTY_B : null;
+  return Boolean(
+    currentUserId && authorizedRecipientUserId && authorizedRecipientUserId === currentUserId,
+  )
+    ? PROPOSAL_PARTY_B
+    : null;
 }
 
 export function isProposalDeletedForActor(proposal, actorRole) {
@@ -382,28 +392,12 @@ export async function getProposalAccessContext({
     throw new ApiError(404, 'proposal_not_found', 'Proposal not found');
   }
 
-  const currentUserId = asText(currentUser?.id || currentUser?.sub);
-  let authorizedRecipientUserId = null;
-
-  if (currentUserId) {
-    const [authorizedLink] = await db
-      .select({
-        authorizedUserId: schema.sharedLinks.authorizedUserId,
-      })
-      .from(schema.sharedLinks)
-      .where(
-        and(
-          eq(schema.sharedLinks.proposalId, proposalId),
-          eq(schema.sharedLinks.authorizedUserId, currentUserId),
-        ),
-      )
-      .orderBy(desc(schema.sharedLinks.updatedAt), desc(schema.sharedLinks.createdAt))
-      .limit(1);
-    authorizedRecipientUserId = asText(authorizedLink?.authorizedUserId) || null;
-  }
+  const recipientSharedLinks = await listRecipientSharedReportLinks(db, currentUser);
+  const sharedReceivedProposalIds = getRecipientSharedProposalIds(recipientSharedLinks);
+  const sharedReceivedProposalIdSet = new Set(sharedReceivedProposalIds);
 
   const actorRole = getProposalActorRole(proposal, currentUser, {
-    authorizedRecipientUserId,
+    sharedReceivedProposalIdSet,
   });
 
   if (!actorRole) {
@@ -417,6 +411,6 @@ export async function getProposalAccessContext({
   return {
     proposal,
     actorRole,
-    authorizedRecipientUserId,
+    sharedReceivedProposalIds,
   };
 }

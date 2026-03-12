@@ -72,6 +72,8 @@ export async function resetTables() {
       shared_link_responses,
       snapshot_access,
       proposal_snapshots,
+      proposal_versions,
+      proposal_events,
       proposal_evaluations,
       document_comparison_coach_cache,
       proposal_responses,

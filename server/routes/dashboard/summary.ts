@@ -1,13 +1,16 @@
-import { and, eq, ilike, inArray, isNull, ne, or } from 'drizzle-orm';
+import { eq, or } from 'drizzle-orm';
 import { ok } from '../../_lib/api-response.js';
 import { requireUser } from '../../_lib/auth.js';
 import { getDb, schema } from '../../_lib/db/client.js';
 import { getProposalOutcomeState } from '../../_lib/proposal-outcomes.js';
+import {
+  buildProposalVisibilityScopes,
+  getRecipientSharedProposalIds,
+  isProposalOwnedByCurrentUser,
+  isProposalReceivedByCurrentUser,
+  listRecipientSharedReportLinks,
+} from '../../_lib/proposal-visibility.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
-
-function normalizeEmail(value: unknown) {
-  return typeof value === 'string' ? value.trim().toLowerCase() : '';
-}
 
 export default async function handler(req: any, res: any) {
   await withApiRoute(req, res, '/api/dashboard/summary', async (context) => {
@@ -20,57 +23,16 @@ export default async function handler(req: any, res: any) {
     context.userId = auth.user.id;
 
     const db = getDb();
-    const currentEmail = normalizeEmail(auth.user.email);
-    const recipientSharedLinks = currentEmail
-      ? await db
-          .select({
-            proposalId: schema.sharedLinks.proposalId,
-          })
-          .from(schema.sharedLinks)
-          .where(
-            and(
-              eq(schema.sharedLinks.mode, 'shared_report'),
-              ilike(schema.sharedLinks.recipientEmail, currentEmail),
-              ne(schema.sharedLinks.userId, auth.user.id),
-            ),
-          )
-      : [];
-    const sharedReceivedProposalIds = Array.from(
-      new Set(
-        recipientSharedLinks
-          .map((row) => String(row.proposalId || '').trim())
-          .filter(Boolean),
-      ),
-    );
+    const recipientSharedLinks = await listRecipientSharedReportLinks(db, auth.user);
+    const sharedReceivedProposalIds = getRecipientSharedProposalIds(recipientSharedLinks);
     const sharedReceivedProposalIdSet = new Set(sharedReceivedProposalIds);
-    const sharedRecipientScope = sharedReceivedProposalIds.length > 0
-      ? inArray(schema.proposals.id, sharedReceivedProposalIds)
-      : null;
-    const ownerScope = currentEmail
-      ? or(
-          eq(schema.proposals.userId, auth.user.id),
-          ilike(schema.proposals.partyAEmail, currentEmail),
-        )
-      : eq(schema.proposals.userId, auth.user.id);
-    const ownerVisibleScope = and(ownerScope, isNull(schema.proposals.deletedByPartyAAt));
-    const ownerActiveScope = and(ownerVisibleScope, isNull(schema.proposals.archivedByPartyAAt));
-    const recipientScope = currentEmail
-      ? sharedRecipientScope
-        ? or(
-            ilike(schema.proposals.partyBEmail, currentEmail),
-            sharedRecipientScope,
-          )
-        : ilike(schema.proposals.partyBEmail, currentEmail)
-      : eq(schema.proposals.userId, '__no_recipient_scope__');
-    const recipientVisibleScope = and(recipientScope, isNull(schema.proposals.deletedByPartyBAt));
-    const recipientActiveScope = and(
-      recipientVisibleScope,
-      isNull(schema.proposals.archivedByPartyBAt),
+    const { hasUserEmail, ownerTabScope, recipientTabScope } = buildProposalVisibilityScopes(
+      auth.user,
+      sharedReceivedProposalIds,
+      { isArchivedTab: false },
     );
 
-    const whereClause = currentEmail
-      ? or(ownerActiveScope, recipientActiveScope)
-      : ownerActiveScope;
+    const whereClause = hasUserEmail ? or(ownerTabScope, recipientTabScope) : ownerTabScope;
 
     const rows = await db
       .select({
@@ -101,17 +63,8 @@ export default async function handler(req: any, res: any) {
       const status = String(row.status || '').trim().toLowerCase();
       const finalOutcome = getProposalOutcomeState(row).finalStatus;
       const isSent = Boolean(row.sentAt);
-      const isOwner =
-        row.userId === auth.user.id ||
-        Boolean(currentEmail && normalizeEmail(row.partyAEmail) === currentEmail);
-      const partyBEmail = normalizeEmail(row.partyBEmail);
-      const isReceived = Boolean(
-        !isOwner &&
-        (
-          (isSent && currentEmail && partyBEmail && partyBEmail === currentEmail) ||
-          sharedReceivedProposalIdSet.has(String(row.id || '').trim())
-        ),
-      );
+      const isOwner = isProposalOwnedByCurrentUser(row, auth.user);
+      const isReceived = isProposalReceivedByCurrentUser(row, auth.user, sharedReceivedProposalIdSet);
       // sent_at is the authoritative signal for "sent". Any unsent proposal you
       // own stays in Drafts regardless of status (including under_verification,
       // needs_changes, etc.) until an actual email is sent and sent_at is set.

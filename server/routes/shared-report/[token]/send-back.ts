@@ -7,6 +7,7 @@ import { ApiError } from '../../../_lib/errors.js';
 import { newId, newToken } from '../../../_lib/ids.js';
 import { getResendConfig } from '../../../_lib/integrations.js';
 import { createNotificationEvent } from '../../../_lib/notifications.js';
+import { appendProposalHistory } from '../../../_lib/proposal-history.js';
 import { assertProposalOpenForNegotiation, buildPendingWonReset } from '../../../_lib/proposal-outcomes.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 import {
@@ -394,7 +395,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         })
         .where(eq(schema.proposals.id, resolved.proposal.id));
 
-      await resolved.db.insert(schema.proposalEvaluations).values({
+      const evaluationValues = {
         id: newId('eval'),
         proposalId: resolved.proposal.id,
         userId: resolved.link.userId,
@@ -418,6 +419,40 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         },
         createdAt: now,
         updatedAt: now,
+      };
+      await resolved.db.insert(schema.proposalEvaluations).values(evaluationValues);
+
+      await appendProposalHistory(resolved.db, {
+        proposal: {
+          ...resolved.proposal,
+          status: 'received',
+          receivedAt: now,
+          ...pendingWonReset,
+          updatedAt: now,
+        },
+        actorUserId: auth.user.id,
+        actorRole: RECIPIENT_ROLE,
+        milestone: 'send_back',
+        eventType: 'proposal.send_back',
+        documentComparison: comparisonId && resolved.comparison
+          ? {
+              ...resolved.comparison,
+              docBText: updatedSharedText || resolved.comparison.docBText,
+              publicReport: Object.keys(publicReport).length > 0 ? publicReport : resolved.comparison.publicReport,
+              evaluationResult: Object.keys(evaluationResult).length > 0
+                ? evaluationResult
+                : resolved.comparison.evaluationResult,
+              updatedAt: now,
+            }
+          : null,
+        recipientRevisions: [sentRevision || currentDraft],
+        evaluations: [evaluationValues],
+        createdAt: now,
+        requestId: context.requestId,
+        eventData: {
+          revision_id: sentRevision?.id || currentDraft.id,
+          evaluation_run_id: latestEvaluation?.id || null,
+        },
       });
     }
 

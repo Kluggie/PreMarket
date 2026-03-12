@@ -5,6 +5,7 @@ import { ApiError } from '../../../_lib/errors.js';
 import { readJsonBody } from '../../../_lib/http.js';
 import { newId } from '../../../_lib/ids.js';
 import { createNotificationEvent } from '../../../_lib/notifications.js';
+import { buildProposalHistoryQueries } from '../../../_lib/proposal-history.js';
 import { assertProposalOpenForNegotiation, buildPendingWonReset } from '../../../_lib/proposal-outcomes.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 
@@ -167,68 +168,72 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     assertProposalOpenForNegotiation(proposalForOutcome);
     const pendingWonReset = buildPendingWonReset(proposalForOutcome, now) || {};
 
+    const finalProposalValues: Record<string, unknown> = {
+      ...proposalForOutcome,
+      ...pendingWonReset,
+      updatedAt: now,
+    };
+    const batchQueries = [];
+    let evaluationResultIndex = -1;
+
     if (normalizedRows.length > 0) {
-      await db
-        .delete(schema.proposalResponses)
-        .where(
-          and(
-            eq(schema.proposalResponses.proposalId, link.proposalId),
-            eq(schema.proposalResponses.userId, link.userId),
-            eq(schema.proposalResponses.enteredByParty, 'b'),
+      const proposalResponseValues = normalizedRows.map((row) => ({
+        id: newId('response'),
+        proposalId: link.proposalId,
+        userId: link.userId,
+        questionId: row.questionId,
+        sectionId: row.sectionId,
+        value: row.value,
+        valueType: row.valueType,
+        rangeMin: row.rangeMin,
+        rangeMax: row.rangeMax,
+        visibility: row.visibility,
+        claimType: 'counterparty_claim',
+        enteredByParty: 'b',
+        createdAt: now,
+        updatedAt: now,
+      }));
+      const sharedLinkResponseValues = normalizedRows.map((row) => ({
+        id: newId('share_resp'),
+        sharedLinkId: link.id,
+        proposalId: link.proposalId,
+        questionId: row.questionId,
+        value: row.value,
+        valueType: row.valueType,
+        rangeMin: row.rangeMin,
+        rangeMax: row.rangeMax,
+        visibility: row.visibility,
+        enteredByParty: 'b',
+        responderEmail: responderEmail || null,
+        metadata: row.metadata || {},
+        createdAt: now,
+        updatedAt: now,
+      }));
+      batchQueries.push(
+        db
+          .delete(schema.proposalResponses)
+          .where(
+            and(
+              eq(schema.proposalResponses.proposalId, link.proposalId),
+              eq(schema.proposalResponses.userId, link.userId),
+              eq(schema.proposalResponses.enteredByParty, 'b'),
+            ),
           ),
-        );
-
-      await db.insert(schema.proposalResponses).values(
-        normalizedRows.map((row) => ({
-          id: newId('response'),
-          proposalId: link.proposalId,
-          userId: link.userId,
-          questionId: row.questionId,
-          sectionId: row.sectionId,
-          value: row.value,
-          valueType: row.valueType,
-          rangeMin: row.rangeMin,
-          rangeMax: row.rangeMax,
-          visibility: row.visibility,
-          claimType: 'counterparty_claim',
-          enteredByParty: 'b',
-          createdAt: now,
-          updatedAt: now,
-        })),
       );
-
-      await db
-        .delete(schema.sharedLinkResponses)
-        .where(eq(schema.sharedLinkResponses.sharedLinkId, link.id));
-
-      await db.insert(schema.sharedLinkResponses).values(
-        normalizedRows.map((row) => ({
-          id: newId('share_resp'),
-          sharedLinkId: link.id,
-          proposalId: link.proposalId,
-          questionId: row.questionId,
-          value: row.value,
-          valueType: row.valueType,
-          rangeMin: row.rangeMin,
-          rangeMax: row.rangeMax,
-          visibility: row.visibility,
-          enteredByParty: 'b',
-          responderEmail: responderEmail || null,
-          metadata: row.metadata || {},
-          createdAt: now,
-          updatedAt: now,
-        })),
+      if (proposalResponseValues.length > 0) {
+        batchQueries.push(db.insert(schema.proposalResponses).values(proposalResponseValues));
+      }
+      batchQueries.push(
+        db
+          .delete(schema.sharedLinkResponses)
+          .where(eq(schema.sharedLinkResponses.sharedLinkId, link.id)),
       );
+      if (sharedLinkResponseValues.length > 0) {
+        batchQueries.push(db.insert(schema.sharedLinkResponses).values(sharedLinkResponseValues));
+      }
 
-      await db
-        .update(schema.proposals)
-        .set({
-          status: 'received',
-          receivedAt: now,
-          ...pendingWonReset,
-          updatedAt: now,
-        })
-        .where(eq(schema.proposals.id, link.proposalId));
+      finalProposalValues.status = 'received';
+      finalProposalValues.receivedAt = now;
 
       try {
         const [proposal] = await db
@@ -267,41 +272,34 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     }
 
     let evaluation = null;
+    let evaluationInsertValues = null;
     if (shouldRunReevaluation) {
       const result = buildReevaluationResult(link.proposalId, normalizedRows);
-      const [saved] = await db
-        .insert(schema.proposalEvaluations)
-        .values({
-          id: newId('eval'),
-          proposalId: link.proposalId,
-          userId: link.userId,
-          source: 'shared_link',
-          status: 'completed',
-          score: result.score,
-          summary: result.summary,
-          result,
-          createdAt: now,
-          updatedAt: now,
-        })
-        .returning();
-
-      await db
-        .update(schema.proposals)
-        .set({
-          status: 're_evaluated',
-          evaluatedAt: now,
-          ...pendingWonReset,
-          updatedAt: now,
-        })
-        .where(eq(schema.proposals.id, link.proposalId));
-
+      evaluationInsertValues = {
+        id: newId('eval'),
+        proposalId: link.proposalId,
+        userId: link.userId,
+        source: 'shared_link',
+        status: 'completed',
+        score: result.score,
+        summary: result.summary,
+        result,
+        createdAt: now,
+        updatedAt: now,
+      };
+      batchQueries.push(
+        db.insert(schema.proposalEvaluations).values(evaluationInsertValues).returning(),
+      );
+      evaluationResultIndex = batchQueries.length - 1;
+      finalProposalValues.status = 're_evaluated';
+      finalProposalValues.evaluatedAt = now;
       evaluation = {
-        id: saved.id,
-        score: saved.score,
-        status: saved.status,
-        summary: saved.summary,
-        result: saved.result || {},
-        created_date: saved.createdAt,
+        id: evaluationInsertValues.id,
+        score: evaluationInsertValues.score,
+        status: evaluationInsertValues.status,
+        summary: evaluationInsertValues.summary,
+        result: evaluationInsertValues.result || {},
+        created_date: evaluationInsertValues.createdAt,
       };
 
       try {
@@ -319,7 +317,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
           userId: link.userId,
           eventType: 'evaluation_update',
           emailCategory: 'proposal_reevaluation_complete',
-          dedupeKey: `evaluation_update:${link.proposalId}:${saved.id}`,
+          dedupeKey: `evaluation_update:${link.proposalId}:${evaluationInsertValues.id}`,
           title: 'Evaluation complete',
           message: `A re-evaluation completed for "${proposal?.title || 'your proposal'}".`,
           actionUrl: `/ProposalDetail?id=${encodeURIComponent(link.proposalId)}`,
@@ -327,7 +325,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
           emailText: [
             `A re-evaluation has completed for "${proposal?.title || 'your proposal'}".`,
             '',
-            `Score: ${saved.score ?? 'N/A'}`,
+            `Score: ${evaluationInsertValues.score ?? 'N/A'}`,
             '',
             'Sign in to review the updated report.',
           ].join('\n'),
@@ -336,16 +334,65 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         // Best-effort notifications should not block shared-link responses.
       }
     }
+    const { queries: historyQueries } = buildProposalHistoryQueries(db, {
+      proposal: finalProposalValues,
+      actorUserId: link.userId,
+      actorRole: 'party_b',
+      milestone: shouldRunReevaluation ? 'receive_and_evaluate' : 'receive',
+      eventType: shouldRunReevaluation ? 'proposal.re_evaluated' : 'proposal.received',
+      eventData: {
+        saved_responses: normalizedRows.length,
+        run_evaluation: shouldRunReevaluation,
+        responder_email: responderEmail || null,
+      },
+      evaluations: evaluationInsertValues ? [evaluationInsertValues] : [],
+      createdAt: now,
+      requestId: context.requestId,
+    });
 
-    const [updatedLink] = await db
-      .update(schema.sharedLinks)
-      .set({
-        uses: sql`${schema.sharedLinks.uses} + 1`,
-        lastUsedAt: now,
-        updatedAt: now,
-      })
-      .where(eq(schema.sharedLinks.id, link.id))
-      .returning();
+    const proposalResultIndex = batchQueries.length;
+    const linkResultIndex = batchQueries.length + 1;
+    const batchResults = await db.batch([
+      ...batchQueries,
+      db
+        .update(schema.proposals)
+        .set({
+          status: finalProposalValues.status as any,
+          receivedAt: finalProposalValues.receivedAt as any,
+          evaluatedAt: finalProposalValues.evaluatedAt as any,
+          ...pendingWonReset,
+          updatedAt: now,
+        })
+        .where(eq(schema.proposals.id, link.proposalId))
+        .returning(),
+      db
+        .update(schema.sharedLinks)
+        .set({
+          uses: sql`${schema.sharedLinks.uses} + 1`,
+          lastUsedAt: now,
+          updatedAt: now,
+        })
+        .where(eq(schema.sharedLinks.id, link.id))
+        .returning(),
+      ...historyQueries,
+    ].filter(Boolean));
+    const updatedProposalRows = batchResults[proposalResultIndex];
+    const maybeSavedEvaluationRows = evaluationResultIndex >= 0 ? batchResults[evaluationResultIndex] : null;
+    const updatedLinkRows = batchResults[linkResultIndex];
+    const updatedProposal = updatedProposalRows?.[0] || null;
+    const savedEvaluationRow =
+      Array.isArray(maybeSavedEvaluationRows) && maybeSavedEvaluationRows.length > 0 && maybeSavedEvaluationRows[0]?.id
+        ? maybeSavedEvaluationRows[0]
+        : null;
+    const updatedLink = Array.isArray(updatedLinkRows)
+      ? updatedLinkRows[0]
+      : Array.isArray(maybeSavedEvaluationRows)
+        ? maybeSavedEvaluationRows[0]
+        : null;
+
+    if (savedEvaluationRow && evaluation) {
+      evaluation.id = savedEvaluationRow.id;
+    }
 
     ok(res, 200, {
       sharedLink: {

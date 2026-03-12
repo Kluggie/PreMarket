@@ -5,11 +5,19 @@ import { getDatabaseIdentitySnapshot, getDb, schema } from '../../_lib/db/client
 import { ApiError } from '../../_lib/errors.js';
 import { readJsonBody } from '../../_lib/http.js';
 import { newId } from '../../_lib/ids.js';
+import { buildProposalHistoryQueries } from '../../_lib/proposal-history.js';
 import {
   buildLegacyOutcomeSeed,
   getProposalArchivedAtForActor,
   mapProposalOutcomeForUser,
 } from '../../_lib/proposal-outcomes.js';
+import {
+  buildProposalVisibilityScopes,
+  getRecipientSharedProposalIds,
+  listRecipientSharedReportLinks,
+  matchesSharedReportAuthorizedUser,
+  matchesSharedReportRecipientEmail,
+} from '../../_lib/proposal-visibility.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 
 const DEFAULT_LIMIT = 25;
@@ -304,26 +312,14 @@ export default async function handler(req: any, res: any) {
       const hasUserEmail = typeof auth.user.email === 'string' && auth.user.email.trim().length > 0;
       const userEmail = hasUserEmail ? normalizeEmail(auth.user.email) : '';
       const dbIdentity = getDatabaseIdentitySnapshot();
-      const recipientSharedLinks = hasUserEmail
-        ? await db
-            .select({
-              proposalId: schema.sharedLinks.proposalId,
-              token: schema.sharedLinks.token,
-              status: schema.sharedLinks.status,
-              expiresAt: schema.sharedLinks.expiresAt,
-              createdAt: schema.sharedLinks.createdAt,
-              updatedAt: schema.sharedLinks.updatedAt,
-            })
-            .from(schema.sharedLinks)
-            .where(
-              and(
-                eq(schema.sharedLinks.mode, 'shared_report'),
-                ilike(schema.sharedLinks.recipientEmail, userEmail),
-                ne(schema.sharedLinks.userId, auth.user.id),
-              ),
-            )
-            .orderBy(desc(schema.sharedLinks.updatedAt), desc(schema.sharedLinks.createdAt))
-        : [];
+      const recipientSharedLinks = await listRecipientSharedReportLinks(db, auth.user);
+      const recipientSharedLinkMatchCounts = recipientSharedLinks.reduce(
+        (acc, link) => ({
+          email: acc.email + (matchesSharedReportRecipientEmail(link, auth.user) ? 1 : 0),
+          authorized: acc.authorized + (matchesSharedReportAuthorizedUser(link, auth.user) ? 1 : 0),
+        }),
+        { email: 0, authorized: 0 },
+      );
       const sharedReportByProposalId = new Map<string, any>();
       recipientSharedLinks.forEach((link) => {
         const key = String(link.proposalId || '').trim();
@@ -332,51 +328,15 @@ export default async function handler(req: any, res: any) {
         }
         sharedReportByProposalId.set(key, link);
       });
-      const recipientSharedProposalIds = Array.from(sharedReportByProposalId.keys());
-      const sharedRecipientScope = recipientSharedProposalIds.length > 0
-        ? inArray(schema.proposals.id, recipientSharedProposalIds)
-        : null;
-      const ownerScope = hasUserEmail
-        ? or(
-            eq(schema.proposals.userId, auth.user.id),
-            ilike(schema.proposals.partyAEmail, userEmail),
-          )
-        : eq(schema.proposals.userId, auth.user.id);
-      const ownerVisibleScope = and(ownerScope, isNull(schema.proposals.deletedByPartyAAt));
-      const recipientScope = hasUserEmail
-        ? sharedRecipientScope
-          ? or(
-              ilike(schema.proposals.partyBEmail, userEmail),
-              sharedRecipientScope,
-            )
-          : ilike(schema.proposals.partyBEmail, userEmail)
-        : eq(schema.proposals.userId, '__no_recipient_scope__');
-      const recipientVisibleScope = and(recipientScope, isNull(schema.proposals.deletedByPartyBAt));
-      const ownerArchiveFilter = isArchivedTab
-        ? isNotNull(schema.proposals.archivedByPartyAAt)
-        : isNull(schema.proposals.archivedByPartyAAt);
-      const recipientArchiveFilter = isArchivedTab
-        ? isNotNull(schema.proposals.archivedByPartyBAt)
-        : isNull(schema.proposals.archivedByPartyBAt);
-      const ownerTabScope = and(ownerVisibleScope, ownerArchiveFilter);
-      const recipientTabScope = and(recipientVisibleScope, recipientArchiveFilter);
-      const directReceivedScope = hasUserEmail
-        ? and(
-            ilike(schema.proposals.partyBEmail, userEmail),
-            isNotNull(schema.proposals.sentAt),
-            ne(schema.proposals.userId, auth.user.id),
-            isNull(schema.proposals.deletedByPartyBAt),
-            recipientArchiveFilter,
-          )
-        : eq(schema.proposals.userId, '__no_recipient_scope__');
-      const sharedLinkReceivedScope = sharedRecipientScope
-        ? and(
-            sharedRecipientScope,
-            ne(schema.proposals.userId, auth.user.id),
-            isNull(schema.proposals.deletedByPartyBAt),
-            recipientArchiveFilter,
-          )
-        : null;
+      const recipientSharedProposalIds = getRecipientSharedProposalIds(recipientSharedLinks);
+      const {
+        ownerTabScope,
+        recipientTabScope,
+        directReceivedScope,
+        sharedLinkReceivedScope,
+      } = buildProposalVisibilityScopes(auth.user, recipientSharedProposalIds, {
+        isArchivedTab,
+      });
       const ownerAgreementRequestedScope = and(
         ownerTabScope,
         isNotNull(schema.proposals.sentAt),
@@ -492,6 +452,9 @@ export default async function handler(req: any, res: any) {
           tab,
           statusFilter: statusFilter || 'all',
           hasSearchQuery: Boolean(query),
+          recipientSharedProposalCount: recipientSharedProposalIds.length,
+          recipientSharedLinkMatchesByEmail: recipientSharedLinkMatchCounts.email,
+          recipientSharedLinkMatchesByAuthorizedUser: recipientSharedLinkMatchCounts.authorized,
           vercelEnv: dbIdentity.vercelEnv,
           dbHost: dbIdentity.dbHost,
           dbName: dbIdentity.dbName,
@@ -521,6 +484,9 @@ export default async function handler(req: any, res: any) {
               userEmail: auth.user.email,
               tab,
               statusFilter,
+              recipientSharedProposalCount: recipientSharedProposalIds.length,
+              recipientSharedLinkMatchesByEmail: recipientSharedLinkMatchCounts.email,
+              recipientSharedLinkMatchesByAuthorizedUser: recipientSharedLinkMatchCounts.authorized,
               vercelEnv: dbIdentity.vercelEnv,
               dbHost: dbIdentity.dbHost,
               dbName: dbIdentity.dbName,
@@ -702,40 +668,107 @@ export default async function handler(req: any, res: any) {
     const proposalId = newId('proposal');
     const dbIdentity = getDatabaseIdentitySnapshot();
 
-    let created;
     const legacyOutcomeSeed = buildLegacyOutcomeSeed(status, now);
+    const proposalValues = {
+      id: proposalId,
+      userId: auth.user.id,
+      title,
+      status,
+      statusReason,
+      templateId,
+      templateName,
+      proposalType,
+      draftStep,
+      sourceProposalId,
+      documentComparisonId,
+      partyAEmail,
+      partyBEmail,
+      summary,
+      payload,
+      sentAt,
+      receivedAt,
+      evaluatedAt,
+      lastSharedAt,
+      partyAOutcome: legacyOutcomeSeed.partyAOutcome,
+      partyAOutcomeAt: legacyOutcomeSeed.partyAOutcomeAt,
+      partyBOutcome: legacyOutcomeSeed.partyBOutcome,
+      partyBOutcomeAt: legacyOutcomeSeed.partyBOutcomeAt,
+      closedAt: legacyOutcomeSeed.closedAt,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    let created;
     try {
-      [created] = await db
-        .insert(schema.proposals)
-        .values({
-          id: proposalId,
-          userId: auth.user.id,
-          title,
-          status,
-          statusReason,
-          templateId,
-          templateName,
-          proposalType,
-          draftStep,
-          sourceProposalId,
-          documentComparisonId,
-          partyAEmail,
-          partyBEmail,
-          summary,
-          payload,
-          sentAt,
-          receivedAt,
-          evaluatedAt,
-          lastSharedAt,
-          partyAOutcome: legacyOutcomeSeed.partyAOutcome,
-          partyAOutcomeAt: legacyOutcomeSeed.partyAOutcomeAt,
-          partyBOutcome: legacyOutcomeSeed.partyBOutcome,
-          partyBOutcomeAt: legacyOutcomeSeed.partyBOutcomeAt,
-          closedAt: legacyOutcomeSeed.closedAt,
+      const historyQueries = [];
+      historyQueries.push(
+        ...buildProposalHistoryQueries(db, {
+          proposal: proposalValues,
+          actorUserId: auth.user.id,
+          actorRole: 'party_a',
+          milestone: 'create',
+          eventType: 'proposal.created',
+          eventData: {
+            status,
+            proposal_type: proposalType,
+          },
           createdAt: now,
-          updatedAt: now,
-        })
-        .returning();
+          requestId: context.requestId,
+        }).queries,
+      );
+      if (sentAt) {
+        historyQueries.push(
+          ...buildProposalHistoryQueries(db, {
+            proposal: proposalValues,
+            actorUserId: auth.user.id,
+            actorRole: 'party_a',
+            milestone: 'send',
+            eventType: 'proposal.sent',
+            eventData: {
+              source: 'proposal_create',
+            },
+            createdAt: sentAt,
+            requestId: context.requestId,
+          }).queries,
+        );
+      }
+      if (receivedAt) {
+        historyQueries.push(
+          ...buildProposalHistoryQueries(db, {
+            proposal: proposalValues,
+            actorUserId: auth.user.id,
+            actorRole: 'party_b',
+            milestone: 'receive',
+            eventType: 'proposal.received',
+            eventData: {
+              source: 'proposal_create',
+            },
+            createdAt: receivedAt,
+            requestId: context.requestId,
+          }).queries,
+        );
+      }
+      if (evaluatedAt) {
+        historyQueries.push(
+          ...buildProposalHistoryQueries(db, {
+            proposal: proposalValues,
+            actorUserId: auth.user.id,
+            actorRole: 'party_a',
+            milestone: 'evaluate',
+            eventType: 'proposal.evaluated',
+            eventData: {
+              source: 'proposal_create',
+            },
+            createdAt: evaluatedAt,
+            requestId: context.requestId,
+          }).queries,
+        );
+      }
+      const [createdRows] = await db.batch([
+        db.insert(schema.proposals).values(proposalValues).returning(),
+        ...historyQueries,
+      ]);
+      created = createdRows[0];
     } catch {
       throw new ApiError(500, 'proposal_create_failed', 'Failed to persist proposal to the database');
     }

@@ -5,6 +5,7 @@ import { getDb, schema } from '../../../_lib/db/client.js';
 import { ApiError } from '../../../_lib/errors.js';
 import { readJsonBody } from '../../../_lib/http.js';
 import { newId } from '../../../_lib/ids.js';
+import { appendProposalHistory } from '../../../_lib/proposal-history.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 import { getDefaultTemplateById } from '../_defaults.js';
 
@@ -207,6 +208,20 @@ export default async function handler(req: any, res: any, templateIdParam?: stri
       },
       createdAt: now,
       updatedAt: now,
+    });
+
+    await appendProposalHistory(db, {
+      proposal: createdProposal,
+      actorUserId: auth.user.id,
+      actorRole: 'party_a',
+      milestone: 'create',
+      eventType: 'proposal.created',
+      createdAt: now,
+      requestId: context.requestId,
+      eventData: {
+        source: 'template_use',
+        template_id: effectiveTemplateId,
+      },
     });
 
     ok(res, 201, {

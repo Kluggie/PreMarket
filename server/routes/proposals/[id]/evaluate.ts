@@ -5,6 +5,7 @@ import { getDb, schema } from '../../../_lib/db/client.js';
 import { ApiError } from '../../../_lib/errors.js';
 import { newId } from '../../../_lib/ids.js';
 import { createNotificationEvent } from '../../../_lib/notifications.js';
+import { buildProposalHistoryQueries } from '../../../_lib/proposal-history.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 import {
   evaluateDocumentComparisonWithVertex,
@@ -641,31 +642,54 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
     const evaluationStatus =
       String(proposal.status || '').toLowerCase() === 'under_verification' ? 're_evaluated' : 'under_verification';
 
-    const [saved] = await db
-      .insert(schema.proposalEvaluations)
-      .values({
-        id: newId('eval'),
-        proposalId: proposal.id,
-        userId: proposal.userId,
-        source: evaluationSource,
-        status: 'completed',
-        score: result.score,
-        summary: result.summary,
-        result,
-        createdAt: now,
-        updatedAt: now,
-      })
-      .returning();
+    const evaluationValues = {
+      id: newId('eval'),
+      proposalId: proposal.id,
+      userId: proposal.userId,
+      source: evaluationSource,
+      status: 'completed',
+      score: result.score,
+      summary: result.summary,
+      result,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const nextProposal = {
+      ...proposal,
+      status: evaluationStatus,
+      evaluatedAt: now,
+      updatedAt: now,
+    };
+    const { queries: historyQueries } = buildProposalHistoryQueries(db, {
+      proposal: nextProposal,
+      actorUserId: auth.user.id,
+      actorRole: 'party_a',
+      milestone: 'evaluate',
+      eventType: 'proposal.evaluated',
+      eventData: {
+        evaluation_source: evaluationSource,
+        evaluation_id: evaluationValues.id,
+      },
+      evaluations: [evaluationValues],
+      createdAt: now,
+      requestId: context.requestId,
+    });
 
-    const [updatedProposal] = await db
-      .update(schema.proposals)
-      .set({
-        status: evaluationStatus,
-        evaluatedAt: now,
-        updatedAt: now,
-      })
-      .where(eq(schema.proposals.id, proposal.id))
-      .returning();
+    const [savedRows, updatedProposalRows] = await db.batch([
+      db.insert(schema.proposalEvaluations).values(evaluationValues).returning(),
+      db
+        .update(schema.proposals)
+        .set({
+          status: nextProposal.status,
+          evaluatedAt: nextProposal.evaluatedAt,
+          updatedAt: nextProposal.updatedAt,
+        })
+        .where(eq(schema.proposals.id, proposal.id))
+        .returning(),
+      ...historyQueries,
+    ]);
+    const [saved] = savedRows;
+    const [updatedProposal] = updatedProposalRows;
 
     try {
       await createNotificationEvent({
