@@ -267,13 +267,16 @@ export async function renderProfessionalPdfBuffer(document: PdfDocument): Promis
   fillRect(0, 0, pageWidth, BAND_H, C.headerBg);
 
   const titleSafe = normalizePdfText(document.title || 'Document Comparison');
+  const subtitleSafe = normalizePdfText(document.subtitle ?? '');
+  const hasDistinctSubtitle =
+    Boolean(subtitleSafe)
+    && subtitleSafe.localeCompare(titleSafe, undefined, { sensitivity: 'accent' }) !== 0;
   setFont('bold', 17, C.headerText);
   const tLines: string[] = pdf.splitTextToSize(titleSafe, colW - 10);
   pdf.text(tLines[0] ?? titleSafe, mL, 27);
 
   // Subtitle: comparison/document name — shown in muted white-blue, NOT uppercased
-  const subtitleSafe = normalizePdfText(document.subtitle ?? '');
-  if (subtitleSafe) {
+  if (hasDistinctSubtitle) {
     const subLines: string[] = pdf.splitTextToSize(subtitleSafe, colW - 10);
     setFont('normal', 9, [185, 198, 220] as [number, number, number]);
     pdf.text(subLines[0] ?? subtitleSafe, mL, 43);
@@ -598,7 +601,7 @@ export async function renderProfessionalPdfBuffer(document: PdfDocument): Promis
 
   const totalPages = pdf.getNumberOfPages();
   const runningLabel = normalizePdfText(
-    document.subtitle
+    hasDistinctSubtitle
       ? `${document.title || ''}  |  ${document.subtitle.toUpperCase()}`
       : document.title || '',
   );

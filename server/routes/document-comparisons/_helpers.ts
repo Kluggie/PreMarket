@@ -1,29 +1,33 @@
 import { ApiError } from '../../_lib/errors.js';
+import {
+  getDecisionStatusDetails,
+  getMediationReviewSubtitle,
+  getMediationReviewTitle,
+  getSentenceSafePreview,
+  parseV2WhyEntry,
+} from '../../../src/lib/aiReportUtils.js';
 
 export const CONFIDENTIAL_LABEL = 'Confidential Information';
 export const SHARED_LABEL = 'Shared Information';
 export const MEDIATION_REVIEW_TITLE = 'AI Mediation Review';
-
-const PLACEHOLDER_MEDIATION_TITLES = new Set([
-  'untitled',
-  'untitled comparison',
-  'untitled proposal',
-  'shared report',
-]);
 
 function normalizeComparisonLabel(side: 'a' | 'b') {
   return side === 'a' ? CONFIDENTIAL_LABEL : SHARED_LABEL;
 }
 
 export function buildMediationReviewTitle(...candidates: unknown[]) {
-  for (const candidate of candidates) {
-    const text = asText(candidate);
-    if (!text) continue;
-    if (PLACEHOLDER_MEDIATION_TITLES.has(text.toLowerCase())) continue;
-    return text;
-  }
-  return MEDIATION_REVIEW_TITLE;
+  return getMediationReviewTitle(...candidates);
 }
+
+export function buildMediationReviewSubtitle(...candidates: unknown[]) {
+  return getMediationReviewSubtitle(...candidates);
+}
+
+export {
+  getDecisionStatusDetails,
+  getSentenceSafePreview,
+  parseV2WhyEntry,
+};
 
 export function buildMediationReviewSections(params: {
   why: string[];

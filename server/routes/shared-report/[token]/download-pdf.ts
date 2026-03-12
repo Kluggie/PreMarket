@@ -1,7 +1,11 @@
 import { ApiError } from '../../../_lib/errors.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 import {
+  buildMediationReviewSubtitle,
   buildMediationReviewTitle,
+  getDecisionStatusDetails,
+  getSentenceSafePreview,
+  parseV2WhyEntry,
   buildRecipientSafeEvaluationProjection,
   MEDIATION_REVIEW_TITLE,
 } from '../../document-comparisons/_helpers.js';
@@ -101,38 +105,34 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       (report.why as unknown[]).forEach((entry) => {
         const raw = asText(entry);
         if (!raw) return;
-        const colonIdx = raw.indexOf(': ');
-        if (colonIdx > 0) {
-          whyBodyMap.set(raw.slice(0, colonIdx).trim().toLowerCase(), raw.slice(colonIdx + 2).trim());
-        }
+        const { heading, body } = parseV2WhyEntry(raw);
+        if (!heading || !body) return;
+        whyBodyMap.set(heading.trim().toLowerCase(), body.trim());
       });
     }
 
-    const firstSentence = (key: string): string => {
-      const body = whyBodyMap.get(key) ?? '';
-      const match = body.match(/^(.+?[.!?])\s/);
-      return match ? match[1].trim() : (body.length > 100 ? `${body.slice(0, 97)}...` : body);
-    };
+    const firstSentence = (key: string): string => getSentenceSafePreview(whyBodyMap.get(key) ?? '', 180);
 
     const missingItems = Array.isArray(report.missing)
       ? (report.missing as unknown[]).map((e) => asText(e)).filter(Boolean)
       : [];
 
+    const decisionStatus = getDecisionStatusDetails(report);
     const fitStatusInfo =
-      fitLevel === 'high'
-        ? { status: 'Ready to finalize', color: [22, 163, 74] as [number, number, number] }
-        : fitLevel === 'low'
-        ? { status: 'Not viable', color: [220, 38, 38] as [number, number, number] }
-        : fitLevel === 'medium' && confidence >= 62 && missingItems.length <= 4
-        ? { status: 'Proceed with conditions', color: [180, 83, 9] as [number, number, number] }
-        : { status: 'Explore further', color: [100, 116, 139] as [number, number, number] };
+      decisionStatus.tone === 'success'
+        ? { status: decisionStatus.label, color: [22, 163, 74] as [number, number, number] }
+        : decisionStatus.tone === 'danger'
+        ? { status: decisionStatus.label, color: [220, 38, 38] as [number, number, number] }
+        : decisionStatus.tone === 'warning'
+        ? { status: decisionStatus.label, color: [180, 83, 9] as [number, number, number] }
+        : { status: decisionStatus.label, color: [100, 116, 139] as [number, number, number] };
 
     const primaryDrivers: string[] = [];
     const assessmentSentence = firstSentence('decision assessment') || firstSentence('key risks');
     if (assessmentSentence) primaryDrivers.push(assessmentSentence);
     const leverageSentence = firstSentence('leverage signals') || firstSentence('key strengths');
     if (leverageSentence) primaryDrivers.push(leverageSentence);
-    const readinessSentence = firstSentence('decision readiness');
+    const readinessSentence = decisionStatus.explanation || firstSentence('decision readiness');
     if (readinessSentence && primaryDrivers.length < 3) primaryDrivers.push(readinessSentence);
 
     const decisionPanel: PdfDecisionPanel = {
@@ -141,7 +141,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       recommendation: recommendationDisplay,
       decisionStatus: fitStatusInfo.status,
       fitColor: fitStatusInfo.color,
-      decisionContext: readinessSentence || undefined,
+      decisionContext: decisionStatus.explanation || undefined,
       primaryDrivers: primaryDrivers.length > 0 ? primaryDrivers : undefined,
     };
 
@@ -278,9 +278,9 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       (report.why as unknown[]).forEach((entryRaw) => {
         const entry = asText(entryRaw);
         if (!entry) return;
-        const colonIdx = entry.indexOf(': ');
-        const rawHeading = colonIdx > 0 ? entry.slice(0, colonIdx).trim() : 'Analysis';
-        const body = colonIdx > 0 ? entry.slice(colonIdx + 2).trim() : entry;
+        const { heading: parsedHeading, body: parsedBody } = parseV2WhyEntry(entry);
+        const rawHeading = parsedHeading || 'Analysis';
+        const body = parsedBody || entry;
         const spec = lookupSection(rawHeading) || {
           level: 2,
           displayHeading: rawHeading || 'Analysis',
@@ -323,6 +323,26 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         }
         reportSections.push(section);
       });
+
+      if (missingItems.length > 0) {
+        reportSections.push({
+          heading: 'Open Questions',
+          level: 1,
+          bullets: missingItems,
+          numberedBullets: true,
+        });
+      }
+
+      const redactions = Array.isArray(report.redactions)
+        ? (report.redactions as unknown[]).map((entry) => asText(entry)).filter(Boolean)
+        : [];
+      if (redactions.length > 0) {
+        reportSections.push({
+          heading: 'Missing or Redacted Information',
+          level: 1,
+          bullets: redactions,
+        });
+      }
     } else {
       reportSections.push({
         heading: 'Executive Summary',
@@ -358,6 +378,12 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       report.title,
       evaluationResult.title,
     );
+    const subtitle = buildMediationReviewSubtitle(
+      resolved.comparison?.title,
+      resolved.proposal?.title,
+      report.title,
+      evaluationResult.title,
+    );
     const comparisonId = asText(resolved.comparison?.id) || asText(resolved.proposal?.documentComparisonId) || 'shared-report';
     const filenameBase = slugify(title) || 'ai-mediation-review';
     const filename =
@@ -367,7 +393,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     const finalSections = isV2 ? deduplicateSections(reportSections) : reportSections;
     const pdfBuffer = await renderProfessionalPdfBuffer({
       title: MEDIATION_REVIEW_TITLE,
-      subtitle: title,
+      subtitle,
       comparisonId,
       footerNote: 'Shared report -- recipient-safe content only',
       decisionPanel,

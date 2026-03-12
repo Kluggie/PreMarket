@@ -72,6 +72,28 @@ function validFactSheetPayload(overrides = {}) {
   };
 }
 
+function splitRenderedParagraphs(entries) {
+  return entries
+    .flatMap((entry) =>
+      String(entry || '')
+        .split(/\n{2,}/g)
+        .map((paragraph) => paragraph.trim())
+        .filter(Boolean),
+    );
+}
+
+function assertCleanRenderedEndings(entries, label) {
+  for (const paragraph of splitRenderedParagraphs(entries)) {
+    assert.match(paragraph, /[.!?]$/, `${label} paragraph must end cleanly: "${paragraph}"`);
+    assert.doesNotMatch(
+      paragraph,
+      /(?:[:;,—-]|\b(?:and|or|but|because|if|then|with|for|to|of|in|on|by|versus|vs|than|around|about|under|over|through|including|depending|based))$/i,
+      `${label} paragraph must not end on a dangling fragment: "${paragraph}"`,
+    );
+    assert.doesNotMatch(paragraph, /(?:\.\.\.|…)/, `${label} paragraph must not expose ellipsis fragments: "${paragraph}"`);
+  }
+}
+
 // Returns the mock vertex-response wrapper for a Pass A (fact sheet) success.
 function factSheetResponse(overrides = {}) {
   return {
@@ -261,6 +283,8 @@ test('v2 retries once (tight mode) then falls back with truncated_output', async
     );
     assert.ok(Array.isArray(outcome.data.missing) && outcome.data.missing.length >= 3,
       'fallback must provide at least 3 missing items');
+    assertCleanRenderedEndings(outcome.data.why, 'fallback why[]');
+    assertCleanRenderedEndings(outcome.data.missing, 'fallback missing[]');
   } finally {
     cleanup();
   }
@@ -2392,6 +2416,144 @@ test('section-safe truncation drops lower-priority content without cutting locke
     assert.equal(/Decision stat(?!us)/i.test(whyText), false, 'Decision status prefix must not be cut mid-label');
     assert.equal(/Recommended pat(?!h)/i.test(whyText), false, 'Recommended path prefix must not be cut mid-label');
     assert.equal(/Option [A-C]\s*[—-](?!\s)/i.test(whyText), false, 'Option labels must not be cut mid-label');
+    assertCleanRenderedEndings(outcome.data.why, 'tight-budget why[]');
+    assertCleanRenderedEndings(outcome.data.missing, 'tight-budget missing[]');
+  } finally {
+    cleanup();
+  }
+});
+
+test('fallback memo stays domain-aware for software deals and keeps deal structures concrete', async () => {
+  const truncatedResponse = {
+    model: 'gemini-2.0-flash-001',
+    text: '{"fit_level":"medium","confidence_0_1":0.7,"why":["partial"]',
+    finishReason: 'MAX_TOKENS',
+    httpStatus: 200,
+  };
+
+  const cleanup = setVertexV2MockSequence([
+    {
+      response: factSheetResponse(validFactSheetPayload({
+        project_goal: 'Implement a customer analytics platform with API integrations and staged rollout.',
+        scope_deliverables: ['API integration layer', 'Customer data migration', 'Analytics dashboard', 'Support playbook'],
+        timeline: { start: '2026-Q3', duration: '7 months', milestones: ['Integration sandbox', 'Pilot rollout', 'Production go-live'] },
+        constraints: ['Must work with the existing CRM', 'Weekend deployment windows only', 'Enterprise SLA required'],
+        success_criteria_kpis: ['Dashboard adoption above 75%', 'P1 response under 30 minutes'],
+        assumptions: ['Customer data quality is still being assessed'],
+        open_questions: ['Who owns migration remediation before go-live?'],
+        missing_info: ['Migration remediation is not scoped.', 'Support SLA and post-launch coverage remain open.'],
+      })),
+    },
+    { response: truncatedResponse },
+    { response: truncatedResponse },
+  ]);
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Shared software proposal covers integrations, migration, support, and staged rollout.',
+      confidentialText: 'Internal notes mention pricing flexibility and implementation staffing constraints.',
+      requestId: 'req-domain-software-fallback-1',
+    });
+
+    assert.equal(outcome.ok, true, 'software fallback evaluation must succeed');
+    if (!outcome.ok) return;
+
+    const whyText = outcome.data.why.join('\n');
+    assert.match(whyText, /\bintegration|migration|SLA|rollout/i);
+    assert.match(whyText, /longer subscription|pilot|phased-rollout/i);
+    assert.match(whyText, /switching costs|delivery certainty|pricing flexibility/i);
+    assertCleanRenderedEndings(outcome.data.why, 'software why[]');
+  } finally {
+    cleanup();
+  }
+});
+
+test('fallback memo stays domain-aware for investment deals without reverting to software jargon', async () => {
+  const truncatedResponse = {
+    model: 'gemini-2.0-flash-001',
+    text: '{"fit_level":"medium","confidence_0_1":0.7,"why":["partial"]',
+    finishReason: 'MAX_TOKENS',
+    httpStatus: 200,
+  };
+
+  const cleanup = setVertexV2MockSequence([
+    {
+      response: factSheetResponse(validFactSheetPayload({
+        project_goal: 'Raise a Series A round to extend runway and fund commercial expansion.',
+        scope_deliverables: ['Series A financing package', 'Board governance framework', 'Milestone plan'],
+        timeline: { start: '2026-Q2', duration: '10 weeks', milestones: ['Lead investor diligence', 'Term sheet negotiation', 'Close'] },
+        constraints: ['Target runway extension of 18 months', 'Board observer request under discussion'],
+        success_criteria_kpis: ['Close the round within the quarter', 'Maintain operating runway through close'],
+        assumptions: ['Lead investor is still evaluating governance protections'],
+        risks: [{ risk: 'Diligence delays', impact: 'high', likelihood: 'med' }],
+        open_questions: ['Would capital be released in one close or through milestone tranches?'],
+        missing_info: ['Valuation and governance terms are still open.', 'Investor protection package is not final.'],
+      })),
+    },
+    { response: truncatedResponse },
+    { response: truncatedResponse },
+  ]);
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Shared fundraising materials reference valuation, board rights, diligence, and milestone financing.',
+      confidentialText: 'Internal notes mention runway sensitivity and governance priorities.',
+      requestId: 'req-domain-investment-fallback-1',
+    });
+
+    assert.equal(outcome.ok, true, 'investment fallback evaluation must succeed');
+    if (!outcome.ok) return;
+
+    const whyText = outcome.data.why.join('\n');
+    assert.match(whyText, /\bvaluation|dilution|governance|board|tranche|diligence|runway\b/i);
+    assert.equal(/\bdiscovery phase\b/i.test(whyText), false, 'investment memo must not fall back to software discovery phrasing');
+    assert.match(whyText, /valuation-versus-control|tranche-based financing|investor protections/i);
+    assertCleanRenderedEndings(outcome.data.why, 'investment why[]');
+  } finally {
+    cleanup();
+  }
+});
+
+test('fallback memo stays domain-aware for supply deals and surfaces MOQ or exclusivity tradeoffs', async () => {
+  const truncatedResponse = {
+    model: 'gemini-2.0-flash-001',
+    text: '{"fit_level":"medium","confidence_0_1":0.7,"why":["partial"]',
+    finishReason: 'MAX_TOKENS',
+    httpStatus: 200,
+  };
+
+  const cleanup = setVertexV2MockSequence([
+    {
+      response: factSheetResponse(validFactSheetPayload({
+        project_goal: 'Secure a manufacturing and distribution agreement for the next regional product launch.',
+        scope_deliverables: ['Production lots', 'Regional distribution support', 'Quality assurance reporting'],
+        timeline: { start: '2026-Q3', duration: '5 months', milestones: ['Pilot batch', 'Regional launch', 'Quarterly supply review'] },
+        constraints: ['MOQ under discussion', 'Lead time target of 8 weeks', 'Warranty claims process not final', 'Regional exclusivity requested'],
+        success_criteria_kpis: ['On-time fill rate above 98%', 'Defect rate below 0.5%'],
+        assumptions: ['Forecast accuracy still depends on the launch plan'],
+        risks: [{ risk: 'Lead-time slippage', impact: 'high', likelihood: 'med' }],
+        open_questions: ['What volume commitment is required to support the pricing tiers?'],
+        missing_info: ['Defect definitions remain open.', 'Exclusivity thresholds are not final.'],
+      })),
+    },
+    { response: truncatedResponse },
+    { response: truncatedResponse },
+  ]);
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Shared supply proposal references lead times, MOQ discussion, warranty treatment, and regional rollout.',
+      confidentialText: 'Internal notes mention capacity utilization and forecast sensitivity.',
+      requestId: 'req-domain-supply-fallback-1',
+    });
+
+    assert.equal(outcome.ok, true, 'supply fallback evaluation must succeed');
+    if (!outcome.ok) return;
+
+    const whyText = outcome.data.why.join('\n');
+    assert.match(whyText, /\bMOQ|minimum orders|lead times|warranty|defect|exclusivity\b/i);
+    assert.match(whyText, /volume-pricing tradeoff|pilot or non-exclusive structure|capacity utilization/i);
+    assertCleanRenderedEndings(outcome.data.why, 'supply why[]');
   } finally {
     cleanup();
   }
@@ -2463,6 +2625,14 @@ test('memo-prose: Pass B prompt contains bilateral negotiator guardrails instead
     assert.ok(
       passBPrompt.includes('Section roles are strict'),
       'Pass B prompt must define distinct section roles to reduce repetition',
+    );
+    assert.ok(
+      passBPrompt.includes('DOMAIN-SENSITIVE LENS'),
+      'Pass B prompt must include an explicit domain-sensitive writing block',
+    );
+    assert.ok(
+      passBPrompt.includes('Domain lens: software / data-platform negotiation'),
+      'Software-oriented fact sheets must receive software-specific prompt guidance',
     );
 
     assert.ok(
@@ -2650,6 +2820,60 @@ test('memo-prose: commercial posture included in Pass B prompt when vendor_prefe
     assert.ok(
       passBPrompt.includes('fixed-price signals detected'),
       'Pass B prompt must add fixed-price-specific guidance when the fact sheet implies fixed-price posture',
+    );
+  } finally {
+    delete globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__;
+  }
+});
+
+test('memo-prose: investment fact sheets receive fundraising-specific prompt guidance', async () => {
+  let passBPrompt = '';
+  let callCount = 0;
+
+  globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__ = async ({ prompt }) => {
+    callCount += 1;
+    if (callCount === 1) {
+      return {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(
+          validFactSheetPayload({
+            project_goal: 'Raise a Series A round to fund runway and hiring.',
+            scope_deliverables: ['Series A financing package', 'Board governance framework'],
+            constraints: ['Board rights under discussion', 'Runway extension required'],
+            assumptions: ['Lead investor diligence is still open'],
+            open_questions: ['How would valuation and governance trade off if diligence takes longer?'],
+            missing_info: ['Tranche structure remains open.'],
+          }),
+        ),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      };
+    }
+    passBPrompt = prompt;
+    return {
+      model: 'gemini-2.0-flash-001',
+      text: JSON.stringify(validPayload({ fit_level: 'medium', confidence_0_1: 0.66 })),
+      finishReason: 'STOP',
+      httpStatus: 200,
+    };
+  };
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Shared investment materials reference valuation, governance, runway, and milestones.',
+      confidentialText: 'Internal notes mention board control and diligence sensitivities.',
+    });
+
+    assert.equal(outcome.ok, true, 'Evaluation must succeed');
+    assert.ok(passBPrompt.length > 0, 'Pass B prompt must have been captured');
+    assert.ok(
+      passBPrompt.includes('Domain lens: investment / fundraising negotiation'),
+      'Investment fact sheets must receive fundraising-specific prompt guidance',
+    );
+    assert.equal(
+      passBPrompt.includes('Do not use software-delivery language such as discovery phase'),
+      true,
+      'Investment prompt guidance must explicitly suppress software-delivery phrasing',
     );
   } finally {
     delete globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__;

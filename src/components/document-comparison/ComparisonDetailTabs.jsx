@@ -12,6 +12,7 @@ import {
   MISSING_OR_REDACTED_INFO_LABEL,
   OPEN_QUESTIONS_LABEL,
   parseV2WhyEntry,
+  splitV2WhyBodyParagraphs,
   filterLegacySectionsForDisplay,
 } from '@/lib/aiReportUtils';
 
@@ -34,13 +35,6 @@ function stripHtml(value) {
     .replace(/&#39;/gi, "'")
     .replace(/\s+/g, ' ')
     .trim();
-}
-
-function splitWhyBodyParagraphs(value) {
-  return String(value ?? '')
-    .split(/\n{2,}/g)
-    .map((paragraph) => paragraph.trim())
-    .filter(Boolean);
 }
 
 export function renderDocumentReadOnly({ text, html }) {
@@ -200,53 +194,48 @@ export function ComparisonAiReportTab({
           {/* Report document — white paper surface */}
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm">
             <div className="px-6 py-7 space-y-7">
-
-              {/* Executive Summary */}
-              <div>
-                <h2 className="text-xl font-bold text-slate-900 mb-5">Executive Summary</h2>
-                {isV2 ? (
-                  <div className="space-y-5" data-testid="v2-full-report">
-                    {safeReport.why.map((entry, index) => {
-                      const { heading, body } = parseV2WhyEntry(entry);
-                      const paragraphs = splitWhyBodyParagraphs(body);
-                      return (
-                        <div key={index}>
-                          {heading ? (
-                            <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">{heading}</h3>
-                          ) : null}
-                          <div className="space-y-3">
-                            {(paragraphs.length > 0 ? paragraphs : [body]).map((paragraph, paragraphIndex) => (
-                              <p key={paragraphIndex} className="text-sm text-slate-700 leading-relaxed">{paragraph}</p>
-                            ))}
-                          </div>
-                          {index < safeReport.why.length - 1 && <div className="mt-5 border-t border-slate-100" />}
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : reportSectionsFiltered.length > 0 ? (
-                  <div className="space-y-5">
-                    {reportSectionsFiltered.map((section, index) => (
-                      <div key={`${section.key || section.heading || 'section'}-${index}`}>
-                        <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
-                          {section.heading || section.key || `Section ${index + 1}`}
-                        </h3>
-                        <ul className="space-y-1.5 text-sm text-slate-700">
-                          {(Array.isArray(section.bullets) ? section.bullets : []).map((line, lineIndex) => (
-                            <li key={`${index}-${lineIndex}`} className="flex items-start gap-2">
-                              <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-slate-400 flex-shrink-0" />
-                              {line}
-                            </li>
+              {isV2 ? (
+                <div className="space-y-5" data-testid="v2-full-report">
+                  {safeReport.why.map((entry, index) => {
+                    const { heading, body } = parseV2WhyEntry(entry);
+                    const paragraphs = splitV2WhyBodyParagraphs(body);
+                    return (
+                      <div key={index}>
+                        {heading ? (
+                          <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">{heading}</h3>
+                        ) : null}
+                        <div className="space-y-3">
+                          {(paragraphs.length > 0 ? paragraphs : [body]).map((paragraph, paragraphIndex) => (
+                            <p key={paragraphIndex} className="text-sm text-slate-700 leading-relaxed">{paragraph}</p>
                           ))}
-                        </ul>
-                        {index < reportSectionsFiltered.length - 1 && <div className="mt-5 border-t border-slate-100" />}
+                        </div>
+                        {index < safeReport.why.length - 1 && <div className="mt-5 border-t border-slate-100" />}
                       </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-slate-600">AI mediation review content is not available yet.</p>
-                )}
-              </div>
+                    );
+                  })}
+                </div>
+              ) : reportSectionsFiltered.length > 0 ? (
+                <div className="space-y-5">
+                  {reportSectionsFiltered.map((section, index) => (
+                    <div key={`${section.key || section.heading || 'section'}-${index}`}>
+                      <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
+                        {section.heading || section.key || `Section ${index + 1}`}
+                      </h3>
+                      <ul className="space-y-1.5 text-sm text-slate-700">
+                        {(Array.isArray(section.bullets) ? section.bullets : []).map((line, lineIndex) => (
+                          <li key={`${index}-${lineIndex}`} className="flex items-start gap-2">
+                            <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-slate-400 flex-shrink-0" />
+                            {line}
+                          </li>
+                        ))}
+                      </ul>
+                      {index < reportSectionsFiltered.length - 1 && <div className="mt-5 border-t border-slate-100" />}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-slate-600">AI mediation review content is not available yet.</p>
+              )}
 
               {/* Open Questions */}
               {isV2 && Array.isArray(safeReport.missing) && safeReport.missing.length > 0 ? (

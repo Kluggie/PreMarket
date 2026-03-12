@@ -11,6 +11,12 @@ export const RERUN_AI_MEDIATION_LABEL = 'Re-run AI Mediation';
 export const RUNNING_AI_MEDIATION_LABEL = 'Running AI Mediation...';
 export const OPEN_QUESTIONS_LABEL = 'Open Questions';
 export const MISSING_OR_REDACTED_INFO_LABEL = 'Missing or Redacted Information';
+export const DECISION_STATUS_LABELS = Object.freeze([
+  'Not viable',
+  'Explore further',
+  'Proceed with conditions',
+  'Ready to finalize',
+]);
 
 const PLACEHOLDER_REVIEW_TITLES = new Set([
   'untitled',
@@ -19,6 +25,152 @@ const PLACEHOLDER_REVIEW_TITLES = new Set([
   'shared report',
 ]);
 
+const DECISION_STATUS_TONE_MAP = {
+  'Not viable': 'danger',
+  'Explore further': 'neutral',
+  'Proceed with conditions': 'warning',
+  'Ready to finalize': 'success',
+};
+
+const TRAILING_FRAGMENT_PATTERN =
+  /\b(and|or|but|because|if|then|with|for|to|of|in|on|by|versus|vs|than|around|about|under|over|through|including|depending|based)\b$/i;
+
+const COMMON_ABBREVIATION_PATTERN =
+  /\b(?:mr|mrs|ms|dr|prof|sr|jr|vs|etc|e\.g|i\.e|no|fig|eq|dept)\.$/i;
+
+function normalizeSpaces(value) {
+  return String(value ?? '')
+    .replace(/\r/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normalizeComparableTitle(value) {
+  return normalizeSpaces(value).toLowerCase();
+}
+
+function normalizeDecisionStatusLabel(value) {
+  const normalized = normalizeSpaces(value).toLowerCase();
+  if (normalized === 'not viable') return 'Not viable';
+  if (normalized === 'explore further') return 'Explore further';
+  if (normalized === 'proceed with conditions') return 'Proceed with conditions';
+  if (normalized === 'ready to finalize') return 'Ready to finalize';
+  return '';
+}
+
+function stripTrailingFragment(value) {
+  return normalizeSpaces(value)
+    .replace(/[,:;—-]+\s*$/g, '')
+    .replace(TRAILING_FRAGMENT_PATTERN, '')
+    .trim();
+}
+
+function isSentenceBoundaryAt(text, index) {
+  const char = text[index];
+  if (!/[.!?]/.test(char)) return false;
+
+  const next = text[index + 1] || '';
+  if (next && !/[\s"'”)\]]/.test(next)) return false;
+
+  if (char === '.') {
+    const snippet = text.slice(Math.max(0, index - 14), index + 1);
+    if (COMMON_ABBREVIATION_PATTERN.test(snippet)) return false;
+    if (/\b[A-Z]\.$/.test(snippet)) return false;
+    if (/\d\.\d$/.test(text.slice(Math.max(0, index - 1), index + 2))) return false;
+  }
+
+  return true;
+}
+
+function lastSentenceBoundaryBefore(text, maxChars) {
+  const limit = Math.min(text.length, Math.max(0, maxChars));
+  let boundary = -1;
+  for (let index = 0; index < limit; index += 1) {
+    if (isSentenceBoundaryAt(text, index)) {
+      boundary = index + 1;
+    }
+  }
+  return boundary;
+}
+
+function lastClauseBoundaryBefore(text, maxChars) {
+  const candidate = text.slice(0, Math.max(0, maxChars));
+  let boundary = -1;
+  const patterns = [
+    /[;:](?=\s|$)/g,
+    /,\s+(?=(?:and|but|or|while|because|if|when|before|after|although|though|which|who|that)\b)/gi,
+    /,(?=\s)/g,
+    /\s(?:--|-|—)\s/g,
+  ];
+
+  patterns.forEach((pattern) => {
+    for (const match of candidate.matchAll(pattern)) {
+      const index = match.index ?? -1;
+      if (index > boundary) {
+        boundary = index + (match[0].endsWith(' ') ? match[0].length : 1);
+      }
+    }
+  });
+
+  return boundary;
+}
+
+function finalizeBoundaryCut(value) {
+  let next = stripTrailingFragment(value);
+  if (!next) return '';
+  if (!/[.!?]$/.test(next)) {
+    next = `${next}.`;
+  }
+  return next;
+}
+
+export function truncateTextAtNaturalBoundary(text, maxChars) {
+  const safe = normalizeSpaces(text);
+  if (!safe) return '';
+  if (!Number.isFinite(maxChars) || maxChars <= 0) return '';
+  if (safe.length <= maxChars) return safe;
+
+  const sentenceBoundary = lastSentenceBoundaryBefore(safe, maxChars);
+  if (sentenceBoundary > 0) {
+    return safe.slice(0, sentenceBoundary).trim();
+  }
+
+  const clauseBoundary = lastClauseBoundaryBefore(safe, maxChars);
+  if (clauseBoundary > 0) {
+    return finalizeBoundaryCut(safe.slice(0, clauseBoundary));
+  }
+
+  return '';
+}
+
+export function splitV2WhyBodyParagraphs(value) {
+  return String(value ?? '')
+    .split(/\n{2,}/g)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
+}
+
+function extractDecisionStatusFromParagraph(paragraph) {
+  const match = normalizeSpaces(paragraph).match(
+    /^Decision status:\s*(Not viable|Explore further|Proceed with conditions|Ready to finalize)\b\.?\s*(.*)$/i,
+  );
+  if (!match) return null;
+
+  const label = normalizeDecisionStatusLabel(match[1]);
+  if (!label) return null;
+
+  let explanation = normalizeSpaces(match[2]).replace(/^[-:;., ]+/, '').trim();
+  if (explanation) {
+    explanation = finalizeBoundaryCut(explanation);
+  }
+
+  return {
+    label,
+    tone: DECISION_STATUS_TONE_MAP[label] || 'neutral',
+    explanation: explanation || '',
+  };
+}
+
 export function getRunAiMediationLabel({ isPending = false, hasExisting = false } = {}) {
   if (isPending) {
     return RUNNING_AI_MEDIATION_LABEL;
@@ -26,24 +178,48 @@ export function getRunAiMediationLabel({ isPending = false, hasExisting = false 
   return hasExisting ? RERUN_AI_MEDIATION_LABEL : RUN_AI_MEDIATION_LABEL;
 }
 
-export function getDecisionStatusInfo(report) {
+export function getDecisionStatusDetails(report) {
+  const whyEntries = Array.isArray(report?.why) ? report.why : [];
+
+  for (const entry of whyEntries) {
+    const { heading, body } = parseV2WhyEntry(entry);
+    if (normalizeSpaces(heading).toLowerCase() !== 'decision readiness') continue;
+    for (const paragraph of splitV2WhyBodyParagraphs(body)) {
+      const details = extractDecisionStatusFromParagraph(paragraph);
+      if (details) return details;
+    }
+  }
+
+  for (const entry of whyEntries) {
+    const { body } = parseV2WhyEntry(entry);
+    for (const paragraph of splitV2WhyBodyParagraphs(body)) {
+      const details = extractDecisionStatusFromParagraph(paragraph);
+      if (details) return details;
+    }
+  }
+
   const fit = String(report?.fit_level ?? '').trim().toLowerCase();
   const confidence = Number(report?.confidence_0_1);
   const missingCount = Array.isArray(report?.missing) ? report.missing.length : 0;
+  const label =
+    fit === 'high'
+      ? 'Ready to finalize'
+      : fit === 'low'
+      ? 'Not viable'
+      : fit === 'medium' && Number.isFinite(confidence) && confidence >= 0.62 && missingCount <= 4
+      ? 'Proceed with conditions'
+      : 'Explore further';
 
-  if (fit === 'high') {
-    return { label: 'Ready to finalize', tone: 'success' };
-  }
-  if (fit === 'low') {
-    return { label: 'Not viable', tone: 'danger' };
-  }
-  if (fit === 'medium') {
-    if (Number.isFinite(confidence) && confidence >= 0.62 && missingCount <= 4) {
-      return { label: 'Proceed with conditions', tone: 'warning' };
-    }
-    return { label: 'Explore further', tone: 'neutral' };
-  }
-  return { label: 'Explore further', tone: 'neutral' };
+  return {
+    label,
+    tone: DECISION_STATUS_TONE_MAP[label] || 'neutral',
+    explanation: '',
+  };
+}
+
+export function getDecisionStatusInfo(report) {
+  const { label, tone } = getDecisionStatusDetails(report);
+  return { label, tone };
 }
 
 export function getMediationReviewTitle(...candidates) {
@@ -54,6 +230,26 @@ export function getMediationReviewTitle(...candidates) {
     return text;
   }
   return MEDIATION_REVIEW_LABEL;
+}
+
+export function getMediationReviewSubtitle(...candidates) {
+  const title = getMediationReviewTitle(...candidates);
+  return normalizeComparableTitle(title) === normalizeComparableTitle(MEDIATION_REVIEW_LABEL) ? '' : title;
+}
+
+export function getSentenceSafePreview(text, maxChars = 180) {
+  const safe = normalizeSpaces(text);
+  if (!safe) return '';
+
+  const firstSentenceBoundary = lastSentenceBoundaryBefore(safe, safe.length);
+  if (firstSentenceBoundary > 0) {
+    const firstSentence = safe.slice(0, firstSentenceBoundary).trim();
+    if (firstSentence.length <= maxChars) {
+      return firstSentence;
+    }
+  }
+
+  return truncateTextAtNaturalBoundary(safe, maxChars) || '';
 }
 
 /**

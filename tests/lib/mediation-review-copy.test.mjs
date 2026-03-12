@@ -20,6 +20,7 @@ test('Step 3 mediation surfaces use mediation-oriented terminology', () => {
     comparisonDetail: readRepoFile('src/pages/DocumentComparisonDetail.jsx'),
     sharedReport: readRepoFile('src/pages/SharedReport.jsx'),
     comparisonPdfRoute: readRepoFile('server/routes/document-comparisons/[id]/download-pdf.ts'),
+    sharedPdfRoute: readRepoFile('server/routes/shared-report/[token]/download-pdf.ts'),
   };
 
   assert.match(files.copyHelpers, /Run AI Mediation/);
@@ -32,6 +33,10 @@ test('Step 3 mediation surfaces use mediation-oriented terminology', () => {
   assert.match(files.sharedReport, /Download AI Mediation Review PDF/);
   assert.match(files.sharedReport, /Step 3: \$\{MEDIATION_REVIEW_LABEL\}/);
   assert.match(files.comparisonPdfRoute, /MEDIATION_REVIEW_TITLE/);
+  assert.match(files.comparisonPdfRoute, /Open Questions/);
+  assert.match(files.comparisonPdfRoute, /Missing or Redacted Information/);
+  assert.match(files.sharedPdfRoute, /Open Questions/);
+  assert.match(files.sharedPdfRoute, /Missing or Redacted Information/);
 
   const combined = Object.values(files).join('\n');
   assert.doesNotMatch(combined, /\bAI Report\b/);

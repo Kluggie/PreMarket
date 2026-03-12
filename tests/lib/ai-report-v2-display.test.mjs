@@ -12,15 +12,22 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   hasV2Report,
+  getDecisionStatusDetails,
+  getDecisionStatusInfo,
   getMediationReviewTitle,
+  getMediationReviewSubtitle,
   getRunAiMediationLabel,
+  getSentenceSafePreview,
   parseV2WhyEntry,
+  splitV2WhyBodyParagraphs,
+  truncateTextAtNaturalBoundary,
   filterLegacySectionsForDisplay,
   getConfidencePercent,
   MEDIATION_REVIEW_LABEL,
 } from '../../src/lib/aiReportUtils.js';
 import {
   buildMediationReviewSections,
+  buildMediationReviewSubtitle,
   buildMediationReviewTitle,
   MEDIATION_REVIEW_TITLE,
 } from '../../server/routes/document-comparisons/_helpers.ts';
@@ -96,8 +103,53 @@ test('mediation review copy helpers: expose mediation-oriented labels', () => {
 test('mediation review title helpers: avoid Untitled-style placeholders', () => {
   assert.equal(getMediationReviewTitle('', 'Untitled', 'Northwind Services Renewal'), 'Northwind Services Renewal');
   assert.equal(getMediationReviewTitle('', 'Shared Report'), 'AI Mediation Review');
+  assert.equal(getMediationReviewSubtitle('', 'Shared Report'), '');
+  assert.equal(getMediationReviewSubtitle('', 'Untitled proposal', 'Northwind Services Renewal'), 'Northwind Services Renewal');
   assert.equal(buildMediationReviewTitle('', 'Untitled proposal', 'Northwind Services Renewal'), 'Northwind Services Renewal');
   assert.equal(buildMediationReviewTitle('', 'Shared Report'), MEDIATION_REVIEW_TITLE);
+  assert.equal(buildMediationReviewSubtitle('', 'Shared Report'), '');
+});
+
+test('decision status helpers: prefer canonical Decision Readiness status over fit-level fallback', () => {
+  const report = {
+    fit_level: 'high',
+    confidence_0_1: 0.91,
+    missing: [],
+    why: [
+      'Executive Summary: The deal appears workable.',
+      'Decision Readiness: Decision status: Proceed with conditions. A viable path exists, but governance and milestone mechanics still need final agreement.\n\nWhat must be agreed now vs later: lock the current round terms now; defer expansion mechanics until the first milestone is met.',
+    ],
+  };
+
+  assert.deepEqual(getDecisionStatusInfo(report), { label: 'Proceed with conditions', tone: 'warning' });
+  assert.deepEqual(getDecisionStatusDetails(report), {
+    label: 'Proceed with conditions',
+    tone: 'warning',
+    explanation: 'A viable path exists, but governance and milestone mechanics still need final agreement.',
+  });
+});
+
+test('sentence-safe preview helpers: shorten at clean boundaries instead of mid-sentence fragments', () => {
+  const text = 'Implementation certainty matters because the rollout depends on two core integrations, a staged migration, and weekend deployment windows. Support coverage will matter after go-live.';
+
+  assert.equal(
+    truncateTextAtNaturalBoundary(text, 95),
+    'Implementation certainty matters because the rollout depends on two core integrations.',
+  );
+  assert.equal(
+    getSentenceSafePreview(text, 95),
+    'Implementation certainty matters because the rollout depends on two core integrations.',
+  );
+});
+
+test('splitV2WhyBodyParagraphs: preserves paragraph boundaries without trimming mid-paragraph', () => {
+  assert.deepEqual(
+    splitV2WhyBodyParagraphs('Decision status: Explore further. More diligence is needed.\n\nWhat must be agreed now vs later: confirm the lead-time assumptions now.'),
+    [
+      'Decision status: Explore further. More diligence is needed.',
+      'What must be agreed now vs later: confirm the lead-time assumptions now.',
+    ],
+  );
 });
 
 test('mediation review section helper: omits empty redactions headings while preserving why and missing', () => {

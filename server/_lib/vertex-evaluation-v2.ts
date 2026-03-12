@@ -1,6 +1,7 @@
 import { createSign } from 'node:crypto';
 import { ApiError } from './errors.js';
 import { getVertexConfig, getVertexNotConfiguredError, type VertexServiceAccountCredentials } from './integrations.js';
+import { truncateTextAtNaturalBoundary } from '../../src/lib/aiReportUtils.js';
 
 const VERTEX_TIMEOUT_MS = 90_000;
 const MAX_ATTEMPTS = 2;
@@ -128,6 +129,13 @@ interface ProposalFactSheet {
   missing_info: string[];
   source_coverage: ProposalFactSheetCoverage;
 }
+
+type ProposalDomainId = 'software' | 'investment' | 'supply' | 'services' | 'generic';
+
+type ProposalDomain = {
+  id: ProposalDomainId;
+  label: string;
+};
 
 // ─── Report style (deterministic consultant voice selection) ───────────────
 
@@ -690,6 +698,102 @@ const MISSING_RULES: MissingRule[] = [
     confidenceUp: 'a risk register with mitigations, owners, and commercial treatment',
     confidenceDown: 'material risks stay implicit or are carried without agreement',
   },
+  {
+    id: 'governance',
+    priority: 101,
+    severity: 'severe',
+    patterns: ['board', 'governance', 'control', 'control rights', 'reserved matters', 'observer rights', 'protective provisions'],
+    label: 'governance and control rights still need clearer treatment',
+    question: 'What governance rights, approval thresholds, or control provisions would apply if the deal proceeds?',
+    why: 'governance terms can matter as much as headline economics because they define control, veto rights, and escalation power',
+    condition: 'define the governance and control package with explicit approval mechanics',
+    confidenceUp: 'clear governance rights, board treatment, and approval thresholds',
+    confidenceDown: 'economics move ahead while control rights remain open or contested',
+  },
+  {
+    id: 'valuation',
+    priority: 99,
+    severity: 'material',
+    patterns: ['valuation', 'dilution', 'pre money', 'post money', 'cap table', 'equity', 'safe', 'priced round'],
+    label: 'valuation and dilution assumptions still need to be tied to the wider deal structure',
+    question: 'What valuation and dilution assumptions underpin the current economics, and what competing structures remain under consideration?',
+    why: 'valuation and dilution shape the real economics and can re-open alignment even if the headline amount appears settled',
+    condition: 'align the valuation and dilution assumptions with the governance and milestone structure',
+    confidenceUp: 'a valuation position that is matched to dilution, governance, and milestone expectations',
+    confidenceDown: 'headline economics stay open or internally inconsistent',
+  },
+  {
+    id: 'tranche',
+    priority: 97,
+    severity: 'material',
+    patterns: ['tranche', 'milestone financing', 'milestone based funding', 'use of funds', 'runway', 'diligence'],
+    label: 'funding cadence and milestone conditions still need definition',
+    question: 'Would the commitment close in one step or through tranches tied to diligence items, milestones, or use-of-funds checkpoints?',
+    why: 'funding cadence changes closing certainty, dilution timing, and execution risk allocation',
+    condition: 'define whether the commitment is fully funded at close or staged against explicit milestones',
+    confidenceUp: 'a funding structure that clearly links close mechanics, diligence, and milestone release',
+    confidenceDown: 'capital timing remains open while operating assumptions depend on it',
+  },
+  {
+    id: 'specification',
+    priority: 103,
+    severity: 'severe',
+    patterns: ['technical specification', 'specification', 'tolerance', 'defect', 'quality control', 'quality standard', 'acceptance sample'],
+    label: 'technical specifications and defect treatment still need tighter definition',
+    question: 'What technical specifications, quality tolerances, and defect definitions govern acceptance and replacement obligations?',
+    why: 'specification ambiguity creates quality disputes, warranty exposure, and rejection risk',
+    condition: 'lock the technical specification, defect definition, and acceptance treatment',
+    confidenceUp: 'agreed specifications, tolerances, and defect-response mechanics',
+    confidenceDown: 'acceptance is expected before the specification and defect treatment are settled',
+  },
+  {
+    id: 'volume_commitment',
+    priority: 95,
+    severity: 'material',
+    patterns: ['minimum order', 'moq', 'volume commitment', 'forecast', 'volume tier', 'exclusivity', 'territory', 'regional exclusivity'],
+    label: 'volume, exclusivity, or forecast assumptions remain underdefined',
+    question: 'What minimum order, forecast, or exclusivity commitments are required to support the current pricing and supply posture?',
+    why: 'volume and exclusivity terms often drive pricing, capacity reservation, and strategic flexibility',
+    condition: 'align the pricing structure with explicit volume and exclusivity thresholds',
+    confidenceUp: 'clear MOQ, forecast, or exclusivity thresholds tied to pricing and performance',
+    confidenceDown: 'price or exclusivity is discussed without the volume commitments that support it',
+  },
+  {
+    id: 'logistics',
+    priority: 93,
+    severity: 'material',
+    patterns: ['lead time', 'shipment', 'logistics', 'inventory', 'fulfillment', 'delivery terms', 'incoterms', 'warehouse'],
+    label: 'lead times and logistics ownership still need clearer allocation',
+    question: 'Which party owns lead-time commitments, inventory buffers, shipment logistics, and delay remedies?',
+    why: 'logistics ownership can materially change reliability, working capital exposure, and service-level risk',
+    condition: 'define lead times, logistics ownership, and the remedy structure for delays',
+    confidenceUp: 'clear lead-time assumptions, logistics owners, and delay remedies',
+    confidenceDown: 'operational delivery depends on logistics that remain unallocated',
+  },
+  {
+    id: 'staffing',
+    priority: 91,
+    severity: 'material',
+    patterns: ['staffing', 'resource plan', 'consultant', 'project manager', 'key personnel', 'onsite support', 'service team'],
+    label: 'staffing and delivery-resourcing assumptions are still too open',
+    question: 'What staffing mix, key roles, and continuity commitments are assumed for delivery?',
+    why: 'staffing assumptions drive delivery capacity, knowledge retention, and timeline credibility',
+    condition: 'lock the staffing model, key roles, and continuity expectations',
+    confidenceUp: 'named delivery roles, resourcing assumptions, and continuity commitments',
+    confidenceDown: 'delivery timing depends on staffing that remains implied or flexible',
+  },
+  {
+    id: 'billing_trigger',
+    priority: 90,
+    severity: 'material',
+    patterns: ['billing trigger', 'invoice', 'retainer', 'time and materials', 'fixed fee', 'milestone billing', 'payment trigger'],
+    label: 'billing triggers and sign-off mechanics still need alignment',
+    question: 'What billing triggers, sign-off points, or payment releases apply as work is completed?',
+    why: 'billing mechanics become contentious when payment timing and sign-off rules are not aligned',
+    condition: 'align billing triggers with named deliverables, sign-off points, and change treatment',
+    confidenceUp: 'payment mechanics tied cleanly to deliverables and acceptance',
+    confidenceDown: 'billing is expected to move ahead of a clear sign-off structure',
+  },
 ];
 
 const CONDITIONAL_CONFIDENCE_PATTERNS = [
@@ -793,27 +897,7 @@ function trimParagraphAtSentenceBoundary(paragraph: string, maxChars: number) {
   if (!text) return '';
   if (text.length <= maxChars) return text;
   if (maxChars <= 0 || isRoleLockedParagraph(text)) return '';
-
-  const sentences = text
-    .split(/(?<=[.!?])\s+/g)
-    .map((sentence) => normalizeSpaces(sentence))
-    .filter(Boolean);
-  const kept: string[] = [];
-  let total = 0;
-  for (const sentence of sentences) {
-    const addition = kept.length === 0 ? sentence.length : sentence.length + 1;
-    if (total + addition > maxChars) break;
-    kept.push(sentence);
-    total += addition;
-  }
-  if (kept.length > 0) return kept.join(' ');
-
-  const candidate = text.slice(0, maxChars);
-  const cutIndex = Math.max(candidate.lastIndexOf('. '), candidate.lastIndexOf('? '), candidate.lastIndexOf('! '));
-  if (cutIndex > 40) {
-    return candidate.slice(0, cutIndex + 1).trim();
-  }
-  return '';
+  return truncateTextAtNaturalBoundary(text, maxChars);
 }
 
 /**
@@ -906,6 +990,20 @@ function compressWhySectionsForRequiredCoverage(sections: WhySection[], maxChars
         ].filter(Boolean);
         return selected.length > 0 ? selected : [paragraphs[0]];
       }
+      if (section.key === 'leverage signals') {
+        const selected = paragraphs
+          .filter((paragraph) => /^Leverage signal:/i.test(paragraph))
+          .slice(0, 3);
+        return selected.length > 0 ? selected : [paragraphs[0]];
+      }
+      if (section.key === 'potential deal structures') {
+        const selected = [
+          paragraphs.find((paragraph) => /^Option A/i.test(paragraph)) || '',
+          paragraphs.find((paragraph) => /^Option B/i.test(paragraph)) || '',
+          paragraphs.find((paragraph) => /^Option C/i.test(paragraph)) || '',
+        ].filter(Boolean);
+        return selected.length > 0 ? selected : [paragraphs[0]];
+      }
       if (section.key === 'decision readiness') {
         const selected = [
           paragraphs.find((paragraph) => /^Decision status:/i.test(paragraph)) || '',
@@ -922,7 +1020,7 @@ function compressWhySectionsForRequiredCoverage(sections: WhySection[], maxChars
       .map((paragraph) => {
         let next = trimParagraphAtSentenceBoundary(paragraph, perParagraphBudget);
         if (!next) {
-          next = sanitizeNarrativeParagraph(paragraph).slice(0, perParagraphBudget).trim();
+          next = truncateTextAtNaturalBoundary(sanitizeNarrativeParagraph(paragraph), perParagraphBudget);
         }
         return next;
       })
@@ -951,6 +1049,42 @@ const GENERIC_FALLBACK_MISSING: string[] = [
   'What change-order, variation, or repricing mechanism applies if assumptions or scope move during execution?',
 ];
 
+const DOMAIN_FALLBACK_MISSING: Record<ProposalDomainId, string[]> = {
+  software: [
+    'Which integrations, APIs, or connected systems are part of the initial rollout, and which are deferred? — determines implementation effort, testing scope, and change-order exposure.',
+    'What data migration, cleanup, or remediation work is assumed, and who owns it? — materially changes delivery effort, timeline, and commercial risk.',
+    'What measurable adoption, performance, or SLA metrics define success after go-live? — sets the basis for acceptance, support obligations, and value realization.',
+    'Which party owns access, environments, security review, and deployment windows? — drives delivery sequencing and schedule reliability.',
+    'What support model, incident-response expectation, and post-launch service level apply? — changes staffing, operating coverage, and pricing assumptions.',
+    'What change-request process applies if integration, reporting, or workflow requirements expand during rollout? — protects both sides from silent scope drift.',
+  ],
+  investment: [
+    'What valuation and dilution assumptions underpin the current round structure? — changes the real economics even if the headline raise amount is stable.',
+    'What governance rights, board treatment, and reserved matters would apply at close? — affects control and investor protection beyond price alone.',
+    'Would capital be released in one close or in tranches tied to milestones or diligence items? — changes runway certainty and execution risk allocation.',
+    'Which due-diligence workstreams remain open, and what issues could still move the terms? — determines closing certainty and timeline risk.',
+    'What use-of-funds plan and milestone plan support the amount being raised? — links capital needs to operating outcomes and milestone credibility.',
+    'Which investor protections are required versus negotiable? — shapes whether governance or downside protection is the real point of tension.',
+  ],
+  supply: [
+    'What technical specifications, quality tolerances, and defect definitions govern acceptance? — determines warranty exposure, rejection rights, and operational risk.',
+    'What minimum order quantities, forecast commitments, or volume tiers underpin the current pricing? — changes unit economics, capacity planning, and leverage.',
+    'What lead times, inventory buffers, and logistics responsibilities apply? — drives service reliability and working-capital exposure.',
+    'Is any exclusivity requested, and what performance or volume thresholds would justify it? — affects strategic flexibility and pricing tradeoffs.',
+    'What warranty, replacement, or chargeback mechanism applies for defects, shortages, or delays? — allocates quality and delivery risk.',
+    'Which regions, SKUs, or rollout phases are included in the initial commitment? — bounds scope and prevents spillover into later commercial disputes.',
+  ],
+  services: [
+    'What specific deliverables, work products, and milestone sign-offs are included in the initial statement of work? — determines billing certainty and acceptance risk.',
+    'What staffing mix, key roles, and continuity commitments are assumed for delivery? — affects execution capacity and knowledge retention.',
+    'Which client-side inputs, approvals, or SMEs are required, and what happens if they are delayed? — shifts timeline risk and dependency ownership.',
+    'What billing triggers, retainer terms, or milestone-payment releases apply? — ties the economics to actual delivery mechanics.',
+    'What change-request process governs out-of-scope work or evolving requirements? — protects both sides from unpriced expansion.',
+    'What acceptance or sign-off criteria convert the work into completed deliverables? — affects dispute exposure and project closeout.',
+  ],
+  generic: GENERIC_FALLBACK_MISSING,
+};
+
 type WhySection = {
   heading: string;
   key: string;
@@ -968,6 +1102,7 @@ const REQUIRED_WHY_SECTION_KEYS = [
 ];
 
 type CalibrationSignals = {
+  domain: ProposalDomain;
   rules: MissingRule[];
   ruleIds: Set<string>;
   blockerLabels: string[];
@@ -995,6 +1130,175 @@ function keywordMatch(text: string, pattern: string) {
   const haystack = normalizeKeywordText(text);
   const needle = normalizeKeywordText(pattern);
   return Boolean(haystack && needle && haystack.includes(needle));
+}
+
+const DOMAIN_SIGNAL_MAP: Record<
+  Exclude<ProposalDomainId, 'generic'>,
+  { label: string; strong: string[]; weak: string[] }
+> = {
+  software: {
+    label: 'SaaS / software implementation',
+    strong: [
+      'saas',
+      'software',
+      'platform',
+      'dashboard',
+      'analytics',
+      'data pipeline',
+      'api',
+      'integration',
+      'migration',
+      'deployment',
+      'go live',
+      'support',
+      'sla',
+      'workflow',
+      'portal',
+      'cloud',
+    ],
+    weak: ['reporting', 'user access', 'adoption', 'rollout', 'schema', 'latency', 'incident'],
+  },
+  investment: {
+    label: 'Investment / fundraising',
+    strong: [
+      'investment',
+      'fundraising',
+      'series a',
+      'series b',
+      'seed round',
+      'valuation',
+      'dilution',
+      'equity',
+      'cap table',
+      'term sheet',
+      'board',
+      'runway',
+      'tranche',
+      'use of funds',
+      'investor',
+      'preferred stock',
+    ],
+    weak: ['governance', 'control rights', 'protective provisions', 'milestone financing', 'lead investor'],
+  },
+  supply: {
+    label: 'Supply / manufacturing / procurement',
+    strong: [
+      'supply',
+      'supplier',
+      'manufacturing',
+      'manufacturer',
+      'distribution',
+      'distributor',
+      'procurement',
+      'moq',
+      'minimum order',
+      'unit price',
+      'lead time',
+      'shipment',
+      'logistics',
+      'inventory',
+      'warranty',
+      'defect',
+      'exclusivity',
+      'factory',
+    ],
+    weak: ['forecast', 'regional', 'territory', 'fulfillment', 'quality control', 'batch'],
+  },
+  services: {
+    label: 'Services / consulting / project delivery',
+    strong: [
+      'services',
+      'consulting',
+      'consultant',
+      'statement of work',
+      'staffing',
+      'resource plan',
+      'mobilization',
+      'callout',
+      'maintenance',
+      'training',
+      'workshop',
+      'retainer',
+      'time and materials',
+      'fixed fee',
+      'service report',
+      'project manager',
+    ],
+    weak: ['deliverable', 'deliverables', 'sign off', 'sign-off', 'milestone billing', 'onsite'],
+  },
+};
+
+function classifyProposalDomain(factSheet: ProposalFactSheet): ProposalDomain {
+  const corpus = normalizeSpaces([
+    factSheet.project_goal || '',
+    ...factSheet.scope_deliverables,
+    factSheet.timeline.start || '',
+    factSheet.timeline.duration || '',
+    ...factSheet.timeline.milestones,
+    ...factSheet.constraints,
+    ...factSheet.success_criteria_kpis,
+    ...factSheet.vendor_preferences,
+    ...factSheet.assumptions,
+    ...factSheet.open_questions,
+    ...factSheet.missing_info,
+    ...factSheet.risks.map((item) => item.risk),
+  ].join(' '));
+
+  const scored = Object.entries(DOMAIN_SIGNAL_MAP)
+    .map(([id, config]) => ({
+      id: id as Exclude<ProposalDomainId, 'generic'>,
+      label: config.label,
+      score:
+        config.strong.filter((pattern) => keywordMatch(corpus, pattern)).length * 3
+        + config.weak.filter((pattern) => keywordMatch(corpus, pattern)).length,
+    }))
+    .sort((left, right) => right.score - left.score);
+
+  const top = scored[0];
+  const runnerUp = scored[1];
+  if (!top || top.score < 3 || (runnerUp && top.score === runnerUp.score)) {
+    return { id: 'generic', label: 'Generic commercial negotiation' };
+  }
+
+  return { id: top.id, label: top.label };
+}
+
+function buildDomainPromptGuidance(domain: ProposalDomain) {
+  if (domain.id === 'software') {
+    return [
+      '- Domain lens: software / data-platform negotiation. Emphasize implementation scope, integrations, data migration or remediation, rollout phases, adoption metrics, support obligations, SLAs, and change-order treatment.',
+      '- Use software delivery language only where the fact_sheet supports it. If phased product scope exists, terms like MVP or pilot are acceptable; otherwise prefer "initial rollout" or "current phase".',
+    ];
+  }
+  if (domain.id === 'investment') {
+    return [
+      '- Domain lens: investment / fundraising negotiation. Emphasize valuation, dilution, governance, board or control dynamics, tranche structure, diligence, runway, milestones, use of funds, and investor protections.',
+      '- Do not use software-delivery language such as discovery phase, rollout, or change orders unless the fact_sheet explicitly mixes those concepts into the financing discussion.',
+    ];
+  }
+  if (domain.id === 'supply') {
+    return [
+      '- Domain lens: supply / manufacturing / procurement negotiation. Emphasize technical specifications, minimum order quantities, pricing tiers, exclusivity thresholds, logistics, warranties, defect definitions, lead times, and supply continuity risk.',
+      '- Focus on unit economics versus volume commitments, operational service levels, and quality or replacement remedies rather than generic project language.',
+    ];
+  }
+  if (domain.id === 'services') {
+    return [
+      '- Domain lens: services / consulting / project delivery negotiation. Emphasize deliverables, staffing, milestones, acceptance or sign-off, dependency ownership, billing triggers, and change-request treatment.',
+      '- Frame workability around execution accountability, staffing continuity, milestone acceptance, and commercial triggers rather than platform or financing terminology.',
+    ];
+  }
+  return [
+    '- Domain lens: generic commercial negotiation. Use the vocabulary already visible in the fact_sheet and avoid defaulting to software, fundraising, or supply-chain language without evidence.',
+  ];
+}
+
+function domainDiligenceLabel(domain: ProposalDomain) {
+  if (domain.id === 'software') return 'pilot or discovery tranche';
+  if (domain.id === 'investment') return 'diligence or staged-close structure';
+  if (domain.id === 'supply') return 'qualification order or pilot supply tranche';
+  if (domain.id === 'services') return 'diagnostic or mobilization phase';
+  return 'diligence step';
 }
 
 function findMatchingMissingRules(text: string) {
@@ -1231,7 +1535,7 @@ function maxParagraphsForSection(sectionKey: string) {
   if (sectionKey === 'executive summary') return 3;
   if (sectionKey === 'decision assessment') return 3;
   if (sectionKey === 'negotiation insights') return 3;
-  if (sectionKey === 'leverage signals') return 3;
+  if (sectionKey === 'leverage signals') return 4;
   if (sectionKey === 'potential deal structures') return 3;
   if (sectionKey === 'decision readiness') return 3;
   if (sectionKey === 'recommended path') return 2;
@@ -1340,18 +1644,29 @@ function sanitizeNarrativeParagraph(value: string) {
   const ellipsisIndex = next.search(/(?:\.\.\.|…)/);
   if (ellipsisIndex >= 0) {
     const beforeEllipsis = next.slice(0, ellipsisIndex).trim();
-    const sentenceBoundary = lastSentenceBoundaryIndex(beforeEllipsis);
-    if (sentenceBoundary > 0) {
-      next = beforeEllipsis.slice(0, sentenceBoundary).trim();
+    const shortened = truncateTextAtNaturalBoundary(beforeEllipsis, beforeEllipsis.length);
+    if (shortened) {
+      next = shortened;
     } else {
       return '';
     }
   }
 
   if (/[,:;–—-]$/.test(next) || TRAILING_FRAGMENT_PATTERN.test(next)) {
-    const sentenceBoundary = lastSentenceBoundaryIndex(next);
-    if (sentenceBoundary > 0) {
-      next = next.slice(0, sentenceBoundary).trim();
+    const shortened = truncateTextAtNaturalBoundary(next, next.length);
+    if (shortened) {
+      next = shortened;
+    } else {
+      return '';
+    }
+  }
+
+  if (!/[.!?]$/.test(next)) {
+    const shortened = truncateTextAtNaturalBoundary(next, next.length);
+    if (shortened && shortened !== next) {
+      next = shortened;
+    } else if (next.length >= 20 && !TRAILING_FRAGMENT_PATTERN.test(next)) {
+      next = `${stripTrailingPunctuation(next)}.`;
     } else {
       return '';
     }
@@ -1477,6 +1792,8 @@ function normalizeMissingQuestions(params: {
   factSheet: ProposalFactSheet;
   missing: string[];
 }) {
+  const domain = classifyProposalDomain(params.factSheet);
+  const domainFallback = DOMAIN_FALLBACK_MISSING[domain.id] || GENERIC_FALLBACK_MISSING;
   const sourceItems = [
     ...params.missing,
     ...params.factSheet.open_questions,
@@ -1520,8 +1837,12 @@ function normalizeMissingQuestions(params: {
   });
 
   if (entries.length === 0) {
-    GENERIC_FALLBACK_MISSING.forEach((item) => addEntry(toActionableMissingQuestion(item), null));
+    domainFallback.forEach((item) => addEntry(toActionableMissingQuestion(item), null));
   } else if (entries.length < MISSING_MIN_ITEMS) {
+    domainFallback.forEach((item) => addEntry(toActionableMissingQuestion(item), null));
+  }
+
+  if (entries.length < MISSING_MIN_ITEMS) {
     GENERIC_FALLBACK_MISSING.forEach((item) => addEntry(toActionableMissingQuestion(item), null));
   }
 
@@ -2212,7 +2533,16 @@ function buildPathsToAgreement(params: {
   };
 
   if (params.signals.ruleIds.has('data_cleanup') || params.signals.ruleIds.has('technical')) {
-    addPath('use a discovery-first or diligence-first tranche before any broad commitment is treated as final');
+    addPath(`use a ${domainDiligenceLabel(params.signals.domain)} before any broad commitment is treated as final`);
+  }
+  if (params.signals.domain.id === 'investment') {
+    addPath('trade valuation against governance or investor-protection terms instead of negotiating price in isolation');
+  }
+  if (params.signals.domain.id === 'supply') {
+    addPath('tie pricing, exclusivity, or lead-time commitments to explicit volume thresholds and service remedies');
+  }
+  if (params.signals.domain.id === 'services') {
+    addPath('lock the initial statement of work, staffing model, and billing triggers before expanding the mandate');
   }
   if (params.signals.ruleIds.has('scope') || params.signals.ruleIds.has('acceptance') || params.signals.ruleIds.has('phase_boundary')) {
     addPath('narrow the initial scope and attach measurable acceptance gates before broader expansion');
@@ -2240,7 +2570,13 @@ function buildNowVsLaterSummary(params: {
     : 'the parties should settle the remaining scope, acceptance, and dependency conditions now';
 
   const laterText =
-    params.factSheet.timeline.milestones.length > 1 || params.signals.ruleIds.has('phase_boundary')
+    params.signals.domain.id === 'investment'
+      ? 'non-core governance refinements or follow-on milestone mechanics can wait until the initial round structure is agreed'
+      : params.signals.domain.id === 'supply'
+      ? 'broader regional scope, higher-volume tiers, or exclusivity terms can wait until the initial supply performance is proven'
+      : params.signals.domain.id === 'services'
+      ? 'secondary workstreams or expansion services can wait until the initial statement of work is accepted'
+      : params.factSheet.timeline.milestones.length > 1 || params.signals.ruleIds.has('phase_boundary')
       ? 'broader rollout items can wait until the earlier phase proves out against agreed gates'
       : params.factSheet.scope_deliverables.length > 2
       ? 'secondary deliverables can be deferred until the initial commitment is accepted'
@@ -2267,6 +2603,14 @@ function buildNegotiationAgendaItems(signals: CalibrationSignals) {
     if (rule.id === 'timeline') addItem('confirm milestones and any non-negotiable deadline assumptions');
     if (rule.id === 'commercial') addItem('tie pricing posture to explicit assumptions and exclusions');
     if (rule.id === 'phase_boundary') addItem('separate current-phase obligations from later-phase options');
+    if (rule.id === 'governance') addItem('align governance rights, approval thresholds, and control protections');
+    if (rule.id === 'valuation') addItem('tie valuation and dilution assumptions to the wider deal structure');
+    if (rule.id === 'tranche') addItem('define whether closing is single-step or milestone-based');
+    if (rule.id === 'specification') addItem('lock the technical specification and defect treatment');
+    if (rule.id === 'volume_commitment') addItem('tie pricing or exclusivity to explicit volume commitments');
+    if (rule.id === 'logistics') addItem('assign logistics ownership, lead times, and delay remedies');
+    if (rule.id === 'staffing') addItem('lock the staffing model and continuity expectations');
+    if (rule.id === 'billing_trigger') addItem('align billing triggers with milestone sign-off and deliverables');
   });
 
   if (items.length < 3) addItem('confirm which issues must be fixed now versus deferred to a later phase');
@@ -2277,11 +2621,35 @@ function buildNegotiationAgendaItems(signals: CalibrationSignals) {
 }
 
 function buildStickingPointsParagraph(signals: CalibrationSignals) {
+  if (signals.domain.id === 'investment') {
+    const scenarios: string[] = [
+      'If one side wants the current valuation while governance, control rights, or investor protections remain open, then the bridge is a cleaner valuation-versus-control tradeoff rather than more headline debate.',
+      'If capital needs are urgent before diligence or milestone confidence is complete, then the bridge is a staged close or tranche structure tied to explicit milestones.',
+    ];
+    return scenarios.slice(0, 2).join(' ');
+  }
+
+  if (signals.domain.id === 'supply') {
+    const scenarios: string[] = [
+      'If the buyer wants lower unit pricing before specifications, lead times, or forecast volumes are fixed, then the bridge is a pilot order, MOQ tiering, or conditional exclusivity structure.',
+      'If the supplier wants longer commitments before regional scope or defect treatment is settled, then the bridge is a narrower initial volume with explicit service and warranty gates.',
+    ];
+    return scenarios.slice(0, 2).join(' ');
+  }
+
+  if (signals.domain.id === 'services') {
+    const scenarios: string[] = [
+      'If the client wants firm fees before staffing, dependencies, or sign-off points are fully defined, then the bridge is a mobilization phase, capped allowance, or clearer change-request regime.',
+      'If the provider wants faster start dates while client-side approvals or SME access remain open, then the bridge is to name dependency owners and phase the early deliverables.',
+    ];
+    return scenarios.slice(0, 2).join(' ');
+  }
+
   const scenarios: string[] = [];
 
   if (signals.ruleIds.has('data_cleanup') || signals.ruleIds.has('change_order') || signals.ruleIds.has('technical')) {
     scenarios.push(
-      'If either side wants firm pricing before the data or technical assumptions are validated, then the bridge is a discovery-first phase or a capped allowance tied to agreed change-order triggers.',
+      `If either side wants firm pricing before the data or technical assumptions are validated, then the bridge is a ${domainDiligenceLabel(signals.domain)} or a capped allowance tied to agreed change-order triggers.`,
     );
   }
   if (signals.ruleIds.has('scope') || signals.ruleIds.has('timeline') || signals.ruleIds.has('acceptance') || signals.ruleIds.has('dependency')) {
@@ -2308,6 +2676,28 @@ function buildLikelyPrioritiesParagraph(params: {
     if (!value || target.includes(value)) return;
     target.push(value);
   };
+
+  if (params.signals.domain.id === 'software') {
+    add(proposingSide, 'implementation timing and rollout certainty');
+    add(proposingSide, 'a bounded integration and migration scope');
+    add(counterparty, 'delivery accountability tied to data readiness and change control');
+    add(counterparty, 'support coverage and service levels that hold after go-live');
+  } else if (params.signals.domain.id === 'investment') {
+    add(proposingSide, 'valuation and funding certainty');
+    add(proposingSide, 'enough capital to support the next runway milestone');
+    add(counterparty, 'governance rights and downside protection');
+    add(counterparty, 'milestone credibility and diligence completion');
+  } else if (params.signals.domain.id === 'supply') {
+    add(proposingSide, 'volume visibility and pricing discipline');
+    add(proposingSide, 'lead-time and capacity commitments that are operationally realistic');
+    add(counterparty, 'unit economics, quality assurance, and defect remedies');
+    add(counterparty, 'flexibility around exclusivity and forecast commitments');
+  } else if (params.signals.domain.id === 'services') {
+    add(proposingSide, 'scope control and staffing utilization');
+    add(proposingSide, 'billing certainty tied to named milestones or deliverables');
+    add(counterparty, 'delivery accountability and milestone sign-off');
+    add(counterparty, 'clear ownership of client-side dependencies and approvals');
+  }
 
   if (hasCommercialSignal(params.factSheet) || params.signals.fixedPriceSignal) {
     add(proposingSide, 'commercial certainty and protection against scope drift');
@@ -2342,6 +2732,20 @@ function buildPossibleConcessionsParagraph(params: {
     concessions.push(value);
   };
 
+  if (params.signals.domain.id === 'software') {
+    add('the vendor may trade some upfront implementation economics for a longer subscription term, phased rollout, or narrower initial integration set');
+    add('the customer may accept a pilot, staged go-live, or clearer change-control regime in exchange for better delivery certainty');
+  } else if (params.signals.domain.id === 'investment') {
+    add('founders may accept a lower headline valuation if governance and control rights stay lighter');
+    add('investors may accept less control at close if capital is staged against milestones or diligence deliverables');
+  } else if (params.signals.domain.id === 'supply') {
+    add('the supplier may offer better unit pricing if the buyer accepts higher volume commitments, firmer forecasts, or narrower regional flexibility');
+    add('the buyer may trade exclusivity or longer commitments for stronger lead-time, warranty, or service protections');
+  } else if (params.signals.domain.id === 'services') {
+    add('the provider may accept a smaller initial fee if the client accepts a tighter statement of work or milestone billing structure');
+    add('the client may accept a mobilization phase or capped allowance if staffing continuity and sign-off mechanics become more reliable');
+  }
+
   if (params.signals.ruleIds.has('scope') || params.signals.ruleIds.has('phase_boundary')) {
     add('one side could accept a narrower initial phase if the other side accepts a clearer expansion path once agreed gates are met');
   }
@@ -2367,6 +2771,15 @@ function buildStructuralTensionsParagraph(params: {
   if (params.cleanBounded) {
     return 'Structural tensions: the remaining tension sits mainly in execution governance, papering discipline, and final approval sequencing rather than in core feasibility.';
   }
+  if (params.signals.domain.id === 'investment') {
+    return `Structural tensions: the main tension is between the headline economics and the control package, because ${params.riskBlockerSummary}.${params.riskTransferSummary ? ` As drafted, ${params.riskTransferSummary}.` : ''} ${buildStickingPointsParagraph(params.signals)}`;
+  }
+  if (params.signals.domain.id === 'supply') {
+    return `Structural tensions: the main tension is between price certainty and operating commitments on volume, specification, and service reliability, because ${params.riskBlockerSummary}.${params.riskTransferSummary ? ` As drafted, ${params.riskTransferSummary}.` : ''} ${buildStickingPointsParagraph(params.signals)}`;
+  }
+  if (params.signals.domain.id === 'services') {
+    return `Structural tensions: the main tension is between commercial certainty and the still-open delivery mechanics around staffing, dependencies, and sign-off, because ${params.riskBlockerSummary}.${params.riskTransferSummary ? ` As drafted, ${params.riskTransferSummary}.` : ''} ${buildStickingPointsParagraph(params.signals)}`;
+  }
   const bridge = buildStickingPointsParagraph(params.signals);
   return `Structural tensions: the main tension is that ${params.riskBlockerSummary}.${params.riskTransferSummary ? ` As drafted, ${params.riskTransferSummary}.` : ''} ${bridge}`;
 }
@@ -2381,8 +2794,28 @@ function buildLeverageSignalParagraphs(params: {
     items.push(value);
   };
 
+  if (params.signals.domain.id === 'software') {
+    add('Leverage signal: implementation continuity appears valuable, so switching costs may be meaningful where integrations, data migration, or workflow reconfiguration are involved.');
+    add('Leverage signal: delivery certainty may matter more than a nominal price reduction if rollout timing, support expectations, or SLA posture carries internal visibility.');
+    if (hasCommercialSignal(params.factSheet) || params.signals.fixedPriceSignal) {
+      add('Leverage signal: internal pricing flexibility may exist around onboarding, implementation effort, or term length even if the headline commercial posture looks firm.');
+    }
+  } else if (params.signals.domain.id === 'investment') {
+    add('Leverage signal: governance and control provisions may matter more than headline valuation, which can shift the real negotiation away from price alone.');
+    add('Leverage signal: timeline pressure around financing or runway may make closing certainty more valuable than a final incremental move in economics.');
+    add('Leverage signal: alternative capital options may exist but still appear imperfect, which can strengthen whichever side is better positioned to offer certainty on diligence and close mechanics.');
+  } else if (params.signals.domain.id === 'supply') {
+    add('Leverage signal: switching or supplier-qualification costs may be meaningful, which can make delivery certainty and defect treatment more valuable than a small unit-price concession.');
+    add('Leverage signal: capacity utilization or forecast visibility may strengthen willingness to close if one side can offer cleaner volume planning.');
+    add('Leverage signal: exclusivity or regional rights may carry more strategic value than the headline price point if they affect channel access or capacity reservation.');
+  } else if (params.signals.domain.id === 'services') {
+    add('Leverage signal: start-date pressure and limited specialist capacity may favor the side able to offer reliable staffing and dependency readiness.');
+    add('Leverage signal: continuity of delivery knowledge may raise switching costs, especially where mobilization, site familiarity, or stakeholder context already matters.');
+    add('Leverage signal: billing certainty may be less important than dependency control if client-side approvals or inputs can still move the delivery plan.');
+  }
+
   if (params.signals.ruleIds.has('timeline') || containsAny(params.factSheet.constraints, ['deadline', 'urgent', 'asap', 'hard deadline'])) {
-    add('Leverage signal: timing pressure appears to exist, which can favor the side able to offer a credible phased timetable or dependency relief.');
+    add('Leverage signal: one side appears to face timeline pressure, which can favor the party able to offer a credible phased timetable or dependency relief.');
   }
   if (params.signals.ruleIds.has('dependency')) {
     add('Leverage signal: approvals, access, and third-party inputs appear to be controlled asymmetrically, which gives the controlling party influence over sequencing and contingency language.');
@@ -2391,7 +2824,7 @@ function buildLeverageSignalParagraphs(params: {
     containsAny(params.factSheet.scope_deliverables, ['integration', 'api', 'system', 'platform', 'reporting', 'workflow'])
     || containsAny(params.factSheet.constraints, ['existing infrastructure', 'existing system', 'existing process'])
   ) {
-    add('Leverage signal: switching or restart costs may be meaningful because the proposal appears to depend on continuity with existing systems, workflows, or operating processes.');
+    add('Leverage signal: switching costs appear meaningful because the proposal seems to depend on continuity with existing systems, workflows, or operating processes.');
   }
   if (hasCommercialSignal(params.factSheet) || params.signals.fixedPriceSignal) {
     add('Leverage signal: budget discipline or pricing posture appears to be shaping the negotiation, which can favor structures that trade certainty for narrower scope or staged commitment.');
@@ -2404,7 +2837,7 @@ function buildLeverageSignalParagraphs(params: {
     add('Leverage signal: the main leverage appears to sit with whichever party can either narrow the commitment quickly or absorb uncertainty without reopening the commercial structure.');
   }
 
-  return items.slice(0, 3);
+  return items.slice(0, 4);
 }
 
 function buildDealStructureParagraphs(params: {
@@ -2412,19 +2845,69 @@ function buildDealStructureParagraphs(params: {
   signals: CalibrationSignals;
   cleanBounded: boolean;
 }) {
-  const optionA = params.cleanBounded
-    ? 'Option A — Standard structure: proceed on the current scope with the written milestones, acceptance criteria, governance cadence, and risk treatment preserved into final papering.'
-    : 'Option A — Standard structure: proceed only if the current scope, acceptance criteria, dependency owners, and commercial assumptions are locked before signature.';
-  const optionB =
-    params.signals.ruleIds.has('technical') || params.signals.ruleIds.has('data_cleanup')
-      ? 'Option B — Diligence-led structure: use a discovery, audit, or pilot tranche to validate the unresolved technical or remediation assumptions before the broader commitment becomes binding.'
-      : 'Option B — Phased structure: commit the initial phase now and defer later scope until agreed exit gates are met.';
-  const optionC =
-    hasCommercialSignal(params.factSheet) || params.signals.fixedPriceSignal
-      ? 'Option C — Contingent commercial structure: use milestone-based pricing, capped allowances, or a defined variation mechanism so the economics move only when the unresolved assumptions move.'
-      : 'Option C — Conditional expansion structure: keep the base commitment narrow and add later scope through pre-agreed expansion triggers once performance or governance conditions are met.';
+  const optionBodies: string[] = [];
+  const addOption = (value: string) => {
+    const text = asText(value);
+    if (!text || optionBodies.includes(text)) return;
+    optionBodies.push(text);
+  };
 
-  return [optionA, optionB, optionC];
+  if (params.signals.domain.id === 'software') {
+    addOption(params.cleanBounded
+      ? 'Standard SaaS structure: proceed on the current subscription and implementation scope with named integrations, rollout phases, acceptance metrics, and support/SLA terms preserved into final papering.'
+      : 'Standard SaaS structure: proceed only if the initial rollout scope, integration assumptions, migration responsibilities, and support commitments are locked before signature.');
+    if (hasCommercialSignal(params.factSheet) || params.signals.fixedPriceSignal) {
+      addOption('Term-versus-economics tradeoff: reduce upfront implementation or onboarding burden in exchange for a longer subscription commitment, broader rollout commitment, or cleaner renewal economics.');
+    }
+    if (params.signals.ruleIds.has('technical') || params.signals.ruleIds.has('data_cleanup') || params.signals.ruleIds.has('dependency')) {
+      addOption('Pilot or phased-rollout structure: start with the highest-priority integrations and migration work, then expand after agreed performance, adoption, or sign-off gates are met.');
+    }
+  } else if (params.signals.domain.id === 'investment') {
+    addOption(params.cleanBounded
+      ? 'Current round structure: close on the present economics with the agreed governance, diligence, and milestone framing carried through final documentation.'
+      : 'Current round structure: proceed only if valuation, dilution, governance rights, and any open diligence items are locked together before signing.');
+    addOption('Tranche-based financing: commit the round in stages so capital release or closing mechanics are tied to agreed milestones, diligence outcomes, or use-of-funds checkpoints.');
+    addOption('Valuation-versus-control tradeoff: adjust headline valuation, board rights, or investor protections so one side gains economics while the other gains cleaner governance certainty.');
+  } else if (params.signals.domain.id === 'supply') {
+    addOption(params.cleanBounded
+      ? 'Base supply structure: proceed on current pricing with technical specifications, lead times, quality standards, and warranty treatment preserved into the contract.'
+      : 'Base supply structure: proceed only if specifications, lead times, defect treatment, and logistics ownership are locked before signature.');
+    addOption('Volume-pricing tradeoff: reduce unit pricing in exchange for higher minimum orders, firmer forecasts, or longer volume commitments.');
+    addOption('Pilot or non-exclusive structure: start with a smaller initial order, regional scope, or non-exclusive term before moving to broader exclusivity or scaled volumes.');
+  } else if (params.signals.domain.id === 'services') {
+    addOption(params.cleanBounded
+      ? 'Fixed-scope services structure: proceed on the current statement of work with named deliverables, staffing assumptions, milestone sign-off, and change-request treatment preserved.'
+      : 'Fixed-scope services structure: proceed only if deliverables, staffing, dependency ownership, and sign-off mechanics are locked before signature.');
+    addOption('Diagnostic or mobilization structure: use a short paid kickoff phase to confirm scope, staffing, and client-side dependencies before the broader work order becomes binding.');
+    addOption('Capped-fee or milestone-billing structure: lower upfront commitment in exchange for clearer billing triggers, milestone releases, and out-of-scope change treatment.');
+  } else {
+    addOption(params.cleanBounded
+      ? 'Standard structure: proceed on the current scope with the written milestones, acceptance criteria, governance cadence, and risk treatment preserved into final papering.'
+      : 'Standard structure: proceed only if the current scope, acceptance criteria, dependency owners, and commercial assumptions are locked before signature.');
+    if (params.signals.ruleIds.has('technical') || params.signals.ruleIds.has('data_cleanup')) {
+      addOption(`Diligence-led structure: use a ${domainDiligenceLabel(params.signals.domain)} to validate the unresolved technical or remediation assumptions before the broader commitment becomes binding.`);
+    } else {
+      addOption('Phased structure: commit the initial phase now and defer later scope until agreed exit gates are met.');
+    }
+    if (hasCommercialSignal(params.factSheet) || params.signals.fixedPriceSignal) {
+      addOption('Contingent commercial structure: use milestone-based pricing, capped allowances, or a defined variation mechanism so the economics move only when the unresolved assumptions move.');
+    } else {
+      addOption('Conditional expansion structure: keep the base commitment narrow and add later scope through pre-agreed expansion triggers once performance or governance conditions are met.');
+    }
+  }
+
+  if (optionBodies.length < 2) {
+    addOption('Phased structure: keep the initial commitment narrow and expand only after agreed acceptance, milestone, or performance gates are met.');
+  }
+  if (optionBodies.length < 3 && (hasCommercialSignal(params.factSheet) || params.signals.fixedPriceSignal)) {
+    addOption('Commercial tradeoff structure: narrow the base commitment or term assumptions now so economics only widen when the unresolved conditions are cleared.');
+  }
+
+  const minOptions = params.signals.coverageCount >= 3 ? 3 : 2;
+  const optionLabels = ['A', 'B', 'C'] as const;
+  return optionBodies
+    .slice(0, Math.max(2, Math.min(3, minOptions)))
+    .map((body, index) => `Option ${optionLabels[index]} — ${body}`);
 }
 
 function buildRecommendedPathParagraphs(params: {
@@ -2444,14 +2927,14 @@ function buildRecommendedPathParagraphs(params: {
 
   if (params.data.fit_level === 'low') {
     return [
-      `Recommended path: pause signature and convert the discussion into a restructuring or diligence step focused on what is needed to ${params.conditionSummary}.`,
+      `Recommended path: pause signature and convert the discussion into a restructuring or ${domainDiligenceLabel(params.signals.domain)} focused on what is needed to ${params.conditionSummary}.`,
       `Immediate next step: ${params.agendaItems.join('; ')}.`,
     ];
   }
 
   const lead =
     params.signals.ruleIds.has('technical') || params.signals.ruleIds.has('data_cleanup')
-      ? `Recommended path: run a short discovery or diligence phase to ${params.conditionSummary}, then reconvene to lock the bounded commitment.`
+      ? `Recommended path: run a short ${domainDiligenceLabel(params.signals.domain)} to ${params.conditionSummary}, then reconvene to lock the bounded commitment.`
       : `Recommended path: use the next negotiation round to ${params.conditionSummary} before either side treats the current draft as final.`;
 
   return [
@@ -2640,6 +3123,7 @@ function buildCalibrationSignals(params: {
   factSheet: ProposalFactSheet;
   data: VertexEvaluationV2Response;
 }) {
+  const domain = classifyProposalDomain(params.factSheet);
   const whySections = parseWhySections(params.data.why);
   const whyBodiesAll = whySections.map((section) => section.body);
   const whyBodies = whySections
@@ -2733,6 +3217,7 @@ function buildCalibrationSignals(params: {
     );
 
   return {
+    domain,
     rules,
     ruleIds,
     blockerLabels: rules.map((rule) => rule.label),
@@ -3146,6 +3631,7 @@ function buildEvalPromptFromFactSheet(params: {
   const tightMode = Boolean(params.tightMode);
   const sc = factSheet.source_coverage;
   const coverageCount = computeCoverageCount(sc);
+  const domain = classifyProposalDomain(factSheet);
 
   const hasDataSecurity = containsAny(factSheet.scope_deliverables, [
     'data', 'api', 'system', 'database', 'integration', 'security', 'cloud', 'storage', 'pipeline',
@@ -3251,14 +3737,18 @@ function buildEvalPromptFromFactSheet(params: {
     '- Output must be safe to share publicly.',
     '',
     'EVALUATION RUBRIC — evaluate all dimensions from the fact_sheet:',
-    '1. Scope boundary & evidence: scope_deliverables, project_goal — are the deliverables, scope boundary, service boundary, phase boundary, or MVP boundary (only if relevant) concrete enough to price and sequence?',
+    '1. Scope boundary & evidence: scope_deliverables, project_goal — are the deliverables, scope boundary, service boundary, or phase boundary concrete enough to price and sequence?',
     '   Flag vague language: "ASAP", "scalable", "world-class", "top N" without definitions, "TBD".',
     '2. Feasibility / realism: timeline, constraints, and assumptions — realistic, contractable, and grounded?',
     '3. Acceptance & measurability: KPIs / success criteria — is there an objective basis for sign-off and value realization?',
     '4. Risk allocation: risks, assumptions, and constraints — who is implicitly carrying data, dependency, or change-order risk?',
-    '5. Decision-readiness: is this ready for a clean commitment, only for a conditional/discovery-first path, or not yet ready?',
+    '5. Decision-readiness: is this ready for a clean commitment, only for a conditional, phased, pilot, or diligence-led path, or not yet ready?',
     '   Use source_coverage flags to guide your assessment.',
     '6. Negotiation dynamics: what leverage, tradeoffs, urgency, switching costs, or dependency signals are shaping the negotiation?',
+    '',
+    'DOMAIN-SENSITIVE LENS:',
+    `- Classified proposal domain: ${domain.label}.`,
+    ...buildDomainPromptGuidance(domain),
     '',
     'REPORT STYLE:',
     voiceGuide,
