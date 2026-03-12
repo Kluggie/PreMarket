@@ -178,7 +178,7 @@ function ProposalRow({
   const helperText = outcome.requested_by_current_user
     ? 'Waiting for the counterparty to confirm the agreement.'
     : outcome.requested_by_counterparty
-      ? 'The counterparty requested agreement on these terms.'
+      ? 'The counterparty requested agreement on this proposal.'
       : outcome.eligibility_reason;
   const deleteCopy = getDeleteCopy(proposal);
 
@@ -441,7 +441,7 @@ export default function Proposals() {
     onSuccess: (updatedProposal) => {
       const outcomeState = String(updatedProposal?.outcome?.state || updatedProposal?.status || '').toLowerCase();
       if (outcomeState === 'pending_won') {
-        toast.success('Agreement requested');
+        toast.success('Agreement Requested');
       } else if (String(updatedProposal?.status || '').toLowerCase() === 'won') {
         toast.success('Marked as Agreed');
       } else {

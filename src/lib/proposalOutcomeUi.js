@@ -1,8 +1,7 @@
 export const AGREED_LABEL = 'Agreed';
 export const AGREEMENT_REQUESTED_LABEL = 'Agreement Requested';
 export const REQUEST_AGREEMENT_LABEL = 'Request Agreement';
-export const CONFIRM_TERMS_LABEL = 'Confirm Terms';
-export const AWAITING_YOUR_CONFIRMATION_LABEL = 'Awaiting Your Confirmation';
+export const CONFIRM_AGREEMENT_LABEL = 'Confirm Agreement';
 
 function asText(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -16,10 +15,14 @@ export function getVisibleProposalStatusLabel(status) {
   return '';
 }
 
-export function getPendingAgreementBadgeLabel(outcome = {}) {
-  return outcome?.requested_by_counterparty ? CONFIRM_TERMS_LABEL : AGREEMENT_REQUESTED_LABEL;
+export function getPendingAgreementBadgeLabel() {
+  return AGREEMENT_REQUESTED_LABEL;
 }
 
 export function getAgreementActionLabel(outcome = {}) {
-  return outcome?.requested_by_counterparty ? CONFIRM_TERMS_LABEL : REQUEST_AGREEMENT_LABEL;
+  return outcome?.requested_by_counterparty ? CONFIRM_AGREEMENT_LABEL : REQUEST_AGREEMENT_LABEL;
+}
+
+export function shouldShowPendingAgreementResponseActions(outcome = {}) {
+  return Boolean(outcome?.pending && outcome?.requested_by_counterparty);
 }

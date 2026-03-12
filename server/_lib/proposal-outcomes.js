@@ -282,7 +282,11 @@ export function buildPendingWonReset(existing, now = new Date()) {
 export function buildOutcomeMutation(existing, actorRole, requestedOutcome, now = new Date()) {
   const normalizedOutcome = asLower(requestedOutcome);
   if (normalizedOutcome !== PROPOSAL_OUTCOME_WON && normalizedOutcome !== PROPOSAL_OUTCOME_LOST) {
-    throw new ApiError(400, 'invalid_outcome', 'Outcome must be "won" or "lost"');
+    throw new ApiError(
+      400,
+      'invalid_outcome',
+      'Use Request Agreement, Confirm Agreement, or Lost when updating the proposal outcome.',
+    );
   }
 
   const currentPartyAOutcome = asLower(existing?.partyAOutcome) || null;

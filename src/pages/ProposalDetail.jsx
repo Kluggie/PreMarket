@@ -52,6 +52,7 @@ import {
   AGREED_LABEL,
   getAgreementActionLabel,
   getVisibleProposalStatusLabel,
+  shouldShowPendingAgreementResponseActions,
 } from '@/lib/proposalOutcomeUi';
 
 const CONFIDENTIAL_LABEL = 'Confidential Information';
@@ -385,7 +386,7 @@ export default function ProposalDetail() {
     onSuccess: (updatedProposal) => {
       const outcomeState = String(updatedProposal?.outcome?.state || updatedProposal?.status || '').toLowerCase();
       if (outcomeState === 'pending_won') {
-        toast.success('Agreement requested');
+        toast.success('Agreement Requested');
       } else if (String(updatedProposal?.status || '').toLowerCase() === 'won') {
         toast.success('Marked as Agreed');
       } else {
@@ -483,6 +484,8 @@ export default function ProposalDetail() {
   const isLost = outcomeState === 'lost';
   const isPendingWon = outcomeState === 'pending_won';
   const isClosed = isWon || isLost;
+  const showPendingAgreementResponseActions =
+    isPendingWon && shouldShowPendingAgreementResponseActions(outcome);
   const canArchive = Boolean(outcome.actor_role);
   const outcomeActionDisabled =
     markOutcomeMutation.isPending || continueNegotiationMutation.isPending;
@@ -493,9 +496,9 @@ export default function ProposalDetail() {
     ? 'This will hide the proposal from your workspace only. It will remain available to the counterparty and stay intact for shared history.'
     : 'This will permanently delete this unsent draft and any linked draft-only comparison data. This action cannot be undone.';
   const pendingOutcomeMessage = outcome.requested_by_counterparty
-    ? 'The counterparty requested agreement on this proposal. Confirm the terms, mark it lost, or keep negotiating.'
+    ? 'The counterparty requested agreement on this proposal. Confirm the agreement, mark it lost, or continue negotiating.'
     : outcome.requested_by_current_user
-      ? `You requested agreement on this proposal. It becomes ${AGREED_LABEL.toLowerCase()} only after the counterparty confirms it.`
+      ? `You requested agreement on this proposal. It becomes ${AGREED_LABEL.toLowerCase()} only after the counterparty confirms the agreement.`
       : '';
 
   return (
@@ -719,7 +722,7 @@ export default function ProposalDetail() {
                           <XCircle className="w-3.5 h-3.5 mr-1.5" />
                           Mark as Lost
                         </OutcomeActionButton>
-                        {isPendingWon ? (
+                        {showPendingAgreementResponseActions ? (
                           <Button
                             size="sm"
                             variant="outline"

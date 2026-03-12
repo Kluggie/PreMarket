@@ -7,8 +7,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import ProposalsChart from '@/components/dashboard/ProposalsChart';
 import {
-  AGREED_LABEL,
-  AWAITING_YOUR_CONFIRMATION_LABEL,
+  AGREEMENT_REQUESTED_LABEL,
   getPendingAgreementBadgeLabel,
 } from '@/lib/proposalOutcomeUi';
 import {
@@ -27,6 +26,8 @@ import {
 import { proposalsClient } from '@/api/proposalsClient';
 import { dashboardClient } from '@/api/dashboardClient';
 
+const DASHBOARD_WON_LABEL = 'Won';
+
 const statusConfig = {
   draft: { color: 'bg-slate-100 text-slate-700', icon: FileText, label: 'Draft' },
   sent: { color: 'bg-blue-100 text-blue-700', icon: Send, label: 'Sent' },
@@ -34,7 +35,7 @@ const statusConfig = {
   under_verification: { color: 'bg-purple-100 text-purple-700', icon: Eye, label: 'Under Review' },
   re_evaluated: { color: 'bg-indigo-100 text-indigo-700', icon: BarChart3, label: 'Re-evaluated' },
   mutual_interest: { color: 'bg-green-100 text-green-700', icon: Users, label: 'Mutual Interest' },
-  won: { color: 'bg-emerald-100 text-emerald-700', label: AGREED_LABEL },
+  won: { color: 'bg-emerald-100 text-emerald-700', label: DASHBOARD_WON_LABEL },
   lost: { color: 'bg-rose-100 text-rose-700', label: 'Lost' },
   closed: { color: 'bg-slate-100 text-slate-600', label: 'Closed' },
   withdrawn: { color: 'bg-red-100 text-red-700', label: 'Withdrawn' },
@@ -135,9 +136,9 @@ function AgreementRequestsCard({ proposals, onOpen, onReviewAll }) {
     <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-3">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="space-y-1">
-          <p className="text-sm font-semibold text-amber-900">{AWAITING_YOUR_CONFIRMATION_LABEL}</p>
+          <p className="text-sm font-semibold text-amber-900">{AGREEMENT_REQUESTED_LABEL}</p>
           <p className="text-sm text-amber-800">
-            {proposals.length} proposal{proposals.length === 1 ? '' : 's'} need your agreement before they can be marked as {AGREED_LABEL.toLowerCase()}.
+            {proposals.length} proposal{proposals.length === 1 ? '' : 's'} need you to confirm the agreement before they can be marked as {DASHBOARD_WON_LABEL.toLowerCase()}.
           </p>
         </div>
         <Button variant="outline" size="sm" className="border-amber-300 bg-white text-amber-900 hover:bg-amber-100" onClick={onReviewAll}>
@@ -196,7 +197,7 @@ export default function Dashboard() {
         color: 'from-indigo-500 to-indigo-600',
       },
       {
-        label: AGREED_LABEL,
+        label: DASHBOARD_WON_LABEL,
         value: summary?.wonCount ?? 0,
         icon: Trophy,
         color: 'from-emerald-500 to-emerald-600',

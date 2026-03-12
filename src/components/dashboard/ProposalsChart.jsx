@@ -7,7 +7,8 @@ import { Label } from '@/components/ui/label';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { AlertCircle, Calendar } from 'lucide-react';
 import { dashboardClient } from '@/api/dashboardClient';
-import { AGREED_LABEL } from '@/lib/proposalOutcomeUi';
+
+const DASHBOARD_WON_LABEL = 'Won';
 
 export default function ProposalsChart() {
   const [timeRange, setTimeRange] = useState('30');
@@ -139,7 +140,7 @@ export default function ProposalsChart() {
                 />
                 <Label htmlFor="won-series" className="flex items-center gap-2 cursor-pointer">
                   <div className="w-3 h-3 rounded-full bg-emerald-500" />
-                  {AGREED_LABEL}
+                  {DASHBOARD_WON_LABEL}
                 </Label>
               </div>
               <div className="flex items-center gap-2">
@@ -209,7 +210,7 @@ export default function ProposalsChart() {
                       strokeWidth={2}
                       dot={{ fill: '#10b981', r: 3 }}
                       activeDot={{ r: 5 }}
-                      name={AGREED_LABEL}
+                      name={DASHBOARD_WON_LABEL}
                     />
                   )}
                   {visibleSeries.lost && (

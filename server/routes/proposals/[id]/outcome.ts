@@ -260,7 +260,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
       throw new ApiError(
         400,
         'invalid_outcome',
-        'Outcome action must be "won", "lost", or "continue".',
+        'Use Request Agreement, Confirm Agreement, Lost, or Continue Negotiating.',
       );
     }
 
@@ -325,13 +325,13 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         actionUrl,
         eventType: 'status_won',
         dedupeKey: `proposal:${updated.id}:won_pending:${actorRole}:${now.getTime()}`,
-        title: 'Agreement requested',
+        title: 'Agreement Requested',
         message: `${actorLabel} requested agreement on "${title}" and is waiting for your confirmation.`,
-        emailSubject: `Agreement requested — ${title}`,
+        emailSubject: `Agreement Requested — ${title}`,
         emailText: [
           `${actorLabel} requested agreement on "${title}" and is waiting for your confirmation.`,
           '',
-          'Sign in to PreMarket to confirm the terms or continue negotiating.',
+          'Sign in to PreMarket to confirm the agreement or continue negotiating.',
         ].join('\n'),
       });
 
@@ -352,11 +352,11 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         actionUrl,
         eventType: 'status_won',
         dedupeKey: `proposal:${updated.id}:won_confirmed:${actorRole}:${now.getTime()}`,
-        title: 'Terms agreed',
-        message: `Both sides agreed to "${title}".`,
-        emailSubject: `Terms agreed — ${title}`,
+        title: 'Agreed',
+        message: `The proposal "${title}" is now agreed.`,
+        emailSubject: `Agreed — ${title}`,
         emailText: [
-          `Both sides agreed to "${title}".`,
+          `The proposal "${title}" is now agreed.`,
           '',
           'Sign in to PreMarket to review the final proposal history.',
         ].join('\n'),

@@ -222,6 +222,29 @@ if (!hasDatabaseUrl()) {
     assert.equal(ownerLaterLostRes.jsonBody().proposal.outcome.state, 'lost');
   });
 
+  test('invalid outcome errors use product-facing agreement language', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = authCookie('outcome_owner_invalid', 'owner-invalid@example.com');
+
+    const proposal = await createProposal(ownerCookie, {
+      title: 'Invalid Outcome Proposal',
+      status: 'received',
+      sentAt: new Date().toISOString(),
+      receivedAt: new Date().toISOString(),
+      partyBEmail: 'recipient-invalid@example.com',
+    });
+
+    const invalidRes = await markOutcome(ownerCookie, proposal.id, { outcome: 'banana' });
+    assert.equal(invalidRes.statusCode, 400);
+    assert.equal(invalidRes.jsonBody().error?.code, 'invalid_outcome');
+    assert.equal(
+      invalidRes.jsonBody().error?.message,
+      'Use Request Agreement, Confirm Agreement, Lost, or Continue Negotiating.',
+    );
+  });
+
   test('unilateral lost closes immediately, updates analytics, and notifies the counterparty', async () => {
     await ensureMigrated();
     await resetTables();
@@ -292,7 +315,8 @@ if (!hasDatabaseUrl()) {
         entry.event_type === 'status_won' &&
         String(entry.message || '').includes('waiting for your confirmation'),
     );
-    assert.ok(pendingNotification, 'owner should receive a pending win confirmation notification');
+    assert.ok(pendingNotification, 'owner should receive an agreement requested notification');
+    assert.equal(pendingNotification.title, 'Agreement Requested');
 
     const confirmWonRes = await markOutcome(ownerCookie, proposal.id, { outcome: 'won' });
     assert.equal(confirmWonRes.statusCode, 200);
@@ -312,9 +336,10 @@ if (!hasDatabaseUrl()) {
     const finalNotification = recipientNotifications.find(
       (entry) =>
         entry.event_type === 'status_won' &&
-        String(entry.message || '').includes('Both sides agreed'),
+        String(entry.message || '').includes('is now agreed'),
     );
-    assert.ok(finalNotification, 'recipient should receive a final won notification');
+    assert.ok(finalNotification, 'recipient should receive an agreed notification');
+    assert.equal(finalNotification.title, 'Agreed');
   });
 
   test('drafts are excluded from the dashboard activity graph', async () => {
