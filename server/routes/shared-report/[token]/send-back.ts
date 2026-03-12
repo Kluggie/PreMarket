@@ -7,6 +7,7 @@ import { ApiError } from '../../../_lib/errors.js';
 import { newId, newToken } from '../../../_lib/ids.js';
 import { getResendConfig } from '../../../_lib/integrations.js';
 import { createNotificationEvent } from '../../../_lib/notifications.js';
+import { assertProposalOpenForNegotiation, buildPendingWonReset } from '../../../_lib/proposal-outcomes.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 import {
   htmlToEditorText,
@@ -273,6 +274,9 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       enforceMaxUses: false,
     });
     requireRecipientAuthorization(resolved.link, auth.user);
+    if (resolved.proposal) {
+      assertProposalOpenForNegotiation(resolved.proposal);
+    }
 
     if (!resolved.link.canSendBack) {
       throw new ApiError(403, 'send_back_not_allowed', 'Send back is disabled for this link');
@@ -284,6 +288,9 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     }
 
     const now = new Date();
+    const pendingWonReset = resolved.proposal
+      ? buildPendingWonReset(resolved.proposal, now) || {}
+      : {};
 
     // ── 1. Supersede old sent revisions and promote current draft ──────────
 
@@ -382,6 +389,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         .set({
           status: 'received',
           receivedAt: now,
+          ...pendingWonReset,
           updatedAt: now,
         })
         .where(eq(schema.proposals.id, resolved.proposal.id));

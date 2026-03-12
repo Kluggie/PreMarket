@@ -7,6 +7,7 @@ import { ApiError } from '../../../_lib/errors.js';
 import { readJsonBody } from '../../../_lib/http.js';
 import { newId } from '../../../_lib/ids.js';
 import { getResendConfig } from '../../../_lib/integrations.js';
+import { assertProposalOpenForNegotiation, buildPendingWonReset } from '../../../_lib/proposal-outcomes.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 import { buildRecipientSafeEvaluationProjection } from '../../document-comparisons/_helpers.js';
 
@@ -524,6 +525,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     const title = normalizeInlineText(proposal.title) || 'Untitled proposal';
     const shareUrl = buildShareUrl(link.token);
     const summaryPreview = buildSummaryPreview({ proposal, comparison });
+    assertProposalOpenForNegotiation(proposal);
     const emailContent = buildSharedProposalEmail({
       senderName,
       proposalTitle: title,
@@ -633,6 +635,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         sentAt: new Date(),
         partyBEmail: recipientEmail,
         lastSharedAt: new Date(),
+        ...(buildPendingWonReset(proposal, new Date()) || {}),
         updatedAt: new Date(),
       })
       .where(eq(schema.proposals.id, proposal.id));

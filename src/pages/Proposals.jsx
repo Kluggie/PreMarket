@@ -6,6 +6,11 @@ import { createPageUrl } from '@/utils';
 import { useAuth } from '@/lib/AuthContext';
 import { proposalsClient } from '@/api/proposalsClient';
 import { dashboardClient } from '@/api/dashboardClient';
+import {
+  AGREED_LABEL,
+  getAgreementActionLabel,
+  getPendingAgreementBadgeLabel,
+} from '@/lib/proposalOutcomeUi';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
@@ -13,9 +18,21 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
@@ -36,6 +53,8 @@ import {
   Archive,
   ArchiveRestore,
   Trophy,
+  Trash2,
+  XCircle,
 } from 'lucide-react';
 
 const statusConfig = {
@@ -45,7 +64,7 @@ const statusConfig = {
   under_verification: { color: 'bg-purple-100 text-purple-700', icon: Eye, label: 'Under Review' },
   re_evaluated: { color: 'bg-indigo-100 text-indigo-700', icon: BarChart3, label: 'Re-evaluated' },
   mutual_interest: { color: 'bg-green-100 text-green-700', icon: Users, label: 'Mutual Interest' },
-  won: { color: 'bg-emerald-100 text-emerald-700', icon: CheckCircle2, label: 'Won' },
+  won: { color: 'bg-emerald-100 text-emerald-700', icon: CheckCircle2, label: AGREED_LABEL },
   lost: { color: 'bg-rose-100 text-rose-700', icon: AlertTriangle, label: 'Lost' },
   closed: { color: 'bg-slate-100 text-slate-600', icon: Clock, label: 'Closed' },
   withdrawn: { color: 'bg-red-100 text-red-700', icon: AlertTriangle, label: 'Withdrawn' },
@@ -53,10 +72,28 @@ const statusConfig = {
 };
 
 const TAB_VALUES = new Set(['all', 'sent', 'received', 'drafts', 'mutual_interest', 'closed', 'archived']);
+const STATUS_FILTER_VALUES = new Set([
+  'all',
+  'draft',
+  'sent',
+  'received',
+  'mutual_interest',
+  'won',
+  'lost',
+  'agreement_requested',
+]);
 
 function normalizeTabValue(value) {
   const nextValue = String(value || '').trim().toLowerCase();
   if (!TAB_VALUES.has(nextValue)) {
+    return 'all';
+  }
+  return nextValue;
+}
+
+function normalizeStatusFilterValue(value) {
+  const nextValue = String(value || '').trim().toLowerCase();
+  if (!STATUS_FILTER_VALUES.has(nextValue)) {
     return 'all';
   }
   return nextValue;
@@ -75,7 +112,51 @@ function StatusBadge({ status }) {
   );
 }
 
-function ProposalRow({ proposal, onOpen, onArchive, onUnarchive }) {
+function OutcomeBadge({ proposal }) {
+  const outcome = proposal?.outcome || {};
+  const outcomeState = String(outcome.state || '').toLowerCase();
+
+  if (outcomeState !== 'pending_won') {
+    return null;
+  }
+
+  return (
+    <Badge className="bg-amber-100 text-amber-700 font-medium">
+      <Trophy className="w-3 h-3 mr-1" />
+      {getPendingAgreementBadgeLabel(outcome)}
+    </Badge>
+  );
+}
+
+function getDeleteCopy(proposal) {
+  if (proposal?.sent_at) {
+    return {
+      title: 'Delete Proposal From Your Workspace?',
+      description:
+        'This will hide the proposal from your workspace only. It will remain available to the counterparty and stay intact for shared history.',
+      confirmLabel: 'Delete',
+    };
+  }
+
+  return {
+    title: 'Delete Draft Proposal?',
+    description:
+      'This will permanently delete this unsent draft and any linked draft-only comparison data. This action cannot be undone.',
+    confirmLabel: 'Delete Draft',
+  };
+}
+
+function ProposalRow({
+  proposal,
+  onOpen,
+  onArchive,
+  onUnarchive,
+  onMarkOutcome,
+  onContinueNegotiation,
+  onDelete,
+  actionsDisabled,
+}) {
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const listType = proposal.list_type || 'sent';
   const directional = proposal.directional_status || proposal.status || listType;
   const iconConfig = statusConfig[String(directional).toLowerCase()] || statusConfig.sent;
@@ -85,93 +166,184 @@ function ProposalRow({ proposal, onOpen, onArchive, onUnarchive }) {
   const sharedReportDate = proposal.shared_report_last_updated_at || proposal.shared_report_sent_at || null;
   const isArchived = Boolean(proposal.archived_at);
   const isOwner = listType !== 'received';
+  const outcome = proposal.outcome || {};
+  const outcomeState = String(outcome.state || proposal.status || '').toLowerCase();
+  const isClosed = outcomeState === 'won' || outcomeState === 'lost';
+  const canArchive = Boolean(outcome.actor_role);
+  const canContinueNegotiating = Boolean(outcome.can_continue_negotiating && outcomeState === 'pending_won');
+  const wonActionDisabled =
+    actionsDisabled || !outcome.can_mark_won || Boolean(outcome.requested_by_current_user);
+  const lostActionDisabled = actionsDisabled || !outcome.can_mark_lost;
+  const continueActionDisabled = actionsDisabled || !canContinueNegotiating;
+  const helperText = outcome.requested_by_current_user
+    ? 'Waiting for the counterparty to confirm the agreement.'
+    : outcome.requested_by_counterparty
+      ? 'The counterparty requested agreement on these terms.'
+      : outcome.eligibility_reason;
+  const deleteCopy = getDeleteCopy(proposal);
 
   return (
-    <div className="w-full border-b border-slate-100 flex items-center hover:bg-slate-50 transition-colors">
-      <button
-        type="button"
-        onClick={() => onOpen(proposal)}
-        className="flex-1 text-left p-4 flex items-center gap-4 min-w-0"
-      >
-        <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center flex-shrink-0">
-          <Icon className="w-5 h-5 text-slate-600" />
-        </div>
-
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1 flex-wrap">
-            <h3 className="font-medium text-slate-900 truncate">{proposal.title || 'Untitled Proposal'}</h3>
-            <StatusBadge status={directional} />
-            {isArchived && (
-              <Badge variant="outline" className="text-xs text-slate-500">
-                <Archive className="w-3 h-3 mr-1" />
-                Archived
-              </Badge>
-            )}
-            {hasSharedReportLink ? (
-              <Badge variant="outline" className="text-xs capitalize">
-                Link {sharedReportStatus || 'active'}
-              </Badge>
-            ) : null}
-            {proposal.status && proposal.status !== directional ? (
-              <Badge variant="outline" className="text-xs">
-                {proposal.status.replace(/_/g, ' ')}
-              </Badge>
-            ) : null}
+    <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+      <div className="w-full border-b border-slate-100 flex items-center hover:bg-slate-50 transition-colors">
+        <button
+          type="button"
+          onClick={() => onOpen(proposal)}
+          className="flex-1 text-left p-4 flex items-center gap-4 min-w-0"
+        >
+          <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center flex-shrink-0">
+            <Icon className="w-5 h-5 text-slate-600" />
           </div>
 
-          <div className="flex items-center gap-4 text-sm text-slate-500">
-            <span>{proposal.template_name || 'Custom Template'}</span>
-            {listType === 'received' ? (
-              <span>From: {proposal.party_a_email || 'Hidden'}</span>
-            ) : (
-              <span>To: {proposal.party_b_email || 'Not specified'}</span>
-            )}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-1 flex-wrap">
+              <h3 className="font-medium text-slate-900 truncate">{proposal.title || 'Untitled Proposal'}</h3>
+              <StatusBadge status={directional} />
+              <OutcomeBadge proposal={proposal} />
+              {isArchived && (
+                <Badge variant="outline" className="text-xs text-slate-500">
+                  <Archive className="w-3 h-3 mr-1" />
+                  Archived
+                </Badge>
+              )}
+              {hasSharedReportLink ? (
+                <Badge variant="outline" className="text-xs capitalize">
+                  Link {sharedReportStatus || 'active'}
+                </Badge>
+              ) : null}
+              {proposal.status && proposal.status !== directional ? (
+                <Badge variant="outline" className="text-xs">
+                  {proposal.status.replace(/_/g, ' ')}
+                </Badge>
+              ) : null}
+            </div>
+
+            <div className="flex items-center gap-4 text-sm text-slate-500">
+              <span>{proposal.template_name || 'Custom Template'}</span>
+              {isOwner ? (
+                <span>To: {proposal.party_b_email || 'Not specified'}</span>
+              ) : (
+                <span>From: {proposal.party_a_email || 'Hidden'}</span>
+              )}
+            </div>
           </div>
-        </div>
 
-        <div className="text-right flex-shrink-0">
-          <p className="text-xs text-slate-400">
-            {sharedReportDate
-              ? new Date(sharedReportDate).toLocaleDateString()
-              : proposal.created_date
-                ? new Date(proposal.created_date).toLocaleDateString()
-                : ''}
-          </p>
-          <ChevronRight className="w-4 h-4 text-slate-400 mt-2 ml-auto" />
-        </div>
-      </button>
+          <div className="text-right flex-shrink-0">
+            <p className="text-xs text-slate-400">
+              {sharedReportDate
+                ? new Date(sharedReportDate).toLocaleDateString()
+                : proposal.created_date
+                  ? new Date(proposal.created_date).toLocaleDateString()
+                  : ''}
+            </p>
+            <ChevronRight className="w-4 h-4 text-slate-400 mt-2 ml-auto" />
+          </div>
+        </button>
 
-      {isOwner && (
-        <div className="pr-2 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+        <div className="pr-2 flex-shrink-0" onClick={(event) => event.stopPropagation()}>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
                 <MoreHorizontal className="w-4 h-4 text-slate-400" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-40">
-              {isArchived ? (
-                <DropdownMenuItem
-                  onClick={() => onUnarchive && onUnarchive(proposal)}
-                  className="gap-2 cursor-pointer"
-                >
-                  <ArchiveRestore className="w-4 h-4" />
-                  Unarchive
-                </DropdownMenuItem>
-              ) : (
-                <DropdownMenuItem
-                  onClick={() => onArchive && onArchive(proposal)}
-                  className="gap-2 cursor-pointer text-slate-600"
-                >
-                  <Archive className="w-4 h-4" />
-                  Archive
-                </DropdownMenuItem>
-              )}
+            <DropdownMenuContent align="end" className="w-56">
+              {!isClosed ? (
+                <>
+                  <DropdownMenuItem
+                    disabled={wonActionDisabled}
+                    onSelect={() => onMarkOutcome && onMarkOutcome(proposal, 'won')}
+                    className="gap-2"
+                  >
+                    <CheckCircle2 className="w-4 h-4" />
+                    {getAgreementActionLabel(outcome)}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    disabled={lostActionDisabled}
+                    onSelect={() => onMarkOutcome && onMarkOutcome(proposal, 'lost')}
+                    className="gap-2"
+                  >
+                    <XCircle className="w-4 h-4" />
+                    Mark as Lost
+                  </DropdownMenuItem>
+                  {outcomeState === 'pending_won' ? (
+                    <DropdownMenuItem
+                      disabled={continueActionDisabled}
+                      onSelect={() => onContinueNegotiation && onContinueNegotiation(proposal)}
+                      className="gap-2"
+                    >
+                      <Clock className="w-4 h-4" />
+                      Continue Negotiating
+                    </DropdownMenuItem>
+                  ) : null}
+                  {helperText ? (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuLabel className="max-w-[13rem] whitespace-normal text-xs leading-relaxed text-slate-500">
+                        {helperText}
+                      </DropdownMenuLabel>
+                    </>
+                  ) : null}
+                  <DropdownMenuSeparator />
+                </>
+              ) : null}
+
+              {canArchive ? (
+                <>
+                  {isArchived ? (
+                    <DropdownMenuItem
+                      disabled={actionsDisabled}
+                      onSelect={() => onUnarchive && onUnarchive(proposal)}
+                      className="gap-2"
+                    >
+                      <ArchiveRestore className="w-4 h-4" />
+                      Unarchive
+                    </DropdownMenuItem>
+                  ) : (
+                    <DropdownMenuItem
+                      disabled={actionsDisabled}
+                      onSelect={() => onArchive && onArchive(proposal)}
+                      className="gap-2"
+                    >
+                      <Archive className="w-4 h-4" />
+                      Archive
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuSeparator />
+                </>
+              ) : null}
+
+              <DropdownMenuItem
+                disabled={actionsDisabled}
+                onSelect={(event) => {
+                  event.preventDefault();
+                  setDeleteDialogOpen(true);
+                }}
+                className="gap-2 text-rose-600 focus:text-rose-700"
+              >
+                <Trash2 className="w-4 h-4" />
+                Delete
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-      )}
-    </div>
+      </div>
+
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{deleteCopy.title}</AlertDialogTitle>
+          <AlertDialogDescription>{deleteCopy.description}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={() => onDelete && onDelete(proposal)}
+            className="bg-rose-600 hover:bg-rose-700"
+          >
+            {deleteCopy.confirmLabel}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 
@@ -184,12 +356,22 @@ export default function Proposals() {
     const params = new URLSearchParams(location.search || '');
     return normalizeTabValue(params.get('tab'));
   });
-  const [statusFilter, setStatusFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState(() => {
+    const params = new URLSearchParams(location.search || '');
+    return normalizeStatusFilterValue(params.get('status'));
+  });
   const [searchQuery, setSearchQuery] = useState('');
   const [cursor, setCursor] = useState(null);
   const [cursorHistory, setCursorHistory] = useState([]);
 
   const normalizedSearch = useMemo(() => searchQuery.trim(), [searchQuery]);
+  const refreshProposalQueries = () => {
+    queryClient.invalidateQueries(['proposals-list']);
+    queryClient.invalidateQueries(['dashboard-summary']);
+    queryClient.invalidateQueries(['dashboard-activity']);
+    queryClient.invalidateQueries(['dashboard-proposals-all']);
+    queryClient.invalidateQueries(['dashboard-proposals-agreement-requests']);
+  };
 
   useEffect(() => {
     const params = new URLSearchParams(location.search || '');
@@ -198,6 +380,14 @@ export default function Proposals() {
       setActiveTab(urlTab);
     }
   }, [location.search, activeTab]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search || '');
+    const urlStatus = normalizeStatusFilterValue(params.get('status'));
+    if (urlStatus !== statusFilter) {
+      setStatusFilter(urlStatus);
+    }
+  }, [location.search, statusFilter]);
 
   useEffect(() => {
     setCursor(null);
@@ -228,8 +418,7 @@ export default function Proposals() {
     mutationFn: (proposal) => proposalsClient.archive(proposal.id),
     onSuccess: () => {
       toast.success('Archived');
-      queryClient.invalidateQueries(['proposals-list']);
-      queryClient.invalidateQueries(['dashboard-summary']);
+      refreshProposalQueries();
     },
     onError: (err) => {
       toast.error(err?.message || 'Failed to archive');
@@ -240,11 +429,54 @@ export default function Proposals() {
     mutationFn: (proposal) => proposalsClient.unarchive(proposal.id),
     onSuccess: () => {
       toast.success('Restored');
-      queryClient.invalidateQueries(['proposals-list']);
-      queryClient.invalidateQueries(['dashboard-summary']);
+      refreshProposalQueries();
     },
     onError: (err) => {
       toast.error(err?.message || 'Failed to restore');
+    },
+  });
+
+  const markOutcomeMutation = useMutation({
+    mutationFn: ({ proposal, outcome }) => proposalsClient.markOutcome(proposal.id, outcome),
+    onSuccess: (updatedProposal) => {
+      const outcomeState = String(updatedProposal?.outcome?.state || updatedProposal?.status || '').toLowerCase();
+      if (outcomeState === 'pending_won') {
+        toast.success('Agreement requested');
+      } else if (String(updatedProposal?.status || '').toLowerCase() === 'won') {
+        toast.success('Marked as Agreed');
+      } else {
+        toast.success('Marked as Lost');
+      }
+      refreshProposalQueries();
+    },
+    onError: (err) => {
+      toast.error(err?.message || 'Failed to update outcome');
+    },
+  });
+
+  const continueNegotiationMutation = useMutation({
+    mutationFn: (proposal) => proposalsClient.continueNegotiation(proposal.id),
+    onSuccess: () => {
+      toast.success('Cleared pending agreement request');
+      refreshProposalQueries();
+    },
+    onError: (err) => {
+      toast.error(err?.message || 'Failed to continue negotiating');
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (proposal) => proposalsClient.remove(proposal.id),
+    onSuccess: (result, proposal) => {
+      if (result?.mode === 'hard' || !proposal?.sent_at) {
+        toast.success('Draft deleted');
+      } else {
+        toast.success('Deleted from your workspace');
+      }
+      refreshProposalQueries();
+    },
+    onError: (err) => {
+      toast.error(err?.message || 'Failed to delete proposal');
     },
   });
 
@@ -346,6 +578,26 @@ export default function Proposals() {
     );
   };
 
+  const handleStatusFilterChange = (nextStatus) => {
+    const normalizedStatus = normalizeStatusFilterValue(nextStatus);
+    setStatusFilter(normalizedStatus);
+
+    const params = new URLSearchParams(location.search || '');
+    if (normalizedStatus === 'all') {
+      params.delete('status');
+    } else {
+      params.set('status', normalizedStatus);
+    }
+    const nextSearch = params.toString();
+    navigate(
+      {
+        pathname: location.pathname,
+        search: nextSearch ? `?${nextSearch}` : '',
+      },
+      { replace: true },
+    );
+  };
+
   const handleNextPage = () => {
     if (!page?.nextCursor) {
       return;
@@ -373,6 +625,25 @@ export default function Proposals() {
   const handleUnarchive = (proposal) => {
     unarchiveMutation.mutate(proposal);
   };
+
+  const handleMarkOutcome = (proposal, outcome) => {
+    markOutcomeMutation.mutate({ proposal, outcome });
+  };
+
+  const handleContinueNegotiation = (proposal) => {
+    continueNegotiationMutation.mutate(proposal);
+  };
+
+  const handleDelete = (proposal) => {
+    deleteMutation.mutate(proposal);
+  };
+
+  const actionsDisabled =
+    archiveMutation.isPending ||
+    unarchiveMutation.isPending ||
+    markOutcomeMutation.isPending ||
+    continueNegotiationMutation.isPending ||
+    deleteMutation.isPending;
 
   return (
     <div className="min-h-screen bg-slate-50 py-8">
@@ -402,7 +673,7 @@ export default function Proposals() {
                   className="pl-9"
                 />
               </div>
-              <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <Select value={statusFilter} onValueChange={handleStatusFilterChange}>
                 <SelectTrigger>
                   <SelectValue placeholder="Filter by status" />
                 </SelectTrigger>
@@ -412,7 +683,8 @@ export default function Proposals() {
                   <SelectItem value="sent">Sent</SelectItem>
                   <SelectItem value="received">Received</SelectItem>
                   <SelectItem value="mutual_interest">Mutual Interest</SelectItem>
-                  <SelectItem value="won">Won</SelectItem>
+                  <SelectItem value="agreement_requested">Agreement Requested</SelectItem>
+                  <SelectItem value="won">{AGREED_LABEL}</SelectItem>
                   <SelectItem value="lost">Lost</SelectItem>
                 </SelectContent>
               </Select>
@@ -486,10 +758,12 @@ export default function Proposals() {
                     <p className="text-sm text-slate-500">
                       {activeTab === 'drafts'
                         ? 'Create your first proposal to get started.'
+                        : statusFilter === 'agreement_requested'
+                          ? 'No proposals are waiting for your confirmation.'
                         : activeTab === 'archived'
                           ? 'No archived proposals.'
-                          : activeTab === 'closed'
-                            ? 'No closed (Won/Lost) proposals yet.'
+                        : activeTab === 'closed'
+                            ? `No closed (${AGREED_LABEL}/Lost) proposals yet.`
                             : `No ${activeTab} proposals yet.`}
                     </p>
                     {activeTab === 'drafts' && (
@@ -509,6 +783,10 @@ export default function Proposals() {
                         onOpen={handleOpenProposal}
                         onArchive={handleArchive}
                         onUnarchive={handleUnarchive}
+                        onMarkOutcome={handleMarkOutcome}
+                        onContinueNegotiation={handleContinueNegotiation}
+                        onDelete={handleDelete}
+                        actionsDisabled={actionsDisabled}
                       />
                     ))}
                   </div>

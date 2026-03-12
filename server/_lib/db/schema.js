@@ -260,7 +260,15 @@ export const proposals = pgTable(
     lastSharedAt: timestamp('last_shared_at', { withTimezone: true }),
     statusReason: text('status_reason'),
     archivedAt: timestamp('archived_at', { withTimezone: true }),
+    archivedByPartyAAt: timestamp('archived_by_party_a_at', { withTimezone: true }),
+    archivedByPartyBAt: timestamp('archived_by_party_b_at', { withTimezone: true }),
     closedAt: timestamp('closed_at', { withTimezone: true }),
+    partyAOutcome: text('party_a_outcome'),
+    partyAOutcomeAt: timestamp('party_a_outcome_at', { withTimezone: true }),
+    partyBOutcome: text('party_b_outcome'),
+    partyBOutcomeAt: timestamp('party_b_outcome_at', { withTimezone: true }),
+    deletedByPartyAAt: timestamp('deleted_by_party_a_at', { withTimezone: true }),
+    deletedByPartyBAt: timestamp('deleted_by_party_b_at', { withTimezone: true }),
     payload: jsonb('payload').notNull().default(sql`'{}'::jsonb`),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -280,7 +288,27 @@ export const proposals = pgTable(
     proposalsPartyAEmailIdx: index('proposals_party_a_email_idx').on(table.partyAEmail, table.createdAt),
     proposalsPartyBEmailIdx: index('proposals_party_b_email_idx').on(table.partyBEmail, table.createdAt),
     proposalsArchivedAtIdx: index('proposals_archived_at_idx').on(table.archivedAt),
+    proposalsArchivedByPartyAAtIdx: index('proposals_archived_by_party_a_at_idx').on(
+      table.archivedByPartyAAt,
+    ),
+    proposalsArchivedByPartyBAtIdx: index('proposals_archived_by_party_b_at_idx').on(
+      table.archivedByPartyBAt,
+    ),
     proposalsClosedAtIdx: index('proposals_closed_at_idx').on(table.closedAt),
+    proposalsPartyAOutcomeIdx: index('proposals_party_a_outcome_idx').on(
+      table.partyAOutcome,
+      table.updatedAt,
+    ),
+    proposalsPartyBOutcomeIdx: index('proposals_party_b_outcome_idx').on(
+      table.partyBOutcome,
+      table.updatedAt,
+    ),
+    proposalsDeletedByPartyAAtIdx: index('proposals_deleted_by_party_a_at_idx').on(
+      table.deletedByPartyAAt,
+    ),
+    proposalsDeletedByPartyBAtIdx: index('proposals_deleted_by_party_b_at_idx').on(
+      table.deletedByPartyBAt,
+    ),
   }),
 );
 

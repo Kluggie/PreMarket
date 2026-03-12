@@ -169,6 +169,20 @@
       "when": 1777683600000,
       "tag": "0023_beta_signups",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1778299200000,
+      "tag": "0024_proposal_outcomes_soft_delete",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1778472000000,
+      "tag": "0025_proposal_actor_archives",
+      "breakpoints": true
     }
   ]
 }

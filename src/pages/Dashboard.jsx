@@ -7,7 +7,12 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import ProposalsChart from '@/components/dashboard/ProposalsChart';
 import {
-    Plus,
+  AGREED_LABEL,
+  AWAITING_YOUR_CONFIRMATION_LABEL,
+  getPendingAgreementBadgeLabel,
+} from '@/lib/proposalOutcomeUi';
+import {
+  Plus,
   Send,
   Inbox,
   Users,
@@ -29,7 +34,7 @@ const statusConfig = {
   under_verification: { color: 'bg-purple-100 text-purple-700', icon: Eye, label: 'Under Review' },
   re_evaluated: { color: 'bg-indigo-100 text-indigo-700', icon: BarChart3, label: 'Re-evaluated' },
   mutual_interest: { color: 'bg-green-100 text-green-700', icon: Users, label: 'Mutual Interest' },
-  won: { color: 'bg-emerald-100 text-emerald-700', label: 'Won' },
+  won: { color: 'bg-emerald-100 text-emerald-700', label: AGREED_LABEL },
   lost: { color: 'bg-rose-100 text-rose-700', label: 'Lost' },
   closed: { color: 'bg-slate-100 text-slate-600', label: 'Closed' },
   withdrawn: { color: 'bg-red-100 text-red-700', label: 'Withdrawn' },
@@ -43,6 +48,20 @@ function StatusBadge({ status }) {
     <Badge className={`${config.color} text-[0.6875rem] px-2 py-0.5 h-5 font-medium`}>
       {Icon ? <Icon className="w-3 h-3 mr-1" /> : null}
       {config.label}
+    </Badge>
+  );
+}
+
+function OutcomeBadge({ proposal }) {
+  const outcome = proposal?.outcome || {};
+  if (String(outcome.state || '').toLowerCase() !== 'pending_won') {
+    return null;
+  }
+
+  return (
+    <Badge className="bg-amber-100 text-amber-700 text-[0.6875rem] px-2 py-0.5 h-5 font-medium">
+      <Trophy className="w-3 h-3 mr-1" />
+      {getPendingAgreementBadgeLabel(outcome)}
     </Badge>
   );
 }
@@ -65,10 +84,13 @@ function CompactProposalRow({ proposal, onOpen }) {
         <div className="flex items-center gap-2 flex-wrap">
           <h4 className="text-sm font-semibold text-slate-900 truncate">{proposal.title || 'Untitled Proposal'}</h4>
           <StatusBadge status={directional} />
+          <OutcomeBadge proposal={proposal} />
         </div>
         <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5 min-w-0">
           <span className="truncate">{templateName}</span>
-          {counterparty ? <span className="truncate">• To: {counterparty}</span> : null}
+          {counterparty ? (
+            <span className="truncate">• {listType === 'received' ? 'From' : 'To'}: {counterparty}</span>
+          ) : null}
         </div>
       </div>
       <div className="text-right shrink-0">
@@ -102,6 +124,37 @@ function ActionRequiredBucket({ title, proposals, onOpen }) {
   );
 }
 
+function AgreementRequestsCard({ proposals, onOpen, onReviewAll }) {
+  if (!proposals || proposals.length === 0) {
+    return null;
+  }
+
+  const displayed = proposals.slice(0, 3);
+
+  return (
+    <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="space-y-1">
+          <p className="text-sm font-semibold text-amber-900">{AWAITING_YOUR_CONFIRMATION_LABEL}</p>
+          <p className="text-sm text-amber-800">
+            {proposals.length} proposal{proposals.length === 1 ? '' : 's'} need your agreement before they can be marked as {AGREED_LABEL.toLowerCase()}.
+          </p>
+        </div>
+        <Button variant="outline" size="sm" className="border-amber-300 bg-white text-amber-900 hover:bg-amber-100" onClick={onReviewAll}>
+          Review Requests
+        </Button>
+      </div>
+      <div className="rounded-lg border border-amber-200 divide-y divide-amber-100 bg-white">
+        {displayed.map((proposal) => (
+          <div key={proposal.id}>
+            <CompactProposalRow proposal={proposal} onOpen={onOpen} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const navigate = useNavigate();
 
@@ -121,6 +174,13 @@ export default function Dashboard() {
     queryKey: ['dashboard-proposals-all'],
     queryFn: () => proposalsClient.list({ tab: 'all', limit: 50 }),
   });
+  const {
+    data: agreementRequests = [],
+    isLoading: agreementRequestsLoading,
+  } = useQuery({
+    queryKey: ['dashboard-proposals-agreement-requests'],
+    queryFn: () => proposalsClient.list({ status: 'agreement_requested', limit: 10 }),
+  });
   const stats = useMemo(
     () => [
       {
@@ -136,7 +196,7 @@ export default function Dashboard() {
         color: 'from-indigo-500 to-indigo-600',
       },
       {
-        label: 'Won',
+        label: AGREED_LABEL,
         value: summary?.wonCount ?? 0,
         icon: Trophy,
         color: 'from-emerald-500 to-emerald-600',
@@ -253,12 +313,10 @@ export default function Dashboard() {
       return;
     }
 
-    if ((proposal.list_type || '').toLowerCase() === 'received') {
-      navigate(createPageUrl('Proposals?tab=received'));
-      return;
-    }
-
     navigate(createPageUrl(`ProposalDetail?id=${encodeURIComponent(proposal.id)}`));
+  };
+  const handleReviewAgreementRequests = () => {
+    navigate(createPageUrl('Proposals?status=agreement_requested'));
   };
 
   return (
@@ -327,6 +385,18 @@ export default function Dashboard() {
             <Card className="border border-slate-200 shadow-sm">
               <CardContent className="p-4 sm:p-5 space-y-4">
                 <h2 className="text-base font-semibold text-slate-900">Action Required</h2>
+
+                {agreementRequestsLoading ? (
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
+                    Loading agreement requests...
+                  </div>
+                ) : (
+                  <AgreementRequestsCard
+                    proposals={agreementRequests}
+                    onOpen={handleOpenProposal}
+                    onReviewAll={handleReviewAgreementRequests}
+                  />
+                )}
 
                 {bucketedProposals.drafts.length > 0 ? (
                   <ActionRequiredBucket

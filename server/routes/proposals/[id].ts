@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, ilike, or } from 'drizzle-orm';
+import { and, asc, desc, eq } from 'drizzle-orm';
 import { ok } from '../../_lib/api-response.js';
 import { logAuditEventBestEffort } from '../../_lib/audit-events.js';
 import { assertProposalOwnership, requireUser } from '../../_lib/auth.js';
@@ -6,6 +6,13 @@ import { getDatabaseIdentitySnapshot, getDb, schema } from '../../_lib/db/client
 import { ApiError } from '../../_lib/errors.js';
 import { readJsonBody } from '../../_lib/http.js';
 import { createNotificationEvent } from '../../_lib/notifications.js';
+import {
+  getProposalAccessContext,
+  getProposalArchivedAtForActor,
+  getProposalFinalOutcomeStatus,
+  mapProposalOutcomeForUser,
+  PROPOSAL_PARTY_A,
+} from '../../_lib/proposal-outcomes.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 
 function getProposalId(req: any, proposalIdParam?: string) {
@@ -17,19 +24,23 @@ function getProposalId(req: any, proposalIdParam?: string) {
   return String(rawId || '').trim();
 }
 
-function mapProposalRow(proposal, ownerEmail) {
+function mapProposalRow(proposal, currentUser, options: Record<string, unknown> = {}) {
+  const outcome = mapProposalOutcomeForUser(proposal, currentUser, options);
+  const effectiveStatus = outcome.final_status || proposal.status;
+  const archivedAt = getProposalArchivedAtForActor(proposal, outcome.actor_role);
   return {
     id: proposal.id,
     title: proposal.title,
-    status: proposal.status,
+    status: effectiveStatus,
     status_reason: proposal.statusReason || null,
+    outcome,
     template_id: proposal.templateId,
     template_name: proposal.templateName,
     proposal_type: proposal.proposalType || 'standard',
     draft_step: Number(proposal.draftStep || 1),
     source_proposal_id: proposal.sourceProposalId || null,
     document_comparison_id: proposal.documentComparisonId || null,
-    party_a_email: proposal.partyAEmail || ownerEmail,
+    party_a_email: proposal.partyAEmail || currentUser?.email || null,
     party_b_email: proposal.partyBEmail,
     summary: proposal.summary,
     payload: proposal.payload || {},
@@ -39,8 +50,12 @@ function mapProposalRow(proposal, ownerEmail) {
     received_at: proposal.receivedAt || null,
     evaluated_at: proposal.evaluatedAt || null,
     last_shared_at: proposal.lastSharedAt || null,
-    archived_at: proposal.archivedAt || null,
+    archived_at: archivedAt,
     closed_at: proposal.closedAt || null,
+    party_a_outcome: proposal.partyAOutcome || null,
+    party_a_outcome_at: proposal.partyAOutcomeAt || null,
+    party_b_outcome: proposal.partyBOutcome || null,
+    party_b_outcome_at: proposal.partyBOutcomeAt || null,
     user_id: proposal.userId,
     created_at: proposal.createdAt,
     updated_at: proposal.updatedAt,
@@ -91,22 +106,12 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
 
     if (req.method === 'GET') {
       const db = getDb();
-      const currentEmail = normalizeEmail(auth.user.email);
-      const readScope = currentEmail
-        ? and(
-            eq(schema.proposals.id, proposalId),
-            or(
-              eq(schema.proposals.userId, auth.user.id),
-              ilike(schema.proposals.partyAEmail, currentEmail),
-              ilike(schema.proposals.partyBEmail, currentEmail),
-            ),
-          )
-        : and(eq(schema.proposals.id, proposalId), eq(schema.proposals.userId, auth.user.id));
-
-      const [existing] = await db.select().from(schema.proposals).where(readScope).limit(1);
-      if (!existing) {
-        throw new ApiError(404, 'proposal_not_found', 'Proposal not found');
-      }
+      const access = await getProposalAccessContext({
+        db,
+        proposalId,
+        currentUser: auth.user,
+      });
+      const existing = access.proposal;
 
       const [responses, evaluations, sharedLinks] = await Promise.all([
         db
@@ -129,7 +134,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
       ]);
 
       ok(res, 200, {
-        proposal: mapProposalRow(existing, auth.user.email),
+        proposal: mapProposalRow(existing, auth.user, { actorRole: access.actorRole }),
         responses: responses.map((row) => ({
           id: row.id,
           proposal_id: row.proposalId,
@@ -198,13 +203,63 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
 
     const db = getDb();
     const dbIdentity = getDatabaseIdentitySnapshot();
-    const existing = await assertProposalOwnership(auth.user.id, proposalId);
 
     if (req.method === 'DELETE') {
-      await db.delete(schema.proposals).where(eq(schema.proposals.id, proposalId));
-      ok(res, 200, { deleted: true });
+      const access = await getProposalAccessContext({
+        db,
+        proposalId,
+        currentUser: auth.user,
+      });
+      const existing = access.proposal;
+      const actorRole = access.actorRole;
+      const now = new Date();
+
+      if (!existing.sentAt) {
+        if (actorRole !== PROPOSAL_PARTY_A) {
+          throw new ApiError(403, 'forbidden', 'Only the proposer can delete an unsent draft');
+        }
+
+        if (existing.documentComparisonId) {
+          await db
+            .delete(schema.documentComparisons)
+            .where(
+              and(
+                eq(schema.documentComparisons.id, existing.documentComparisonId),
+                eq(schema.documentComparisons.userId, auth.user.id),
+              ),
+            );
+        }
+
+        await db.delete(schema.proposals).where(eq(schema.proposals.id, proposalId));
+        ok(res, 200, { deleted: true, mode: 'hard' });
+        return;
+      }
+
+      const deleteValues =
+        actorRole === PROPOSAL_PARTY_A
+          ? {
+              deletedByPartyAAt: now,
+              updatedAt: now,
+            }
+          : {
+              deletedByPartyBAt: now,
+              updatedAt: now,
+            };
+
+      await db
+        .update(schema.proposals)
+        .set(deleteValues)
+        .where(eq(schema.proposals.id, proposalId));
+
+      ok(res, 200, {
+        deleted: true,
+        mode: 'soft',
+        actor_role: actorRole,
+      });
       return;
     }
+
+    const existing = await assertProposalOwnership(auth.user.id, proposalId);
 
     const body = await readJsonBody(req);
     const nextTitle = body.title === undefined ? existing.title : String(body.title || '').trim();
@@ -224,11 +279,19 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
       ? null
       : (String(body.status || '').trim().toLowerCase() || null);
 
+    if (incomingStatus === 'won' || incomingStatus === 'lost') {
+      throw new ApiError(
+        400,
+        'use_outcome_route',
+        'Use /api/proposals/[id]/outcome to mark a proposal as agreed or lost.',
+      );
+    }
+
     if (incomingStatus !== null && !ALLOWED_STATUSES.has(incomingStatus)) {
       throw new ApiError(400, 'invalid_status', `Invalid status "${incomingStatus}". Allowed: ${Array.from(ALLOWED_STATUSES).join(', ')}`);
     }
 
-    const currentStatusNorm = String(existing.status || '').trim().toLowerCase();
+    const currentStatusNorm = getProposalFinalOutcomeStatus(existing) || String(existing.status || '').trim().toLowerCase();
     if (CLOSED_STATUSES.has(currentStatusNorm) && incomingStatus !== null && !CLOSED_STATUSES.has(incomingStatus)) {
       throw new ApiError(400, 'invalid_status_transition', `Cannot change status from "${currentStatusNorm}" to "${incomingStatus}". Use the archive action or contact support to reopen a closed proposal.`);
     }
@@ -298,12 +361,6 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         body.lastSharedAt === undefined && body.last_shared_at === undefined
           ? existing.lastSharedAt
           : parseDateOrNull(body.lastSharedAt || body.last_shared_at),
-      // closedAt: timestamp when the proposal first became won/lost. Never cleared once set.
-      closedAt: (() => {
-        if (incomingStatus === null) return existing.closedAt;
-        if (CLOSED_STATUSES.has(incomingStatus) && !existing.closedAt) return new Date();
-        return existing.closedAt;
-      })(),
       updatedAt: new Date(),
     };
 
@@ -415,7 +472,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
     }
 
     ok(res, 200, {
-      proposal: mapProposalRow(updated, auth.user.email),
+      proposal: mapProposalRow(updated, auth.user, { actorRole: PROPOSAL_PARTY_A }),
     });
   });
 }

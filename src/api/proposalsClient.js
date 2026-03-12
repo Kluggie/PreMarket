@@ -92,7 +92,7 @@ export const proposalsClient = {
   },
 
   async remove(id) {
-    await request(`/api/proposals/${encodeURIComponent(String(id || ''))}`, {
+    return request(`/api/proposals/${encodeURIComponent(String(id || ''))}`, {
       method: 'DELETE',
     });
   },
@@ -155,8 +155,23 @@ export const proposalsClient = {
     return response.proposal || null;
   },
 
+  async markOutcome(id, outcome) {
+    const response = await request(`/api/proposals/${encodeURIComponent(String(id || ''))}/outcome`, {
+      method: 'POST',
+      body: JSON.stringify({ outcome }),
+    });
+    return response.proposal || null;
+  },
+
+  async continueNegotiation(id) {
+    const response = await request(`/api/proposals/${encodeURIComponent(String(id || ''))}/outcome`, {
+      method: 'POST',
+      body: JSON.stringify({ action: 'continue' }),
+    });
+    return response.proposal || null;
+  },
+
   async close(id, status) {
-    // Redirects to the canonical PATCH /api/proposals/:id endpoint (no dedicated /close route)
-    return this.update(id, { status });
+    return this.markOutcome(id, status);
   },
 };

@@ -5,6 +5,7 @@ import { ApiError } from '../../../_lib/errors.js';
 import { readJsonBody } from '../../../_lib/http.js';
 import { newId } from '../../../_lib/ids.js';
 import { createNotificationEvent } from '../../../_lib/notifications.js';
+import { assertProposalOpenForNegotiation, buildPendingWonReset } from '../../../_lib/proposal-outcomes.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 
 function getToken(req: any, tokenParam?: string) {
@@ -154,6 +155,17 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     }
 
     const now = new Date();
+    const [proposalForOutcome] = await db
+      .select()
+      .from(schema.proposals)
+      .where(eq(schema.proposals.id, link.proposalId))
+      .limit(1);
+
+    if (!proposalForOutcome) {
+      throw new ApiError(404, 'proposal_not_found', 'Proposal not found');
+    }
+    assertProposalOpenForNegotiation(proposalForOutcome);
+    const pendingWonReset = buildPendingWonReset(proposalForOutcome, now) || {};
 
     if (normalizedRows.length > 0) {
       await db
@@ -213,6 +225,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         .set({
           status: 'received',
           receivedAt: now,
+          ...pendingWonReset,
           updatedAt: now,
         })
         .where(eq(schema.proposals.id, link.proposalId));
@@ -277,6 +290,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         .set({
           status: 're_evaluated',
           evaluatedAt: now,
+          ...pendingWonReset,
           updatedAt: now,
         })
         .where(eq(schema.proposals.id, link.proposalId));

@@ -5,6 +5,11 @@ import { getDatabaseIdentitySnapshot, getDb, schema } from '../../_lib/db/client
 import { ApiError } from '../../_lib/errors.js';
 import { readJsonBody } from '../../_lib/http.js';
 import { newId } from '../../_lib/ids.js';
+import {
+  buildLegacyOutcomeSeed,
+  getProposalArchivedAtForActor,
+  mapProposalOutcomeForUser,
+} from '../../_lib/proposal-outcomes.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 
 const DEFAULT_LIMIT = 25;
@@ -128,11 +133,14 @@ function resolveDocumentComparisonResumeStep(params: {
 }
 
 function mapProposalRow(proposal, currentUser, sharedReportLink = null, resumeStepOverride: unknown = null) {
+  const outcome = mapProposalOutcomeForUser(proposal, currentUser);
+  const effectiveStatus = outcome.final_status || proposal.status;
+  const archivedAt = getProposalArchivedAtForActor(proposal, outcome.actor_role);
   const currentEmail = String(currentUser?.email || '').trim().toLowerCase();
   const currentUserId = String(currentUser?.id || '').trim();
   const senderEmail = String(proposal.partyAEmail || '').trim().toLowerCase();
   const recipientEmail = String(proposal.partyBEmail || '').trim().toLowerCase();
-  const normalizedStatus = String(proposal.status || '').trim().toLowerCase();
+  const normalizedStatus = String(effectiveStatus || '').trim().toLowerCase();
   const sharedReportToken = String(sharedReportLink?.token || '').trim();
   const hasSharedReportLink = Boolean(sharedReportToken);
   const isSent = Boolean(proposal.sentAt);
@@ -172,9 +180,10 @@ function mapProposalRow(proposal, currentUser, sharedReportLink = null, resumeSt
   return {
     id: proposal.id,
     title: proposal.title,
-    status: proposal.status,
+    status: effectiveStatus,
     status_reason: proposal.statusReason || null,
     directional_status: directionalStatus,
+    outcome,
     list_type: listType,
     shared_report_token: hasSharedReportLink ? sharedReportToken : null,
     shared_report_status: hasSharedReportLink ? String(sharedReportLink.status || '').toLowerCase() || 'active' : null,
@@ -198,8 +207,12 @@ function mapProposalRow(proposal, currentUser, sharedReportLink = null, resumeSt
     received_at: proposal.receivedAt || null,
     evaluated_at: proposal.evaluatedAt || null,
     last_shared_at: proposal.lastSharedAt || null,
-    archived_at: proposal.archivedAt || null,
+    archived_at: archivedAt,
     closed_at: proposal.closedAt || null,
+    party_a_outcome: proposal.partyAOutcome || null,
+    party_a_outcome_at: proposal.partyAOutcomeAt || null,
+    party_b_outcome: proposal.partyBOutcome || null,
+    party_b_outcome_at: proposal.partyBOutcomeAt || null,
     user_id: proposal.userId,
     created_at: proposal.createdAt,
     updated_at: proposal.updatedAt,
@@ -329,6 +342,7 @@ export default async function handler(req: any, res: any) {
             ilike(schema.proposals.partyAEmail, userEmail),
           )
         : eq(schema.proposals.userId, auth.user.id);
+      const ownerVisibleScope = and(ownerScope, isNull(schema.proposals.deletedByPartyAAt));
       const recipientScope = hasUserEmail
         ? sharedRecipientScope
           ? or(
@@ -337,49 +351,67 @@ export default async function handler(req: any, res: any) {
             )
           : ilike(schema.proposals.partyBEmail, userEmail)
         : eq(schema.proposals.userId, '__no_recipient_scope__');
+      const recipientVisibleScope = and(recipientScope, isNull(schema.proposals.deletedByPartyBAt));
+      const ownerArchiveFilter = isArchivedTab
+        ? isNotNull(schema.proposals.archivedByPartyAAt)
+        : isNull(schema.proposals.archivedByPartyAAt);
+      const recipientArchiveFilter = isArchivedTab
+        ? isNotNull(schema.proposals.archivedByPartyBAt)
+        : isNull(schema.proposals.archivedByPartyBAt);
+      const ownerTabScope = and(ownerVisibleScope, ownerArchiveFilter);
+      const recipientTabScope = and(recipientVisibleScope, recipientArchiveFilter);
       const directReceivedScope = hasUserEmail
         ? and(
             ilike(schema.proposals.partyBEmail, userEmail),
             isNotNull(schema.proposals.sentAt),
             ne(schema.proposals.userId, auth.user.id),
+            isNull(schema.proposals.deletedByPartyBAt),
+            recipientArchiveFilter,
           )
         : eq(schema.proposals.userId, '__no_recipient_scope__');
       const sharedLinkReceivedScope = sharedRecipientScope
-        ? and(sharedRecipientScope, ne(schema.proposals.userId, auth.user.id))
+        ? and(
+            sharedRecipientScope,
+            ne(schema.proposals.userId, auth.user.id),
+            isNull(schema.proposals.deletedByPartyBAt),
+            recipientArchiveFilter,
+          )
         : null;
+      const ownerAgreementRequestedScope = and(
+        ownerTabScope,
+        isNotNull(schema.proposals.sentAt),
+        eq(schema.proposals.partyBOutcome, 'won'),
+        isNull(schema.proposals.partyAOutcome),
+      );
+      const recipientAgreementRequestedScope = and(
+        recipientTabScope,
+        isNotNull(schema.proposals.sentAt),
+        eq(schema.proposals.partyAOutcome, 'won'),
+        isNull(schema.proposals.partyBOutcome),
+      );
 
       const conditions = [] as any[];
       const listScope = hasUserEmail
         ? or(
-            ownerScope,
-            recipientScope,
+            ownerTabScope,
+            recipientTabScope,
           )
-        : ownerScope;
+        : ownerTabScope;
       conditions.push(listScope);
-
-      // By default, exclude archived proposals unless the user is viewing the Archived tab.
-      if (isArchivedTab) {
-        conditions.push(isNotNull(schema.proposals.archivedAt));
-      } else {
-        conditions.push(isNull(schema.proposals.archivedAt));
-      }
 
       if (isClosedTab) {
         conditions.push(
-          and(
-            ownerScope,
-            or(
-              eq(schema.proposals.status, 'won'),
-              eq(schema.proposals.status, 'lost'),
-            ),
+          or(
+            eq(schema.proposals.status, 'won'),
+            eq(schema.proposals.status, 'lost'),
           ),
         );
       } else if (tab === 'drafts') {
         // Any proposal you own where sent_at IS NULL is a draft, regardless of status.
         // This keeps under_verification, needs_changes, etc. in Drafts until email is sent.
-        conditions.push(and(ownerScope, isNull(schema.proposals.sentAt)));
+        conditions.push(and(ownerTabScope, isNull(schema.proposals.sentAt)));
       } else if (tab === 'sent') {
-        conditions.push(and(ownerScope, isNotNull(schema.proposals.sentAt)));
+        conditions.push(and(ownerTabScope, isNotNull(schema.proposals.sentAt)));
       } else if (tab === 'received') {
         conditions.push(
           sharedLinkReceivedScope
@@ -389,7 +421,7 @@ export default async function handler(req: any, res: any) {
       } else if (tab === 'mutual_interest') {
         conditions.push(
           and(
-            ownerScope,
+            ownerTabScope,
             or(
               eq(schema.proposals.status, 'mutual_interest'),
               eq(schema.proposals.status, 'received'),
@@ -400,20 +432,26 @@ export default async function handler(req: any, res: any) {
 
       if (statusFilter && statusFilter !== 'all') {
         if (statusFilter === 'draft') {
-          conditions.push(and(ownerScope, isNull(schema.proposals.sentAt)));
+          conditions.push(and(ownerTabScope, isNull(schema.proposals.sentAt)));
         } else if (statusFilter === 'sent') {
-          conditions.push(and(ownerScope, isNotNull(schema.proposals.sentAt)));
+          conditions.push(and(ownerTabScope, isNotNull(schema.proposals.sentAt)));
         } else if (statusFilter === 'received') {
           conditions.push(
             sharedLinkReceivedScope
               ? or(directReceivedScope, sharedLinkReceivedScope)
               : directReceivedScope,
           );
+        } else if (statusFilter === 'agreement_requested') {
+          conditions.push(
+            hasUserEmail
+              ? or(ownerAgreementRequestedScope, recipientAgreementRequestedScope)
+              : ownerAgreementRequestedScope,
+          );
         } else if (statusFilter === 'mutual_interest') {
           conditions.push(
             or(
-              eq(schema.proposals.status, 'mutual_interest'),
-              and(ownerScope, eq(schema.proposals.status, 'received')),
+              and(ownerTabScope, eq(schema.proposals.status, 'mutual_interest')),
+              and(ownerTabScope, eq(schema.proposals.status, 'received')),
             ),
           );
         } else {
@@ -665,6 +703,7 @@ export default async function handler(req: any, res: any) {
     const dbIdentity = getDatabaseIdentitySnapshot();
 
     let created;
+    const legacyOutcomeSeed = buildLegacyOutcomeSeed(status, now);
     try {
       [created] = await db
         .insert(schema.proposals)
@@ -688,6 +727,11 @@ export default async function handler(req: any, res: any) {
           receivedAt,
           evaluatedAt,
           lastSharedAt,
+          partyAOutcome: legacyOutcomeSeed.partyAOutcome,
+          partyAOutcomeAt: legacyOutcomeSeed.partyAOutcomeAt,
+          partyBOutcome: legacyOutcomeSeed.partyBOutcome,
+          partyBOutcomeAt: legacyOutcomeSeed.partyBOutcomeAt,
+          closedAt: legacyOutcomeSeed.closedAt,
           createdAt: now,
           updatedAt: now,
         })

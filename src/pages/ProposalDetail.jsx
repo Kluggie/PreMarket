@@ -7,10 +7,29 @@ import { sharedLinksClient } from '@/api/sharedLinksClient';
 import { documentComparisonsClient } from '@/api/documentComparisonsClient';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
+import {
+  Archive,
+  ArchiveRestore,
   ArrowLeft,
   ArrowRight,
   BarChart3,
@@ -19,6 +38,7 @@ import {
   FileText,
   Send,
   Sparkles,
+  Trash2,
   XCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -28,6 +48,11 @@ import {
   MEDIATION_REVIEW_LABEL,
   OPEN_QUESTIONS_LABEL,
 } from '@/lib/aiReportUtils';
+import {
+  AGREED_LABEL,
+  getAgreementActionLabel,
+  getVisibleProposalStatusLabel,
+} from '@/lib/proposalOutcomeUi';
 
 const CONFIDENTIAL_LABEL = 'Confidential Information';
 const SHARED_LABEL = 'Shared Information';
@@ -62,36 +87,6 @@ function formatDateTime(value) {
   return parsed.toLocaleString();
 }
 
-function getEvaluationProviderMeta(evaluation) {
-  const result =
-    evaluation?.result && typeof evaluation.result === 'object' && !Array.isArray(evaluation.result)
-      ? evaluation.result
-      : {};
-  const providerRaw = asText(
-    evaluation?.evaluation_provider ||
-      evaluation?.provider ||
-      result.evaluation_provider ||
-      result.provider,
-  );
-  const model = asText(
-    evaluation?.evaluation_model ||
-      evaluation?.evaluation_provider_model ||
-      result.evaluation_model ||
-      result.evaluation_provider_model ||
-      result.model,
-  );
-  const reason = asText(
-    evaluation?.evaluation_provider_reason ||
-      result.evaluation_provider_reason ||
-      result.fallbackReason,
-  );
-  return {
-    provider: asLower(providerRaw) === 'vertex' ? 'vertex' : providerRaw ? 'fallback' : 'unknown',
-    model: model || null,
-    reason: reason || null,
-  };
-}
-
 function renderDocumentReadOnly({ text, html }) {
   const safeText = String(text || '').trim();
   const safeHtml = asText(html);
@@ -114,6 +109,10 @@ function renderDocumentReadOnly({ text, html }) {
 
 function getStatusLabel(status) {
   const normalized = String(status || 'draft').toLowerCase();
+  const visibleStatusLabel = getVisibleProposalStatusLabel(normalized);
+  if (visibleStatusLabel) {
+    return visibleStatusLabel;
+  }
   switch (normalized) {
     case 'under_verification':
       return 'Under Verification';
@@ -137,10 +136,28 @@ function getStatusClass(status) {
   if (normalized === 'under_verification' || normalized === 're_evaluated') {
     return 'bg-indigo-100 text-indigo-700';
   }
+  if (normalized === 'won') return 'bg-emerald-100 text-emerald-700';
+  if (normalized === 'lost') return 'bg-rose-100 text-rose-700';
   if (normalized === 'mutual_interest' || normalized === 'revealed') return 'bg-green-100 text-green-700';
   if (normalized === 'closed') return 'bg-slate-100 text-slate-600';
   if (normalized === 'withdrawn') return 'bg-red-100 text-red-700';
   return 'bg-slate-100 text-slate-700';
+}
+
+function OutcomeActionButton({ tooltip, children, ...buttonProps }) {
+  const button = <Button {...buttonProps}>{children}</Button>;
+  if (!tooltip || !buttonProps.disabled) {
+    return button;
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="inline-flex">{button}</span>
+      </TooltipTrigger>
+      <TooltipContent>{tooltip}</TooltipContent>
+    </Tooltip>
+  );
 }
 
 function triggerJsonDownload(filename, payload) {
@@ -227,9 +244,7 @@ export default function ProposalDetail() {
   });
 
   const proposal = detailQuery.data?.proposal || null;
-  const responses = detailQuery.data?.responses || [];
   const evaluations = detailQuery.data?.evaluations || [];
-  const sharedLinks = detailQuery.data?.sharedLinks || [];
 
   const comparisonQuery = useQuery({
     queryKey: ['proposal-linked-comparison', proposal?.document_comparison_id || 'none'],
@@ -274,6 +289,15 @@ export default function ProposalDetail() {
     Array.isArray(latestReportData?.missing) ? latestReportData.missing.length
     : Array.isArray(latestResult?.report?.missing) ? latestResult.report.missing.length
     : 0;
+  const refreshProposalQueries = () => {
+    queryClient.invalidateQueries(['proposal-detail', proposalId]);
+    queryClient.invalidateQueries(['proposal-linked-comparison', proposal?.document_comparison_id || 'none']);
+    queryClient.invalidateQueries(['proposals-list']);
+    queryClient.invalidateQueries(['dashboard-summary']);
+    queryClient.invalidateQueries(['dashboard-activity']);
+    queryClient.invalidateQueries(['dashboard-proposals-all']);
+    queryClient.invalidateQueries(['dashboard-proposals-agreement-requests']);
+  };
 
   const runEvaluationMutation = useMutation({
     mutationFn: () => {
@@ -287,9 +311,7 @@ export default function ProposalDetail() {
       return proposalsClient.evaluate(proposalId, {});
     },
     onSuccess: () => {
-      queryClient.invalidateQueries(['proposal-detail', proposalId]);
-      queryClient.invalidateQueries(['proposal-linked-comparison', proposal?.document_comparison_id || 'none']);
-      queryClient.invalidateQueries(['proposals']);
+      refreshProposalQueries();
       toast.success('AI mediation review ready');
     },
     onError: (error) => {
@@ -359,16 +381,65 @@ export default function ProposalDetail() {
   });
 
   const markOutcomeMutation = useMutation({
-    mutationFn: (status) => proposalsClient.close(proposalId, status),
+    mutationFn: (status) => proposalsClient.markOutcome(proposalId, status),
     onSuccess: (updatedProposal) => {
-      const label = String(updatedProposal?.status || '').toLowerCase() === 'won' ? 'Won' : 'Lost';
-      toast.success(`Marked as ${label}`);
-      queryClient.invalidateQueries(['proposal-detail', proposalId]);
-      queryClient.invalidateQueries(['proposals-list']);
-      queryClient.invalidateQueries(['dashboard-summary']);
+      const outcomeState = String(updatedProposal?.outcome?.state || updatedProposal?.status || '').toLowerCase();
+      if (outcomeState === 'pending_won') {
+        toast.success('Agreement requested');
+      } else if (String(updatedProposal?.status || '').toLowerCase() === 'won') {
+        toast.success('Marked as Agreed');
+      } else {
+        toast.success('Marked as Lost');
+      }
+      refreshProposalQueries();
     },
     onError: (error) => {
       toast.error(error?.message || 'Failed to update outcome');
+    },
+  });
+
+  const continueNegotiationMutation = useMutation({
+    mutationFn: () => proposalsClient.continueNegotiation(proposalId),
+    onSuccess: () => {
+      toast.success('Cleared pending agreement request');
+      refreshProposalQueries();
+    },
+    onError: (error) => {
+      toast.error(error?.message || 'Failed to continue negotiating');
+    },
+  });
+
+  const archiveMutation = useMutation({
+    mutationFn: () => proposalsClient.archive(proposalId),
+    onSuccess: () => {
+      toast.success('Archived');
+      refreshProposalQueries();
+    },
+    onError: (error) => {
+      toast.error(error?.message || 'Failed to archive proposal');
+    },
+  });
+
+  const unarchiveMutation = useMutation({
+    mutationFn: () => proposalsClient.unarchive(proposalId),
+    onSuccess: () => {
+      toast.success('Restored');
+      refreshProposalQueries();
+    },
+    onError: (error) => {
+      toast.error(error?.message || 'Failed to restore proposal');
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: () => proposalsClient.remove(proposalId),
+    onSuccess: () => {
+      toast.success(proposal?.sent_at ? 'Deleted from your workspace' : 'Draft deleted');
+      refreshProposalQueries();
+      navigate(createPageUrl('Proposals'));
+    },
+    onError: (error) => {
+      toast.error(error?.message || 'Failed to delete proposal');
     },
   });
 
@@ -405,6 +476,27 @@ export default function ProposalDetail() {
       </div>
     );
   }
+
+  const outcome = proposal.outcome || {};
+  const outcomeState = asLower(outcome.state || proposal.status);
+  const isWon = outcomeState === 'won';
+  const isLost = outcomeState === 'lost';
+  const isPendingWon = outcomeState === 'pending_won';
+  const isClosed = isWon || isLost;
+  const canArchive = Boolean(outcome.actor_role);
+  const outcomeActionDisabled =
+    markOutcomeMutation.isPending || continueNegotiationMutation.isPending;
+  const archiveActionDisabled =
+    archiveMutation.isPending || unarchiveMutation.isPending || deleteMutation.isPending;
+  const deleteDialogTitle = proposal.sent_at ? 'Delete Proposal From Your Workspace?' : 'Delete Draft Proposal?';
+  const deleteDialogDescription = proposal.sent_at
+    ? 'This will hide the proposal from your workspace only. It will remain available to the counterparty and stay intact for shared history.'
+    : 'This will permanently delete this unsent draft and any linked draft-only comparison data. This action cannot be undone.';
+  const pendingOutcomeMessage = outcome.requested_by_counterparty
+    ? 'The counterparty requested agreement on this proposal. Confirm the terms, mark it lost, or keep negotiating.'
+    : outcome.requested_by_current_user
+      ? `You requested agreement on this proposal. It becomes ${AGREED_LABEL.toLowerCase()} only after the counterparty confirms it.`
+      : '';
 
   return (
     <div className="min-h-screen bg-slate-50 py-6">
@@ -505,11 +597,12 @@ export default function ProposalDetail() {
                   }
                   navigate(createPageUrl(`CreateProposal?draft=${encodeURIComponent(proposal.id)}&step=4`));
                 }}
+                disabled={isClosed}
               >
                 <ArrowRight className="w-4 h-4 mr-2" />
                 Edit Proposal
               </Button>
-              <Button onClick={() => shareMutation.mutate()} disabled={shareMutation.isPending}>
+              <Button onClick={() => shareMutation.mutate()} disabled={shareMutation.isPending || isClosed}>
                 <Send className="w-4 h-4 mr-2" />
                 Share Updated Version
               </Button>
@@ -517,6 +610,49 @@ export default function ProposalDetail() {
                 <Download className="w-4 h-4 mr-2" />
                 Download AI Mediation Review PDF
               </Button>
+              {canArchive ? (
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    if (proposal.archived_at) {
+                      unarchiveMutation.mutate();
+                      return;
+                    }
+                    archiveMutation.mutate();
+                  }}
+                  disabled={archiveActionDisabled}
+                >
+                  {proposal.archived_at ? (
+                    <ArchiveRestore className="w-4 h-4 mr-2" />
+                  ) : (
+                    <Archive className="w-4 h-4 mr-2" />
+                  )}
+                  {proposal.archived_at ? 'Unarchive' : 'Archive'}
+                </Button>
+              ) : null}
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="outline" className="text-rose-700 border-rose-200 hover:bg-rose-50" disabled={deleteMutation.isPending}>
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    Delete
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>{deleteDialogTitle}</AlertDialogTitle>
+                    <AlertDialogDescription>{deleteDialogDescription}</AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={() => deleteMutation.mutate()}
+                      className="bg-rose-600 hover:bg-rose-700"
+                    >
+                      Delete
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
             </div>
 
             <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -536,40 +672,67 @@ export default function ProposalDetail() {
               <TabsContent value="report" className="mt-6 space-y-5">
 
                 {/* Outcome row */}
-                {(() => {
-                  const currentStatus = String(proposal.status || '').toLowerCase();
-                  const isWon = currentStatus === 'won';
-                  const isLost = currentStatus === 'lost';
-                  const isClosed = isWon || isLost;
-                  return (
-                    <div className="flex flex-wrap items-center gap-3">
-                      {isClosed ? (
-                        <>
-                          <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg font-semibold text-sm border ${isWon ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-600 border-rose-200'}`}>
-                            {isWon ? <CheckCircle2 className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
-                            {isWon ? 'Won' : 'Lost'}
-                            {proposal.closed_at && <span className="text-xs opacity-70 ml-1">· {formatDate(proposal.closed_at)}</span>}
-                          </div>
-                          <Button size="sm" variant="outline" disabled={markOutcomeMutation.isPending || isWon} onClick={() => markOutcomeMutation.mutate('won')}>
-                            <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" /> Won
+                {pendingOutcomeMessage ? (
+                  <Alert className="border-amber-200 bg-amber-50">
+                    <AlertDescription className="text-amber-900">{pendingOutcomeMessage}</AlertDescription>
+                  </Alert>
+                ) : null}
+
+                <TooltipProvider>
+                  <div className="flex flex-wrap items-center gap-3">
+                    {isClosed ? (
+                      <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg font-semibold text-sm border ${isWon ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-600 border-rose-200'}`}>
+                        {isWon ? <CheckCircle2 className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
+                        {isWon ? AGREED_LABEL : 'Lost'}
+                        {proposal.closed_at ? <span className="text-xs opacity-70 ml-1">· {formatDate(proposal.closed_at)}</span> : null}
+                      </div>
+                    ) : null}
+
+                    {!isClosed ? (
+                      <>
+                        <OutcomeActionButton
+                          size="sm"
+                          className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                          disabled={
+                            outcomeActionDisabled ||
+                            !outcome.can_mark_won ||
+                            Boolean(outcome.requested_by_current_user)
+                          }
+                          tooltip={
+                            outcome.requested_by_current_user
+                              ? 'Waiting for the counterparty to confirm the agreement.'
+                              : outcome.eligibility_reason
+                          }
+                          onClick={() => markOutcomeMutation.mutate('won')}
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />
+                          {getAgreementActionLabel(outcome)}
+                        </OutcomeActionButton>
+                        <OutcomeActionButton
+                          size="sm"
+                          variant="outline"
+                          className="text-rose-600 border-rose-200 hover:bg-rose-50"
+                          disabled={outcomeActionDisabled || !outcome.can_mark_lost}
+                          tooltip={outcome.eligibility_reason}
+                          onClick={() => markOutcomeMutation.mutate('lost')}
+                        >
+                          <XCircle className="w-3.5 h-3.5 mr-1.5" />
+                          Mark as Lost
+                        </OutcomeActionButton>
+                        {isPendingWon ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={outcomeActionDisabled || !outcome.can_continue_negotiating}
+                            onClick={() => continueNegotiationMutation.mutate()}
+                          >
+                            Continue Negotiating
                           </Button>
-                          <Button size="sm" variant="outline" disabled={markOutcomeMutation.isPending || isLost} onClick={() => markOutcomeMutation.mutate('lost')}>
-                            <XCircle className="w-3.5 h-3.5 mr-1.5" /> Lost
-                          </Button>
-                        </>
-                      ) : (
-                        <>
-                          <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white" disabled={markOutcomeMutation.isPending} onClick={() => markOutcomeMutation.mutate('won')}>
-                            <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" /> Mark as Won
-                          </Button>
-                          <Button size="sm" variant="outline" className="text-rose-600 border-rose-200 hover:bg-rose-50" disabled={markOutcomeMutation.isPending} onClick={() => markOutcomeMutation.mutate('lost')}>
-                            <XCircle className="w-3.5 h-3.5 mr-1.5" /> Mark as Lost
-                          </Button>
-                        </>
-                      )}
-                    </div>
-                  );
-                })()}
+                        ) : null}
+                      </>
+                    ) : null}
+                  </div>
+                </TooltipProvider>
 
                 {/* Shared AI mediation review — same ComparisonAiReportTab used by recipient Step 0 and Step 3.
                    Only the data changes; the layout is structurally identical across all roles.
@@ -610,7 +773,7 @@ export default function ProposalDetail() {
 
                 {/* Action buttons */}
                 <div className="flex flex-wrap gap-3 pt-2">
-                  <Button onClick={() => runEvaluationMutation.mutate()} disabled={runEvaluationMutation.isPending}>
+                  <Button onClick={() => runEvaluationMutation.mutate()} disabled={runEvaluationMutation.isPending || isClosed}>
                     <Sparkles className="w-4 h-4 mr-2" />
                     {getRunAiMediationLabel({
                       isPending: runEvaluationMutation.isPending,

@@ -7,6 +7,7 @@ import { ApiError } from '../../../_lib/errors.js';
 import { readJsonBody } from '../../../_lib/http.js';
 import { newId } from '../../../_lib/ids.js';
 import { createNotificationEvent } from '../../../_lib/notifications.js';
+import { assertProposalOpenForNegotiation, buildPendingWonReset } from '../../../_lib/proposal-outcomes.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 import { evaluateDocumentComparisonWithVertex } from '../../../_lib/vertex-evaluation.js';
 import { evaluateWithVertexV2 } from '../../../_lib/vertex-evaluation-v2.js';
@@ -1230,6 +1231,18 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     const existingRow = firstRow<DocumentComparisonRow>(existingRows);
     ensureComparisonFound(existingRow);
     const existing = existingRow as DocumentComparisonRow;
+    let linkedProposal = null;
+    if (existing.proposalId) {
+      const proposalRows = await db
+        .select()
+        .from(schema.proposals)
+        .where(eq(schema.proposals.id, existing.proposalId))
+        .limit(1);
+      linkedProposal = firstRow(proposalRows);
+      if (linkedProposal) {
+        assertProposalOpenForNegotiation(linkedProposal);
+      }
+    }
     const body = (await readJsonBody(req)) as Record<string, unknown>;
     const draft = resolveEvaluationDraft({
       existing,
@@ -1823,6 +1836,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
 
     let proposalSummary = null;
     if (existing.proposalId) {
+      const pendingWonReset = buildPendingWonReset(linkedProposal, now) || {};
       const proposalRows = await withDbWriteGuard({
         requestId,
         message: 'Failed to persist proposal evaluation status',
@@ -1836,6 +1850,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
               draftStep: 3,
               evaluatedAt: now,
               documentComparisonId: existing.id,
+              ...pendingWonReset,
               updatedAt: now,
             })
             .where(eq(schema.proposals.id, existing.proposalId))

@@ -9,6 +9,7 @@ import { readJsonBody } from '../../../_lib/http.js';
 import { newId, newToken } from '../../../_lib/ids.js';
 import { getResendConfig } from '../../../_lib/integrations.js';
 import { createNotificationEvent } from '../../../_lib/notifications.js';
+import { assertProposalOpenForNegotiation, buildPendingWonReset } from '../../../_lib/proposal-outcomes.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 
 function getProposalId(req: any, proposalIdParam?: string) {
@@ -164,6 +165,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
     if (!existing) {
       throw new ApiError(404, 'proposal_not_found', 'Proposal not found');
     }
+    assertProposalOpenForNegotiation(existing);
 
     const body = await readJsonBody(req);
     const recipientEmail =
@@ -181,6 +183,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
     });
 
     const sentAt = new Date();
+    const pendingWonReset = buildPendingWonReset(existing, sentAt) || {};
     const [updatedProposal] = await db
       .update(schema.proposals)
       .set({
@@ -188,6 +191,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         draftStep: 4,
         partyBEmail: recipientEmail,
         sentAt,
+        ...pendingWonReset,
         updatedAt: sentAt,
       })
       .where(eq(schema.proposals.id, existing.id))

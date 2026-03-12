@@ -1,8 +1,13 @@
 import { eq } from 'drizzle-orm';
 import { ok } from '../../../_lib/api-response.js';
-import { assertProposalOwnership, requireUser } from '../../../_lib/auth.js';
+import { requireUser } from '../../../_lib/auth.js';
 import { getDatabaseIdentitySnapshot, getDb, schema } from '../../../_lib/db/client.js';
 import { ApiError } from '../../../_lib/errors.js';
+import {
+  getProposalAccessContext,
+  getProposalArchivedAtForActor,
+  PROPOSAL_PARTY_A,
+} from '../../../_lib/proposal-outcomes.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 
 function getProposalId(req: any, proposalIdParam?: string) {
@@ -14,7 +19,7 @@ function getProposalId(req: any, proposalIdParam?: string) {
   return String(rawId || '').trim();
 }
 
-function mapProposalRow(row) {
+function mapProposalRow(row, actorRole) {
   return {
     id: row.id,
     title: row.title,
@@ -36,7 +41,7 @@ function mapProposalRow(row) {
     received_at: row.receivedAt || null,
     evaluated_at: row.evaluatedAt || null,
     last_shared_at: row.lastSharedAt || null,
-    archived_at: row.archivedAt || null,
+    archived_at: getProposalArchivedAtForActor(row, actorRole),
     closed_at: row.closedAt || null,
     user_id: row.userId,
     created_at: row.createdAt,
@@ -61,15 +66,23 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
     }
     context.userId = auth.user.id;
 
-    await assertProposalOwnership(auth.user.id, proposalId);
-
     const db = getDb();
     const dbIdentity = getDatabaseIdentitySnapshot();
     const now = new Date();
+    const access = await getProposalAccessContext({
+      db,
+      proposalId,
+      currentUser: auth.user,
+    });
+    const actorRole = access.actorRole;
+    const archiveValues =
+      actorRole === PROPOSAL_PARTY_A
+        ? { archivedByPartyAAt: now, updatedAt: now }
+        : { archivedByPartyBAt: now, updatedAt: now };
 
     const [updated] = await db
       .update(schema.proposals)
-      .set({ archivedAt: now, updatedAt: now })
+      .set(archiveValues)
       .where(eq(schema.proposals.id, proposalId))
       .returning();
 
@@ -88,6 +101,6 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
       }),
     );
 
-    ok(res, 200, { proposal: mapProposalRow(updated) });
+    ok(res, 200, { proposal: mapProposalRow(updated, actorRole) });
   });
 }
