@@ -50,7 +50,7 @@ export default function Landing() {
     { number: '01', title: 'Share Deal Terms', description: 'Add private constraints and a shared position for the other side to review.' },
     { number: '02', title: 'AI Negotiation', description: 'The AI finds gaps, risks, and trade-offs without leaking confidential info.' },
     { number: '03', title: 'Converge on Terms', description: 'Iterate until you reach an agreed commercial position.' },
-    { number: '04', title: 'Verify & Finalize', description: 'Lock the agreed terms, export a summary, and move to contracts.' }
+    { number: '04', title: 'Verify & Finalize', description: 'Lock in the agreed terms, export a summary, and move to contracts.' }
   ];
 
   return (
@@ -104,7 +104,7 @@ export default function Landing() {
               transition={{ duration: 0.6, delay: 0.2 }}
               className="text-xl text-slate-600 max-w-2xl mx-auto mb-10"
             >
-              When advice is biased toward one side, better outcomes are harder to reach. PreMarket is designed to be objectively neutral, helping both parties negotiate business terms fairly while protecting confidential information. 
+              When advice is biased toward one side, better outcomes are harder to reach. PreMarket is designed to be objectively neutral, helping both parties negotiate business terms fairly while protecting confidential information.  
             </motion.p>
 
             <motion.div
