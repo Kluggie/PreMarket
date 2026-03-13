@@ -215,6 +215,14 @@ export function buildReconstructedProposalValues(versionRow, options = {}) {
     summary: String(proposal.summary || '').trim() || null,
     sentAt: parseDateOrNull(proposal.sentAt || proposal.sent_at),
     receivedAt: parseDateOrNull(proposal.receivedAt || proposal.received_at),
+    lastThreadActivityAt: parseDateOrNull(
+      proposal.lastThreadActivityAt || proposal.last_thread_activity_at,
+    ),
+    lastThreadActorRole:
+      String(proposal.lastThreadActorRole || proposal.last_thread_actor_role || '').trim() || null,
+    lastThreadActivityType:
+      String(proposal.lastThreadActivityType || proposal.last_thread_activity_type || '').trim() ||
+      null,
     evaluatedAt: parseDateOrNull(proposal.evaluatedAt || proposal.evaluated_at),
     lastSharedAt: parseDateOrNull(proposal.lastSharedAt || proposal.last_shared_at),
     archivedAt: parseDateOrNull(proposal.archivedAt || proposal.archived_at),

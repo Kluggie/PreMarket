@@ -8,6 +8,9 @@ import { readJsonBody } from '../../_lib/http.js';
 import { createNotificationEvent } from '../../_lib/notifications.js';
 import { buildProposalHistoryQueries } from '../../_lib/proposal-history.js';
 import {
+  buildProposalThreadActivityValues,
+} from '../../_lib/proposal-thread-activity.js';
+import {
   getProposalAccessContext,
   getProposalArchivedAtForActor,
   getProposalFinalOutcomeStatus,
@@ -49,6 +52,9 @@ function mapProposalRow(proposal, currentUser, options: Record<string, unknown> 
     owner_user_id: proposal.userId,
     sent_at: proposal.sentAt || null,
     received_at: proposal.receivedAt || null,
+    last_thread_activity_at: proposal.lastThreadActivityAt || null,
+    last_thread_actor_role: proposal.lastThreadActorRole || null,
+    last_thread_activity_type: proposal.lastThreadActivityType || null,
     evaluated_at: proposal.evaluatedAt || null,
     last_shared_at: proposal.lastSharedAt || null,
     archived_at: archivedAt,
@@ -325,6 +331,25 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
     const existing = await assertProposalOwnership(auth.user.id, proposalId);
 
     const body = await readJsonBody(req);
+    const attemptedThreadFieldUpdate = [
+      'sentAt',
+      'sent_at',
+      'receivedAt',
+      'received_at',
+      'lastThreadActivityAt',
+      'last_thread_activity_at',
+      'lastThreadActorRole',
+      'last_thread_actor_role',
+      'lastThreadActivityType',
+      'last_thread_activity_type',
+    ].some((key) => Object.prototype.hasOwnProperty.call(body || {}, key));
+    if (attemptedThreadFieldUpdate) {
+      throw new ApiError(
+        400,
+        'thread_activity_server_controlled',
+        'sent_at, received_at, and thread activity fields are server-controlled.',
+      );
+    }
     const nextTitle = body.title === undefined ? existing.title : String(body.title || '').trim();
 
     if (!nextTitle) {
@@ -408,14 +433,6 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         body.summary === undefined ? existing.summary : String(body.summary || '').trim() || null,
       payload:
         body.payload && typeof body.payload === 'object' ? body.payload : existing.payload || {},
-      sentAt:
-        body.sentAt === undefined && body.sent_at === undefined
-          ? existing.sentAt
-          : parseDateOrNull(body.sentAt || body.sent_at),
-      receivedAt:
-        body.receivedAt === undefined && body.received_at === undefined
-          ? existing.receivedAt
-          : parseDateOrNull(body.receivedAt || body.received_at),
       evaluatedAt:
         body.evaluatedAt === undefined && body.evaluated_at === undefined
           ? existing.evaluatedAt
@@ -424,6 +441,11 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         body.lastSharedAt === undefined && body.last_shared_at === undefined
           ? existing.lastSharedAt
           : parseDateOrNull(body.lastSharedAt || body.last_shared_at),
+      ...buildProposalThreadActivityValues({
+        activityAt: existing.lastThreadActivityAt,
+        actorRole: existing.lastThreadActorRole,
+        activityType: existing.lastThreadActivityType,
+      }),
       updatedAt: new Date(),
     };
 

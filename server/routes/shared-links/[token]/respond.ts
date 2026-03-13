@@ -6,6 +6,10 @@ import { readJsonBody } from '../../../_lib/http.js';
 import { newId } from '../../../_lib/ids.js';
 import { createNotificationEvent } from '../../../_lib/notifications.js';
 import { buildProposalHistoryQueries } from '../../../_lib/proposal-history.js';
+import {
+  buildProposalThreadActivityValues,
+  PROPOSAL_THREAD_ACTIVITY_RECEIVED,
+} from '../../../_lib/proposal-thread-activity.js';
 import { assertProposalOpenForNegotiation, buildPendingWonReset } from '../../../_lib/proposal-outcomes.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 
@@ -170,6 +174,11 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
 
     const finalProposalValues: Record<string, unknown> = {
       ...proposalForOutcome,
+      ...buildProposalThreadActivityValues({
+        activityAt: proposalForOutcome.lastThreadActivityAt,
+        actorRole: proposalForOutcome.lastThreadActorRole,
+        activityType: proposalForOutcome.lastThreadActivityType,
+      }),
       ...pendingWonReset,
       updatedAt: now,
     };
@@ -234,6 +243,14 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
 
       finalProposalValues.status = 'received';
       finalProposalValues.receivedAt = now;
+      Object.assign(
+        finalProposalValues,
+        buildProposalThreadActivityValues({
+          activityAt: now,
+          actorRole: 'party_b',
+          activityType: PROPOSAL_THREAD_ACTIVITY_RECEIVED,
+        }),
+      );
 
       try {
         const [proposal] = await db
@@ -360,6 +377,9 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
           status: finalProposalValues.status as any,
           receivedAt: finalProposalValues.receivedAt as any,
           evaluatedAt: finalProposalValues.evaluatedAt as any,
+          lastThreadActivityAt: finalProposalValues.lastThreadActivityAt as any,
+          lastThreadActorRole: finalProposalValues.lastThreadActorRole as any,
+          lastThreadActivityType: finalProposalValues.lastThreadActivityType as any,
           ...pendingWonReset,
           updatedAt: now,
         })

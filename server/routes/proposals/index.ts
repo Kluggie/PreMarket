@@ -1,4 +1,4 @@
-import { and, desc, eq, ilike, inArray, isNotNull, isNull, lt, ne, or } from 'drizzle-orm';
+import { and, desc, eq, ilike, inArray, or } from 'drizzle-orm';
 import { ok } from '../../_lib/api-response.js';
 import { requireUser } from '../../_lib/auth.js';
 import { getDatabaseIdentitySnapshot, getDb, schema } from '../../_lib/db/client.js';
@@ -8,9 +8,15 @@ import { newId } from '../../_lib/ids.js';
 import { buildProposalHistoryQueries } from '../../_lib/proposal-history.js';
 import {
   buildLegacyOutcomeSeed,
-  getProposalArchivedAtForActor,
-  mapProposalOutcomeForUser,
 } from '../../_lib/proposal-outcomes.js';
+import {
+  getProposalThreadState,
+  matchesProposalInboxFilter,
+  matchesProposalThreadBucket,
+  matchesProposalThreadStatus,
+  toDateOrNull,
+} from '../../_lib/proposal-thread-state.js';
+import { seedProposalThreadActivityFromTimeline } from '../../_lib/proposal-thread-activity.js';
 import {
   buildProposalVisibilityScopes,
   getRecipientSharedProposalIds,
@@ -22,10 +28,6 @@ import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 
 const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 100;
-// Legacy status set kept for reference only. Tab membership is now controlled
-// exclusively by sent_at (NULL = unsent/draft, NOT NULL = sent). Status values
-// like 'under_verification' must not evict a proposal from Drafts.
-const DRAFT_STATUSES = ['draft', 'ready'] as const;
 
 function normalizeEmail(value: unknown) {
   return typeof value === 'string' ? value.trim().toLowerCase() : '';
@@ -140,48 +142,15 @@ function resolveDocumentComparisonResumeStep(params: {
   return 1;
 }
 
-function mapProposalRow(proposal, currentUser, sharedReportLink = null, resumeStepOverride: unknown = null) {
-  const outcome = mapProposalOutcomeForUser(proposal, currentUser);
-  const effectiveStatus = outcome.final_status || proposal.status;
-  const archivedAt = getProposalArchivedAtForActor(proposal, outcome.actor_role);
-  const currentEmail = String(currentUser?.email || '').trim().toLowerCase();
-  const currentUserId = String(currentUser?.id || '').trim();
-  const senderEmail = String(proposal.partyAEmail || '').trim().toLowerCase();
-  const recipientEmail = String(proposal.partyBEmail || '').trim().toLowerCase();
-  const normalizedStatus = String(effectiveStatus || '').trim().toLowerCase();
+function mapProposalRow(
+  proposal,
+  threadState,
+  sharedReportLink = null,
+  resumeStepOverride: unknown = null,
+) {
+  const effectiveStatus = threadState.outcome.final_status || proposal.status;
   const sharedReportToken = String(sharedReportLink?.token || '').trim();
   const hasSharedReportLink = Boolean(sharedReportToken);
-  const isSent = Boolean(proposal.sentAt);
-  const isOwner =
-    String(proposal.userId || '').trim() === currentUserId ||
-    Boolean(currentEmail && senderEmail && senderEmail === currentEmail);
-  // sent_at IS NULL → still a draft; status alone does not determine tab membership.
-  const isDraft = !isSent;
-
-  let listType = 'sent';
-  if (hasSharedReportLink && !isOwner) {
-    listType = 'received';
-  } else if (isDraft) {
-    listType = 'draft';
-  } else if (
-    isSent &&
-    recipientEmail &&
-    recipientEmail === currentEmail &&
-    !isOwner
-  ) {
-    listType = 'received';
-  }
-
-  let directionalStatus = listType === 'draft' ? 'draft' : listType === 'received' ? 'received' : 'sent';
-
-  if (normalizedStatus && normalizedStatus !== 'draft' && normalizedStatus !== 'sent') {
-    directionalStatus = normalizedStatus;
-  }
-
-  if (listType === 'received' && (normalizedStatus === 'sent' || normalizedStatus === 'received')) {
-    directionalStatus = 'received';
-  }
-
   const normalizedDraftStep = clampResumeStep(proposal.draftStep || 1, 1);
   const resolvedResumeStep = clampResumeStep(resumeStepOverride, normalizedDraftStep);
 
@@ -190,9 +159,9 @@ function mapProposalRow(proposal, currentUser, sharedReportLink = null, resumeSt
     title: proposal.title,
     status: effectiveStatus,
     status_reason: proposal.statusReason || null,
-    directional_status: directionalStatus,
-    outcome,
-    list_type: listType,
+    directional_status: threadState.directionalStatus,
+    outcome: threadState.outcome,
+    list_type: threadState.listType,
     shared_report_token: hasSharedReportLink ? sharedReportToken : null,
     shared_report_status: hasSharedReportLink ? String(sharedReportLink.status || '').toLowerCase() || 'active' : null,
     shared_report_expires_at: hasSharedReportLink ? sharedReportLink.expiresAt || null : null,
@@ -210,17 +179,30 @@ function mapProposalRow(proposal, currentUser, sharedReportLink = null, resumeSt
     summary: proposal.summary,
     payload: proposal.payload || {},
     recipient_email: proposal.partyBEmail || null,
+    counterparty_email: threadState.counterpartyEmail,
     owner_user_id: proposal.userId,
     sent_at: proposal.sentAt || null,
     received_at: proposal.receivedAt || null,
+    last_thread_activity_at: proposal.lastThreadActivityAt || null,
+    last_thread_actor_role: proposal.lastThreadActorRole || null,
+    last_thread_activity_type: proposal.lastThreadActivityType || null,
     evaluated_at: proposal.evaluatedAt || null,
     last_shared_at: proposal.lastSharedAt || null,
-    archived_at: archivedAt,
+    archived_at: threadState.archivedAt,
     closed_at: proposal.closedAt || null,
     party_a_outcome: proposal.partyAOutcome || null,
     party_a_outcome_at: proposal.partyAOutcomeAt || null,
     party_b_outcome: proposal.partyBOutcome || null,
     party_b_outcome_at: proposal.partyBOutcomeAt || null,
+    thread_bucket: threadState.bucket,
+    latest_direction: threadState.latestDirection,
+    needs_response: threadState.needsResponse,
+    waiting_on_other_party: threadState.waitingOnOtherParty,
+    win_confirmation_requested: threadState.winConfirmationRequested,
+    review_status: threadState.reviewStatus,
+    is_mutual_interest: threadState.isMutualInterest,
+    is_latest_version: threadState.isLatestVersion,
+    last_activity_at: threadState.sortAt || proposal.createdAt,
     user_id: proposal.userId,
     created_at: proposal.createdAt,
     updated_at: proposal.updatedAt,
@@ -237,15 +219,15 @@ function decodeCursor(rawCursor) {
   try {
     const decoded = JSON.parse(Buffer.from(rawCursor, 'base64url').toString('utf8'));
     const id = String(decoded?.id || '').trim();
-    const createdAt = new Date(String(decoded?.createdAt || ''));
+    const updatedAt = new Date(String(decoded?.updatedAt || decoded?.createdAt || ''));
 
-    if (!id || Number.isNaN(createdAt.getTime())) {
+    if (!id || Number.isNaN(updatedAt.getTime())) {
       return null;
     }
 
     return {
       id,
-      createdAt,
+      updatedAt,
     };
   } catch {
     return null;
@@ -253,14 +235,14 @@ function decodeCursor(rawCursor) {
 }
 
 function encodeCursor(row) {
-  if (!row?.id || !row?.createdAt) {
+  if (!row?.id || !row?.updatedAt) {
     return null;
   }
 
   return Buffer.from(
     JSON.stringify({
       id: row.id,
-      createdAt: new Date(row.createdAt).toISOString(),
+      updatedAt: new Date(row.updatedAt).toISOString(),
     }),
   ).toString('base64url');
 }
@@ -302,15 +284,27 @@ export default async function handler(req: any, res: any) {
 
     if (req.method === 'GET') {
       const limit = parseLimit(req.query?.limit);
-      const tab = String(req.query?.tab || 'all').trim().toLowerCase();
-      const isArchivedTab = tab === 'archived';
-      const isClosedTab = tab === 'closed';
+      const rawTab = String(req.query?.tab || '').trim().toLowerCase();
       const query = String(req.query?.query || req.query?.q || '').trim();
-      const statusFilter = String(req.query?.status || '').trim().toLowerCase();
+      const rawStatusFilter = String(req.query?.status || '').trim().toLowerCase();
+      const rawInboxFilter = String(req.query?.inbox || '').trim().toLowerCase();
       const cursor = decodeCursor(String(req.query?.cursor || ''));
+      const inboxOnlyFilters = new Set([
+        'needs_response',
+        'waiting_on_other_party',
+        'agreement_requested',
+        'win_confirmation_requested',
+      ]);
+      const tab =
+        rawTab || rawInboxFilter || inboxOnlyFilters.has(rawStatusFilter)
+          ? rawTab || 'inbox'
+          : 'all';
+      const inboxFilter =
+        rawInboxFilter || (inboxOnlyFilters.has(rawStatusFilter) ? rawStatusFilter : '');
+      const statusFilter =
+        rawInboxFilter || inboxOnlyFilters.has(rawStatusFilter) ? '' : rawStatusFilter;
 
       const hasUserEmail = typeof auth.user.email === 'string' && auth.user.email.trim().length > 0;
-      const userEmail = hasUserEmail ? normalizeEmail(auth.user.email) : '';
       const dbIdentity = getDatabaseIdentitySnapshot();
       const recipientSharedLinks = await listRecipientSharedReportLinks(db, auth.user);
       const recipientSharedLinkMatchCounts = recipientSharedLinks.reduce(
@@ -329,95 +323,20 @@ export default async function handler(req: any, res: any) {
         sharedReportByProposalId.set(key, link);
       });
       const recipientSharedProposalIds = getRecipientSharedProposalIds(recipientSharedLinks);
-      const {
-        ownerTabScope,
-        recipientTabScope,
-        directReceivedScope,
-        sharedLinkReceivedScope,
-      } = buildProposalVisibilityScopes(auth.user, recipientSharedProposalIds, {
-        isArchivedTab,
-      });
-      const ownerAgreementRequestedScope = and(
-        ownerTabScope,
-        isNotNull(schema.proposals.sentAt),
-        eq(schema.proposals.partyBOutcome, 'won'),
-        isNull(schema.proposals.partyAOutcome),
-      );
-      const recipientAgreementRequestedScope = and(
-        recipientTabScope,
-        isNotNull(schema.proposals.sentAt),
-        eq(schema.proposals.partyAOutcome, 'won'),
-        isNull(schema.proposals.partyBOutcome),
+      const { ownerVisibleScope, recipientVisibleScope } = buildProposalVisibilityScopes(
+        auth.user,
+        recipientSharedProposalIds,
+        { isArchivedTab: false },
       );
 
       const conditions = [] as any[];
       const listScope = hasUserEmail
         ? or(
-            ownerTabScope,
-            recipientTabScope,
+            ownerVisibleScope,
+            recipientVisibleScope,
           )
-        : ownerTabScope;
+        : ownerVisibleScope;
       conditions.push(listScope);
-
-      if (isClosedTab) {
-        conditions.push(
-          or(
-            eq(schema.proposals.status, 'won'),
-            eq(schema.proposals.status, 'lost'),
-          ),
-        );
-      } else if (tab === 'drafts') {
-        // Any proposal you own where sent_at IS NULL is a draft, regardless of status.
-        // This keeps under_verification, needs_changes, etc. in Drafts until email is sent.
-        conditions.push(and(ownerTabScope, isNull(schema.proposals.sentAt)));
-      } else if (tab === 'sent') {
-        conditions.push(and(ownerTabScope, isNotNull(schema.proposals.sentAt)));
-      } else if (tab === 'received') {
-        conditions.push(
-          sharedLinkReceivedScope
-            ? or(directReceivedScope, sharedLinkReceivedScope)
-            : directReceivedScope,
-        );
-      } else if (tab === 'mutual_interest') {
-        conditions.push(
-          and(
-            ownerTabScope,
-            or(
-              eq(schema.proposals.status, 'mutual_interest'),
-              eq(schema.proposals.status, 'received'),
-            ),
-          ),
-        );
-      }
-
-      if (statusFilter && statusFilter !== 'all') {
-        if (statusFilter === 'draft') {
-          conditions.push(and(ownerTabScope, isNull(schema.proposals.sentAt)));
-        } else if (statusFilter === 'sent') {
-          conditions.push(and(ownerTabScope, isNotNull(schema.proposals.sentAt)));
-        } else if (statusFilter === 'received') {
-          conditions.push(
-            sharedLinkReceivedScope
-              ? or(directReceivedScope, sharedLinkReceivedScope)
-              : directReceivedScope,
-          );
-        } else if (statusFilter === 'agreement_requested') {
-          conditions.push(
-            hasUserEmail
-              ? or(ownerAgreementRequestedScope, recipientAgreementRequestedScope)
-              : ownerAgreementRequestedScope,
-          );
-        } else if (statusFilter === 'mutual_interest') {
-          conditions.push(
-            or(
-              and(ownerTabScope, eq(schema.proposals.status, 'mutual_interest')),
-              and(ownerTabScope, eq(schema.proposals.status, 'received')),
-            ),
-          );
-        } else {
-          conditions.push(eq(schema.proposals.status, statusFilter));
-        }
-      }
 
       if (query) {
         const pattern = `%${query}%`;
@@ -432,15 +351,6 @@ export default async function handler(req: any, res: any) {
         );
       }
 
-      if (cursor) {
-        conditions.push(
-          or(
-            lt(schema.proposals.createdAt, cursor.createdAt),
-            and(eq(schema.proposals.createdAt, cursor.createdAt), lt(schema.proposals.id, cursor.id)),
-          ),
-        );
-      }
-
       const whereClause = conditions.length === 1 ? conditions[0] : and(...conditions);
       console.info(
         JSON.stringify({
@@ -451,6 +361,7 @@ export default async function handler(req: any, res: any) {
           userId: auth.user.id,
           tab,
           statusFilter: statusFilter || 'all',
+          inboxFilter: inboxFilter || 'all',
           hasSearchQuery: Boolean(query),
           recipientSharedProposalCount: recipientSharedProposalIds.length,
           recipientSharedLinkMatchesByEmail: recipientSharedLinkMatchCounts.email,
@@ -469,10 +380,8 @@ export default async function handler(req: any, res: any) {
           .select()
           .from(schema.proposals)
           .where(whereClause)
-          .orderBy(desc(schema.proposals.createdAt), desc(schema.proposals.id))
-          .limit(limit + 1);
-        
-        // Log empty results with context for debugging
+          .orderBy(desc(schema.proposals.updatedAt), desc(schema.proposals.id));
+
         if (rows.length === 0) {
           console.warn(
             JSON.stringify({
@@ -484,6 +393,7 @@ export default async function handler(req: any, res: any) {
               userEmail: auth.user.email,
               tab,
               statusFilter,
+              inboxFilter,
               recipientSharedProposalCount: recipientSharedProposalIds.length,
               recipientSharedLinkMatchesByEmail: recipientSharedLinkMatchCounts.email,
               recipientSharedLinkMatchesByAuthorizedUser: recipientSharedLinkMatchCounts.authorized,
@@ -513,9 +423,72 @@ export default async function handler(req: any, res: any) {
         throw new ApiError(500, 'proposals_query_failed', 'Failed to load proposals from the database');
       }
 
-      const hasMore = rows.length > limit;
-      const pageRows = hasMore ? rows.slice(0, limit) : rows;
-      const nextCursor = hasMore ? encodeCursor(pageRows[pageRows.length - 1]) : null;
+      const filteredEntries = rows
+        .map((row) => ({
+          row,
+          threadState: getProposalThreadState(row, auth.user, {
+            sharedReceivedProposalIds: recipientSharedProposalIds,
+          }),
+        }))
+        .filter(({ threadState }) => matchesProposalThreadBucket(threadState, tab))
+        .filter(({ threadState }) => matchesProposalThreadStatus(threadState, statusFilter))
+        .filter(({ threadState }) =>
+          tab === 'inbox' ? matchesProposalInboxFilter(threadState, inboxFilter) : true,
+        )
+        .sort((left, right) => {
+          const leftTime = (left.threadState.sortAt || toDateOrNull(left.row.updatedAt) || toDateOrNull(left.row.createdAt) || new Date(0)).getTime();
+          const rightTime =
+            (right.threadState.sortAt || toDateOrNull(right.row.updatedAt) || toDateOrNull(right.row.createdAt) || new Date(0)).getTime();
+          if (rightTime !== leftTime) {
+            return rightTime - leftTime;
+          }
+          return String(right.row.id || '').localeCompare(String(left.row.id || ''));
+        });
+
+      const visibleEntries = cursor
+        ? filteredEntries.filter(({ row, threadState }) => {
+            const rowUpdatedAt =
+              threadState.sortAt || toDateOrNull(row.updatedAt) || toDateOrNull(row.createdAt);
+            if (!rowUpdatedAt) {
+              return String(row.id || '') < cursor.id;
+            }
+            return (
+              rowUpdatedAt.getTime() < cursor.updatedAt.getTime() ||
+              (rowUpdatedAt.getTime() === cursor.updatedAt.getTime() &&
+                String(row.id || '') < cursor.id)
+            );
+          })
+        : filteredEntries;
+
+      if (visibleEntries.length === 0) {
+        console.warn(
+          JSON.stringify({
+            level: 'warn',
+            route: '/api/proposals',
+            event: 'proposals_list_empty_filtered_result',
+            requestId: context.requestId,
+            userId: auth.user.id,
+            userEmail: auth.user.email,
+            tab,
+            statusFilter,
+            inboxFilter,
+            hasSearchQuery: Boolean(query),
+          }),
+        );
+      }
+
+      const hasMore = visibleEntries.length > limit;
+      const pageEntries = hasMore ? visibleEntries.slice(0, limit) : visibleEntries;
+      const pageRows = pageEntries.map(({ row }) => row);
+      const nextCursor = hasMore
+        ? encodeCursor({
+            id: pageEntries[pageEntries.length - 1]?.row?.id,
+            updatedAt:
+              pageEntries[pageEntries.length - 1]?.threadState?.sortAt ||
+              pageEntries[pageEntries.length - 1]?.row?.updatedAt ||
+              pageEntries[pageEntries.length - 1]?.row?.createdAt,
+          })
+        : null;
 
       const documentComparisonProposals = pageRows.filter(
         (row) =>
@@ -605,8 +578,10 @@ export default async function handler(req: any, res: any) {
           userId: auth.user.id,
           tab,
           statusFilter: statusFilter || 'all',
+          inboxFilter: inboxFilter || 'all',
           resultCount: pageRows.length,
           fetchedCount: rows.length,
+          matchedCount: filteredEntries.length,
           hasMore,
           vercelEnv: dbIdentity.vercelEnv,
           dbHost: dbIdentity.dbHost,
@@ -617,10 +592,10 @@ export default async function handler(req: any, res: any) {
       );
 
       ok(res, 200, {
-        proposals: pageRows.map((row) =>
+        proposals: pageEntries.map(({ row, threadState }) =>
           mapProposalRow(
             row,
-            auth.user,
+            threadState,
             sharedReportByProposalId.get(String(row.id || '')) || null,
             resumeStepByProposalId.get(String(row.id || '')) || null,
           ),
@@ -687,6 +662,10 @@ export default async function handler(req: any, res: any) {
       payload,
       sentAt,
       receivedAt,
+      ...seedProposalThreadActivityFromTimeline({
+        sentAt,
+        receivedAt,
+      }),
       evaluatedAt,
       lastSharedAt,
       partyAOutcome: legacyOutcomeSeed.partyAOutcome,
@@ -791,7 +770,10 @@ export default async function handler(req: any, res: any) {
     );
 
     ok(res, 201, {
-      proposal: mapProposalRow(created, auth.user),
+      proposal: mapProposalRow(
+        created,
+        getProposalThreadState(created, auth.user),
+      ),
     });
   });
 }

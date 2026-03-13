@@ -1,10 +1,12 @@
-import { or } from 'drizzle-orm';
+import { and, inArray, or } from 'drizzle-orm';
 import { ok } from '../../_lib/api-response.js';
 import { requireUser } from '../../_lib/auth.js';
 import { getDb, schema } from '../../_lib/db/client.js';
 import { getProposalOutcomeState } from '../../_lib/proposal-outcomes.js';
+import { getProposalThreadState, toDateOrNull } from '../../_lib/proposal-thread-state.js';
 import {
   buildProposalVisibilityScopes,
+  getProposalActorRoleFromVisibility,
   getRecipientSharedProposalIds,
   isProposalOwnedByCurrentUser,
   isProposalReceivedByCurrentUser,
@@ -20,6 +22,17 @@ const RANGE_DAYS = {
   all: null,
 };
 
+const NEW_THREAD_EVENT_TYPES = new Set(['proposal.created']);
+const ACTIVE_ROUND_EVENT_TYPES = new Set(['proposal.sent', 'proposal.received', 'proposal.send_back']);
+const CLOSED_THREAD_EVENT_TYPES = new Set(['proposal.outcome.won_confirmed', 'proposal.outcome.lost']);
+const ARCHIVED_THREAD_EVENT_TYPES = new Set(['proposal.archived']);
+const DASHBOARD_ACTIVITY_EVENT_TYPES = [
+  ...NEW_THREAD_EVENT_TYPES,
+  ...ACTIVE_ROUND_EVENT_TYPES,
+  ...CLOSED_THREAD_EVENT_TYPES,
+  ...ARCHIVED_THREAD_EVENT_TYPES,
+];
+
 function startOfDay(input: Date) {
   const value = new Date(input);
   value.setHours(0, 0, 0, 0);
@@ -34,14 +47,6 @@ function addDays(input: Date, days: number) {
 
 function formatDateLabel(input: Date) {
   return input.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-}
-
-function toDateOrNull(value: unknown) {
-  if (!value) {
-    return null;
-  }
-  const parsed = new Date(String(value));
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
 export default async function handler(req: any, res: any) {
@@ -65,13 +70,13 @@ export default async function handler(req: any, res: any) {
     const recipientSharedLinks = await listRecipientSharedReportLinks(db, auth.user);
     const sharedReceivedProposalIds = getRecipientSharedProposalIds(recipientSharedLinks);
     const sharedReceivedProposalIdSet = new Set(sharedReceivedProposalIds);
-    const { hasUserEmail, ownerTabScope, recipientTabScope } = buildProposalVisibilityScopes(
+    const { hasUserEmail, ownerVisibleScope, recipientVisibleScope } = buildProposalVisibilityScopes(
       auth.user,
       sharedReceivedProposalIds,
       { isArchivedTab: false },
     );
 
-    const whereClause = hasUserEmail ? or(ownerTabScope, recipientTabScope) : ownerTabScope;
+    const whereClause = hasUserEmail ? or(ownerVisibleScope, recipientVisibleScope) : ownerVisibleScope;
 
     const rows = await db
       .select({
@@ -79,7 +84,14 @@ export default async function handler(req: any, res: any) {
         status: schema.proposals.status,
         sentAt: schema.proposals.sentAt,
         receivedAt: schema.proposals.receivedAt,
+        lastThreadActivityAt: schema.proposals.lastThreadActivityAt,
+        lastThreadActorRole: schema.proposals.lastThreadActorRole,
+        lastThreadActivityType: schema.proposals.lastThreadActivityType,
         closedAt: schema.proposals.closedAt,
+        archivedAt: schema.proposals.archivedAt,
+        archivedByPartyAAt: schema.proposals.archivedByPartyAAt,
+        archivedByPartyBAt: schema.proposals.archivedByPartyBAt,
+        createdAt: schema.proposals.createdAt,
         updatedAt: schema.proposals.updatedAt,
         userId: schema.proposals.userId,
         partyAEmail: schema.proposals.partyAEmail,
@@ -92,31 +104,77 @@ export default async function handler(req: any, res: any) {
       .from(schema.proposals)
       .where(whereClause);
 
-    const relevantDates = rows.flatMap((row) => {
-      const status = String(row.status || '').trim().toLowerCase();
-      const finalOutcome = getProposalOutcomeState(row).finalStatus;
-      const sentAt = toDateOrNull(row.sentAt);
-      const receivedAt = toDateOrNull(row.receivedAt);
-      const closedAt = toDateOrNull(row.closedAt);
-      const updatedAt = toDateOrNull(row.updatedAt);
-      const dates = [] as Date[];
+    const threadRows = rows.map((row) => ({
+      row,
+      threadState: getProposalThreadState(row, auth.user, {
+        sharedReceivedProposalIds,
+      }),
+    }));
+    const threadByProposalId = new Map(
+      threadRows.map(({ row, threadState }) => [String(row.id || '').trim(), { row, threadState }]),
+    );
+    const visibleProposalIds = Array.from(threadByProposalId.keys()).filter(Boolean);
+    const eventRows =
+      visibleProposalIds.length > 0
+        ? await db
+            .select({
+              proposalId: schema.proposalEvents.proposalId,
+              eventType: schema.proposalEvents.eventType,
+              actorRole: schema.proposalEvents.actorRole,
+              createdAt: schema.proposalEvents.createdAt,
+            })
+            .from(schema.proposalEvents)
+            .where(
+              and(
+                inArray(schema.proposalEvents.proposalId, visibleProposalIds),
+                inArray(schema.proposalEvents.eventType, DASHBOARD_ACTIVITY_EVENT_TYPES),
+              ),
+            )
+        : [];
 
-      if (sentAt) {
-        dates.push(sentAt);
-      }
-      if (status === 'mutual_interest' || status === 'received') {
-        if (receivedAt) {
-          dates.push(receivedAt);
-        } else if (updatedAt) {
-          dates.push(updatedAt);
+    const relevantDates = threadRows
+      .flatMap(({ row, threadState }) => {
+        const status = String(row.status || '').trim().toLowerCase();
+        const finalOutcome = getProposalOutcomeState(row).finalStatus;
+        const sentAt = toDateOrNull(row.sentAt);
+        const receivedAt = toDateOrNull(row.receivedAt);
+        const closedAt = toDateOrNull(row.closedAt);
+        const updatedAt = toDateOrNull(row.updatedAt);
+        const createdAt = toDateOrNull(row.createdAt);
+        const threadActivityAt = toDateOrNull(row.lastThreadActivityAt || threadState.threadActivityAt);
+        const archivedAt = toDateOrNull(threadState.archivedAt);
+        const dates = [] as Date[];
+
+        if (createdAt) {
+          dates.push(createdAt);
         }
-      }
-      if ((finalOutcome === 'won' || finalOutcome === 'lost') && closedAt) {
-        dates.push(closedAt);
-      }
+        if (sentAt) {
+          dates.push(sentAt);
+        }
+        if (status === 'mutual_interest' || status === 'received') {
+          if (receivedAt) {
+            dates.push(receivedAt);
+          } else if (updatedAt) {
+            dates.push(updatedAt);
+          }
+        }
+        if ((finalOutcome === 'won' || finalOutcome === 'lost') && closedAt) {
+          dates.push(closedAt);
+        }
+        if (threadActivityAt) {
+          dates.push(threadActivityAt);
+        }
+        if (archivedAt) {
+          dates.push(archivedAt);
+        }
 
-      return dates;
-    });
+        return dates;
+      })
+      .concat(
+        eventRows
+          .map((row) => toDateOrNull(row.createdAt))
+          .filter((value): value is Date => Boolean(value)),
+      );
 
     let startDate = days === null ? null : startOfDay(addDays(now, -(days - 1)));
     if (!startDate) {
@@ -139,10 +197,26 @@ export default async function handler(req: any, res: any) {
         mutual: 0,
         won: 0,
         lost: 0,
+        new_threads: 0,
+        active_rounds: 0,
+        closed_threads: 0,
+        archived_threads: 0,
       });
     }
 
-    const incrementPoint = (dateValue: Date | null, metric: 'sent' | 'received' | 'mutual' | 'won' | 'lost') => {
+    const incrementPoint = (
+      dateValue: Date | null,
+      metric:
+        | 'sent'
+        | 'received'
+        | 'mutual'
+        | 'won'
+        | 'lost'
+        | 'new_threads'
+        | 'active_rounds'
+        | 'closed_threads'
+        | 'archived_threads',
+    ) => {
       if (!dateValue) {
         return;
       }
@@ -153,7 +227,11 @@ export default async function handler(req: any, res: any) {
       point[metric] += 1;
     };
 
-    rows.forEach((row) => {
+    threadRows.forEach(({ row, threadState }) => {
+      if (threadState.bucket === 'archived') {
+        return;
+      }
+
       const status = String(row.status || '').trim().toLowerCase();
       const finalOutcome = getProposalOutcomeState(row).finalStatus;
       const sentAt = toDateOrNull(row.sentAt);
@@ -165,8 +243,11 @@ export default async function handler(req: any, res: any) {
         return;
       }
 
-      const isOwner = isProposalOwnedByCurrentUser(row, auth.user);
       const isRecipient = isProposalReceivedByCurrentUser(row, auth.user, sharedReceivedProposalIdSet);
+      const isOwner = isProposalOwnedByCurrentUser(row, auth.user);
+      if (!isOwner && !isRecipient) {
+        return;
+      }
 
       if (isRecipient) {
         incrementPoint(sentAt, 'received');
@@ -182,6 +263,75 @@ export default async function handler(req: any, res: any) {
         incrementPoint(closedAt || updatedAt, 'won');
       } else if (finalOutcome === 'lost') {
         incrementPoint(closedAt || updatedAt, 'lost');
+      }
+    });
+
+    const proposalsWithCreatedEvent = new Set<string>();
+    const proposalsWithActiveEvent = new Set<string>();
+    const proposalsWithClosedEvent = new Set<string>();
+    const proposalsWithArchivedEvent = new Set<string>();
+
+    eventRows.forEach((eventRow) => {
+      const proposalId = String(eventRow.proposalId || '').trim();
+      const eventType = String(eventRow.eventType || '').trim().toLowerCase();
+      const eventAt = toDateOrNull(eventRow.createdAt);
+      const threadEntry = threadByProposalId.get(proposalId);
+      const currentActorRole = threadEntry
+        ? getProposalActorRoleFromVisibility(threadEntry.row, auth.user, sharedReceivedProposalIdSet)
+        : null;
+
+      if (NEW_THREAD_EVENT_TYPES.has(eventType)) {
+        proposalsWithCreatedEvent.add(proposalId);
+        incrementPoint(eventAt, 'new_threads');
+      }
+
+      if (ACTIVE_ROUND_EVENT_TYPES.has(eventType)) {
+        proposalsWithActiveEvent.add(proposalId);
+        incrementPoint(eventAt, 'active_rounds');
+      }
+
+      if (CLOSED_THREAD_EVENT_TYPES.has(eventType)) {
+        proposalsWithClosedEvent.add(proposalId);
+        incrementPoint(eventAt, 'closed_threads');
+      }
+
+      if (
+        ARCHIVED_THREAD_EVENT_TYPES.has(eventType) &&
+        currentActorRole &&
+        String(eventRow.actorRole || '').trim().toLowerCase() === currentActorRole
+      ) {
+        proposalsWithArchivedEvent.add(proposalId);
+        incrementPoint(eventAt, 'archived_threads');
+      }
+    });
+
+    threadRows.forEach(({ row, threadState }) => {
+      const proposalId = String(row.id || '').trim();
+      const createdAt = toDateOrNull(row.createdAt);
+      const threadActivityAt = toDateOrNull(row.lastThreadActivityAt || threadState.threadActivityAt);
+      const closedAt = toDateOrNull(row.closedAt);
+      const archivedAt = toDateOrNull(threadState.archivedAt);
+      const finalOutcome = String(threadState.outcome.final_status || '').toLowerCase();
+
+      if (proposalId && !proposalsWithCreatedEvent.has(proposalId) && createdAt) {
+        incrementPoint(createdAt, 'new_threads');
+      }
+
+      if (proposalId && !proposalsWithActiveEvent.has(proposalId) && threadActivityAt) {
+        incrementPoint(threadActivityAt, 'active_rounds');
+      }
+
+      if (
+        proposalId &&
+        !proposalsWithClosedEvent.has(proposalId) &&
+        (finalOutcome === 'won' || finalOutcome === 'lost') &&
+        closedAt
+      ) {
+        incrementPoint(closedAt, 'closed_threads');
+      }
+
+      if (proposalId && !proposalsWithArchivedEvent.has(proposalId) && archivedAt) {
+        incrementPoint(archivedAt, 'archived_threads');
       }
     });
 

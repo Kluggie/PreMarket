@@ -21,6 +21,10 @@ export const proposalsClient = {
       searchParams.set('status', String(params.status));
     }
 
+    if (params.inbox) {
+      searchParams.set('inbox', String(params.inbox));
+    }
+
     if (params.tab) {
       searchParams.set('tab', String(params.tab));
     }

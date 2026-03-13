@@ -10,6 +10,10 @@ import { newId, newToken } from '../../../_lib/ids.js';
 import { getResendConfig } from '../../../_lib/integrations.js';
 import { createNotificationEvent } from '../../../_lib/notifications.js';
 import { buildProposalHistoryQueries } from '../../../_lib/proposal-history.js';
+import {
+  buildProposalThreadActivityValues,
+  PROPOSAL_THREAD_ACTIVITY_SENT,
+} from '../../../_lib/proposal-thread-activity.js';
 import { assertProposalOpenForNegotiation, buildPendingWonReset } from '../../../_lib/proposal-outcomes.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 
@@ -65,6 +69,9 @@ function mapProposalRow(row) {
     owner_user_id: row.userId,
     sent_at: row.sentAt || null,
     received_at: row.receivedAt || null,
+    last_thread_activity_at: row.lastThreadActivityAt || null,
+    last_thread_actor_role: row.lastThreadActorRole || null,
+    last_thread_activity_type: row.lastThreadActivityType || null,
     evaluated_at: row.evaluatedAt || null,
     last_shared_at: row.lastSharedAt || null,
     user_id: row.userId,
@@ -192,6 +199,11 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
       partyBEmail: recipientEmail,
       sentAt,
       lastSharedAt: createShareLink ? sentAt : existing.lastSharedAt || null,
+      ...buildProposalThreadActivityValues({
+        activityAt: sentAt,
+        actorRole: 'party_a',
+        activityType: PROPOSAL_THREAD_ACTIVITY_SENT,
+      }),
       ...pendingWonReset,
       updatedAt: sentAt,
     };
@@ -247,6 +259,9 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
                 partyBEmail: nextProposal.partyBEmail,
                 sentAt: nextProposal.sentAt,
                 lastSharedAt: nextProposal.lastSharedAt,
+                lastThreadActivityAt: nextProposal.lastThreadActivityAt,
+                lastThreadActorRole: nextProposal.lastThreadActorRole,
+                lastThreadActivityType: nextProposal.lastThreadActivityType,
                 ...pendingWonReset,
                 updatedAt: nextProposal.updatedAt,
               })
@@ -302,6 +317,9 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
             draftStep: nextProposal.draftStep,
             partyBEmail: nextProposal.partyBEmail,
             sentAt: nextProposal.sentAt,
+            lastThreadActivityAt: nextProposal.lastThreadActivityAt,
+            lastThreadActorRole: nextProposal.lastThreadActorRole,
+            lastThreadActivityType: nextProposal.lastThreadActivityType,
             ...pendingWonReset,
             updatedAt: nextProposal.updatedAt,
           })

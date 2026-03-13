@@ -8,13 +8,14 @@ import { Badge } from '@/components/ui/badge';
 import ProposalsChart from '@/components/dashboard/ProposalsChart';
 import {
   AGREEMENT_REQUESTED_LABEL,
-  getPendingAgreementBadgeLabel,
 } from '@/lib/proposalOutcomeUi';
 import {
   Plus,
   Send,
   Inbox,
   Users,
+  Archive,
+  CheckCircle2,
   Trophy,
   XCircle,
   ChevronRight,
@@ -32,8 +33,8 @@ const statusConfig = {
   draft: { color: 'bg-slate-100 text-slate-700', icon: FileText, label: 'Draft' },
   sent: { color: 'bg-blue-100 text-blue-700', icon: Send, label: 'Sent' },
   received: { color: 'bg-amber-100 text-amber-700', icon: Inbox, label: 'Received' },
-  under_verification: { color: 'bg-purple-100 text-purple-700', icon: Eye, label: 'Under Review' },
-  re_evaluated: { color: 'bg-indigo-100 text-indigo-700', icon: BarChart3, label: 'Re-evaluated' },
+  under_review: { color: 'bg-purple-100 text-purple-700', icon: Eye, label: 'Under Review' },
+  ai_review: { color: 'bg-indigo-100 text-indigo-700', icon: BarChart3, label: 'AI Review' },
   mutual_interest: { color: 'bg-green-100 text-green-700', icon: Users, label: 'Mutual Interest' },
   won: { color: 'bg-emerald-100 text-emerald-700', label: DASHBOARD_WON_LABEL },
   lost: { color: 'bg-rose-100 text-rose-700', label: 'Lost' },
@@ -41,8 +42,18 @@ const statusConfig = {
   withdrawn: { color: 'bg-red-100 text-red-700', label: 'Withdrawn' },
 };
 
-function StatusBadge({ status }) {
-  const config = statusConfig[String(status || '').toLowerCase()] || statusConfig.draft;
+function getCompactStatusKey(proposal) {
+  const normalizedStatus = String(proposal?.status || '').toLowerCase();
+  if (proposal?.thread_bucket === 'drafts') return 'draft';
+  if (normalizedStatus === 'won' || normalizedStatus === 'lost') return normalizedStatus;
+  if (String(proposal?.review_status || '').toLowerCase() === 're_evaluated') return 'ai_review';
+  if (proposal?.review_status) return 'under_review';
+  if (proposal?.is_mutual_interest) return 'mutual_interest';
+  return String(proposal?.latest_direction || '').toLowerCase() || 'draft';
+}
+
+function StatusBadge({ proposal }) {
+  const config = statusConfig[getCompactStatusKey(proposal)] || statusConfig.draft;
   const Icon = config.icon;
 
   return (
@@ -53,26 +64,46 @@ function StatusBadge({ status }) {
   );
 }
 
-function OutcomeBadge({ proposal }) {
-  const outcome = proposal?.outcome || {};
-  if (String(outcome.state || '').toLowerCase() !== 'pending_won') {
+function ActionBadge({ proposal }) {
+  if (proposal?.win_confirmation_requested) {
+    return (
+      <Badge className="bg-amber-100 text-amber-700 text-[0.6875rem] px-2 py-0.5 h-5 font-medium">
+        <Trophy className="w-3 h-3 mr-1" />
+        Win Confirmation Requested
+      </Badge>
+    );
+  }
+
+  if (proposal?.needs_response) {
+    return (
+      <Badge className="bg-rose-100 text-rose-700 text-[0.6875rem] px-2 py-0.5 h-5 font-medium">
+        Needs Response
+      </Badge>
+    );
+  }
+
+  if (proposal?.waiting_on_other_party) {
+    return (
+      <Badge className="bg-slate-100 text-slate-700 text-[0.6875rem] px-2 py-0.5 h-5 font-medium">
+        Waiting on Other Party
+      </Badge>
+    );
+  }
+
+  if (!proposal?.is_latest_version) {
     return null;
   }
 
   return (
-    <Badge className="bg-amber-100 text-amber-700 text-[0.6875rem] px-2 py-0.5 h-5 font-medium">
-      <Trophy className="w-3 h-3 mr-1" />
-      {getPendingAgreementBadgeLabel(outcome)}
+    <Badge variant="outline" className="text-[0.6875rem] px-2 py-0.5 h-5 font-medium text-slate-600">
+      Latest Version
     </Badge>
   );
 }
 
 function CompactProposalRow({ proposal, onOpen }) {
-  const listType = proposal.list_type || 'sent';
-  const directional = proposal.directional_status || proposal.status || listType;
-  const counterparty =
-    listType === 'received' ? proposal.party_a_email : proposal.party_b_email;
-  const lastUpdated = proposal.updated_date || proposal.created_date;
+  const counterparty = proposal.counterparty_email || proposal.party_b_email || proposal.party_a_email;
+  const lastUpdated = proposal.last_activity_at || proposal.updated_date || proposal.created_date;
   const templateName = proposal.template_name || 'Custom Template';
 
   return (
@@ -84,13 +115,13 @@ function CompactProposalRow({ proposal, onOpen }) {
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <h4 className="text-sm font-semibold text-slate-900 truncate">{proposal.title || 'Untitled Proposal'}</h4>
-          <StatusBadge status={directional} />
-          <OutcomeBadge proposal={proposal} />
+          <StatusBadge proposal={proposal} />
+          <ActionBadge proposal={proposal} />
         </div>
         <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5 min-w-0">
           <span className="truncate">{templateName}</span>
           {counterparty ? (
-            <span className="truncate">• {listType === 'received' ? 'From' : 'To'}: {counterparty}</span>
+            <span className="truncate">• With: {counterparty}</span>
           ) : null}
         </div>
       </div>
@@ -102,6 +133,12 @@ function CompactProposalRow({ proposal, onOpen }) {
       </div>
     </button>
   );
+}
+
+function getProposalSortTime(proposal) {
+  return new Date(
+    proposal?.last_activity_at || proposal?.updated_date || proposal?.created_date || 0,
+  ).getTime();
 }
 
 function ActionRequiredBucket({ title, proposals, onOpen }) {
@@ -180,39 +217,50 @@ export default function Dashboard() {
     isLoading: agreementRequestsLoading,
   } = useQuery({
     queryKey: ['dashboard-proposals-agreement-requests'],
-    queryFn: () => proposalsClient.list({ status: 'agreement_requested', limit: 10 }),
+    queryFn: () => proposalsClient.list({ tab: 'inbox', inbox: 'win_confirmation_requested', limit: 10 }),
   });
-  const stats = useMemo(
+  const primaryStats = useMemo(
     () => [
       {
-        label: 'Proposals Sent',
-        value: summary?.sentCount ?? 0,
-        icon: Send,
+        label: 'Inbox',
+        value: summary?.inboxCount ?? 0,
+        icon: Inbox,
         color: 'from-blue-500 to-blue-600',
       },
       {
-        label: 'Proposals Received',
-        value: summary?.receivedCount ?? 0,
-        icon: Inbox,
+        label: 'Drafts',
+        value: summary?.draftsCount ?? 0,
+        icon: FileText,
         color: 'from-indigo-500 to-indigo-600',
       },
+      {
+        label: 'Closed',
+        value: summary?.closedCount ?? 0,
+        icon: CheckCircle2,
+        color: 'from-emerald-500 to-emerald-600',
+      },
+      {
+        label: 'Archived',
+        value: summary?.archivedCount ?? 0,
+        icon: Archive,
+        color: 'from-slate-500 to-slate-600',
+      },
+    ],
+    [summary],
+  );
+  const outcomeStats = useMemo(
+    () => [
       {
         label: DASHBOARD_WON_LABEL,
         value: summary?.wonCount ?? 0,
         icon: Trophy,
-        color: 'from-emerald-500 to-emerald-600',
+        color: 'text-emerald-700 bg-emerald-50 border-emerald-200',
       },
       {
         label: 'Lost',
         value: summary?.lostCount ?? 0,
         icon: XCircle,
-        color: 'from-rose-500 to-rose-600',
-      },
-      {
-        label: 'Mutual Interest',
-        value: summary?.mutualInterestCount ?? 0,
-        icon: Users,
-        color: 'from-green-500 to-green-600',
+        color: 'text-rose-700 bg-rose-50 border-rose-200',
       },
     ],
     [summary],
@@ -221,7 +269,7 @@ export default function Dashboard() {
   // Bucket proposals for Action Required (first-match-wins dedupe)
   const bucketedProposals = useMemo(() => {
     const sorted = [...allProposals].sort(
-      (a, b) => new Date(b.updated_date || b.created_date) - new Date(a.updated_date || a.created_date),
+      (a, b) => getProposalSortTime(b) - getProposalSortTime(a),
     );
     const seen = new Set();
 
@@ -241,26 +289,27 @@ export default function Dashboard() {
     };
 
     const drafts = takeBucket(
-      (proposal) => proposal.list_type === 'draft' || proposal.directional_status === 'draft',
+      (proposal) => proposal.thread_bucket === 'drafts',
     );
-    const waitingOnRecipient = takeBucket(
-      (proposal) => proposal.list_type === 'sent' && proposal.directional_status === 'sent',
+    const needsResponse = takeBucket(
+      (proposal) =>
+        proposal.thread_bucket === 'inbox' &&
+        proposal.needs_response &&
+        !proposal.win_confirmation_requested,
+    );
+    const waitingOnOtherParty = takeBucket(
+      (proposal) => proposal.thread_bucket === 'inbox' && proposal.waiting_on_other_party,
     );
     const needsReview = takeBucket(
-      (proposal) =>
-        proposal.directional_status === 'under_verification' ||
-        proposal.directional_status === 're_evaluated',
-    );
-    const mutualInterest = takeBucket(
-      (proposal) => proposal.directional_status === 'mutual_interest',
+      (proposal) => proposal.thread_bucket === 'inbox' && Boolean(proposal.review_status),
     );
 
-    return { drafts, waitingOnRecipient, needsReview, mutualInterest };
+    return { drafts, needsResponse, waitingOnOtherParty, needsReview };
   }, [allProposals]);
 
   // Recent proposals (last 5 updated)
   const recentProposals = useMemo(() => {
-    return [...allProposals].sort((a, b) => new Date(b.updated_date || b.created_date) - new Date(a.updated_date || a.created_date)).slice(0, 5);
+    return [...allProposals].sort((a, b) => getProposalSortTime(b) - getProposalSortTime(a)).slice(0, 5);
   }, [allProposals]);
   const handleOpenProposal = (proposal) => {
     if (!proposal?.id) {
@@ -292,7 +341,7 @@ export default function Dashboard() {
         return;
       }
 
-      if ((proposal.list_type || '').toLowerCase() === 'draft') {
+      if (proposal.thread_bucket === 'drafts' || (proposal.list_type || '').toLowerCase() === 'draft') {
         navigate(
           createPageUrl(
             `DocumentComparisonCreate?draft=${encodeURIComponent(
@@ -309,7 +358,7 @@ export default function Dashboard() {
       return;
     }
 
-    if ((proposal.list_type || '').toLowerCase() === 'draft') {
+    if (proposal.thread_bucket === 'drafts' || (proposal.list_type || '').toLowerCase() === 'draft') {
       navigate(createPageUrl(`CreateProposal?draft=${encodeURIComponent(proposal.id)}`));
       return;
     }
@@ -317,7 +366,7 @@ export default function Dashboard() {
     navigate(createPageUrl(`ProposalDetail?id=${encodeURIComponent(proposal.id)}`));
   };
   const handleReviewAgreementRequests = () => {
-    navigate(createPageUrl('Proposals?status=agreement_requested'));
+    navigate(createPageUrl('Proposals?tab=inbox&inbox=win_confirmation_requested'));
   };
 
   return (
@@ -336,8 +385,8 @@ export default function Dashboard() {
           </Link>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
-          {stats.map((stat) => (
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-4">
+          {primaryStats.map((stat) => (
             <Card key={stat.label} className={`border-0 shadow-sm${summaryError ? ' opacity-60' : ''}`}>
               <CardContent className="p-5">
                 <div className="flex items-start justify-between">
@@ -357,6 +406,31 @@ export default function Dashboard() {
             </Card>
           ))}
         </div>
+        <Card className={`border border-slate-200 shadow-sm mb-8${summaryError ? ' opacity-60' : ''}`}>
+          <CardContent className="p-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-medium text-slate-900">Outcome Snapshot</p>
+              <p className="text-sm text-slate-500">Won and lost proposals are included inside Closed.</p>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              {outcomeStats.map((stat) => (
+                <div
+                  key={stat.label}
+                  className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 ${stat.color}`}
+                >
+                  <stat.icon className="w-4 h-4" />
+                  <span className="text-sm font-medium">{stat.label}</span>
+                  <span
+                    className="text-lg font-semibold"
+                    title={summaryError ? (summaryErrorObj?.message || 'Could not load stats') : undefined}
+                  >
+                    {summaryLoading ? '...' : summaryError ? '—' : stat.value}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
         {summaryError && (
           <div className="flex items-center gap-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 mb-6">
             <AlertCircle className="w-4 h-4 shrink-0" />
@@ -399,6 +473,14 @@ export default function Dashboard() {
                   />
                 )}
 
+                {bucketedProposals.needsResponse.length > 0 ? (
+                  <ActionRequiredBucket
+                    title="Needs your response"
+                    proposals={bucketedProposals.needsResponse}
+                    onOpen={handleOpenProposal}
+                  />
+                ) : null}
+
                 {bucketedProposals.drafts.length > 0 ? (
                   <ActionRequiredBucket
                     title="Drafts not sent"
@@ -407,10 +489,10 @@ export default function Dashboard() {
                   />
                 ) : null}
 
-                {bucketedProposals.waitingOnRecipient.length > 0 ? (
+                {bucketedProposals.waitingOnOtherParty.length > 0 ? (
                   <ActionRequiredBucket
-                    title="Waiting on recipient"
-                    proposals={bucketedProposals.waitingOnRecipient}
+                    title="Waiting on other party"
+                    proposals={bucketedProposals.waitingOnOtherParty}
                     onOpen={handleOpenProposal}
                   />
                 ) : null}
@@ -419,14 +501,6 @@ export default function Dashboard() {
                   <ActionRequiredBucket
                     title="Needs review / verify"
                     proposals={bucketedProposals.needsReview}
-                    onOpen={handleOpenProposal}
-                  />
-                ) : null}
-
-                {bucketedProposals.mutualInterest.length > 0 ? (
-                  <ActionRequiredBucket
-                    title="Mutual interest ready"
-                    proposals={bucketedProposals.mutualInterest}
                     onOpen={handleOpenProposal}
                   />
                 ) : null}

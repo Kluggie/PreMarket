@@ -8,6 +8,10 @@ import { newId, newToken } from '../../../_lib/ids.js';
 import { getResendConfig } from '../../../_lib/integrations.js';
 import { createNotificationEvent } from '../../../_lib/notifications.js';
 import { appendProposalHistory } from '../../../_lib/proposal-history.js';
+import {
+  buildProposalThreadActivityValues,
+  PROPOSAL_THREAD_ACTIVITY_SEND_BACK,
+} from '../../../_lib/proposal-thread-activity.js';
 import { assertProposalOpenForNegotiation, buildPendingWonReset } from '../../../_lib/proposal-outcomes.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 import {
@@ -385,11 +389,19 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     // ── 4. Update proposal status ──────────────────────────────────────────
 
     if (resolved.proposal?.id) {
+      const threadActivity = buildProposalThreadActivityValues({
+        activityAt: now,
+        actorRole: RECIPIENT_ROLE,
+        activityType: PROPOSAL_THREAD_ACTIVITY_SEND_BACK,
+      });
       await resolved.db
         .update(schema.proposals)
         .set({
           status: 'received',
           receivedAt: now,
+          lastThreadActivityAt: threadActivity.lastThreadActivityAt,
+          lastThreadActorRole: threadActivity.lastThreadActorRole,
+          lastThreadActivityType: threadActivity.lastThreadActivityType,
           ...pendingWonReset,
           updatedAt: now,
         })
@@ -427,6 +439,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
           ...resolved.proposal,
           status: 'received',
           receivedAt: now,
+          ...threadActivity,
           ...pendingWonReset,
           updatedAt: now,
         },

@@ -256,6 +256,9 @@ export const proposals = pgTable(
     summary: text('summary'),
     sentAt: timestamp('sent_at', { withTimezone: true }),
     receivedAt: timestamp('received_at', { withTimezone: true }),
+    lastThreadActivityAt: timestamp('last_thread_activity_at', { withTimezone: true }),
+    lastThreadActorRole: text('last_thread_actor_role'),
+    lastThreadActivityType: text('last_thread_activity_type'),
     evaluatedAt: timestamp('evaluated_at', { withTimezone: true }),
     lastSharedAt: timestamp('last_shared_at', { withTimezone: true }),
     statusReason: text('status_reason'),
@@ -290,6 +293,14 @@ export const proposals = pgTable(
     ),
     proposalsPartyAEmailIdx: index('proposals_party_a_email_idx').on(table.partyAEmail, table.createdAt),
     proposalsPartyBEmailIdx: index('proposals_party_b_email_idx').on(table.partyBEmail, table.createdAt),
+    proposalsLastThreadActivityIdx: index('proposals_last_thread_activity_idx').on(
+      table.lastThreadActivityAt,
+      table.createdAt,
+    ),
+    proposalsLastThreadActorIdx: index('proposals_last_thread_actor_idx').on(
+      table.lastThreadActorRole,
+      table.lastThreadActivityAt,
+    ),
     proposalsArchivedAtIdx: index('proposals_archived_at_idx').on(table.archivedAt),
     proposalsArchivedByPartyAAtIdx: index('proposals_archived_by_party_a_at_idx').on(
       table.archivedByPartyAAt,

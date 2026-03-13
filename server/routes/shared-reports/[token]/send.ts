@@ -8,6 +8,10 @@ import { readJsonBody } from '../../../_lib/http.js';
 import { newId } from '../../../_lib/ids.js';
 import { getResendConfig } from '../../../_lib/integrations.js';
 import { appendProposalHistory } from '../../../_lib/proposal-history.js';
+import {
+  buildProposalThreadActivityValues,
+  PROPOSAL_THREAD_ACTIVITY_SENT,
+} from '../../../_lib/proposal-thread-activity.js';
 import { assertProposalOpenForNegotiation, buildPendingWonReset } from '../../../_lib/proposal-outcomes.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 import { buildRecipientSafeEvaluationProjection } from '../../document-comparisons/_helpers.js';
@@ -631,6 +635,11 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
 
     const proposalSentAt = new Date();
     const proposalPendingWonReset = buildPendingWonReset(proposal, proposalSentAt) || {};
+    const threadActivity = buildProposalThreadActivityValues({
+      activityAt: proposalSentAt,
+      actorRole: 'party_a',
+      activityType: PROPOSAL_THREAD_ACTIVITY_SENT,
+    });
 
     await db
       .update(schema.proposals)
@@ -639,6 +648,9 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         sentAt: proposalSentAt,
         partyBEmail: recipientEmail,
         lastSharedAt: proposalSentAt,
+        lastThreadActivityAt: threadActivity.lastThreadActivityAt,
+        lastThreadActorRole: threadActivity.lastThreadActorRole,
+        lastThreadActivityType: threadActivity.lastThreadActivityType,
         ...proposalPendingWonReset,
         updatedAt: proposalSentAt,
       })
@@ -651,6 +663,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         sentAt: proposalSentAt,
         partyBEmail: recipientEmail,
         lastSharedAt: proposalSentAt,
+        ...threadActivity,
         ...proposalPendingWonReset,
         updatedAt: proposalSentAt,
       },

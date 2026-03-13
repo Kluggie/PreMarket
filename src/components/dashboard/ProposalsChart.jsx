@@ -8,16 +8,13 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { AlertCircle, Calendar } from 'lucide-react';
 import { dashboardClient } from '@/api/dashboardClient';
 
-const DASHBOARD_WON_LABEL = 'Won';
-
 export default function ProposalsChart() {
   const [timeRange, setTimeRange] = useState('30');
   const [visibleSeries, setVisibleSeries] = useState({
-    sent: true,
-    received: true,
-    mutual: true,
-    won: true,
-    lost: true,
+    newThreads: true,
+    activeRounds: true,
+    closedThreads: true,
+    archivedThreads: true,
   });
 
   const timeRanges = [
@@ -37,11 +34,10 @@ export default function ProposalsChart() {
   const chartData = Array.isArray(data?.points) ? data.points : [];
   const hasData = chartData.some((point) => {
     return (
-      Number(point.sent || 0) > 0 ||
-      Number(point.received || 0) > 0 ||
-      Number(point.mutual || 0) > 0 ||
-      Number(point.won || 0) > 0 ||
-      Number(point.lost || 0) > 0
+      Number(point.new_threads || 0) > 0 ||
+      Number(point.active_rounds || 0) > 0 ||
+      Number(point.closed_threads || 0) > 0 ||
+      Number(point.archived_threads || 0) > 0
     );
   });
 
@@ -55,7 +51,7 @@ export default function ProposalsChart() {
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <CardTitle className="flex items-center gap-2">
             <Calendar className="w-5 h-5" />
-            Proposals Activity
+            Thread Activity
           </CardTitle>
           <div className="flex flex-wrap gap-2">
             {timeRanges.map((range) => (
@@ -93,7 +89,7 @@ export default function ProposalsChart() {
         ) : !hasData ? (
           <div className="py-12 text-center">
             <p className="text-slate-500 mb-6">
-              No sent proposal activity yet. Drafts are excluded from this chart until a proposal is shared.
+              No proposal activity yet. New threads, live negotiation rounds, closures, and archived activity will appear here.
             </p>
           </div>
         ) : (
@@ -101,57 +97,46 @@ export default function ProposalsChart() {
             <div className="mb-6 flex flex-wrap gap-4">
               <div className="flex items-center gap-2">
                 <Checkbox
-                  id="sent-series"
-                  checked={visibleSeries.sent}
-                  onCheckedChange={() => toggleSeries('sent')}
+                  id="new-threads-series"
+                  checked={visibleSeries.newThreads}
+                  onCheckedChange={() => toggleSeries('newThreads')}
                 />
-                <Label htmlFor="sent-series" className="flex items-center gap-2 cursor-pointer">
+                <Label htmlFor="new-threads-series" className="flex items-center gap-2 cursor-pointer">
                   <div className="w-3 h-3 rounded-full bg-blue-500" />
-                  Sent
+                  New Threads
                 </Label>
               </div>
               <div className="flex items-center gap-2">
                 <Checkbox
-                  id="received-series"
-                  checked={visibleSeries.received}
-                  onCheckedChange={() => toggleSeries('received')}
+                  id="active-rounds-series"
+                  checked={visibleSeries.activeRounds}
+                  onCheckedChange={() => toggleSeries('activeRounds')}
                 />
-                <Label htmlFor="received-series" className="flex items-center gap-2 cursor-pointer">
-                  <div className="w-3 h-3 rounded-full bg-indigo-500" />
-                  Received
+                <Label htmlFor="active-rounds-series" className="flex items-center gap-2 cursor-pointer">
+                  <div className="w-3 h-3 rounded-full bg-amber-500" />
+                  Active Rounds
                 </Label>
               </div>
               <div className="flex items-center gap-2">
                 <Checkbox
-                  id="mutual-series"
-                  checked={visibleSeries.mutual}
-                  onCheckedChange={() => toggleSeries('mutual')}
+                  id="closed-threads-series"
+                  checked={visibleSeries.closedThreads}
+                  onCheckedChange={() => toggleSeries('closedThreads')}
                 />
-                <Label htmlFor="mutual-series" className="flex items-center gap-2 cursor-pointer">
+                <Label htmlFor="closed-threads-series" className="flex items-center gap-2 cursor-pointer">
                   <div className="w-3 h-3 rounded-full bg-green-500" />
-                  Mutual Interest
+                  Threads Closed
                 </Label>
               </div>
               <div className="flex items-center gap-2">
                 <Checkbox
-                  id="won-series"
-                  checked={visibleSeries.won}
-                  onCheckedChange={() => toggleSeries('won')}
+                  id="archived-threads-series"
+                  checked={visibleSeries.archivedThreads}
+                  onCheckedChange={() => toggleSeries('archivedThreads')}
                 />
-                <Label htmlFor="won-series" className="flex items-center gap-2 cursor-pointer">
-                  <div className="w-3 h-3 rounded-full bg-emerald-500" />
-                  {DASHBOARD_WON_LABEL}
-                </Label>
-              </div>
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id="lost-series"
-                  checked={visibleSeries.lost}
-                  onCheckedChange={() => toggleSeries('lost')}
-                />
-                <Label htmlFor="lost-series" className="flex items-center gap-2 cursor-pointer">
-                  <div className="w-3 h-3 rounded-full bg-rose-500" />
-                  Lost
+                <Label htmlFor="archived-threads-series" className="flex items-center gap-2 cursor-pointer">
+                  <div className="w-3 h-3 rounded-full bg-slate-500" />
+                  Threads Archived
                 </Label>
               </div>
             </div>
@@ -169,59 +154,48 @@ export default function ProposalsChart() {
                       borderRadius: '8px',
                     }}
                   />
-                  {visibleSeries.sent && (
+                  {visibleSeries.newThreads && (
                     <Line
                       type="monotone"
-                      dataKey="sent"
+                      dataKey="new_threads"
                       stroke="#3b82f6"
                       strokeWidth={2}
                       dot={{ fill: '#3b82f6', r: 3 }}
                       activeDot={{ r: 5 }}
-                      name="Sent"
+                      name="New Threads"
                     />
                   )}
-                  {visibleSeries.received && (
+                  {visibleSeries.activeRounds && (
                     <Line
                       type="monotone"
-                      dataKey="received"
-                      stroke="#6366f1"
+                      dataKey="active_rounds"
+                      stroke="#f59e0b"
                       strokeWidth={2}
-                      dot={{ fill: '#6366f1', r: 3 }}
+                      dot={{ fill: '#f59e0b', r: 3 }}
                       activeDot={{ r: 5 }}
-                      name="Received"
+                      name="Active Rounds"
                     />
                   )}
-                  {visibleSeries.mutual && (
+                  {visibleSeries.closedThreads && (
                     <Line
                       type="monotone"
-                      dataKey="mutual"
+                      dataKey="closed_threads"
                       stroke="#10b981"
                       strokeWidth={2}
                       dot={{ fill: '#10b981', r: 3 }}
                       activeDot={{ r: 5 }}
-                      name="Mutual Interest"
+                      name="Threads Closed"
                     />
                   )}
-                  {visibleSeries.won && (
+                  {visibleSeries.archivedThreads && (
                     <Line
                       type="monotone"
-                      dataKey="won"
-                      stroke="#10b981"
+                      dataKey="archived_threads"
+                      stroke="#64748b"
                       strokeWidth={2}
-                      dot={{ fill: '#10b981', r: 3 }}
+                      dot={{ fill: '#64748b', r: 3 }}
                       activeDot={{ r: 5 }}
-                      name={DASHBOARD_WON_LABEL}
-                    />
-                  )}
-                  {visibleSeries.lost && (
-                    <Line
-                      type="monotone"
-                      dataKey="lost"
-                      stroke="#f43f5e"
-                      strokeWidth={2}
-                      dot={{ fill: '#f43f5e', r: 3 }}
-                      activeDot={{ r: 5 }}
-                      name="Lost"
+                      name="Threads Archived"
                     />
                   )}
                 </LineChart>

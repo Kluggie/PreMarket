@@ -7,9 +7,7 @@ import { useAuth } from '@/lib/AuthContext';
 import { proposalsClient } from '@/api/proposalsClient';
 import { dashboardClient } from '@/api/dashboardClient';
 import {
-  AGREED_LABEL,
   getAgreementActionLabel,
-  getPendingAgreementBadgeLabel,
 } from '@/lib/proposalOutcomeUi';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -57,51 +55,53 @@ import {
   XCircle,
 } from 'lucide-react';
 
-const statusConfig = {
-  draft: { color: 'bg-slate-100 text-slate-700', icon: FileText, label: 'Draft' },
+const DIRECTION_BADGE_CONFIG = {
   sent: { color: 'bg-blue-100 text-blue-700', icon: Send, label: 'Sent' },
   received: { color: 'bg-amber-100 text-amber-700', icon: Inbox, label: 'Received' },
-  under_verification: { color: 'bg-purple-100 text-purple-700', icon: Eye, label: 'Under Review' },
-  re_evaluated: { color: 'bg-indigo-100 text-indigo-700', icon: BarChart3, label: 'Re-evaluated' },
-  mutual_interest: { color: 'bg-green-100 text-green-700', icon: Users, label: 'Mutual Interest' },
-  won: { color: 'bg-emerald-100 text-emerald-700', icon: CheckCircle2, label: AGREED_LABEL },
-  lost: { color: 'bg-rose-100 text-rose-700', icon: AlertTriangle, label: 'Lost' },
-  closed: { color: 'bg-slate-100 text-slate-600', icon: Clock, label: 'Closed' },
-  withdrawn: { color: 'bg-red-100 text-red-700', icon: AlertTriangle, label: 'Withdrawn' },
-  archived: { color: 'bg-slate-100 text-slate-500', icon: Archive, label: 'Archived' },
 };
 
-const TAB_VALUES = new Set(['all', 'sent', 'received', 'drafts', 'mutual_interest', 'closed', 'archived']);
-const STATUS_FILTER_VALUES = new Set([
+const TAB_ALIASES = {
+  all: 'inbox',
+  sent: 'inbox',
+  received: 'inbox',
+  mutual_interest: 'inbox',
+};
+const TAB_VALUES = new Set(['inbox', 'drafts', 'closed', 'archived']);
+const STATUS_FILTER_VALUES = new Set(['all', 'under_review', 'mutual_interest', 'won', 'lost']);
+const INBOX_FILTER_VALUES = new Set([
   'all',
-  'draft',
-  'sent',
-  'received',
-  'mutual_interest',
-  'won',
-  'lost',
-  'agreement_requested',
+  'needs_response',
+  'waiting_on_other_party',
+  'win_confirmation_requested',
 ]);
+const INBOX_FILTER_ALIASES = {
+  agreement_requested: 'win_confirmation_requested',
+};
 
 function normalizeTabValue(value) {
   const nextValue = String(value || '').trim().toLowerCase();
-  if (!TAB_VALUES.has(nextValue)) {
-    return 'all';
+  if (TAB_VALUES.has(nextValue)) {
+    return nextValue;
   }
-  return nextValue;
+  return TAB_ALIASES[nextValue] || 'inbox';
 }
 
 function normalizeStatusFilterValue(value) {
   const nextValue = String(value || '').trim().toLowerCase();
-  if (!STATUS_FILTER_VALUES.has(nextValue)) {
-    return 'all';
-  }
-  return nextValue;
+  return STATUS_FILTER_VALUES.has(nextValue) ? nextValue : 'all';
 }
 
-function StatusBadge({ status }) {
-  const key = String(status || '').toLowerCase();
-  const config = statusConfig[key] || statusConfig.draft;
+function normalizeInboxFilterValue(value) {
+  const nextValue = String(value || '').trim().toLowerCase();
+  const aliasedValue = INBOX_FILTER_ALIASES[nextValue] || nextValue;
+  return INBOX_FILTER_VALUES.has(aliasedValue) ? aliasedValue : 'all';
+}
+
+function DirectionBadge({ direction }) {
+  const config = DIRECTION_BADGE_CONFIG[String(direction || '').toLowerCase()];
+  if (!config) {
+    return null;
+  }
   const Icon = config.icon;
 
   return (
@@ -112,20 +112,212 @@ function StatusBadge({ status }) {
   );
 }
 
-function OutcomeBadge({ proposal }) {
-  const outcome = proposal?.outcome || {};
-  const outcomeState = String(outcome.state || '').toLowerCase();
+function LatestVersionBadge() {
+  return (
+    <Badge variant="outline" className="text-xs text-slate-600">
+      Latest Version
+    </Badge>
+  );
+}
 
-  if (outcomeState !== 'pending_won') {
+function OutcomeStateBadge({ status }) {
+  const normalizedStatus = String(status || '').trim().toLowerCase();
+  if (normalizedStatus === 'won') {
+    return (
+      <Badge className="bg-emerald-100 text-emerald-700 font-medium">
+        <CheckCircle2 className="w-3 h-3 mr-1" />
+        Won
+      </Badge>
+    );
+  }
+  if (normalizedStatus === 'lost') {
+    return (
+      <Badge className="bg-rose-100 text-rose-700 font-medium">
+        <AlertTriangle className="w-3 h-3 mr-1" />
+        Lost
+      </Badge>
+    );
+  }
+  if (normalizedStatus === 'draft') {
+    return (
+      <Badge className="bg-slate-100 text-slate-700 font-medium">
+        <FileText className="w-3 h-3 mr-1" />
+        Draft
+      </Badge>
+    );
+  }
+  return null;
+}
+
+function ReviewBadge({ reviewStatus }) {
+  const normalizedStatus = String(reviewStatus || '').trim().toLowerCase();
+  if (!normalizedStatus) {
+    return null;
+  }
+  return (
+    <Badge className="bg-purple-100 text-purple-700 font-medium">
+      {normalizedStatus === 're_evaluated' ? (
+        <BarChart3 className="w-3 h-3 mr-1" />
+      ) : (
+        <Eye className="w-3 h-3 mr-1" />
+      )}
+      {normalizedStatus === 're_evaluated' ? 'AI Review' : 'Under Review'}
+    </Badge>
+  );
+}
+
+function ActionStateBadge({ proposal }) {
+  if (proposal?.win_confirmation_requested) {
+    return (
+      <Badge className="bg-amber-100 text-amber-700 font-medium">
+        <Trophy className="w-3 h-3 mr-1" />
+        Win Confirmation Requested
+      </Badge>
+    );
+  }
+
+  if (proposal?.needs_response) {
+    return (
+      <Badge className="bg-rose-100 text-rose-700 font-medium">
+        <AlertCircle className="w-3 h-3 mr-1" />
+        Needs Response
+      </Badge>
+    );
+  }
+
+  if (proposal?.waiting_on_other_party) {
+    return (
+      <Badge className="bg-slate-100 text-slate-700 font-medium">
+        <Clock className="w-3 h-3 mr-1" />
+        Waiting on Other Party
+      </Badge>
+    );
+  }
+
+  return null;
+}
+
+function MutualInterestBadge({ isMutualInterest }) {
+  if (!isMutualInterest) {
     return null;
   }
 
   return (
-    <Badge className="bg-amber-100 text-amber-700 font-medium">
-      <Trophy className="w-3 h-3 mr-1" />
-      {getPendingAgreementBadgeLabel(outcome)}
+    <Badge className="bg-green-100 text-green-700 font-medium">
+      <Users className="w-3 h-3 mr-1" />
+      Mutual Interest
     </Badge>
   );
+}
+
+function getRowIcon(proposal) {
+  const normalizedStatus = String(proposal?.status || '').trim().toLowerCase();
+  if (normalizedStatus === 'won') return CheckCircle2;
+  if (normalizedStatus === 'lost') return XCircle;
+  if (proposal?.thread_bucket === 'archived') return Archive;
+  if (String(proposal?.latest_direction || '').toLowerCase() === 'received') return Inbox;
+  if (String(proposal?.latest_direction || '').toLowerCase() === 'sent') return Send;
+  return FileText;
+}
+
+function formatUpdatedAt(value) {
+  if (!value) {
+    return '';
+  }
+
+  const candidate = new Date(value);
+  if (Number.isNaN(candidate.getTime())) {
+    return '';
+  }
+
+  return candidate.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function getStatusOptions(activeTab) {
+  if (activeTab === 'closed') {
+    return [
+      { value: 'all', label: 'All outcomes' },
+      { value: 'won', label: 'Won' },
+      { value: 'lost', label: 'Lost' },
+    ];
+  }
+
+  if (activeTab === 'drafts') {
+    return [
+      { value: 'all', label: 'All states' },
+      { value: 'under_review', label: 'Under Review / AI Review' },
+    ];
+  }
+
+  if (activeTab === 'archived') {
+    return [
+      { value: 'all', label: 'All states' },
+      { value: 'under_review', label: 'Under Review / AI Review' },
+      { value: 'mutual_interest', label: 'Mutual Interest' },
+      { value: 'won', label: 'Won' },
+      { value: 'lost', label: 'Lost' },
+    ];
+  }
+
+  return [
+    { value: 'all', label: 'All states' },
+    { value: 'under_review', label: 'Under Review / AI Review' },
+    { value: 'mutual_interest', label: 'Mutual Interest' },
+  ];
+}
+
+function getEmptyStateCopy(activeTab, inboxFilter) {
+  if (activeTab === 'drafts') {
+    return {
+      title: 'No draft proposals yet.',
+      description: 'Create your first proposal to get started.',
+    };
+  }
+
+  if (activeTab === 'closed') {
+    return {
+      title: 'No closed proposals yet.',
+      description: 'Won and lost proposal threads will appear here.',
+    };
+  }
+
+  if (activeTab === 'archived') {
+    return {
+      title: 'No archived proposals.',
+      description: 'Archived proposal threads will appear here until you restore them.',
+    };
+  }
+
+  if (inboxFilter === 'needs_response') {
+    return {
+      title: 'No proposals need your response.',
+      description: 'When a counterparty sends back the latest version, the thread will appear here.',
+    };
+  }
+
+  if (inboxFilter === 'waiting_on_other_party') {
+    return {
+      title: 'Nothing is waiting on the other party.',
+      description: 'Threads you sent most recently will appear here until the counterparty replies.',
+    };
+  }
+
+  if (inboxFilter === 'win_confirmation_requested') {
+    return {
+      title: 'No win confirmations are waiting.',
+      description: 'Agreement requests that need your confirmation will appear here.',
+    };
+  }
+
+  return {
+    title: 'No active proposals in your inbox.',
+    description: 'Sent and received negotiation threads will appear here.',
+  };
 }
 
 function getDeleteCopy(proposal) {
@@ -157,18 +349,21 @@ function ProposalRow({
   actionsDisabled,
 }) {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const listType = proposal.list_type || 'sent';
-  const directional = proposal.directional_status || proposal.status || listType;
-  const iconConfig = statusConfig[String(directional).toLowerCase()] || statusConfig.sent;
-  const Icon = iconConfig.icon;
+  const Icon = getRowIcon(proposal);
   const hasSharedReportLink = Boolean(proposal.shared_report_token);
   const sharedReportStatus = String(proposal.shared_report_status || '').trim().toLowerCase();
-  const sharedReportDate = proposal.shared_report_last_updated_at || proposal.shared_report_sent_at || null;
-  const isArchived = Boolean(proposal.archived_at);
-  const isOwner = listType !== 'received';
+  const sharedReportDate =
+    proposal.shared_report_last_updated_at ||
+    proposal.last_activity_at ||
+    proposal.updated_at ||
+    proposal.created_at ||
+    proposal.shared_report_sent_at ||
+    null;
+  const isDraft = proposal.thread_bucket === 'drafts';
+  const isArchived = proposal.thread_bucket === 'archived';
   const outcome = proposal.outcome || {};
   const outcomeState = String(outcome.state || proposal.status || '').toLowerCase();
-  const isClosed = outcomeState === 'won' || outcomeState === 'lost';
+  const isClosed = proposal.thread_bucket === 'closed' || outcomeState === 'won' || outcomeState === 'lost';
   const canArchive = Boolean(outcome.actor_role);
   const canContinueNegotiating = Boolean(outcome.can_continue_negotiating && outcomeState === 'pending_won');
   const wonActionDisabled =
@@ -197,8 +392,12 @@ function ProposalRow({
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1 flex-wrap">
               <h3 className="font-medium text-slate-900 truncate">{proposal.title || 'Untitled Proposal'}</h3>
-              <StatusBadge status={directional} />
-              <OutcomeBadge proposal={proposal} />
+              <OutcomeStateBadge status={isDraft ? 'draft' : proposal.status} />
+              <DirectionBadge direction={proposal.latest_direction} />
+              {proposal.is_latest_version && !isDraft ? <LatestVersionBadge /> : null}
+              <ActionStateBadge proposal={proposal} />
+              <ReviewBadge reviewStatus={proposal.review_status} />
+              <MutualInterestBadge isMutualInterest={proposal.is_mutual_interest} />
               {isArchived && (
                 <Badge variant="outline" className="text-xs text-slate-500">
                   <Archive className="w-3 h-3 mr-1" />
@@ -210,31 +409,16 @@ function ProposalRow({
                   Link {sharedReportStatus || 'active'}
                 </Badge>
               ) : null}
-              {proposal.status && proposal.status !== directional ? (
-                <Badge variant="outline" className="text-xs">
-                  {proposal.status.replace(/_/g, ' ')}
-                </Badge>
-              ) : null}
             </div>
 
             <div className="flex items-center gap-4 text-sm text-slate-500">
               <span>{proposal.template_name || 'Custom Template'}</span>
-              {isOwner ? (
-                <span>To: {proposal.party_b_email || 'Not specified'}</span>
-              ) : (
-                <span>From: {proposal.party_a_email || 'Hidden'}</span>
-              )}
+              <span>With: {proposal.counterparty_email || 'Not specified'}</span>
             </div>
           </div>
 
           <div className="text-right flex-shrink-0">
-            <p className="text-xs text-slate-400">
-              {sharedReportDate
-                ? new Date(sharedReportDate).toLocaleDateString()
-                : proposal.created_date
-                  ? new Date(proposal.created_date).toLocaleDateString()
-                  : ''}
-            </p>
+            <p className="text-xs text-slate-400">{formatUpdatedAt(sharedReportDate)}</p>
             <ChevronRight className="w-4 h-4 text-slate-400 mt-2 ml-auto" />
           </div>
         </button>
@@ -360,11 +544,21 @@ export default function Proposals() {
     const params = new URLSearchParams(location.search || '');
     return normalizeStatusFilterValue(params.get('status'));
   });
+  const [inboxFilter, setInboxFilter] = useState(() => {
+    const params = new URLSearchParams(location.search || '');
+    return normalizeInboxFilterValue(params.get('inbox') || params.get('status'));
+  });
   const [searchQuery, setSearchQuery] = useState('');
   const [cursor, setCursor] = useState(null);
   const [cursorHistory, setCursorHistory] = useState([]);
 
   const normalizedSearch = useMemo(() => searchQuery.trim(), [searchQuery]);
+  const normalizedInboxFilter = activeTab === 'inbox' ? inboxFilter : 'all';
+  const statusOptions = useMemo(() => getStatusOptions(activeTab), [activeTab]);
+  const emptyState = useMemo(
+    () => getEmptyStateCopy(activeTab, normalizedInboxFilter),
+    [activeTab, normalizedInboxFilter],
+  );
   const refreshProposalQueries = () => {
     queryClient.invalidateQueries(['proposals-list']);
     queryClient.invalidateQueries(['dashboard-summary']);
@@ -376,23 +570,27 @@ export default function Proposals() {
   useEffect(() => {
     const params = new URLSearchParams(location.search || '');
     const urlTab = normalizeTabValue(params.get('tab'));
+    const urlStatus = normalizeStatusFilterValue(params.get('status'));
+    const urlInbox =
+      urlTab === 'inbox'
+        ? normalizeInboxFilterValue(params.get('inbox') || params.get('status'))
+        : 'all';
+
     if (urlTab !== activeTab) {
       setActiveTab(urlTab);
     }
-  }, [location.search, activeTab]);
-
-  useEffect(() => {
-    const params = new URLSearchParams(location.search || '');
-    const urlStatus = normalizeStatusFilterValue(params.get('status'));
     if (urlStatus !== statusFilter) {
       setStatusFilter(urlStatus);
     }
-  }, [location.search, statusFilter]);
+    if (urlInbox !== inboxFilter) {
+      setInboxFilter(urlInbox);
+    }
+  }, [location.search, activeTab, statusFilter, inboxFilter]);
 
   useEffect(() => {
     setCursor(null);
     setCursorHistory([]);
-  }, [activeTab, statusFilter, normalizedSearch]);
+  }, [activeTab, statusFilter, normalizedInboxFilter, normalizedSearch]);
 
   const { data: summary, isLoading: summaryLoading, isError: summaryError } = useQuery({
     queryKey: ['dashboard-summary'],
@@ -402,11 +600,12 @@ export default function Proposals() {
   });
 
   const { data, isLoading, isError, error, refetch } = useQuery({
-    queryKey: ['proposals-list', activeTab, statusFilter, normalizedSearch, cursor],
+    queryKey: ['proposals-list', activeTab, statusFilter, normalizedInboxFilter, normalizedSearch, cursor],
     queryFn: () =>
       proposalsClient.listWithMeta({
         tab: activeTab,
         status: statusFilter,
+        inbox: normalizedInboxFilter !== 'all' ? normalizedInboxFilter : undefined,
         query: normalizedSearch,
         limit: 20,
         cursor,
@@ -489,14 +688,12 @@ export default function Proposals() {
   const tabCounts = useMemo(() => {
     if (summaryLoading || summaryError || !summary) return null;
     return {
-      all: summary.totalCount || 0,
-      sent: summary.sentCount || 0,
-      received: summary.receivedCount || 0,
+      inbox: summary.inboxCount || 0,
       drafts: summary.draftsCount || 0,
-      mutual_interest: summary.mutualInterestCount || 0,
       closed: summary.closedCount || 0,
+      archived: summary.archivedCount || 0,
     };
-  }, [summary, summaryLoading]);
+  }, [summary, summaryLoading, summaryError]);
 
   // Display helper: shows '…' while counts are loading, never shows stale 0.
   function tabCount(key) {
@@ -533,7 +730,7 @@ export default function Proposals() {
         return;
       }
 
-      if ((proposal.list_type || '').toLowerCase() === 'draft') {
+      if (proposal.thread_bucket === 'drafts' || (proposal.list_type || '').toLowerCase() === 'draft') {
         navigate(
           createPageUrl(
             `DocumentComparisonCreate?draft=${encodeURIComponent(
@@ -550,7 +747,7 @@ export default function Proposals() {
       return;
     }
 
-    if ((proposal.list_type || '').toLowerCase() === 'draft') {
+    if (proposal.thread_bucket === 'drafts' || (proposal.list_type || '').toLowerCase() === 'draft') {
       navigate(createPageUrl(`CreateProposal?draft=${encodeURIComponent(proposal.id)}`));
       return;
     }
@@ -563,11 +760,42 @@ export default function Proposals() {
     setActiveTab(normalizedTab);
 
     const params = new URLSearchParams(location.search || '');
-    if (normalizedTab === 'all') {
+    if (normalizedTab === 'inbox') {
       params.delete('tab');
     } else {
       params.set('tab', normalizedTab);
     }
+    if (normalizedTab !== 'inbox') {
+      params.delete('inbox');
+      setInboxFilter('all');
+    }
+    const allowedStatusValues = new Set(getStatusOptions(normalizedTab).map((option) => option.value));
+    const currentStatus = normalizeStatusFilterValue(params.get('status'));
+    if (!allowedStatusValues.has(currentStatus)) {
+      params.delete('status');
+      setStatusFilter('all');
+    }
+    const nextSearch = params.toString();
+    navigate(
+      {
+        pathname: location.pathname,
+        search: nextSearch ? `?${nextSearch}` : '',
+      },
+      { replace: true },
+    );
+  };
+
+  const handleInboxFilterChange = (nextFilter) => {
+    const normalizedFilter = normalizeInboxFilterValue(nextFilter);
+    setInboxFilter(normalizedFilter);
+
+    const params = new URLSearchParams(location.search || '');
+    if (normalizedFilter === 'all') {
+      params.delete('inbox');
+    } else {
+      params.set('inbox', normalizedFilter);
+    }
+    params.delete('tab');
     const nextSearch = params.toString();
     navigate(
       {
@@ -651,7 +879,7 @@ export default function Proposals() {
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
           <div>
             <h1 className="text-2xl font-bold text-slate-900">Proposals</h1>
-            <p className="text-slate-500 mt-1">Track sent and received proposal activity.</p>
+            <p className="text-slate-500 mt-1">Manage live proposal threads across inbox, drafts, closed, and archived.</p>
           </div>
           <Link to={createPageUrl('DocumentComparisonCreate')}>
             <Button className="bg-blue-600 hover:bg-blue-700">
@@ -669,23 +897,20 @@ export default function Proposals() {
                 <Input
                   value={searchQuery}
                   onChange={(event) => setSearchQuery(event.target.value)}
-                  placeholder="Search by title, template, or party email"
+                  placeholder="Search by title, template, counterparty, or summary"
                   className="pl-9"
                 />
               </div>
               <Select value={statusFilter} onValueChange={handleStatusFilterChange}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Filter by status" />
+                  <SelectValue placeholder="Filter by state" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All statuses</SelectItem>
-                  <SelectItem value="draft">Draft</SelectItem>
-                  <SelectItem value="sent">Sent</SelectItem>
-                  <SelectItem value="received">Received</SelectItem>
-                  <SelectItem value="mutual_interest">Mutual Interest</SelectItem>
-                  <SelectItem value="agreement_requested">Agreement Requested</SelectItem>
-                  <SelectItem value="won">{AGREED_LABEL}</SelectItem>
-                  <SelectItem value="lost">Lost</SelectItem>
+                  {statusOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -694,20 +919,11 @@ export default function Proposals() {
 
         <Tabs value={activeTab} onValueChange={handleTabChange}>
           <TabsList className="bg-white border border-slate-200 p-1 mb-6 flex-wrap h-auto gap-1">
-            <TabsTrigger value="all" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
-              All ({tabCount('all')})
-            </TabsTrigger>
-            <TabsTrigger value="sent" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
-              Sent ({tabCount('sent')})
-            </TabsTrigger>
-            <TabsTrigger value="received" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
-              Received ({tabCount('received')})
+            <TabsTrigger value="inbox" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
+              Inbox ({tabCount('inbox')})
             </TabsTrigger>
             <TabsTrigger value="drafts" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
               Drafts ({tabCount('drafts')})
-            </TabsTrigger>
-            <TabsTrigger value="mutual_interest" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
-              Mutual Interest ({tabCount('mutual_interest')})
             </TabsTrigger>
             <TabsTrigger value="closed" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
               <Trophy className="w-3 h-3 mr-1" />
@@ -715,11 +931,37 @@ export default function Proposals() {
             </TabsTrigger>
             <TabsTrigger value="archived" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
               <Archive className="w-3 h-3 mr-1" />
-              Archived
+              Archived ({tabCount('archived')})
             </TabsTrigger>
           </TabsList>
 
           <TabsContent value={activeTab}>
+            {activeTab === 'inbox' ? (
+              <div className="mb-4 flex flex-wrap gap-2">
+                {[
+                  { value: 'all', label: 'All' },
+                  { value: 'needs_response', label: 'Needs Your Response' },
+                  { value: 'waiting_on_other_party', label: 'Waiting on Other Party' },
+                  { value: 'win_confirmation_requested', label: 'Win Confirmation Requested' },
+                ].map((option) => (
+                  <Button
+                    key={option.value}
+                    type="button"
+                    size="sm"
+                    variant={normalizedInboxFilter === option.value ? 'default' : 'outline'}
+                    className={
+                      normalizedInboxFilter === option.value
+                        ? 'bg-slate-900 text-white hover:bg-slate-800'
+                        : 'border-slate-200 text-slate-600 hover:bg-slate-100'
+                    }
+                    onClick={() => handleInboxFilterChange(option.value)}
+                  >
+                    {option.label}
+                  </Button>
+                ))}
+              </div>
+            ) : null}
+
             <Card className="border-0 shadow-sm overflow-hidden">
               <CardContent className="p-0">
                 {isLoading ? (
@@ -754,20 +996,10 @@ export default function Proposals() {
                   </div>
                 ) : proposals.length === 0 ? (
                   <div className="py-16 px-6 text-center space-y-3">
-                    <p className="text-slate-600 font-medium">No proposals found</p>
-                    <p className="text-sm text-slate-500">
-                      {activeTab === 'drafts'
-                        ? 'Create your first proposal to get started.'
-                        : statusFilter === 'agreement_requested'
-                          ? 'No proposals are waiting for your confirmation.'
-                        : activeTab === 'archived'
-                          ? 'No archived proposals.'
-                        : activeTab === 'closed'
-                            ? `No closed (${AGREED_LABEL}/Lost) proposals yet.`
-                            : `No ${activeTab} proposals yet.`}
-                    </p>
+                    <p className="text-slate-600 font-medium">{emptyState.title}</p>
+                    <p className="text-sm text-slate-500">{emptyState.description}</p>
                     {activeTab === 'drafts' && (
-                      <Link to="/templates">
+                      <Link to={createPageUrl('DocumentComparisonCreate')}>
                         <Button className="bg-blue-600 hover:bg-blue-700 mt-2">
                           Create New Proposal
                         </Button>
