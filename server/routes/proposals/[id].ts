@@ -6,7 +6,11 @@ import { getDatabaseIdentitySnapshot, getDb, schema } from '../../_lib/db/client
 import { ApiError } from '../../_lib/errors.js';
 import { readJsonBody } from '../../_lib/http.js';
 import { createNotificationEvent } from '../../_lib/notifications.js';
-import { buildProposalHistoryQueries } from '../../_lib/proposal-history.js';
+import {
+  buildProposalHistoryQueries,
+  getDocumentComparisonSnapshotFromVersion,
+  getProposalSnapshotFromVersion,
+} from '../../_lib/proposal-history.js';
 import {
   buildProposalThreadActivityValues,
 } from '../../_lib/proposal-thread-activity.js';
@@ -96,6 +100,93 @@ function parseDateOrNull(value: unknown) {
   return candidate;
 }
 
+function toTitleCase(value: unknown) {
+  return asText(value)
+    .split(/[_\s.]+/)
+    .filter(Boolean)
+    .map((part) => `${part[0]?.toUpperCase() || ''}${part.slice(1)}`)
+    .join(' ');
+}
+
+function mapVersionSnapshotProposal(snapshotProposal: Record<string, any> | null, fallbackProposal: any) {
+  const source = snapshotProposal || fallbackProposal || {};
+  return {
+    id: source.id || fallbackProposal?.id || null,
+    title: source.title || fallbackProposal?.title || null,
+    status: source.status || fallbackProposal?.status || 'draft',
+    status_reason: source.statusReason || source.status_reason || fallbackProposal?.statusReason || null,
+    template_id: source.templateId || source.template_id || fallbackProposal?.templateId || null,
+    template_name: source.templateName || source.template_name || fallbackProposal?.templateName || null,
+    proposal_type: source.proposalType || source.proposal_type || fallbackProposal?.proposalType || 'standard',
+    summary: source.summary || fallbackProposal?.summary || null,
+    payload: source.payload && typeof source.payload === 'object' ? source.payload : {},
+    party_a_email: source.partyAEmail || source.party_a_email || fallbackProposal?.partyAEmail || null,
+    party_b_email: source.partyBEmail || source.party_b_email || fallbackProposal?.partyBEmail || null,
+    sent_at: source.sentAt || source.sent_at || fallbackProposal?.sentAt || null,
+    received_at: source.receivedAt || source.received_at || fallbackProposal?.receivedAt || null,
+    updated_at: source.updatedAt || source.updated_at || fallbackProposal?.updatedAt || null,
+  };
+}
+
+function mapVersionSnapshotComparison(snapshotComparison: Record<string, any> | null) {
+  if (!snapshotComparison) {
+    return null;
+  }
+
+  return {
+    id: snapshotComparison.id || null,
+    party_a_label: snapshotComparison.partyALabel || snapshotComparison.party_a_label || null,
+    party_b_label: snapshotComparison.partyBLabel || snapshotComparison.party_b_label || null,
+    doc_a_text: snapshotComparison.docAText || snapshotComparison.doc_a_text || '',
+    doc_a_html: snapshotComparison.docAHtml || snapshotComparison.doc_a_html || '',
+    doc_a_source: snapshotComparison.docASource || snapshotComparison.doc_a_source || null,
+    doc_b_text: snapshotComparison.docBText || snapshotComparison.doc_b_text || '',
+    doc_b_html: snapshotComparison.docBHtml || snapshotComparison.doc_b_html || '',
+    doc_b_source: snapshotComparison.docBSource || snapshotComparison.doc_b_source || null,
+    updated_at: snapshotComparison.updatedAt || snapshotComparison.updated_at || null,
+  };
+}
+
+function mapProposalVersionRow(versionRow: any, index: number, totalVersions: number, liveProposal: any) {
+  const snapshotProposal = getProposalSnapshotFromVersion(versionRow);
+  const snapshotComparison = getDocumentComparisonSnapshotFromVersion(versionRow);
+  const snapshotMeta =
+    versionRow?.snapshotMeta && typeof versionRow.snapshotMeta === 'object' && !Array.isArray(versionRow.snapshotMeta)
+      ? versionRow.snapshotMeta
+      : {};
+  const actorRole = asLower(versionRow?.actorRole);
+  const proposalSnapshot = mapVersionSnapshotProposal(snapshotProposal, liveProposal);
+  const actorEmail =
+    actorRole === 'party_b'
+      ? proposalSnapshot.party_b_email
+      : actorRole === 'party_a'
+        ? proposalSnapshot.party_a_email
+        : null;
+
+  return {
+    id: versionRow.id,
+    version_number: Math.max(totalVersions - index, 1),
+    is_latest_version: index === 0,
+    read_only: index !== 0,
+    actor_role: actorRole || null,
+    actor_label:
+      actorRole === 'party_a'
+        ? 'Proposer'
+        : actorRole === 'party_b'
+          ? 'Counterparty'
+          : 'System',
+    actor_email: actorEmail || null,
+    milestone: versionRow.milestone || null,
+    milestone_label: toTitleCase(versionRow.milestone || snapshotMeta.milestone || ''),
+    event_type: asText(snapshotMeta.event_type) || null,
+    status: proposalSnapshot.status || versionRow.status || 'draft',
+    created_date: versionRow.createdAt,
+    has_document_snapshot: Boolean(snapshotComparison),
+    snapshot_proposal: proposalSnapshot,
+    snapshot_document_comparison: mapVersionSnapshotComparison(snapshotComparison),
+  };
+}
+
 export default async function handler(req: any, res: any, proposalIdParam?: string) {
   await withApiRoute(req, res, '/api/proposals/[id]', async (context) => {
     ensureMethod(req, ['GET', 'PATCH', 'DELETE']);
@@ -120,7 +211,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
       });
       const existing = access.proposal;
 
-      const [responses, evaluations, sharedLinks] = await Promise.all([
+      const [responses, evaluations, sharedLinks, versions] = await Promise.all([
         db
           .select()
           .from(schema.proposalResponses)
@@ -138,6 +229,12 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
           .where(eq(schema.sharedLinks.proposalId, proposalId))
           .orderBy(desc(schema.sharedLinks.createdAt))
           .limit(20),
+        db
+          .select()
+          .from(schema.proposalVersions)
+          .where(eq(schema.proposalVersions.proposalId, proposalId))
+          .orderBy(desc(schema.proposalVersions.createdAt))
+          .limit(25),
       ]);
 
       ok(res, 200, {
@@ -204,6 +301,9 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
           created_date: row.createdAt,
           updated_date: row.updatedAt,
         })),
+        versions: versions.map((row, index) =>
+          mapProposalVersionRow(row, index, versions.length, existing),
+        ),
       });
       return;
     }

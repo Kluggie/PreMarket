@@ -83,6 +83,7 @@ export const proposalsClient = {
       responses: requireArray(response, 'responses'),
       evaluations: requireArray(response, 'evaluations'),
       sharedLinks: requireArray(response, 'shared_links'),
+      versions: requireArray(response, 'versions'),
     };
   },
 

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { createPageUrl } from '@/utils';
@@ -34,8 +34,10 @@ import {
   ArrowRight,
   BarChart3,
   CheckCircle2,
+  Clock,
   Download,
   FileText,
+  History,
   Send,
   Sparkles,
   Trash2,
@@ -145,6 +147,43 @@ function getStatusClass(status) {
   return 'bg-slate-100 text-slate-700';
 }
 
+function formatHistoryLabel(value) {
+  return asText(value)
+    .split(/[_\s.]+/)
+    .filter(Boolean)
+    .map((part) => `${part[0]?.toUpperCase() || ''}${part.slice(1)}`)
+    .join(' ');
+}
+
+function normalizeComparisonPreview(value) {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  return {
+    partyALabel: value.partyALabel || value.party_a_label || null,
+    partyBLabel: value.partyBLabel || value.party_b_label || null,
+    docAText: value.docAText || value.doc_a_text || '',
+    docAHtml: value.docAHtml || value.doc_a_html || '',
+    docASource: value.docASource || value.doc_a_source || null,
+    docBText: value.docBText || value.doc_b_text || '',
+    docBHtml: value.docBHtml || value.doc_b_html || '',
+    docBSource: value.docBSource || value.doc_b_source || null,
+  };
+}
+
+function renderPayloadReadOnly(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || Object.keys(payload).length === 0) {
+    return null;
+  }
+
+  return (
+    <pre className="whitespace-pre-wrap break-words rounded-xl border border-slate-200 bg-white p-4 text-xs text-slate-700 overflow-auto">
+      {JSON.stringify(payload, null, 2)}
+    </pre>
+  );
+}
+
 function OutcomeActionButton({ tooltip, children, ...buttonProps }) {
   const button = <Button {...buttonProps}>{children}</Button>;
   if (!tooltip || !buttonProps.disabled) {
@@ -236,7 +275,8 @@ export default function ProposalDetail() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const proposalId = useProposalId();
-  const [activeTab, setActiveTab] = useState('report');
+  const [activeTab, setActiveTab] = useState('proposal');
+  const [selectedVersionId, setSelectedVersionId] = useState('');
 
   const detailQuery = useQuery({
     queryKey: ['proposal-detail', proposalId],
@@ -246,6 +286,7 @@ export default function ProposalDetail() {
 
   const proposal = detailQuery.data?.proposal || null;
   const evaluations = detailQuery.data?.evaluations || [];
+  const detailVersions = detailQuery.data?.versions || [];
 
   const comparisonQuery = useQuery({
     queryKey: ['proposal-linked-comparison', proposal?.document_comparison_id || 'none'],
@@ -254,6 +295,87 @@ export default function ProposalDetail() {
   });
 
   const comparison = comparisonQuery.data?.comparison || null;
+  const versionHistory = useMemo(() => {
+    if (detailVersions.length > 0) {
+      return detailVersions;
+    }
+    if (!proposal) {
+      return [];
+    }
+
+    const actorRole = asLower(proposal.last_thread_actor_role);
+    const actorLabel =
+      actorRole === 'party_a'
+        ? 'Proposer'
+        : actorRole === 'party_b'
+          ? 'Counterparty'
+          : 'System';
+    const actorEmail =
+      actorRole === 'party_b'
+        ? proposal.party_b_email || null
+        : actorRole === 'party_a'
+          ? proposal.party_a_email || null
+          : null;
+
+    return [
+      {
+        id: `live-${proposal.id}`,
+        version_number: 1,
+        is_latest_version: true,
+        read_only: false,
+        actor_role: actorRole || null,
+        actor_label: actorLabel,
+        actor_email: actorEmail,
+        milestone: proposal.last_thread_activity_type || 'live',
+        milestone_label: 'Current Live Version',
+        event_type: proposal.last_thread_activity_type || null,
+        status: proposal.status || 'draft',
+        created_date: proposal.last_thread_activity_at || proposal.updated_date || proposal.created_date,
+        has_document_snapshot: Boolean(comparison),
+        snapshot_proposal: proposal,
+        snapshot_document_comparison: comparison
+          ? {
+              party_a_label: comparison.partyALabel || comparison.party_a_label || null,
+              party_b_label: comparison.partyBLabel || comparison.party_b_label || null,
+              doc_a_text: comparison.docAText || comparison.doc_a_text || '',
+              doc_a_html: comparison.docAHtml || comparison.doc_a_html || '',
+              doc_a_source: comparison.docASource || comparison.doc_a_source || null,
+              doc_b_text: comparison.docBText || comparison.doc_b_text || '',
+              doc_b_html: comparison.docBHtml || comparison.doc_b_html || '',
+              doc_b_source: comparison.docBSource || comparison.doc_b_source || null,
+            }
+          : null,
+      },
+    ];
+  }, [comparison, detailVersions, proposal]);
+  const selectedVersion = useMemo(
+    () =>
+      versionHistory.find((entry) => String(entry?.id || '') === String(selectedVersionId || '')) ||
+      versionHistory[0] ||
+      null,
+    [selectedVersionId, versionHistory],
+  );
+  const selectedVersionProposal = selectedVersion?.snapshot_proposal || proposal;
+  const selectedVersionComparison = normalizeComparisonPreview(
+    selectedVersion?.snapshot_document_comparison || (selectedVersion?.is_latest_version ? comparison : null),
+  );
+  const viewingHistoricalVersion = activeTab === 'history' && Boolean(selectedVersion?.read_only);
+
+  useEffect(() => {
+    if (versionHistory.length === 0) {
+      if (selectedVersionId) {
+        setSelectedVersionId('');
+      }
+      return;
+    }
+
+    const hasSelectedVersion = versionHistory.some(
+      (entry) => String(entry?.id || '') === String(selectedVersionId || ''),
+    );
+    if (!hasSelectedVersion) {
+      setSelectedVersionId(String(versionHistory[0].id || ''));
+    }
+  }, [selectedVersionId, versionHistory]);
   const confidentialLength = String(comparison?.doc_a_text || '').length;
   const sharedLength = String(comparison?.doc_b_text || '').length;
   const confidentialWordCount = String(comparison?.doc_a_text || '')
@@ -600,12 +722,15 @@ export default function ProposalDetail() {
                   }
                   navigate(createPageUrl(`CreateProposal?draft=${encodeURIComponent(proposal.id)}&step=4`));
                 }}
-                disabled={isClosed}
+                disabled={isClosed || viewingHistoricalVersion}
               >
                 <ArrowRight className="w-4 h-4 mr-2" />
                 Edit Proposal
               </Button>
-              <Button onClick={() => shareMutation.mutate()} disabled={shareMutation.isPending || isClosed}>
+              <Button
+                onClick={() => shareMutation.mutate()}
+                disabled={shareMutation.isPending || isClosed || viewingHistoricalVersion}
+              >
                 <Send className="w-4 h-4 mr-2" />
                 Share Updated Version
               </Button>
@@ -660,14 +785,21 @@ export default function ProposalDetail() {
 
             <Tabs value={activeTab} onValueChange={setActiveTab}>
               <TabsList className="bg-white border border-slate-200 p-1">
+                <TabsTrigger value="proposal" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
+                  <FileText className="w-4 h-4 mr-2" />
+                  Proposal
+                </TabsTrigger>
+                <TabsTrigger value="history" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
+                  <History className="w-4 h-4 mr-2" />
+                  Version History
+                  {versionHistory.length > 0 ? (
+                    <Badge className="ml-2 bg-slate-100 text-slate-700 text-xs">{versionHistory.length}</Badge>
+                  ) : null}
+                </TabsTrigger>
                 <TabsTrigger value="report" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
                   <BarChart3 className="w-4 h-4 mr-2" />
                   {MEDIATION_REVIEW_LABEL}
                   {evaluations.length > 0 && <Badge className="ml-2 bg-green-100 text-green-700 text-xs">Complete</Badge>}
-                </TabsTrigger>
-                <TabsTrigger value="proposal" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
-                  <FileText className="w-4 h-4 mr-2" />
-                  Proposal
                 </TabsTrigger>
               </TabsList>
 
@@ -816,6 +948,13 @@ export default function ProposalDetail() {
 
               <TabsContent value="proposal" className="mt-6">
                 <div className="space-y-8">
+                  <Alert className="bg-blue-50 border-blue-200">
+                    <AlertDescription className="text-blue-900">
+                      You are viewing the current live version of this proposal thread. Older versions are available in
+                      Version History as read-only snapshots.
+                    </AlertDescription>
+                  </Alert>
+
                   {comparison ? (
                     <>
                       <div>
@@ -863,6 +1002,182 @@ export default function ProposalDetail() {
                       </AlertDescription>
                     </Alert>
                   )}
+                </div>
+              </TabsContent>
+
+              <TabsContent value="history" className="mt-6">
+                <div className="grid grid-cols-1 xl:grid-cols-[320px_1fr] gap-6">
+                  <Card className="border border-slate-200 shadow-sm">
+                    <CardContent className="pt-6 space-y-3">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900">Version History</p>
+                        <p className="text-sm text-slate-500">
+                          Latest first. Historical versions stay read-only.
+                        </p>
+                      </div>
+
+                      {versionHistory.length === 0 ? (
+                        <p className="text-sm text-slate-500">No version history is available yet.</p>
+                      ) : (
+                        <div className="space-y-3">
+                          {versionHistory.map((version) => {
+                            const isSelected = String(version?.id || '') === String(selectedVersion?.id || '');
+                            return (
+                              <button
+                                key={version.id}
+                                type="button"
+                                onClick={() => setSelectedVersionId(String(version.id || ''))}
+                                className={`w-full rounded-xl border px-4 py-3 text-left transition-colors ${
+                                  isSelected
+                                    ? 'border-slate-900 bg-slate-900 text-white'
+                                    : 'border-slate-200 bg-white hover:bg-slate-50'
+                                }`}
+                              >
+                                <div className="flex items-center justify-between gap-3">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="font-medium">
+                                      Version {version.version_number}
+                                    </span>
+                                    {version.is_latest_version ? (
+                                      <Badge className="bg-emerald-100 text-emerald-700">Current</Badge>
+                                    ) : (
+                                      <Badge variant="outline">Read-only</Badge>
+                                    )}
+                                  </div>
+                                  <span className={`text-xs ${isSelected ? 'text-slate-200' : 'text-slate-500'}`}>
+                                    {formatDateTime(version.created_date)}
+                                  </span>
+                                </div>
+                                <div className={`mt-2 space-y-1 text-sm ${isSelected ? 'text-slate-200' : 'text-slate-600'}`}>
+                                  <p>{version.actor_label || 'System'}{version.actor_email ? ` · ${version.actor_email}` : ''}</p>
+                                  <p>{version.milestone_label || formatHistoryLabel(version.milestone) || 'Snapshot'}</p>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  <Card className="border border-slate-200 shadow-sm">
+                    <CardContent className="pt-6 space-y-6">
+                      {selectedVersion ? (
+                        <>
+                          <div className="flex flex-wrap items-center gap-3">
+                            <h2 className="text-xl font-semibold text-slate-900">
+                              Version {selectedVersion.version_number}
+                            </h2>
+                            <Badge className={getStatusClass(selectedVersion.status)}>
+                              {getStatusLabel(selectedVersion.status)}
+                            </Badge>
+                            {selectedVersion.is_latest_version ? (
+                              <Badge className="bg-emerald-100 text-emerald-700">Latest Version</Badge>
+                            ) : (
+                              <Badge variant="outline">Read-only snapshot</Badge>
+                            )}
+                          </div>
+
+                          {selectedVersion.read_only ? (
+                            <Alert className="bg-amber-50 border-amber-200">
+                              <AlertDescription className="text-amber-900">
+                                Historical versions are read-only. Switch back to the latest version to edit or share the live proposal.
+                              </AlertDescription>
+                            </Alert>
+                          ) : null}
+
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Actor</p>
+                              <p className="mt-2 text-sm font-medium text-slate-900">
+                                {selectedVersion.actor_label || 'System'}
+                              </p>
+                              {selectedVersion.actor_email ? (
+                                <p className="text-sm text-slate-500">{selectedVersion.actor_email}</p>
+                              ) : null}
+                            </div>
+                            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Captured</p>
+                              <p className="mt-2 text-sm font-medium text-slate-900 inline-flex items-center gap-2">
+                                <Clock className="w-4 h-4 text-slate-400" />
+                                {formatDateTime(selectedVersion.created_date)}
+                              </p>
+                            </div>
+                            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Snapshot Event</p>
+                              <p className="mt-2 text-sm font-medium text-slate-900">
+                                {selectedVersion.milestone_label || formatHistoryLabel(selectedVersion.milestone) || 'Snapshot'}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="space-y-3">
+                            <div className="flex flex-wrap items-center gap-3">
+                              <h3 className="text-lg font-semibold text-slate-900">
+                                {selectedVersionProposal?.title || proposal?.title || 'Proposal'}
+                              </h3>
+                              <Badge variant="outline">
+                                {selectedVersionProposal?.template_name || 'Custom Template'}
+                              </Badge>
+                            </div>
+                            {asText(selectedVersionProposal?.summary) ? (
+                              <p className="text-sm text-slate-600">{selectedVersionProposal.summary}</p>
+                            ) : null}
+                          </div>
+
+                          {selectedVersionComparison ? (
+                            <div className="space-y-8">
+                              <div>
+                                <div className="flex items-center justify-between mb-3">
+                                  <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+                                    {selectedVersionComparison.partyALabel || CONFIDENTIAL_LABEL}
+                                  </h3>
+                                  <div className="flex gap-2">
+                                    <Badge variant="outline">{selectedVersionComparison.docASource || 'typed'}</Badge>
+                                  </div>
+                                </div>
+                                <div className="rounded-xl border border-slate-200 bg-white p-4 max-h-[320px] overflow-auto">
+                                  {renderDocumentReadOnly({
+                                    text: selectedVersionComparison.docAText || '',
+                                    html: selectedVersionComparison.docAHtml || '',
+                                  })}
+                                </div>
+                              </div>
+
+                              <div className="border-t border-slate-200" />
+
+                              <div>
+                                <div className="flex items-center justify-between mb-3">
+                                  <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+                                    {selectedVersionComparison.partyBLabel || SHARED_LABEL}
+                                  </h3>
+                                  <div className="flex gap-2">
+                                    <Badge variant="outline">{selectedVersionComparison.docBSource || 'typed'}</Badge>
+                                  </div>
+                                </div>
+                                <div className="rounded-xl border border-slate-200 bg-white p-4 max-h-[320px] overflow-auto">
+                                  {renderDocumentReadOnly({
+                                    text: selectedVersionComparison.docBText || '',
+                                    html: selectedVersionComparison.docBHtml || '',
+                                  })}
+                                </div>
+                              </div>
+                            </div>
+                          ) : (
+                            <Alert className="bg-slate-50 border-slate-200">
+                              <AlertDescription className="text-slate-700">
+                                This historical snapshot does not include a preserved document comparison export. Proposal metadata is still available below.
+                              </AlertDescription>
+                            </Alert>
+                          )}
+
+                          {renderPayloadReadOnly(selectedVersionProposal?.payload)}
+                        </>
+                      ) : (
+                        <p className="text-sm text-slate-500">Select a version to inspect its read-only snapshot.</p>
+                      )}
+                    </CardContent>
+                  </Card>
                 </div>
               </TabsContent>
 

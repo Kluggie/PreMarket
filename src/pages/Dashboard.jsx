@@ -14,8 +14,6 @@ import {
   Send,
   Inbox,
   Users,
-  Archive,
-  CheckCircle2,
   Trophy,
   XCircle,
   ChevronRight,
@@ -69,7 +67,7 @@ function ActionBadge({ proposal }) {
     return (
       <Badge className="bg-amber-100 text-amber-700 text-[0.6875rem] px-2 py-0.5 h-5 font-medium">
         <Trophy className="w-3 h-3 mr-1" />
-        Win Confirmation Requested
+        Pending Win
       </Badge>
     );
   }
@@ -77,7 +75,7 @@ function ActionBadge({ proposal }) {
   if (proposal?.needs_response) {
     return (
       <Badge className="bg-rose-100 text-rose-700 text-[0.6875rem] px-2 py-0.5 h-5 font-medium">
-        Needs Response
+        Needs Reply
       </Badge>
     );
   }
@@ -85,20 +83,12 @@ function ActionBadge({ proposal }) {
   if (proposal?.waiting_on_other_party) {
     return (
       <Badge className="bg-slate-100 text-slate-700 text-[0.6875rem] px-2 py-0.5 h-5 font-medium">
-        Waiting on Other Party
+        Waiting
       </Badge>
     );
   }
 
-  if (!proposal?.is_latest_version) {
-    return null;
-  }
-
-  return (
-    <Badge variant="outline" className="text-[0.6875rem] px-2 py-0.5 h-5 font-medium text-slate-600">
-      Latest Version
-    </Badge>
-  );
+  return null;
 }
 
 function CompactProposalRow({ proposal, onOpen }) {
@@ -217,50 +207,39 @@ export default function Dashboard() {
     isLoading: agreementRequestsLoading,
   } = useQuery({
     queryKey: ['dashboard-proposals-agreement-requests'],
-    queryFn: () => proposalsClient.list({ tab: 'inbox', inbox: 'win_confirmation_requested', limit: 10 }),
+    queryFn: () => proposalsClient.list({ tab: 'all', status: 'win_confirmation_requested', limit: 10 }),
   });
   const primaryStats = useMemo(
     () => [
       {
-        label: 'Inbox',
-        value: summary?.inboxCount ?? 0,
-        icon: Inbox,
+        label: 'Sent',
+        value: summary?.sentCount ?? 0,
+        icon: Send,
         color: 'from-blue-500 to-blue-600',
       },
       {
-        label: 'Drafts',
-        value: summary?.draftsCount ?? 0,
-        icon: FileText,
+        label: 'Received',
+        value: summary?.receivedCount ?? 0,
+        icon: Inbox,
         color: 'from-indigo-500 to-indigo-600',
       },
       {
-        label: 'Closed',
-        value: summary?.closedCount ?? 0,
-        icon: CheckCircle2,
-        color: 'from-emerald-500 to-emerald-600',
+        label: 'Mutual Interest',
+        value: summary?.mutualInterestCount ?? 0,
+        icon: Users,
+        color: 'from-green-500 to-green-600',
       },
-      {
-        label: 'Archived',
-        value: summary?.archivedCount ?? 0,
-        icon: Archive,
-        color: 'from-slate-500 to-slate-600',
-      },
-    ],
-    [summary],
-  );
-  const outcomeStats = useMemo(
-    () => [
       {
         label: DASHBOARD_WON_LABEL,
         value: summary?.wonCount ?? 0,
         icon: Trophy,
-        color: 'text-emerald-700 bg-emerald-50 border-emerald-200',
+        color: 'from-emerald-500 to-emerald-600',
       },
       {
         label: 'Lost',
         value: summary?.lostCount ?? 0,
         icon: XCircle,
-        color: 'text-rose-700 bg-rose-50 border-rose-200',
+        color: 'from-rose-500 to-rose-600',
       },
     ],
     [summary],
@@ -366,7 +345,7 @@ export default function Dashboard() {
     navigate(createPageUrl(`ProposalDetail?id=${encodeURIComponent(proposal.id)}`));
   };
   const handleReviewAgreementRequests = () => {
-    navigate(createPageUrl('Proposals?tab=inbox&inbox=win_confirmation_requested'));
+    navigate(createPageUrl('Proposals?tab=all&status=win_confirmation_requested'));
   };
 
   return (
@@ -385,7 +364,7 @@ export default function Dashboard() {
           </Link>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-4 mb-8">
           {primaryStats.map((stat) => (
             <Card key={stat.label} className={`border-0 shadow-sm${summaryError ? ' opacity-60' : ''}`}>
               <CardContent className="p-5">
@@ -406,31 +385,6 @@ export default function Dashboard() {
             </Card>
           ))}
         </div>
-        <Card className={`border border-slate-200 shadow-sm mb-8${summaryError ? ' opacity-60' : ''}`}>
-          <CardContent className="p-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="text-sm font-medium text-slate-900">Outcome Snapshot</p>
-              <p className="text-sm text-slate-500">Won and lost proposals are included inside Closed.</p>
-            </div>
-            <div className="flex flex-wrap gap-3">
-              {outcomeStats.map((stat) => (
-                <div
-                  key={stat.label}
-                  className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 ${stat.color}`}
-                >
-                  <stat.icon className="w-4 h-4" />
-                  <span className="text-sm font-medium">{stat.label}</span>
-                  <span
-                    className="text-lg font-semibold"
-                    title={summaryError ? (summaryErrorObj?.message || 'Could not load stats') : undefined}
-                  >
-                    {summaryLoading ? '...' : summaryError ? '—' : stat.value}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
         {summaryError && (
           <div className="flex items-center gap-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 mb-6">
             <AlertCircle className="w-4 h-4 shrink-0" />

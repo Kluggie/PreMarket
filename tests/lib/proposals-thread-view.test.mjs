@@ -23,20 +23,29 @@ test('proposals page uses Inbox/Drafts/Closed/Archived as the top-level tabs', (
   assert.doesNotMatch(proposalsPage, /TabsTrigger value="sent"/);
   assert.doesNotMatch(proposalsPage, /TabsTrigger value="received"/);
   assert.doesNotMatch(proposalsPage, /TabsTrigger value="mutual_interest"/);
+  assert.match(proposalsPage, /Manage live proposal threads across inbox, drafts, closed, and archived\./);
 });
 
-test('proposals page keeps inbox sub-filters, latest-version badge, and updated empty states', () => {
+test('proposals page keeps row-level tags and a compact actionable status dropdown without inbox chips', () => {
   const proposalsPage = readRepoFile('src/pages/Proposals.jsx');
 
-  assert.match(proposalsPage, /Needs Your Response/);
-  assert.match(proposalsPage, /Waiting on Other Party/);
-  assert.match(proposalsPage, /Win Confirmation Requested/);
-  assert.match(proposalsPage, /Latest Version/);
+  assert.match(proposalsPage, /All states/);
+  assert.match(proposalsPage, /Needs Reply/);
+  assert.match(proposalsPage, /Waiting/);
+  assert.match(proposalsPage, /Pending Win/);
 
-  assert.match(proposalsPage, /No draft proposals yet\./);
-  assert.match(proposalsPage, /Create your first proposal to get started\./);
-  assert.match(proposalsPage, /No active proposals in your inbox\./);
-  assert.match(proposalsPage, /Sent and received negotiation threads will appear here\./);
-  assert.match(proposalsPage, /No closed proposals yet\./);
-  assert.match(proposalsPage, /No archived proposals\./);
+  assert.match(proposalsPage, /Sent/);
+  assert.match(proposalsPage, /Received/);
+  assert.match(proposalsPage, /Under Review/);
+  assert.match(proposalsPage, /AI Review/);
+  assert.match(proposalsPage, /Mutual Interest/);
+  assert.match(proposalsPage, /Won/);
+  assert.match(proposalsPage, /Lost/);
+
+  assert.doesNotMatch(proposalsPage, /Needs Your Response/);
+  assert.doesNotMatch(proposalsPage, /Waiting on Other Party/);
+  assert.doesNotMatch(proposalsPage, /Win Confirmation Requested/);
+  assert.doesNotMatch(proposalsPage, /handleInboxFilterChange/);
+  assert.doesNotMatch(proposalsPage, /normalizedInboxFilter/);
+  assert.doesNotMatch(proposalsPage, /activeTab === 'inbox' \? \(/);
 });

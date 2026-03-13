@@ -192,7 +192,7 @@ export function matchesProposalThreadStatus(threadState, statusFilter) {
     case 'win_confirmation_requested':
       return threadState.winConfirmationRequested;
     case 'needs_response':
-      return threadState.needsResponse;
+      return threadState.needsResponse && !threadState.winConfirmationRequested;
     case 'waiting_on_other_party':
       return threadState.waitingOnOtherParty;
     case 'won':
@@ -216,7 +216,7 @@ export function matchesProposalInboxFilter(threadState, inboxFilter) {
 
   switch (normalizedFilter) {
     case 'needs_response':
-      return threadState.needsResponse;
+      return threadState.needsResponse && !threadState.winConfirmationRequested;
     case 'waiting_on_other_party':
       return threadState.waitingOnOtherParty;
     case 'win_confirmation_requested':

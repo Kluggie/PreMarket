@@ -289,20 +289,9 @@ export default async function handler(req: any, res: any) {
       const rawStatusFilter = String(req.query?.status || '').trim().toLowerCase();
       const rawInboxFilter = String(req.query?.inbox || '').trim().toLowerCase();
       const cursor = decodeCursor(String(req.query?.cursor || ''));
-      const inboxOnlyFilters = new Set([
-        'needs_response',
-        'waiting_on_other_party',
-        'agreement_requested',
-        'win_confirmation_requested',
-      ]);
-      const tab =
-        rawTab || rawInboxFilter || inboxOnlyFilters.has(rawStatusFilter)
-          ? rawTab || 'inbox'
-          : 'all';
-      const inboxFilter =
-        rawInboxFilter || (inboxOnlyFilters.has(rawStatusFilter) ? rawStatusFilter : '');
-      const statusFilter =
-        rawInboxFilter || inboxOnlyFilters.has(rawStatusFilter) ? '' : rawStatusFilter;
+      const tab = rawTab || rawInboxFilter ? rawTab || 'inbox' : 'all';
+      const inboxFilter = rawInboxFilter;
+      const statusFilter = rawStatusFilter;
 
       const hasUserEmail = typeof auth.user.email === 'string' && auth.user.email.trim().length > 0;
       const dbIdentity = getDatabaseIdentitySnapshot();

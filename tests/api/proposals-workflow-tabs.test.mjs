@@ -181,6 +181,21 @@ async function getSummary(cookie) {
   return res.jsonBody().summary;
 }
 
+async function getProposalDetail(cookie, proposalId) {
+  const res = await callHandler(
+    proposalDetailHandler,
+    {
+      method: 'GET',
+      url: `/api/proposals/${proposalId}`,
+      headers: { cookie },
+      query: { id: proposalId },
+    },
+    proposalId,
+  );
+  assert.equal(res.statusCode, 200, `Proposal detail should return 200, got ${res.statusCode}`);
+  return res.jsonBody();
+}
+
 // ─── withEnvOverride helper ────────────────────────────────────────────────────
 
 function withEnvOverride(overrides, fn) {
@@ -645,6 +660,53 @@ test(
 );
 
 test(
+  'proposal detail exposes latest-first version history while Inbox keeps a single canonical thread row',
+  { skip: !dbAvailable ? 'DATABASE_URL not set' : false },
+  async () => {
+    await ensureMigrated();
+
+    const runId = Date.now();
+    const ownerCookie = makeSessionCookie({
+      sub: `workflow-version-history-owner-${runId}`,
+      email: `workflow-version-history-owner-${runId}@example.com`,
+    });
+    const recipientEmail = `workflow-version-history-recipient-${runId}@example.com`;
+
+    const thread = await createProposal(ownerCookie, {
+      title: `Version History Thread ${Date.now()}`,
+      status: 'draft',
+      partyBEmail: recipientEmail,
+    });
+
+    const firstSend = await sendProposal(ownerCookie, thread.id, { recipientEmail });
+    await respondToSharedLink(firstSend.sharedLink.token, {
+      responderEmail: recipientEmail,
+      responses: [{ questionId: 'q_version_history', value: 'Counter round one' }],
+    });
+    await sendProposal(ownerCookie, thread.id, { recipientEmail });
+
+    const inbox = await listProposals(ownerCookie, { tab: 'inbox', limit: '20' });
+    assert.equal(
+      inbox.filter((entry) => entry.id === thread.id).length,
+      1,
+      'Inbox should keep a single canonical row for the thread',
+    );
+
+    const detail = await getProposalDetail(ownerCookie, thread.id);
+    assert.equal(Array.isArray(detail.versions), true);
+    assert.equal(detail.versions.length >= 4, true, 'Expected create/send/respond/resend snapshots');
+    assert.equal(detail.versions[0].is_latest_version, true);
+    assert.equal(detail.versions[0].read_only, false);
+    assert.equal(detail.versions.slice(1).every((entry) => entry.read_only === true), true);
+    assert.equal(detail.versions.some((entry) => entry.actor_role === 'party_b'), true);
+
+    const versionTimes = detail.versions.map((entry) => new Date(entry.created_date).getTime());
+    const sortedVersionTimes = [...versionTimes].sort((left, right) => right - left);
+    assert.deepEqual(versionTimes, sortedVersionTimes, 'Version history should be sorted newest first');
+  },
+);
+
+test(
   'generic PATCH cannot rewrite transport timestamps or corrupt latestDirection',
   { skip: !dbAvailable ? 'DATABASE_URL not set' : false },
   async () => {
@@ -687,6 +749,78 @@ test(
     const afterRow = after.find((entry) => entry.id === thread.id);
     assert.equal(afterRow?.latest_direction, 'sent');
     assert.equal(afterRow?.last_thread_actor_role, 'party_a');
+  },
+);
+
+test(
+  'actionable status filters work inside Inbox',
+  { skip: !dbAvailable ? 'DATABASE_URL not set' : false },
+  async () => {
+    await ensureMigrated();
+
+    const runId = Date.now();
+    const ownerCookie = makeSessionCookie({
+      sub: `workflow-status-filters-owner-${runId}`,
+      email: `workflow-status-filters-owner-${runId}@example.com`,
+    });
+    const recipientCookie = makeSessionCookie({
+      sub: `workflow-status-filters-recipient-${runId}`,
+      email: `workflow-status-filters-recipient-${runId}@example.com`,
+    });
+    const recipientEmail = `workflow-status-filters-recipient-${runId}@example.com`;
+
+    const waitingThread = await createProposal(ownerCookie, {
+      title: `Waiting Thread ${Date.now()}`,
+      status: 'draft',
+      partyBEmail: recipientEmail,
+    });
+    await sendProposal(ownerCookie, waitingThread.id, { recipientEmail });
+
+    const needsReplyThread = await createProposal(ownerCookie, {
+      title: `Needs Reply Thread ${Date.now()}`,
+      status: 'draft',
+      partyBEmail: recipientEmail,
+    });
+    const replySend = await sendProposal(ownerCookie, needsReplyThread.id, { recipientEmail });
+    await respondToSharedLink(replySend.sharedLink.token, {
+      responderEmail: recipientEmail,
+      responses: [{ questionId: 'q_status_filter', value: 'Counter update' }],
+    });
+
+    const pendingWinThread = await createProposal(ownerCookie, {
+      title: `Pending Win Thread ${Date.now()}`,
+      status: 'draft',
+      partyBEmail: recipientEmail,
+    });
+    await sendProposal(ownerCookie, pendingWinThread.id, { recipientEmail });
+    await markOutcome(recipientCookie, pendingWinThread.id, { outcome: 'won' });
+
+    const waitingRows = await listProposals(ownerCookie, {
+      tab: 'inbox',
+      status: 'waiting_on_other_party',
+      limit: '20',
+    });
+    assert.equal(waitingRows.some((entry) => entry.id === waitingThread.id), true);
+    assert.equal(waitingRows.some((entry) => entry.id === needsReplyThread.id), false);
+    assert.equal(waitingRows.some((entry) => entry.id === pendingWinThread.id), false);
+
+    const replyRows = await listProposals(ownerCookie, {
+      tab: 'inbox',
+      status: 'needs_response',
+      limit: '20',
+    });
+    assert.equal(replyRows.some((entry) => entry.id === needsReplyThread.id), true);
+    assert.equal(replyRows.some((entry) => entry.id === waitingThread.id), false);
+    assert.equal(replyRows.some((entry) => entry.id === pendingWinThread.id), false);
+
+    const pendingWinRows = await listProposals(ownerCookie, {
+      tab: 'inbox',
+      status: 'win_confirmation_requested',
+      limit: '20',
+    });
+    assert.equal(pendingWinRows.some((entry) => entry.id === pendingWinThread.id), true);
+    assert.equal(pendingWinRows.some((entry) => entry.id === waitingThread.id), false);
+    assert.equal(pendingWinRows.some((entry) => entry.id === needsReplyThread.id), false);
   },
 );
 

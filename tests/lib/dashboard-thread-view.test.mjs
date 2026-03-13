@@ -11,47 +11,59 @@ function readRepoFile(relativePath) {
   return readFileSync(path.join(repoRoot, relativePath), 'utf8');
 }
 
-test('dashboard primary proposal stats use Inbox/Drafts/Closed/Archived', () => {
+test('dashboard restores the old proposal metric row instead of inbox bucket cards', () => {
   const dashboard = readRepoFile('src/pages/Dashboard.jsx');
 
-  assert.match(dashboard, /label: 'Inbox'/);
-  assert.match(dashboard, /label: 'Drafts'/);
-  assert.match(dashboard, /label: 'Closed'/);
-  assert.match(dashboard, /label: 'Archived'/);
-  assert.match(dashboard, /summary\?\.inboxCount/);
-  assert.match(dashboard, /summary\?\.draftsCount/);
-  assert.match(dashboard, /summary\?\.closedCount/);
-  assert.match(dashboard, /summary\?\.archivedCount/);
+  assert.match(dashboard, /label: 'Sent'/);
+  assert.match(dashboard, /label: 'Received'/);
+  assert.match(dashboard, /label: 'Mutual Interest'/);
+  assert.match(dashboard, /const DASHBOARD_WON_LABEL = 'Won'/);
+  assert.match(dashboard, /label: DASHBOARD_WON_LABEL/);
+  assert.match(dashboard, /label: 'Lost'/);
+  assert.match(dashboard, /summary\?\.sentCount/);
+  assert.match(dashboard, /summary\?\.receivedCount/);
+  assert.match(dashboard, /summary\?\.mutualInterestCount/);
+  assert.match(dashboard, /summary\?\.wonCount/);
+  assert.match(dashboard, /summary\?\.lostCount/);
+  assert.match(dashboard, /md:grid-cols-5/);
 
-  assert.doesNotMatch(dashboard, /label: 'Proposals Sent'/);
-  assert.doesNotMatch(dashboard, /label: 'Proposals Received'/);
-  assert.doesNotMatch(dashboard, /summary\?\.sentCount/);
-  assert.doesNotMatch(dashboard, /summary\?\.receivedCount/);
-  assert.doesNotMatch(dashboard, /summary\?\.mutualInterestCount/);
+  assert.doesNotMatch(dashboard, /label: 'Inbox'/);
+  assert.doesNotMatch(dashboard, /label: 'Drafts'/);
+  assert.doesNotMatch(dashboard, /label: 'Archived'/);
+  assert.doesNotMatch(dashboard, /summary\?\.inboxCount/);
+  assert.doesNotMatch(dashboard, /summary\?\.draftsCount/);
+  assert.doesNotMatch(dashboard, /summary\?\.closedCount/);
+  assert.doesNotMatch(dashboard, /summary\?\.archivedCount/);
+  assert.doesNotMatch(dashboard, /Outcome Snapshot/);
 });
 
-test('dashboard action area keeps Inbox routing and removes mutual-interest action buckets', () => {
+test('dashboard keeps action buckets but drops inbox-only routing and mutual-interest action cards', () => {
   const dashboard = readRepoFile('src/pages/Dashboard.jsx');
 
   assert.match(dashboard, /Needs your response/);
   assert.match(dashboard, /Drafts not sent/);
   assert.match(dashboard, /Waiting on other party/);
   assert.match(dashboard, /Needs review \/ verify/);
-  assert.match(dashboard, /Proposals\?tab=inbox&inbox=win_confirmation_requested/);
+  assert.match(dashboard, /Proposals\?tab=all&status=win_confirmation_requested/);
+
   assert.doesNotMatch(dashboard, /Mutual interest ready/);
+  assert.doesNotMatch(dashboard, /Proposals\?tab=inbox&inbox=win_confirmation_requested/);
 });
 
-test('dashboard chart uses thread-based activity labels and empty-state copy', () => {
+test('dashboard chart returns to the visible legacy metric story', () => {
   const chart = readRepoFile('src/components/dashboard/ProposalsChart.jsx');
 
-  assert.match(chart, /Thread Activity/);
-  assert.match(chart, /New Threads/);
-  assert.match(chart, /Active Rounds/);
-  assert.match(chart, /Threads Closed/);
-  assert.match(chart, /Threads Archived/);
-  assert.match(chart, /No proposal activity yet\./);
-  assert.match(chart, /New threads, live negotiation rounds, closures, and archived activity will appear here\./);
+  assert.match(chart, /Proposals Activity/);
+  assert.match(chart, /Sent/);
+  assert.match(chart, /Received/);
+  assert.match(chart, /Mutual Interest/);
+  assert.match(chart, /Won/);
+  assert.match(chart, /Lost/);
+  assert.match(chart, /Create your first proposal to see analytics\./);
 
-  assert.doesNotMatch(chart, /No sent proposal activity yet\./);
-  assert.doesNotMatch(chart, /Mutual Interest/);
+  assert.doesNotMatch(chart, /Thread Activity/);
+  assert.doesNotMatch(chart, /New Threads/);
+  assert.doesNotMatch(chart, /Active Rounds/);
+  assert.doesNotMatch(chart, /Threads Closed/);
+  assert.doesNotMatch(chart, /Threads Archived/);
 });

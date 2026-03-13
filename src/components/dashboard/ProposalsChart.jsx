@@ -11,10 +11,11 @@ import { dashboardClient } from '@/api/dashboardClient';
 export default function ProposalsChart() {
   const [timeRange, setTimeRange] = useState('30');
   const [visibleSeries, setVisibleSeries] = useState({
-    newThreads: true,
-    activeRounds: true,
-    closedThreads: true,
-    archivedThreads: true,
+    sent: true,
+    received: true,
+    mutual: true,
+    won: true,
+    lost: true,
   });
 
   const timeRanges = [
@@ -34,10 +35,11 @@ export default function ProposalsChart() {
   const chartData = Array.isArray(data?.points) ? data.points : [];
   const hasData = chartData.some((point) => {
     return (
-      Number(point.new_threads || 0) > 0 ||
-      Number(point.active_rounds || 0) > 0 ||
-      Number(point.closed_threads || 0) > 0 ||
-      Number(point.archived_threads || 0) > 0
+      Number(point.sent || 0) > 0 ||
+      Number(point.received || 0) > 0 ||
+      Number(point.mutual || 0) > 0 ||
+      Number(point.won || 0) > 0 ||
+      Number(point.lost || 0) > 0
     );
   });
 
@@ -51,7 +53,7 @@ export default function ProposalsChart() {
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <CardTitle className="flex items-center gap-2">
             <Calendar className="w-5 h-5" />
-            Thread Activity
+            Proposals Activity
           </CardTitle>
           <div className="flex flex-wrap gap-2">
             {timeRanges.map((range) => (
@@ -89,7 +91,7 @@ export default function ProposalsChart() {
         ) : !hasData ? (
           <div className="py-12 text-center">
             <p className="text-slate-500 mb-6">
-              No proposal activity yet. New threads, live negotiation rounds, closures, and archived activity will appear here.
+              No proposal activity yet. Create your first proposal to see analytics.
             </p>
           </div>
         ) : (
@@ -97,46 +99,57 @@ export default function ProposalsChart() {
             <div className="mb-6 flex flex-wrap gap-4">
               <div className="flex items-center gap-2">
                 <Checkbox
-                  id="new-threads-series"
-                  checked={visibleSeries.newThreads}
-                  onCheckedChange={() => toggleSeries('newThreads')}
+                  id="sent-series"
+                  checked={visibleSeries.sent}
+                  onCheckedChange={() => toggleSeries('sent')}
                 />
-                <Label htmlFor="new-threads-series" className="flex items-center gap-2 cursor-pointer">
+                <Label htmlFor="sent-series" className="flex items-center gap-2 cursor-pointer">
                   <div className="w-3 h-3 rounded-full bg-blue-500" />
-                  New Threads
+                  Sent
                 </Label>
               </div>
               <div className="flex items-center gap-2">
                 <Checkbox
-                  id="active-rounds-series"
-                  checked={visibleSeries.activeRounds}
-                  onCheckedChange={() => toggleSeries('activeRounds')}
+                  id="received-series"
+                  checked={visibleSeries.received}
+                  onCheckedChange={() => toggleSeries('received')}
                 />
-                <Label htmlFor="active-rounds-series" className="flex items-center gap-2 cursor-pointer">
-                  <div className="w-3 h-3 rounded-full bg-amber-500" />
-                  Active Rounds
+                <Label htmlFor="received-series" className="flex items-center gap-2 cursor-pointer">
+                  <div className="w-3 h-3 rounded-full bg-indigo-500" />
+                  Received
                 </Label>
               </div>
               <div className="flex items-center gap-2">
                 <Checkbox
-                  id="closed-threads-series"
-                  checked={visibleSeries.closedThreads}
-                  onCheckedChange={() => toggleSeries('closedThreads')}
+                  id="mutual-series"
+                  checked={visibleSeries.mutual}
+                  onCheckedChange={() => toggleSeries('mutual')}
                 />
-                <Label htmlFor="closed-threads-series" className="flex items-center gap-2 cursor-pointer">
+                <Label htmlFor="mutual-series" className="flex items-center gap-2 cursor-pointer">
                   <div className="w-3 h-3 rounded-full bg-green-500" />
-                  Threads Closed
+                  Mutual Interest
                 </Label>
               </div>
               <div className="flex items-center gap-2">
                 <Checkbox
-                  id="archived-threads-series"
-                  checked={visibleSeries.archivedThreads}
-                  onCheckedChange={() => toggleSeries('archivedThreads')}
+                  id="won-series"
+                  checked={visibleSeries.won}
+                  onCheckedChange={() => toggleSeries('won')}
                 />
-                <Label htmlFor="archived-threads-series" className="flex items-center gap-2 cursor-pointer">
-                  <div className="w-3 h-3 rounded-full bg-slate-500" />
-                  Threads Archived
+                <Label htmlFor="won-series" className="flex items-center gap-2 cursor-pointer">
+                  <div className="w-3 h-3 rounded-full bg-emerald-500" />
+                  Won
+                </Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="lost-series"
+                  checked={visibleSeries.lost}
+                  onCheckedChange={() => toggleSeries('lost')}
+                />
+                <Label htmlFor="lost-series" className="flex items-center gap-2 cursor-pointer">
+                  <div className="w-3 h-3 rounded-full bg-rose-500" />
+                  Lost
                 </Label>
               </div>
             </div>
@@ -154,48 +167,59 @@ export default function ProposalsChart() {
                       borderRadius: '8px',
                     }}
                   />
-                  {visibleSeries.newThreads && (
+                  {visibleSeries.sent && (
                     <Line
                       type="monotone"
-                      dataKey="new_threads"
+                      dataKey="sent"
                       stroke="#3b82f6"
                       strokeWidth={2}
                       dot={{ fill: '#3b82f6', r: 3 }}
                       activeDot={{ r: 5 }}
-                      name="New Threads"
+                      name="Sent"
                     />
                   )}
-                  {visibleSeries.activeRounds && (
+                  {visibleSeries.received && (
                     <Line
                       type="monotone"
-                      dataKey="active_rounds"
-                      stroke="#f59e0b"
+                      dataKey="received"
+                      stroke="#6366f1"
                       strokeWidth={2}
-                      dot={{ fill: '#f59e0b', r: 3 }}
+                      dot={{ fill: '#6366f1', r: 3 }}
                       activeDot={{ r: 5 }}
-                      name="Active Rounds"
+                      name="Received"
                     />
                   )}
-                  {visibleSeries.closedThreads && (
+                  {visibleSeries.mutual && (
                     <Line
                       type="monotone"
-                      dataKey="closed_threads"
+                      dataKey="mutual"
                       stroke="#10b981"
                       strokeWidth={2}
                       dot={{ fill: '#10b981', r: 3 }}
                       activeDot={{ r: 5 }}
-                      name="Threads Closed"
+                      name="Mutual Interest"
                     />
                   )}
-                  {visibleSeries.archivedThreads && (
+                  {visibleSeries.won && (
                     <Line
                       type="monotone"
-                      dataKey="archived_threads"
-                      stroke="#64748b"
+                      dataKey="won"
+                      stroke="#10b981"
                       strokeWidth={2}
-                      dot={{ fill: '#64748b', r: 3 }}
+                      dot={{ fill: '#10b981', r: 3 }}
                       activeDot={{ r: 5 }}
-                      name="Threads Archived"
+                      name="Won"
+                    />
+                  )}
+                  {visibleSeries.lost && (
+                    <Line
+                      type="monotone"
+                      dataKey="lost"
+                      stroke="#f43f5e"
+                      strokeWidth={2}
+                      dot={{ fill: '#f43f5e', r: 3 }}
+                      activeDot={{ r: 5 }}
+                      name="Lost"
                     />
                   )}
                 </LineChart>

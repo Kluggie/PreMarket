@@ -67,15 +67,12 @@ const TAB_ALIASES = {
   mutual_interest: 'inbox',
 };
 const TAB_VALUES = new Set(['inbox', 'drafts', 'closed', 'archived']);
-const STATUS_FILTER_VALUES = new Set(['all', 'under_review', 'mutual_interest', 'won', 'lost']);
-const INBOX_FILTER_VALUES = new Set([
-  'all',
-  'needs_response',
-  'waiting_on_other_party',
-  'win_confirmation_requested',
-]);
-const INBOX_FILTER_ALIASES = {
+const STATUS_FILTER_VALUES = new Set(['all', 'needs_response', 'waiting_on_other_party', 'win_confirmation_requested']);
+const STATUS_FILTER_ALIASES = {
   agreement_requested: 'win_confirmation_requested',
+  needs_reply: 'needs_response',
+  waiting: 'waiting_on_other_party',
+  pending_win: 'win_confirmation_requested',
 };
 
 function normalizeTabValue(value) {
@@ -88,13 +85,8 @@ function normalizeTabValue(value) {
 
 function normalizeStatusFilterValue(value) {
   const nextValue = String(value || '').trim().toLowerCase();
-  return STATUS_FILTER_VALUES.has(nextValue) ? nextValue : 'all';
-}
-
-function normalizeInboxFilterValue(value) {
-  const nextValue = String(value || '').trim().toLowerCase();
-  const aliasedValue = INBOX_FILTER_ALIASES[nextValue] || nextValue;
-  return INBOX_FILTER_VALUES.has(aliasedValue) ? aliasedValue : 'all';
+  const aliasedValue = STATUS_FILTER_ALIASES[nextValue] || nextValue;
+  return STATUS_FILTER_VALUES.has(aliasedValue) ? aliasedValue : 'all';
 }
 
 function DirectionBadge({ direction }) {
@@ -108,14 +100,6 @@ function DirectionBadge({ direction }) {
     <Badge className={`${config.color} font-medium`}>
       <Icon className="w-3 h-3 mr-1" />
       {config.label}
-    </Badge>
-  );
-}
-
-function LatestVersionBadge() {
-  return (
-    <Badge variant="outline" className="text-xs text-slate-600">
-      Latest Version
     </Badge>
   );
 }
@@ -171,7 +155,7 @@ function ActionStateBadge({ proposal }) {
     return (
       <Badge className="bg-amber-100 text-amber-700 font-medium">
         <Trophy className="w-3 h-3 mr-1" />
-        Win Confirmation Requested
+        Pending Win
       </Badge>
     );
   }
@@ -180,7 +164,7 @@ function ActionStateBadge({ proposal }) {
     return (
       <Badge className="bg-rose-100 text-rose-700 font-medium">
         <AlertCircle className="w-3 h-3 mr-1" />
-        Needs Response
+        Needs Reply
       </Badge>
     );
   }
@@ -189,7 +173,7 @@ function ActionStateBadge({ proposal }) {
     return (
       <Badge className="bg-slate-100 text-slate-700 font-medium">
         <Clock className="w-3 h-3 mr-1" />
-        Waiting on Other Party
+        Waiting
       </Badge>
     );
   }
@@ -238,40 +222,16 @@ function formatUpdatedAt(value) {
   });
 }
 
-function getStatusOptions(activeTab) {
-  if (activeTab === 'closed') {
-    return [
-      { value: 'all', label: 'All outcomes' },
-      { value: 'won', label: 'Won' },
-      { value: 'lost', label: 'Lost' },
-    ];
-  }
-
-  if (activeTab === 'drafts') {
-    return [
-      { value: 'all', label: 'All states' },
-      { value: 'under_review', label: 'Under Review / AI Review' },
-    ];
-  }
-
-  if (activeTab === 'archived') {
-    return [
-      { value: 'all', label: 'All states' },
-      { value: 'under_review', label: 'Under Review / AI Review' },
-      { value: 'mutual_interest', label: 'Mutual Interest' },
-      { value: 'won', label: 'Won' },
-      { value: 'lost', label: 'Lost' },
-    ];
-  }
-
+function getStatusOptions() {
   return [
     { value: 'all', label: 'All states' },
-    { value: 'under_review', label: 'Under Review / AI Review' },
-    { value: 'mutual_interest', label: 'Mutual Interest' },
+    { value: 'needs_response', label: 'Needs Reply' },
+    { value: 'waiting_on_other_party', label: 'Waiting' },
+    { value: 'win_confirmation_requested', label: 'Pending Win' },
   ];
 }
 
-function getEmptyStateCopy(activeTab, inboxFilter) {
+function getEmptyStateCopy(activeTab, statusFilter) {
   if (activeTab === 'drafts') {
     return {
       title: 'No draft proposals yet.',
@@ -293,23 +253,23 @@ function getEmptyStateCopy(activeTab, inboxFilter) {
     };
   }
 
-  if (inboxFilter === 'needs_response') {
+  if (statusFilter === 'needs_response') {
     return {
-      title: 'No proposals need your response.',
-      description: 'When a counterparty sends back the latest version, the thread will appear here.',
+      title: 'No proposals need a reply.',
+      description: 'When a counterparty sends back an update, it will appear here.',
     };
   }
 
-  if (inboxFilter === 'waiting_on_other_party') {
+  if (statusFilter === 'waiting_on_other_party') {
     return {
-      title: 'Nothing is waiting on the other party.',
-      description: 'Threads you sent most recently will appear here until the counterparty replies.',
+      title: 'Nothing is waiting right now.',
+      description: 'Proposals you sent most recently will appear here until the counterparty replies.',
     };
   }
 
-  if (inboxFilter === 'win_confirmation_requested') {
+  if (statusFilter === 'win_confirmation_requested') {
     return {
-      title: 'No win confirmations are waiting.',
+      title: 'No pending win requests.',
       description: 'Agreement requests that need your confirmation will appear here.',
     };
   }
@@ -394,7 +354,6 @@ function ProposalRow({
               <h3 className="font-medium text-slate-900 truncate">{proposal.title || 'Untitled Proposal'}</h3>
               <OutcomeStateBadge status={isDraft ? 'draft' : proposal.status} />
               <DirectionBadge direction={proposal.latest_direction} />
-              {proposal.is_latest_version && !isDraft ? <LatestVersionBadge /> : null}
               <ActionStateBadge proposal={proposal} />
               <ReviewBadge reviewStatus={proposal.review_status} />
               <MutualInterestBadge isMutualInterest={proposal.is_mutual_interest} />
@@ -544,20 +503,15 @@ export default function Proposals() {
     const params = new URLSearchParams(location.search || '');
     return normalizeStatusFilterValue(params.get('status'));
   });
-  const [inboxFilter, setInboxFilter] = useState(() => {
-    const params = new URLSearchParams(location.search || '');
-    return normalizeInboxFilterValue(params.get('inbox') || params.get('status'));
-  });
   const [searchQuery, setSearchQuery] = useState('');
   const [cursor, setCursor] = useState(null);
   const [cursorHistory, setCursorHistory] = useState([]);
 
   const normalizedSearch = useMemo(() => searchQuery.trim(), [searchQuery]);
-  const normalizedInboxFilter = activeTab === 'inbox' ? inboxFilter : 'all';
-  const statusOptions = useMemo(() => getStatusOptions(activeTab), [activeTab]);
+  const statusOptions = useMemo(() => getStatusOptions(), []);
   const emptyState = useMemo(
-    () => getEmptyStateCopy(activeTab, normalizedInboxFilter),
-    [activeTab, normalizedInboxFilter],
+    () => getEmptyStateCopy(activeTab, statusFilter),
+    [activeTab, statusFilter],
   );
   const refreshProposalQueries = () => {
     queryClient.invalidateQueries(['proposals-list']);
@@ -571,10 +525,6 @@ export default function Proposals() {
     const params = new URLSearchParams(location.search || '');
     const urlTab = normalizeTabValue(params.get('tab'));
     const urlStatus = normalizeStatusFilterValue(params.get('status'));
-    const urlInbox =
-      urlTab === 'inbox'
-        ? normalizeInboxFilterValue(params.get('inbox') || params.get('status'))
-        : 'all';
 
     if (urlTab !== activeTab) {
       setActiveTab(urlTab);
@@ -582,15 +532,12 @@ export default function Proposals() {
     if (urlStatus !== statusFilter) {
       setStatusFilter(urlStatus);
     }
-    if (urlInbox !== inboxFilter) {
-      setInboxFilter(urlInbox);
-    }
-  }, [location.search, activeTab, statusFilter, inboxFilter]);
+  }, [location.search, activeTab, statusFilter]);
 
   useEffect(() => {
     setCursor(null);
     setCursorHistory([]);
-  }, [activeTab, statusFilter, normalizedInboxFilter, normalizedSearch]);
+  }, [activeTab, statusFilter, normalizedSearch]);
 
   const { data: summary, isLoading: summaryLoading, isError: summaryError } = useQuery({
     queryKey: ['dashboard-summary'],
@@ -600,12 +547,11 @@ export default function Proposals() {
   });
 
   const { data, isLoading, isError, error, refetch } = useQuery({
-    queryKey: ['proposals-list', activeTab, statusFilter, normalizedInboxFilter, normalizedSearch, cursor],
+    queryKey: ['proposals-list', activeTab, statusFilter, normalizedSearch, cursor],
     queryFn: () =>
       proposalsClient.listWithMeta({
         tab: activeTab,
         status: statusFilter,
-        inbox: normalizedInboxFilter !== 'all' ? normalizedInboxFilter : undefined,
         query: normalizedSearch,
         limit: 20,
         cursor,
@@ -765,37 +711,6 @@ export default function Proposals() {
     } else {
       params.set('tab', normalizedTab);
     }
-    if (normalizedTab !== 'inbox') {
-      params.delete('inbox');
-      setInboxFilter('all');
-    }
-    const allowedStatusValues = new Set(getStatusOptions(normalizedTab).map((option) => option.value));
-    const currentStatus = normalizeStatusFilterValue(params.get('status'));
-    if (!allowedStatusValues.has(currentStatus)) {
-      params.delete('status');
-      setStatusFilter('all');
-    }
-    const nextSearch = params.toString();
-    navigate(
-      {
-        pathname: location.pathname,
-        search: nextSearch ? `?${nextSearch}` : '',
-      },
-      { replace: true },
-    );
-  };
-
-  const handleInboxFilterChange = (nextFilter) => {
-    const normalizedFilter = normalizeInboxFilterValue(nextFilter);
-    setInboxFilter(normalizedFilter);
-
-    const params = new URLSearchParams(location.search || '');
-    if (normalizedFilter === 'all') {
-      params.delete('inbox');
-    } else {
-      params.set('inbox', normalizedFilter);
-    }
-    params.delete('tab');
     const nextSearch = params.toString();
     navigate(
       {
@@ -936,32 +851,6 @@ export default function Proposals() {
           </TabsList>
 
           <TabsContent value={activeTab}>
-            {activeTab === 'inbox' ? (
-              <div className="mb-4 flex flex-wrap gap-2">
-                {[
-                  { value: 'all', label: 'All' },
-                  { value: 'needs_response', label: 'Needs Your Response' },
-                  { value: 'waiting_on_other_party', label: 'Waiting on Other Party' },
-                  { value: 'win_confirmation_requested', label: 'Win Confirmation Requested' },
-                ].map((option) => (
-                  <Button
-                    key={option.value}
-                    type="button"
-                    size="sm"
-                    variant={normalizedInboxFilter === option.value ? 'default' : 'outline'}
-                    className={
-                      normalizedInboxFilter === option.value
-                        ? 'bg-slate-900 text-white hover:bg-slate-800'
-                        : 'border-slate-200 text-slate-600 hover:bg-slate-100'
-                    }
-                    onClick={() => handleInboxFilterChange(option.value)}
-                  >
-                    {option.label}
-                  </Button>
-                ))}
-              </div>
-            ) : null}
-
             <Card className="border-0 shadow-sm overflow-hidden">
               <CardContent className="p-0">
                 {isLoading ? (
