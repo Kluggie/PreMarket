@@ -267,6 +267,99 @@ if (fs.existsSync(API_CLIENT_DIR)) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// CHECK 8: Test helpers must have production safety guards
+//
+// WHY: tests/helpers/db.mjs contains resetTables() which runs TRUNCATE on ALL
+// tables. If DATABASE_URL in .env.local points to production (which it did),
+// running ANY integration test locally truncates the entire production database.
+// This was the root cause of the repeated "data wiped after deployment" incident.
+// ──────────────────────────────────────────────────────────────────────────────
+const testDbHelperPath = path.join('tests', 'helpers', 'db.mjs');
+if (fs.existsSync(testDbHelperPath)) {
+  const testDbHelper = fs.readFileSync(testDbHelperPath, 'utf8');
+  if (!testDbHelper.includes('assertNotProduction')) {
+    errors.push(
+      '[CRITICAL] tests/helpers/db.mjs is missing the assertNotProduction() guard. ' +
+      'resetTables() will TRUNCATE ALL production tables if DATABASE_URL points to production. ' +
+      'This was the root cause of the repeated data-loss incident.'
+    );
+  }
+  if (testDbHelper.includes('resetTables') && !testDbHelper.includes('isProductionDatabaseUrl')) {
+    errors.push(
+      '[CRITICAL] tests/helpers/db.mjs resetTables() does not check isProductionDatabaseUrl(). ' +
+      'It will blindly truncate whatever database DATABASE_URL points to.'
+    );
+  }
+  console.log('[OK] Test helper production guard check completed (Check 8)');
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// CHECK 9: .env.local must not use production DATABASE_URL for test runs
+// ──────────────────────────────────────────────────────────────────────────────
+const KNOWN_PRODUCTION_HOSTS = [
+  'ep-odd-feather-a7mrocqy-pooler.ap-southeast-2.aws.neon.tech',
+];
+const envLocalPath = '.env.local';
+if (fs.existsSync(envLocalPath)) {
+  const envLocalContent = fs.readFileSync(envLocalPath, 'utf8');
+  const dbUrlMatch = envLocalContent.match(/^DATABASE_URL\s*=\s*["']?([^\s"']+)/m);
+  if (dbUrlMatch) {
+    try {
+      const localDbUrl = new URL(dbUrlMatch[1]);
+      const localHost = localDbUrl.hostname.toLowerCase();
+      if (KNOWN_PRODUCTION_HOSTS.some((h) => localHost === h || localHost.endsWith('.' + h))) {
+        warnings.push(
+          '[CRITICAL WARNING] .env.local DATABASE_URL points to a KNOWN PRODUCTION database host: ' +
+          localHost + '. Running integration tests locally will TRUNCATE ALL production data. ' +
+          'Create a Neon test branch and update .env.local (or better, create .env.test.local) ' +
+          'with the branch DATABASE_URL.'
+        );
+      }
+    } catch {
+      // URL parse failure is not dangerous for this check
+    }
+  }
+  console.log('[OK] .env.local production URL check completed (Check 9)');
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// CHECK 10: .env.test.local must have an active DATABASE_URL
+//
+// WHY: tests/helpers/db.mjs loads .env.test.local first, then .env.local.
+// If .env.test.local has DATABASE_URL commented out, tests silently fall
+// through to .env.local — which means test runs TRUNCATE the development
+// database instead of a dedicated test branch. This breaks the intended
+// 3-way environment separation (dev / test / production).
+// ──────────────────────────────────────────────────────────────────────────────
+const envTestLocalPath = '.env.test.local';
+if (fs.existsSync(envTestLocalPath)) {
+  const envTestContent = fs.readFileSync(envTestLocalPath, 'utf8');
+  const activeDbUrl = envTestContent.match(/^DATABASE_URL\s*=\s*["']?([^\s"'#]+)/m);
+  const commentedDbUrl = envTestContent.match(/^#\s*DATABASE_URL/m);
+  if (!activeDbUrl && commentedDbUrl) {
+    warnings.push(
+      '[WARNING] .env.test.local exists but DATABASE_URL is commented out. ' +
+      'Tests will fall through to .env.local and TRUNCATE the development database. ' +
+      'Uncomment DATABASE_URL in .env.test.local and set it to the integration-tests branch URL.'
+    );
+  } else if (!activeDbUrl) {
+    warnings.push(
+      '[WARNING] .env.test.local exists but has no DATABASE_URL. ' +
+      'Tests will fall through to .env.local. Set DATABASE_URL to the integration-tests branch URL.'
+    );
+  } else {
+    console.log('[OK] .env.test.local has an active DATABASE_URL (Check 10)');
+  }
+} else {
+  warnings.push(
+    '[WARNING] .env.test.local does not exist. Tests will use .env.local DATABASE_URL. ' +
+    'Create .env.test.local with DATABASE_URL pointing to a dedicated test branch.'
+  );
+}
+console.log('[OK] .env.test.local DATABASE_URL presence check completed (Check 10)');
+
+
+// ──────────────────────────────────────────────────────────────────────────────
 // REPORT
 // ──────────────────────────────────────────────────────────────────────────────
 if (warnings.length > 0) {

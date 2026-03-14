@@ -4,10 +4,115 @@ import { migrate } from 'drizzle-orm/neon-http/migrator';
 import { sql } from 'drizzle-orm';
 import dotenv from 'dotenv';
 
+dotenv.config({ path: '.env.test.local' });
+dotenv.config({ path: '.env.test' });
 dotenv.config({ path: '.env.local' });
 dotenv.config();
 
 let migrated = false;
+
+// ──────────────────────────────────────────────────────────────────────────────
+// PRODUCTION SAFETY GUARD
+//
+// This is the #1 cause of the "data wiped after deployment" bug.
+// .env.local contained the PRODUCTION DATABASE_URL. Every test that called
+// resetTables() ran TRUNCATE against production, destroying all user data.
+//
+// This guard blocks ALL destructive test operations against production databases.
+//
+// STRATEGY: ALLOWLIST, not blocklist.
+// Only explicitly permitted test/dev database hosts can be targeted.
+// Any unknown host is blocked by default. This is safer than trying to
+// enumerate all possible production hostnames.
+// ──────────────────────────────────────────────────────────────────────────────
+
+const ALLOWED_TEST_DB_HOSTS = [
+  // Development branch (.env.local)
+  'ep-withered-resonance-a7msfkph-pooler.ap-southeast-2.aws.neon.tech',
+  // Integration-tests branch (.env.test.local)
+  'ep-still-flower-a7m7ixml-pooler.ap-southeast-2.aws.neon.tech',
+];
+
+// Also block explicitly known production hosts as a defense-in-depth layer
+const KNOWN_PRODUCTION_HOSTS = [
+  'ep-odd-feather-a7mrocqy-pooler.ap-southeast-2.aws.neon.tech',
+];
+
+function isDatabaseUrlAllowedForTests(url) {
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    return ALLOWED_TEST_DB_HOSTS.some(
+      (h) => host === h.toLowerCase()
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isProductionDatabaseUrl(url) {
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    // Block known production hosts
+    if (KNOWN_PRODUCTION_HOSTS.some((h) => host === h || host.endsWith('.' + h))) {
+      return true;
+    }
+    // Block any URL that contains 'production' or 'prod' in the host or path
+    if (/\bprod(uction)?\b/i.test(host) || /\bprod(uction)?\b/i.test(parsed.pathname)) {
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function assertNotProduction(context) {
+  const databaseUrl = (process.env.DATABASE_URL || '').trim();
+
+  // Layer 1: Explicit production host detection
+  if (isProductionDatabaseUrl(databaseUrl)) {
+    const parsed = new URL(databaseUrl);
+    throw new Error(
+      `[FATAL] ${context} — DATABASE_URL points to PRODUCTION database ` +
+      `(host: ${parsed.hostname}). This would destroy all user data.\n\n` +
+      `Fix: Create a .env.test.local file with a TEST database URL:\n` +
+      `  DATABASE_URL=postgresql://...@your-test-branch.neon.tech/neondb\n\n` +
+      `Or use a Neon branch: neon branches create --name test-branch\n` +
+      `Then set DATABASE_URL to the branch connection string in .env.test.local`
+    );
+  }
+
+  // Layer 2: Allowlist check — block ANY host not explicitly permitted
+  if (databaseUrl && !isDatabaseUrlAllowedForTests(databaseUrl)) {
+    let host = '<unparseable>';
+    try { host = new URL(databaseUrl).hostname; } catch {}
+    throw new Error(
+      `[FATAL] ${context} — DATABASE_URL host "${host}" is not in the allowed test database list.\n\n` +
+      `Only these hosts are permitted for test runs:\n` +
+      ALLOWED_TEST_DB_HOSTS.map((h) => `  - ${h}`).join('\n') + '\n\n' +
+      `If this is a new test/dev branch, add its pooler hostname to ALLOWED_TEST_DB_HOSTS\n` +
+      `in tests/helpers/db.mjs.`
+    );
+  }
+
+  // Layer 3: Block if running inside any Vercel deployment (production, preview, or development).
+  // When VERCEL_ENV is set, Vercel pre-injects DATABASE_URL into process.env BEFORE dotenv runs.
+  // dotenv.config() silently skips env vars that already exist, so .env.test.local is ignored.
+  // The Vercel-injected DATABASE_URL would be used instead — which is the shared dev DB in
+  // preview/development, or production in production. Either path is wrong for test runs.
+  const vercelEnv = process.env.VERCEL_ENV;
+  if (vercelEnv) {
+    throw new Error(
+      `[FATAL] ${context} — VERCEL_ENV is "${vercelEnv}". ` +
+      `Tests must never run inside a Vercel deployment (production, preview, or development). ` +
+      `When VERCEL_ENV is set, Vercel owns DATABASE_URL and .env.test.local is bypassed entirely.`
+    );
+  }
+}
 
 function getValidDatabaseUrl() {
   const databaseUrl = (process.env.DATABASE_URL || '').trim();
@@ -42,12 +147,18 @@ export function getDb() {
 
 export async function ensureMigrated() {
   if (migrated) return;
+  // Migrations are safe (additive), but guard anyway to prevent accidental
+  // schema changes on production during test runs
+  assertNotProduction('ensureMigrated()');
   const db = getDb();
   await migrate(db, { migrationsFolder: './drizzle' });
   migrated = true;
 }
 
 export async function resetTables() {
+  // ── CRITICAL: This function runs TRUNCATE on ALL tables. ──
+  // It MUST NEVER execute against a production database.
+  assertNotProduction('resetTables()');
   const db = getDb();
   // Core tables that always exist (from early migrations)
   await db.execute(
