@@ -31,6 +31,11 @@ const ALLOWED_TEST_DB_HOSTS = [
   'ep-withered-resonance-a7msfkph-pooler.ap-southeast-2.aws.neon.tech',
   // Integration-tests branch (.env.test.local)
   'ep-still-flower-a7m7ixml-pooler.ap-southeast-2.aws.neon.tech',
+  // ── MAINTENANCE NOTE ──────────────────────────────────────────────────────
+  // This list must be kept in sync with ALLOWED_NON_PRODUCTION_HOSTS
+  // in scripts/_db-safety.mjs (used by db-migrate.mjs and guard-db-safety.mjs).
+  // When you add a new Neon branch, update BOTH files.
+  // ──────────────────────────────────────────────────────────────────────────
 ];
 
 // Also block explicitly known production hosts as a defense-in-depth layer

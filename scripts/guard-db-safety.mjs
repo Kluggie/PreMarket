@@ -13,6 +13,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import dotenv from 'dotenv';
+import { KNOWN_PRODUCTION_HOSTS } from './_db-safety.mjs';
 
 dotenv.config({ path: '.env.local' });
 dotenv.config();
@@ -295,10 +296,8 @@ if (fs.existsSync(testDbHelperPath)) {
 
 // ──────────────────────────────────────────────────────────────────────────────
 // CHECK 9: .env.local must not use production DATABASE_URL for test runs
+// (KNOWN_PRODUCTION_HOSTS imported from scripts/_db-safety.mjs)
 // ──────────────────────────────────────────────────────────────────────────────
-const KNOWN_PRODUCTION_HOSTS = [
-  'ep-odd-feather-a7mrocqy-pooler.ap-southeast-2.aws.neon.tech',
-];
 const envLocalPath = '.env.local';
 if (fs.existsSync(envLocalPath)) {
   const envLocalContent = fs.readFileSync(envLocalPath, 'utf8');
