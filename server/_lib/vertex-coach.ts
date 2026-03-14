@@ -2,7 +2,7 @@ import { createHash, createSign } from 'node:crypto';
 import { z } from 'zod';
 import { ApiError } from './errors.js';
 import { getVertexConfig, getVertexNotConfiguredError } from './integrations.js';
-import { sanitizeUserInput } from './vertex-input-sanitizer.js';
+import { sanitizeUserInput, wrapRawUserContent } from './vertex-input-sanitizer.js';
 
 export const COACH_PROMPT_VERSION = 'coach-v1';
 
@@ -426,11 +426,11 @@ export function buildCoachPrompt(params: GenerateCoachParams) {
     '',
     'Confidential Document (doc_a):',
     includeConfidentialDoc
-      ? `<CONFIDENTIAL_TEXT>\n${params.docAText || '(empty)'}\n</CONFIDENTIAL_TEXT>`
+      ? wrapRawUserContent('confidential_doc', params.docAText || '(empty)')
       : '(not provided for this intent)',
     '',
     'Shared Document (doc_b):',
-    includeSharedDoc ? `<SHARED_TEXT>\n${params.docBText || '(empty)'}\n</SHARED_TEXT>` : '(not provided for this intent)',
+    includeSharedDoc ? wrapRawUserContent('shared_doc', params.docBText || '(empty)') : '(not provided for this intent)',
   ].join('\n');
 }
 
@@ -498,17 +498,11 @@ function buildCustomPromptFeedbackPrompt(params: GenerateCoachParams, strictMode
     'Company Context:',
     `Company name: ${companyName}`,
     `Website: ${companyWebsite}`,
-    '<SHARED_TEXT>',
-    sharedText || '(empty)',
-    '</SHARED_TEXT>',
-    '<USER_CONFIDENTIAL_TEXT>',
-    userConfidentialText || '(empty)',
-    '</USER_CONFIDENTIAL_TEXT>',
+    wrapRawUserContent('shared_text', sharedText || '(empty)'),
+    wrapRawUserContent('user_confidential_text', userConfidentialText || '(empty)'),
     ...(selectionText
       ? [
-          '<SELECTION>',
-          selectionText,
-          '</SELECTION>',
+          wrapRawUserContent('selection', selectionText),
           'Focus your feedback on the selection where relevant.',
         ]
       : []),

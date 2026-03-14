@@ -30,8 +30,10 @@ test('negotiate prompt includes consultant constraints and required sections', (
   assert.match(prompt, /## Key asks \/ give-gets/);
   assert.match(prompt, /## Suggested framing/);
   assert.match(prompt, /## Next-step checklist/);
-  assert.match(prompt, /<CONFIDENTIAL_TEXT>/);
-  assert.match(prompt, /<SHARED_TEXT>/);
+  // Sentinel-based delimiters (not XML tags, which are collision-vulnerable)
+  assert.ok((prompt.match(/<<<PREMARKET_RAW_/g) || []).length >= 2, 'Prompt must use at least 2 sentinel delimiters for doc content');
+  assert.ok(!prompt.includes('<CONFIDENTIAL_TEXT>'), 'Must NOT use vulnerable CONFIDENTIAL_TEXT XML tag');
+  assert.ok(!prompt.includes('<SHARED_TEXT>'), 'Must NOT use vulnerable SHARED_TEXT XML tag');
   assert.match(prompt, /Company Context:/);
   assert.match(prompt, /Company name: Acme Dynamics/);
   assert.match(prompt, /Website: https:\/\/acme\.example\.com/);
