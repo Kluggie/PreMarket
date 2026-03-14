@@ -2,6 +2,7 @@ import { createHash, createSign } from 'node:crypto';
 import { z } from 'zod';
 import { ApiError } from './errors.js';
 import { getVertexConfig, getVertexNotConfiguredError } from './integrations.js';
+import { sanitizeUserInput } from './vertex-input-sanitizer.js';
 
 export const COACH_PROMPT_VERSION = 'coach-v1';
 
@@ -1573,8 +1574,21 @@ export function buildSelectionTextHash(selectionText: string) {
 }
 
 export async function generateDocumentComparisonCoach(params: GenerateCoachParams) {
-  if (params.intent === 'custom_prompt') {
-    return generateCustomPromptFeedback(params);
+  // Sanitize all user-supplied text at entry to prevent null bytes and control
+  // characters from reaching the Vertex API or confusing the model.
+  // This does NOT change evaluation logic, intent, or downstream behavior.
+  const sanitizedParams: GenerateCoachParams = {
+    ...params,
+    docAText: sanitizeUserInput(params.docAText),
+    docBText: sanitizeUserInput(params.docBText),
+    selectionText: params.selectionText != null ? sanitizeUserInput(params.selectionText) : params.selectionText,
+    promptText: params.promptText != null ? sanitizeUserInput(params.promptText) : params.promptText,
+  };
+  // Use sanitized params for the rest of the function
+  const p = sanitizedParams;
+
+  if (p.intent === 'custom_prompt') {
+    return generateCustomPromptFeedback(p);
   }
 
   const mockPayload = asText(process.env.VERTEX_COACH_MOCK_RESPONSE);
@@ -1589,30 +1603,30 @@ export async function generateDocumentComparisonCoach(params: GenerateCoachParam
       model: 'vertex-coach-mock',
       result: enforceCoachIntentShape({
         coachResult: validated,
-        intent: params.intent,
-        mode: params.mode,
-        selectionTarget: params.selectionTarget,
-        selectionText: params.selectionText,
+        intent: p.intent,
+        mode: p.mode,
+        selectionTarget: p.selectionTarget,
+        selectionText: p.selectionText,
       }),
     };
   }
 
   if (String(process.env.VERTEX_MOCK || '').trim() === '1') {
-    const validated = validateCoachResultV1(buildMockCoachResult(params));
+    const validated = validateCoachResultV1(buildMockCoachResult(p));
     return {
       provider: 'mock' as const,
       model: 'vertex-coach-mock',
       result: enforceCoachIntentShape({
         coachResult: validated,
-        intent: params.intent,
-        mode: params.mode,
-        selectionTarget: params.selectionTarget,
-        selectionText: params.selectionText,
+        intent: p.intent,
+        mode: p.mode,
+        selectionTarget: p.selectionTarget,
+        selectionText: p.selectionText,
       }),
     };
   }
 
-  const basePrompt = buildCoachPrompt(params);
+  const basePrompt = buildCoachPrompt(p);
   let latestText = '';
   let latestModel = '';
 
@@ -1629,10 +1643,10 @@ export async function generateDocumentComparisonCoach(params: GenerateCoachParam
       const validated = validateCoachResultV1(parsed);
       const normalized = enforceCoachIntentShape({
         coachResult: validated,
-        intent: params.intent,
-        mode: params.mode,
-        selectionTarget: params.selectionTarget,
-        selectionText: params.selectionText,
+        intent: p.intent,
+        mode: p.mode,
+        selectionTarget: p.selectionTarget,
+        selectionText: p.selectionText,
       });
       return {
         provider: vertex.provider,

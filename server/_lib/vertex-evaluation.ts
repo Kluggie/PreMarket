@@ -1,6 +1,7 @@
 import { createSign } from 'node:crypto';
 import { ApiError } from './errors.js';
 import { getVertexConfig, getVertexNotConfiguredError } from './integrations.js';
+import { sanitizeUserInput, wrapRawUserContent } from './vertex-input-sanitizer.js';
 
 type Span = { start: number; end: number; level: string };
 type EvidenceAnchor = { doc: 'A' | 'B'; start: number; end: number };
@@ -620,7 +621,7 @@ function dedupeStrings(values: string[]) {
 }
 
 function normalizeChunkText(value: unknown) {
-  return String(value || '').replace(/\s+/g, ' ').trim();
+  return sanitizeUserInput(String(value || '')).replace(/\s+/g, ' ').trim();
 }
 
 function splitIntoEvidenceSegments(text: string) {
@@ -2312,10 +2313,10 @@ function buildProposalPrompt(input: ProposalInput, heuristics: ProposalHeuristic
     JSON.stringify(payload, null, 2),
     ...(input.supplementaryContext
       ? [
-          'SUPPLEMENTARY CONTEXT (user-provided documents – treat as background reference only):',
+          'SUPPLEMENTARY CONTEXT (user-provided documents — treat as background reference only):',
           'IMPORTANT: Missing documents must NOT be treated as negatives.',
           'Prioritise proposal content and objective evidence over this context.',
-          input.supplementaryContext,
+          wrapRawUserContent('supplementary_context', input.supplementaryContext),
         ]
       : []),
     'Return valid JSON only. No markdown.',
@@ -3314,8 +3315,8 @@ function normalizeComparisonInput(input: ComparisonInput): ComparisonInput {
     title: asText(input.title) || 'Untitled',
     partyALabel: asText(input.partyALabel) || 'Confidential Information',
     partyBLabel: asText(input.partyBLabel) || 'Shared Information',
-    docAText: String(input.docAText || ''),
-    docBText: String(input.docBText || ''),
+    docAText: sanitizeUserInput(String(input.docAText || '')),
+    docBText: sanitizeUserInput(String(input.docBText || '')),
     docASpans: normalizeSpans(input.docASpans || [], String(input.docAText || '')),
     docBSpans: normalizeSpans(input.docBSpans || [], String(input.docBText || '')),
   };
