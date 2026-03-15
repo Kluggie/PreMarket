@@ -1,4 +1,3 @@
--- Documents feature: general context files per user
 CREATE TABLE IF NOT EXISTS "user_documents" (
   "id" text PRIMARY KEY,
   "user_id" text NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
@@ -13,7 +12,6 @@ CREATE TABLE IF NOT EXISTS "user_documents" (
   "error_message" text,
   "created_at" timestamp with time zone NOT NULL DEFAULT now(),
   "updated_at" timestamp with time zone NOT NULL DEFAULT now()
-);
-
+);--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "user_documents_user_idx"
   ON "user_documents" ("user_id", "created_at");

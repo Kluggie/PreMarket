@@ -357,10 +357,107 @@ if (fs.existsSync(envTestLocalPath)) {
 }
 console.log('[OK] .env.test.local DATABASE_URL presence check completed (Check 10)');
 
+// ──────────────────────────────────────────────────────────────────────────────
+// CHECK 11: Every migration SQL file must be registered in _journal.json
+//
+// WHY: This was the exact root cause of the March 2026 production incident.
+// 0028_recipient_details.sql was committed with schema.js changes, but the
+// journal was not updated. Drizzle's migrate() skips files it doesn't know
+// about. The production build ran, the columns were never created, and every
+// SELECT * from proposals crashed with "column party_b_name does not exist".
+// ──────────────────────────────────────────────────────────────────────────────
+const DRIZZLE_DIR = 'drizzle';
+const JOURNAL_PATH = path.join(DRIZZLE_DIR, 'meta', '_journal.json');
+
+if (fs.existsSync(JOURNAL_PATH)) {
+  const journal = JSON.parse(fs.readFileSync(JOURNAL_PATH, 'utf8'));
+  const journalTags = new Set((journal.entries || []).map((e) => e.tag));
+
+  const sqlFiles = fs
+    .readdirSync(DRIZZLE_DIR)
+    .filter((f) => f.endsWith('.sql'))
+    .sort();
+
+  const unregistered = sqlFiles.filter((f) => {
+    const tag = f.replace(/\.sql$/, '');
+    return !journalTags.has(tag);
+  });
+
+  if (unregistered.length > 0) {
+    errors.push(
+      `[CRITICAL] ${unregistered.length} migration file(s) exist in drizzle/ but are NOT registered in _journal.json:\n` +
+      unregistered.map((f) => `  - drizzle/${f}`).join('\n') + '\n' +
+      `  Drizzle's migrate() will SILENTLY SKIP these files. Columns/tables they add will\n` +
+      `  never exist in production, and any code referencing them will crash at runtime.\n` +
+      `  Fix: run "npx drizzle-kit generate" to regenerate the journal, or manually add\n` +
+      `  the missing entries to drizzle/meta/_journal.json.`
+    );
+  } else {
+    console.log(`[OK] All ${sqlFiles.length} migration files are registered in _journal.json (Check 11)`);
+  }
+} else {
+  errors.push('[CRITICAL] drizzle/meta/_journal.json does not exist. Drizzle migrations cannot run.');
+}
 
 // ──────────────────────────────────────────────────────────────────────────────
-// REPORT
+// CHECK 12: Migration SQL files must use statement-breakpoint separators
+//
+// WHY: Neon's HTTP driver sends each query as a prepared statement.
+// PostgreSQL rejects prepared statements that contain multiple commands
+// ("cannot insert multiple commands into a prepared statement", code 42601).
+// Drizzle splits SQL files on `--> statement-breakpoint` markers and sends
+// each segment as a separate query. A file with 2+ statements and no
+// breakpoint marker will be sent as one query and fail at deploy time.
+//
+// This check counts SQL statement terminators (semicolons outside comments)
+// and requires at least (statements - 1) breakpoint markers.
 // ──────────────────────────────────────────────────────────────────────────────
+if (fs.existsSync(DRIZZLE_DIR)) {
+  const sqlFiles = fs
+    .readdirSync(DRIZZLE_DIR)
+    .filter((f) => f.endsWith('.sql'))
+    .sort();
+
+  for (const sqlFile of sqlFiles) {
+    const filePath = path.join(DRIZZLE_DIR, sqlFile);
+    const content = fs.readFileSync(filePath, 'utf8');
+
+    // Count statement-breakpoint markers
+    const breakpointMatches = content.match(/--> statement-breakpoint/g);
+    const breakpointCount = breakpointMatches ? breakpointMatches.length : 0;
+
+    // Count semicolons that actually terminate SQL statements.
+    // Strategy: strip pure-comment lines (lines starting with -- that are NOT
+    // breakpoint markers), then count remaining semicolons.
+    const nonCommentLines = content
+      .split('\n')
+      .filter((line) => {
+        const trimmed = line.trim();
+        // Keep breakpoint marker lines regardless
+        if (trimmed.includes('--> statement-breakpoint')) return true;
+        // Discard pure comment lines
+        if (trimmed.startsWith('--')) return false;
+        return true;
+      })
+      .join('\n');
+
+    // Count `;` in the non-comment content (each marks end of a SQL statement)
+    const semicolonCount = (nonCommentLines.match(/;/g) || []).length;
+
+    if (semicolonCount > 1 && breakpointCount === 0) {
+      errors.push(
+        `[CRITICAL] drizzle/${sqlFile} has ${semicolonCount} SQL statements but zero ` +
+        `"--> statement-breakpoint" separators. ` +
+        `Neon's HTTP driver will reject multi-statement queries (Postgres error 42601). ` +
+        `Add "--> statement-breakpoint" on its own line between each statement.\n` +
+        `  Example: ALTER TABLE "t" ADD COLUMN "a" text;--> statement-breakpoint\n` +
+        `           ALTER TABLE "t" ADD COLUMN "b" text;`
+      );
+    }
+  }
+  console.log(`[OK] Migration SQL breakpoint formatting checked (Check 12)`);
+}
+
 if (warnings.length > 0) {
   console.warn('\nWarnings:');
   for (const warning of warnings) {
