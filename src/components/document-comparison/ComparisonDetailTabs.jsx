@@ -156,6 +156,19 @@ export function ComparisonAiReportTab({
         </Card>
       ) : null}
 
+      {/* Completed evaluation with no visible report content — prevents a silent blank panel.
+          This can occur when the server's projection strips all content due to confidentiality
+          policy or when an edge-case fallback produces an empty public_report. */}
+      {!isEvaluationRunning && !isEvaluationNotConfigured && !isEvaluationFailed && hasEvaluations && !hasReport ? (
+        <Card className="border border-slate-200 shadow-sm">
+          <CardContent className="py-6 text-slate-600">
+            The AI mediation review completed. Detailed report content is not available for this
+            evaluation — this can happen if the report was filtered for confidentiality. You may
+            re-run the review to generate a new result.
+          </CardContent>
+        </Card>
+      ) : null}
+
       {hasReport ? (
         <>
           {/* Compact metadata row — lighter alternative to heavy dark strip */}

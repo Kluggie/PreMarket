@@ -87,4 +87,520 @@ tests/api/document-comparison-v2-evaluate.test.mjs
 ℹ skipped 0
 ℹ todo 0
 ℹ duration_ms 503.403709
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h[?2004l
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h  wc -l src/pages/SharedReport.jsx && grep -n "latestEva [KlluatedReport\|setLatestEvaluatedReport\|updates automatically\|mediation review  [Kuupdates\|isProcessing\|evaluateMutation\|workspaceQuery\|runEvaluation\|setStep\ [K||latestReportData\|publicReport\|evaluation_run\|polling\|refetchInterval\|runEv [KaaluationFromStep" src/pages/SharedReport.jsx | head -80[?2004l
+    2135 src/pages/SharedReport.jsx
+422:  const [step, setStep] = useState(0);
+426:  const [latestEvaluatedReport, setLatestEvaluatedReport] = useState(null);
+427:  const [stepHydrated, setStepHydrated] = useState(false);
+447:  const workspaceQuery = useQuery({
+454:  const share = workspaceQuery.data?.share || null;
+455:  const parent = workspaceQuery.data?.parent || null;
+456:  const comparison = workspaceQuery.data?.comparison || null;
+457:  const baseline = workspaceQuery.data?.baseline || {};
+458:  const defaults = workspaceQuery.data?.defaults || {};
+459:  const recipientDraft = workspaceQuery.data?.recipientDraft || workspaceQuery.data?.currentDraft || null;
+460:  const latestEvaluation = workspaceQuery.data?.latestEvaluation || null;
+461:  const latestSentRevision = workspaceQuery.data?.latestSentRevision || null;
+463:    () => baseline?.shared_payload || workspaceQuery.data?.baselineShared || defaults.shared_payload || {},
+464:    [baseline?.shared_payload, defaults.shared_payload, workspaceQuery.data?.baselineShared],
+676:    setStep(0);
+677:    setStepHydrated(false);
+706:    if (!workspaceQuery.data) return;
+711:    console.log('[SharedReport] comparisonId', workspaceQuery.data?.comparison?.id);
+714:    const br = baseline?.ai_report || workspaceQuery.data?.baselineAiReport || comparison?.public_report || {};
+716:  }, [workspaceQuery.data]);
+719:    if (!workspaceQuery.data) return;
+857:      setStep(hydratedStep);
+858:      setStepHydrated(true);
+860:      setStep(0);
+864:    workspaceQuery.data,
+879:      setStep(0);
+897:    setStep(0);
+945:      await workspaceQuery.refetch();
+962:  const evaluateMutation = useMutation({
+970:      setLatestEvaluatedReport(result?.evaluation?.public_report || null);
+971:      setStep(3);
+973:      await workspaceQuery.refetch();
+989:      setStep(3);
+990:      await workspaceQuery.refetch();
+1024:      await workspaceQuery.refetch();
+1181:      setStep(0);
+1191:    setStep(bounded);
+1194:  const runEvaluationFromStep2 = async () => {
+1197:      setStep(0);
+1200:    setStep(3);
+1201:    await evaluateMutation.mutateAsync();
+1220:      setStep(0);
+1331:      setStep(0);
+1428:      setStep(0);
+1449:    workspaceQuery.data?.baselineAiReport ||
+1454:    latestEvaluatedReport ||
+1456:    workspaceQuery.data?.latestReport ||
+1481:    evaluateMutation.isPending ||
+1580:  if (workspaceQuery.isLoading) {
+1595:  if (workspaceQuery.error || !share || !parent) {
+1601:            <AlertDescription className="text-red-800">{toFriendlyLoadError(workspaceQuery.error)}</AlertDescription>
+2027:            onBack={() => setStep(0)}
+2039:            onRetry={() => setStep(2)}
+2040:            onBackToStep1={() => setStep(1)}
+2052:              onBack={() => setStep(1)}
+2053:              onContinue={runEvaluationFromStep2}
+2055:              continueDisabled={evaluateMutation.isPending || !canReevaluate || requiresRecipientVerification}
+2089:                  onClick={() => setStep(2)}
+2128:            onBack={() => setStep(2)}
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h[?2004l
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h  grep -n "updates automatically\|processing finishes\|m [Keediation review updates\|step3IsEvaluation\|step3HasReport\|step3Recommendation\ [K||hasStep3Report\|updatedRecipientReport" src/pages/SharedReport.jsx[?2004l
+1453:  const updatedRecipientReport =
+1462:  const hasStep3Report =
+1463:    Boolean(updatedRecipientReport && typeof updatedRecipientReport === 'object' && !Array.isArray(updatedRecipientReport)) &&
+1464:    Object.keys(updatedRecipientReport).length > 0;
+1469:  const step3Recommendation =
+1470:    asText(updatedRecipientReport?.recommendation) ||
+1480:  const step3IsEvaluationRunning =
+1485:  const step3IsEvaluationNotConfigured = latestEvaluationErrorCode === 'not_configured';
+1486:  const step3IsEvaluationFailed =
+1487:    !step3IsEvaluationRunning &&
+1488:    !step3IsEvaluationNotConfigured &&
+1521:            tone: step3IsEvaluationFailed
+1523:              : step3IsEvaluationRunning
+1525:                : step3IsEvaluationNotConfigured
+1528:            title: step3IsEvaluationFailed
+1530:              : step3IsEvaluationRunning
+1532:                : step3IsEvaluationNotConfigured
+2098:            hasReportBadge={hasStep3Report}
+2102:              isEvaluationRunning: step3IsEvaluationRunning,
+2104:              isEvaluationNotConfigured: step3IsEvaluationNotConfigured,
+2108:              isEvaluationFailed: step3IsEvaluationFailed,
+2110:              hasReport: hasStep3Report,
+2113:              report: updatedRecipientReport,
+2114:              recommendation: step3Recommendation,
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h[?2004l
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h  grep -rn "updates automatically\|processing finishes\| [KiisEvaluationRunning\|isPollingTimedOut" src/components/ src/pages/ 2>/dev/null | [K  grep -v ".jsx.bak" | head -40[?2004l
+src/components/document-comparison/ComparisonDetailTabs.jsx:76:  isEvaluationRunning = false,
+src/components/document-comparison/ComparisonDetailTabs.jsx:77:  isPollingTimedOut = false,
+src/components/document-comparison/ComparisonDetailTabs.jsx:112:      {isEvaluationRunning ? (
+src/components/document-comparison/ComparisonDetailTabs.jsx:120:              {isPollingTimedOut
+src/components/document-comparison/ComparisonDetailTabs.jsx:122:                : 'The mediation review updates automatically when processing finishes.'}
+src/components/document-comparison/ComparisonDetailTabs.jsx:153:      {!isEvaluationRunning && !isEvaluationNotConfigured && !isEvaluationFailed && !hasReport && !hasEvaluations ? (
+src/pages/DocumentComparisonDetail.jsx:483:  const isEvaluationRunning =
+src/pages/DocumentComparisonDetail.jsx:501:    !isEvaluationRunning &&
+src/pages/DocumentComparisonDetail.jsx:530:  const isPollingTimedOut =
+src/pages/DocumentComparisonDetail.jsx:531:    isEvaluationRunning &&
+src/pages/DocumentComparisonDetail.jsx:540:    if (isEvaluationRunning) {
+src/pages/DocumentComparisonDetail.jsx:550:  }, [comparisonId, isEvaluationRunning]);
+src/pages/DocumentComparisonDetail.jsx:869:              isEvaluationRunning,
+src/pages/DocumentComparisonDetail.jsx:870:              isPollingTimedOut,
+src/pages/SharedReport.jsx:1961:                isEvaluationRunning: false,
+src/pages/SharedReport.jsx:1962:                isPollingTimedOut: false,
+src/pages/SharedReport.jsx:2102:              isEvaluationRunning: step3IsEvaluationRunning,
+src/pages/SharedReport.jsx:2103:              isPollingTimedOut: false,
+src/pages/ProposalDetail.jsx:877:                  isEvaluationRunning={runEvaluationMutation.isPending}
+src/pages/ProposalDetail.jsx:878:                  isPollingTimedOut={false}
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h[?2004l
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h  grep -rn "latestEvaluation\|latestReport\|evaluation_r [Kuun\|public_report" server/routes/shared-report/ 2>/dev/null | head -50[?2004l
+server/routes/shared-report/_shared.ts:394:        result: 'no_public_report',
+server/routes/shared-report/_shared.ts:512:    public_report: toObject(row.resultPublicReport),
+server/routes/shared-report/[token]/send-back.ts:342:    const [latestEvaluation] = await resolved.db
+server/routes/shared-report/[token]/send-back.ts:356:    const publicReport = toObject(latestEvaluation?.resultPublicReport);
+server/routes/shared-report/[token]/send-back.ts:357:    const evaluationResult = toObject((latestEvaluation?.resultJson as any)?.evaluation_result);
+server/routes/shared-report/[token]/send-back.ts:378:      if (latestEvaluation && Object.keys(publicReport).length > 0) {
+server/routes/shared-report/[token]/send-back.ts:415:        status: latestEvaluation ? 'completed' : 'received',
+server/routes/shared-report/[token]/send-back.ts:417:        summary: latestEvaluation
+server/routes/shared-report/[token]/send-back.ts:423:          evaluation_run_id: latestEvaluation?.id || null,
+server/routes/shared-report/[token]/send-back.ts:424:          public_report: publicReport,
+server/routes/shared-report/[token]/send-back.ts:467:          evaluation_run_id: latestEvaluation?.id || null,
+server/routes/shared-report/[token]/send-back.ts:585:      evaluation_id: latestEvaluation?.id || null,
+server/routes/shared-report/[token]/send-back.ts:604:      evaluationId: latestEvaluation?.id || null,
+server/routes/shared-report/[token]/download-pdf.ts:72:      projection.public_report && Object.keys(asObject(projection.public_report)).length > 0
+server/routes/shared-report/[token]/download-pdf.ts:73:        ? projection.public_report
+server/routes/shared-report/[token]/evaluate.ts:566:          resultPublicReport: projection.public_report || {},
+server/routes/shared-report/[token]/evaluate.ts:580:              evaluation_run_id: round.evaluationRunId,
+server/routes/shared-report/[token]/evaluate.ts:608:          public_report: projection.public_report || {},
+server/routes/shared-report/[token].ts:58:    const latestEvaluation = await getLatestRecipientEvaluationRun(resolved.db, resolved.link.id);
+server/routes/shared-report/[token].ts:147:      latestEvaluation: mapEvaluationRunView(latestEvaluation),
+server/routes/shared-report/[token].ts:148:      latestReport:
+server/routes/shared-report/[token].ts:149:        latestEvaluation?.status === 'success' && latestEvaluation?.resultPublicReport
+server/routes/shared-report/[token].ts:150:          ? latestEvaluation.resultPublicReport
+server/routes/shared-report/[token].ts:161:      hasEvaluation: Boolean(latestEvaluation),
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h[?2004l
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h  grep -n "mapEvaluationRunView\|latestEvaluationStatus\ [K||status.*success\|status.*running\|status.*completed\|evaluation_run" server/rou [Kttes/shared-report/_shared.ts | head -40[?2004l
+503:export function mapEvaluationRunView(row: any) {
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h[?2004l
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h  grep -rn "evaluateRecipient\|sharedReportsClient" src/ [K  2>/dev/null | grep -v "node_modules" | head -20[?2004l
+src/api/sharedReportsClient.js:74:export const sharedReportsClient = {
+src/api/sharedReportsClient.js:167:  async evaluateRecipient(token) {
+src/pages/DocumentComparisonDetail.jsx:7:import { sharedReportsClient } from '@/api/sharedReportsClient';
+src/pages/DocumentComparisonDetail.jsx:411:    queryFn: () => sharedReportsClient.list({ comparisonId }),
+src/pages/DocumentComparisonDetail.jsx:579:      const response = await sharedReportsClient.create({
+src/pages/DocumentComparisonDetail.jsx:641:        const created = await sharedReportsClient.create({
+src/pages/DocumentComparisonDetail.jsx:652:      return sharedReportsClient.send(workingToken, {
+src/pages/SharedReport.jsx:4:import { sharedReportsClient } from '@/api/sharedReportsClient';
+src/pages/SharedReport.jsx:397:      sharedReportsClient.getRecipientWorkspace(token),
+src/pages/SharedReport.jsx:938:      return sharedReportsClient.saveRecipientDraft(token, buildDraftInput(stepToSave));
+src/pages/SharedReport.jsx:967:      return sharedReportsClient.evaluateRecipient(token);
+src/pages/SharedReport.jsx:985:    mutationFn: () => sharedReportsClient.sendBackRecipient(token),
+src/pages/SharedReport.jsx:1008:    mutationFn: () => sharedReportsClient.startRecipientVerification(token),
+src/pages/SharedReport.jsx:1019:    mutationFn: () => sharedReportsClient.confirmRecipientVerification(token, verificationCode),
+src/pages/SharedReport.jsx:1032:    mutationFn: () => sharedReportsClient.downloadRecipientProposalPdf(token),
+src/pages/SharedReport.jsx:1042:    mutationFn: () => sharedReportsClient.downloadRecipientAiReportPdf(token),
+src/pages/SharedReport.jsx:1257:      const response = await sharedReportsClient.coachRecipient(token, payload);
+src/pages/SharedReport.jsx:1341:      const response = await sharedReportsClient.companyBriefRecipient(token, {
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h[?2004l
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h  grep -n "status.*running\|status.*queued\|evaluationRu [KnnId\|evaluation_run\|insert.*evaluation" server/routes/shared-report/[token]/eva [Klluate.ts | head -30[?2004l
+zsh: no matches found: server/routes/shared-report/[token]/evaluate.ts
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h[?2004l
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h  grep -n "status.*running\|status.*queued\|evaluationRu [KnnId\|insert.*evaluation" 'server/routes/shared-report/[token]/evaluate.ts' | hea [Kdd -30[?2004l
+223:  evaluationRunId: string;
+269:      evaluationRunId: run.id,
+428:    const evaluationRunId = newId('share_eval');
+430:      id: evaluationRunId,
+580:              evaluation_run_id: round.evaluationRunId,
+594:        .where(eq(schema.sharedReportEvaluationRuns.id, evaluationRunId));
+606:        evaluation_id: evaluationRunId,
+617:        evaluationId: evaluationRunId,
+637:        .where(eq(schema.sharedReportEvaluationRuns.id, evaluationRunId));
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h[?2004l
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h  grep -n "getLatestRecipientEvaluationRun\|sharedReport [KEEvaluationRuns" 'server/routes/shared-report/_shared.ts' | head -20[?2004l
+469:export async function getLatestRecipientEvaluationRun(db: any, linkId: string) {
+472:    .from(schema.sharedReportEvaluationRuns)
+475:        eq(schema.sharedReportEvaluationRuns.sharedLinkId, linkId),
+476:        eq(schema.sharedReportEvaluationRuns.actorRole, RECIPIENT_ROLE),
+480:      desc(schema.sharedReportEvaluationRuns.createdAt),
+481:      desc(schema.sharedReportEvaluationRuns.updatedAt),
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h[?2004l
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h  grep -n "refetchInterval\|refetchOnWindowFocus\|staleT [Kiime" src/pages/DocumentComparisonDetail.jsx | head -10[?2004l
+369:    refetchInterval: (query) => {
+380:    refetchIntervalInBackground: true,
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h[?2004l
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h  find tests/ -name "*.mjs" | xargs grep -l "shared.repo [Krrt\|SharedReport\|evaluateRecipient\|mediation" 2>/dev/null | head -10[?2004l
+tests/lib/ai-report-v2-display.test.mjs
+tests/lib/vertex-evaluation-v2.test.mjs
+tests/lib/proposal-outcome-step-visibility.test.mjs
+tests/lib/mediation-review-copy.test.mjs
+tests/api/workflow-parity.test.mjs
+tests/api/shared-report-recipient-draft.test.mjs
+tests/api/proposals-authorized-recipient-visibility.test.mjs
+tests/api/document-comparison-evaluation-confidentiality.test.mjs
+tests/api/shared-reports.test.mjs
+tests/helpers/db.mjs
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h[?2004l
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h  grep -rn "status.*running\|status.*evaluating\|status. [K**queued\|running.*status\|evaluating.*status" server/ 2>/dev/null | grep -v ".ma [Kpp\|.snap\|interface\|type\|comparisonStatus" | head -20[?2004l
+server/_lib/db/schema.js:918:    status: text('status').notNull().default('queued'),
+server/routes/shared-reports/[token]/send.ts:434:  status: 'queued' | 'sent' | 'failed';
+server/routes/document-comparisons/[id].ts:127:    status === 'running' ||
+server/routes/document-comparisons/[id].ts:128:    status === 'queued' ||
+server/routes/document-comparisons/[id].ts:129:    status === 'evaluating' ||
+server/routes/document-comparisons/[id]/evaluate.ts:1359:            status: 'running',
+server/routes/proposals/index.ts:113:    status === 'running' ||
+server/routes/proposals/index.ts:114:    status === 'queued' ||
+server/routes/proposals/index.ts:115:    status === 'evaluating' ||
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h[?2004l
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h  grep -n "isFetching\|isRefetching\|isLoading\|fetchSta [Kttus" src/pages/SharedReport.jsx | head -15[?2004l
+416:  const { user, isAuthenticated, isLoadingAuth, navigateToLogin, logout } = useAuth();
+1155:    if (isLoadingAuth) {
+1580:  if (workspaceQuery.isLoading) {
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h[?2004l
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h  grep -n "projectPublicReport\|public_report.*null\|pro [Kjjection.public_report" 'server/routes/shared-report/_shared.ts' | head -20[?2004l
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h[?2004l
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h  grep -n "projectPublicReport\|public_report" 'server/r [Kooutes/shared-report/[token]/evaluate.ts' | head -20[?2004l
+566:          resultPublicReport: projection.public_report || {},
+608:          public_report: projection.public_report || {},
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h[?2004l
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h  grep -rn "buildRecipientSafeEvaluationProjection" serv [Keer/ 2>/dev/null | head -5[?2004l
+server/routes/shared-reports/[token]/send.ts:17:import { buildRecipientSafeEvaluationProjection } from '../../document-comparisons/_helpers.js';
+server/routes/shared-reports/[token]/send.ts:282:    const projection = buildRecipientSafeEvaluationProjection({
+server/routes/shared-reports/[token].ts:6:import { buildRecipientSafeEvaluationProjection } from '../document-comparisons/_helpers.js';
+server/routes/shared-reports/[token].ts:99:    const projection = buildRecipientSafeEvaluationProjection({
+server/routes/shared-links/[token].ts:8:import { buildRecipientSafeEvaluationProjection } from '../document-comparisons/_helpers.js';
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h[?2004l
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h  node --test tests/api/shared-report-recipient-draft.te [Ksst.mjs tests/api/shared-reports.test.mjs 2>&1 | tail -20[?2004l
+Node.js v25.5.0
+✖ tests/api/shared-reports.test.mjs (1991.155458ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 0
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2026.9361
+
+✖ failing tests:
+
+test at tests/api/shared-report-recipient-draft.test.mjs:1:1
+✖ tests/api/shared-report-recipient-draft.test.mjs (1989.884596ms)
+  'test failed'
+
+test at tests/api/shared-reports.test.mjs:1:1
+✖ tests/api/shared-reports.test.mjs (1991.155458ms)
+  'test failed'
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h[?2004l
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h  node --test tests/api/shared-report-recipient-draft.te [Ksst.mjs 2>&1 | tail -20[?2004l
+  code: 'ERR_MODULE_NOT_FOUND',
+  url: 'file:///Users/mac/Desktop/PreMarket/PreMarket/server/_lib/http.js'
+}
+
+Node.js v25.5.0
+✖ tests/api/shared-report-recipient-draft.test.mjs (1052.08465ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1081.327626
+
+✖ failing tests:
+
+test at tests/api/shared-report-recipient-draft.test.mjs:1:1
+✖ tests/api/shared-report-recipient-draft.test.mjs (1052.08465ms)
+  'test failed'
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h[?2004l
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h  node --test tests/lib/ai-report-v2-display.test.mjs te [Kssts/lib/mediation-review-copy.test.mjs 2>&1 | tail -20[?2004l
+✔ filterLegacySectionsForDisplay: hides Risk Flags when empty (0.173486ms)
+✔ filterLegacySectionsForDisplay: keeps Top Blockers when non-empty (0.156088ms)
+✔ filterLegacySectionsForDisplay: hides Top Blockers when empty (0.134178ms)
+✔ filterLegacySectionsForDisplay: handles null/undefined gracefully (0.183685ms)
+✔ V2 payload: hasV2Report true, filterLegacySectionsForDisplay returns empty for V2 sections (0.282792ms)
+✔ Legacy payload: hasV2Report false for legacy report without why (0.440242ms)
+✔ getConfidencePercent: uses confidence_0_1 for V2 reports (0.201586ms)
+✔ getConfidencePercent: clamps confidence_0_1 to 0-100 (5.338056ms)
+✔ getConfidencePercent: falls back to similarity_score for legacy reports (0.225814ms)
+✔ getConfidencePercent: falls back to fallbackScore when no report fields (0.120087ms)
+✔ getConfidencePercent: returns 0 for missing data (0.10606ms)
+✔ Step 3 mediation surfaces use mediation-oriented terminology (29.83629ms)
+ℹ tests 32
+ℹ suites 0
+ℹ pass 32
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 935.579861
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h[?2004l
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h  grep -n "buildRecipientSafeEvaluationProjection\|publi [Kcc_report\|redact" server/routes/document-comparisons/_helpers.ts | head -20[?2004l
+35:  redactions: string[];
+42:  if (params.redactions.length > 0) {
+43:    sections.push({ key: 'redactions', heading: 'Redactions', bullets: params.redactions });
+152:    public_report: row.publicReport || {},
+484:function redactConfidentialStrings(value: any, markers: string[]): any {
+494:      .map((entry) => redactConfidentialStrings(entry, markers))
+506:      next[key] = redactConfidentialStrings(entry, markers);
+643:    redactions: [] as string[],
+656:      redactions: [],
+691:  const redactions = scrubStringArray(sourceReport.redactions, markers);
+704:    redactions,
+726:      redactions,
+731:  const projectedReport = redactConfidentialStrings(safeReport, markers);
+771:      public_report: fallbackReport,
+777:    public_report: finalReport,
+781:export function buildRecipientSafeEvaluationProjection(params: {
+810:  // V2-format source report: preserve why/missing/redactions structure so the
+917:  const projectedReport = redactConfidentialStrings(safeReport, markers);
+957:      public_report: fallbackReport,
+963:    public_report: finalReport,
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h[?2004l
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h  grep -n "continueDisabled\|continueLabel\|isPending\|L [Kooader2\|spinner" src/pages/document-comparison/Step2EditSources.jsx 2>/dev/null  [K|| head -20[?2004l
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h[?2004l
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h  grep -rn "continueDisabled\|continueLabel\|onContinue" [K  src/components/ 2>/dev/null | grep -i "step2\|editor\|sources" | head -10[?2004l
+src/components/document-comparison/Step1AddSources.jsx:269: *   onContinue      () => void
+src/components/document-comparison/Step1AddSources.jsx:283:  onContinue,
+src/components/document-comparison/Step1AddSources.jsx:476:          onClick={onContinue}
+src/components/document-comparison/Step2EditSources.jsx:153: *   onContinue              () => void   — advance to Step 3
+src/components/document-comparison/Step2EditSources.jsx:182:  onContinue,
+src/components/document-comparison/Step2EditSources.jsx:195:  continueLabel,
+src/components/document-comparison/Step2EditSources.jsx:196:  continueDisabled,
+src/components/document-comparison/Step2EditSources.jsx:417:              onClick={onContinue}
+src/components/document-comparison/Step2EditSources.jsx:418:              disabled={saveDraftPending || exceedsAnySizeLimit || continueDisabled}
+src/components/document-comparison/Step2EditSources.jsx:429:                  {continueLabel || 'Review Package'}
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h[?2004l
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h  grep -n "getRunAiMediationLabel\|RUN_AI_MEDIATION_LABE [KLL\|RUNNING_AI_MEDIATION_LABEL\|RERUN_AI_MEDIATION" src/pages/SharedReport.jsx |  [Khhead -10[?2004l
+33:  RUN_AI_MEDIATION_LABEL,
+2054:              continueLabel={RUN_AI_MEDIATION_LABEL}
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h[?2004l
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h  grep -n "getRunAiMediationLabel\|step3IsEvaluationRunn [Kiing\|runEvaluationFromStep2\|setStep(3)\|continueLabel" src/pages/SharedReport.j [Kssx | head -20[?2004l
+32:  getRunAiMediationLabel,
+972:      setStep(3);
+990:      setStep(3);
+1195:  const runEvaluationFromStep2 = async () => {
+1201:    // Do NOT pre-emptively setStep(3) here. The step transition happens only
+1203:    // ready and `step3IsEvaluationRunning` is definitively false. This
+1497:  const step3IsEvaluationRunning = evaluateMutation.isPending;
+1500:    !step3IsEvaluationRunning &&
+1536:              : step3IsEvaluationRunning
+1543:              : step3IsEvaluationRunning
+2066:              onContinue={runEvaluationFromStep2}
+2067:              continueLabel={getRunAiMediationLabel({
+2118:              isEvaluationRunning: step3IsEvaluationRunning,
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h[?2004l
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h  node --test tests/api/shared-report-mediation-review-s [Kttate.test.mjs 2>&1[?2004l
+▶ step3IsEvaluationRunning — fix: solely mutation-pending-based
+  [32m✔ is true while evaluateMutation is pending [90m(10.334826ms)[39m[39m
+  [32m✔ is false once evaluateMutation settles successfully [90m(1.130546ms)[39m[39m
+  [32m✔ is false even if latestEvaluationStatus would be running (pre-fix: would be true) [90m(0.461877ms)[39m[39m
+  [32m✔ is false for status=success (the normal post-evaluation workspace state) [90m(2.16799ms)[39m[39m
+  [32m✔ is false for status=pending (an abandoned prior run in the DB) [90m(0.461503ms)[39m[39m
+[32m✔ step3IsEvaluationRunning — fix: solely mutation-pending-based [90m(17.949879ms)[39m[39m
+▶ timeline and review panel consistency
+  [32m✔ both show "running" state whilst mutation is pending [90m(1.756073ms)[39m[39m
+  [32m✔ both show "ready" state when mutation settles with valid report [90m(0.253521ms)[39m[39m
+  [32m✔ panel and timeline use the same variable — they cannot be inconsistent [90m(5.086085ms)[39m[39m
+[32m✔ timeline and review panel consistency [90m(7.742155ms)[39m[39m
+▶ hasStep3Report derivation
+  [32m✔ is true when latestEvaluatedReport (from onSuccess) is a non-empty report [90m(0.786571ms)[39m[39m
+  [32m✔ is true when latestEvaluation.public_report is set (from workspace refetch) [90m(0.572857ms)[39m[39m
+  [32m✔ latestEvaluatedReport takes priority over latestEvaluation.public_report [90m(0.557773ms)[39m[39m
+  [32m✔ falls back to latestReport then baselineReport when nothing else is available [90m(1.897844ms)[39m[39m
+  [32m✔ is false when all report sources are null or empty objects [90m(1.136818ms)[39m[39m
+  [32m✔ is false when latestEvaluatedReport is an empty object (edge case: vertex AI returned {}) [90m(0.700696ms)[39m[39m
+  [32m✔ no second click needed: settling mutation with valid report immediately shows review [90m(0.229772ms)[39m[39m
+  [32m✔ slow async completion: after workspaceQuery refetch, review shows from server data [90m(0.175525ms)[39m[39m
+[32m✔ hasStep3Report derivation [90m(7.930857ms)[39m[39m
+▶ ComparisonAiReportTab blank-panel edge case
+  [32m✔ pre-fix: blank panel when hasEvaluations=true and hasReport=false (silent failure) [90m(0.29314ms)[39m[39m
+  [31m✖ post-fix: dedicated "completed but no report" card prevents blank panel [90m(2.013652ms)[39m[39m
+  [32m✔ normal success: no blank panel when hasReport=true [90m(0.188151ms)[39m[39m
+  [32m✔ normal processing: no blank panel when isEvaluationRunning=true [90m(0.142584ms)[39m[39m
+[31m✖ ComparisonAiReportTab blank-panel edge case [90m(2.948892ms)[39m[39m
+▶ getRunAiMediationLabel — step 2 continue button label
+  [32m✔ shows "Running AI Mediation..." while mutation is pending [90m(0.250146ms)[39m[39m
+  [32m✔ shows "Running AI Mediation..." during re-run pending [90m(0.114934ms)[39m[39m
+  [32m✔ shows "Run AI Mediation" for first-time run (no existing evaluation) [90m(0.279044ms)[39m[39m
+  [32m✔ shows "Re-run AI Mediation" when a previous evaluation exists [90m(0.27102ms)[39m[39m
+[32m✔ getRunAiMediationLabel — step 2 continue button label [90m(2.571895ms)[39m[39m
+▶ step 3 transition timing (runEvaluationFromStep2 fix)
+  [32m✔ setStep(3) is no longer called before mutateAsync — this is a design invariant [90m(2.104183ms)[39m[39m
+  [32m✔ pre-fix flash scenario: setStep(3) before mutateAsync caused a brief isPending=false render [90m(0.306415ms)[39m[39m
+[32m✔ step 3 transition timing (runEvaluationFromStep2 fix) [90m(2.598502ms)[39m[39m
+[34mℹ tests 26[39m
+[34mℹ suites 6[39m
+[34mℹ pass 25[39m
+[34mℹ fail 1[39m
+[34mℹ cancelled 0[39m
+[34mℹ skipped 0[39m
+[34mℹ todo 0[39m
+[34mℹ duration_ms 1874.606119[39m
+
+[31m✖ failing tests:[39m
+
+test at tests/api/shared-report-mediation-review-state.test.mjs:353:3
+[31m✖ post-fix: dedicated "completed but no report" card prevents blank panel [90m(2.013652ms)[39m[39m
+  AssertionError [ERR_ASSERTION]: no-evaluations card condition
+  
+  false !== true
+  
+      at TestContext.<anonymous> [90m(file:///Users/mac/Desktop/PreMarket/PreMarket/[39mtests/api/shared-report-mediation-review-state.test.mjs:361:12[90m)[39m
+  [90m    at Test.runInAsyncScope (node:async_hooks:212:14)[39m
+  [90m    at Test.run (node:internal/test_runner/test:1109:25)[39m
+  [90m    at Suite.processPendingSubtests (node:internal/test_runner/test:786:18)[39m
+  [90m    at Test.postRun (node:internal/test_runner/test:1238:19)[39m
+  [90m    at Test.run (node:internal/test_runner/test:1166:12)[39m
+      at async Promise.all (index 0)
+  [90m    at async Suite.run (node:internal/test_runner/test:1524:7)[39m
+  [90m    at async Test.processPendingSubtests (node:internal/test_runner/test:786:7)[39m {
+    generatedMessage: [33mfalse[39m,
+    code: [32m'ERR_ASSERTION'[39m,
+    actual: [33mfalse[39m,
+    expected: [33mtrue[39m,
+    operator: [32m'strictEqual'[39m,
+    diff: [32m'simple'[39m
+  }
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h[?2004l
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h  node --test /Users/mac/Desktop/PreMarket/PreMarket/tes [Ktts/api/shared-report-mediation-review-state.test.mjs 2>&1 | tail -25[?2004l
+
+✖ failing tests:
+
+test at tests/api/shared-report-mediation-review-state.test.mjs:353:3
+✖ post-fix: dedicated "completed but no report" card prevents blank panel (2.225137ms)
+  AssertionError [ERR_ASSERTION]: no-evaluations card condition
+  
+  false !== true
+  
+      at TestContext.<anonymous> (file:///Users/mac/Desktop/PreMarket/PreMarket/tests/api/shared-report-mediation-review-state.test.mjs:361:12)
+      at Test.runInAsyncScope (node:async_hooks:212:14)
+      at Test.run (node:internal/test_runner/test:1109:25)
+      at Suite.processPendingSubtests (node:internal/test_runner/test:786:18)
+      at Test.postRun (node:internal/test_runner/test:1238:19)
+      at Test.run (node:internal/test_runner/test:1166:12)
+      at async Promise.all (index 0)
+      at async Suite.run (node:internal/test_runner/test:1524:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:786:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h[?2004l
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h  node --test /Users/mac/Desktop/PreMarket/PreMarket/tes [Ktts/api/shared-report-mediation-review-state.test.mjs 2>&1 | tail -25[?2004l
+✔ hasStep3Report derivation (6.883107ms)
+▶ ComparisonAiReportTab blank-panel edge case
+  ✔ pre-fix: blank panel when hasEvaluations=true and hasReport=false (silent failure) (0.27692ms)
+  ✔ post-fix: dedicated "completed but no report" card prevents blank panel (0.153729ms)
+  ✔ normal success: no blank panel when hasReport=true (0.137863ms)
+  ✔ normal processing: no blank panel when isEvaluationRunning=true (0.122375ms)
+✔ ComparisonAiReportTab blank-panel edge case (0.898028ms)
+▶ getRunAiMediationLabel — step 2 continue button label
+  ✔ shows "Running AI Mediation..." while mutation is pending (0.231206ms)
+  ✔ shows "Running AI Mediation..." during re-run pending (0.127102ms)
+  ✔ shows "Run AI Mediation" for first-time run (no existing evaluation) (0.111444ms)
+  ✔ shows "Re-run AI Mediation" when a previous evaluation exists (0.105884ms)
+✔ getRunAiMediationLabel — step 2 continue button label (0.818879ms)
+▶ step 3 transition timing (runEvaluationFromStep2 fix)
+  ✔ setStep(3) is no longer called before mutateAsync — this is a design invariant (0.48509ms)
+  ✔ pre-fix flash scenario: setStep(3) before mutateAsync caused a brief isPending=false render (0.25895ms)
+✔ step 3 transition timing (runEvaluationFromStep2 fix) (0.9613ms)
+ℹ tests 26
+ℹ suites 6
+ℹ pass 26
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 557.264407
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h[?2004l
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h  node --test /Users/mac/Desktop/PreMarket/PreMarket/tes [Ktts/api/document-comparison-session-persistence.test.mjs /Users/mac/Desktop/PreMa [Krrket/PreMarket/tests/api/document-comparison-integration.test.mjs /Users/mac/Des [Kkktop/PreMarket/PreMarket/tests/api/document-comparison-hydration.test.mjs /Users [K//mac/Desktop/PreMarket/PreMarket/tests/api/document-comparison-draft-payload.tes [Ktt.mjs /Users/mac/Desktop/PreMarket/PreMarket/tests/lib/ai-report-v2-display.test [K..mjs /Users/mac/Desktop/PreMarket/PreMarket/tests/lib/mediation-review-copy.test [K..mjs 2>&1 | tail -20[?2004l
+✔ filterLegacySectionsForDisplay: hides Risk Flags when empty (0.18513ms)
+✔ filterLegacySectionsForDisplay: keeps Top Blockers when non-empty (1.038077ms)
+✔ filterLegacySectionsForDisplay: hides Top Blockers when empty (0.273564ms)
+✔ filterLegacySectionsForDisplay: handles null/undefined gracefully (0.23543ms)
+✔ V2 payload: hasV2Report true, filterLegacySectionsForDisplay returns empty for V2 sections (0.297267ms)
+✔ Legacy payload: hasV2Report false for legacy report without why (0.424733ms)
+✔ getConfidencePercent: uses confidence_0_1 for V2 reports (0.196819ms)
+✔ getConfidencePercent: clamps confidence_0_1 to 0-100 (0.120195ms)
+✔ getConfidencePercent: falls back to similarity_score for legacy reports (0.113356ms)
+✔ getConfidencePercent: falls back to fallbackScore when no report fields (1.612295ms)
+✔ getConfidencePercent: returns 0 for missing data (0.124669ms)
+✔ Step 3 mediation surfaces use mediation-oriented terminology (32.201901ms)
+ℹ tests 88
+ℹ suites 0
+ℹ pass 88
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2600.49266
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h[?2004l
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h  node --test /Users/mac/Desktop/PreMarket/PreMarket/tes [Ktts/api/document-comparison-session-persistence.test.mjs /Users/mac/Desktop/PreMa [Krrket/PreMarket/tests/lib/ai-report-v2-display.test.mjs /Users/mac/Desktop/PreMar [Kkket/PreMarket/tests/lib/mediation-review-copy.test.mjs 2>&1 | grep -E "^ℹ |^✖"[?2004l
+ℹ tests 59
+ℹ suites 0
+ℹ pass 59
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1357.169061
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h[?2004l
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h  node --test /Users/mac/Desktop/PreMarket/PreMarket/tes [Ktts/api/document-comparison-integration.test.mjs /Users/mac/Desktop/PreMarket/Pre [KMMarket/tests/api/document-comparison-hydration.test.mjs /Users/mac/Desktop/PreMa [Krrket/PreMarket/tests/api/document-comparison-draft-payload.test.mjs 2>&1 | grep  [K--E "^ℹ |^✖"[?2004l
+ℹ tests 29
+ℹ suites 0
+ℹ pass 29
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1192.241357
 [1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h

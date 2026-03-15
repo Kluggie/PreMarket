@@ -29,6 +29,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Progress } from '@/components/ui/progress';
 import { toast } from 'sonner';
 import {
+  getRunAiMediationLabel,
   MEDIATION_REVIEW_LABEL,
   RUN_AI_MEDIATION_LABEL,
 } from '@/lib/aiReportUtils';
@@ -1197,7 +1198,12 @@ export default function SharedReport() {
       setStep(0);
       return;
     }
-    setStep(3);
+    // Do NOT pre-emptively setStep(3) here. The step transition happens only
+    // inside onSuccess so that when step 3 renders the report data is already
+    // ready and `step3IsEvaluationRunning` is definitively false. This
+    // eliminates the flash (step-3 shows briefly with isPending=false before
+    // isPending becomes true) and the inconsistency where the review panel
+    // shows 'updates automatically' after the evaluation has already finished.
     await evaluateMutation.mutateAsync();
   };
 
@@ -1477,11 +1483,18 @@ export default function SharedReport() {
       latestEvaluation?.result?.error?.code ||
       latestEvaluation?.error?.code,
   ).toLowerCase();
-  const step3IsEvaluationRunning =
-    evaluateMutation.isPending ||
-    latestEvaluationStatus === 'running' ||
-    latestEvaluationStatus === 'queued' ||
-    latestEvaluationStatus === 'evaluating';
+  // The recipient evaluate endpoint is synchronous: it blocks until the
+  // Vertex AI call completes and returns the full result in a single HTTP
+  // round-trip.  The server-side evaluation run row only ever carries statuses
+  // 'pending', 'success', or 'error' — never 'running'/'queued'/'evaluating'.
+  // Checking those statuses against latestEvaluationStatus would therefore
+  // never fire for legitimate in-progress evaluations, but COULD wrongly show
+  // the 'processing' card if stale workspace data happens to contain one of
+  // those strings.  Binding isEvaluationRunning solely to the mutation's
+  // pending state keeps the review panel and timeline perfectly in sync:
+  // they both derive from the same variable and transition to 'ready' in the
+  // same React render batch as the mutation settling.
+  const step3IsEvaluationRunning = evaluateMutation.isPending;
   const step3IsEvaluationNotConfigured = latestEvaluationErrorCode === 'not_configured';
   const step3IsEvaluationFailed =
     !step3IsEvaluationRunning &&
@@ -2051,7 +2064,10 @@ export default function SharedReport() {
               onSaveDraft={() => saveDraftMutation.mutate({ stepToSave: 2 })}
               onBack={() => setStep(1)}
               onContinue={runEvaluationFromStep2}
-              continueLabel={RUN_AI_MEDIATION_LABEL}
+              continueLabel={getRunAiMediationLabel({
+                isPending: evaluateMutation.isPending,
+                hasExisting: Boolean(latestEvaluation),
+              })}
               continueDisabled={evaluateMutation.isPending || !canReevaluate || requiresRecipientVerification}
               coachPanel={coachPanelNode}
             />
