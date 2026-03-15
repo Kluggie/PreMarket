@@ -119,6 +119,10 @@ export function mapComparisonRow(row: any) {
     party_b_label: normalizeComparisonLabel('b'),
     company_name: row.companyName || null,
     company_website: row.companyWebsite || null,
+    recipient_name: row.recipientName || null,
+    recipient_email: row.recipientEmail || null,
+    doc_a_title: typeof inputs.doc_a_title === 'string' && inputs.doc_a_title.trim() ? inputs.doc_a_title.trim() : null,
+    doc_b_title: typeof inputs.doc_b_title === 'string' && inputs.doc_b_title.trim() ? inputs.doc_b_title.trim() : null,
     doc_a_text: docAText,
     doc_b_text: docBText,
     doc_a_html: docAHtml,
@@ -139,6 +143,11 @@ export function mapComparisonRow(row: any) {
         : null,
     doc_a_spans: toSpanArray(row.docASpans),
     doc_b_spans: toSpanArray(row.docBSpans),
+    // Canonical documents[] session — full-fidelity multi-document structure.
+    // Null for legacy comparisons created before canonical storage was added.
+    documents_session: Array.isArray(inputs.documents_session) && inputs.documents_session.length > 0
+      ? inputs.documents_session
+      : null,
     evaluation_result: row.evaluationResult || {},
     public_report: row.publicReport || {},
     inputs: row.inputs || {},

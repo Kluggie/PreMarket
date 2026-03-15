@@ -1,0 +1,90 @@
+Script started on Sun Mar 15 20:20:04 2026
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h[?2004l
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h  grep -c "saveSeqRef = useRef(0)" src/pages/DocumentCom [KpparisonCreate.jsx[?2004l
+1
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h[?2004l
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h  grep -c "thisSaveSeq = ++saveSeqRef" src/pages/Documen [KttComparisonCreate.jsx && grep -c "thisSaveSeq < saveSeqRef" src/pages/DocumentCo [KmmparisonCreate.jsx && grep -c "STEP2_AUTOSAVE_DEBOUNCE_MS = 30_000" src/pages/Do [KccumentComparisonCreate.jsx && grep -c "STEP2_AUTOSAVE_MIN_INTERVAL_MS = 30_000"  [Kssrc/pages/DocumentComparisonCreate.jsx && grep -c "const handleSelectDoc = useCa [Klllback" src/pages/DocumentComparisonCreate.jsx && grep -c "document-switch" src/ [Kppages/DocumentComparisonCreate.jsx && grep -c "onSelectDoc={handleSelectDoc}" sr [Kcc/pages/DocumentComparisonCreate.jsx && echo "ALL FOUND"[?2004l
+1
+1
+1
+1
+1
+1
+1
+ALL FOUND
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h[?2004l
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h  grep -n "refetchType" src/pages/DocumentComparisonCrea [Ktte.jsx[?2004l
+1488:        refetchType: 'none',
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h[?2004l
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h  node --test tests/api/document-comparison-session-pers [Kiistence.test.mjs 2>&1 | tail -20[?2004l
+✔ multi-doc: compiled bundles have title headers for multi-doc sides (0.868511ms)
+✔ multi-doc: doc_a_title / doc_b_title are null for multi-doc sides (0.440086ms)
+✔ single-doc-per-side: round-trip preserves exact structure (0.304785ms)
+✔ single-doc: content round-trips correctly (0.300384ms)
+✔ full workflow: Step 2 multi-doc session → save → reopen preserves all docs (0.952251ms)
+✔ serializeDocumentsSession strips _pendingFile and normalizes importStatus (0.260115ms)
+✔ serializeDocumentsSession keeps all documents regardless of owner (0.322759ms)
+✔ serializeDocumentsSession preserves html and json per document (0.296338ms)
+✔ payload includes documents_session when documents are present (0.231513ms)
+✔ payload documents_session is null when no documents (0.331854ms)
+✔ payload documents_session is null when not provided (0.2259ms)
+✔ documents with unclassified visibility survive reopen (0.296113ms)
+ℹ tests 27
+ℹ suites 0
+ℹ pass 27
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 558.625673
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h[?2004l
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h  node --test tests/api/document-comparison-integration. [Kttest.mjs 2>&1 | tail -15[?2004l
+✔ comparison list item falls back gracefully when only email is available (0.219521ms)
+✔ comparison list item shows "With: Not specified" when neither field is set (0.17212ms)
+✔ proposal list item uses party_b_name and counterparty_email via formatRecipientLabel (0.142944ms)
+✔ dashboard compact row uses formatRecipientShort (no With: prefix) (0.210895ms)
+✔ single confidential doc compiles to its text content without a title header (0.247538ms)
+✔ empty documents array produces empty bundles (0.165603ms)
+✔ hydrateDocumentsFromComparison returns empty array for blank comparison (0.215821ms)
+ℹ tests 21
+ℹ suites 0
+ℹ pass 21
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 464.159976
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h[?2004l
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h  ls tests/api/document-comparison*.mjs[?2004l
+tests/api/document-comparison-coach-actions.test.mjs
+tests/api/document-comparison-coach-intents.test.mjs
+tests/api/document-comparison-company-context.test.mjs
+tests/api/document-comparison-create-regression.test.mjs
+tests/api/document-comparison-custom-prompt.test.mjs
+tests/api/document-comparison-draft-payload.test.mjs
+tests/api/document-comparison-editor-content.test.mjs
+tests/api/document-comparison-evaluation-cache.test.mjs
+tests/api/document-comparison-evaluation-confidentiality.test.mjs
+tests/api/document-comparison-hydration.test.mjs
+tests/api/document-comparison-integration.test.mjs
+tests/api/document-comparison-recipient-details.test.mjs
+tests/api/document-comparison-session-persistence.test.mjs
+tests/api/document-comparison-v2-evaluate.test.mjs
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h[?2004l
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h  node --test tests/api/document-comparison-hydration.te [Ksst.mjs tests/api/document-comparison-draft-payload.test.mjs 2>&1 | tail -15[?2004l
+✔ hydration allows server state when no unsaved local edits exist (2.595654ms)
+✔ hydration blocks stale server payload when local draft is newer and dirty (0.303163ms)
+✔ hydration allows newer server payload even when local draft is dirty (0.211628ms)
+✔ comparison updated timestamp resolves from snake_case and camelCase fields (0.281791ms)
+✔ hydrated step respects explicit route step when provided (0.331423ms)
+✔ hydrated step falls back to server draft step when route step is absent (0.204676ms)
+✔ hydrated step keeps in-flight local step when route step is stale (0.412187ms)
+ℹ tests 8
+ℹ suites 0
+ℹ pass 8
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 503.403709
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[Jmac@Macs-MBP PreMarket % [K[?2004h

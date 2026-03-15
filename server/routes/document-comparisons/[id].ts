@@ -175,6 +175,8 @@ function toRecipientSafeComparison(mappedComparison: any) {
     doc_a_spans: [],
     evaluation_result: projection.evaluation_result,
     public_report: projection.public_report,
+    // Strip canonical documents_session — contains confidential content.
+    documents_session: null,
     inputs: toTokenSafeInputs(mappedComparison?.inputs),
   };
 }
@@ -232,6 +234,11 @@ function hasAnyWritablePatchField(body: Record<string, unknown>) {
     'public_report',
     'metadata',
     'inputs',
+    'recipientName',
+    'recipient_name',
+    'recipientEmail',
+    'recipient_email',
+    'documents_session',
   ];
 
   return writableKeys.some((key) => body[key] !== undefined);
@@ -415,6 +422,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
               document_comparison_id: proposal.documentComparisonId,
               party_a_email: proposal.partyAEmail,
               party_b_email: proposal.partyBEmail,
+              party_b_name: (proposal as any).partyBName || null,
               created_date: proposal.createdAt,
               updated_date: proposal.updatedAt,
             }
@@ -516,6 +524,22 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     const docBFiles = toArray(body.docBFiles || body.doc_b_files || rawInputs.doc_b_files);
     const docAUrl = asText(body.docAUrl || body.doc_a_url || rawInputs.doc_a_url) || null;
     const docBUrl = asText(body.docBUrl || body.doc_b_url || rawInputs.doc_b_url) || null;
+    const docATitle = asText(body.docATitle || body.doc_a_title || rawInputs.doc_a_title) || null;
+    const docBTitle = asText(body.docBTitle || body.doc_b_title || rawInputs.doc_b_title) || null;
+    const hasDocumentsSession = body.documents_session !== undefined;
+    const documentsSession = hasDocumentsSession && Array.isArray(body.documents_session) && body.documents_session.length > 0
+      ? body.documents_session
+      : (!hasDocumentsSession && Array.isArray(rawInputs.documents_session) && rawInputs.documents_session.length > 0
+          ? rawInputs.documents_session
+          : null);
+    const hasRecipientName = body.recipientName !== undefined || body.recipient_name !== undefined;
+    const hasRecipientEmail = body.recipientEmail !== undefined || body.recipient_email !== undefined;
+    const nextRecipientName = hasRecipientName
+      ? (asText(body.recipientName || body.recipient_name) || null)
+      : (existing.recipientName ?? null);
+    const nextRecipientEmail = hasRecipientEmail
+      ? (asText(body.recipientEmail || body.recipient_email).toLowerCase() || null)
+      : (existing.recipientEmail ?? null);
     assertDocumentComparisonWithinLimits({
       docAText: nextDocAText,
       docBText: nextDocBText,
@@ -530,6 +554,8 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
           : parseStep(body.draftStep || body.draft_step, existing.draftStep || 1),
       partyALabel: CONFIDENTIAL_LABEL,
       partyBLabel: SHARED_LABEL,
+      recipientName: nextRecipientName,
+      recipientEmail: nextRecipientEmail,
       docAText: nextDocAText,
       docBText: nextDocBText,
       docASpans: nextDocASpans,
@@ -560,6 +586,9 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
         doc_b_url: docBUrl,
         confidential_doc_content: nextDocAText,
         shared_doc_content: nextDocBText,
+        ...(docATitle !== null ? { doc_a_title: docATitle } : {}),
+        ...(docBTitle !== null ? { doc_b_title: docBTitle } : {}),
+        ...(documentsSession !== null ? { documents_session: documentsSession } : {}),
       },
       metadata:
         body.metadata && typeof body.metadata === 'object' ? body.metadata : existing.metadata || {},
@@ -632,6 +661,12 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
           draftStep: updated.draftStep,
           proposalType: 'document_comparison',
           documentComparisonId: updated.id,
+          ...(nextRecipientEmail !== null && nextRecipientEmail !== (proposal?.partyBEmail ?? null)
+            ? { partyBEmail: nextRecipientEmail }
+            : {}),
+          ...(nextRecipientName !== null && nextRecipientName !== ((proposal as any)?.partyBName ?? null)
+            ? { partyBName: nextRecipientName }
+            : {}),
           updatedAt: proposalUpdatedAt,
         })
         .where(eq(schema.proposals.id, existing.proposalId));

@@ -58,6 +58,11 @@ export function buildComparisonDraftSavePayload({
   metadata = {},
   docASpans = [],
   docBSpans = [],
+  recipientName = null,
+  recipientEmail = null,
+  docATitle = null,
+  docBTitle = null,
+  documentsSession = null,
   sanitizeHtml = (value) => String(value || ''),
 }) {
   const nextTitle = asText(snapshot.title || fallback.title) || 'Untitled';
@@ -92,6 +97,11 @@ export function buildComparisonDraftSavePayload({
     draft_step: Number(stepToSave || 1),
     proposalId: linkedProposalId || routeProposalId || null,
     createProposal: !(linkedProposalId || routeProposalId),
+    recipient_name: recipientName || null,
+    recipient_email: recipientEmail ? String(recipientEmail).trim().toLowerCase() : null,
+    doc_a_title: docATitle || null,
+    doc_b_title: docBTitle || null,
+    documents_session: Array.isArray(documentsSession) && documentsSession.length > 0 ? documentsSession : null,
   };
 
   if (token) {

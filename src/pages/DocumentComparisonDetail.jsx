@@ -419,8 +419,17 @@ export default function DocumentComparisonDetail() {
     if (!isShareDialogOpen) {
       return;
     }
-    setShareRecipientEmail((current) => current || asText(proposal?.party_b_email));
-  }, [isShareDialogOpen, proposal?.party_b_email]);
+    // Pre-fill the share dialog with the most authoritative recipient email we have:
+    // 1) Whatever the user already typed (preserve it)
+    // 2) The linked proposal's party_b_email
+    // 3) The comparison's own recipient_email (set in Step 3)
+    setShareRecipientEmail(
+      (current) =>
+        current ||
+        asText(proposal?.party_b_email) ||
+        asText(comparison?.recipient_email),
+    );
+  }, [isShareDialogOpen, proposal?.party_b_email, comparison?.recipient_email]);
 
   useEffect(() => {
     if (selectedShareToken) {
@@ -839,7 +848,14 @@ export default function DocumentComparisonDetail() {
                   <p className="text-xs font-semibold tracking-wide uppercase text-slate-500 mb-2">
                     Party B (Recipient)
                   </p>
-                  <p className="font-semibold text-slate-900">{proposal?.party_b_email || 'Not specified'}</p>
+                  {(proposal?.party_b_name || comparison?.recipient_name) && (
+                    <p className="font-semibold text-slate-900">
+                      {proposal?.party_b_name || comparison?.recipient_name}
+                    </p>
+                  )}
+                  <p className={proposal?.party_b_name || comparison?.recipient_name ? 'text-sm text-slate-600 mt-0.5' : 'font-semibold text-slate-900'}>
+                    {proposal?.party_b_email || comparison?.recipient_email || 'Not specified'}
+                  </p>
                 </div>
               </div>
             </CardContent>

@@ -176,6 +176,7 @@ function mapProposalRow(
     document_comparison_id: proposal.documentComparisonId || null,
     party_a_email: proposal.partyAEmail || null,
     party_b_email: proposal.partyBEmail,
+    party_b_name: (proposal as any).partyBName || null,
     summary: proposal.summary,
     payload: proposal.payload || {},
     recipient_email: proposal.partyBEmail || null,
@@ -621,6 +622,7 @@ export default async function handler(req: any, res: any) {
       String(body.documentComparisonId || body.document_comparison_id || '').trim() || null;
     const partyAEmail = normalizeEmail(body.partyAEmail || body.party_a_email || auth.user.email || '') || null;
     const partyBEmail = normalizeEmail(body.partyBEmail || body.party_b_email || '') || null;
+    const partyBName = asText(body.partyBName || body.party_b_name) || null;
     const summary = String(body.summary || '').trim() || null;
     const payload = body.payload && typeof body.payload === 'object' ? body.payload : {};
     const sentAt = parseDateOrNull(body.sentAt || body.sent_at);
@@ -647,6 +649,7 @@ export default async function handler(req: any, res: any) {
       documentComparisonId,
       partyAEmail,
       partyBEmail,
+      partyBName,
       summary,
       payload,
       sentAt,

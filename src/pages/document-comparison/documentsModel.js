@@ -2,11 +2,23 @@
  * documentsModel.js
  *
  * Helpers for the multi-document model used in the Step 1 / 2 / 3 workflow.
- * The backend still persists data as doc_a (confidential) + doc_b (shared),
- * so this module handles:
+ *
+ * Canonical storage: the full documents[] session is persisted as
+ * `inputs.documents_session` in the comparison's JSONB inputs column.
+ * This preserves document count, stable ids, titles, visibility, content,
+ * and ordering across save/reopen cycles.
+ *
+ * Legacy compatibility: the backend also stores compiled doc_a / doc_b
+ * bundles (text columns + inputs JSONB fields). These are derived from the
+ * canonical documents[] and consumed by the evaluator, report builder, and
+ * other paths that expect a two-bundle model.
+ *
+ * This module handles:
  *   - Creating document entries
- *   - Compiling a documents[] array into confidential + shared bundles
- *   - Hydrating a documents[] from an existing doc_a / doc_b comparison row
+ *   - Serializing documents[] for draft persistence (documents_session)
+ *   - Compiling documents[] into confidential + shared bundles (legacy model)
+ *   - Hydrating documents[] from a saved comparison (prefers documents_session,
+ *     falls back to legacy doc_a / doc_b bundles for old data)
  */
 
 // ─────────────────────────────────────────────
@@ -106,19 +118,46 @@ export function createDocument(overrides = {}) {
 }
 
 // ─────────────────────────────────────────────
-//  Hydration — convert old doc_a / doc_b row → documents[]
+//  Hydration — restore documents[] from server
 // ─────────────────────────────────────────────
 
 /**
- * Convert an existing comparison row (doc_a / doc_b model) into the new
- * documents array format. Called when opening an existing draft.
+ * Restore documents from a saved comparison row.
  *
- * Returns an array of 0–2 documents. Empty only if both sides are truly blank.
+ * **Preferred path**: if `comparison.documents_session` (the canonical
+ * serialized array) is present and non-empty, it is deserialized directly.
+ * This preserves the exact number of documents, their stable ids, titles,
+ * visibility, content, and ordering the user had before saving.
  *
- * @param {object} comparison  – the mapped comparison row from the server
+ * **Legacy fallback**: if `documents_session` is absent (e.g. comparisons
+ * created before the canonical storage was added), the two compiled
+ * doc_a / doc_b bundles are used to create 0–2 synthetic documents.
+ *
+ * @param {object} comparison – the mapped comparison row from the server
  * @returns {SourceDocument[]}
  */
 export function hydrateDocumentsFromComparison(comparison) {
+  // ── Canonical path: full-fidelity documents_session ──────────────────
+  const session = comparison?.documents_session;
+  if (Array.isArray(session) && session.length > 0) {
+    return session.map((d) =>
+      createDocument({
+        id: d.id,
+        title: d.title || 'Untitled Document',
+        visibility: d.visibility || VISIBILITY_UNCLASSIFIED,
+        owner: d.owner || OWNER_RECIPIENT,
+        source: d.source || 'typed',
+        text: d.text || '',
+        html: d.html || '<p></p>',
+        json: d.json || null,
+        files: Array.isArray(d.files) ? d.files : [],
+        importStatus: d.importStatus || 'idle',
+        importError: '',
+      }),
+    );
+  }
+
+  // ── Legacy fallback: reconstruct from doc_a / doc_b bundles ──────────
   const docs = [];
 
   const docAText = String(comparison?.doc_a_text || '');
@@ -126,6 +165,7 @@ export function hydrateDocumentsFromComparison(comparison) {
   const docAJson = comparison?.doc_a_json || null;
   const docASource = String(comparison?.doc_a_source || 'typed');
   const docAFiles = Array.isArray(comparison?.doc_a_files) ? comparison.doc_a_files : [];
+  const docATitle = String(comparison?.doc_a_title || 'Confidential Information');
   const hasDocA = Boolean(docAText || htmlToText(docAHtml));
 
   const docBText = String(comparison?.doc_b_text || '');
@@ -133,12 +173,13 @@ export function hydrateDocumentsFromComparison(comparison) {
   const docBJson = comparison?.doc_b_json || null;
   const docBSource = String(comparison?.doc_b_source || 'typed');
   const docBFiles = Array.isArray(comparison?.doc_b_files) ? comparison.doc_b_files : [];
+  const docBTitle = String(comparison?.doc_b_title || 'Shared Information');
   const hasDocB = Boolean(docBText || htmlToText(docBHtml));
 
   if (hasDocA) {
     docs.push(createDocument({
       id: 'legacy-doc-a',
-      title: 'Confidential Information',
+      title: docATitle,
       visibility: VISIBILITY_CONFIDENTIAL,
       source: docASource,
       text: docAText,
@@ -152,7 +193,7 @@ export function hydrateDocumentsFromComparison(comparison) {
   if (hasDocB) {
     docs.push(createDocument({
       id: 'legacy-doc-b',
-      title: 'Shared Information',
+      title: docBTitle,
       visibility: VISIBILITY_SHARED,
       source: docBSource,
       text: docBText,
@@ -309,6 +350,7 @@ export function buildDocumentsStateHash(documents) {
 
 /**
  * Serialize recipient-owned documents for persistence in editor_state.documents.
+ * Used by the SharedReport flow where proposer docs are static.
  * Strips transient UI fields (_pendingFile, etc.) and normalises import status.
  *
  * @param {SourceDocument[]} documents
@@ -330,6 +372,32 @@ export function serializeDocumentsForDraft(documents) {
       importStatus: d.importStatus === 'importing' ? 'idle' : (d.importStatus || 'idle'),
       importError: '',
     }));
+}
+
+/**
+ * Serialize the full documents[] session for comparison draft persistence.
+ * Unlike `serializeDocumentsForDraft`, this keeps ALL documents regardless
+ * of owner — comparisons don't have a proposer/recipient split.
+ *
+ * This becomes the canonical `documents_session` stored in inputs JSONB.
+ *
+ * @param {SourceDocument[]} documents
+ * @returns {object[]}
+ */
+export function serializeDocumentsSession(documents) {
+  return (documents || []).map((d) => ({
+    id: d.id,
+    title: d.title || 'Untitled Document',
+    visibility: d.visibility || VISIBILITY_UNCLASSIFIED,
+    owner: d.owner || OWNER_RECIPIENT,
+    source: d.source || 'typed',
+    text: d.text || '',
+    html: d.html || '<p></p>',
+    json: d.json || null,
+    files: Array.isArray(d.files) ? d.files : [],
+    importStatus: d.importStatus === 'importing' ? 'idle' : (d.importStatus || 'idle'),
+    importError: '',
+  }));
 }
 
 /**

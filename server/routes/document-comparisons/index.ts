@@ -102,6 +102,13 @@ export default async function handler(req: any, res: any) {
     const docASpans = toSpanArray(body.docASpans || body.doc_a_spans);
     const docBSpans = toSpanArray(body.docBSpans || body.doc_b_spans);
     const rawInputs = toJsonObject(body.inputs);
+    const recipientName = asText(body.recipientName || body.recipient_name) || null;
+    const recipientEmail = normalizeEmail(body.recipientEmail || body.recipient_email) || null;
+    const docATitle = asText(body.docATitle || body.doc_a_title || rawInputs.doc_a_title) || null;
+    const docBTitle = asText(body.docBTitle || body.doc_b_title || rawInputs.doc_b_title) || null;
+    const documentsSession = Array.isArray(body.documents_session) && body.documents_session.length > 0
+      ? body.documents_session
+      : null;
     const docASource = asText(body.docASource || body.doc_a_source) || asText(rawInputs.doc_a_source) || 'typed';
     const docBSource = asText(body.docBSource || body.doc_b_source) || asText(rawInputs.doc_b_source) || 'typed';
     const rawDocAHtml = asText(body.docAHtml || body.doc_a_html || rawInputs.doc_a_html);
@@ -134,6 +141,9 @@ export default async function handler(req: any, res: any) {
       doc_b_url: docBUrl,
       confidential_doc_content: docAText,
       shared_doc_content: docBText,
+      ...(docATitle !== null ? { doc_a_title: docATitle } : {}),
+      ...(docBTitle !== null ? { doc_b_title: docBTitle } : {}),
+      ...(documentsSession !== null ? { documents_session: documentsSession } : {}),
     };
 
     if (process.env.NODE_ENV !== 'production') {
@@ -180,7 +190,8 @@ export default async function handler(req: any, res: any) {
           sourceProposalId: null,
           documentComparisonId: null,
           partyAEmail: normalizeEmail(auth.user.email) || null,
-          partyBEmail: null,
+          partyBEmail: recipientEmail,
+          partyBName: recipientName,
           summary: 'Document comparison workflow',
           payload: {},
           createdAt: now,
@@ -201,6 +212,8 @@ export default async function handler(req: any, res: any) {
         draftStep,
         partyALabel,
         partyBLabel,
+        recipientName,
+        recipientEmail,
         docAText,
         docBText,
         docASpans,

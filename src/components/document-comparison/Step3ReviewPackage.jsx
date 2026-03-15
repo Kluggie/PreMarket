@@ -3,6 +3,8 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -10,7 +12,9 @@ import {
   FileText,
   Loader2,
   Lock,
+  Mail,
   Sparkles,
+  User,
   Users,
 } from 'lucide-react';
 import { VISIBILITY_CONFIDENTIAL, VISIBILITY_SHARED, getDocumentCounts } from '@/pages/document-comparison/documentsModel';
@@ -130,6 +134,10 @@ function BundleSection({ label, icon, colorClass, borderClass, bgClass, sourceDo
  *   saveDraftPending        boolean
  *   onBack                  () => void
  *   onRunEvaluation         () => void
+ *   recipientName           string
+ *   recipientEmail          string
+ *   onRecipientNameChange   (value: string) => void
+ *   onRecipientEmailChange  (value: string) => void
  */
 export default function Step3ReviewPackage({
   documents = [],
@@ -141,6 +149,10 @@ export default function Step3ReviewPackage({
   saveDraftPending = false,
   onBack,
   onRunEvaluation,
+  recipientName = '',
+  recipientEmail = '',
+  onRecipientNameChange,
+  onRecipientEmailChange,
 }) {
   const counts = getDocumentCounts(documents);
   const confidentialDocs = documents.filter((d) => d.visibility === VISIBILITY_CONFIDENTIAL);
@@ -208,6 +220,53 @@ export default function Step3ReviewPackage({
           </AlertDescription>
         </Alert>
       )}
+
+      {/* Recipient details */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Mail className="w-4 h-4 text-slate-500" />
+            Recipient Details
+          </CardTitle>
+          <CardDescription>
+            Who will receive the shared report? Email is required to send.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="recipient-name" className="flex items-center gap-1.5 text-sm">
+                <User className="w-3.5 h-3.5 text-slate-400" />
+                Name <span className="text-slate-400 font-normal">(optional)</span>
+              </Label>
+              <Input
+                id="recipient-name"
+                data-testid="recipient-name-input"
+                type="text"
+                placeholder="e.g. Sarah Chen"
+                value={recipientName}
+                onChange={(e) => onRecipientNameChange?.(e.target.value)}
+                disabled={isRunning}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="recipient-email" className="flex items-center gap-1.5 text-sm">
+                <Mail className="w-3.5 h-3.5 text-slate-400" />
+                Email <span className="text-slate-400 font-normal">(required to send)</span>
+              </Label>
+              <Input
+                id="recipient-email"
+                data-testid="recipient-email-input"
+                type="email"
+                placeholder="e.g. sarah@company.com"
+                value={recipientEmail}
+                onChange={(e) => onRecipientEmailChange?.(e.target.value)}
+                disabled={isRunning}
+              />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Privacy reminder */}
       <Alert className="bg-blue-50 border-blue-200">

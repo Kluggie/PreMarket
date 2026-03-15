@@ -50,6 +50,7 @@ function mapProposalRow(proposal, currentUser, options: Record<string, unknown> 
     document_comparison_id: proposal.documentComparisonId || null,
     party_a_email: proposal.partyAEmail || currentUser?.email || null,
     party_b_email: proposal.partyBEmail,
+    party_b_name: (proposal as any).partyBName || null,
     summary: proposal.summary,
     payload: proposal.payload || {},
     recipient_email: proposal.partyBEmail || null,
@@ -529,6 +530,10 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         body.partyBEmail === undefined && body.party_b_email === undefined
           ? existing.partyBEmail
           : normalizeEmail(body.partyBEmail || body.party_b_email || '') || null,
+      partyBName:
+        body.partyBName === undefined && body.party_b_name === undefined
+          ? (existing as any).partyBName ?? null
+          : asText(body.partyBName || body.party_b_name) || null,
       summary:
         body.summary === undefined ? existing.summary : String(body.summary || '').trim() || null,
       payload:

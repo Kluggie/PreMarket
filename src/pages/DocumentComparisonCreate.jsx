@@ -44,6 +44,7 @@ import {
   compileBundles,
   createDocument,
   hydrateDocumentsFromComparison,
+  serializeDocumentsSession,
   VISIBILITY_CONFIDENTIAL,
   VISIBILITY_SHARED,
   VISIBILITY_UNCLASSIFIED,
@@ -76,8 +77,11 @@ const MAX_PREVIEW_CHARS = 500;
 const TOTAL_EDITOR_STEPS = 3;
 const TOTAL_WORKFLOW_STEPS = 3;
 const DIFF_CONTEXT_CHARS = 220;
-const STEP2_AUTOSAVE_DEBOUNCE_MS = 2500;
-const STEP2_AUTOSAVE_MIN_INTERVAL_MS = 5000;
+// Background autosave: only fire after the user has been idle for ~30 seconds.
+// Immediate saves happen on step changes, doc switches, and unmount — so the
+// background timer is purely a safety-net for long open-editor sessions.
+const STEP2_AUTOSAVE_DEBOUNCE_MS = 30_000;
+const STEP2_AUTOSAVE_MIN_INTERVAL_MS = 30_000;
 const COACH_INTENT_LABELS = {
   improve_shared: 'Improve shared writing',
   negotiate: 'Negotiation strategy',
@@ -691,6 +695,9 @@ export default function DocumentComparisonCreate() {
   const [companyContextSaveError, setCompanyContextSaveError] = useState('');
   const [companyContextValidationError, setCompanyContextValidationError] = useState('');
   const [isSavingCompanyContext, setIsSavingCompanyContext] = useState(false);
+  // ── Recipient details ───────────────────────────────────────────────────
+  const [recipientName, setRecipientName] = useState('');
+  const [recipientEmail, setRecipientEmail] = useState('');
   const [isCoachResponseCopied, setIsCoachResponseCopied] = useState(false);
   const [coachRequestMeta, setCoachRequestMeta] = useState(null);
   const [coachResultHash, setCoachResultHash] = useState('');
@@ -729,6 +736,9 @@ export default function DocumentComparisonCreate() {
   const saveMutationPendingRef = useRef(false);
   const activeSavePromiseRef = useRef(null);
   const lastStep2AutosaveAtRef = useRef(0);
+  // Monotonically increasing counter — each save invocation claims a sequence number.
+  // Used to detect stale responses when multiple saves race (e.g. rapid manual saves).
+  const saveSeqRef = useRef(0);
   // Tracks which comparisonId has already had its documents hydrated from the server.
   // Prevents post-save draftQuery refetches from wiping locally-edited documents.
   const lastHydratedComparisonIdRef = useRef(null);
@@ -736,6 +746,7 @@ export default function DocumentComparisonCreate() {
   const docBSpansRef = useRef([]);
   const activeImportRequestRef = useRef({ id: 0, controller: null });
   const metadataRef = useRef({});
+  const documentsRef = useRef([]);
   const companyContextSaveTimerRef = useRef(null);
   const companyContextSavedTimerRef = useRef(null);
   const companyContextPersistedRef = useRef({
@@ -755,6 +766,8 @@ export default function DocumentComparisonCreate() {
     docBSource: 'typed',
     docAFiles: [],
     docBFiles: [],
+    recipientName: '',
+    recipientEmail: '',
   });
 
   // ── Helper: update one document in the documents array ───────────────────
@@ -767,6 +780,9 @@ export default function DocumentComparisonCreate() {
       // Synchronously recompile bundles and update the draft-state ref so that
       // saves never read stale (empty) content from latestDraftStateRef.
       const { confidential, shared } = compileBundles(next);
+      // Keep documentsRef in sync so unmount saves read the latest documents[],
+      // including any title renames that happened since the last useEffect run.
+      documentsRef.current = next;
       latestDraftStateRef.current = {
         ...latestDraftStateRef.current,
         docAText: confidential.text,
@@ -957,8 +973,6 @@ export default function DocumentComparisonCreate() {
     setCompanyContextSaveError('');
     setCompanyContextValidationError('');
 
-    setTitle(comparison.title || '');
-
     const nextDocAText = String(comparison.doc_a_text || '');
     const nextDocBText = String(comparison.doc_b_text || '');
     const nextDocAHtml = asText(comparison.doc_a_html) || textToHtml(nextDocAText);
@@ -976,23 +990,40 @@ export default function DocumentComparisonCreate() {
         ? comparison.metadata
         : {};
 
-    // Build documents array from legacy doc_a/doc_b (backward compat hydration).
+    // Restore documents[] from the saved comparison.
+    // Preferred: use the canonical documents_session (full-fidelity multi-doc model).
+    // Fallback: reconstruct 0–2 legacy docs from compiled doc_a / doc_b bundles.
     // Only update documents when this comparison hasn't been hydrated yet in this
     // session — prevents post-save refetches from overwriting in-progress edits.
+    //
+    // title, recipientName, and recipientEmail are also moved into this guard:
+    // they must not be reset by any subsequent refetch that arrives while the user
+    // is actively editing those fields — saving already pushes them to the server.
     const comparisonIdForHydration = comparison.id || resolvedDraftId || '';
     if (comparisonIdForHydration !== lastHydratedComparisonIdRef.current) {
       lastHydratedComparisonIdRef.current = comparisonIdForHydration;
+      // Title and recipient are only applied on the first hydration for each
+      // comparison ID. Subsequent refetches (e.g. from background cache invalidation)
+      // must NOT overwrite fields the user may be actively editing.
+      setTitle(comparison.title || '');
+      setRecipientName(asText(comparison.recipient_name || ''));
+      setRecipientEmail(asText(comparison.recipient_email || ''));
       const hydratedDocs = hydrateDocumentsFromComparison({
+        // Canonical session (preferred — preserves exact document structure)
+        documents_session: comparison.documents_session,
+        // Legacy fields (fallback for old comparisons without documents_session)
         doc_a_text: nextDocAText,
         doc_a_html: nextDocAHtml,
         doc_a_json: nextDocAJson,
         doc_a_source: nextDocASource,
         doc_a_files: nextDocAFiles,
+        doc_a_title: comparison.doc_a_title,
         doc_b_text: nextDocBText,
         doc_b_html: nextDocBHtml,
         doc_b_json: nextDocBJson,
         doc_b_source: nextDocBSource,
         doc_b_files: nextDocBFiles,
+        doc_b_title: comparison.doc_b_title,
       });
       // Use a functional updater so we can inspect current docs without extra deps.
       // If local documents already exist (e.g. created in Step 1 before the draft was
@@ -1144,6 +1175,7 @@ export default function DocumentComparisonCreate() {
   // Keep latestDraftStateRef in sync with the compiled bundles so unmount saves
   // and background saves always get the latest content.
   useEffect(() => {
+    documentsRef.current = documents;
     latestDraftStateRef.current = {
       title: asText(title) || 'Untitled',
       docAText: confidentialBundle.text,
@@ -1156,8 +1188,10 @@ export default function DocumentComparisonCreate() {
       docBSource: sharedBundle.source,
       docAFiles: Array.isArray(confidentialBundle.files) ? confidentialBundle.files : [],
       docBFiles: Array.isArray(sharedBundle.files) ? sharedBundle.files : [],
+      recipientName: recipientName || '',
+      recipientEmail: recipientEmail || '',
     };
-  }, [title, confidentialBundle, sharedBundle]);
+  }, [title, confidentialBundle, sharedBundle, recipientName, recipientEmail, documents]);
 
   useEffect(() => {
     setCoachResult(null);
@@ -1212,6 +1246,9 @@ export default function DocumentComparisonCreate() {
   const saveDraftMutation = useMutation({
     mutationFn: async ({ stepToSave, silent = false, nonBlocking = false }) => {
       const saveStartedAtMs = Date.now();
+      // Claim a sequence number before the network call so we can detect stale
+      // responses if a newer save completes first.
+      const thisSaveSeq = ++saveSeqRef.current;
       const savedStep = clampStep(stepToSave || step || 1);
       const activeComparisonId = asText(comparisonIdRef.current || comparisonId);
       const snapshot = latestDraftStateRef.current || {};
@@ -1239,6 +1276,15 @@ export default function DocumentComparisonCreate() {
         docASpans: docASpansRef.current,
         docBSpans: docBSpansRef.current,
         metadata: metadataRef.current,
+        recipientName: recipientName || null,
+        recipientEmail: recipientEmail || null,
+        docATitle: documents.filter((d) => d.visibility === VISIBILITY_CONFIDENTIAL).length === 1
+          ? documents.find((d) => d.visibility === VISIBILITY_CONFIDENTIAL)?.title || null
+          : null,
+        docBTitle: documents.filter((d) => d.visibility === VISIBILITY_SHARED).length === 1
+          ? documents.find((d) => d.visibility === VISIBILITY_SHARED)?.title || null
+          : null,
+        documentsSession: serializeDocumentsSession(documents),
         sanitizeHtml: sanitizeEditorHtml,
       });
       const requestedSnapshot = {
@@ -1355,6 +1401,20 @@ export default function DocumentComparisonCreate() {
       linkedProposalIdRef.current = persistedProposalId;
       const hasNewerLocalEdits = lastEditAtRef.current > saveStartedAtMs;
 
+      // STALE-RESPONSE GUARD: a newer save has already started (or completed)
+      // since this one was dispatched. Its response is the authoritative state;
+      // skip all state mutations from this older response to avoid stomping.
+      if (thisSaveSeq < saveSeqRef.current) {
+        if (import.meta.env.DEV) {
+          console.info('[DocumentComparisonCreate] saveDraft: stale response dropped', {
+            thisSaveSeq,
+            latestSaveSeq: saveSeqRef.current,
+            comparisonId: persistedComparisonId,
+          });
+        }
+        return persistedComparisonId;
+      }
+
       if (!nonBlocking) {
         // Update title only (documents are the source of truth and not overwritten)
         setTitle(persistedTitle);
@@ -1419,8 +1479,13 @@ export default function DocumentComparisonCreate() {
       }
 
       queryClient.invalidateQueries({ queryKey: ['proposals'] });
+      // Mark the draft query stale so the NEXT time a subscriber mounts it refreshes,
+      // but do NOT immediately refetch while the user is actively editing. An
+      // immediate refetch would re-run the hydration effect which can stomp in-progress
+      // title / recipient / company-context edits that happened during the round-trip.
       queryClient.invalidateQueries({
         queryKey: ['document-comparison-draft', persistedComparisonId, routeState.token],
+        refetchType: 'none',
       });
       return persistedComparisonId;
     },
@@ -1490,6 +1555,19 @@ export default function DocumentComparisonCreate() {
       docBSpans: docBSpansRef.current,
       metadata: metadataRef.current,
       sanitizeHtml: sanitizeEditorHtml,
+      recipientName: snapshot.recipientName || null,
+      recipientEmail: snapshot.recipientEmail || null,
+      docATitle: (() => {
+        const docs = documentsRef.current || [];
+        const confDocs = docs.filter(d => d.visibility === VISIBILITY_CONFIDENTIAL);
+        return confDocs.length === 1 ? confDocs[0]?.title || null : null;
+      })(),
+      docBTitle: (() => {
+        const docs = documentsRef.current || [];
+        const sharedDocs = docs.filter(d => d.visibility === VISIBILITY_SHARED);
+        return sharedDocs.length === 1 ? sharedDocs[0]?.title || null : null;
+      })(),
+      documentsSession: serializeDocumentsSession(documentsRef.current || []),
     });
 
     if (import.meta.env.DEV) {
@@ -1974,6 +2052,18 @@ export default function DocumentComparisonCreate() {
       }
     },
     [runSaveDraftMutation, waitForActiveSave],
+  );
+
+  // Save current document edits before switching tabs, then switch the active doc.
+  // Not awaited so the UI stays responsive; latest state is already in latestDraftStateRef.
+  const handleSelectDoc = useCallback(
+    (id) => {
+      if (isDirtyRef.current && comparisonIdRef.current && !saveMutationPendingRef.current) {
+        void bestEffortSaveDraft({ reason: 'document-switch', stepToSave: 2, requireDraftId: true });
+      }
+      setActiveDocId(id);
+    },
+    [bestEffortSaveDraft],
   );
 
   const ensureStep2DraftId = useCallback(async () => {
@@ -3606,7 +3696,7 @@ export default function DocumentComparisonCreate() {
                 <Step2EditSources
                   documents={documents}
                   activeDocId={activeDocId}
-                  onSelectDoc={(id) => setActiveDocId(id)}
+                  onSelectDoc={handleSelectDoc}
                   onDocumentContentChange={handleDocumentContentChange}
                   editorRef={activeEditorRef}
                   limits={limits}
@@ -3650,6 +3740,10 @@ export default function DocumentComparisonCreate() {
                           : null,
                     });
                   }}
+                  onRenameDoc={(id, newTitle) => {
+                    updateDocument(id, { title: newTitle });
+                    markDraftEdited();
+                  }}
                 />
               </motion.div>
             </DocumentComparisonEditorErrorBoundary>
@@ -3673,6 +3767,10 @@ export default function DocumentComparisonCreate() {
                 saveDraftPending={saveDraftMutation.isPending}
                 onBack={() => jumpStep(2)}
                 onRunEvaluation={handleFinishClick}
+                recipientName={recipientName}
+                recipientEmail={recipientEmail}
+                onRecipientNameChange={setRecipientName}
+                onRecipientEmailChange={setRecipientEmail}
               />
             </motion.div>
           )}

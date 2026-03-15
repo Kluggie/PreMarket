@@ -6,6 +6,7 @@ import { createPageUrl } from '@/utils';
 import { useAuth } from '@/lib/AuthContext';
 import { proposalsClient } from '@/api/proposalsClient';
 import { dashboardClient } from '@/api/dashboardClient';
+import { formatRecipientLabel } from '@/lib/recipientUtils';
 import {
   getAgreementActionLabel,
 } from '@/lib/proposalOutcomeUi';
@@ -372,7 +373,7 @@ function ProposalRow({
 
             <div className="flex items-center gap-4 text-sm text-slate-500">
               <span>{proposal.template_name || 'Custom Template'}</span>
-              <span>With: {proposal.counterparty_email || 'Not specified'}</span>
+              <span>{formatRecipientLabel(proposal.party_b_name, proposal.counterparty_email)}</span>
             </div>
           </div>
 

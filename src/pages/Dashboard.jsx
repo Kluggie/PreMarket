@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import ProposalsChart from '@/components/dashboard/ProposalsChart';
+import { formatRecipientShort } from '@/lib/recipientUtils';
 import {
   AGREEMENT_REQUESTED_LABEL,
 } from '@/lib/proposalOutcomeUi';
@@ -92,7 +93,10 @@ function ActionBadge({ proposal }) {
 }
 
 function CompactProposalRow({ proposal, onOpen }) {
-  const counterparty = proposal.counterparty_email || proposal.party_b_email || proposal.party_a_email;
+  const recipientLabel = formatRecipientShort(
+    proposal.party_b_name,
+    proposal.counterparty_email || proposal.party_b_email || proposal.party_a_email,
+  );
   const lastUpdated = proposal.last_activity_at || proposal.updated_date || proposal.created_date;
   const templateName = proposal.template_name || 'Custom Template';
 
@@ -110,9 +114,7 @@ function CompactProposalRow({ proposal, onOpen }) {
         </div>
         <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5 min-w-0">
           <span className="truncate">{templateName}</span>
-          {counterparty ? (
-            <span className="truncate">• With: {counterparty}</span>
-          ) : null}
+          <span className="truncate">• With: {recipientLabel}</span>
         </div>
       </div>
       <div className="text-right shrink-0">

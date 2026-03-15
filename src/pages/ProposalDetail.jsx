@@ -251,7 +251,7 @@ async function downloadProposalInfoPdf(proposal, comparison) {
   writeLine(`Created: ${formatDateTime(proposal?.created_date)}`);
   writeLine(`Updated: ${formatDateTime(proposal?.updated_date)}`);
   writeLine(`Party A: ${proposal?.party_a_email || 'Not specified'}`);
-  writeLine(`Party B: ${proposal?.party_b_email || 'Not specified'}`);
+  writeLine(`Party B: ${[proposal?.party_b_name, proposal?.party_b_email].filter(Boolean).join(' · ') || 'Not specified'}`);
   y += 8;
 
   if (comparison) {

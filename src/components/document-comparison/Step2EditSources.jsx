@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Input } from '@/components/ui/input';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -193,7 +194,49 @@ export default function Step2EditSources({
   // Label / disabled override for the Continue button
   continueLabel,
   continueDisabled,
+  // Rename docs inline
+  onRenameDoc,
 }) {
+  // ── Inline title editing state ────────────────────────────────────────────
+  const [editingTitleDocId, setEditingTitleDocId] = useState(null);
+  const [editingTitleValue, setEditingTitleValue] = useState('');
+  const titleInputRef = useRef(null);
+  // Store the doc snapshot at edit-start so we can revert on empty input.
+  const editingTitleDocRef = useRef(null);
+
+  function startEditingTitle(doc) {
+    setEditingTitleDocId(doc.id);
+    setEditingTitleValue(doc.title || '');
+    editingTitleDocRef.current = doc;
+    // Focus after render
+    setTimeout(() => titleInputRef.current?.select(), 0);
+  }
+
+  function commitTitleEdit() {
+    if (!editingTitleDocId) return;
+    const trimmed = editingTitleValue.trim();
+    if (trimmed) {
+      // User provided a non-empty title — always use it.
+      onRenameDoc?.(editingTitleDocId, trimmed);
+    } else {
+      // Empty input: for uploaded files revert to the previous valid title so we
+      // don't destroy the original filename; for typed docs fall back gracefully.
+      const prevDoc = editingTitleDocRef.current;
+      const prevTitle = String(prevDoc?.title || '').trim();
+      const fallback =
+        prevDoc?.source === 'uploaded' && prevTitle
+          ? prevTitle
+          : 'Untitled Document';
+      onRenameDoc?.(editingTitleDocId, fallback);
+    }
+    editingTitleDocRef.current = null;
+    setEditingTitleDocId(null);
+  }
+
+  function cancelTitleEdit() {
+    editingTitleDocRef.current = null;
+    setEditingTitleDocId(null);
+  }
   const activeDoc = documents.find((d) => d.id === activeDocId) || null;
   const isFullscreen = Boolean(fullscreenDocId && fullscreenDocId === activeDocId);
   const isActiveDocReadOnly = activeDocId ? readOnlyDocIds.includes(activeDocId) : false;
@@ -268,9 +311,29 @@ export default function Step2EditSources({
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2 min-w-0">
                     <VisibilityIcon visibility={activeDoc.visibility} size="w-4 h-4" />
-                    <h3 className="text-sm font-semibold text-slate-800 truncate">
-                      {activeDoc.title || 'Untitled'}
-                    </h3>
+                    {editingTitleDocId === activeDoc.id ? (
+                      <Input
+                        ref={titleInputRef}
+                        data-testid="doc-title-input"
+                        className="h-7 text-sm font-semibold text-slate-800 py-0 px-1 w-48"
+                        value={editingTitleValue}
+                        onChange={(e) => setEditingTitleValue(e.target.value)}
+                        onBlur={commitTitleEdit}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') { e.preventDefault(); commitTitleEdit(); }
+                          if (e.key === 'Escape') { e.preventDefault(); cancelTitleEdit(); }
+                        }}
+                      />
+                    ) : (
+                      <h3
+                        className="text-sm font-semibold text-slate-800 truncate cursor-pointer hover:text-blue-700 hover:underline"
+                        title="Click to rename"
+                        onClick={() => onRenameDoc && startEditingTitle(activeDoc)}
+                        data-testid="doc-title-display"
+                      >
+                        {activeDoc.title || 'Untitled'}
+                      </h3>
+                    )}
                     <VisibilityBadge visibility={activeDoc.visibility} />
                     {activeDoc.source === 'uploaded' && (
                       <Badge variant="outline" className="text-xs">uploaded</Badge>
