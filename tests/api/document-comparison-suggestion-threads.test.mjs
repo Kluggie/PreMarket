@@ -4,7 +4,9 @@ import {
   appendAssistantEntry,
   appendUserEntry,
   buildThreadHistoryForRequest,
+  canCreateThread,
   createThread,
+  deleteThread,
   deriveThreadTitle,
   deserializeThreadsFromMetadata,
   ensureActiveThread,
@@ -12,6 +14,8 @@ import {
   getActiveThread,
   getLastAssistantEntry,
   MAX_THREADS,
+  normalizeThreadsOnLoad,
+  renameThread,
   serializeThreadsForPersistence,
   THREAD_HISTORY_WINDOW,
 } from '../../src/pages/document-comparison/suggestionThreads.js';
@@ -60,25 +64,31 @@ test('createThread starts an empty thread and sets it as active', () => {
   assert.equal(result.threads[0].entries.length, 0);
 });
 
-test('createThread prepends to existing threads', () => {
-  const existing = [{ id: 'old1', title: 'Old', createdAt: 1, updatedAt: 1, entries: [] }];
-  const result = createThread(existing);
+test('createThread prepends new thread when active thread is non-empty', () => {
+  // Must start from a non-empty thread (can't stack empty threads)
+  let st = appendUserEntry([], null, { content: 'first question', promptType: 'risks' });
+  const result = createThread(st.threads, st.activeThreadId);
   assert.equal(result.threads.length, 2);
   assert.equal(result.threads[0].id, result.activeThreadId);
-  assert.equal(result.threads[1].id, 'old1');
+  assert.notEqual(result.activeThreadId, st.activeThreadId);
+  assert.equal(result.created, true);
+  assert.equal(result.threads[1].id, st.activeThreadId);
 });
 
-test('createThread caps at MAX_THREADS', () => {
-  const existing = Array.from({ length: MAX_THREADS + 5 }, (_, i) => ({
-    id: `t${i}`,
-    title: `Thread ${i}`,
-    createdAt: i,
-    updatedAt: i,
-    entries: [],
-  }));
-  const result = createThread(existing);
-  assert.ok(result.threads.length <= MAX_THREADS);
-  assert.equal(result.threads[0].id, result.activeThreadId);
+test('createThread blocks creation at MAX_THREADS (3) and returns created:false', () => {
+  // Build exactly MAX_THREADS non-empty threads
+  let st = appendUserEntry([], null, { content: 'q1', promptType: 'risks' });
+  assert.equal(MAX_THREADS, 3);
+  let st2 = createThread(st.threads, st.activeThreadId);
+  let st2w = appendUserEntry(st2.threads, st2.activeThreadId, { content: 'q2', promptType: 'risks' });
+  let st3 = createThread(st2w.threads, st2w.activeThreadId);
+  let st3w = appendUserEntry(st3.threads, st3.activeThreadId, { content: 'q3', promptType: 'risks' });
+  assert.equal(st3w.threads.length, MAX_THREADS);
+  // Try to create a 4th
+  const result = createThread(st3w.threads, st3w.activeThreadId);
+  assert.equal(result.created, false);
+  assert.equal(result.threads.length, MAX_THREADS);
+  assert.equal(result.activeThreadId, st3w.activeThreadId); // unchanged
 });
 
 // ── ensureActiveThread ───────────────────────────────────────────────────
@@ -90,11 +100,13 @@ test('ensureActiveThread returns existing thread if id matches', () => {
   assert.equal(result.threads, threads);
 });
 
-test('ensureActiveThread creates a thread if id does not match', () => {
+test('ensureActiveThread falls back to first existing thread if id does not match', () => {
   const threads = [{ id: 'x', title: 'X', createdAt: 1, updatedAt: 1, entries: [] }];
   const result = ensureActiveThread(threads, 'nonexistent');
-  assert.notEqual(result.activeThreadId, 'x');
-  assert.equal(result.threads.length, 2);
+  // Falls back to the first existing thread rather than creating another empty one
+  assert.equal(result.activeThreadId, 'x');
+  assert.equal(result.threads.length, 1);
+  assert.equal(result.threads, threads);
 });
 
 test('ensureActiveThread creates a thread if none exist', () => {
@@ -427,4 +439,275 @@ test('thread history for request only contains bounded entries, not doc snapshot
     assert.ok(!entry.docAText, 'history should not contain document text');
     assert.ok(!entry.docBText, 'history should not contain document text');
   }
+});
+
+// ── canCreateThread ──────────────────────────────────────────────────────
+
+test('canCreateThread allows creation when no threads exist', () => {
+  assert.equal(canCreateThread([], null), true);
+});
+
+test('canCreateThread allows creation when all threads are non-empty and below limit', () => {
+  let st = appendUserEntry([], null, { content: 'q', promptType: 'risks' });
+  assert.equal(canCreateThread(st.threads, st.activeThreadId), true);
+});
+
+test('canCreateThread blocks creation when active thread is empty', () => {
+  const emptyThread = { id: 'e1', title: 'New thread', createdAt: 1, updatedAt: 1, entries: [] };
+  assert.equal(canCreateThread([emptyThread], 'e1'), false);
+});
+
+test('canCreateThread blocks creation when any thread is empty (no stacking)', () => {
+  const emptyThread = { id: 'e1', title: 'New thread', createdAt: 1, updatedAt: 1, entries: [] };
+  // Simulate: existing non-active empty thread (should still block)
+  let st = appendUserEntry([], null, { content: 'q', promptType: 'risks' });
+  // Active is non-empty, but add a second empty thread manually
+  const mixed = [...st.threads, emptyThread];
+  assert.equal(canCreateThread(mixed, st.activeThreadId), false);
+});
+
+test('canCreateThread blocks creation when at MAX_THREADS limit', () => {
+  let st = appendUserEntry([], null, { content: 'q1', promptType: 'risks' });
+  let st2 = createThread(st.threads, st.activeThreadId);
+  let st2w = appendUserEntry(st2.threads, st2.activeThreadId, { content: 'q2', promptType: 'risks' });
+  let st3 = createThread(st2w.threads, st2w.activeThreadId);
+  let st3w = appendUserEntry(st3.threads, st3.activeThreadId, { content: 'q3', promptType: 'risks' });
+  assert.equal(st3w.threads.length, MAX_THREADS);
+  assert.equal(canCreateThread(st3w.threads, st3w.activeThreadId), false);
+});
+
+// ── createThread — new behavior ──────────────────────────────────────────
+
+test('createThread returns created:false when active thread is empty', () => {
+  const result = createThread([], null); // creates first thread (ok, no threads yet)
+  assert.equal(result.created, true);
+  // Now try to create again while on empty active thread
+  const result2 = createThread(result.threads, result.activeThreadId);
+  assert.equal(result2.created, false);
+  assert.equal(result2.threads.length, 1);
+  assert.equal(result2.activeThreadId, result.activeThreadId);
+});
+
+test('createThread returns created:true when active thread is non-empty', () => {
+  let st = appendUserEntry([], null, { content: 'q', promptType: 'risks' });
+  const result = createThread(st.threads, st.activeThreadId);
+  assert.equal(result.created, true);
+  assert.equal(result.threads.length, 2);
+  assert.notEqual(result.activeThreadId, st.activeThreadId);
+});
+
+// ── deleteThread ─────────────────────────────────────────────────────────
+
+test('deleteThread removes a non-active thread', () => {
+  let st = appendUserEntry([], null, { content: 'q1', promptType: 'risks' });
+  const thread1Id = st.activeThreadId;
+  let st2 = createThread(st.threads, st.activeThreadId);
+  let st2w = appendUserEntry(st2.threads, st2.activeThreadId, { content: 'q2', promptType: 'general' });
+  // Active is thread2; delete thread1
+  const result = deleteThread(st2w.threads, st2w.activeThreadId, thread1Id);
+  assert.equal(result.threads.length, 1);
+  assert.equal(result.threads[0].id, st2w.activeThreadId);
+  assert.equal(result.activeThreadId, st2w.activeThreadId);
+});
+
+test('deleteThread on active thread switches to another thread', () => {
+  let st = appendUserEntry([], null, { content: 'q1', promptType: 'risks' });
+  const thread1Id = st.activeThreadId;
+  let st2 = createThread(st.threads, st.activeThreadId);
+  let st2w = appendUserEntry(st2.threads, st2.activeThreadId, { content: 'q2', promptType: 'general' });
+  const thread2Id = st2w.activeThreadId;
+  // Active is thread2; delete thread2 (the active one)
+  const result = deleteThread(st2w.threads, thread2Id, thread2Id);
+  assert.equal(result.threads.length, 1);
+  assert.equal(result.activeThreadId, thread1Id);
+  assert.notEqual(result.activeThreadId, thread2Id);
+});
+
+test('deleteThread on active thread prefers non-empty fallback', () => {
+  // Thread 1 (non-empty), Thread 2 (active, empty) → delete thread 2 → fall back to thread 1
+  let st = appendUserEntry([], null, { content: 'q', promptType: 'risks' });
+  const thread1Id = st.activeThreadId;
+  let st2 = createThread(st.threads, st.activeThreadId); // thread2 is empty
+  const thread2Id = st2.activeThreadId;
+  const result = deleteThread(st2.threads, thread2Id, thread2Id);
+  assert.equal(result.activeThreadId, thread1Id);
+});
+
+test('deleteThread on the last remaining thread returns empty state', () => {
+  const threads = [{ id: 't1', title: 'Thread 1', createdAt: 1, updatedAt: 1, entries: [] }];
+  const result = deleteThread(threads, 't1', 't1');
+  assert.equal(result.threads.length, 0);
+  assert.equal(result.activeThreadId, null);
+});
+
+test('deleteThread with unknown id returns state unchanged', () => {
+  const threads = [{ id: 't1', title: 'Thread 1', createdAt: 1, updatedAt: 1, entries: [] }];
+  const result = deleteThread(threads, 't1', 'nonexistent');
+  assert.equal(result.threads.length, 1);
+  assert.equal(result.activeThreadId, 't1');
+});
+
+// ── renameThread ─────────────────────────────────────────────────────────
+
+test('renameThread updates the title of the target thread', () => {
+  let st = appendUserEntry([], null, { content: 'q', promptType: 'risks' });
+  const updated = renameThread(st.threads, st.activeThreadId, 'My analysis session');
+  assert.equal(updated[0].title, 'My analysis session');
+});
+
+test('renameThread trims whitespace', () => {
+  let st = appendUserEntry([], null, { content: 'q', promptType: 'risks' });
+  const updated = renameThread(st.threads, st.activeThreadId, '  Custom Name  ');
+  assert.equal(updated[0].title, 'Custom Name');
+});
+
+test('renameThread ignores blank new title', () => {
+  let st = appendUserEntry([], null, { content: 'q', promptType: 'risks' });
+  const before = st.threads[0].title;
+  const updated = renameThread(st.threads, st.activeThreadId, '   ');
+  assert.equal(updated[0].title, before); // unchanged
+});
+
+test('renameThread returns threads unchanged for unknown threadId', () => {
+  let st = appendUserEntry([], null, { content: 'q', promptType: 'risks' });
+  const updated = renameThread(st.threads, 'nonexistent', 'New name');
+  assert.equal(updated[0].title, st.threads[0].title);
+});
+
+// ── normalizeThreadsOnLoad ───────────────────────────────────────────────
+
+test('normalizeThreadsOnLoad returns unchanged when at or below MAX_THREADS', () => {
+  let st = appendUserEntry([], null, { content: 'q', promptType: 'risks' });
+  const result = normalizeThreadsOnLoad(st.threads, st.activeThreadId);
+  assert.equal(result.threads, st.threads);
+  assert.equal(result.activeThreadId, st.activeThreadId);
+});
+
+test('normalizeThreadsOnLoad trims to MAX_THREADS (3) from a larger set', () => {
+  // Build 5 threads (simulating old drafts with higher limit)
+  const threads = Array.from({ length: 5 }, (_, i) => ({
+    id: `t${i}`,
+    title: `Thread ${i}`,
+    createdAt: i,
+    updatedAt: i,
+    entries: i === 0 ? [] : [{ role: 'user', content: `q${i}` }],
+  }));
+  const result = normalizeThreadsOnLoad(threads, 't2');
+  assert.equal(result.threads.length, MAX_THREADS);
+});
+
+test('normalizeThreadsOnLoad keeps active thread even if it would be trimmed', () => {
+  const threads = Array.from({ length: 6 }, (_, i) => ({
+    id: `t${i}`,
+    title: `Thread ${i}`,
+    createdAt: i,
+    updatedAt: i,
+    entries: [{ role: 'user', content: `q${i}` }],
+  }));
+  // Active is the last (lowest priority) thread
+  const result = normalizeThreadsOnLoad(threads, 't5');
+  assert.ok(result.threads.some((t) => t.id === 't5'), 'active thread must be kept');
+  assert.equal(result.activeThreadId, 't5');
+  assert.equal(result.threads.length, MAX_THREADS);
+});
+
+test('normalizeThreadsOnLoad prefers non-empty threads over empty ones', () => {
+  const threads = [
+    { id: 'empty1', title: 'E1', createdAt: 10, updatedAt: 10, entries: [] },
+    { id: 'empty2', title: 'E2', createdAt: 9, updatedAt: 9, entries: [] },
+    { id: 'full1', title: 'F1', createdAt: 8, updatedAt: 8, entries: [{ role: 'user', content: 'q' }] },
+    { id: 'full2', title: 'F2', createdAt: 7, updatedAt: 7, entries: [{ role: 'user', content: 'q' }] },
+    { id: 'full3', title: 'F3', createdAt: 6, updatedAt: 6, entries: [{ role: 'user', content: 'q' }] },
+  ];
+  // Active is empty1 (stays due to active priority)
+  const result = normalizeThreadsOnLoad(threads, 'empty1');
+  assert.equal(result.threads.length, MAX_THREADS);
+  const ids = result.threads.map((t) => t.id);
+  assert.ok(ids.includes('empty1'), 'active thread kept');
+  assert.ok(ids.includes('full1'), 'newest non-empty kept');
+  assert.ok(ids.includes('full2'), 'second non-empty kept');
+  assert.ok(!ids.includes('empty2'), 'non-active empty trimmed');
+});
+
+test('deserializeThreadsFromMetadata normalises old drafts with >3 threads', () => {
+  const oldDraft = {
+    suggestionThreads: Array.from({ length: 7 }, (_, i) => ({
+      id: `t${i}`,
+      title: `Thread ${i}`,
+      createdAt: i,
+      updatedAt: i,
+      entries: [{ role: 'user', content: `question ${i}`, timestamp: i, promptType: 'risks' }],
+    })),
+    activeSuggestionThreadId: 't3',
+  };
+  const result = deserializeThreadsFromMetadata(oldDraft);
+  assert.ok(result.threads.length <= MAX_THREADS, `should have at most ${MAX_THREADS} threads`);
+  assert.ok(result.threads.some((t) => t.id === 't3'), 'active thread must be preserved');
+  assert.equal(result.activeThreadId, 't3');
+});
+
+// ── Thread persistence after delete / create ─────────────────────────────
+
+test('thread persistence after delete works (serialize → deserialize roundtrip)', () => {
+  let st = appendUserEntry([], null, { content: 'q1', promptType: 'risks' });
+  st = appendAssistantEntry(st.threads, st.activeThreadId, { content: 'a1', coachResultHash: 'h1' });
+  const thread1Id = st.activeThreadId;
+  let st2 = createThread(st.threads, st.activeThreadId);
+  let st2w = appendUserEntry(st2.threads, st2.activeThreadId, { content: 'q2', promptType: 'general' });
+  st2w = appendAssistantEntry(st2w.threads, st2w.activeThreadId, { content: 'a2', coachResultHash: 'h2' });
+  const thread2Id = st2w.activeThreadId;
+
+  // Delete thread1
+  const afterDelete = deleteThread(st2w.threads, thread2Id, thread1Id);
+  assert.equal(afterDelete.threads.length, 1);
+
+  // Serialize and restore
+  const serialized = serializeThreadsForPersistence(afterDelete.threads, afterDelete.activeThreadId);
+  const restored = deserializeThreadsFromMetadata(serialized);
+  assert.equal(restored.threads.length, 1);
+  assert.equal(restored.threads[0].id, thread2Id);
+  assert.equal(restored.activeThreadId, thread2Id);
+});
+
+test('thread persistence after create works (serialize → deserialize roundtrip)', () => {
+  let st = appendUserEntry([], null, { content: 'q1', promptType: 'risks' });
+  st = appendAssistantEntry(st.threads, st.activeThreadId, { content: 'a1', coachResultHash: 'h1' });
+
+  // Create second thread and add entry
+  let st2 = createThread(st.threads, st.activeThreadId);
+  let st2w = appendUserEntry(st2.threads, st2.activeThreadId, { content: 'q2', promptType: 'general' });
+  st2w = appendAssistantEntry(st2w.threads, st2w.activeThreadId, { content: 'a2', coachResultHash: 'h2' });
+
+  const serialized = serializeThreadsForPersistence(st2w.threads, st2w.activeThreadId);
+  const restored = deserializeThreadsFromMetadata(serialized);
+  assert.equal(restored.threads.length, 2);
+  assert.equal(restored.activeThreadId, st2w.activeThreadId);
+  assert.equal(restored.threads[0].entries.length, 2);
+  assert.equal(restored.threads[1].entries.length, 2);
+});
+
+// ── No regression: suggestion prompts / custom prompts continue thread ──
+
+test('regression: suggested prompts still continue active thread after new rules', () => {
+  let st = appendUserEntry([], null, { content: 'Risks & Gaps', promptType: 'risks' });
+  st = appendAssistantEntry(st.threads, st.activeThreadId, { content: 'Here are risks', coachResultHash: 'h1' });
+  const threadId = st.activeThreadId;
+
+  // Suggested prompt click → continues same thread
+  const continued = appendUserEntry(st.threads, threadId, { content: 'Negotiation Strategy', promptType: 'negotiate' });
+  assert.equal(continued.threads.length, 1);
+  assert.equal(continued.activeThreadId, threadId);
+  assert.equal(continued.threads[0].entries.length, 3);
+});
+
+test('regression: custom prompts still continue active thread after new rules', () => {
+  let st = appendUserEntry([], null, { content: 'Risks & Gaps', promptType: 'risks' });
+  st = appendAssistantEntry(st.threads, st.activeThreadId, { content: 'Here are risks', coachResultHash: 'h1' });
+  const threadId = st.activeThreadId;
+
+  const continued = appendUserEntry(st.threads, threadId, { content: 'Tell me more about clause 4', promptType: 'custom_prompt' });
+  assert.equal(continued.threads.length, 1);
+  assert.equal(continued.activeThreadId, threadId);
+  assert.equal(continued.threads[0].entries.length, 3);
+  assert.equal(continued.threads[0].entries[2].promptType, 'custom_prompt');
 });

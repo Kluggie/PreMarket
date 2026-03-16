@@ -11,7 +11,8 @@
  */
 
 // ── Constants ────────────────────────────────────────────────────────────
-export const MAX_THREADS = 10;
+/** Maximum number of guidance threads per draft session. */
+export const MAX_THREADS = 3;
 export const MAX_ENTRIES_PER_THREAD = 20;
 /** How many recent entries (from the active thread) to include in AI requests. */
 export const THREAD_HISTORY_WINDOW = 6;
@@ -44,13 +45,39 @@ export function deriveThreadTitle(entry) {
   return text.length > 48 ? `${text.slice(0, 45)}…` : text;
 }
 
+// ── Thread creation guard ────────────────────────────────────────────────
+
+/**
+ * Returns true if a new thread may be created given the current state.
+ *
+ * Rules:
+ *  - Fewer than MAX_THREADS threads must exist.
+ *  - There must be no existing empty thread (prevents stacking blank entries).
+ */
+export function canCreateThread(threads = [], activeThreadId = null) {
+  if (!Array.isArray(threads)) return true;
+  if (threads.length >= MAX_THREADS) return false;
+  // Block if any empty thread already exists
+  const hasEmptyThread = threads.some((t) => !t.entries || t.entries.length === 0);
+  if (hasEmptyThread) return false;
+  return true;
+}
+
 // ── Thread CRUD helpers ──────────────────────────────────────────────────
 
 /**
- * Create a new empty thread and return the updated state.
- * Returns { threads, activeThreadId }.
+ * Create a new empty thread if allowed by thread rules.
+ *
+ * Returns { threads, activeThreadId, created }.
+ *  - `created` is false when creation was blocked (active thread is already
+ *    empty or the thread limit has been reached).
  */
-export function createThread(threads = []) {
+export function createThread(threads = [], activeThreadId = null) {
+  if (!canCreateThread(threads, activeThreadId)) {
+    // Return current state unchanged
+    const currentActiveId = activeThreadId || (threads.length > 0 ? threads[0].id : null);
+    return { threads, activeThreadId: currentActiveId, created: false };
+  }
   const id = generateThreadId();
   const now = Date.now();
   const newThread = {
@@ -61,18 +88,60 @@ export function createThread(threads = []) {
     entries: [],
   };
   const updated = [newThread, ...threads].slice(0, MAX_THREADS);
-  return { threads: updated, activeThreadId: id };
+  return { threads: updated, activeThreadId: id, created: true };
+}
+
+/**
+ * Delete a thread by ID.
+ * If the deleted thread was active, selects a sensible replacement:
+ *  - first non-empty thread, else first remaining.
+ * If no threads remain, returns an empty state.
+ * Returns { threads, activeThreadId }.
+ */
+export function deleteThread(threads, activeThreadId, threadIdToDelete) {
+  if (!Array.isArray(threads) || !threadIdToDelete) return { threads, activeThreadId };
+  const remaining = threads.filter((t) => t.id !== threadIdToDelete);
+  if (remaining.length === 0) {
+    return { threads: [], activeThreadId: null };
+  }
+  let newActiveId = activeThreadId;
+  if (activeThreadId === threadIdToDelete) {
+    const nonEmpty = remaining.find((t) => t.entries && t.entries.length > 0);
+    newActiveId = nonEmpty ? nonEmpty.id : remaining[0].id;
+  }
+  return { threads: remaining, activeThreadId: newActiveId };
+}
+
+/**
+ * Rename a thread.  Returns the updated threads array.
+ * Silently ignores missing thread IDs or blank titles.
+ */
+export function renameThread(threads, threadId, newTitle) {
+  if (!Array.isArray(threads) || !threadId) return threads;
+  const trimmed = String(newTitle || '').trim();
+  if (!trimmed) return threads;
+  return threads.map((t) => (t.id === threadId ? { ...t, title: trimmed } : t));
 }
 
 /**
  * Ensure an active thread exists.  If `activeThreadId` points to an existing
- * thread, return as-is.  Otherwise, create a new thread.
+ * thread, return as-is.  Otherwise, fall back to the first existing thread
+ * rather than creating another empty one.  Only creates a brand new thread
+ * when no threads exist at all.
  */
 export function ensureActiveThread(threads = [], activeThreadId = null) {
   if (activeThreadId && threads.some((t) => t.id === activeThreadId)) {
     return { threads, activeThreadId };
   }
-  return createThread(threads);
+  // Fall back to first existing thread if any (avoids stacking empty threads)
+  if (Array.isArray(threads) && threads.length > 0) {
+    return { threads, activeThreadId: threads[0].id };
+  }
+  // No threads at all — create the very first one unconditionally
+  const id = generateThreadId();
+  const now = Date.now();
+  const newThread = { id, title: 'New thread', createdAt: now, updatedAt: now, entries: [] };
+  return { threads: [newThread], activeThreadId: id };
 }
 
 /**
@@ -172,6 +241,39 @@ export function buildThreadHistoryForRequest(threads, activeThreadId) {
   }));
 }
 
+// ── Backward-compatibility normalisation ────────────────────────────────
+
+/**
+ * Normalise a loaded thread list to fit within MAX_THREADS.
+ * Useful when a draft was saved with an older, higher thread-limit.
+ *
+ * Retention priority:
+ *  1. Active thread is always kept (if valid).
+ *  2. Non-empty threads before empty threads.
+ *  3. Newer (higher updatedAt) threads before older ones.
+ *  4. Trim to MAX_THREADS.
+ */
+export function normalizeThreadsOnLoad(threads, activeThreadId) {
+  if (!Array.isArray(threads) || threads.length <= MAX_THREADS) {
+    return { threads, activeThreadId };
+  }
+  const active = threads.find((t) => t.id === activeThreadId);
+  const rest = threads.filter((t) => t.id !== activeThreadId);
+  const nonEmpty = rest
+    .filter((t) => t.entries && t.entries.length > 0)
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  const empty = rest
+    .filter((t) => !t.entries || t.entries.length === 0)
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  const ordered = [...(active ? [active] : []), ...nonEmpty, ...empty];
+  const trimmed = ordered.slice(0, MAX_THREADS);
+  let newActiveId = activeThreadId;
+  if (newActiveId && !trimmed.some((t) => t.id === newActiveId)) {
+    newActiveId = trimmed.length > 0 ? trimmed[0].id : null;
+  }
+  return { threads: trimmed, activeThreadId: newActiveId };
+}
+
 // ── Persistence helpers ──────────────────────────────────────────────────
 
 /**
@@ -253,7 +355,6 @@ export function deserializeThreadsFromMetadata(metadata) {
 
   const threads = raw
     .filter((t) => t && typeof t === 'object' && t.id)
-    .slice(0, MAX_THREADS)
     .map((t) => ({
       id: t.id,
       title: t.title || 'Thread',
@@ -286,5 +387,6 @@ export function deserializeThreadsFromMetadata(metadata) {
     activeThreadId = threads.length > 0 ? threads[0].id : null;
   }
 
-  return { threads, activeThreadId };
+  // Normalise on load: trims to MAX_THREADS for backward compat with older drafts
+  return normalizeThreadsOnLoad(threads, activeThreadId);
 }

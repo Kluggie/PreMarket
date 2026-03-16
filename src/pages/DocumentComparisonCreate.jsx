@@ -37,10 +37,15 @@ import {
   appendAssistantEntry,
   appendUserEntry,
   buildThreadHistoryForRequest,
+  canCreateThread,
   createThread,
+  deleteThread,
   deserializeThreadsFromMetadata,
   getActiveThread,
   getLastAssistantEntry,
+  MAX_THREADS,
+  normalizeThreadsOnLoad,
+  renameThread,
   serializeThreadsForPersistence,
 } from '@/pages/document-comparison/suggestionThreads';
 import {
@@ -77,9 +82,11 @@ import {
   Loader2,
   MessageSquarePlus,
   MessagesSquare,
+  Pencil,
   Plus,
   Save,
   Sparkles,
+  Trash2,
   Upload,
   X,
 } from 'lucide-react';
@@ -738,6 +745,12 @@ export default function DocumentComparisonCreate() {
   const [suggestionThreads, setSuggestionThreads] = useState([]);
   const [activeSuggestionThreadId, setActiveSuggestionThreadId] = useState(null);
   const [showThreadHistory, setShowThreadHistory] = useState(false);
+  /** threadId pending delete confirmation, or null */
+  const [deletingThreadId, setDeletingThreadId] = useState(null);
+  /** threadId being renamed inline, or null */
+  const [renamingThreadId, setRenamingThreadId] = useState(null);
+  const [renameInputValue, setRenameInputValue] = useState('');
+  const renameInputRef = useRef(null);
   const suggestionThreadsRef = useRef([]);
   const activeSuggestionThreadIdRef = useRef(null);
   const [ignoredRouteDraftId, setIgnoredRouteDraftId] = useState('');
@@ -3037,7 +3050,18 @@ export default function DocumentComparisonCreate() {
 
   // ── Suggestion thread management ──────────────────────────────────────
   const handleStartNewThread = useCallback(() => {
-    const result = createThread(suggestionThreadsRef.current);
+    const currentThreads = suggestionThreadsRef.current;
+    const currentActiveId = activeSuggestionThreadIdRef.current;
+
+    if (!canCreateThread(currentThreads, currentActiveId)) {
+      if (currentThreads.length >= MAX_THREADS) {
+        toast.info('Max 3 threads — delete one to start fresh.');
+      }
+      // If already on empty thread: silently do nothing
+      return;
+    }
+
+    const result = createThread(currentThreads, currentActiveId);
     setSuggestionThreads(result.threads);
     setActiveSuggestionThreadId(result.activeThreadId);
     suggestionThreadsRef.current = result.threads;
@@ -3051,7 +3075,6 @@ export default function DocumentComparisonCreate() {
     setExpandedSuggestionIds([]);
     setCoachError('');
     setIsCoachResponseCopied(false);
-    toast.success('Started new thread');
   }, []);
 
   const handleSelectThread = useCallback((threadId) => {
@@ -3081,8 +3104,88 @@ export default function DocumentComparisonCreate() {
     setShowThreadHistory(false);
   }, []);
 
+  // ── Delete thread ───────────────────────────────────────────────────────
+  const handleDeleteThread = useCallback((threadId) => {
+    setDeletingThreadId(threadId);
+  }, []);
+
+  const handleCancelDelete = useCallback(() => {
+    setDeletingThreadId(null);
+  }, []);
+
+  const handleConfirmDeleteThread = useCallback((threadId) => {
+    const currentThreads = suggestionThreadsRef.current;
+    const currentActiveId = activeSuggestionThreadIdRef.current;
+    const wasActive = currentActiveId === threadId;
+
+    let result = deleteThread(currentThreads, currentActiveId, threadId);
+
+    // If all threads were removed, auto-create a fresh empty thread
+    if (result.threads.length === 0) {
+      const fresh = createThread([], null);
+      result = { threads: fresh.threads, activeThreadId: fresh.activeThreadId };
+    }
+
+    setSuggestionThreads(result.threads);
+    setActiveSuggestionThreadId(result.activeThreadId);
+    suggestionThreadsRef.current = result.threads;
+    activeSuggestionThreadIdRef.current = result.activeThreadId;
+
+    // If the active thread changed, restore that thread's coach state
+    if (wasActive) {
+      const newActive = result.threads.find((t) => t.id === result.activeThreadId) || null;
+      const lastAssistant = newActive ? getLastAssistantEntry(newActive) : null;
+      if (lastAssistant) {
+        setCoachResult(lastAssistant.coachResult || null);
+        setCoachResultHash(lastAssistant.coachResultHash || '');
+        setCoachCached(lastAssistant.coachCached || false);
+        setCoachWithheldCount(lastAssistant.withheldCount || 0);
+        setCoachRequestMeta(lastAssistant.coachRequestMeta || null);
+      } else {
+        setCoachResult(null);
+        setCoachResultHash('');
+        setCoachCached(false);
+        setCoachWithheldCount(0);
+        setCoachRequestMeta(null);
+      }
+      setExpandedSuggestionIds([]);
+      setCoachError('');
+      setIsCoachResponseCopied(false);
+    }
+
+    setDeletingThreadId(null);
+  }, []);
+
+  // ── Rename thread ───────────────────────────────────────────────────────
+  const handleStartRename = useCallback((threadId, currentTitle) => {
+    setDeletingThreadId(null); // cancel delete if open
+    setRenamingThreadId(threadId);
+    setRenameInputValue(currentTitle || '');
+    // Focus input on next tick
+    setTimeout(() => renameInputRef.current?.focus(), 0);
+  }, []);
+
+  const handleConfirmRename = useCallback(() => {
+    const threadId = renamingThreadId;
+    const newTitle = renameInputValue.trim();
+    if (threadId && newTitle) {
+      const updated = renameThread(suggestionThreadsRef.current, threadId, newTitle);
+      setSuggestionThreads(updated);
+      suggestionThreadsRef.current = updated;
+    }
+    setRenamingThreadId(null);
+    setRenameInputValue('');
+  }, [renamingThreadId, renameInputValue]);
+
+  const handleCancelRename = useCallback(() => {
+    setRenamingThreadId(null);
+    setRenameInputValue('');
+  }, []);
+
   const activeThread = getActiveThread(suggestionThreads, activeSuggestionThreadId);
   const activeThreadEntryCount = activeThread?.entries?.length || 0;
+  const canStartNewThread = canCreateThread(suggestionThreads, activeSuggestionThreadId);
+  const atThreadLimit = suggestionThreads.length >= MAX_THREADS;
 
   const copyCoachResponse = async () => {
     if (!coachResponseText) {
@@ -3471,7 +3574,7 @@ export default function DocumentComparisonCreate() {
                 onClick={() => setShowThreadHistory((v) => !v)}
                 data-testid="toggle-thread-history"
               >
-                {showThreadHistory ? 'Hide history' : `${suggestionThreads.length} threads`}
+                {showThreadHistory ? 'Hide' : `${suggestionThreads.length}/${MAX_THREADS}`}
               </Button>
             ) : null}
             <Button
@@ -3479,8 +3582,9 @@ export default function DocumentComparisonCreate() {
               variant="outline"
               size="sm"
               className="h-7 text-xs px-2"
-              disabled={coachLoading}
+              disabled={coachLoading || !canStartNewThread}
               onClick={handleStartNewThread}
+              title={atThreadLimit ? 'Max 3 threads — delete one to start fresh' : undefined}
               data-testid="start-new-thread"
             >
               <Plus className="w-3.5 h-3.5 mr-1" />
@@ -3488,6 +3592,11 @@ export default function DocumentComparisonCreate() {
             </Button>
           </div>
         </div>
+        {atThreadLimit ? (
+          <p className="text-[11px] text-slate-400 -mt-2 text-right" data-testid="thread-limit-notice">
+            Max 3 threads. Delete one to start fresh.
+          </p>
+        ) : null}
 
         {/* ── Thread history panel ────────────────────────────────────── */}
         {showThreadHistory && suggestionThreads.length > 0 ? (
@@ -3496,25 +3605,106 @@ export default function DocumentComparisonCreate() {
               const isActive = thread.id === activeSuggestionThreadId;
               const entryCount = thread.entries?.length || 0;
               const exchangeCount = Math.ceil(entryCount / 2);
+              const isDeleting = deletingThreadId === thread.id;
+              const isRenaming = renamingThreadId === thread.id;
               return (
-                <button
+                <div
                   key={thread.id}
-                  type="button"
-                  className={`w-full text-left px-3 py-2 text-xs transition-colors hover:bg-slate-50 ${
-                    isActive ? 'bg-blue-50/60 border-l-2 border-blue-500' : ''
+                  className={`group flex items-center gap-2 px-3 py-2 text-xs transition-colors ${
+                    isActive ? 'bg-blue-50/60 border-l-2 border-blue-500' : 'hover:bg-slate-50'
                   }`}
-                  onClick={() => handleSelectThread(thread.id)}
                   data-testid={`thread-history-item-${thread.id}`}
                 >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className={`truncate font-medium ${isActive ? 'text-blue-700' : 'text-slate-700'}`}>
+                  {/* Title or rename input */}
+                  {isRenaming ? (
+                    <input
+                      ref={renameInputRef}
+                      className="flex-1 min-w-0 text-xs border border-blue-400 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                      value={renameInputValue}
+                      onChange={(e) => setRenameInputValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleConfirmRename();
+                        if (e.key === 'Escape') handleCancelRename();
+                      }}
+                      data-testid={`thread-rename-input-${thread.id}`}
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      className={`flex-1 min-w-0 text-left truncate font-medium ${isActive ? 'text-blue-700' : 'text-slate-700'}`}
+                      onClick={() => handleSelectThread(thread.id)}
+                      title={thread.title}
+                    >
                       {thread.title || 'Thread'}
-                    </span>
-                    <span className="text-slate-400 shrink-0">
-                      {exchangeCount > 0 ? `${exchangeCount} exchange${exchangeCount === 1 ? '' : 's'}` : 'empty'}
-                    </span>
-                  </div>
-                </button>
+                    </button>
+                  )}
+
+                  {/* Right side: count + actions */}
+                  {isDeleting ? (
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span className="text-red-600 font-medium">Delete?</span>
+                      <button
+                        type="button"
+                        className="text-red-600 hover:text-red-700 font-semibold"
+                        onClick={() => handleConfirmDeleteThread(thread.id)}
+                        data-testid={`thread-confirm-delete-${thread.id}`}
+                      >
+                        Yes
+                      </button>
+                      <button
+                        type="button"
+                        className="text-slate-400 hover:text-slate-600"
+                        onClick={handleCancelDelete}
+                        data-testid={`thread-cancel-delete-${thread.id}`}
+                      >
+                        No
+                      </button>
+                    </div>
+                  ) : isRenaming ? (
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        className="text-blue-600 hover:text-blue-700 font-semibold"
+                        onClick={handleConfirmRename}
+                        data-testid={`thread-confirm-rename-${thread.id}`}
+                      >
+                        Save
+                      </button>
+                      <button
+                        type="button"
+                        className="text-slate-400 hover:text-slate-600"
+                        onClick={handleCancelRename}
+                        data-testid={`thread-cancel-rename-${thread.id}`}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-slate-400">
+                        {exchangeCount > 0 ? `${exchangeCount} ex.` : 'empty'}
+                      </span>
+                      <button
+                        type="button"
+                        className="text-slate-300 hover:text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={() => handleStartRename(thread.id, thread.title)}
+                        title="Rename"
+                        data-testid={`thread-rename-btn-${thread.id}`}
+                      >
+                        <Pencil className="w-3 h-3" />
+                      </button>
+                      <button
+                        type="button"
+                        className="text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={() => handleDeleteThread(thread.id)}
+                        title="Delete thread"
+                        data-testid={`thread-delete-btn-${thread.id}`}
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                  )}
+                </div>
               );
             })}
           </div>

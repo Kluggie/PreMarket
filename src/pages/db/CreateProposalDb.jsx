@@ -95,7 +95,7 @@ export default function CreateProposalDb() {
             )}
 
             <div className="flex items-center justify-end gap-3 pt-2">
-              <Button variant="outline" onClick={() => navigate(createPageUrl('Opportunities'))}>>
+              <Button variant="outline" onClick={() => navigate(createPageUrl('Opportunities'))}>
                 Cancel
               </Button>
               <Button
