@@ -19,6 +19,7 @@ import {
   COACH_PROMPT_VERSION,
   generateDocumentComparisonCoach,
 } from '../../../_lib/vertex-coach.js';
+import { extractSafeMediatorContext } from '../../../_lib/coach-mediator-context.js';
 import { ensureComparisonFound } from '../_helpers.js';
 import { assertDocumentComparisonWithinLimits } from '../_limits.js';
 
@@ -278,6 +279,15 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     const selectionTarget = parseSelectionTarget(body.selectionTarget || body.selection_target);
     const selectionText = sanitizeEditorText(body.selectionText || body.selection_text || '').slice(0, 20000);
     const promptText = asText(body.promptText || body.prompt_text || '').slice(0, MAX_CUSTOM_PROMPT_CHARS);
+    const rawThreadHistory = Array.isArray(body.threadHistory) ? body.threadHistory : [];
+    const threadHistory = rawThreadHistory
+      .filter((e: any) => e && (e.role === 'user' || e.role === 'assistant') && typeof e.content === 'string')
+      .slice(-6)
+      .map((e: any) => ({
+        role: e.role as 'user' | 'assistant',
+        content: String(e.content || '').slice(0, 2000),
+        ...(e.promptType ? { promptType: String(e.promptType) } : {}),
+      }));
     validateIntentMode({
       intent,
       mode,
@@ -340,6 +350,14 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       docBText,
     });
 
+    // ── Extract safe mediator context from the comparison's latest evaluation ──
+    // Uses only the public/shared evaluation output. Never reads the other
+    // party's raw confidential text.
+    const mediatorContext = extractSafeMediatorContext({
+      publicReport: existing.publicReport,
+      evaluationResult: existing.evaluationResult,
+    });
+
     const modelForHash = String(process.env.VERTEX_COACH_MODEL || process.env.VERTEX_MODEL || '').trim();
     const cacheHash = buildCoachCacheHash({
       docAText,
@@ -352,6 +370,8 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       promptText: promptText || undefined,
       companyName: companyContext.companyName,
       companyWebsite: companyContext.companyWebsite,
+      threadHistory: threadHistory.length > 0 ? threadHistory : undefined,
+      mediatorContext,
     });
     const cacheHashPrefix = cacheHash.slice(0, 12);
 
@@ -399,6 +419,8 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       companyName: companyContext.companyName,
       companyWebsite: companyContext.companyWebsite,
       otherPartyCanaryTokens: resolveOtherPartyCanaryTokens(existing, existingInputs),
+      threadHistory: threadHistory.length > 0 ? threadHistory : undefined,
+      mediatorContext,
     });
     const relevanceGuarded = applyCoachRelevanceGuard({
       coachResult: generated.result,

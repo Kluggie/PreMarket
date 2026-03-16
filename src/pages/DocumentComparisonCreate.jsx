@@ -34,6 +34,16 @@ import {
 } from '@/pages/document-comparison/hydration';
 import { buildComparisonDraftSavePayload } from '@/pages/document-comparison/draftPayload';
 import {
+  appendAssistantEntry,
+  appendUserEntry,
+  buildThreadHistoryForRequest,
+  createThread,
+  deserializeThreadsFromMetadata,
+  getActiveThread,
+  getLastAssistantEntry,
+  serializeThreadsForPersistence,
+} from '@/pages/document-comparison/suggestionThreads';
+import {
   buildComparisonQueryPayload,
   buildOptimisticEvaluationHistoryEntry,
   defaultOwnerPermissions,
@@ -65,6 +75,9 @@ import {
   Copy,
   FileText,
   Loader2,
+  MessageSquarePlus,
+  MessagesSquare,
+  Plus,
   Save,
   Sparkles,
   Upload,
@@ -720,6 +733,13 @@ export default function DocumentComparisonCreate() {
   const [isFinishingComparison, setIsFinishingComparison] = useState(false);
   const [isRunningEvaluation, setIsRunningEvaluation] = useState(false);
   const [finishStage, setFinishStage] = useState('idle');
+
+  // ── Suggestion thread state ─────────────────────────────────────────────
+  const [suggestionThreads, setSuggestionThreads] = useState([]);
+  const [activeSuggestionThreadId, setActiveSuggestionThreadId] = useState(null);
+  const [showThreadHistory, setShowThreadHistory] = useState(false);
+  const suggestionThreadsRef = useRef([]);
+  const activeSuggestionThreadIdRef = useRef(null);
   const [ignoredRouteDraftId, setIgnoredRouteDraftId] = useState('');
 
   const companyContextNameInputRef = useRef(null);
@@ -1035,6 +1055,23 @@ export default function DocumentComparisonCreate() {
         }
         return hydratedDocs[0]?.id || null;
       });
+
+      // Restore suggestion threads from persisted metadata
+      const restoredThreads = deserializeThreadsFromMetadata(metadataRef.current);
+      if (restoredThreads.threads.length > 0) {
+        setSuggestionThreads((current) => (current.length > 0 ? current : restoredThreads.threads));
+        setActiveSuggestionThreadId((current) => current || restoredThreads.activeThreadId);
+        // Restore the last response from the active thread so it shows immediately
+        const activeThread = restoredThreads.threads.find((t) => t.id === restoredThreads.activeThreadId);
+        const lastAssistant = activeThread ? getLastAssistantEntry(activeThread) : null;
+        if (lastAssistant && lastAssistant.coachResult && !coachResult) {
+          setCoachResult(lastAssistant.coachResult);
+          setCoachResultHash(lastAssistant.coachResultHash || '');
+          setCoachCached(lastAssistant.coachCached || false);
+          setCoachWithheldCount(lastAssistant.withheldCount || 0);
+          setCoachRequestMeta(lastAssistant.coachRequestMeta || null);
+        }
+      }
     }
 
     const serverResumeStepRaw = Number(comparison.resume_step || comparison.draft_step || 1);
@@ -1213,6 +1250,11 @@ export default function DocumentComparisonCreate() {
     setIsFinishingComparison(false);
     setIsRunningEvaluation(false);
     setFinishStage('idle');
+    // Note: suggestion threads are intentionally NOT reset here.
+    // They are restored from metadata during draft hydration and
+    // persist as long as the component is mounted.  The comparisonId
+    // changes on first draft save ('' → new id) and we must not lose
+    // in-flight thread state in that case.
   }, [comparisonId]);
 
   const currentStateHash = useMemo(
@@ -1252,6 +1294,16 @@ export default function DocumentComparisonCreate() {
       const savedStep = clampStep(stepToSave || step || 1);
       const activeComparisonId = asText(comparisonIdRef.current || comparisonId);
       const snapshot = latestDraftStateRef.current || {};
+      // Persist suggestion threads into metadata before building save payload
+      const threadPersistence = serializeThreadsForPersistence(
+        suggestionThreadsRef.current,
+        activeSuggestionThreadIdRef.current,
+      );
+      metadataRef.current = {
+        ...(metadataRef.current || {}),
+        suggestionThreads: threadPersistence.suggestionThreads,
+        activeSuggestionThreadId: threadPersistence.activeSuggestionThreadId,
+      };
       const payload = buildComparisonDraftSavePayload({
         snapshot,
         fallback: {
@@ -1542,6 +1594,16 @@ export default function DocumentComparisonCreate() {
       return null;
     }
     const snapshot = latestDraftStateRef.current || {};
+    // Persist suggestion threads into metadata before building save payload
+    const threadPersistence2 = serializeThreadsForPersistence(
+      suggestionThreadsRef.current,
+      activeSuggestionThreadIdRef.current,
+    );
+    metadataRef.current = {
+      ...(metadataRef.current || {}),
+      suggestionThreads: threadPersistence2.suggestionThreads,
+      activeSuggestionThreadId: threadPersistence2.activeSuggestionThreadId,
+    };
     const payload = buildComparisonDraftSavePayload({
       snapshot,
       fallback: snapshot,
@@ -1753,6 +1815,11 @@ export default function DocumentComparisonCreate() {
   useEffect(() => {
     comparisonIdRef.current = comparisonId;
   }, [comparisonId]);
+
+  useEffect(() => {
+    suggestionThreadsRef.current = suggestionThreads;
+    activeSuggestionThreadIdRef.current = activeSuggestionThreadId;
+  }, [suggestionThreads, activeSuggestionThreadId]);
 
   useEffect(() => {
     linkedProposalIdRef.current = linkedProposalId;
@@ -2615,9 +2682,25 @@ export default function DocumentComparisonCreate() {
     setCoachError('');
     setIsCoachResponseCopied(false);
 
+    const normalizedAction = String(action || intent || '').trim().toLowerCase();
+    const isCustomPromptRequest = normalizedAction === 'custom_prompt';
+
+    // ── Thread: append user entry and build history ─────────────────────
+    const userContent = isCustomPromptRequest
+      ? String(promptText || '').trim()
+      : (COACH_INTENT_LABELS[intent] || action || intent || 'prompt');
+    const appended = appendUserEntry(
+      suggestionThreadsRef.current,
+      activeSuggestionThreadIdRef.current,
+      { content: userContent, promptType: intent || action, intent },
+    );
+    setSuggestionThreads(appended.threads);
+    setActiveSuggestionThreadId(appended.activeThreadId);
+    suggestionThreadsRef.current = appended.threads;
+    activeSuggestionThreadIdRef.current = appended.activeThreadId;
+    const threadHistory = buildThreadHistoryForRequest(appended.threads, appended.activeThreadId);
+
     try {
-      const normalizedAction = String(action || intent || '').trim().toLowerCase();
-      const isCustomPromptRequest = normalizedAction === 'custom_prompt';
       const payload = {
         action: action || undefined,
         mode,
@@ -2625,6 +2708,7 @@ export default function DocumentComparisonCreate() {
         promptText: isCustomPromptRequest ? String(promptText || '').trim() : undefined,
         selectionText: selectionText || undefined,
         selectionTarget: selectionTarget || undefined,
+        threadHistory: threadHistory.length > 0 ? threadHistory : undefined,
       };
       if (!isCustomPromptRequest) {
         const sanitizedDocAHtml = sanitizeEditorHtml(docAHtml || textToHtml(docAText));
@@ -2643,7 +2727,7 @@ export default function DocumentComparisonCreate() {
       setCoachCached(Boolean(response?.cached));
       setCoachWithheldCount(Number(response?.withheldCount || 0));
       setCoachNotConfigured(false);
-      setCoachRequestMeta({
+      const requestMeta = {
         action: action || '',
         mode,
         intent,
@@ -2659,8 +2743,29 @@ export default function DocumentComparisonCreate() {
                 to: Number(selectionRange.to),
               }
             : null,
-      });
+      };
+      setCoachRequestMeta(requestMeta);
       setExpandedSuggestionIds([]);
+
+      // ── Thread: append assistant entry ───────────────────────────────
+      const assistantContent = asText(
+        coach?.custom_feedback || coach?.summary?.overall || '',
+      );
+      const assistantAppended = appendAssistantEntry(
+        suggestionThreadsRef.current,
+        activeSuggestionThreadIdRef.current,
+        {
+          content: assistantContent,
+          coachResult: coach,
+          coachResultHash: String(response?.cacheHash || ''),
+          coachCached: Boolean(response?.cached),
+          coachRequestMeta: requestMeta,
+          withheldCount: Number(response?.withheldCount || 0),
+        },
+      );
+      setSuggestionThreads(assistantAppended.threads);
+      suggestionThreadsRef.current = assistantAppended.threads;
+
       if (!silent) {
         toast.success(response?.cached ? 'Loaded cached suggestions' : 'Suggestions ready');
       }
@@ -2929,6 +3034,55 @@ export default function DocumentComparisonCreate() {
       runCustomPromptCoach();
     }
   };
+
+  // ── Suggestion thread management ──────────────────────────────────────
+  const handleStartNewThread = useCallback(() => {
+    const result = createThread(suggestionThreadsRef.current);
+    setSuggestionThreads(result.threads);
+    setActiveSuggestionThreadId(result.activeThreadId);
+    suggestionThreadsRef.current = result.threads;
+    activeSuggestionThreadIdRef.current = result.activeThreadId;
+    // Clear current coach results so the UI resets for the new thread
+    setCoachResult(null);
+    setCoachResultHash('');
+    setCoachCached(false);
+    setCoachWithheldCount(0);
+    setCoachRequestMeta(null);
+    setExpandedSuggestionIds([]);
+    setCoachError('');
+    setIsCoachResponseCopied(false);
+    toast.success('Started new thread');
+  }, []);
+
+  const handleSelectThread = useCallback((threadId) => {
+    if (!threadId || threadId === activeSuggestionThreadIdRef.current) return;
+    const thread = suggestionThreadsRef.current.find((t) => t.id === threadId);
+    if (!thread) return;
+    setActiveSuggestionThreadId(threadId);
+    activeSuggestionThreadIdRef.current = threadId;
+    // Restore the last assistant response from the selected thread
+    const lastAssistant = getLastAssistantEntry(thread);
+    if (lastAssistant) {
+      setCoachResult(lastAssistant.coachResult || null);
+      setCoachResultHash(lastAssistant.coachResultHash || '');
+      setCoachCached(lastAssistant.coachCached || false);
+      setCoachWithheldCount(lastAssistant.withheldCount || 0);
+      setCoachRequestMeta(lastAssistant.coachRequestMeta || null);
+    } else {
+      setCoachResult(null);
+      setCoachResultHash('');
+      setCoachCached(false);
+      setCoachWithheldCount(0);
+      setCoachRequestMeta(null);
+    }
+    setExpandedSuggestionIds([]);
+    setCoachError('');
+    setIsCoachResponseCopied(false);
+    setShowThreadHistory(false);
+  }, []);
+
+  const activeThread = getActiveThread(suggestionThreads, activeSuggestionThreadId);
+  const activeThreadEntryCount = activeThread?.entries?.length || 0;
 
   const copyCoachResponse = async () => {
     if (!coachResponseText) {
@@ -3290,6 +3444,81 @@ export default function DocumentComparisonCreate() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* ── Thread bar ──────────────────────────────────────────────── */}
+        <div className="flex items-center justify-between gap-2 rounded-md border border-slate-200 bg-slate-50/60 px-3 py-2" data-testid="suggestion-thread-bar">
+          <div className="flex items-center gap-2 text-xs text-slate-600 min-w-0">
+            <MessagesSquare className="w-3.5 h-3.5 shrink-0 text-slate-500" />
+            {activeThread ? (
+              <span className="truncate" title={activeThread.title}>
+                {activeThread.title}
+                {activeThreadEntryCount > 0 ? (
+                  <span className="ml-1 text-slate-400">
+                    ({Math.ceil(activeThreadEntryCount / 2)} {Math.ceil(activeThreadEntryCount / 2) === 1 ? 'exchange' : 'exchanges'})
+                  </span>
+                ) : null}
+              </span>
+            ) : (
+              <span className="text-slate-400">No active thread</span>
+            )}
+          </div>
+          <div className="flex items-center gap-1 shrink-0">
+            {suggestionThreads.length > 1 ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs px-2"
+                onClick={() => setShowThreadHistory((v) => !v)}
+                data-testid="toggle-thread-history"
+              >
+                {showThreadHistory ? 'Hide history' : `${suggestionThreads.length} threads`}
+              </Button>
+            ) : null}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs px-2"
+              disabled={coachLoading}
+              onClick={handleStartNewThread}
+              data-testid="start-new-thread"
+            >
+              <Plus className="w-3.5 h-3.5 mr-1" />
+              New thread
+            </Button>
+          </div>
+        </div>
+
+        {/* ── Thread history panel ────────────────────────────────────── */}
+        {showThreadHistory && suggestionThreads.length > 0 ? (
+          <div className="rounded-md border border-slate-200 bg-white divide-y divide-slate-100" data-testid="thread-history-panel">
+            {suggestionThreads.map((thread) => {
+              const isActive = thread.id === activeSuggestionThreadId;
+              const entryCount = thread.entries?.length || 0;
+              const exchangeCount = Math.ceil(entryCount / 2);
+              return (
+                <button
+                  key={thread.id}
+                  type="button"
+                  className={`w-full text-left px-3 py-2 text-xs transition-colors hover:bg-slate-50 ${
+                    isActive ? 'bg-blue-50/60 border-l-2 border-blue-500' : ''
+                  }`}
+                  onClick={() => handleSelectThread(thread.id)}
+                  data-testid={`thread-history-item-${thread.id}`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className={`truncate font-medium ${isActive ? 'text-blue-700' : 'text-slate-700'}`}>
+                      {thread.title || 'Thread'}
+                    </span>
+                    <span className="text-slate-400 shrink-0">
+                      {exchangeCount > 0 ? `${exchangeCount} exchange${exchangeCount === 1 ? '' : 's'}` : 'empty'}
+                    </span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="h-full rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
             <div className="space-y-3">
@@ -3342,6 +3571,18 @@ export default function DocumentComparisonCreate() {
                     </button>
                   </div>
                 ) : null}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="w-full mt-1"
+                  disabled={coachLoading || coachNotConfigured}
+                  onClick={handleCompanyBriefAction}
+                  data-testid="coach-company-brief-action"
+                >
+                  {coachLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
+                  Generate Company Brief
+                </Button>
               </div>
               <div className="flex flex-wrap gap-2">
                 <p className="w-full text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">Suggested Prompts</p>
@@ -3362,17 +3603,6 @@ export default function DocumentComparisonCreate() {
                     {option.label}
                   </Button>
                 ))}
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={coachLoading || coachNotConfigured}
-                  onClick={handleCompanyBriefAction}
-                  data-testid="coach-company-brief-action"
-                >
-                  {coachLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
-                  Company Brief
-                </Button>
               </div>
             </div>
           </div>

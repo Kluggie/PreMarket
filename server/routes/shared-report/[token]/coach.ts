@@ -19,6 +19,7 @@ import {
   COACH_PROMPT_VERSION,
   generateDocumentComparisonCoach,
 } from '../../../_lib/vertex-coach.js';
+import { extractSafeMediatorContext } from '../../../_lib/coach-mediator-context.js';
 import { assertDocumentComparisonWithinLimits } from '../../document-comparisons/_limits.js';
 import {
   SHARED_REPORT_ROUTE,
@@ -276,6 +277,37 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     const companyWebsite = asText(body.company_website || body.companyWebsite)
       || asText(resolved.comparison?.companyWebsite);
 
+    // ── Extract safe mediator context from shared-report evaluation history ──
+    // Query the latest successful evaluation runs for this shared link.
+    // Uses only the public/shared evaluation output (resultPublicReport,
+    // resultJson). Never reads the other party's raw confidential text.
+    const MAX_MEDIATOR_RUNS = 4;
+    const evaluationRuns = await resolved.db
+      .select({
+        resultPublicReport: schema.sharedReportEvaluationRuns.resultPublicReport,
+        resultJson: schema.sharedReportEvaluationRuns.resultJson,
+        createdAt: schema.sharedReportEvaluationRuns.createdAt,
+      })
+      .from(schema.sharedReportEvaluationRuns)
+      .where(
+        and(
+          eq(schema.sharedReportEvaluationRuns.sharedLinkId, resolved.link.id),
+          eq(schema.sharedReportEvaluationRuns.status, 'success'),
+        ),
+      )
+      .orderBy(desc(schema.sharedReportEvaluationRuns.createdAt))
+      .limit(MAX_MEDIATOR_RUNS);
+
+    const latestRun = evaluationRuns[0] || null;
+    const priorRuns = evaluationRuns.slice(1);
+    const mediatorContext = extractSafeMediatorContext({
+      publicReport: latestRun?.resultPublicReport,
+      evaluationResult: latestRun?.resultJson
+        ? (latestRun.resultJson as any)?.evaluation_result
+        : undefined,
+      priorRuns,
+    });
+
     const modelForHash = String(process.env.VERTEX_COACH_MODEL || process.env.VERTEX_MODEL || '').trim();
     const cacheHash = buildCoachCacheHash({
       docAText,
@@ -288,6 +320,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       promptText: promptText || undefined,
       companyName: companyName || undefined,
       companyWebsite: companyWebsite || undefined,
+      mediatorContext,
     });
 
     const [cached] = await resolved.db
@@ -327,6 +360,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       promptText: promptText || undefined,
       companyName: companyName || undefined,
       companyWebsite: companyWebsite || undefined,
+      mediatorContext,
     });
     const relevanceGuarded = applyCoachRelevanceGuard({
       coachResult: generated.result,
