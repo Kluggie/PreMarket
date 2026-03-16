@@ -211,6 +211,27 @@
       "when": 1778947200000,
       "tag": "0029_private_mode",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1779033600000,
+      "tag": "0030_starter_usage_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1779037200000,
+      "tag": "0031_starter_usage_events_user_idx",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1779040800000,
+      "tag": "0032_starter_usage_events_type_idx",
+      "breakpoints": true
     }
   ]
 }

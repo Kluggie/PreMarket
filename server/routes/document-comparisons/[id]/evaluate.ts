@@ -30,6 +30,7 @@ import {
   mapComparisonRow,
 } from '../_helpers.js';
 import { assertDocumentComparisonWithinLimits } from '../_limits.js';
+import { assertStarterAiEvaluationAllowed } from '../../../_lib/starter-entitlements.js';
 
 const CONFIDENTIAL_LABEL = 'Confidential Information';
 const SHARED_LABEL = 'Shared Information';
@@ -1232,6 +1233,12 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     const existingRow = firstRow<DocumentComparisonRow>(existingRows);
     ensureComparisonFound(existingRow);
     const existing = existingRow as DocumentComparisonRow;
+
+    await assertStarterAiEvaluationAllowed(db, {
+      userId: existing.userId,
+      userEmail: user.email || null,
+    });
+
     let linkedProposal = null;
     if (existing.proposalId) {
       const proposalRows = await db

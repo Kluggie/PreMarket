@@ -20,6 +20,30 @@ function authCookie(sub, email) {
   return makeSessionCookie({ sub, email });
 }
 
+async function seedProfessionalPlan(userId, email) {
+  const db = getDb();
+  await db
+    .insert(schema.users)
+    .values({ id: userId, email })
+    .onConflictDoNothing({ target: schema.users.id });
+  await db
+    .insert(schema.billingReferences)
+    .values({
+      userId,
+      plan: 'professional',
+      status: 'active',
+      updatedAt: new Date(),
+    })
+    .onConflictDoUpdate({
+      target: schema.billingReferences.userId,
+      set: {
+        plan: 'professional',
+        status: 'active',
+        updatedAt: new Date(),
+      },
+    });
+}
+
 async function callHandler(handler, reqOptions, ...args) {
   const req = createMockReq(reqOptions);
   const res = createMockRes();
@@ -173,6 +197,8 @@ if (!hasDatabaseUrl()) {
 
     const ownerCookie = authCookie('outcome_owner_rounds', 'owner-rounds@example.com');
     const recipientCookie = authCookie('outcome_recipient_rounds', 'recipient-rounds@example.com');
+    await seedProfessionalPlan('outcome_owner_rounds', 'owner-rounds@example.com');
+    await seedProfessionalPlan('outcome_recipient_rounds', 'recipient-rounds@example.com');
     await touchUser(recipientCookie);
 
     const roundOne = await createProposal(ownerCookie, {

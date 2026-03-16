@@ -19,6 +19,24 @@ function getCookie(subject, email) {
   return makeSessionCookie({ sub: subject, email });
 }
 
+async function seedProfessionalPlan(userId, email) {
+  const db = getDb();
+  await db.execute(sql`
+    insert into users (id, email)
+    values (${userId}, ${email})
+    on conflict (id) do nothing
+  `);
+  await db.execute(sql`
+    insert into billing_references (user_id, plan, status, updated_at)
+    values (${userId}, 'professional', 'active', now())
+    on conflict (user_id)
+    do update set
+      plan = excluded.plan,
+      status = excluded.status,
+      updated_at = excluded.updated_at
+  `);
+}
+
 async function createProposal(cookie, body) {
   const normalizedStatus = String(body?.status || '').trim().toLowerCase();
   const shouldDefaultSentAt =
@@ -49,6 +67,8 @@ if (!hasDatabaseUrl()) {
 
     const ownerCookie = getCookie('p0_dash_owner', 'owner@example.com');
     const otherCookie = getCookie('p0_dash_other', 'other@example.com');
+    await seedProfessionalPlan('p0_dash_owner', 'owner@example.com');
+    await seedProfessionalPlan('p0_dash_other', 'other@example.com');
 
     await createProposal(ownerCookie, {
       title: 'Owner Draft',
@@ -139,6 +159,8 @@ if (!hasDatabaseUrl()) {
 
     const ownerCookie = getCookie('p0_list_owner', 'owner@example.com');
     const otherCookie = getCookie('p0_list_other', 'other@example.com');
+    await seedProfessionalPlan('p0_list_owner', 'owner@example.com');
+    await seedProfessionalPlan('p0_list_other', 'other@example.com');
 
     await createProposal(ownerCookie, {
       title: 'Draft Alpha',

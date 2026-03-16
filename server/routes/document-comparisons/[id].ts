@@ -26,6 +26,10 @@ import {
   toJsonObject,
 } from './_helpers.js';
 import { assertDocumentComparisonWithinLimits } from './_limits.js';
+import {
+  assertStarterPerOpportunityUploadLimit,
+  sumComparisonInputUploadBytes,
+} from '../../_lib/starter-entitlements.js';
 
 function toOptionalJsonObject(value: unknown) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -544,6 +548,14 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       docAText: nextDocAText,
       docBText: nextDocBText,
     });
+
+    if (existing.proposalId) {
+      const uploadBytes = sumComparisonInputUploadBytes({
+        docAFiles,
+        docBFiles,
+      });
+      await assertStarterPerOpportunityUploadLimit(db, existing.userId, uploadBytes);
+    }
 
     const updateValues = {
       title: nextTitle || existing.title,

@@ -14,6 +14,24 @@ function authCookie(sub, email) {
   return makeSessionCookie({ sub, email });
 }
 
+async function seedProfessionalPlan(userId, email) {
+  const db = getDb();
+  await db.execute(sql`
+    insert into users (id, email)
+    values (${userId}, ${email})
+    on conflict (id) do nothing
+  `);
+  await db.execute(sql`
+    insert into billing_references (user_id, plan, status, updated_at)
+    values (${userId}, 'professional', 'active', now())
+    on conflict (user_id)
+    do update set
+      plan = excluded.plan,
+      status = excluded.status,
+      updated_at = excluded.updated_at
+  `);
+}
+
 async function createProposal(cookie, body) {
   const req = createMockReq({
     method: 'POST',
@@ -122,6 +140,8 @@ if (!hasDatabaseUrl()) {
 
     const ownerCookie = authCookie('tab_owner', 'owner@example.com');
     const otherCookie = authCookie('tab_other', 'other@example.com');
+    await seedProfessionalPlan('tab_owner', 'owner@example.com');
+    await seedProfessionalPlan('tab_other', 'other@example.com');
 
     await createProposal(ownerCookie, {
       title: 'Ready Draft',
@@ -176,6 +196,7 @@ if (!hasDatabaseUrl()) {
     await resetTables();
 
     const ownerCookie = authCookie('send_owner', 'owner@example.com');
+    await seedProfessionalPlan('send_owner', 'owner@example.com');
 
     const missingRecipient = await createProposal(ownerCookie, {
       title: 'Missing Recipient',

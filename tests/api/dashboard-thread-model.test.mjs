@@ -4,6 +4,7 @@ import proposalsHandler from '../../server/routes/proposals/index.ts';
 import proposalArchiveHandler from '../../server/routes/proposals/[id]/archive.ts';
 import dashboardSummaryHandler from '../../server/routes/dashboard/summary.ts';
 import dashboardActivityHandler from '../../server/routes/dashboard/activity.ts';
+import { getDb, schema } from '../../server/_lib/db/client.js';
 import { ensureTestEnv, makeSessionCookie } from '../helpers/auth.mjs';
 import { ensureMigrated, hasDatabaseUrl, resetTables } from '../helpers/db.mjs';
 import { createMockReq, createMockRes } from '../helpers/httpMock.mjs';
@@ -12,6 +13,30 @@ ensureTestEnv();
 
 function authCookie(sub, email) {
   return makeSessionCookie({ sub, email });
+}
+
+async function seedProfessionalPlan(userId, email) {
+  const db = getDb();
+  await db
+    .insert(schema.users)
+    .values({ id: userId, email })
+    .onConflictDoNothing({ target: schema.users.id });
+  await db
+    .insert(schema.billingReferences)
+    .values({
+      userId,
+      plan: 'professional',
+      status: 'active',
+      updatedAt: new Date(),
+    })
+    .onConflictDoUpdate({
+      target: schema.billingReferences.userId,
+      set: {
+        plan: 'professional',
+        status: 'active',
+        updatedAt: new Date(),
+      },
+    });
 }
 
 async function callHandler(handler, reqOptions, ...args) {
@@ -107,6 +132,8 @@ if (!hasDatabaseUrl()) {
 
     const ownerCookie = authCookie('dashboard_thread_owner', 'dashboard-thread-owner@example.com');
     const otherCookie = authCookie('dashboard_thread_other', 'dashboard-thread-other@example.com');
+    await seedProfessionalPlan('dashboard_thread_owner', 'dashboard-thread-owner@example.com');
+    await seedProfessionalPlan('dashboard_thread_other', 'dashboard-thread-other@example.com');
 
     await createProposal(ownerCookie, {
       title: 'Owner Draft',

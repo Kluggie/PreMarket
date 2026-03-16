@@ -35,6 +35,30 @@ async function callHandler(handler, reqOptions, ...args) {
   return res;
 }
 
+async function seedProfessionalPlan(userId, email) {
+  const db = getDb();
+  await db
+    .insert(schema.users)
+    .values({ id: userId, email })
+    .onConflictDoNothing({ target: schema.users.id });
+  await db
+    .insert(schema.billingReferences)
+    .values({
+      userId,
+      plan: 'professional',
+      status: 'active',
+      updatedAt: new Date(),
+    })
+    .onConflictDoUpdate({
+      target: schema.billingReferences.userId,
+      set: {
+        plan: 'professional',
+        status: 'active',
+        updatedAt: new Date(),
+      },
+    });
+}
+
 async function createProposal(cookie, body) {
   const res = await callHandler(proposalsHandler, {
     method: 'POST',
@@ -768,6 +792,14 @@ test(
       email: `workflow-status-filters-recipient-${runId}@example.com`,
     });
     const recipientEmail = `workflow-status-filters-recipient-${runId}@example.com`;
+    await seedProfessionalPlan(
+      `workflow-status-filters-owner-${runId}`,
+      `workflow-status-filters-owner-${runId}@example.com`,
+    );
+    await seedProfessionalPlan(
+      `workflow-status-filters-recipient-${runId}`,
+      `workflow-status-filters-recipient-${runId}@example.com`,
+    );
 
     const waitingThread = await createProposal(ownerCookie, {
       title: `Waiting Thread ${Date.now()}`,
@@ -1018,6 +1050,10 @@ test(
       sub: `workflow-counts-owner-${runId}`,
       email: `workflow-counts-owner-${runId}@example.com`,
     });
+    await seedProfessionalPlan(
+      `workflow-counts-owner-${runId}`,
+      `workflow-counts-owner-${runId}@example.com`,
+    );
 
     const draft = await createProposal(cookie, {
       title: `Count Draft ${Date.now()}`,

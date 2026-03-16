@@ -211,4 +211,12 @@ export async function resetTables() {
   if (oid) {
     await db.execute(sql`truncate table user_documents restart identity cascade`);
   }
+
+  const starterUsageExists = await db.execute(
+    sql`select to_regclass('public.starter_usage_events') as oid`,
+  );
+  const starterUsageOid = starterUsageExists?.rows?.[0]?.oid ?? starterUsageExists?.[0]?.oid ?? null;
+  if (starterUsageOid) {
+    await db.execute(sql`truncate table starter_usage_events restart identity cascade`);
+  }
 }

@@ -24,6 +24,11 @@ import {
   toJsonObject,
 } from './_helpers.js';
 import { assertDocumentComparisonWithinLimits } from './_limits.js';
+import {
+  assertStarterOpportunityCreateAllowed,
+  assertStarterPerOpportunityUploadLimit,
+  sumComparisonInputUploadBytes,
+} from '../../_lib/starter-entitlements.js';
 
 function toOptionalJsonObject(value: unknown) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -176,6 +181,8 @@ export default async function handler(req: any, res: any) {
         throw new ApiError(404, 'proposal_not_found', 'Linked proposal not found');
       }
     } else if (createLinkedProposal) {
+      await assertStarterOpportunityCreateAllowed(db, auth.user.id);
+
       const [proposal] = await db
         .insert(schema.proposals)
         .values({
@@ -199,6 +206,14 @@ export default async function handler(req: any, res: any) {
         })
         .returning();
       linkedProposalId = proposal.id;
+    }
+
+    if (linkedProposalId) {
+      const uploadBytes = sumComparisonInputUploadBytes({
+        docAFiles,
+        docBFiles,
+      });
+      await assertStarterPerOpportunityUploadLimit(db, auth.user.id, uploadBytes);
     }
 
     const [created] = await db

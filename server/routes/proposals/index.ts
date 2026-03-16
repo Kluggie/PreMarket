@@ -29,6 +29,7 @@ import {
   isPlanEligibleForPrivateMode,
   shouldMaskPrivateSender,
 } from '../../_lib/private-mode.js';
+import { assertStarterOpportunityCreateAllowed } from '../../_lib/starter-entitlements.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 
 const DEFAULT_LIMIT = 25;
@@ -642,6 +643,8 @@ export default async function handler(req: any, res: any) {
     const evaluatedAt = parseDateOrNull(body.evaluatedAt || body.evaluated_at);
     const lastSharedAt = parseDateOrNull(body.lastSharedAt || body.last_shared_at);
     const isPrivateMode = Boolean(body.isPrivateMode || body.is_private_mode);
+
+    await assertStarterOpportunityCreateAllowed(db, auth.user.id);
 
     // Plan gating: only Early Access, Professional, and Enterprise may create private opportunities.
     if (isPrivateMode) {

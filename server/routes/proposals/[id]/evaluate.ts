@@ -13,6 +13,7 @@ import {
 } from '../../../_lib/vertex-evaluation.js';
 import { evaluateWithVertexV2 } from '../../../_lib/vertex-evaluation-v2.js';
 import { selectRelevantDocuments } from '../../../_lib/user-documents-context.js';
+import { assertStarterAiEvaluationAllowed } from '../../../_lib/starter-entitlements.js';
 import { buildMediationReviewSections } from '../../document-comparisons/_helpers.js';
 
 function getProposalId(req: any, proposalIdParam?: string) {
@@ -425,6 +426,11 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
     if (!proposal) {
       throw new ApiError(404, 'proposal_not_found', 'Proposal not found');
     }
+
+    await assertStarterAiEvaluationAllowed(db, {
+      userId: proposal.userId,
+      userEmail: proposal.partyAEmail || auth.user.email,
+    });
 
     const responses = await db
       .select()

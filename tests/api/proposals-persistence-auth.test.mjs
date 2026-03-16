@@ -55,6 +55,24 @@ async function callProposalsHandler(reqOptions) {
   return res;
 }
 
+async function seedProfessionalPlan(userId, email) {
+  const db = getDb();
+  await db.execute(sql`
+    insert into users (id, email)
+    values (${userId}, ${email})
+    on conflict (id) do nothing
+  `);
+  await db.execute(sql`
+    insert into billing_references (user_id, plan, status, updated_at)
+    values (${userId}, 'professional', 'active', now())
+    on conflict (user_id)
+    do update set
+      plan = excluded.plan,
+      status = excluded.status,
+      updated_at = excluded.updated_at
+  `);
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // SCENARIO A: Normal persistence across simulated cold-start/redeploy
 // ──────────────────────────────────────────────────────────────────────────────
@@ -65,6 +83,7 @@ if (!hasDatabaseUrl()) {
   test('A: proposals created before redeploy are returned correctly after redeploy (cold-start simulation)', async () => {
     await ensureMigrated();
     await resetTables();
+    await seedProfessionalPlan('user_persist_test', 'persist-test@example.com');
 
     const cookie = authCookie('user_persist_test', 'persist-test@example.com');
 

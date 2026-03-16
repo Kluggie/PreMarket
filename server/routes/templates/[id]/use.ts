@@ -7,6 +7,7 @@ import { readJsonBody } from '../../../_lib/http.js';
 import { newId } from '../../../_lib/ids.js';
 import { appendProposalHistory } from '../../../_lib/proposal-history.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
+import { assertStarterOpportunityCreateAllowed } from '../../../_lib/starter-entitlements.js';
 import { getDefaultTemplateById } from '../_defaults.js';
 
 function getTemplateId(req: any, templateIdParam?: string) {
@@ -142,6 +143,8 @@ export default async function handler(req: any, res: any, templateIdParam?: stri
 
     const title = String(body.title || `${effectiveTemplateName} Proposal`).trim();
     const partyBEmail = normalizeEmail(body.partyBEmail || body.party_b_email || '') || null;
+
+    await assertStarterOpportunityCreateAllowed(db, auth.user.id);
 
     const [createdProposal] = await db
       .insert(schema.proposals)

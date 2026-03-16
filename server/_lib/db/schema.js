@@ -977,6 +977,28 @@ export const proposalEvaluations = pgTable(
   }),
 );
 
+export const starterUsageEvents = pgTable(
+  'starter_usage_events',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    eventType: text('event_type').notNull(),
+    quantity: integer('quantity').notNull(),
+    scopeId: text('scope_id'),
+    metadata: jsonb('metadata').notNull().default(sql`'{}'::jsonb`),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    starterUsageEventsUserIdx: index('starter_usage_events_user_idx').on(table.userId, table.createdAt),
+    starterUsageEventsTypeIdx: index('starter_usage_events_type_idx').on(
+      table.eventType,
+      table.createdAt,
+    ),
+  }),
+);
+
 export const documentComparisons = pgTable(
   'document_comparisons',
   {

@@ -42,6 +42,7 @@ import {
   resolveSharedReportToken,
   toObject,
 } from '../_shared.js';
+import { assertStarterAiEvaluationAllowed } from '../../../_lib/starter-entitlements.js';
 
 const SHARED_REPORT_EVALUATE_ROUTE = `${SHARED_REPORT_ROUTE}/evaluate`;
 const MIN_SHARED_EVALUATION_TEXT_LENGTH = 40;
@@ -375,6 +376,11 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       enforceMaxUses: false,
     });
     requireRecipientAuthorization(resolved.link, auth.user);
+
+    await assertStarterAiEvaluationAllowed(resolved.db, {
+      userId: auth.user.id,
+      userEmail: auth.user.email || null,
+    });
 
     if (!resolved.link.canReevaluate) {
       throw new ApiError(403, 'reevaluation_not_allowed', 'Re-evaluation is disabled for this link');

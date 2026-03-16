@@ -22,6 +22,10 @@ import { readJsonBody } from '../../_lib/http.js';
 import { newId } from '../../_lib/ids.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 import {
+  assertStarterMonthlyUploadAllowed,
+  recordStarterUploadUsage,
+} from '../../_lib/starter-entitlements.js';
+import {
   buildStorageKey,
   getStorageProvider,
   storeFileToDisk,
@@ -314,6 +318,11 @@ export default async function handler(req: any, res: any) {
       );
     }
 
+    await assertStarterMonthlyUploadAllowed(db, {
+      userId,
+      incomingBytes: buffer.length,
+    });
+
     const docId = newId('doc');
     const resolvedMime = mimeType || 'application/octet-stream';
 
@@ -338,6 +347,15 @@ export default async function handler(req: any, res: any) {
       status: 'processing',
       createdAt: new Date(),
       updatedAt: new Date(),
+    });
+
+    await recordStarterUploadUsage(db, {
+      userId,
+      bytes: buffer.length,
+      scopeId: docId,
+      metadata: {
+        source: 'documents_upload',
+      },
     });
 
     // ---------------------------------------------------------------------------

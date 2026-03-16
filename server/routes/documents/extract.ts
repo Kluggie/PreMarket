@@ -1,8 +1,13 @@
 import { ok } from '../../_lib/api-response.js';
 import { requireUser } from '../../_lib/auth.js';
+import { getDb } from '../../_lib/db/client.js';
 import { ApiError } from '../../_lib/errors.js';
 import { readJsonBody } from '../../_lib/http.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
+import {
+  assertStarterMonthlyUploadAllowed,
+  recordStarterUploadUsage,
+} from '../../_lib/starter-entitlements.js';
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
 const ALLOWED_MIME_TYPES = new Set([
@@ -211,6 +216,7 @@ export default async function handler(req: any, res: any) {
     context.userId = auth.user.id;
 
     const body = await readJsonBody(req);
+    const db = getDb();
 
     const filename = asText(body.filename || body.file_name || body.name || 'document');
     const mimeType = asText(body.mimeType || body.mime_type || body.type || 'application/octet-stream');
@@ -226,8 +232,20 @@ export default async function handler(req: any, res: any) {
 
     const buffer = decodeBase64File(body.fileBase64 || body.file_base64 || body.base64);
 
+    await assertStarterMonthlyUploadAllowed(db, {
+      userId: auth.user.id,
+      incomingBytes: buffer.length,
+    });
+
     if (fileType === 'docx') {
       const extracted = await extractDocx(buffer);
+      await recordStarterUploadUsage(db, {
+        userId: auth.user.id,
+        bytes: buffer.length,
+        metadata: {
+          source: 'documents_extract',
+        },
+      });
       ok(res, 200, {
         ok: true,
         filename,
@@ -239,6 +257,13 @@ export default async function handler(req: any, res: any) {
     }
 
     const extracted = await extractPdf(buffer);
+    await recordStarterUploadUsage(db, {
+      userId: auth.user.id,
+      bytes: buffer.length,
+      metadata: {
+        source: 'documents_extract',
+      },
+    });
     ok(res, 200, {
       ok: true,
       filename,
