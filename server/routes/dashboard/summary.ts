@@ -8,6 +8,7 @@ import {
   getRecipientSharedProposalIds,
   listRecipientSharedReportLinks,
 } from '../../_lib/proposal-visibility.js';
+import { getStarterUsageSnapshot } from '../../_lib/starter-entitlements.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 
 export default async function handler(req: any, res: any) {
@@ -101,6 +102,11 @@ export default async function handler(req: any, res: any) {
       }
     });
 
+    const starterUsage = await getStarterUsageSnapshot(db, {
+      userId: auth.user.id,
+      userEmail: auth.user.email,
+    });
+
     ok(res, 200, {
       summary: {
         inboxCount,
@@ -113,6 +119,7 @@ export default async function handler(req: any, res: any) {
         lostCount,
         closedCount,
         totalCount: inboxCount + draftsCount + closedCount,
+        starterUsage,
       },
     });
   });

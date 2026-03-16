@@ -36,6 +36,7 @@ import { proposalsClient } from '@/api/proposalsClient';
 import { templatesClient } from '@/api/templatesClient';
 import { billingClient } from '@/api/billingClient';
 import { isPrivateModePlanEligible, PRIVATE_MODE_ELIGIBILITY_COPY } from '@/lib/privateModeEligibility';
+import { getStarterLimitErrorCopy } from '@/lib/starterLimitErrorCopy';
 import {
   TEMPLATE_ONBOARDING_CONFIG,
   getEnabledModules,
@@ -564,7 +565,7 @@ export default function CreateProposalWithDrafts() {
       setStep(2);
       setValidationErrors({});
     } catch (error) {
-      setSaveError(error?.message || 'Failed to save draft. Please try again.');
+      setSaveError(getStarterLimitErrorCopy(error, 'create') || error?.message || 'Failed to save draft. Please try again.');
     } finally {
       setIsSavingDraft(false);
     }
@@ -584,7 +585,7 @@ export default function CreateProposalWithDrafts() {
       await persistDraft({ status: 'draft', createIfMissing: true, draftStepOverride: nextStep });
       setStep(nextStep);
     } catch (error) {
-      setSaveError(error?.message || 'Failed to save draft. Please try again.');
+      setSaveError(getStarterLimitErrorCopy(error, 'create') || error?.message || 'Failed to save draft. Please try again.');
     } finally {
       setIsSavingDraft(false);
     }
@@ -599,7 +600,7 @@ export default function CreateProposalWithDrafts() {
       try {
         await persistDraft({ status: 'draft', createIfMissing: false, draftStepOverride: targetStep });
       } catch (error) {
-        setSaveError(error?.message || 'Failed to save draft. Please try again.');
+        setSaveError(getStarterLimitErrorCopy(error, 'create') || error?.message || 'Failed to save draft. Please try again.');
       }
     }
   };
@@ -624,7 +625,10 @@ export default function CreateProposalWithDrafts() {
       try {
         await proposalsClient.evaluate(proposalId, {});
       } catch (error) {
-        if (error?.status === 501 || error?.code === 'not_configured') {
+        const starterMessage = getStarterLimitErrorCopy(error, 'evaluation');
+        if (starterMessage) {
+          setEvaluationError(starterMessage);
+        } else if (error?.status === 501 || error?.code === 'not_configured') {
           setEvaluationError('AI evaluation is not configured for this environment yet.');
         } else {
           setEvaluationError(error?.message || 'Evaluation failed. Opportunity was still saved.');
@@ -634,7 +638,7 @@ export default function CreateProposalWithDrafts() {
       queryClient.invalidateQueries(['proposals']);
       navigate(createPageUrl(`OpportunityDetail?id=${encodeURIComponent(proposalId)}`));
     } catch (error) {
-      setEvaluationError(error?.message || 'Failed to submit opportunity.');
+      setEvaluationError(getStarterLimitErrorCopy(error, 'create') || error?.message || 'Failed to submit opportunity.');
     } finally {
       setIsSubmittingEvaluation(false);
     }

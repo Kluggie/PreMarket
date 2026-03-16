@@ -325,3 +325,133 @@ export async function recordStarterUploadUsage(
     createdAt: new Date(),
   });
 }
+
+export async function getStarterUsageSnapshot(
+  db: any,
+  params: {
+    userId: string;
+    userEmail?: string | null;
+    now?: Date;
+  },
+) {
+  const planTier = await getUserPlanTier(db, params.userId);
+  if (!isStarterPlan(planTier)) {
+    return null;
+  }
+
+  const { start, end } = getMonthWindow(params.now || new Date());
+
+  const [monthlyCreatedRow] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(schema.proposals)
+    .where(
+      and(
+        eq(schema.proposals.userId, params.userId),
+        gte(schema.proposals.createdAt, start),
+        lt(schema.proposals.createdAt, end),
+      ),
+    );
+  const opportunitiesCreatedThisMonth = toCount(monthlyCreatedRow?.count);
+
+  const activeCandidates = await db
+    .select({
+      id: schema.proposals.id,
+      status: schema.proposals.status,
+      partyAOutcome: schema.proposals.partyAOutcome,
+      partyBOutcome: schema.proposals.partyBOutcome,
+    })
+    .from(schema.proposals)
+    .where(
+      and(
+        eq(schema.proposals.userId, params.userId),
+        isNull(schema.proposals.deletedByPartyAAt),
+        isNull(schema.proposals.archivedByPartyAAt),
+        isNull(schema.proposals.archivedAt),
+      ),
+    );
+
+  const activeOpportunities = activeCandidates.filter((row: any) => {
+    const finalOutcome = getProposalFinalOutcomeStatus(row);
+    if (finalOutcome === 'won' || finalOutcome === 'lost') {
+      return false;
+    }
+    const normalizedStatus = String(row?.status || '').trim().toLowerCase();
+    return normalizedStatus !== 'won' && normalizedStatus !== 'lost';
+  }).length;
+
+  const [proposalEvalRow] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(schema.proposalEvaluations)
+    .where(
+      and(
+        eq(schema.proposalEvaluations.userId, params.userId),
+        eq(schema.proposalEvaluations.status, 'completed'),
+        gte(schema.proposalEvaluations.createdAt, start),
+        lt(schema.proposalEvaluations.createdAt, end),
+      ),
+    );
+
+  const normalizedEmail = String(params.userEmail || '').trim().toLowerCase();
+  const sharedRecipientPredicate = normalizedEmail
+    ? or(
+        eq(schema.sharedLinks.authorizedUserId, params.userId),
+        ilike(schema.sharedLinks.recipientEmail, normalizedEmail),
+      )
+    : eq(schema.sharedLinks.authorizedUserId, params.userId);
+
+  const [sharedEvalRow] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(schema.sharedReportEvaluationRuns)
+    .innerJoin(
+      schema.sharedLinks,
+      eq(schema.sharedReportEvaluationRuns.sharedLinkId, schema.sharedLinks.id),
+    )
+    .where(
+      and(
+        gte(schema.sharedReportEvaluationRuns.createdAt, start),
+        lt(schema.sharedReportEvaluationRuns.createdAt, end),
+        eq(schema.sharedReportEvaluationRuns.actorRole, 'recipient'),
+        eq(schema.sharedReportEvaluationRuns.status, 'success'),
+        sharedRecipientPredicate,
+      ),
+    );
+
+  const aiEvaluationsThisMonth = toCount(proposalEvalRow?.count) + toCount(sharedEvalRow?.count);
+
+  const [uploadUsageRow] = await db
+    .select({ totalBytes: sql<number>`coalesce(sum(${schema.starterUsageEvents.quantity}), 0)::bigint` })
+    .from(schema.starterUsageEvents)
+    .where(
+      and(
+        eq(schema.starterUsageEvents.userId, params.userId),
+        eq(schema.starterUsageEvents.eventType, UPLOAD_BYTES_EVENT),
+        gte(schema.starterUsageEvents.createdAt, start),
+        lt(schema.starterUsageEvents.createdAt, end),
+      ),
+    );
+
+  const uploadBytesThisMonth = toCount(uploadUsageRow?.totalBytes);
+
+  return {
+    plan: 'starter',
+    limits: {
+      opportunitiesPerMonth: STARTER_LIMITS.opportunitiesPerMonth,
+      activeOpportunities: STARTER_LIMITS.activeOpportunities,
+      aiEvaluationsPerMonth: STARTER_LIMITS.aiEvaluationsPerMonth,
+      uploadBytesPerOpportunity: STARTER_LIMITS.uploadBytesPerOpportunity,
+      uploadBytesPerMonth: STARTER_LIMITS.uploadBytesPerMonth,
+    },
+    usage: {
+      opportunitiesCreatedThisMonth,
+      activeOpportunities,
+      aiEvaluationsThisMonth,
+      uploadBytesThisMonth,
+    },
+    remaining: {
+      opportunitiesPerMonth: Math.max(0, STARTER_LIMITS.opportunitiesPerMonth - opportunitiesCreatedThisMonth),
+      activeOpportunities: Math.max(0, STARTER_LIMITS.activeOpportunities - activeOpportunities),
+      aiEvaluationsPerMonth: Math.max(0, STARTER_LIMITS.aiEvaluationsPerMonth - aiEvaluationsThisMonth),
+      uploadBytesPerMonth: Math.max(0, STARTER_LIMITS.uploadBytesPerMonth - uploadBytesThisMonth),
+    },
+  };
+}

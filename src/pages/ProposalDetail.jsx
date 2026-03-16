@@ -56,6 +56,7 @@ import {
   getVisibleProposalStatusLabel,
   shouldShowPendingAgreementResponseActions,
 } from '@/lib/proposalOutcomeUi';
+import { getStarterLimitErrorCopy } from '@/lib/starterLimitErrorCopy';
 
 const CONFIDENTIAL_LABEL = 'Confidential Information';
 const SHARED_LABEL = 'Shared Information';
@@ -438,7 +439,11 @@ export default function ProposalDetail() {
       toast.success('AI mediation review ready');
     },
     onError: (error) => {
-      toast.error(error?.message || 'AI mediation could not be completed');
+      toast.error(
+        getStarterLimitErrorCopy(error, 'evaluation') ||
+          error?.message ||
+          'AI mediation could not be completed',
+      );
     },
   });
 

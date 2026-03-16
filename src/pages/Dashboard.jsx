@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { proposalsClient } from '@/api/proposalsClient';
 import { dashboardClient } from '@/api/dashboardClient';
+import { formatBytes, formatCount } from '@/lib/starterPlanLimits';
 
 const DASHBOARD_WON_LABEL = 'Won';
 
@@ -182,6 +183,76 @@ function AgreementRequestsCard({ proposals, onOpen, onReviewAll }) {
         ))}
       </div>
     </div>
+  );
+}
+
+function StarterUsageMetric({ label, used, limit, isBytes = false }) {
+  const normalizedLimit = Number.isFinite(Number(limit)) ? Math.max(1, Number(limit)) : 1;
+  const normalizedUsed = Number.isFinite(Number(used)) ? Math.max(0, Number(used)) : 0;
+  const percent = Math.max(0, Math.min(100, Math.round((normalizedUsed / normalizedLimit) * 100)));
+  const usedText = isBytes ? formatBytes(normalizedUsed) : formatCount(normalizedUsed);
+  const limitText = isBytes ? formatBytes(normalizedLimit) : formatCount(normalizedLimit);
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs text-slate-600">{label}</p>
+        <p className="text-xs font-medium text-slate-800">{usedText} / {limitText}</p>
+      </div>
+      <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
+        <div className="h-full bg-amber-500 transition-[width]" style={{ width: `${percent}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function StarterUsageCard({ starterUsage }) {
+  if (!starterUsage || starterUsage.plan !== 'starter') {
+    return null;
+  }
+
+  const limits = starterUsage.limits || {};
+  const usage = starterUsage.usage || {};
+
+  return (
+    <Card className="border-amber-200 bg-amber-50/40 shadow-sm mb-8">
+      <CardContent className="p-5 space-y-4">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div>
+            <p className="text-sm font-semibold text-slate-900">Starter plan usage</p>
+            <p className="text-xs text-slate-600">Limits reset monthly.</p>
+          </div>
+          <Badge variant="outline" className="border-amber-300 bg-white text-amber-800">Starter</Badge>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <StarterUsageMetric
+            label="New opportunities"
+            used={usage.opportunitiesCreatedThisMonth}
+            limit={limits.opportunitiesPerMonth}
+          />
+          <StarterUsageMetric
+            label="Active opportunities"
+            used={usage.activeOpportunities}
+            limit={limits.activeOpportunities}
+          />
+          <StarterUsageMetric
+            label="AI evaluations"
+            used={usage.aiEvaluationsThisMonth}
+            limit={limits.aiEvaluationsPerMonth}
+          />
+          <StarterUsageMetric
+            label="Upload usage"
+            used={usage.uploadBytesThisMonth}
+            limit={limits.uploadBytesPerMonth}
+            isBytes
+          />
+        </div>
+        <p className="text-xs text-slate-600">
+          Per opportunity upload cap: {formatBytes(limits.uploadBytesPerOpportunity)}.
+        </p>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -393,6 +464,10 @@ export default function Dashboard() {
             <span>Summary stats could not be loaded. Your opportunities are unaffected — <button type="button" className="underline font-medium" onClick={() => refetchSummary()}>retry</button>.</span>
           </div>
         )}
+
+        {!summaryError && !summaryLoading && summary?.starterUsage?.plan === 'starter' ? (
+          <StarterUsageCard starterUsage={summary.starterUsage} />
+        ) : null}
 
         <div className="mb-8">
           <ProposalsChart />

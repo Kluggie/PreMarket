@@ -66,6 +66,7 @@ import {
   allDocumentsClassified,
   buildDocumentsStateHash,
 } from '@/pages/document-comparison/documentsModel';
+import { getStarterLimitErrorCopy } from '@/lib/starterLimitErrorCopy';
 import Step1AddSources from '@/components/document-comparison/Step1AddSources';
 import Step2EditSources from '@/components/document-comparison/Step2EditSources';
 import Step3ReviewPackage from '@/components/document-comparison/Step3ReviewPackage';
@@ -619,6 +620,11 @@ function getSuggestionCategoryLabel(category) {
 }
 
 function toEvaluationErrorMessage(error) {
+  const starterMessage = getStarterLimitErrorCopy(error, 'evaluation');
+  if (starterMessage) {
+    return starterMessage;
+  }
+
   const status = Number(error?.status || 0);
   const code = asText(
     error?.body?.error?.failure_code ||
@@ -1558,7 +1564,10 @@ export default function DocumentComparisonCreate() {
       if (variables?.nonBlocking) {
         return;
       }
-      const message = error?.message || 'Failed to save draft';
+      const message =
+        getStarterLimitErrorCopy(error, 'create') ||
+        error?.message ||
+        'Failed to save draft';
       setUiError(message);
       toast.error(message);
     },
@@ -1931,7 +1940,10 @@ export default function DocumentComparisonCreate() {
     try {
       documentComparisonsClient.validateImportFile(file);
     } catch (error) {
-      const message = error?.message || 'Failed to import file';
+      const message =
+        getStarterLimitErrorCopy(error, 'upload') ||
+        error?.message ||
+        'Failed to import file';
       updateDocument(docId, {
         importStatus: 'error',
         importError: message,
@@ -1976,7 +1988,10 @@ export default function DocumentComparisonCreate() {
       ) {
         return;
       }
-      const message = error?.message || 'Failed to import file';
+      const message =
+        getStarterLimitErrorCopy(error, 'upload') ||
+        error?.message ||
+        'Failed to import file';
       updateDocument(docId, {
         importStatus: 'error',
         importError: message,
@@ -2819,7 +2834,10 @@ export default function DocumentComparisonCreate() {
         return null;
       }
 
-      const message = error?.message || 'Suggestion request failed';
+      const message =
+        getStarterLimitErrorCopy(error, 'evaluation') ||
+        error?.message ||
+        'Suggestion request failed';
       setCoachError(message);
       if (!silent) {
         toast.error(message);
@@ -2957,7 +2975,10 @@ export default function DocumentComparisonCreate() {
         return null;
       }
 
-      const message = error?.message || 'Company brief request failed';
+      const message =
+        getStarterLimitErrorCopy(error, 'evaluation') ||
+        error?.message ||
+        'Company brief request failed';
       setCoachError(message);
       if (!silent) {
         toast.error(message);

@@ -203,4 +203,44 @@ if (!hasDatabaseUrl()) {
     assert.equal(recipientActivity.legacyReceived >= 1, true);
     assert.equal(recipientActivity.archivedThreads, 0);
   });
+
+  test('dashboard summary includes starter usage snapshot for starter users', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const starterCookie = authCookie('dashboard_starter_user', 'dashboard-starter-user@example.com');
+    await createProposal(starterCookie, {
+      title: 'Starter Draft',
+      status: 'draft',
+      partyBEmail: 'starter-recipient@example.com',
+    });
+
+    const summary = await getSummary(starterCookie);
+    assert.equal(summary.starterUsage?.plan, 'starter');
+    assert.equal(summary.starterUsage?.limits?.opportunitiesPerMonth, 3);
+    assert.equal(summary.starterUsage?.limits?.activeOpportunities, 2);
+    assert.equal(summary.starterUsage?.limits?.aiEvaluationsPerMonth, 10);
+    assert.equal(summary.starterUsage?.limits?.uploadBytesPerMonth, 100 * 1024 * 1024);
+    assert.equal(summary.starterUsage?.usage?.opportunitiesCreatedThisMonth >= 1, true);
+    assert.equal(summary.starterUsage?.remaining?.opportunitiesPerMonth <= 2, true);
+  });
+
+  test('dashboard summary omits starter usage snapshot for paid users', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const proUserId = 'dashboard_paid_user';
+    const proEmail = 'dashboard-paid-user@example.com';
+    const proCookie = authCookie(proUserId, proEmail);
+    await seedProfessionalPlan(proUserId, proEmail);
+
+    await createProposal(proCookie, {
+      title: 'Paid User Draft',
+      status: 'draft',
+      partyBEmail: 'paid-recipient@example.com',
+    });
+
+    const summary = await getSummary(proCookie);
+    assert.equal(summary.starterUsage, null);
+  });
 }
