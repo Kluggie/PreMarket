@@ -20,6 +20,13 @@ import {
 } from '../../document-comparisons/_helpers.js';
 import { assertDocumentComparisonWithinLimits } from '../../document-comparisons/_limits.js';
 import {
+  buildBudgetedContext,
+  buildConvergenceDigest,
+  SOFT_TOKEN_CEILING,
+  PROMPT_TOKEN_HARD_CEILING,
+  type ExchangeRoundSnapshot,
+} from '../../../_lib/evaluation-context-budget.js';
+import {
   DRAFT_STATUS,
   RECIPIENT_ROLE,
   SENT_STATUS,
@@ -224,6 +231,8 @@ interface ExchangeHistoryRound {
   sharedTextSnapshot: string;
   sharedTextLength: number;
   confidentialLength: number;
+  /** Prior missing[] questions extracted from the evaluation result. */
+  missingQuestions: string[];
   createdAt: Date | string;
 }
 
@@ -264,12 +273,26 @@ async function getExchangeHistory(
     const json = toObject(run.resultJson);
     const snapshot = toObject(json?.shared_snapshot);
     const inputTrace = toObject(json?.input_trace);
+    // Extract prior missing[] questions for convergence tracking
+    const evalResult = toObject(json?.evaluation_result);
+    const evalReport = toObject(evalResult?.report);
+    const missingQuestions: string[] = [];
+    const missingSource = Array.isArray(evalReport?.missing)
+      ? evalReport.missing
+      : Array.isArray(evalResult?.missing)
+        ? evalResult.missing
+        : [];
+    for (const entry of missingSource) {
+      const text = asText(entry?.text ?? entry);
+      if (text) missingQuestions.push(text);
+    }
     return {
       round: index + 1,
       evaluationRunId: run.id,
       sharedTextSnapshot: asText(snapshot?.text),
       sharedTextLength: Number(inputTrace?.shared_length || 0) || 0,
       confidentialLength: Number(inputTrace?.confidential_length || 0) || 0,
+      missingQuestions,
       createdAt: run.createdAt,
     };
   });
@@ -410,7 +433,28 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
 
     // ── Exchange history: include previous rounds' shared text ──────────────
     const exchangeHistory = await getExchangeHistory(resolved.db, resolved.link.id);
-    const evaluationSharedText = buildHistoryAwareSharedText(sharedText, exchangeHistory);
+
+    // ── Build convergence digest from prior evaluation rounds ───────────────
+    const priorEvalSnapshots: ExchangeRoundSnapshot[] = exchangeHistory.map((h) => ({
+      round: h.round,
+      sharedTextSnapshot: h.sharedTextSnapshot,
+      missingQuestions: h.missingQuestions || [],
+      createdAt: h.createdAt,
+    }));
+    const convergenceDigest = buildConvergenceDigest(priorEvalSnapshots, sharedText);
+
+    // ── Budget-controlled context assembly ──────────────────────────────────
+    const budgeted = buildBudgetedContext({
+      currentSharedText: sharedText,
+      confidentialText: confidentialBundle,
+      historyRounds: exchangeHistory.map((h) => ({
+        round: h.round,
+        sharedTextSnapshot: h.sharedTextSnapshot,
+      })),
+      priorEvaluationRounds: priorEvalSnapshots,
+    });
+    const evaluationSharedText = budgeted.sharedText;
+    const evaluationConfidentialText = budgeted.confidentialText;
 
     if (sharedText.length < MIN_SHARED_EVALUATION_TEXT_LENGTH) {
       throw new ApiError(
@@ -445,6 +489,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     try {
       const engine = resolveDocumentComparisonEngine(req);
       let evaluated: any;
+      let v2Preflight: { promptChars?: number; estimatedPromptTokens?: number; overCeiling?: boolean; trimTriggered?: boolean } = {};
       if (engine === 'v2') {
         // Hard try-catch so any unexpected evaluator throw produces a valid
         // completed_with_warnings result rather than a 502.
@@ -452,11 +497,12 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         try {
           v2Result = await evaluateWithVertexV2({
             sharedText: evaluationSharedText,
-            confidentialText: confidentialBundle,
+            confidentialText: evaluationConfidentialText,
             requestId: context?.requestId || undefined,
             generationModel: asText(process.env.VERTEX_DOC_COMPARE_GENERATION_MODEL) || undefined,
             verifierModel: asText(process.env.VERTEX_DOC_COMPARE_VERIFIER_MODEL) || undefined,
             extractModel: asText(process.env.VERTEX_DOC_COMPARE_EXTRACT_MODEL) || undefined,
+            convergenceDigestText: convergenceDigest?.digestText || undefined,
           });
         } catch (unexpectedError: any) {
           v2Result = {
@@ -529,12 +575,14 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
           };
         }
         evaluated = convertV2ResponseToEvaluation(v2Result);
+        // Extract preflight data for input_trace
+        v2Preflight = (v2Result as any)?._internal?.preflight || {};
       } else {
         const evaluateComparison = getDocumentComparisonEvaluator();
         evaluated = await evaluateComparison(
           {
             title: asText(resolved.comparison?.title) || asText(resolved.proposal.title) || 'Shared Report',
-            docAText: confidentialBundle,
+            docAText: evaluationConfidentialText,
             docBText: evaluationSharedText,
             docASpans: [],
             docBSpans: [],
@@ -545,7 +593,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
             correlationId: context?.requestId || null,
             routeName: SHARED_REPORT_EVALUATE_ROUTE,
             entityId: currentDraft.id,
-            inputChars: confidentialBundle.length + sharedText.length,
+            inputChars: evaluationConfidentialText.length + evaluationSharedText.length,
           },
         );
       }
@@ -574,6 +622,20 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
               recipient_confidential_length: recipientConfidentialText.length,
               exchange_round: exchangeHistory.length + 1,
               previous_rounds: exchangeHistory.length,
+              budget_was_trimmed: budgeted.wasTrimmed,
+              estimated_input_chars: budgeted.budget.totalChars,
+              estimated_input_tokens: budgeted.estimatedTokens,
+              soft_token_ceiling: SOFT_TOKEN_CEILING,
+              prompt_token_hard_ceiling: PROMPT_TOKEN_HARD_CEILING,
+              token_preflight_ok: budgeted.estimatedTokens <= SOFT_TOKEN_CEILING,
+              // Real prompt-level preflight (from V2 engine _internal)
+              preflight_prompt_chars: v2Preflight.promptChars ?? null,
+              preflight_estimated_prompt_tokens: v2Preflight.estimatedPromptTokens ?? null,
+              preflight_over_ceiling: v2Preflight.overCeiling ?? null,
+              preflight_trim_triggered: v2Preflight.trimTriggered ?? false,
+              convergence_digest_chars: convergenceDigest?.digestChars || 0,
+              convergence_open_questions: convergenceDigest?.openQuestions?.length || 0,
+              convergence_resolved_questions: convergenceDigest?.resolvedQuestions?.length || 0,
             },
             exchange_history: exchangeHistory.map((round) => ({
               round: round.round,

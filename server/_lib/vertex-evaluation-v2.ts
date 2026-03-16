@@ -3,6 +3,7 @@ import { ApiError } from './errors.js';
 import { getVertexConfig, getVertexNotConfiguredError, type VertexServiceAccountCredentials } from './integrations.js';
 import { sanitizeUserInput, wrapRawUserContent } from './vertex-input-sanitizer.js';
 import { truncateTextAtNaturalBoundary } from '../../src/lib/aiReportUtils.js';
+import { preflightPromptCheck, type PreflightResult } from './evaluation-context-budget.js';
 
 const VERTEX_TIMEOUT_MS = 90_000;
 const MAX_ATTEMPTS = 2;
@@ -82,6 +83,8 @@ export interface VertexEvaluationV2Request {
   verifierModel?: string;
   /** Model for Pass A (fact-sheet extraction). Defaults to VERTEX_DOC_COMPARE_EXTRACT_MODEL or verifierModel. */
   extractModel?: string;
+  /** Optional convergence digest text from prior evaluation rounds. Enables multi-round convergence. */
+  convergenceDigestText?: string;
 }
 
 export interface VertexEvaluationV2Response {
@@ -240,6 +243,14 @@ export interface VertexEvaluationV2Internal {
   failure_kind?: string;
   /** Internal-only fallback classification. */
   fallback_mode?: FallbackMode;
+  /** Token preflight result from the exact final prompt. */
+  preflight?: {
+    promptChars: number;
+    estimatedPromptTokens: number;
+    overCeiling: boolean;
+    ceiling: number;
+    trimTriggered: boolean;
+  };
   /** Actual models used for each step (server-side only). */
   models_used?: {
     generation: string;
@@ -3630,6 +3641,8 @@ function buildEvalPromptFromFactSheet(params: {
   reportStyle: ReportStyle;
   /** When true, uses tighter output limits to avoid truncation. */
   tightMode?: boolean;
+  /** Optional convergence digest from prior rounds — injected before INPUT JSON. */
+  convergenceDigestText?: string;
 }) {
   const { factSheet, chunks, reportStyle } = params;
   const tightMode = Boolean(params.tightMode);
@@ -3879,6 +3892,8 @@ function buildEvalPromptFromFactSheet(params: {
     '- why/missing/redactions must be arrays (can be empty).',
     '- Keep ALL statements safe for public sharing.',
     '- Use generic derived wording for confidential-driven conclusions.',
+    // ── Convergence context (injected only when prior rounds exist) ──────
+    params.convergenceDigestText ? params.convergenceDigestText : '',
     'INPUT JSON:',
     JSON.stringify(payload, null, 2),
     'Return JSON only.',
@@ -4918,6 +4933,8 @@ export async function evaluateWithVertexV2(
     asText(process.env.VERTEX_DOC_COMPARE_EXTRACT_MODEL) ||
     verifierModel;
 
+  const convergenceDigestText = asText(input.convergenceDigestText) || undefined;
+
   if (!sharedText || !confidentialText) {
     return buildFailure({
       kind: 'empty_output',
@@ -4958,7 +4975,26 @@ export async function evaluateWithVertexV2(
   });
 
   // ── Pass B: final evaluation using Fact Sheet ────────────────────────────
-  let prompt = buildEvalPromptFromFactSheet({ factSheet, chunks, reportStyle });
+  let prompt = buildEvalPromptFromFactSheet({ factSheet, chunks, reportStyle, convergenceDigestText });
+
+  // ── Token preflight: check exact final prompt before Vertex call ─────────
+  // This runs on the actual assembled prompt string, not just the inputs.
+  // If the prompt exceeds the hard ceiling, we proactively switch to tight
+  // mode. If still over, we strip the convergence digest (it is the most
+  // expendable part of the prompt — the model can still evaluate without it).
+  let preflight = preflightPromptCheck(prompt);
+  let preflightTrimTriggered = false;
+  if (preflight.overCeiling) {
+    // First trim: rebuild with tight mode (reduces instruction overhead).
+    prompt = buildEvalPromptFromFactSheet({ factSheet, chunks, reportStyle, tightMode: true, convergenceDigestText });
+    preflight = preflightPromptCheck(prompt);
+    preflightTrimTriggered = true;
+    if (preflight.overCeiling && convergenceDigestText) {
+      // Second trim: drop convergence digest entirely.
+      prompt = buildEvalPromptFromFactSheet({ factSheet, chunks, reportStyle, tightMode: true });
+      preflight = preflightPromptCheck(prompt);
+    }
+  }
 
   let attempt = 0;
   let usedTightRetry = false;
@@ -5043,7 +5079,7 @@ export async function evaluateWithVertexV2(
       if (!usedTightRetry) {
         // First truncation → retry once with tight mode to reduce output size.
         usedTightRetry = true;
-        prompt = buildEvalPromptFromFactSheet({ factSheet, chunks, reportStyle, tightMode: true });
+        prompt = buildEvalPromptFromFactSheet({ factSheet, chunks, reportStyle, tightMode: true, convergenceDigestText });
         continue;
       }
       // Tight retry also truncated → use fallback.
@@ -5057,7 +5093,7 @@ export async function evaluateWithVertexV2(
         // First parse failure → retry once with tight mode.
         usedTightRetry = true;
         lastParseFailureKind = 'json_parse_error';
-        prompt = buildEvalPromptFromFactSheet({ factSheet, chunks, reportStyle, tightMode: true });
+        prompt = buildEvalPromptFromFactSheet({ factSheet, chunks, reportStyle, tightMode: true, convergenceDigestText });
         continue;
       }
       // Both attempts failed to parse → use fallback.
@@ -5071,7 +5107,7 @@ export async function evaluateWithVertexV2(
       if (!usedTightRetry) {
         usedTightRetry = true;
         lastParseFailureKind = 'schema_validation_error';
-        prompt = buildEvalPromptFromFactSheet({ factSheet, chunks, reportStyle, tightMode: true });
+        prompt = buildEvalPromptFromFactSheet({ factSheet, chunks, reportStyle, tightMode: true, convergenceDigestText });
         continue;
       }
       // Schema still invalid after tight retry → fallback.
@@ -5243,6 +5279,13 @@ export async function evaluateWithVertexV2(
         pass_b_attempt_count: attempt,
         report_style: reportStyle,
         telemetry,
+        preflight: {
+          promptChars: preflight.promptChars,
+          estimatedPromptTokens: preflight.estimatedPromptTokens,
+          overCeiling: preflight.overCeiling,
+          ceiling: preflight.ceiling,
+          trimTriggered: preflightTrimTriggered,
+        },
         models_used: {
           generation: generationModel,
           extract: extractModel,
@@ -5299,6 +5342,13 @@ export async function evaluateWithVertexV2(
       pass_b_attempt_count: attempt,
       report_style: reportStyle,
       telemetry: fallbackTelemetry,
+      preflight: {
+        promptChars: preflight.promptChars,
+        estimatedPromptTokens: preflight.estimatedPromptTokens,
+        overCeiling: preflight.overCeiling,
+        ceiling: preflight.ceiling,
+        trimTriggered: preflightTrimTriggered,
+      },
       warnings: fallback.warnings,
       failure_kind: lastParseFailureKind,
       fallback_mode: fallback.fallbackMode,
