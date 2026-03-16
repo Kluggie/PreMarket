@@ -8,6 +8,8 @@ export const DEFAULT_NOTIFICATION_SETTINGS = {
   email_proposals: true,
   email_evaluations: true,
   email_reveals: true,
+  email_opportunity_updates: true,
+  email_final_outcome: true,
   email_marketing: false,
 };
 
@@ -56,6 +58,12 @@ export function normalizeNotificationSettings(value: unknown) {
     ),
     email_reveals: toBoolean(
       (source as any).email_reveals ?? DEFAULT_NOTIFICATION_SETTINGS.email_reveals,
+    ),
+    email_opportunity_updates: toBoolean(
+      (source as any).email_opportunity_updates ?? DEFAULT_NOTIFICATION_SETTINGS.email_opportunity_updates,
+    ),
+    email_final_outcome: toBoolean(
+      (source as any).email_final_outcome ?? DEFAULT_NOTIFICATION_SETTINGS.email_final_outcome,
     ),
     email_marketing: toBoolean(
       (source as any).email_marketing ?? DEFAULT_NOTIFICATION_SETTINGS.email_marketing,

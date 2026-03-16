@@ -178,6 +178,8 @@ export default function Settings() {
     email_proposals: true,
     email_evaluations: true,
     email_reveals: true,
+    email_opportunity_updates: true,
+    email_final_outcome: true,
     email_marketing: false,
   });
 
@@ -188,6 +190,8 @@ export default function Settings() {
         email_proposals: profile.notification_settings.email_proposals ?? true,
         email_evaluations: profile.notification_settings.email_evaluations ?? true,
         email_reveals: profile.notification_settings.email_reveals ?? true,
+        email_opportunity_updates: profile.notification_settings.email_opportunity_updates ?? true,
+        email_final_outcome: profile.notification_settings.email_final_outcome ?? true,
         email_marketing: profile.notification_settings.email_marketing ?? false,
       });
     }
@@ -493,24 +497,28 @@ export default function Settings() {
                   onCheckedChange={(v) => handleNotificationChange('email_proposals', v)}
                 />
               </div>
+              {/* Evaluation Updates and Reveal Requests are hidden from UI; set showHiddenNotificationTypes = true to restore */}
               <Separator />
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="font-medium">Evaluation Updates</p>
-                  <p className="text-sm text-slate-500">Get notified when an evaluation is complete.</p>
+                  <p className="font-medium">Opportunity Updates</p>
+                  <p className="text-sm text-slate-500">Get notified when the other party sends back updates.</p>
                 </div>
                 <Switch
-                  checked={notifications.email_evaluations}
-                  onCheckedChange={(v) => handleNotificationChange('email_evaluations', v)}
+                  checked={notifications.email_opportunity_updates}
+                  onCheckedChange={(v) => handleNotificationChange('email_opportunity_updates', v)}
                 />
               </div>
               <Separator />
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="font-medium">Reveal Requests</p>
-                  <p className="text-sm text-slate-500">Get notified when someone requests a reveal.</p>
+                  <p className="font-medium">Final Outcome</p>
+                  <p className="text-sm text-slate-500">Get notified when an opportunity is finalized as won or lost.</p>
                 </div>
-                <Switch checked={notifications.email_reveals} onCheckedChange={(v) => handleNotificationChange('email_reveals', v)} />
+                <Switch
+                  checked={notifications.email_final_outcome}
+                  onCheckedChange={(v) => handleNotificationChange('email_final_outcome', v)}
+                />
               </div>
               <Separator />
               <div className="flex items-center justify-between">
