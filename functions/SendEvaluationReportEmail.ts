@@ -127,7 +127,7 @@ Deno.serve(async (req) => {
 
     // Determine sender name
     const senderName = user.full_name || user.email || 'A PreMarket user';
-    const itemTypeLabel = item.type === 'proposal' ? 'proposal' 
+    const itemTypeLabel = item.type === 'proposal' ? 'opportunity' 
                         : item.type === 'document_comparison' ? 'document comparison'
                         : item.type === 'profile_matching' ? 'profile match'
                         : 'evaluation';

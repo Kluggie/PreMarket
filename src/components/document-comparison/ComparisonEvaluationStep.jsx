@@ -39,7 +39,7 @@ export default function ComparisonEvaluationStep({
   onTabChange,
   hasReportBadge = false,
   tabOrder = ['details', 'report'],
-  detailsTabLabel = 'Proposal',
+  detailsTabLabel = 'Opportunity',
   aiReportProps = {},
   proposalDetailsProps = {},
   onBack,

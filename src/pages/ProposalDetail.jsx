@@ -245,7 +245,7 @@ async function downloadProposalInfoPdf(proposal, comparison) {
     });
   };
 
-  writeLine(proposal?.title || 'Proposal', { fontSize: 20, bold: true });
+  writeLine(proposal?.title || 'Opportunity', { fontSize: 20, bold: true });
   y += 6;
   writeLine(`Status: ${getStatusLabel(proposal?.status)}`);
   writeLine(`Created: ${formatDateTime(proposal?.created_date)}`);
@@ -261,7 +261,7 @@ async function downloadProposalInfoPdf(proposal, comparison) {
     writeLine(SHARED_LABEL, { bold: true });
     writeLine(comparison.doc_b_text || '');
   } else {
-    writeLine('No linked document comparison content was found for this proposal.');
+    writeLine('No linked document comparison content was found for this opportunity.');
   }
 
   const filenameBase = String(proposal?.title || 'proposal')
@@ -478,10 +478,10 @@ export default function ProposalDetail() {
   const downloadProposalMutation = useMutation({
     mutationFn: () => downloadProposalInfoPdf(proposal, comparison),
     onSuccess: () => {
-      toast.success('Proposal info PDF downloaded');
+      toast.success('Opportunity info PDF downloaded');
     },
     onError: (error) => {
-      toast.error(error?.message || 'Failed to download proposal info PDF');
+      toast.error(error?.message || 'Failed to download opportunity info PDF');
     },
   });
 
@@ -539,7 +539,7 @@ export default function ProposalDetail() {
       refreshProposalQueries();
     },
     onError: (error) => {
-      toast.error(error?.message || 'Failed to archive proposal');
+      toast.error(error?.message || 'Failed to archive opportunity');
     },
   });
 
@@ -550,7 +550,7 @@ export default function ProposalDetail() {
       refreshProposalQueries();
     },
     onError: (error) => {
-      toast.error(error?.message || 'Failed to restore proposal');
+      toast.error(error?.message || 'Failed to restore opportunity');
     },
   });
 
@@ -559,10 +559,10 @@ export default function ProposalDetail() {
     onSuccess: () => {
       toast.success(proposal?.sent_at ? 'Deleted from your workspace' : 'Draft deleted');
       refreshProposalQueries();
-      navigate(createPageUrl('Proposals'));
+      navigate(createPageUrl('Opportunities'));
     },
     onError: (error) => {
-      toast.error(error?.message || 'Failed to delete proposal');
+      toast.error(error?.message || 'Failed to delete opportunity');
     },
   });
 
@@ -571,7 +571,7 @@ export default function ProposalDetail() {
       <div className="min-h-screen bg-slate-50 py-8">
         <div className="max-w-7xl mx-auto px-6">
           <Alert className="bg-amber-50 border-amber-200">
-            <AlertDescription className="text-amber-900">Missing proposal id.</AlertDescription>
+            <AlertDescription className="text-amber-900">Missing opportunity id.</AlertDescription>
           </Alert>
         </div>
       </div>
@@ -581,7 +581,7 @@ export default function ProposalDetail() {
   if (detailQuery.isLoading) {
     return (
       <div className="min-h-screen bg-slate-50 py-8">
-        <div className="max-w-7xl mx-auto px-6 text-slate-500">Loading proposal...</div>
+        <div className="max-w-7xl mx-auto px-6 text-slate-500">Loading opportunity...</div>
       </div>
     );
   }
@@ -592,7 +592,7 @@ export default function ProposalDetail() {
         <div className="max-w-7xl mx-auto px-6">
           <Alert className="bg-red-50 border-red-200">
             <AlertDescription className="text-red-900">
-              {detailQuery.error?.message || 'Proposal not found'}
+              {detailQuery.error?.message || 'Opportunity not found'}
             </AlertDescription>
           </Alert>
         </div>
@@ -613,9 +613,9 @@ export default function ProposalDetail() {
     markOutcomeMutation.isPending || continueNegotiationMutation.isPending;
   const archiveActionDisabled =
     archiveMutation.isPending || unarchiveMutation.isPending || deleteMutation.isPending;
-  const deleteDialogTitle = proposal.sent_at ? 'Delete Proposal From Your Workspace?' : 'Delete Draft Proposal?';
+  const deleteDialogTitle = proposal.sent_at ? 'Delete Opportunity From Your Workspace?' : 'Delete Draft Opportunity?';
   const deleteDialogDescription = proposal.sent_at
-    ? 'This will hide the proposal from your workspace only. It will remain available to the counterparty and stay intact for shared history.'
+    ? 'This will hide the opportunity from your workspace only. It will remain available to the counterparty and stay intact for shared history.'
     : 'This will permanently delete this unsent draft and any linked draft-only comparison data. This action cannot be undone.';
   const pendingOutcomeMessage = outcome.requested_by_counterparty
     ? 'The counterparty requested agreement on this proposal. Confirm the agreement, mark it lost, or continue negotiating.'
@@ -626,9 +626,9 @@ export default function ProposalDetail() {
   return (
     <div className="min-h-screen bg-slate-50 py-6">
       <div className="max-w-[1400px] mx-auto px-6 space-y-6">
-        <Link to={createPageUrl('Proposals')} className="inline-flex items-center text-slate-600 hover:text-slate-900">
+        <Link to={createPageUrl('Opportunities')} className="inline-flex items-center text-slate-600 hover:text-slate-900">
           <ArrowLeft className="w-4 h-4 mr-2" />
-          Back to Proposals
+          Back to Opportunities
         </Link>
 
         <div className="grid grid-cols-1 xl:grid-cols-[340px_1fr] gap-6 items-start">
@@ -707,7 +707,7 @@ export default function ProposalDetail() {
             <div className="flex flex-wrap gap-3">
               <Button variant="outline" onClick={() => downloadProposalMutation.mutate()} disabled={downloadProposalMutation.isPending}>
                 <Download className="w-4 h-4 mr-2" />
-                Download Proposal Info PDF
+                Download Opportunity Details PDF
               </Button>
               <Button
                 variant="outline"
@@ -720,7 +720,7 @@ export default function ProposalDetail() {
                     );
                     return;
                   }
-                  navigate(createPageUrl(`CreateProposal?draft=${encodeURIComponent(proposal.id)}&step=4`));
+                  navigate(createPageUrl(`CreateOpportunity?draft=${encodeURIComponent(proposal.id)}&step=4`));
                 }}
                 disabled={isClosed || viewingHistoricalVersion}
               >
@@ -787,7 +787,7 @@ export default function ProposalDetail() {
               <TabsList className="bg-white border border-slate-200 p-1">
                 <TabsTrigger value="proposal" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
                   <FileText className="w-4 h-4 mr-2" />
-                  Proposal
+                  Opportunity
                 </TabsTrigger>
                 <TabsTrigger value="history" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
                   <History className="w-4 h-4 mr-2" />
@@ -950,7 +950,7 @@ export default function ProposalDetail() {
                 <div className="space-y-8">
                   <Alert className="bg-blue-50 border-blue-200">
                     <AlertDescription className="text-blue-900">
-                      You are viewing the current live version of this proposal thread. Older versions are available in
+                      You are viewing the current live version of this opportunity thread. Older versions are available in
                       Version History as read-only snapshots.
                     </AlertDescription>
                   </Alert>

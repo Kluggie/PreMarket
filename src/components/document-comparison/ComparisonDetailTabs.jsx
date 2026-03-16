@@ -345,7 +345,7 @@ function DocumentPanel({ label, text, html, badges = [] }) {
 }
 
 export function ComparisonProposalDetailsTab({
-  title = 'Proposal',
+  title = 'Opportunity',
   description = 'Read-only document content for both information documents.',
   documents = [],
   leftLabel = 'Confidential Information',
@@ -360,7 +360,7 @@ export function ComparisonProposalDetailsTab({
   const normalizedDocuments = Array.isArray(documents)
     ? documents
         .map((doc) => ({
-          label: asText(doc?.label) || 'Proposal',
+          label: asText(doc?.label) || 'Opportunity',
           text: asText(doc?.text),
           html: asText(doc?.html),
           badges: Array.isArray(doc?.badges) ? doc.badges : [],
@@ -403,7 +403,7 @@ export function ComparisonDetailTabs({
   onTabChange,
   hasReportBadge = false,
   tabOrder = ['report', 'details'],
-  detailsTabLabel = 'Proposal',
+  detailsTabLabel = 'Opportunity',
   aiReportProps = {},
   proposalDetailsProps = {},
 }) {

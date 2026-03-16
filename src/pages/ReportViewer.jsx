@@ -82,7 +82,7 @@ export default function ReportViewer() {
               {payload?.sharedLink ? (
                 <div className="p-3 rounded-lg border border-slate-200 bg-slate-50 space-y-1">
                   <p className="text-sm font-medium text-slate-900">
-                    {payload.sharedLink.proposal?.title || 'Shared proposal'}
+                    {payload.sharedLink.proposal?.title || 'Shared opportunity'}
                   </p>
                   <div className="flex items-center gap-2 flex-wrap">
                     <Badge className="bg-blue-100 text-blue-700">

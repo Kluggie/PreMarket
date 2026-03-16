@@ -1032,10 +1032,10 @@ export default function SharedReport() {
   const downloadSharedProposalPdfMutation = useMutation({
     mutationFn: () => sharedReportsClient.downloadRecipientProposalPdf(token),
     onSuccess: () => {
-      toast.success('Proposal PDF download started');
+      toast.success('Opportunity PDF download started');
     },
     onError: (error) => {
-      toast.error(error?.message || 'Unable to download proposal PDF');
+      toast.error(error?.message || 'Unable to download opportunity PDF');
     },
   });
 
@@ -1513,7 +1513,7 @@ export default function SharedReport() {
       id: 'created',
       kind: 'file',
       tone: 'info',
-      title: 'Proposal Created',
+      title: 'Opportunity Created',
       timestamp: formatDateTime(parent?.created_at || comparison?.created_at),
     },
     {
@@ -1951,7 +1951,7 @@ export default function SharedReport() {
                 disabled={downloadSharedProposalPdfMutation.isPending}
               >
                 {downloadSharedProposalPdfMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-                Download Proposal PDF
+                Download Opportunity PDF
               </Button>
               <Button
                 type="button"
@@ -1969,7 +1969,7 @@ export default function SharedReport() {
               onTabChange={setRecipientDetailTab}
               hasReportBadge={hasStep0Report}
               tabOrder={['details', 'report']}
-              detailsTabLabel="Proposal"
+              detailsTabLabel="Opportunity"
               aiReportProps={{
                 isEvaluationRunning: false,
                 isPollingTimedOut: false,
@@ -1981,16 +1981,16 @@ export default function SharedReport() {
                 evaluationFailureBannerMessage: '',
                 hasReport: hasStep0Report,
                 hasEvaluations: false,
-                noReportMessage: 'No baseline AI mediation review is available yet for this proposal.',
+                noReportMessage: 'No baseline AI mediation review is available yet for this opportunity.',
                 report: baselineReport,
                 recommendation: step0Recommendation,
                 timelineItems: baseTimelineItems,
               }}
               proposalDetailsProps={{
-                description: 'Read-only baseline proposal content shared by the proposer.',
+                description: 'Read-only baseline opportunity content shared by the proposer.',
                 documents: [
                   {
-                    label: baselineSharedDocument.label || 'Proposal',
+                    label: baselineSharedDocument.label || 'Opportunity',
                     text: baselineSharedDocument.text || '',
                     html: baselineSharedDocument.html || '',
                     badges: [baselineSharedDocument.source || 'typed'],
@@ -2011,7 +2011,7 @@ export default function SharedReport() {
                   disabled={requiresRecipientVerification}
                   className="bg-blue-600 hover:bg-blue-700"
                 >
-                  {requiresRecipientVerification ? 'Verify access to continue' : 'Edit Proposal'}
+                  {requiresRecipientVerification ? 'Verify access to continue' : 'Edit Opportunity'}
                   <ArrowRight className="w-4 h-4 ml-2" />
                 </Button>
               </div>
@@ -2113,7 +2113,7 @@ export default function SharedReport() {
             onTabChange={setRecipientDetailTab}
             hasReportBadge={hasStep3Report}
             tabOrder={['details', 'report']}
-            detailsTabLabel="Proposal"
+            detailsTabLabel="Opportunity"
             aiReportProps={{
               isEvaluationRunning: step3IsEvaluationRunning,
               isPollingTimedOut: false,
@@ -2131,7 +2131,7 @@ export default function SharedReport() {
               timelineItems: step3TimelineItems,
             }}
             proposalDetailsProps={{
-              description: 'Read-only current proposal state after recipient edits.',
+              description: 'Read-only current opportunity state after recipient edits.',
               leftLabel: CONFIDENTIAL_LABEL,
               rightLabel: SHARED_LABEL,
               leftText: step3Bundles.confidential.text,

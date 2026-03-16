@@ -137,7 +137,7 @@ test.describe('Shared Report Recipient Draft', () => {
     await expect(page.getByText('Step 0: Overview')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
     await expect(page.locator('pre')).toContainText(proposerSharedMarker, { timeout: LOAD_TIMEOUT_MS });
 
-    await page.getByRole('button', { name: 'Edit Proposal' }).click();
+    await page.getByRole('button', { name: 'Edit Opportunity' }).click();
     await expect(page.getByText('Step 1: Upload and Import')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
 
     await page.getByRole('button', { name: 'Continue to Editor' }).click();
@@ -197,7 +197,7 @@ test.describe('Shared Report Recipient Draft', () => {
     await expect(page.getByText('Step 0: Overview')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
     await expect(page.getByText('Sign in to edit and respond.')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
 
-    await page.getByRole('button', { name: 'Edit Proposal' }).click();
+    await page.getByRole('button', { name: 'Edit Opportunity' }).click();
     await expect(page.getByText('Sign in to PreMarket')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
 
     const recipientCookie = makeStableEmailCookie(recipientEmail);
@@ -207,7 +207,7 @@ test.describe('Shared Report Recipient Draft', () => {
     await expect(page).toHaveURL(new RegExp(`/shared-report/${encodeURIComponent(token)}`), {
       timeout: LOAD_TIMEOUT_MS,
     });
-    await expect(page.getByRole('button', { name: 'Edit Proposal' })).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+    await expect(page.getByRole('button', { name: 'Edit Opportunity' })).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
   });
 
   test('Deep link step query is clamped to Step 0 while logged out', async ({ page, request }) => {

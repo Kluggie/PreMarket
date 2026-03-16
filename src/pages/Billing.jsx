@@ -229,16 +229,16 @@ export default function Billing() {
               <div className="space-y-3">
                 {isProfessional ? (
                   <>
-                    <Feature text="Unlimited proposals per month" detail="Create as many proposals as needed" />
-                    <Feature text="3 re-evaluations per proposal" detail="Update and re-run evaluations" />
+                    <Feature text="Unlimited opportunities per month" detail="Create as many opportunities as needed" />
+                    <Feature text="3 re-evaluations per opportunity" detail="Update and re-run evaluations" />
                     <Feature text="All templates" detail="Access all pre-qualification templates" />
                     <Feature text="Organization profiles" detail="Create and manage organization profiles" />
                     <Feature text="Priority support" detail="Faster support turnaround" />
                   </>
                 ) : (
                   <>
-                    <Feature text="3 proposals per month" detail="Starter monthly allowance" />
-                    <Feature text="1 re-evaluation per proposal" detail="Single recipient re-run per proposal" />
+                    <Feature text="3 opportunities per month" detail="Starter monthly allowance" />
+                    <Feature text="1 re-evaluation per opportunity" detail="Single recipient re-run per opportunity" />
                     <Feature text="All templates" detail="Use canonical baseline templates" />
                     <Feature text="Pseudonymous mode" detail="Identity reveal only when needed" />
                   </>

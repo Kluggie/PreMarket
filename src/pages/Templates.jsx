@@ -258,7 +258,7 @@ export default function Templates() {
                     <FileText className="w-16 h-16 text-slate-300 mx-auto mb-4" />
                     <h3 className="text-xl font-semibold text-slate-900 mb-2">Get Started with Templates</h3>
                     <p className="text-slate-600 mb-6">
-                      Create your first template to structure pre-qualification proposals.
+                      Create your first template to structure pre-qualification opportunities.
                     </p>
                     <Link to={createPageUrl('Admin')}>
                       <Button className="bg-blue-600 hover:bg-blue-700">
@@ -313,7 +313,7 @@ export default function Templates() {
                               Coming Soon
                             </Button>
                           ) : (
-                            <Link to={createPageUrl(`CreateProposal?template=${encodeURIComponent(template.id)}`)}>
+                            <Link to={createPageUrl(`CreateOpportunity?template=${encodeURIComponent(template.id)}`)}>
                               <Button
                                 onClick={() => incrementViewCount(template.id)}
                                 className="w-full bg-slate-900 hover:bg-slate-800"

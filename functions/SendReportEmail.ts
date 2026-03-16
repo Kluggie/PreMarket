@@ -167,7 +167,7 @@ Deno.serve(async (req) => {
         return Response.json({
           ok: false,
           errorCode: 'NOT_FOUND',
-          message: 'Proposal not found',
+          message: 'Opportunity not found',
           correlationId
         }, { status: 404 });
       }
@@ -278,7 +278,7 @@ Deno.serve(async (req) => {
     if (proposalId) {
       const proposals = await base44.entities.Proposal.filter({ id: proposalId });
       if (proposals[0]) {
-        itemTitle = proposals[0].title || proposals[0].template_name || 'Proposal';
+        itemTitle = proposals[0].title || proposals[0].template_name || 'Opportunity';
         itemType = 'proposal';
       }
     } else if (documentComparisonId) {

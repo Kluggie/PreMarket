@@ -23,7 +23,7 @@ test('proposals page uses Inbox/Drafts/Closed/Archived as the top-level tabs', (
   assert.doesNotMatch(proposalsPage, /TabsTrigger value="sent"/);
   assert.doesNotMatch(proposalsPage, /TabsTrigger value="received"/);
   assert.doesNotMatch(proposalsPage, /TabsTrigger value="mutual_interest"/);
-  assert.match(proposalsPage, /Manage live proposal threads across inbox, drafts, closed, and archived\./);
+  assert.match(proposalsPage, /Manage live opportunity threads across inbox, drafts, closed, and archived\./);
 });
 
 test('proposals page keeps row-level tags and a compact actionable status dropdown without inbox chips', () => {

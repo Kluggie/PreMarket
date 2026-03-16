@@ -623,7 +623,7 @@ export default function Profile() {
                     Social Links
                   </h2>
                   <p className="text-sm text-slate-600">
-                    Optional. Helps others verify your profile and provides context in proposals.
+                    Optional. Helps others verify your profile and provides context in opportunities.
                   </p>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

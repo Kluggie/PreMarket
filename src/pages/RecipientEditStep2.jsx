@@ -112,9 +112,9 @@ export default function RecipientEditStep2() {
 
   const backTarget = sharedToken
     ? createPageUrl(`SharedReport?token=${encodeURIComponent(sharedToken)}`)
-    : createPageUrl('Proposals');
+    : createPageUrl('Opportunities');
 
-  const backLabel = sharedToken ? 'Back to Shared Report' : 'Back to Proposals';
+  const backLabel = sharedToken ? 'Back to Shared Report' : 'Back to Opportunities';
 
   const backSlot = (
     <button

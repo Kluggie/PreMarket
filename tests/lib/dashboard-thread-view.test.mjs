@@ -44,22 +44,22 @@ test('dashboard keeps action buckets but drops inbox-only routing and mutual-int
   assert.match(dashboard, /Drafts not sent/);
   assert.match(dashboard, /Waiting on other party/);
   assert.match(dashboard, /Needs review \/ verify/);
-  assert.match(dashboard, /Proposals\?tab=all&status=win_confirmation_requested/);
+  assert.match(dashboard, /Opportunities\?tab=all&status=win_confirmation_requested/);
 
   assert.doesNotMatch(dashboard, /Mutual interest ready/);
-  assert.doesNotMatch(dashboard, /Proposals\?tab=inbox&inbox=win_confirmation_requested/);
+  assert.doesNotMatch(dashboard, /Opportunities\?tab=inbox&inbox=win_confirmation_requested/);
 });
 
 test('dashboard chart returns to the visible legacy metric story', () => {
   const chart = readRepoFile('src/components/dashboard/ProposalsChart.jsx');
 
-  assert.match(chart, /Proposals Activity/);
+  assert.match(chart, /Opportunities Activity/);
   assert.match(chart, /Sent/);
   assert.match(chart, /Received/);
   assert.match(chart, /Mutual Interest/);
   assert.match(chart, /Won/);
   assert.match(chart, /Lost/);
-  assert.match(chart, /Create your first proposal to see analytics\./);
+  assert.match(chart, /Create your first opportunity to see analytics\./);
 
   assert.doesNotMatch(chart, /Thread Activity/);
   assert.doesNotMatch(chart, /New Threads/);

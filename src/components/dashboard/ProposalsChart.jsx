@@ -53,7 +53,7 @@ export default function ProposalsChart() {
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <CardTitle className="flex items-center gap-2">
             <Calendar className="w-5 h-5" />
-            Proposals Activity
+            Opportunities Activity
           </CardTitle>
           <div className="flex flex-wrap gap-2">
             {timeRanges.map((range) => (
@@ -91,7 +91,7 @@ export default function ProposalsChart() {
         ) : !hasData ? (
           <div className="py-12 text-center">
             <p className="text-slate-500 mb-6">
-              No proposal activity yet. Create your first proposal to see analytics.
+              No opportunity activity yet. Create your first opportunity to see analytics.
             </p>
           </div>
         ) : (

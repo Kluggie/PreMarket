@@ -177,7 +177,7 @@ Deno.serve(async (req) => {
     if (proposalTitle) {
       title = proposalTitle;
     } else if (resolvedProposalId) {
-      title = `Proposal ${resolvedProposalId}`;
+      title = `Opportunity ${resolvedProposalId}`;
     } else if (documentComparisonId) {
       title = `Document Comparison ${documentComparisonId}`;
     }
@@ -233,7 +233,7 @@ Deno.serve(async (req) => {
     if (!report) {
       doc.setTextColor(0, 0, 0);
       doc.setFontSize(11);
-      doc.text('No AI report found for this proposal yet.', 20, yPos);
+      doc.text('No AI report found for this opportunity yet.', 20, yPos);
       yPos += 8;
     } else {
       const quality = (report.quality && typeof report.quality === 'object') ? report.quality as Record<string, unknown> : {};

@@ -3794,7 +3794,7 @@ export default function DocumentComparisonCreate() {
       <ComparisonWorkflowShell
         backSlot={
           <Link
-            to={createPageUrl('Proposals')}
+            to={createPageUrl('Opportunities')}
             className="inline-flex items-center text-slate-600 hover:text-slate-900"
             onClick={async (event) => {
               if (step >= 2) {
@@ -3810,7 +3810,7 @@ export default function DocumentComparisonCreate() {
                   stepToSave: Math.max(2, step),
                   requireDraftId: true,
                 });
-                navigate(createPageUrl('Proposals'));
+                navigate(createPageUrl('Opportunities'));
                 return;
               }
 

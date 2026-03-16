@@ -68,7 +68,7 @@ export default function Privacy() {
                 </p>
                 <p>
                   We design product workflows around controlled disclosure. Identity and sensitive
-                  proposal details are shared according to your visibility settings and reveal choices.
+                  opportunity details are shared according to your visibility settings and reveal choices.
                 </p>
               </Section>
 
@@ -80,8 +80,8 @@ export default function Privacy() {
                     email address, role, organization details, and profile attributes you choose to add.
                   </li>
                   <li>
-                    <span className="font-medium text-slate-900">Proposal data:</span> structured
-                    responses, comments, and visibility settings associated with proposals.
+                    <span className="font-medium text-slate-900">Opportunity data:</span> structured
+                    responses, comments, and visibility settings associated with opportunities.
                   </li>
                   <li>
                     <span className="font-medium text-slate-900">Optional social links:</span> links
@@ -97,7 +97,7 @@ export default function Privacy() {
               <Section id="use-of-information" title="How We Use Information">
                 <p>We use information to operate and improve PreMarket, including to:</p>
                 <ul className="list-disc pl-5 space-y-2">
-                  <li>Provide core account, proposal, directory, and organization features.</li>
+                  <li>Provide core account, opportunity, directory, and organization features.</li>
                   <li>Generate AI-assisted compatibility evaluations when consent is provided.</li>
                   <li>Deliver service notifications, support responses, and security alerts.</li>
                   <li>Monitor abuse, enforce platform rules, and protect users and systems.</li>
@@ -119,7 +119,7 @@ export default function Privacy() {
                 <p>We do not sell your personal information.</p>
                 <p>We may disclose data in the following situations:</p>
                 <ul className="list-disc pl-5 space-y-2">
-                  <li>To counterparties, according to proposal visibility and reveal decisions.</li>
+                  <li>To counterparties, according to opportunity visibility and reveal decisions.</li>
                   <li>To service providers supporting infrastructure, analytics, and communications.</li>
                   <li>To comply with legal obligations or lawful requests.</li>
                   <li>To protect rights, safety, and platform security.</li>

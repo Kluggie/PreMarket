@@ -239,7 +239,7 @@ export default function Landing() {
             Ready to start pre-qualifying?
           </h2>
           <p className="text-lg text-slate-400 mb-10 max-w-2xl mx-auto">
-            Create your first proposal in minutes. No commitment required.
+            Create your first opportunity in minutes. No commitment required.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
             <Button 

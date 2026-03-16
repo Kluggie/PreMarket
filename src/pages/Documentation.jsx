@@ -15,7 +15,7 @@ export default function Documentation() {
       color: 'from-blue-500 to-blue-600',
       items: [
         { title: 'What is PreMarket?', desc: 'Understanding the platform and its purpose' },
-        { title: 'Creating Your First Proposal', desc: 'Step-by-step guide to getting started' },
+        { title: 'Creating Your First Opportunity', desc: 'Step-by-step guide to getting started' },
         { title: 'Browsing Products', desc: 'Finding the right template or tool for your needs' },
         { title: 'Guest vs. Account Mode', desc: 'Understanding the differences' }
       ]
@@ -47,10 +47,10 @@ export default function Documentation() {
       icon: Users,
       color: 'from-indigo-500 to-indigo-600',
       items: [
-        { title: 'Proposal Lifecycle', desc: 'From creation to reveal' },
+        { title: 'Opportunity Lifecycle', desc: 'From creation to reveal' },
         { title: 'Verification Process', desc: 'How to verify counterparty information' },
         { title: 'Re-evaluation', desc: 'Updating evaluations with new data' },
-        { title: 'Comments & Communication', desc: 'Collaborating within proposals' }
+        { title: 'Comments & Communication', desc: 'Collaborating within opportunities' }
       ]
     }
   ];
@@ -104,7 +104,7 @@ export default function Documentation() {
                 <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center mb-3">
                   <span className="font-bold">2</span>
                 </div>
-                <h3 className="font-semibold mb-2">Fill Proposal</h3>
+                <h3 className="font-semibold mb-2">Fill Opportunity</h3>
                 <p className="text-blue-100 text-sm">Enter information with granular visibility controls</p>
               </div>
               <div>
@@ -117,7 +117,7 @@ export default function Documentation() {
             </div>
             <Link to="/templates">
               <Button className="mt-6 bg-white text-blue-600 hover:bg-blue-50">
-                Create Your First Proposal
+                Create Your First Opportunity
                 <ArrowRight className="ml-2 w-4 h-4" />
               </Button>
             </Link>

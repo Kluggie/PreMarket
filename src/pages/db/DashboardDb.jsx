@@ -16,15 +16,15 @@ export default function DashboardDb() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <Card className="border-0 shadow-sm">
             <CardHeader>
-              <CardTitle className="text-lg">Proposals</CardTitle>
+              <CardTitle className="text-lg">Opportunities</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              <p className="text-sm text-slate-600">Create, list, and view proposals stored in Postgres.</p>
+              <p className="text-sm text-slate-600">Create, list, and view opportunities stored in Postgres.</p>
               <div className="flex gap-2">
-                <Link to={createPageUrl('Proposals')}>
-                  <Button>Open Proposals</Button>
+                <Link to={createPageUrl('Opportunities')}>
+                  <Button>Open Opportunities</Button>
                 </Link>
-                <Link to={createPageUrl('CreateProposal')}>
+                <Link to={createPageUrl('CreateOpportunity')}>
                   <Button variant="outline">Create</Button>
                 </Link>
               </div>

@@ -403,7 +403,7 @@ export default function CreateProposalWithDrafts() {
     }
 
     const created = await templatesClient.useTemplate(selectedTemplate.id, {
-      title: proposalTitle || `${selectedTemplate.name} Proposal`,
+      title: proposalTitle || `${selectedTemplate.name} Opportunity`,
       partyBEmail: recipientEmail.trim() || null,
       idempotencyKey: `wizard:${selectedTemplate.id}:${Date.now()}`,
     });
@@ -448,7 +448,7 @@ export default function CreateProposalWithDrafts() {
     };
 
     await proposalsClient.update(proposalId, {
-      title: proposalTitle || `${selectedTemplate.name} Proposal`,
+      title: proposalTitle || `${selectedTemplate.name} Opportunity`,
       status,
       template_id: selectedTemplate.id,
       template_name: selectedTemplate.name,
@@ -613,14 +613,14 @@ export default function CreateProposalWithDrafts() {
         if (error?.status === 501 || error?.code === 'not_configured') {
           setEvaluationError('AI evaluation is not configured for this environment yet.');
         } else {
-          setEvaluationError(error?.message || 'Evaluation failed. Proposal was still saved.');
+          setEvaluationError(error?.message || 'Evaluation failed. Opportunity was still saved.');
         }
       }
 
       queryClient.invalidateQueries(['proposals']);
-      navigate(createPageUrl(`ProposalDetail?id=${encodeURIComponent(proposalId)}`));
+      navigate(createPageUrl(`OpportunityDetail?id=${encodeURIComponent(proposalId)}`));
     } catch (error) {
-      setEvaluationError(error?.message || 'Failed to submit proposal.');
+      setEvaluationError(error?.message || 'Failed to submit opportunity.');
     } finally {
       setIsSubmittingEvaluation(false);
     }
@@ -781,8 +781,8 @@ export default function CreateProposalWithDrafts() {
           </Link>
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-2xl font-bold text-slate-900">Create Proposal</h1>
-              <p className="text-slate-500 mt-1">Fill out the template to create a pre-qualification proposal.</p>
+              <h1 className="text-2xl font-bold text-slate-900">Create Opportunity</h1>
+              <p className="text-slate-500 mt-1">Fill out the template to create a pre-qualification opportunity.</p>
             </div>
           </div>
         </div>
@@ -852,16 +852,16 @@ export default function CreateProposalWithDrafts() {
             <motion.div key="step1-details" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
               <Card className="border-0 shadow-sm">
                 <CardHeader>
-                  <CardTitle>Proposal Details</CardTitle>
-                  <CardDescription>Set the title and recipient for your proposal.</CardDescription>
+                  <CardTitle>Opportunity Details</CardTitle>
+                  <CardDescription>Set the title and recipient for your opportunity.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-6">
                   <div className="space-y-2">
-                    <Label>Proposal Title</Label>
+                    <Label>Opportunity Title</Label>
                     <Input
                       value={proposalTitle}
                       onChange={(event) => setProposalTitle(event.target.value)}
-                      placeholder={`${selectedTemplate?.name} Proposal`}
+                      placeholder={`${selectedTemplate?.name} Opportunity`}
                     />
                   </div>
 
@@ -1071,7 +1071,7 @@ export default function CreateProposalWithDrafts() {
               <Card className="border-0 shadow-sm">
                 <CardHeader>
                   <CardTitle>Review & Submit</CardTitle>
-                  <CardDescription>Review your proposal before sending.</CardDescription>
+                  <CardDescription>Review your opportunity before sending.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-6">
                   <div className="p-4 bg-slate-50 rounded-xl space-y-3">
@@ -1081,7 +1081,7 @@ export default function CreateProposalWithDrafts() {
                     </div>
                     <div className="flex justify-between">
                       <span className="text-slate-500">Title</span>
-                      <span className="font-medium">{proposalTitle || `${selectedTemplate?.name} Proposal`}</span>
+                      <span className="font-medium">{proposalTitle || `${selectedTemplate?.name} Opportunity`}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-slate-500">Recipient</span>

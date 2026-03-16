@@ -129,9 +129,9 @@ export default function Pricing() {
       icon: Zap,
       color: 'from-slate-500 to-slate-600',
       features: [
-        { text: '3 proposals per month', included: true },
+        { text: '3 opportunities per month', included: true },
         { text: 'AI evaluation report', included: true },
-        { text: 'Limited re-evaluation per proposal', included: true },
+        { text: 'Limited re-evaluation per opportunity', included: true },
         { text: 'Pseudonymous mode', included: true },
         { text: 'Email support', included: true },
         { text: 'Organization profiles', included: true },
@@ -147,10 +147,10 @@ export default function Pricing() {
       icon: Building2,
       color: 'from-blue-500 to-indigo-600',
       features: [
-        { text: 'Unlimited proposals', included: true },
+        { text: 'Unlimited opportunities', included: true },
         { text: 'Advanced AI negotiation', included: true },
         { text: 'Extended AI evaluation report', included: true },
-        { text: 'Unlimited AI re-evaluations per proposal', included: true },
+        { text: 'Unlimited AI re-evaluations per opportunity', included: true },
         { text: 'Pseudonymous mode', included: true },
         { text: 'Priority support', included: true },
         { text: 'Organization profiles', included: true },
@@ -166,10 +166,10 @@ export default function Pricing() {
       icon: Shield,
       color: 'from-indigo-500 to-purple-600',
       features: [
-        { text: 'Unlimited proposals', included: true },
+        { text: 'Unlimited opportunities', included: true },
         { text: 'Tailored / Fine-tuned AI negotiation', included: true },
         { text: 'Extended AI evaluation report', included: true },
-        { text: 'Unlimited AI re-evaluations per proposal', included: true },
+        { text: 'Unlimited AI re-evaluations per opportunity', included: true },
         { text: 'Pseudonymous submissions', included: true },
         { text: 'Priority support', included: true },
         { text: 'Organization profiles', included: true },
@@ -354,11 +354,11 @@ export default function Pricing() {
               },
               {
                 q: 'Do recipients need to pay or create an account?',
-                a: 'No. Recipients can view and respond via the share link. An account is only required to create proposals and manage negotiations.',
+                a: 'No. Recipients can view and respond via the share link. An account is only required to create opportunities and manage negotiations.',
               },
               {
                 q: 'What counts toward my plan limits?',
-                a: 'Only actions taken by the proposal owner count toward your plan (creating proposals and running AI evaluations). Recipient viewing/responding does not use the recipient’s plan.',
+                a: 'Only actions taken by the opportunity owner count toward your plan (creating opportunities and running AI evaluations). Recipient viewing/responding does not use the recipient\'s plan.',
               },
               {
                 q: 'How is confidential information protected?',

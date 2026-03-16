@@ -552,10 +552,10 @@ export default function DocumentComparisonDetail() {
   const downloadProposalPdfMutation = useMutation({
     mutationFn: () => documentComparisonsClient.downloadProposalPdf(comparisonId),
     onSuccess: () => {
-      toast.success('Proposal details PDF download started');
+      toast.success('Opportunity details PDF download started');
     },
     onError: (error) => {
-      toast.error(error?.message || 'Failed to download proposal details PDF');
+      toast.error(error?.message || 'Failed to download opportunity details PDF');
     },
   });
 
@@ -750,7 +750,7 @@ export default function DocumentComparisonDetail() {
       id: 'created',
       kind: 'file',
       tone: 'info',
-      title: 'Proposal Created',
+      title: 'Opportunity Created',
       timestamp: formatDateTime(comparison.created_date),
     },
     {
@@ -777,11 +777,11 @@ export default function DocumentComparisonDetail() {
     <div className="min-h-screen bg-slate-50 py-6">
       <div className="max-w-[1400px] mx-auto px-6 space-y-6">
         <Link
-          to={createPageUrl('Proposals')}
+          to={createPageUrl('Opportunities')}
           className="inline-flex items-center text-slate-600 hover:text-slate-900"
         >
           <ArrowLeft className="w-4 h-4 mr-2" />
-          Back to Proposals
+          Back to Opportunities
         </Link>
 
         <div className="space-y-6 min-w-0">
@@ -805,7 +805,7 @@ export default function DocumentComparisonDetail() {
               }
             >
               <ArrowLeft className="w-4 h-4 mr-2" />
-              Edit Proposal
+              Edit Opportunity
             </Button>
             <Button
               variant="outline"
@@ -813,7 +813,7 @@ export default function DocumentComparisonDetail() {
               disabled={downloadProposalPdfMutation.isPending}
             >
               <Download className="w-4 h-4 mr-2" />
-              Complete Proposal Details
+              Download Opportunity Details PDF
             </Button>
             <Button
               variant="outline"

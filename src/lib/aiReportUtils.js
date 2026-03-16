@@ -22,6 +22,7 @@ const PLACEHOLDER_REVIEW_TITLES = new Set([
   'untitled',
   'untitled comparison',
   'untitled proposal',
+  'untitled opportunity',
   'shared report',
 ]);
 

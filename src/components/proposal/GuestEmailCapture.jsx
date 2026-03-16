@@ -21,7 +21,7 @@ export default function GuestEmailCapture({ onEmailSubmit, isSubmitting }) {
           Almost Done!
         </CardTitle>
         <CardDescription>
-          Enter your email to receive a magic link for accessing and editing your proposal.
+          Enter your email to receive a magic link for accessing and editing your opportunity.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -46,11 +46,11 @@ export default function GuestEmailCapture({ onEmailSubmit, isSubmitting }) {
             </div>
             <div className="flex items-start gap-2 text-sm text-blue-700">
               <CheckCircle2 className="w-4 h-4 flex-shrink-0 mt-0.5" />
-              <span>Edit proposal later via magic link</span>
+              <span>Edit opportunity later via magic link</span>
             </div>
             <div className="flex items-start gap-2 text-sm text-blue-700">
               <CheckCircle2 className="w-4 h-4 flex-shrink-0 mt-0.5" />
-              <span>Share proposal with recipient</span>
+              <span>Share opportunity with recipient</span>
             </div>
           </div>
 
@@ -59,7 +59,7 @@ export default function GuestEmailCapture({ onEmailSubmit, isSubmitting }) {
             disabled={isSubmitting || !email}
             className="w-full bg-blue-600 hover:bg-blue-700"
           >
-            {isSubmitting ? 'Creating Proposal...' : 'Create Proposal'}
+            {isSubmitting ? 'Creating Opportunity...' : 'Create Opportunity'}
           </Button>
 
           <p className="text-xs text-slate-500 text-center">

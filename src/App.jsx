@@ -33,6 +33,24 @@ const SharedReportAliasRedirect = () => {
   return <Navigate to={`/SharedReport${location.search || ''}`} replace />;
 };
 
+// ── Backward-compat redirects: old /Proposal* paths → new /Opportunity* paths ──
+const ProposalsRedirect = () => {
+  const location = useLocation();
+  return <Navigate to={`/Opportunities${location.search || ''}`} replace />;
+};
+const ProposalDetailRedirect = () => {
+  const location = useLocation();
+  return <Navigate to={`/OpportunityDetail${location.search || ''}`} replace />;
+};
+const CreateProposalRedirect = () => {
+  const location = useLocation();
+  return <Navigate to={`/CreateOpportunity${location.search || ''}`} replace />;
+};
+const CreateProposalWithDraftsRedirect = () => {
+  const location = useLocation();
+  return <Navigate to={`/CreateOpportunity${location.search || ''}`} replace />;
+};
+
 const PublicRoutes = () => {
   return (
     <Routes>
@@ -194,6 +212,36 @@ const PublicRoutes = () => {
           <MainPage />
         </LayoutWrapper>
       } />
+      {/* ── Canonical opportunity paths ────────────────────────────────── */}
+      <Route
+        path="/Opportunities"
+        element={
+          <LayoutWrapper currentPageName="Proposals">
+            <Pages.Proposals />
+          </LayoutWrapper>
+        }
+      />
+      <Route
+        path="/OpportunityDetail"
+        element={
+          <LayoutWrapper currentPageName="ProposalDetail">
+            <Pages.ProposalDetail />
+          </LayoutWrapper>
+        }
+      />
+      <Route
+        path="/CreateOpportunity"
+        element={
+          <LayoutWrapper currentPageName="CreateProposalWithDrafts">
+            <Pages.CreateProposalWithDrafts />
+          </LayoutWrapper>
+        }
+      />
+      {/* ── Backward-compat: old /Proposal* → redirect to /Opportunity* ── */}
+      <Route path="/Proposals" element={<ProposalsRedirect />} />
+      <Route path="/ProposalDetail" element={<ProposalDetailRedirect />} />
+      <Route path="/CreateProposal" element={<CreateProposalRedirect />} />
+      <Route path="/CreateProposalWithDrafts" element={<CreateProposalWithDraftsRedirect />} />
       {Object.entries(Pages).map(([path, Page]) => (
         <Route
           key={path}

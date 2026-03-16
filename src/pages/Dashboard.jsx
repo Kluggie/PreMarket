@@ -108,7 +108,7 @@ function CompactProposalRow({ proposal, onOpen }) {
     >
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
-          <h4 className="text-sm font-semibold text-slate-900 truncate">{proposal.title || 'Untitled Proposal'}</h4>
+          <h4 className="text-sm font-semibold text-slate-900 truncate">{proposal.title || 'Untitled Opportunity'}</h4>
           <StatusBadge proposal={proposal} />
           <ActionBadge proposal={proposal} />
         </div>
@@ -167,7 +167,7 @@ function AgreementRequestsCard({ proposals, onOpen, onReviewAll }) {
         <div className="space-y-1">
           <p className="text-sm font-semibold text-amber-900">{AGREEMENT_REQUESTED_LABEL}</p>
           <p className="text-sm text-amber-800">
-            {proposals.length} proposal{proposals.length === 1 ? '' : 's'} need you to confirm the agreement before they can be marked as {DASHBOARD_WON_LABEL.toLowerCase()}.
+            {proposals.length} opportunit{proposals.length === 1 ? 'y' : 'ies'} need you to confirm the agreement before they can be marked as {DASHBOARD_WON_LABEL.toLowerCase()}.
           </p>
         </div>
         <Button variant="outline" size="sm" className="border-amber-300 bg-white text-amber-900 hover:bg-amber-100" onClick={onReviewAll}>
@@ -340,14 +340,14 @@ export default function Dashboard() {
     }
 
     if (proposal.thread_bucket === 'drafts' || (proposal.list_type || '').toLowerCase() === 'draft') {
-      navigate(createPageUrl(`CreateProposal?draft=${encodeURIComponent(proposal.id)}`));
+      navigate(createPageUrl(`CreateOpportunity?draft=${encodeURIComponent(proposal.id)}`));
       return;
     }
 
-    navigate(createPageUrl(`ProposalDetail?id=${encodeURIComponent(proposal.id)}`));
+    navigate(createPageUrl(`OpportunityDetail?id=${encodeURIComponent(proposal.id)}`));
   };
   const handleReviewAgreementRequests = () => {
-    navigate(createPageUrl('Proposals?tab=all&status=win_confirmation_requested'));
+    navigate(createPageUrl('Opportunities?tab=all&status=win_confirmation_requested'));
   };
 
   return (
@@ -356,12 +356,12 @@ export default function Dashboard() {
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
           <div>
             <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
-            <p className="text-slate-500 mt-1">Here&apos;s what&apos;s happening with your proposals.</p>
+            <p className="text-slate-500 mt-1">Here&apos;s what&apos;s happening with your opportunities.</p>
           </div>
           <Link to={createPageUrl('DocumentComparisonCreate')}>
             <Button className="bg-blue-600 hover:bg-blue-700">
               <Plus className="w-4 h-4 mr-2" />
-              New Proposal
+              New Opportunity
             </Button>
           </Link>
         </div>
@@ -390,7 +390,7 @@ export default function Dashboard() {
         {summaryError && (
           <div className="flex items-center gap-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 mb-6">
             <AlertCircle className="w-4 h-4 shrink-0" />
-            <span>Summary stats could not be loaded. Your proposals are unaffected — <button type="button" className="underline font-medium" onClick={() => refetchSummary()}>retry</button>.</span>
+            <span>Summary stats could not be loaded. Your opportunities are unaffected — <button type="button" className="underline font-medium" onClick={() => refetchSummary()}>retry</button>.</span>
           </div>
         )}
 
@@ -399,12 +399,12 @@ export default function Dashboard() {
         </div>
 
         {loadingProposals ? (
-          <div className="text-sm text-slate-500">Loading proposals...</div>
+          <div className="text-sm text-slate-500">Loading opportunities...</div>
         ) : proposalsError ? (
           <Card className="border-dashed border-2 border-red-200 bg-red-50">
             <CardContent className="py-10 text-center space-y-3">
               <AlertCircle className="w-8 h-8 text-red-500 mx-auto" />
-              <p className="text-red-700 font-medium">Failed to load proposals</p>
+              <p className="text-red-700 font-medium">Failed to load opportunities</p>
               <p className="text-sm text-red-600">{proposalsErrorObj?.message || 'An unexpected error occurred.'}</p>
               <Button variant="outline" size="sm" onClick={() => refetchProposals()} className="mt-2">
                 Retry
@@ -465,7 +465,7 @@ export default function Dashboard() {
 
             <Card className="border border-slate-200 shadow-sm">
               <CardContent className="p-4 sm:p-5 space-y-4">
-                <h2 className="text-base font-semibold text-slate-900">Recent Proposals</h2>
+                <h2 className="text-base font-semibold text-slate-900">Recent Opportunities</h2>
 
                 {recentProposals.length > 0 ? (
                   <div className="rounded-lg border border-slate-200 divide-y divide-slate-100 bg-white">

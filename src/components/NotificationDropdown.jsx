@@ -168,7 +168,7 @@ export default function NotificationDropdown({ user }) {
                 className={`relative group ${!notification.read ? 'bg-blue-50/50' : ''}`}
               >
                 <Link
-                  to={notification.action_url || createPageUrl('Proposals')}
+                  to={notification.action_url || createPageUrl('Opportunities')}
                   className={`block px-3 py-3 pr-10 hover:bg-slate-50 transition-colors ${!notification.read ? 'border-l-2 border-blue-500' : ''}`}
                 >
                   <div className="flex-1 min-w-0">

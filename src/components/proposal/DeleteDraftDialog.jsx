@@ -26,9 +26,9 @@ export default function DeleteDraftDialog({ onConfirm, disabled, trigger }) {
       </AlertDialogTrigger>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Delete Draft Proposal?</AlertDialogTitle>
+          <AlertDialogTitle>Delete Draft Opportunity?</AlertDialogTitle>
           <AlertDialogDescription>
-            This will permanently delete this draft proposal and all associated responses. This action cannot be undone.
+            This will permanently delete this draft opportunity and all associated responses. This action cannot be undone.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

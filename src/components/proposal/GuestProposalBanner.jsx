@@ -17,7 +17,7 @@ export default function GuestProposalBanner({ onCreateAccount }) {
             <div>
               <h3 className="font-semibold text-lg mb-1">You're using Guest Mode</h3>
               <p className="text-blue-100 text-sm">
-                Create an account to track analytics, manage multiple proposals, and access your dashboard.
+                Create an account to track analytics, manage multiple opportunities, and access your dashboard.
               </p>
             </div>
           </div>

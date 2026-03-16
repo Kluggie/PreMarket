@@ -101,7 +101,7 @@ export default function RecipientEditStep3() {
 
   const doneTarget = sharedToken
     ? createPageUrl(`SharedReport?token=${encodeURIComponent(sharedToken)}`)
-    : createPageUrl('Proposals');
+    : createPageUrl('Opportunities');
 
   if (proposalQuery.isLoading || comparisonQuery.isLoading) {
     return (

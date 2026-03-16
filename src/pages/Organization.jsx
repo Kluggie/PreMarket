@@ -608,7 +608,7 @@ export default function Organization() {
               <CardTitle>{isCreateMode ? 'Create Organization' : 'Organization Profile'}</CardTitle>
               <CardDescription>
                 {isCreateMode
-                  ? 'Set up your organization profile for directory visibility and proposal context.'
+                  ? 'Set up your organization profile for directory visibility and opportunity context.'
                   : 'Update your organization details, social links, and directory settings.'}
               </CardDescription>
             </div>
@@ -749,7 +749,7 @@ export default function Organization() {
                 Social Links
               </h2>
               <p className="text-sm text-slate-600">
-                Optional. Helps others verify your organization and provides context in proposals.
+                Optional. Helps others verify your organization and provides context in opportunities.
               </p>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

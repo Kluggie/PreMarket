@@ -28,7 +28,7 @@ export default function CreateProposalDb() {
         status: 'draft',
       }),
     onSuccess: (proposal) => {
-      navigate(createPageUrl(`ProposalDetail?id=${proposal.id}`));
+      navigate(createPageUrl(`OpportunityDetail?id=${proposal.id}`));
     },
   });
 
@@ -40,13 +40,13 @@ export default function CreateProposalDb() {
     <div className="min-h-screen bg-slate-50 py-8">
       <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Create Proposal</h1>
-          <p className="text-sm text-slate-500">Create a proposal stored directly in Postgres.</p>
+          <h1 className="text-2xl font-bold text-slate-900">Create Opportunity</h1>
+          <p className="text-sm text-slate-500">Create an opportunity stored directly in Postgres.</p>
         </div>
 
         <Card className="border-0 shadow-sm">
           <CardHeader>
-            <CardTitle>Proposal Details</CardTitle>
+            <CardTitle>Opportunity Details</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
@@ -55,7 +55,7 @@ export default function CreateProposalDb() {
                 id="proposal-title"
                 value={formState.title}
                 onChange={(event) => setField('title', event.target.value)}
-                placeholder="Acquisition fit proposal"
+                placeholder="Acquisition fit opportunity"
               />
             </div>
 
@@ -86,7 +86,7 @@ export default function CreateProposalDb() {
                 id="proposal-summary"
                 value={formState.summary}
                 onChange={(event) => setField('summary', event.target.value)}
-                placeholder="High-level context for this proposal"
+                placeholder="High-level context for this opportunity"
               />
             </div>
 
@@ -95,14 +95,14 @@ export default function CreateProposalDb() {
             )}
 
             <div className="flex items-center justify-end gap-3 pt-2">
-              <Button variant="outline" onClick={() => navigate(createPageUrl('Proposals'))}>
+              <Button variant="outline" onClick={() => navigate(createPageUrl('Opportunities'))}>>
                 Cancel
               </Button>
               <Button
                 onClick={() => createMutation.mutate()}
                 disabled={createMutation.isPending || !formState.title.trim()}
               >
-                {createMutation.isPending ? 'Creating...' : 'Create Proposal'}
+                {createMutation.isPending ? 'Creating...' : 'Create Opportunity'}
               </Button>
             </div>
           </CardContent>

@@ -73,7 +73,7 @@ export default function ProposalDetailDb() {
   const deleteMutation = useMutation({
     mutationFn: () => proposalsClient.remove(proposalId),
     onSuccess: () => {
-      navigate(createPageUrl('Proposals'));
+      navigate(createPageUrl('Opportunities'));
     },
   });
 
@@ -94,7 +94,7 @@ export default function ProposalDetailDb() {
     return (
       <div className="min-h-screen bg-slate-50 py-8">
         <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8">
-          <p className="text-sm text-slate-600">Missing proposal id in URL.</p>
+          <p className="text-sm text-slate-600">Missing opportunity id in URL.</p>
         </div>
       </div>
     );
@@ -104,7 +104,7 @@ export default function ProposalDetailDb() {
     return (
       <div className="min-h-screen bg-slate-50 py-8">
         <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8">
-          <p className="text-sm text-slate-600">Loading proposal...</p>
+          <p className="text-sm text-slate-600">Loading opportunity...</p>
         </div>
       </div>
     );
@@ -115,17 +115,17 @@ export default function ProposalDetailDb() {
       <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">Proposal Detail</h1>
+            <h1 className="text-2xl font-bold text-slate-900">Opportunity Detail</h1>
             <p className="text-sm text-slate-500">View and edit the DB-backed proposal record.</p>
           </div>
-          <Button variant="outline" onClick={() => navigate(createPageUrl('Proposals'))}>
+          <Button variant="outline" onClick={() => navigate(createPageUrl('Opportunities'))}>
             Back
           </Button>
         </div>
 
         <Card className="border-0 shadow-sm">
           <CardHeader>
-            <CardTitle>Proposal</CardTitle>
+            <CardTitle>Opportunity</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-1">

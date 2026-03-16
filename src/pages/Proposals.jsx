@@ -235,28 +235,28 @@ function getStatusOptions() {
 function getEmptyStateCopy(activeTab, statusFilter) {
   if (activeTab === 'drafts') {
     return {
-      title: 'No draft proposals yet.',
-      description: 'Create your first proposal to get started.',
+      title: 'No draft opportunities yet.',
+      description: 'Create your first opportunity to get started.',
     };
   }
 
   if (activeTab === 'closed') {
     return {
-      title: 'No closed proposals yet.',
-      description: 'Won and lost proposal threads will appear here.',
+      title: 'No closed opportunities yet.',
+      description: 'Won and lost opportunity threads will appear here.',
     };
   }
 
   if (activeTab === 'archived') {
     return {
-      title: 'No archived proposals.',
-      description: 'Archived proposal threads will appear here until you restore them.',
+      title: 'No archived opportunities.',
+      description: 'Archived opportunity threads will appear here until you restore them.',
     };
   }
 
   if (statusFilter === 'needs_response') {
     return {
-      title: 'No proposals need a reply.',
+      title: 'No opportunities need a reply.',
       description: 'When a counterparty sends back an update, it will appear here.',
     };
   }
@@ -264,7 +264,7 @@ function getEmptyStateCopy(activeTab, statusFilter) {
   if (statusFilter === 'waiting_on_other_party') {
     return {
       title: 'Nothing is waiting right now.',
-      description: 'Proposals you sent most recently will appear here until the counterparty replies.',
+      description: 'Opportunities you sent most recently will appear here until the counterparty replies.',
     };
   }
 
@@ -276,7 +276,7 @@ function getEmptyStateCopy(activeTab, statusFilter) {
   }
 
   return {
-    title: 'No active proposals in your inbox.',
+    title: 'No active opportunities in your inbox.',
     description: 'Sent and received negotiation threads will appear here.',
   };
 }
@@ -284,15 +284,15 @@ function getEmptyStateCopy(activeTab, statusFilter) {
 function getDeleteCopy(proposal) {
   if (proposal?.sent_at) {
     return {
-      title: 'Delete Proposal From Your Workspace?',
+      title: 'Delete Opportunity From Your Workspace?',
       description:
-        'This will hide the proposal from your workspace only. It will remain available to the counterparty and stay intact for shared history.',
+        'This will hide the opportunity from your workspace only. It will remain available to the counterparty and stay intact for shared history.',
       confirmLabel: 'Delete',
     };
   }
 
   return {
-    title: 'Delete Draft Proposal?',
+    title: 'Delete Draft Opportunity?',
     description:
       'This will permanently delete this unsent draft and any linked draft-only comparison data. This action cannot be undone.',
     confirmLabel: 'Delete Draft',
@@ -352,7 +352,7 @@ function ProposalRow({
 
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1 flex-wrap">
-              <h3 className="font-medium text-slate-900 truncate">{proposal.title || 'Untitled Proposal'}</h3>
+              <h3 className="font-medium text-slate-900 truncate">{proposal.title || 'Untitled Opportunity'}</h3>
               <OutcomeStateBadge status={isDraft ? 'draft' : proposal.status} />
               <DirectionBadge direction={proposal.latest_direction} />
               <ActionStateBadge proposal={proposal} />
@@ -622,7 +622,7 @@ export default function Proposals() {
       refreshProposalQueries();
     },
     onError: (err) => {
-      toast.error(err?.message || 'Failed to delete proposal');
+      toast.error(err?.message || 'Failed to delete opportunity');
     },
   });
 
@@ -695,11 +695,11 @@ export default function Proposals() {
     }
 
     if (proposal.thread_bucket === 'drafts' || (proposal.list_type || '').toLowerCase() === 'draft') {
-      navigate(createPageUrl(`CreateProposal?draft=${encodeURIComponent(proposal.id)}`));
+      navigate(createPageUrl(`CreateOpportunity?draft=${encodeURIComponent(proposal.id)}`));
       return;
     }
 
-    navigate(createPageUrl(`ProposalDetail?id=${encodeURIComponent(proposal.id)}`));
+    navigate(createPageUrl(`OpportunityDetail?id=${encodeURIComponent(proposal.id)}`));
   };
 
   const handleTabChange = (nextTab) => {
@@ -794,13 +794,13 @@ export default function Proposals() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">Proposals</h1>
-            <p className="text-slate-500 mt-1">Manage live proposal threads across inbox, drafts, closed, and archived.</p>
+            <h1 className="text-2xl font-bold text-slate-900">Opportunities</h1>
+            <p className="text-slate-500 mt-1">Manage live opportunity threads across inbox, drafts, closed, and archived.</p>
           </div>
           <Link to={createPageUrl('DocumentComparisonCreate')}>
             <Button className="bg-blue-600 hover:bg-blue-700">
               <Plus className="w-4 h-4 mr-2" />
-              New Proposal
+              New Opportunity
             </Button>
           </Link>
         </div>
@@ -855,7 +855,7 @@ export default function Proposals() {
             <Card className="border-0 shadow-sm overflow-hidden">
               <CardContent className="p-0">
                 {isLoading ? (
-                  <div className="py-12 text-center text-slate-500">Loading proposals...</div>
+                  <div className="py-12 text-center text-slate-500">Loading opportunities...</div>
                 ) : isError ? (
                   <div className="py-16 px-6 text-center space-y-3">
                     {(Number(error?.status) === 401 || error?.code === 'unauthorized') ? (
@@ -863,7 +863,7 @@ export default function Proposals() {
                         <AlertCircle className="w-8 h-8 text-amber-500 mx-auto" />
                         <p className="text-amber-800 font-medium">Session expired</p>
                         <p className="text-sm text-slate-500">
-                          Your session has expired or is invalid. Sign in again &mdash; your proposals are still saved and will reappear immediately.
+                          Your session has expired or is invalid. Sign in again &mdash; your opportunities are still saved and will reappear immediately.
                         </p>
                         <Button variant="outline" onClick={() => navigateToLogin()}>
                           Sign in again
@@ -872,7 +872,7 @@ export default function Proposals() {
                     ) : (
                       <>
                         <AlertCircle className="w-8 h-8 text-red-500 mx-auto" />
-                        <p className="text-red-600 font-medium">Failed to load proposals</p>
+                        <p className="text-red-600 font-medium">Failed to load opportunities</p>
                         <p className="text-sm text-slate-500">
                           {error?.message === 'proposals_query_failed'
                             ? 'Database connection error. Please refresh or contact support if this persists.'
@@ -891,7 +891,7 @@ export default function Proposals() {
                     {activeTab === 'drafts' && (
                       <Link to={createPageUrl('DocumentComparisonCreate')}>
                         <Button className="bg-blue-600 hover:bg-blue-700 mt-2">
-                          Create New Proposal
+                          Create New Opportunity
                         </Button>
                       </Link>
                     )}

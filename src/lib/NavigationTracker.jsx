@@ -7,9 +7,10 @@ import { appLogsClient } from '@/api/appLogsClient';
 const BRAND_NAME = 'PreMarket';
 const PAGE_TITLE_OVERRIDES = {
   SharedReport: 'Shared Report',
-  ProposalDetail: 'Proposal Detail',
-  CreateProposal: 'Create Proposal',
-  CreateProposalWithDrafts: 'Create Proposal',
+  Proposals: 'Opportunities',
+  ProposalDetail: 'Opportunity Detail',
+  CreateProposal: 'Create Opportunity',
+  CreateProposalWithDrafts: 'Create Opportunity',
   DocumentComparisonCreate: 'Document Comparison',
   DocumentComparisonDetail: 'Document Comparison',
   DocumentComparisonRunDetails: 'Comparison Run Details',
@@ -17,6 +18,14 @@ const PAGE_TITLE_OVERRIDES = {
   DirectoryOrgDetail: 'Directory Organization',
   ReportViewer: 'Report Viewer',
   GeminiTest: 'AI Test',
+};
+
+// Maps new URL path segments to their internal page key equivalents.
+// Allows tab titles and analytics logging to work for /Opportunities etc.
+const PATH_SEGMENT_ALIASES = {
+  opportunities: 'Proposals',
+  opportunitydetail: 'ProposalDetail',
+  createopportunity: 'CreateProposalWithDrafts',
 };
 
 function normalizeRouteToken(value) {
@@ -54,7 +63,9 @@ export default function NavigationTracker() {
       const pathSegment = pathname.replace(/^\//, '').split('/')[0];
       const pageKeys = Object.keys(Pages);
       const normalizedPathSegment = normalizeRouteToken(pathSegment);
-      const matchedKey = pageKeys.find((key) => normalizeRouteToken(key) === normalizedPathSegment);
+      const matchedKey = pageKeys.find((key) => normalizeRouteToken(key) === normalizedPathSegment)
+        ?? PATH_SEGMENT_ALIASES[normalizedPathSegment]
+        ?? null;
       pageName = matchedKey || null;
     }
 

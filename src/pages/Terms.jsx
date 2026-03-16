@@ -73,7 +73,7 @@ export default function Terms() {
               <Section id="service" title="Service Scope">
                 <p>
                   PreMarket is a pre-qualification information platform that allows users to exchange
-                  structured proposals, apply visibility controls, and request AI-assisted evaluations.
+                  structured opportunities, apply visibility controls, and request AI-assisted evaluations.
                 </p>
               </Section>
 

@@ -30,10 +30,10 @@ export default function SharedReportDb() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold text-slate-900">Shared Report</h1>
-            <p className="text-sm text-slate-500">Token-based read for shared proposal metadata.</p>
+            <p className="text-sm text-slate-500">Token-based read for shared opportunity metadata.</p>
           </div>
-          <Button variant="outline" onClick={() => navigate(createPageUrl('Proposals'))}>
-            Back to Proposals
+          <Button variant="outline" onClick={() => navigate(createPageUrl('Opportunities'))}>
+            Back to Opportunities
           </Button>
         </div>
 
@@ -64,7 +64,7 @@ export default function SharedReportDb() {
         {sharedLink && (
           <Card className="border-0 shadow-sm">
             <CardHeader>
-              <CardTitle>{sharedLink.proposal?.title || 'Shared proposal'}</CardTitle>
+              <CardTitle>{sharedLink.proposal?.title || 'Shared opportunity'}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               <p className="text-sm text-slate-600">Status: {sharedLink.status}</p>
@@ -80,9 +80,9 @@ export default function SharedReportDb() {
               {sharedLink.proposal?.id && (
                 <Button
                   variant="outline"
-                  onClick={() => navigate(createPageUrl(`ProposalDetail?id=${encodeURIComponent(sharedLink.proposal.id)}`))}
+                  onClick={() => navigate(createPageUrl(`OpportunityDetail?id=${encodeURIComponent(sharedLink.proposal.id)}`))}
                 >
-                  View Proposal
+                  View Opportunity
                 </Button>
               )}
             </CardContent>

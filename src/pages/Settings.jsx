@@ -485,8 +485,8 @@ export default function Settings() {
               <Separator />
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="font-medium">New Proposals</p>
-                  <p className="text-sm text-slate-500">Get notified when you receive a proposal.</p>
+                  <p className="font-medium">New Opportunities</p>
+                  <p className="text-sm text-slate-500">Get notified when you receive an opportunity.</p>
                 </div>
                 <Switch
                   checked={notifications.email_proposals}
@@ -685,7 +685,7 @@ export default function Settings() {
                   <p className="text-sm text-slate-500">Loading sessions...</p>
                 ) : sessionsError ? (
                   <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
-                    Could not load sessions — your proposals and data are unaffected. Refresh to retry.
+                    Could not load sessions — your opportunities and data are unaffected. Refresh to retry.
                   </p>
                 ) : sessions.length === 0 ? (
                   <p className="text-sm text-slate-500">No active sessions found.</p>
