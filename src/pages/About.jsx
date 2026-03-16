@@ -12,22 +12,22 @@ export default function About() {
     {
       icon: Shield,
       title: 'Privacy First',
-      description: 'Your information is protected with industry-leading privacy controls and progressive reveal mechanisms.'
+      description: 'You control what is shared, when it is shared, and who can see it.'
     },
     {
       icon: Eye,
       title: 'Transparency',
-      description: 'Clear visibility into what information is shared, when, and with whom. No hidden data exchanges.'
+      description: 'Clear visibility into what has been shared, what remains private, and what actions were taken.'
     },
     {
       icon: Lock,
       title: 'Security',
-      description: 'Enterprise-grade security measures to protect sensitive pre-qualification data.'
+      description: 'Designed to reduce unnecessary exposure of sensitive information early in the process.'
     },
     {
       icon: BarChart3,
-      title: 'AI-Powered Insights',
-      description: 'Advanced AI evaluations provide objective compatibility assessments with your explicit consent.'
+      title: 'AI-Assisted Insights',
+      description: 'Advanced AI helps surface fit, gaps, and questions to resolve before deeper engagement.'
     }
   ];
 
@@ -40,13 +40,13 @@ export default function About() {
             About PreMarket
           </h1>
           <p className="text-xl text-blue-100 mb-8">
-            A privacy-preserving pre-qualification platform for structured trust-building before commitment.
+            PreMarket helps parties assess fit before sharing sensitive information or committing resources.
           </p>
           <Button 
             size="lg" 
             className="bg-white text-slate-900 hover:bg-blue-50"
             onClick={() => {
-              window.location.href = createPageUrl('Templates');
+              window.location.href = createPageUrl('Opportunities');
               setTimeout(() => window.scrollTo(0, 0), 100);
             }}
           >
@@ -66,24 +66,26 @@ export default function About() {
                 PreMarket exists to solve a fundamental challenge in business relationships: how do parties evaluate compatibility and fit before revealing sensitive information or committing resources?
               </p>
               <p className="text-lg text-slate-600 mb-4">
-                Traditional approaches often require extensive disclosure upfront, creating privacy concerns and information asymmetry. PreMarket introduces a structured, privacy-preserving framework where parties can:
+                PreMarket makes early-stage business evaluation more private, structured, and efficient. 
+                Too often, parties are expected to share sensitive details before they know whether there is enough alignment to justify deeper engagement. 
+                PreMarket helps both sides assess fit first, so conversations can move forward with more clarity and less unnecessary exposure where parties can:
               </p>
               <ul className="space-y-2 text-slate-600">
                 <li className="flex items-start gap-2">
                   <span className="text-blue-600 font-bold">•</span>
-                  Exchange information gradually through progressive reveal gates
+                  Exchange information gradually through progressive stages
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="text-blue-600 font-bold">•</span>
-                  Leverage AI-powered compatibility assessments with explicit consent
+                  Leverage AI-powered mediation and assessments with explicit consent
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="text-blue-600 font-bold">•</span>
-                  Maintain pseudonymity until mutual interest is established
+                  Optionally maintain pseudonymity until mutual interest is established
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="text-blue-600 font-bold">•</span>
-                  Verify claims through a structured verification workflow
+                  Move forward only when there is a strong reason to continue
                 </li>
               </ul>
             </CardContent>
@@ -127,12 +129,8 @@ export default function About() {
             <CardContent className="p-8">
               <h2 className="text-2xl font-bold text-slate-900 mb-4">Important Disclaimer</h2>
               <p className="text-slate-600 mb-4">
-                PreMarket is an information platform for pre-qualification only. We do not act as brokers, 
-                provide financial or legal advice, or handle transactions. All dealings are directly between parties.
-              </p>
-              <p className="text-slate-600">
-                AI evaluations are informational only. Users must conduct their own due diligence and 
-                consult qualified professionals for investment, legal, or financial decisions.
+                PreMarket helps parties assess fit before deeper engagement. AI evaluations are informational only. 
+                We do not broker deals, provide legal or financial advice, or act on behalf of either party. Users remain responsible for their own diligence, professional advice, and final decisions.
               </p>
             </CardContent>
           </Card>
@@ -153,22 +151,12 @@ export default function About() {
               size="lg" 
               className="bg-blue-600 hover:bg-blue-700"
               onClick={() => {
-                window.location.href = createPageUrl('Templates');
+                window.location.href = createPageUrl('Opportunities');
                 setTimeout(() => window.scrollTo(0, 0), 100);
               }}
             >
               Get Started
               <ArrowRight className="ml-2 w-5 h-5" />
-            </Button>
-            <Button 
-              size="lg" 
-              variant="outline"
-              onClick={() => {
-                window.location.href = createPageUrl('Documentation');
-                setTimeout(() => window.scrollTo(0, 0), 100);
-              }}
-            >
-              View Documentation
             </Button>
           </div>
         </div>

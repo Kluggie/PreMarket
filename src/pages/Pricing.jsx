@@ -226,11 +226,10 @@ export default function Pricing() {
           <Badge className="mb-4 bg-blue-100 text-blue-700">Pricing</Badge>
           <h1 className="text-4xl font-bold text-slate-900 mb-4">Simple, transparent pricing</h1>
           <p className="text-lg text-slate-600 max-w-2xl mx-auto">
-            Start free and scale as you grow. No hidden fees, no surprises.
+            Start free and upgrade when you need more capacity.
           </p>
           <p className="text-sm text-slate-500 mt-2">
-            Upgrades apply immediately. Downgrades and cancellations take effect at the end of your
-            billing period.
+            No hidden fees. Cancel anytime. Paid changes take effect according to your billing cycle.
           </p>
         </div>
 
@@ -238,15 +237,16 @@ export default function Pricing() {
           <CardContent className="p-6 sm:p-7">
             <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
               <div>
-                <h2 className="text-lg font-semibold text-slate-900">Beta program: 6 months free for the first 50 users</h2>
+                <h2 className="text-lg font-semibold text-slate-900">Early Access Program: 3 months free for the first 50 users</h2>
                 <p className="text-sm text-slate-600 mt-2 max-w-2xl">
-                  Beta members get early access to workflow updates and a direct feedback loop with the product team.
+                  Early members get early access to workflow updates and a direct feedback loop with the product team.
                 </p>
               </div>
+              <span className="text-xs text-slate-500 whitespace-nowrap sm:text-right shrink-0">Ends June 30, 2026</span>
             </div>
             <div className="mt-5">
               <div className="flex items-center justify-between text-sm mb-2">
-                <span className="text-slate-600">Beta seats claimed</span>
+                <span className="text-slate-600">Apply for Early Access</span>
                 <span className="font-semibold text-slate-900">
                   {betaCountLoading ? (
                     <span className="text-slate-400">Loading…</span>

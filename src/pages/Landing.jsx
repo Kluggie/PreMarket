@@ -6,6 +6,9 @@ import {
   Shield, ArrowRight, CheckCircle2, Lock, Eye, FileText, BarChart3, RefreshCw
 } from 'lucide-react';
 
+// Set to true to restore the "View Documentation" CTA button on the landing page.
+const showDocumentationCta = false;
+
 export default function Landing() {
   const navigate = useNavigate();
 
@@ -250,15 +253,17 @@ export default function Landing() {
               Get Started
               <ArrowRight className="ml-2 w-5 h-5" />
             </Button>
-            <Link to="/documentation">
-              <Button 
-                variant="outline" 
-                size="lg" 
-                className="px-8 py-6 text-lg h-auto border-white/30 text-white hover:bg-white/10 bg-transparent"
-              >
-                View Documentation
-              </Button>
-            </Link>
+            {showDocumentationCta && (
+              <Link to="/documentation">
+                <Button
+                  variant="outline"
+                  size="lg"
+                  className="px-8 py-6 text-lg h-auto border-white/30 text-white hover:bg-white/10 bg-transparent"
+                >
+                  View Documentation
+                </Button>
+              </Link>
+            )}
           </div>
         </div>
       </section>

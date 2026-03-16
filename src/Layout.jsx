@@ -40,6 +40,9 @@ function CoinSideIcon({ className = '', ...props }) {
   );
 }
 
+// Set to true to restore the Documentation link in the footer.
+const showDocumentationLink = false;
+
 export default function Layout({ children, currentPageName }) {
   const { user, logout, navigateToLogin, checkAppState } = useAuth();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -291,7 +294,7 @@ export default function Layout({ children, currentPageName }) {
                 <ul className="space-y-2 text-sm text-slate-400">
                   <li><Link to={createPageUrl('About')} className="hover:text-white transition-colors">About Us</Link></li>
                   <li><Link to="/contact" className="hover:text-white transition-colors">Contact</Link></li>
-                  <li><Link to="/documentation" className="hover:text-white transition-colors">Documentation</Link></li>
+                  {showDocumentationLink && <li><Link to="/documentation" className="hover:text-white transition-colors">Documentation</Link></li>}
                 </ul>
               </div>
               <div>
