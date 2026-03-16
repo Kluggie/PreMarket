@@ -67,6 +67,7 @@ function mapProposalRow(row) {
     payload: row.payload || {},
     recipient_email: row.partyBEmail || null,
     owner_user_id: row.userId,
+    is_private_mode: Boolean(row.isPrivateMode),
     sent_at: row.sentAt || null,
     received_at: row.receivedAt || null,
     last_thread_activity_at: row.lastThreadActivityAt || null,
@@ -86,22 +87,38 @@ async function sendProposalEmail(params: {
   recipientEmail: string;
   senderEmail: string;
   proposalTitle: string;
+  isPrivateMode?: boolean;
 }) {
   const resend = getResendConfig();
   if (!resend.ready) {
     throw new ApiError(501, 'not_configured', 'Resend email delivery is not configured');
   }
 
-  const sender = asText(params.senderEmail) || 'A PreMarket user';
+  const isPrivate = Boolean(params.isPrivateMode);
   const title = asText(params.proposalTitle) || 'Untitled proposal';
-  const subject = `${sender} sent you a proposal: ${title}`;
-  const text = [
-    `${sender} sent you a proposal on PreMarket.`,
-    '',
-    `Title: ${title}`,
-    '',
-    'Sign in to PreMarket to review and respond.',
-  ].join('\n');
+
+  // Private mode: do not leak sender identity in any email field.
+  const subject = isPrivate
+    ? `You received a private opportunity on PreMarket`
+    : `${asText(params.senderEmail) || 'A PreMarket user'} sent you a proposal: ${title}`;
+
+  const text = isPrivate
+    ? [
+        `You received a private opportunity on PreMarket.`,
+        '',
+        `Title: ${title}`,
+        '',
+        'This opportunity was sent in Private Mode. The sender\'s identity is not shown.',
+        '',
+        'Sign in to PreMarket to review and respond.',
+      ].join('\n')
+    : [
+        `${asText(params.senderEmail) || 'A PreMarket user'} sent you a proposal on PreMarket.`,
+        '',
+        `Title: ${title}`,
+        '',
+        'Sign in to PreMarket to review and respond.',
+      ].join('\n');
 
   const from = resend.fromName ? `${resend.fromName} <${resend.fromEmail}>` : resend.fromEmail;
   const payload: Record<string, unknown> = {
@@ -184,10 +201,12 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
     }
 
     const createShareLink = body.createShareLink !== false;
+    const isPrivateMode = Boolean((existing as any).isPrivateMode);
     const emailProviderMessageId = await sendProposalEmail({
       recipientEmail,
       senderEmail: auth.user.email,
       proposalTitle: existing.title,
+      isPrivateMode,
     });
 
     const sentAt = new Date();
@@ -388,17 +407,31 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
             eventType: 'new_proposal',
             emailCategory: 'proposal_received',
             dedupeKey: `new_proposal:${updatedProposal.id}:${recipientUser.id}`,
-            title: 'New proposal received',
-            message: `${auth.user.email} sent you "${updatedProposal.title || 'a proposal'}".`,
+            title: isPrivateMode ? 'New private opportunity received' : 'New proposal received',
+            message: isPrivateMode
+              ? `You received a private opportunity on PreMarket: "${updatedProposal.title || 'a proposal'}".`
+              : `${auth.user.email} sent you "${updatedProposal.title || 'a proposal'}".`,
             actionUrl: `/ProposalDetail?id=${encodeURIComponent(updatedProposal.id)}`,
-            emailSubject: 'New proposal received on PreMarket',
-            emailText: [
-              `You received a new proposal from ${auth.user.email}.`,
-              '',
-              `Title: ${updatedProposal.title || 'Untitled Proposal'}`,
-              '',
-              'Sign in to PreMarket to review it.',
-            ].join('\n'),
+            emailSubject: isPrivateMode
+              ? 'You received a private opportunity on PreMarket'
+              : 'New proposal received on PreMarket',
+            emailText: isPrivateMode
+              ? [
+                  `You received a private opportunity on PreMarket.`,
+                  '',
+                  `Title: ${updatedProposal.title || 'Untitled Proposal'}`,
+                  '',
+                  'This opportunity was sent in Private Mode. The sender\'s identity is not shown.',
+                  '',
+                  'Sign in to PreMarket to review it.',
+                ].join('\n')
+              : [
+                  `You received a new proposal from ${auth.user.email}.`,
+                  '',
+                  `Title: ${updatedProposal.title || 'Untitled Proposal'}`,
+                  '',
+                  'Sign in to PreMarket to review it.',
+                ].join('\n'),
           });
         }
       } catch {

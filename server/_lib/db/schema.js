@@ -276,6 +276,7 @@ export const proposals = pgTable(
     reconstructedAt: timestamp('reconstructed_at', { withTimezone: true }),
     reconstructedFromVersionId: text('reconstructed_from_version_id'),
     recoverySource: text('recovery_source'),
+    isPrivateMode: boolean('is_private_mode').notNull().default(false),
     payload: jsonb('payload').notNull().default(sql`'{}'::jsonb`),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -326,6 +327,7 @@ export const proposals = pgTable(
     ),
     proposalsReconstructedAtIdx: index('proposals_reconstructed_at_idx').on(table.reconstructedAt),
     proposalsRecoverySourceIdx: index('proposals_recovery_source_idx').on(table.recoverySource),
+    proposalsPrivateModeIdx: index('proposals_private_mode_idx').on(table.isPrivateMode),
   }),
 );
 

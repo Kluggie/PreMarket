@@ -3,6 +3,7 @@ import { and, desc, eq, gt, sql } from 'drizzle-orm';
 import { ApiError } from '../../_lib/errors.js';
 import { getDb, schema } from '../../_lib/db/client.js';
 import { newId } from '../../_lib/ids.js';
+import { PRIVATE_SENDER_LABEL } from '../../_lib/private-mode.js';
 import { buildRecipientSafeEvaluationProjection } from '../document-comparisons/_helpers.js';
 
 export const SHARED_REPORT_ROUTE = '/api/shared-report/[token]';
@@ -265,6 +266,7 @@ export function buildShareView(link: any) {
 
 export function buildParentView(params: { proposal: any; comparison: any; owner: any }) {
   const { proposal, comparison, owner } = params;
+  const isPrivateMode = Boolean((proposal as any)?.isPrivateMode);
   return {
     id: proposal.id,
     proposal_id: proposal.id,
@@ -272,8 +274,8 @@ export function buildParentView(params: { proposal: any; comparison: any; owner:
     title: asText(comparison?.title) || asText(proposal.title) || 'Shared Report',
     status: asText(proposal.status) || null,
     created_at: proposal.createdAt || null,
-    proposer_name: asText(owner?.fullName) || null,
-    proposer_email: normalizeEmail(owner?.email) || null,
+    proposer_name: isPrivateMode ? PRIVATE_SENDER_LABEL : asText(owner?.fullName) || null,
+    proposer_email: isPrivateMode ? null : normalizeEmail(owner?.email) || null,
   };
 }
 

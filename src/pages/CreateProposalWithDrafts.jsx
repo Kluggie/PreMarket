@@ -13,6 +13,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Switch } from '@/components/ui/switch';
 import { Progress } from '@/components/ui/progress';
 import {
   AlertTriangle,
@@ -21,6 +22,7 @@ import {
   Briefcase,
   Building2,
   Eye,
+  EyeOff,
   FileText,
   Handshake,
   Lock,
@@ -32,6 +34,8 @@ import {
 } from 'lucide-react';
 import { proposalsClient } from '@/api/proposalsClient';
 import { templatesClient } from '@/api/templatesClient';
+import { billingClient } from '@/api/billingClient';
+import { isPrivateModePlanEligible, PRIVATE_MODE_ELIGIBILITY_COPY } from '@/lib/privateModeEligibility';
 import {
   TEMPLATE_ONBOARDING_CONFIG,
   getEnabledModules,
@@ -119,6 +123,7 @@ export default function CreateProposalWithDrafts() {
   const [isSubmittingEvaluation, setIsSubmittingEvaluation] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [evaluationError, setEvaluationError] = useState('');
+  const [isPrivateMode, setIsPrivateMode] = useState(false);
 
   const routeParams = asSearchParams();
   const requestedStep = Number.parseInt(routeParams.get('step') || '', 10);
@@ -130,6 +135,13 @@ export default function CreateProposalWithDrafts() {
     queryKey: ['templates'],
     queryFn: () => templatesClient.list(),
   });
+
+  const { data: billing } = useQuery({
+    queryKey: ['billing-status'],
+    queryFn: () => billingClient.get(),
+  });
+  const planTier = String(billing?.plan_tier || 'starter').trim().toLowerCase();
+  const isPrivateModeEligible = isPrivateModePlanEligible(planTier);
 
   const getNormalizedParty = (question) => {
     if (question?.party) return question.party;
@@ -255,6 +267,7 @@ export default function CreateProposalWithDrafts() {
     setDraftProposalId(proposal.id);
     setProposalTitle(proposal.title || '');
     setRecipientEmail(proposal.party_b_email || '');
+    setIsPrivateMode(Boolean(proposal.is_private_mode));
 
     const payload = proposal.payload && typeof proposal.payload === 'object' ? proposal.payload : {};
     if (payload.preset_key) {
@@ -453,6 +466,7 @@ export default function CreateProposalWithDrafts() {
       template_id: selectedTemplate.id,
       template_name: selectedTemplate.name,
       party_b_email: recipientEmail.trim() || null,
+      is_private_mode: isPrivateModeEligible ? isPrivateMode : false,
       payload,
     });
 
@@ -960,6 +974,45 @@ export default function CreateProposalWithDrafts() {
                     </div>
                   )}
 
+                  {/* ── Private Mode ── */}
+                  <div className={`rounded-xl border p-4 ${isPrivateModeEligible ? 'border-slate-200 bg-white' : 'border-slate-100 bg-slate-50'}`}>
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <EyeOff className={`w-4 h-4 flex-shrink-0 ${isPrivateModeEligible ? 'text-slate-600' : 'text-slate-400'}`} />
+                        <Label
+                          htmlFor="private-mode-toggle"
+                          className={`font-medium cursor-pointer ${isPrivateModeEligible ? 'text-slate-900' : 'text-slate-400'}`}
+                        >
+                          Private mode
+                        </Label>
+                      </div>
+                      {isPrivateModeEligible ? (
+                        <Switch
+                          id="private-mode-toggle"
+                          checked={isPrivateMode}
+                          onCheckedChange={(checked) => setIsPrivateMode(checked)}
+                        />
+                      ) : (
+                        <Badge variant="outline" className="text-xs text-slate-400 border-slate-200 flex-shrink-0">
+                          {PRIVATE_MODE_ELIGIBILITY_COPY}
+                        </Badge>
+                      )}
+                    </div>
+                    {isPrivateModeEligible ? (
+                      <p className="text-xs text-slate-500 mt-2">
+                        Hide your identity from the other party in platform-generated emails and recipient-facing screens.
+                        Your account remains known to PreMarket. This does not hide names you include in the content itself.
+                      </p>
+                    ) : null}
+                    {isPrivateMode && isPrivateModeEligible && (
+                      <ul className="text-xs text-slate-600 mt-2 space-y-1 pl-1 list-disc list-inside">
+                        <li>Emails use the generic PreMarket sender</li>
+                        <li>Recipient-facing metadata hides your identity</li>
+                        <li>Written content is not automatically scrubbed</li>
+                      </ul>
+                    )}
+                  </div>
+
                   <div className="flex justify-between mt-6">
                     <Button
                       variant="outline"
@@ -1094,6 +1147,15 @@ export default function CreateProposalWithDrafts() {
                         {selectedTemplate?.questions?.length || 0}
                       </span>
                     </div>
+                    {isPrivateMode && isPrivateModeEligible && (
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Privacy</span>
+                        <span className="font-medium flex items-center gap-1 text-indigo-700">
+                          <EyeOff className="w-3.5 h-3.5" />
+                          Private
+                        </span>
+                      </div>
+                    )}
                   </div>
 
                   <div className="p-4 bg-blue-50 border border-blue-100 rounded-xl">

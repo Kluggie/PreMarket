@@ -1022,6 +1022,13 @@ async function ensureReceivedProposalRecord(
   }) || null;
   const existingDetails = parseObjectField(existingRecord?.details);
   const openedAt = new Date().toISOString();
+  const isPrivateMode = Boolean(
+    proposal?.is_private_mode ||
+    proposal?.isPrivateMode ||
+    proposal?.data?.is_private_mode ||
+    proposal?.data?.isPrivateMode,
+  );
+  const senderEmail = isPrivateMode ? null : normalizeEmail(proposal?.party_a_email);
 
   const payload = {
     entity_type: 'Proposal',
@@ -1034,8 +1041,8 @@ async function ensureReceivedProposalRecord(
       proposal_id: normalizedProposalId,
       proposalTitle: asString(proposal?.title) || null,
       templateName: asString(proposal?.template_name) || null,
-      partyAEmail: normalizeEmail(proposal?.party_a_email),
-      senderEmail: normalizeEmail(proposal?.party_a_email),
+      partyAEmail: senderEmail,
+      senderEmail,
       recipientEmail,
       token: asString(shareLink?.token),
       shareLinkId: asString(shareLink?.id),

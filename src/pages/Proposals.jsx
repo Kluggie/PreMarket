@@ -6,7 +6,7 @@ import { createPageUrl } from '@/utils';
 import { useAuth } from '@/lib/AuthContext';
 import { proposalsClient } from '@/api/proposalsClient';
 import { dashboardClient } from '@/api/dashboardClient';
-import { formatRecipientLabel } from '@/lib/recipientUtils';
+import { formatRecipientLabel, PRIVATE_SENDER_LABEL } from '@/lib/recipientUtils';
 import {
   getAgreementActionLabel,
 } from '@/lib/proposalOutcomeUi';
@@ -44,6 +44,7 @@ import {
   Clock,
   Users,
   Eye,
+  EyeOff,
   AlertTriangle,
   AlertCircle,
   CheckCircle2,
@@ -373,7 +374,14 @@ function ProposalRow({
 
             <div className="flex items-center gap-4 text-sm text-slate-500">
               <span>{proposal.template_name || 'Custom Template'}</span>
-              <span>{formatRecipientLabel(proposal.party_b_name, proposal.counterparty_email)}</span>
+              {proposal.is_private_mode && (proposal.outcome?.actor_role === 'party_b' || !proposal.counterparty_email) && !proposal.owner_user_id ? (
+                <span className="flex items-center gap-1">
+                  <EyeOff className="w-3 h-3" />
+                  {`With: ${PRIVATE_SENDER_LABEL}`}
+                </span>
+              ) : (
+                <span>{formatRecipientLabel(proposal.party_b_name, proposal.counterparty_email)}</span>
+              )}
             </div>
           </div>
 

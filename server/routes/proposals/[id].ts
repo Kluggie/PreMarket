@@ -21,6 +21,11 @@ import {
   mapProposalOutcomeForUser,
   PROPOSAL_PARTY_A,
 } from '../../_lib/proposal-outcomes.js';
+import {
+  applyPrivateModeMask,
+  isPlanEligibleForPrivateMode,
+  shouldMaskPrivateSender,
+} from '../../_lib/private-mode.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 
 function getProposalId(req: any, proposalIdParam?: string) {
@@ -36,7 +41,11 @@ function mapProposalRow(proposal, currentUser, options: Record<string, unknown> 
   const outcome = mapProposalOutcomeForUser(proposal, currentUser, options);
   const effectiveStatus = outcome.final_status || proposal.status;
   const archivedAt = getProposalArchivedAtForActor(proposal, outcome.actor_role);
-  return {
+  const isPrivateMode = Boolean((proposal as any).isPrivateMode);
+  const actorRole = String(options?.actorRole || outcome?.actor_role || '').trim().toLowerCase();
+  const maskSender = shouldMaskPrivateSender(isPrivateMode, actorRole);
+
+  const base = {
     id: proposal.id,
     title: proposal.title,
     status: effectiveStatus,
@@ -68,12 +77,15 @@ function mapProposalRow(proposal, currentUser, options: Record<string, unknown> 
     party_a_outcome_at: proposal.partyAOutcomeAt || null,
     party_b_outcome: proposal.partyBOutcome || null,
     party_b_outcome_at: proposal.partyBOutcomeAt || null,
+    is_private_mode: isPrivateMode,
     user_id: proposal.userId,
     created_at: proposal.createdAt,
     updated_at: proposal.updatedAt,
     created_date: proposal.createdAt,
     updated_date: proposal.updatedAt,
   };
+
+  return maskSender ? applyPrivateModeMask(base) : base;
 }
 
 function normalizeEmail(value: unknown) {
@@ -148,7 +160,7 @@ function mapVersionSnapshotComparison(snapshotComparison: Record<string, any> | 
   };
 }
 
-function mapProposalVersionRow(versionRow: any, index: number, totalVersions: number, liveProposal: any) {
+function mapProposalVersionRow(versionRow: any, index: number, totalVersions: number, liveProposal: any, viewerMaskSender = false) {
   const snapshotProposal = getProposalSnapshotFromVersion(versionRow);
   const snapshotComparison = getDocumentComparisonSnapshotFromVersion(versionRow);
   const snapshotMeta =
@@ -157,12 +169,14 @@ function mapProposalVersionRow(versionRow: any, index: number, totalVersions: nu
       : {};
   const actorRole = asLower(versionRow?.actorRole);
   const proposalSnapshot = mapVersionSnapshotProposal(snapshotProposal, liveProposal);
-  const actorEmail =
+  const rawActorEmail =
     actorRole === 'party_b'
       ? proposalSnapshot.party_b_email
       : actorRole === 'party_a'
         ? proposalSnapshot.party_a_email
         : null;
+  // Mask sender email for party_a version history items when the viewer is a recipient.
+  const actorEmail = (viewerMaskSender && actorRole === 'party_a') ? null : rawActorEmail;
 
   return {
     id: versionRow.id,
@@ -303,7 +317,13 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
           updated_date: row.updatedAt,
         })),
         versions: versions.map((row, index) =>
-          mapProposalVersionRow(row, index, versions.length, existing),
+          mapProposalVersionRow(
+            row,
+            index,
+            versions.length,
+            existing,
+            shouldMaskPrivateSender(Boolean((existing as any).isPrivateMode), access.actorRole),
+          ),
         ),
       });
       return;
@@ -485,6 +505,28 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
       throw new ApiError(400, 'invalid_status_transition', `Cannot change status from "${currentStatusNorm}" to "${incomingStatus}". Use the archive action or contact support to reopen a closed proposal.`);
     }
 
+    const requestedPrivateMode =
+      body.isPrivateMode === undefined && body.is_private_mode === undefined
+        ? undefined
+        : Boolean(body.isPrivateMode ?? body.is_private_mode);
+
+    // Plan gating: Starter cannot enable Private Mode through PATCH updates.
+    if (requestedPrivateMode === true) {
+      const [billingRow] = await db
+        .select({ plan: schema.billingReferences.plan })
+        .from(schema.billingReferences)
+        .where(eq(schema.billingReferences.userId, auth.user.id))
+        .limit(1);
+      const planTier = String(billingRow?.plan || 'starter').trim().toLowerCase();
+      if (!isPlanEligibleForPrivateMode(planTier)) {
+        throw new ApiError(
+          403,
+          'plan_not_eligible',
+          'Private Mode is available on Early Access, Professional, and Enterprise plans',
+        );
+      }
+    }
+
     const updateValues = {
       title: nextTitle,
       status: incomingStatus ?? existing.status,
@@ -546,6 +588,10 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         body.lastSharedAt === undefined && body.last_shared_at === undefined
           ? existing.lastSharedAt
           : parseDateOrNull(body.lastSharedAt || body.last_shared_at),
+      isPrivateMode:
+        requestedPrivateMode === undefined
+          ? Boolean((existing as any).isPrivateMode)
+          : requestedPrivateMode,
       ...buildProposalThreadActivityValues({
         activityAt: existing.lastThreadActivityAt,
         actorRole: existing.lastThreadActorRole,

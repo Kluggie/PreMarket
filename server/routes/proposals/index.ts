@@ -24,6 +24,11 @@ import {
   matchesSharedReportAuthorizedUser,
   matchesSharedReportRecipientEmail,
 } from '../../_lib/proposal-visibility.js';
+import {
+  applyPrivateModeMask,
+  isPlanEligibleForPrivateMode,
+  shouldMaskPrivateSender,
+} from '../../_lib/private-mode.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 
 const DEFAULT_LIMIT = 25;
@@ -154,7 +159,11 @@ function mapProposalRow(
   const normalizedDraftStep = clampResumeStep(proposal.draftStep || 1, 1);
   const resolvedResumeStep = clampResumeStep(resumeStepOverride, normalizedDraftStep);
 
-  return {
+  const isPrivateMode = Boolean((proposal as any).isPrivateMode);
+  const actorRole = String(threadState.outcome?.actor_role || threadState?.actorRole || '').trim().toLowerCase();
+  const maskSender = shouldMaskPrivateSender(isPrivateMode, actorRole);
+
+  const base = {
     id: proposal.id,
     title: proposal.title,
     status: effectiveStatus,
@@ -204,12 +213,15 @@ function mapProposalRow(
     is_mutual_interest: threadState.isMutualInterest,
     is_latest_version: threadState.isLatestVersion,
     last_activity_at: threadState.sortAt || proposal.createdAt,
+    is_private_mode: isPrivateMode,
     user_id: proposal.userId,
     created_at: proposal.createdAt,
     updated_at: proposal.updatedAt,
     created_date: proposal.createdAt,
     updated_date: proposal.updatedAt,
   };
+
+  return maskSender ? applyPrivateModeMask(base) : base;
 }
 
 function decodeCursor(rawCursor) {
@@ -629,6 +641,24 @@ export default async function handler(req: any, res: any) {
     const receivedAt = parseDateOrNull(body.receivedAt || body.received_at);
     const evaluatedAt = parseDateOrNull(body.evaluatedAt || body.evaluated_at);
     const lastSharedAt = parseDateOrNull(body.lastSharedAt || body.last_shared_at);
+    const isPrivateMode = Boolean(body.isPrivateMode || body.is_private_mode);
+
+    // Plan gating: only Early Access, Professional, and Enterprise may create private opportunities.
+    if (isPrivateMode) {
+      const [billingRow] = await db
+        .select({ plan: schema.billingReferences.plan })
+        .from(schema.billingReferences)
+        .where(eq(schema.billingReferences.userId, auth.user.id))
+        .limit(1);
+      const planTier = String(billingRow?.plan || 'starter').trim().toLowerCase();
+      if (!isPlanEligibleForPrivateMode(planTier)) {
+        throw new ApiError(
+          403,
+          'plan_not_eligible',
+          'Private Mode is available on Early Access, Professional, and Enterprise plans',
+        );
+      }
+    }
 
     const now = new Date();
     const proposalId = newId('proposal');
@@ -652,6 +682,7 @@ export default async function handler(req: any, res: any) {
       partyBName,
       summary,
       payload,
+      isPrivateMode,
       sentAt,
       receivedAt,
       ...seedProposalThreadActivityFromTimeline({

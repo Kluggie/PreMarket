@@ -9,6 +9,10 @@ import { readJsonBody } from '../../../_lib/http.js';
 import { createNotificationEvent } from '../../../_lib/notifications.js';
 import { buildProposalHistoryQueries } from '../../../_lib/proposal-history.js';
 import {
+  applyPrivateModeMask,
+  shouldMaskPrivateSender,
+} from '../../../_lib/private-mode.js';
+import {
   buildContinueNegotiationReset,
   buildOutcomeMutation,
   getProposalAccessContext,
@@ -46,8 +50,11 @@ function mapProposalRow(proposal, currentUser, options: Record<string, unknown> 
   const outcome = mapProposalOutcomeForUser(proposal, currentUser, options);
   const effectiveStatus = outcome.final_status || proposal.status;
   const archivedAt = getProposalArchivedAtForActor(proposal, outcome.actor_role);
+  const isPrivateMode = Boolean((proposal as any).isPrivateMode);
+  const actorRole = asLower(options?.actorRole || outcome?.actor_role || '');
+  const maskSender = shouldMaskPrivateSender(isPrivateMode, actorRole);
 
-  return {
+  const base = {
     id: proposal.id,
     title: proposal.title,
     status: effectiveStatus,
@@ -78,12 +85,15 @@ function mapProposalRow(proposal, currentUser, options: Record<string, unknown> 
     party_a_outcome_at: proposal.partyAOutcomeAt || null,
     party_b_outcome: proposal.partyBOutcome || null,
     party_b_outcome_at: proposal.partyBOutcomeAt || null,
+    is_private_mode: isPrivateMode,
     user_id: proposal.userId,
     created_at: proposal.createdAt,
     updated_at: proposal.updatedAt,
     created_date: proposal.createdAt,
     updated_date: proposal.updatedAt,
   };
+
+  return maskSender ? applyPrivateModeMask(base) : base;
 }
 
 async function resolveCounterpartyTarget(db, proposal, actorRole) {
