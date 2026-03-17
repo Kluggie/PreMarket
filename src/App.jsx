@@ -14,6 +14,7 @@ import DirectoryOrgDetail from '@/pages/DirectoryOrgDetail';
 import RecipientEditStep2 from '@/pages/RecipientEditStep2';
 import RecipientEditStep3 from '@/pages/RecipientEditStep3';
 import Verify from '@/pages/Verify';
+import GuestCreateOpportunity from '@/pages/GuestCreateOpportunity';
 
 const { Pages, Layout, mainPage } = pagesConfig;
 const mainPageKey = mainPage ?? Object.keys(Pages)[0];
@@ -192,6 +193,16 @@ const PublicRoutes = () => {
       />
       <Route path="/shared-report" element={<SharedReportAliasRedirect />} />
       <Route
+        path="/opportunities/new"
+        element={
+          <LayoutWrapper currentPageName="OpportunitiesNew">
+            <GuestCreateOpportunity />
+          </LayoutWrapper>
+        }
+      />
+      {/* Backward-compat redirect for the old path */}
+      <Route path="/GuestOpportunity" element={<Navigate to="/opportunities/new" replace />} />
+      <Route
         path="/proposals/:proposalId/recipient-edit"
         element={
           <LayoutWrapper currentPageName="ProposalDetail">
@@ -310,7 +321,9 @@ const AppRoutes = () => {
     location.pathname === '/shared-report' ||
     location.pathname.startsWith('/shared-report/') ||
     location.pathname === '/share' ||
-    location.pathname.startsWith('/share/');
+    location.pathname.startsWith('/share/') ||
+    location.pathname === '/GuestOpportunity' ||
+    location.pathname === '/opportunities/new';
   return <AuthenticatedApp isPublicDirectoryRoute={isPublicDirectoryRoute} />;
 };
 

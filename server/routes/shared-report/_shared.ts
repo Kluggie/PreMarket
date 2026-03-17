@@ -4,6 +4,7 @@ import { ApiError } from '../../_lib/errors.js';
 import { getDb, schema } from '../../_lib/db/client.js';
 import { newId } from '../../_lib/ids.js';
 import { PRIVATE_SENDER_LABEL } from '../../_lib/private-mode.js';
+import { clientIpForRateLimit } from '../../_lib/security.js';
 import { buildRecipientSafeEvaluationProjection } from '../document-comparisons/_helpers.js';
 
 export const SHARED_REPORT_ROUTE = '/api/shared-report/[token]';
@@ -554,14 +555,6 @@ export function stableJsonEquals(left: unknown, right: unknown) {
   return JSON.stringify(stableSort(left ?? {})) === JSON.stringify(stableSort(right ?? {}));
 }
 
-function normalizeClientIp(req: any) {
-  const forwarded = asText(req?.headers?.['x-forwarded-for']);
-  if (forwarded) {
-    return forwarded.split(',')[0]?.trim() || 'unknown';
-  }
-  return asText(req?.socket?.remoteAddress) || 'unknown';
-}
-
 function hashRateLimitKey(input: string) {
   return createHash('sha256').update(input).digest('hex');
 }
@@ -574,7 +567,7 @@ export async function assertSharedReportVerifyRateLimit(params: {
   windowMs: number;
 }) {
   const db = getDb();
-  const ip = normalizeClientIp(params.req);
+  const ip = clientIpForRateLimit(params.req);
   const now = new Date();
   const windowStart = new Date(now.getTime() - params.windowMs);
   const rateLimitKey = hashRateLimitKey(`${params.action}:${params.token}:${ip}`);

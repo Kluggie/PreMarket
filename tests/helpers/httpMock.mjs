@@ -5,13 +5,13 @@ export function createMockReq({ method = 'GET', url = '/', query = {}, headers =
     query,
     headers,
     body,
+    socket: { remoteAddress: '127.0.0.1' },
   };
 }
 
 export function createMockRes() {
   const headers = new Map();
-
-  return {
+  const self = {
     statusCode: 200,
     ended: false,
     body: '',
@@ -21,16 +21,27 @@ export function createMockRes() {
     getHeader(name) {
       return headers.get(String(name).toLowerCase());
     },
+    /** Express-style res.status(code).json(body) chaining */
+    status(code) {
+      self.statusCode = code;
+      return self;
+    },
+    json(payload) {
+      self.ended = true;
+      self.body = JSON.stringify(payload || {});
+      return self;
+    },
     end(payload = '') {
-      this.ended = true;
-      this.body = String(payload || '');
+      self.ended = true;
+      self.body = String(payload || '');
     },
     jsonBody() {
       try {
-        return JSON.parse(this.body || '{}');
+        return JSON.parse(self.body || '{}');
       } catch {
         return {};
       }
     },
   };
+  return self;
 }

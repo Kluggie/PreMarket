@@ -83,6 +83,7 @@ import securityMfaDisableHandler from '../server/routes/security/mfa/disable.js'
 import securityMfaBackupRegenerateHandler from '../server/routes/security/mfa/backup/regenerate.js';
 import directorySearchHandler from '../server/routes/directory/search.js';
 import directoryDetailHandler from '../server/routes/directory/detail.js';
+import publicTemplatesHandler from '../server/routes/public/templates.js';
 
 type VercelRequest = {
   method?: string;
@@ -282,6 +283,10 @@ export default async function handler(req: any, res: any) {
 
   if (pathname === '/api/templates' && method === 'GET') {
     return templatesHandler(req, res);
+  }
+
+  if (pathname === '/api/public/templates' && method === 'GET') {
+    return publicTemplatesHandler(req, res);
   }
 
   if (pathname === '/api/contact-requests' && method === 'POST') {

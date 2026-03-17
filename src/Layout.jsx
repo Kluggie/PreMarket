@@ -85,6 +85,7 @@ export default function Layout({ children, currentPageName }) {
 
   const publicNavLinks = [
     { label: 'Home', pageKey: 'Landing', href: createPageUrl('Landing'), icon: Home },
+    { label: 'Opportunities', pageKey: 'OpportunitiesNew', href: '/opportunities/new', icon: FileText },
     { label: 'Pricing', pageKey: 'Pricing', href: createPageUrl('Pricing'), icon: CoinSideIcon }
   ];
 
