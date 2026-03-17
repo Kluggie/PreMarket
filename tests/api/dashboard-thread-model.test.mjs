@@ -39,6 +39,30 @@ async function seedProfessionalPlan(userId, email) {
     });
 }
 
+async function seedStarterPlan(userId, email) {
+  const db = getDb();
+  await db
+    .insert(schema.users)
+    .values({ id: userId, email })
+    .onConflictDoNothing({ target: schema.users.id });
+  await db
+    .insert(schema.billingReferences)
+    .values({
+      userId,
+      plan: 'starter',
+      status: 'active',
+      updatedAt: new Date(),
+    })
+    .onConflictDoUpdate({
+      target: schema.billingReferences.userId,
+      set: {
+        plan: 'starter',
+        status: 'active',
+        updatedAt: new Date(),
+      },
+    });
+}
+
 async function callHandler(handler, reqOptions, ...args) {
   const req = createMockReq(reqOptions);
   const res = createMockRes();
@@ -208,7 +232,11 @@ if (!hasDatabaseUrl()) {
     await ensureMigrated();
     await resetTables();
 
-    const starterCookie = authCookie('dashboard_starter_user', 'dashboard-starter-user@example.com');
+    const starterUserId = 'dashboard_starter_user';
+    const starterEmail = 'dashboard-starter-user@example.com';
+    await seedStarterPlan(starterUserId, starterEmail);
+
+    const starterCookie = authCookie(starterUserId, starterEmail);
     await createProposal(starterCookie, {
       title: 'Starter Draft',
       status: 'draft',
@@ -241,6 +269,80 @@ if (!hasDatabaseUrl()) {
     });
 
     const summary = await getSummary(proCookie);
+    assert.equal(summary.starterUsage, null);
+  });
+
+  test('dashboard summary omits starter usage snapshot for early access users', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const userId = 'dashboard_early_access_user';
+    const email = 'dashboard-early-access-user@example.com';
+    const cookie = authCookie(userId, email);
+    await seedProfessionalPlan(userId, email);
+
+    const db = getDb();
+    await db
+      .insert(schema.billingReferences)
+      .values({
+        userId,
+        plan: 'early_access',
+        status: 'active',
+        updatedAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: schema.billingReferences.userId,
+        set: {
+          plan: 'early_access',
+          status: 'active',
+          updatedAt: new Date(),
+        },
+      });
+
+    await createProposal(cookie, {
+      title: 'Early Access Draft',
+      status: 'draft',
+      partyBEmail: 'early-access-recipient@example.com',
+    });
+
+    const summary = await getSummary(cookie);
+    assert.equal(summary.starterUsage, null);
+  });
+
+  test('dashboard summary omits starter usage snapshot for enterprise users', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const userId = 'dashboard_enterprise_user';
+    const email = 'dashboard-enterprise-user@example.com';
+    const cookie = authCookie(userId, email);
+    await seedProfessionalPlan(userId, email);
+
+    const db = getDb();
+    await db
+      .insert(schema.billingReferences)
+      .values({
+        userId,
+        plan: 'enterprise',
+        status: 'active',
+        updatedAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: schema.billingReferences.userId,
+        set: {
+          plan: 'enterprise',
+          status: 'active',
+          updatedAt: new Date(),
+        },
+      });
+
+    await createProposal(cookie, {
+      title: 'Enterprise Draft',
+      status: 'draft',
+      partyBEmail: 'enterprise-recipient@example.com',
+    });
+
+    const summary = await getSummary(cookie);
     assert.equal(summary.starterUsage, null);
   });
 }

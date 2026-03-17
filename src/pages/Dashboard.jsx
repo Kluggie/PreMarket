@@ -25,7 +25,7 @@ import {
 } from 'lucide-react';
 import { proposalsClient } from '@/api/proposalsClient';
 import { dashboardClient } from '@/api/dashboardClient';
-import { formatBytes, formatCount } from '@/lib/starterPlanLimits';
+import { formatBytes, formatCount, isStarterPlanTier } from '@/lib/starterPlanLimits';
 
 const DASHBOARD_WON_LABEL = 'Won';
 
@@ -465,7 +465,7 @@ export default function Dashboard() {
           </div>
         )}
 
-        {!summaryError && !summaryLoading && summary?.starterUsage?.plan === 'starter' ? (
+        {!summaryError && !summaryLoading && isStarterPlanTier(summary?.starterUsage?.plan) ? (
           <StarterUsageCard starterUsage={summary.starterUsage} />
         ) : null}
 

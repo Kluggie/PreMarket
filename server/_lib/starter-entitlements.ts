@@ -47,13 +47,12 @@ export async function getUserPlanTier(db: any, userId: string) {
     .from(schema.billingReferences)
     .where(eq(schema.billingReferences.userId, userId))
     .limit(1);
-  const normalized = normalizePlan(billingRow?.plan);
-  return normalized || 'starter';
+  return normalizePlan(billingRow?.plan);
 }
 
 export function isStarterPlan(planTier: unknown) {
   const normalized = normalizePlan(planTier);
-  return normalized ? STARTER_PLAN_ALIASES.has(normalized) : true;
+  return normalized ? STARTER_PLAN_ALIASES.has(normalized) : false;
 }
 
 function buildLimitError(params: {

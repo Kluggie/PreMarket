@@ -309,6 +309,41 @@ if (!hasDatabaseUrl()) {
     assert.equal(result.body?.ok, true);
   });
 
+  test('Non-starter plan variants are never treated as starter for creation caps', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const nonStarterPlans = [
+      'early_access',
+      'early-access',
+      'early access',
+      'early_access_program',
+      'early-access-program',
+      'early access program',
+      'professional',
+      'enterprise',
+    ];
+
+    for (const [index, plan] of nonStarterPlans.entries()) {
+      const userId = `nonstarter_create_${index}`;
+      const email = `nonstarter-create-${index}@example.com`;
+      const cookie = authCookie(userId, email);
+      await seedUserAndPlan(userId, email, plan);
+
+      await seedProposal(userId, `${plan}-p1`);
+      await seedProposal(userId, `${plan}-p2`);
+      await seedProposal(userId, `${plan}-p3`);
+
+      const result = await createProposalViaApi(cookie, `${plan}-p4-allowed`);
+      assert.equal(
+        result.status,
+        201,
+        `Expected non-starter plan "${plan}" to bypass starter caps: ${JSON.stringify(result.body)}`,
+      );
+      assert.equal(result.body?.ok, true);
+    }
+  });
+
   test('Starter evaluation pool ignores failed attempts and failed shared-report runs', async () => {
     await ensureMigrated();
     await resetTables();

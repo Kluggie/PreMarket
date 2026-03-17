@@ -14,7 +14,7 @@ export function normalizePlanTier(value) {
 
 export function isStarterPlanTier(value) {
   const normalized = normalizePlanTier(value);
-  return normalized ? STARTER_PLAN_ALIASES.has(normalized) : true;
+  return normalized ? STARTER_PLAN_ALIASES.has(normalized) : false;
 }
 
 export function toWholeNumber(value) {

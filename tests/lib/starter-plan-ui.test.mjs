@@ -15,9 +15,21 @@ import {
 
 test('starter plan helpers normalize and format values', () => {
   assert.equal(normalizePlanTier(' Starter Plan '), 'starter_plan');
+  assert.equal(normalizePlanTier('early-access'), 'early_access');
+  assert.equal(normalizePlanTier('early access program'), 'early_access_program');
   assert.equal(isStarterPlanTier('starter'), true);
   assert.equal(isStarterPlanTier('free'), true);
+  assert.equal(isStarterPlanTier('early_access'), false);
+  assert.equal(isStarterPlanTier('early-access'), false);
+  assert.equal(isStarterPlanTier('early access'), false);
+  assert.equal(isStarterPlanTier('early_access_program'), false);
+  assert.equal(isStarterPlanTier('early-access-program'), false);
+  assert.equal(isStarterPlanTier('early access program'), false);
   assert.equal(isStarterPlanTier('professional'), false);
+  assert.equal(isStarterPlanTier('enterprise'), false);
+  assert.equal(isStarterPlanTier(''), false);
+  assert.equal(isStarterPlanTier(null), false);
+  assert.equal(isStarterPlanTier(undefined), false);
 
   assert.equal(formatCount(12345), '12,345');
   assert.equal(formatBytes(1024 * 1024), '1.0 MB');
