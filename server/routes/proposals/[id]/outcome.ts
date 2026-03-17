@@ -387,6 +387,20 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
           actor_role: actorRole,
         },
       });
+
+      const previousStatus = asLower(existing?.status);
+      if (previousStatus === 'revealed' || previousStatus === 'under_verification') {
+        await logAuditEventBestEffort({
+          eventType: 'share.reveal.denied',
+          userId: auth.user.id,
+          req,
+          metadata: {
+            proposal_id: updated.id,
+            previous_status: previousStatus || null,
+            next_status: 'lost',
+          },
+        });
+      }
     } else if (nextOutcome.state === PROPOSAL_OUTCOME_PENDING_WON) {
       await notifyCounterparty({
         db,

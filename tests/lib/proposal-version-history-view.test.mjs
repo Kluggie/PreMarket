@@ -27,6 +27,6 @@ test('proposal detail keeps historical versions read-only while the live version
   assert.match(proposalDetail, /Historical versions are read-only\./);
   assert.match(proposalDetail, /disabled=\{isClosed \|\| viewingHistoricalVersion\}/);
   assert.match(proposalDetail, /shareMutation\.isPending[\s\S]*isClosed[\s\S]*viewingHistoricalVersion/);
-  assert.match(proposalDetail, /current live version of this proposal thread/i);
+  assert.match(proposalDetail, /switch back to the latest version to edit or share the live proposal/i);
   assert.match(proposalDetail, /Read-only snapshot/);
 });

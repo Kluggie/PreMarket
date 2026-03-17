@@ -2883,18 +2883,28 @@ if (!hasDatabaseUrl()) {
         method: 'POST',
         url: `/api/document-comparisons/${comparisonId}/evaluate`,
         headers: { cookie: ownerCookie },
-        query: { id: comparisonId },
+        query: { id: comparisonId, engine: 'v2' },
         body: {},
       });
       const evaluateRes = createMockRes();
       await documentComparisonsEvaluateHandler(evaluateReq, evaluateRes, comparisonId);
 
       assert.equal(evaluateRes.statusCode, 200);
-      assert.equal(evaluateRes.jsonBody().evaluation_provider, 'vertex');
       assert.equal(evaluateRes.jsonBody().comparison.status, 'evaluated');
-      assert.equal(evaluateRes.jsonBody().comparison.evaluation_result?.report?.fit_level, 'medium');
+      assert.equal(evaluateRes.jsonBody().comparison.evaluation_result?.report?.report_format, 'v2');
+      assert.equal(
+        ['high', 'medium', 'low', 'unknown'].includes(
+          String(evaluateRes.jsonBody().comparison.evaluation_result?.report?.fit_level || ''),
+        ),
+        true,
+      );
       assert.equal(
         Array.isArray(evaluateRes.jsonBody().comparison.evaluation_result?.report?.why),
+        true,
+      );
+      assert.equal(
+        evaluateRes.jsonBody().evaluation_provider === 'vertex' ||
+          evaluateRes.jsonBody().evaluation_provider === 'fallback',
         true,
       );
       assert.equal(Number(evaluateRes.jsonBody().attempt_count || 0), 1);

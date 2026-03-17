@@ -86,8 +86,10 @@ if (!hasDatabaseUrl()) {
       assert.equal(modelPrompt.includes('REQUEST_OVERRIDE_OTHER_PARTY_SECRET_55'), false);
       assert.equal(modelPrompt.includes('REQUEST_OVERRIDE_SHARED_SHOULD_NOT_BE_USED'), false);
       assert.equal(modelPrompt.includes(otherPartyConfidential), false);
-      assert.equal(modelPrompt.includes('<SHARED_TEXT>'), true);
-      assert.equal(modelPrompt.includes('<USER_CONFIDENTIAL_TEXT>'), true);
+      assert.equal(modelPrompt.includes('type:shared_text'), true);
+      assert.equal(modelPrompt.includes('type:user_confidential_text'), true);
+      assert.equal(modelPrompt.includes('<<<PREMARKET_RAW_SHARED_TEXT_'), true);
+      assert.equal(modelPrompt.includes('<<<PREMARKET_RAW_USER_CONFIDENTIAL_TEXT_'), true);
 
       assert.equal(String(res.jsonBody().coach.custom_feedback || '').length > 0, true);
     } finally {

@@ -12,6 +12,7 @@ import sharedLinksHandler from '../../server/routes/shared-links/index.ts';
 import sharedLinkReadHandler from '../../server/routes/shared-links/[token].ts';
 import proposalsHandler from '../../server/routes/proposals/index.ts';
 import proposalDetailHandler from '../../server/routes/proposals/[id].ts';
+import proposalOutcomeHandler from '../../server/routes/proposals/[id]/outcome.ts';
 import {
   decryptMfaSecret,
   encryptMfaSecret,
@@ -581,6 +582,13 @@ test(
         status: 'revealed',
         partyAEmail: email,
       });
+      await getDb().execute(sql`
+        update proposals
+        set sent_at = now(),
+            received_at = now(),
+            updated_at = now()
+        where id = 'proposal_share_2'
+      `);
 
       const createShareRes = await callRoute(sharedLinksHandler, {
         method: 'POST',
@@ -633,14 +641,15 @@ test(
       }, 'proposal_share_1');
       assert.equal(revealApprovedRes.statusCode, 200);
 
-      const revealDeniedRes = await callRoute(proposalDetailHandler, {
-        method: 'PATCH',
-        url: '/api/proposals/proposal_share_2',
+      const revealDeniedRes = await callRoute(proposalOutcomeHandler, {
+        method: 'POST',
+        url: '/api/proposals/proposal_share_2/outcome',
         headers: {
           cookie: sessionCookie({ userId, email, sid }),
         },
+        query: { id: 'proposal_share_2' },
         body: {
-          status: 'lost',
+          outcome: 'lost',
         },
       }, 'proposal_share_2');
       assert.equal(revealDeniedRes.statusCode, 200);
