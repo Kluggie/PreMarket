@@ -165,8 +165,10 @@ export default function Pricing() {
       color: 'from-indigo-500 to-purple-600',
       features: [
         { text: 'Unlimited opportunities', included: true },
+        { text: 'Unlimited active opportunities', included: true },
         { text: 'Unlimited AI evaluations', included: true },
         { text: 'Private mode', included: true },
+        { text: 'Priority support', included: true },
         { text: 'Organization profiles', included: true },
         { text: 'Custom security review + onboarding', included: true },
         { text: 'Advanced data analytics', included: true },
