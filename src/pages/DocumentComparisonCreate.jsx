@@ -74,8 +74,11 @@ import {
   clearGuestComparisonMigrationOverlay,
   createGuestComparisonLocalId,
   getOrCreateGuestComparisonSessionId,
+  normalizeGuestAiUsageState,
   readGuestComparisonDraft,
   readGuestComparisonMigrationOverlay,
+  resolveGuestComparisonHydrationStep,
+  resolveGuestComparisonPersistedStep,
   writeGuestComparisonDraft,
   writeGuestComparisonMigrationOverlay,
 } from '@/pages/document-comparison/guestPreviewState';
@@ -640,6 +643,14 @@ function isGuestAiLimitCode(code) {
   return normalized === 'guest_ai_assistance_limit_reached' || normalized === 'guest_ai_mediation_limit_reached';
 }
 
+function isGuestAssistanceLimitCode(code) {
+  return asText(code) === 'guest_ai_assistance_limit_reached';
+}
+
+function isGuestMediationLimitCode(code) {
+  return asText(code) === 'guest_ai_mediation_limit_reached';
+}
+
 function getGuestAiLimitMessage(error) {
   const code = getApiErrorCode(error);
   if (!isGuestAiLimitCode(code)) {
@@ -808,6 +819,7 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
   const [guestEvaluationError, setGuestEvaluationError] = useState('');
   const [guestEvaluationErrorCode, setGuestEvaluationErrorCode] = useState('');
   const [guestEvaluationActiveTab, setGuestEvaluationActiveTab] = useState('report');
+  const [guestAiUsage, setGuestAiUsage] = useState(() => normalizeGuestAiUsageState());
   const [isMigratingGuestDraft, setIsMigratingGuestDraft] = useState(false);
   const [guestMigrationError, setGuestMigrationError] = useState('');
 
@@ -859,6 +871,9 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
   const companyContextSaveSeqRef = useRef(0);
   const guestDraftIdRef = useRef('');
   const guestSessionIdRef = useRef('');
+  const guestAiUsageRef = useRef(normalizeGuestAiUsageState());
+  const guestCanonicalStepRef = useRef(routeState.step);
+  const hasHydratedGuestDraftRef = useRef(false);
   const hasMigratedGuestDraftRef = useRef(false);
   const latestDraftStateRef = useRef({
     title: '',
@@ -955,15 +970,37 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
     };
   }, []);
 
-  const persistGuestDraft = useCallback((overrideStep, overrides = null) => {
+  const commitGuestAiUsage = useCallback((updater) => {
+    const current = normalizeGuestAiUsageState(guestAiUsageRef.current);
+    const draft =
+      typeof updater === 'function'
+        ? updater(current)
+        : updater;
+    const next = normalizeGuestAiUsageState(draft, current);
+    guestAiUsageRef.current = next;
+    setGuestAiUsage(next);
+    return next;
+  }, []);
+
+  const persistGuestDraft = useCallback((overrideStep, overrides = null, options = null) => {
     if (!isGuestMode || typeof window === 'undefined') {
       return;
     }
     const { guestDraftId, guestSessionId } = getGuestComparisonIds();
+    const persistOptions =
+      options && typeof options === 'object' && !Array.isArray(options)
+        ? options
+        : {};
     const guestDraftOverrides =
       overrides && typeof overrides === 'object' && !Array.isArray(overrides)
         ? overrides
         : {};
+    const resolvedStep = resolveGuestComparisonPersistedStep({
+      requestedStep: overrideStep,
+      canonicalStep: guestCanonicalStepRef.current || stepRef.current || step || 1,
+      forceStep: Boolean(persistOptions.forceStep),
+      maxStep: TOTAL_EDITOR_STEPS,
+    });
     const docs = Array.isArray(documents)
       ? documents.map((doc) => ({
           id: String(doc?.id || ''),
@@ -982,7 +1019,7 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
     const basePayload = {
       guestDraftId,
       guestSessionId,
-      step: clampStep(overrideStep || step || 1),
+      step: resolvedStep,
       title,
       documents: docs,
       activeDocId: asText(activeDocId),
@@ -990,6 +1027,7 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
       recipientEmail,
       companyContextName,
       companyContextWebsite,
+      guestAiUsage: normalizeGuestAiUsageState(guestAiUsageRef.current),
       aiState: {
         suggestionThreads: suggestionThreadsRef.current,
         activeSuggestionThreadId: activeSuggestionThreadIdRef.current,
@@ -1016,6 +1054,14 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
               !Array.isArray(guestDraftOverrides.guestEvaluationPreview)
                 ? guestDraftOverrides.guestEvaluationPreview
                 : null,
+          }
+        : {}),
+      ...(Object.prototype.hasOwnProperty.call(guestDraftOverrides, 'guestAiUsage')
+        ? {
+            guestAiUsage: normalizeGuestAiUsageState(
+              guestDraftOverrides.guestAiUsage,
+              guestAiUsageRef.current,
+            ),
           }
         : {}),
       ...(guestDraftOverrides.aiState &&
@@ -1122,7 +1168,7 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
   );
 
   const requestGuestSignIn = useCallback(() => {
-    persistGuestDraft(stepRef.current || step || 1);
+    persistGuestDraft(guestCanonicalStepRef.current || stepRef.current || step || 1);
     navigateToLogin(location.pathname + location.search);
   }, [location.pathname, location.search, navigateToLogin, persistGuestDraft, step]);
 
@@ -1158,11 +1204,23 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
       !Array.isArray(draft.guestEvaluationPreview)
         ? draft.guestEvaluationPreview
         : null;
+    const restoredGuestAiUsage = normalizeGuestAiUsageState(draft.guestAiUsage, {
+      mediationRunsUsed: Number(restoredGuestEvaluation?.runCount || 0),
+    });
+    const restoredStep = resolveGuestComparisonHydrationStep({
+      draftStep: draft.step,
+      routeStep: routeState.step,
+      hasStepParam: routeState.hasStepParam,
+      maxStep: TOTAL_EDITOR_STEPS,
+    });
 
     guestDraftIdRef.current =
       asText(draft.guestDraftId) || guestDraftIdRef.current || createGuestComparisonLocalId('guest_doc_compare_draft');
     guestSessionIdRef.current =
       asText(draft.guestSessionId) || guestSessionIdRef.current || getOrCreateGuestComparisonSessionId();
+    guestAiUsageRef.current = restoredGuestAiUsage;
+    guestCanonicalStepRef.current = restoredStep;
+    stepRef.current = restoredStep;
 
     setTitle(String(draft.title || ''));
     setDocuments(restoredDocuments);
@@ -1191,6 +1249,7 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
     setCoachError('');
     setCoachErrorCode('');
     setGuestEvaluationPreview(restoredGuestEvaluation);
+    setGuestAiUsage(restoredGuestAiUsage);
     setGuestEvaluationError('');
     setGuestEvaluationErrorCode('');
     setGuestEvaluationActiveTab('report');
@@ -1233,26 +1292,47 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
     );
     setDraftDirty(false);
 
-    if (replaceRoute) {
-      const restoredStep = clampStep(draft.step || routeState.step || 1);
+    if (replaceRoute && !routeState.hasStepParam) {
       updateRouteParams({ nextStep: restoredStep, replace: true });
     }
   }, [
+    routeState.hasStepParam,
     routeState.step,
     updateRouteParams,
   ]);
 
   useEffect(() => {
     if (!isGuestMode) {
+      hasHydratedGuestDraftRef.current = false;
       return;
     }
+
+    if (hasHydratedGuestDraftRef.current) {
+      return;
+    }
+
+    hasHydratedGuestDraftRef.current = true;
+    guestCanonicalStepRef.current = clampStep(routeState.step || 1);
 
     const draft = readGuestComparisonDraft();
     if (!draft) {
       return;
     }
     applyGuestDraftToEditor(draft, { replaceRoute: true });
-  }, [applyGuestDraftToEditor, isGuestMode]);
+  }, [applyGuestDraftToEditor, isGuestMode, routeState.step]);
+
+  useEffect(() => {
+    if (!isGuestMode) {
+      guestAiUsageRef.current = normalizeGuestAiUsageState();
+      setGuestAiUsage((current) =>
+        current.assistanceRequestsUsed === 0 && current.mediationRunsUsed === 0
+          ? current
+          : normalizeGuestAiUsageState(),
+      );
+      return;
+    }
+    guestAiUsageRef.current = normalizeGuestAiUsageState(guestAiUsage, guestAiUsageRef.current);
+  }, [guestAiUsage, isGuestMode]);
 
   const migrateGuestDraftToAuthenticatedFlow = useCallback(async (draft) => {
     if (!draft || typeof draft !== 'object') {
@@ -2271,13 +2351,13 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
     coachResponseMetaParts.push('Limited public info found');
   }
   const coachResponseMeta = coachResponseMetaParts.join(' · ');
-  const coachLimitReached = isGuestAiLimitCode(coachErrorCode);
-  const guestEvaluationRunsUsed = Number(guestEvaluationPreview?.runCount || 0);
+  const coachLimitReached = isGuestAssistanceLimitCode(coachErrorCode);
+  const guestMediationRunsUsed = Number(guestAiUsage?.mediationRunsUsed || 0);
   const guestMediationLimitReached =
     isGuestMode &&
     (
-      guestEvaluationRunsUsed >= GUEST_AI_MEDIATION_RUN_LIMIT ||
-      isGuestAiLimitCode(guestEvaluationErrorCode)
+      guestMediationRunsUsed >= GUEST_AI_MEDIATION_RUN_LIMIT ||
+      isGuestMediationLimitCode(guestEvaluationErrorCode)
     );
   const previewEvaluationReport =
     guestEvaluationPreview?.report ||
@@ -2322,7 +2402,10 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
   useEffect(() => {
     stepRef.current = step;
     isDirtyRef.current = isDirty;
-  }, [isDirty, step]);
+    if (isGuestMode) {
+      guestCanonicalStepRef.current = clampStep(step || guestCanonicalStepRef.current || 1);
+    }
+  }, [isDirty, isGuestMode, step]);
 
   useEffect(() => {
     comparisonIdRef.current = comparisonId;
@@ -2730,7 +2813,8 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
   const jumpStep = async (nextStep) => {
     const bounded = clampStep(nextStep || 1);
     if (isGuestMode) {
-      persistGuestDraft(bounded);
+      guestCanonicalStepRef.current = bounded;
+      persistGuestDraft(bounded, null, { forceStep: true });
       updateRouteParams({ nextStep: bounded, replace: true });
       return;
     }
@@ -2928,6 +3012,10 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
         companyName: asText(companyContextName) || undefined,
         companyWebsite: asText(companyContextWebsite) || undefined,
       });
+      const nextGuestAiUsage = commitGuestAiUsage((current) => ({
+        ...current,
+        mediationRunsUsed: current.mediationRunsUsed + 1,
+      }));
 
       const preview = {
         comparison: evaluationResponse?.comparison || null,
@@ -2939,13 +3027,20 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
         evaluationInputTrace: evaluationResponse?.evaluationInputTrace || null,
         requestId: evaluationResponse?.requestId || null,
         completedAt: new Date().toISOString(),
-        runCount: GUEST_AI_MEDIATION_RUN_LIMIT,
+        runCount: nextGuestAiUsage.mediationRunsUsed,
         limit: GUEST_AI_MEDIATION_RUN_LIMIT,
       };
 
       setGuestEvaluationPreview(preview);
       setGuestEvaluationActiveTab('report');
-      persistGuestDraft(3, { guestEvaluationPreview: preview });
+      persistGuestDraft(
+        3,
+        {
+          guestEvaluationPreview: preview,
+          guestAiUsage: nextGuestAiUsage,
+        },
+        { forceStep: true },
+      );
       setShowFinishConfirmDialog(false);
       updateRouteParams({ nextStep: 3, replace: true });
       toast.success('AI mediation review ready');
@@ -3090,7 +3185,7 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
 
   const handleFinishClick = () => {
     if (isGuestMode) {
-      const guestRunsUsed = Number(guestEvaluationPreview?.runCount || 0);
+      const guestRunsUsed = Number(guestAiUsageRef.current?.mediationRunsUsed || 0);
       if (guestRunsUsed >= GUEST_AI_MEDIATION_RUN_LIMIT) {
         requestGuestSignIn();
         return;
@@ -3472,12 +3567,19 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
       );
       setSuggestionThreads(assistantAppended.threads);
       suggestionThreadsRef.current = assistantAppended.threads;
+      const nextGuestAiUsage = isGuestMode
+        ? commitGuestAiUsage((current) => ({
+            ...current,
+            assistanceRequestsUsed: current.assistanceRequestsUsed + 1,
+          }))
+        : null;
 
       if (!silent) {
         toast.success(response?.cached ? 'Loaded cached suggestions' : 'Suggestions ready');
       }
       if (isGuestMode) {
         persistGuestDraft(2, {
+          guestAiUsage: nextGuestAiUsage,
           aiState: {
             suggestionThreads: assistantAppended.threads,
             activeSuggestionThreadId: assistantAppended.activeThreadId,
@@ -3645,11 +3747,18 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
       setCoachErrorCode('');
       setCoachRequestMeta(companyBriefRequestMeta);
       setExpandedSuggestionIds([]);
+      const nextGuestAiUsage = isGuestMode
+        ? commitGuestAiUsage((current) => ({
+            ...current,
+            assistanceRequestsUsed: current.assistanceRequestsUsed + 1,
+          }))
+        : null;
       if (!silent) {
         toast.success('Company brief ready');
       }
       if (isGuestMode) {
         persistGuestDraft(2, {
+          guestAiUsage: nextGuestAiUsage,
           aiState: {
             coachResult: coachResultFromBrief,
             coachResultHash: '',

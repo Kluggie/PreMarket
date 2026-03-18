@@ -274,6 +274,23 @@ test('guest Step 2 AI assistance uses the public preview path, applies suggestio
       timeout: LOAD_TIMEOUT_MS,
     },
   );
+
+  await page.getByTestId('step2-continue-button').click();
+  await expect(page.locator('[data-testid="doc-comparison-step-3"]')).toBeVisible({
+    timeout: LOAD_TIMEOUT_MS,
+  });
+  await page.waitForTimeout(800);
+  await expect(page.locator('[data-testid="doc-comparison-step-2"]')).toHaveCount(0);
+  await expect(page.getByTestId('guest-evaluation-limit-alert')).toHaveCount(0);
+  await expect(page.getByTestId('step2-run-evaluation-button')).toContainText('Run AI Mediation');
+
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await expect(page.locator('[data-testid="doc-comparison-step-3"]')).toBeVisible({
+    timeout: LOAD_TIMEOUT_MS,
+  });
+  await expect(page.locator('[data-testid="doc-comparison-step-2"]')).toHaveCount(0);
+  await expect(page.getByTestId('guest-evaluation-limit-alert')).toHaveCount(0);
+  await expect(page.getByTestId('step2-run-evaluation-button')).toContainText('Run AI Mediation');
 });
 
 test('guest Step 3 AI mediation runs locally once, shows the preview, and survives refresh', async ({
@@ -373,6 +390,10 @@ test('guest Step 3 AI mediation runs locally once, shows the preview, and surviv
   await expect(page.locator('[data-testid="doc-comparison-step-3"]')).toBeVisible({
     timeout: LOAD_TIMEOUT_MS,
   });
+  await page.waitForTimeout(800);
+  await expect(page.locator('[data-testid="doc-comparison-step-2"]')).toHaveCount(0);
+  await expect(page.getByTestId('guest-evaluation-limit-alert')).toHaveCount(0);
+  await expect(page.getByTestId('step2-run-evaluation-button')).toContainText('Run AI Mediation');
   await page.getByTestId('step2-run-evaluation-button').click();
 
   await expect.poll(() => guestEvaluateCalls, { timeout: LOAD_TIMEOUT_MS }).toBe(1);

@@ -2,9 +2,77 @@ export const GUEST_COMPARISON_DRAFT_KEY = 'pm:guest_doc_comparison_draft';
 export const GUEST_COMPARISON_MIGRATION_KEY = 'pm:guest_doc_comparison_migration';
 export const GUEST_COMPARISON_SESSION_KEY = 'pm:guest_doc_comparison_session';
 export const GUEST_COMPARISON_DRAFT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+export const GUEST_COMPARISON_TOTAL_STEPS = 3;
 
 function asText(value) {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function toSafeInteger(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return null;
+  }
+  return Math.floor(numeric);
+}
+
+function clampGuestStep(value, maxStep = GUEST_COMPARISON_TOTAL_STEPS) {
+  const normalizedMax = Math.max(1, toSafeInteger(maxStep) || GUEST_COMPARISON_TOTAL_STEPS);
+  const numeric = toSafeInteger(value);
+  if (!Number.isFinite(numeric)) {
+    return 1;
+  }
+  return Math.max(1, Math.min(normalizedMax, numeric));
+}
+
+export function normalizeGuestAiUsageState(value, fallback = {}) {
+  const raw =
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? value
+      : {};
+  const fallbackState =
+    fallback && typeof fallback === 'object' && !Array.isArray(fallback)
+      ? fallback
+      : {};
+  const fallbackAssistance = Math.max(0, toSafeInteger(fallbackState.assistanceRequestsUsed) || 0);
+  const fallbackMediation = Math.max(0, toSafeInteger(fallbackState.mediationRunsUsed) || 0);
+
+  return {
+    assistanceRequestsUsed: Math.max(
+      0,
+      toSafeInteger(raw.assistanceRequestsUsed) || fallbackAssistance,
+    ),
+    mediationRunsUsed: Math.max(
+      0,
+      toSafeInteger(raw.mediationRunsUsed) || fallbackMediation,
+    ),
+  };
+}
+
+export function resolveGuestComparisonHydrationStep({
+  draftStep,
+  routeStep,
+  hasStepParam = false,
+  maxStep = GUEST_COMPARISON_TOTAL_STEPS,
+} = {}) {
+  if (hasStepParam) {
+    return clampGuestStep(routeStep, maxStep);
+  }
+  return clampGuestStep(draftStep || routeStep || 1, maxStep);
+}
+
+export function resolveGuestComparisonPersistedStep({
+  requestedStep,
+  canonicalStep,
+  forceStep = false,
+  maxStep = GUEST_COMPARISON_TOTAL_STEPS,
+} = {}) {
+  const normalizedCanonicalStep = clampGuestStep(canonicalStep, maxStep);
+  const normalizedRequestedStep = clampGuestStep(
+    requestedStep == null ? normalizedCanonicalStep : requestedStep,
+    maxStep,
+  );
+  return forceStep ? normalizedRequestedStep : normalizedCanonicalStep;
 }
 
 export function createGuestComparisonLocalId(prefix = 'guest_doc_compare') {
@@ -34,7 +102,17 @@ export function readGuestComparisonDraft() {
       return null;
     }
 
-    return parsed;
+    const legacyMediationRunsUsed = Math.max(
+      0,
+      toSafeInteger(parsed?.guestEvaluationPreview?.runCount) || 0,
+    );
+
+    return {
+      ...parsed,
+      guestAiUsage: normalizeGuestAiUsageState(parsed.guestAiUsage, {
+        mediationRunsUsed: legacyMediationRunsUsed,
+      }),
+    };
   } catch {
     return null;
   }
@@ -46,7 +124,19 @@ export function writeGuestComparisonDraft(payload) {
   }
 
   try {
-    window.localStorage.setItem(GUEST_COMPARISON_DRAFT_KEY, JSON.stringify(payload || {}));
+    const normalizedPayload =
+      payload && typeof payload === 'object' && !Array.isArray(payload)
+        ? {
+            ...payload,
+            guestAiUsage: normalizeGuestAiUsageState(payload.guestAiUsage, {
+              mediationRunsUsed: Math.max(
+                0,
+                toSafeInteger(payload?.guestEvaluationPreview?.runCount) || 0,
+              ),
+            }),
+          }
+        : {};
+    window.localStorage.setItem(GUEST_COMPARISON_DRAFT_KEY, JSON.stringify(normalizedPayload));
     return true;
   } catch {
     return false;

@@ -195,6 +195,160 @@ test('guest evaluation succeeds without auth, uses guest draft id, and returns p
   }
 });
 
+test('guest Step 2 coach assistance does not consume the Step 3 mediation allowance', async () => {
+  __resetGuestPreviewRateLimitsForTest();
+  const originalVertexMock = process.env.VERTEX_MOCK;
+  const originalEvaluator = globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
+  process.env.VERTEX_MOCK = '1';
+  globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = async () => ({
+    evaluation_provider: 'vertex',
+    evaluation_model: 'guest-preview-test-model',
+    recommendation: 'Medium',
+    report: {
+      report_format: 'v2',
+      fit_level: 'medium',
+      confidence_0_1: 0.62,
+      why: ['The first real mediation run is still available after Step 2 assistance.'],
+      missing: ['Resolve one remaining redline.'],
+      redactions: [],
+      summary: {
+        fit_level: 'medium',
+        top_fit_reasons: [{ text: 'Coach assistance did not consume the mediation run.' }],
+        top_blockers: [{ text: 'One redline is still open.' }],
+        next_actions: ['Resolve the open redline before sharing.'],
+      },
+      sections: [],
+      recommendation: 'Medium',
+    },
+  });
+
+  try {
+    const requestBody = buildGuestPreviewBody({
+      guestDraftId: 'guest_draft_after_step2_coach',
+      guestSessionId: 'guest_session_after_step2_coach',
+    });
+
+    const coachRes = await callRoute(guestCoachHandler, {
+      url: '/api/public/document-comparisons/coach',
+      headers: { 'x-real-ip': '198.51.100.15' },
+      body: {
+        ...requestBody,
+        mode: 'full',
+        intent: 'general',
+        action: 'general',
+      },
+    });
+    assert.equal(coachRes.statusCode, 200);
+
+    const evaluateRes = await callRoute(guestEvaluateHandler, {
+      url: '/api/public/document-comparisons/evaluate',
+      headers: { 'x-real-ip': '198.51.100.15' },
+      body: requestBody,
+    });
+    assert.equal(evaluateRes.statusCode, 200);
+    assert.equal(evaluateRes.jsonBody()?.comparison?.id, 'guest_draft_after_step2_coach');
+  } finally {
+    __resetGuestPreviewRateLimitsForTest();
+    if (originalVertexMock === undefined) {
+      delete process.env.VERTEX_MOCK;
+    } else {
+      process.env.VERTEX_MOCK = originalVertexMock;
+    }
+    if (originalEvaluator === undefined) {
+      delete globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
+    } else {
+      globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = originalEvaluator;
+    }
+  }
+});
+
+test('guest company brief does not consume the Step 3 mediation allowance', async () => {
+  __resetGuestPreviewRateLimitsForTest();
+  const originalResearchOverride = globalThis.__PREMARKET_TEST_COMPANY_BRIEF_RESEARCH__;
+  const originalVertexOverride = globalThis.__PREMARKET_TEST_COMPANY_BRIEF_VERTEX_CALL__;
+  const originalEvaluator = globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
+
+  globalThis.__PREMARKET_TEST_COMPANY_BRIEF_RESEARCH__ = async () => ({
+    queries: ['acme guest preview'],
+    sources: [
+      {
+        title: 'Acme Overview',
+        url: 'https://example.com/acme-overview',
+        snippet: 'Acme overview snippet.',
+      },
+    ],
+  });
+  globalThis.__PREMARKET_TEST_COMPANY_BRIEF_VERTEX_CALL__ = async () => ({
+    model: 'company-brief-test-model',
+    text: 'Acme Industries appears to have a predictable enterprise procurement cycle.',
+  });
+  globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = async () => ({
+    evaluation_provider: 'vertex',
+    evaluation_model: 'guest-preview-test-model',
+    recommendation: 'High',
+    report: {
+      report_format: 'v2',
+      fit_level: 'high',
+      confidence_0_1: 0.86,
+      why: ['The first mediation run remains available after generating a company brief.'],
+      missing: [],
+      redactions: [],
+      summary: {
+        fit_level: 'high',
+        top_fit_reasons: [{ text: 'Company brief usage did not consume the mediation run.' }],
+        top_blockers: [],
+        next_actions: [],
+      },
+      sections: [],
+      recommendation: 'High',
+    },
+  });
+
+  try {
+    const requestBody = buildGuestPreviewBody({
+      guestDraftId: 'guest_draft_after_company_brief',
+      guestSessionId: 'guest_session_after_company_brief',
+    });
+
+    const briefRes = await callRoute(guestCompanyBriefHandler, {
+      url: '/api/public/document-comparisons/company-brief',
+      headers: { 'x-real-ip': '198.51.100.16' },
+      body: {
+        ...requestBody,
+        companyName: 'Acme Industries',
+        companyWebsite: 'https://acme.example',
+        lens: 'risk_negotiation',
+      },
+    });
+    assert.equal(briefRes.statusCode, 200);
+
+    const evaluateRes = await callRoute(guestEvaluateHandler, {
+      url: '/api/public/document-comparisons/evaluate',
+      headers: { 'x-real-ip': '198.51.100.16' },
+      body: requestBody,
+    });
+    assert.equal(evaluateRes.statusCode, 200);
+    assert.equal(evaluateRes.jsonBody()?.comparison?.id, 'guest_draft_after_company_brief');
+  } finally {
+    __resetGuestPreviewRateLimitsForTest();
+    if (originalResearchOverride === undefined) {
+      delete globalThis.__PREMARKET_TEST_COMPANY_BRIEF_RESEARCH__;
+    } else {
+      globalThis.__PREMARKET_TEST_COMPANY_BRIEF_RESEARCH__ = originalResearchOverride;
+    }
+    if (originalVertexOverride === undefined) {
+      delete globalThis.__PREMARKET_TEST_COMPANY_BRIEF_VERTEX_CALL__;
+    } else {
+      globalThis.__PREMARKET_TEST_COMPANY_BRIEF_VERTEX_CALL__ = originalVertexOverride;
+    }
+    if (originalEvaluator === undefined) {
+      delete globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
+    } else {
+      globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = originalEvaluator;
+    }
+  }
+});
+
 test('guest evaluation enforces one mediation run per guest draft', async () => {
   __resetGuestPreviewRateLimitsForTest();
   const originalEvaluator = globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
@@ -245,6 +399,69 @@ test('guest evaluation enforces one mediation run per guest draft', async () => 
       String(secondRes.jsonBody()?.error?.message || ''),
       /sign in to continue with more ai runs/i,
     );
+  } finally {
+    __resetGuestPreviewRateLimitsForTest();
+    if (originalEvaluator === undefined) {
+      delete globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
+    } else {
+      globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = originalEvaluator;
+    }
+  }
+});
+
+test('failed guest mediation does not consume the per-draft allowance', async () => {
+  __resetGuestPreviewRateLimitsForTest();
+  const originalEvaluator = globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
+
+  try {
+    const requestBody = buildGuestPreviewBody({
+      guestDraftId: 'guest_draft_failed_then_successful_eval',
+      guestSessionId: 'guest_session_failed_then_successful_eval',
+    });
+
+    globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = async () => {
+      const error = new Error('Simulated timeout');
+      error.code = 'vertex_timeout';
+      throw error;
+    };
+
+    const failedRes = await callRoute(guestEvaluateHandler, {
+      url: '/api/public/document-comparisons/evaluate',
+      headers: { 'x-real-ip': '198.51.100.17' },
+      body: requestBody,
+    });
+    assert.equal(failedRes.statusCode, 504);
+    assert.equal(failedRes.jsonBody()?.error?.code, 'vertex_timeout');
+
+    globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = async () => ({
+      evaluation_provider: 'vertex',
+      evaluation_model: 'guest-preview-test-model',
+      recommendation: 'Medium',
+      report: {
+        report_format: 'v2',
+        fit_level: 'medium',
+        confidence_0_1: 0.55,
+        why: ['The failed attempt did not consume the mediation allowance.'],
+        missing: ['Resolve the remaining operational dependency.'],
+        redactions: [],
+        summary: {
+          fit_level: 'medium',
+          top_fit_reasons: [{ text: 'The retry was allowed after a failed run.' }],
+          top_blockers: [{ text: 'One operational dependency remains.' }],
+          next_actions: ['Resolve the operational dependency.'],
+        },
+        sections: [],
+        recommendation: 'Medium',
+      },
+    });
+
+    const successfulRes = await callRoute(guestEvaluateHandler, {
+      url: '/api/public/document-comparisons/evaluate',
+      headers: { 'x-real-ip': '198.51.100.17' },
+      body: requestBody,
+    });
+    assert.equal(successfulRes.statusCode, 200);
+    assert.equal(successfulRes.jsonBody()?.comparison?.id, 'guest_draft_failed_then_successful_eval');
   } finally {
     __resetGuestPreviewRateLimitsForTest();
     if (originalEvaluator === undefined) {

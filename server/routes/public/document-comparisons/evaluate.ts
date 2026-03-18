@@ -7,6 +7,7 @@ import {
   assertGuestPreviewEvaluationWithinLimits,
   buildGuestPreviewComparison,
   classifyGuestEvaluationFailure,
+  recordGuestAiMediationSuccess,
   resolveGuestComparisonPreviewInput,
   runGuestEvaluationModel,
   toGuestEvaluationApiError,
@@ -74,6 +75,10 @@ export default async function handler(req: any, res: any) {
       docBSource: previewInput.docBSource,
       docAFiles: previewInput.docAFiles,
       docBFiles: previewInput.docBFiles,
+    });
+    recordGuestAiMediationSuccess(req, {
+      guestDraftId: previewInput.guestDraftId,
+      guestSessionId: previewInput.guestSessionId,
     });
 
     ok(res, 200, {

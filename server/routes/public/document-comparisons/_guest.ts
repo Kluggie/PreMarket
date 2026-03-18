@@ -121,7 +121,7 @@ function consumeWindowLimit({
   }
 }
 
-function consumeDraftLimit({
+function assertDraftLimitAvailable({
   map,
   key,
   limit,
@@ -139,12 +139,13 @@ function consumeDraftLimit({
   const entry = map.get(normalizedKey);
 
   if (!entry || now - entry.firstUsedAt > MEDIATION_DRAFT_TTL_MS) {
-    map.set(normalizedKey, { count: 1, firstUsedAt: now });
+    if (entry) {
+      map.delete(normalizedKey);
+    }
     return;
   }
 
-  entry.count += 1;
-  if (entry.count > limit) {
+  if (entry.count >= limit) {
     throw new ApiError(429, errorCode, errorMessage, {
       sign_in_required_for_more_runs: true,
       scope: 'guest_draft',
@@ -153,6 +154,25 @@ function consumeDraftLimit({
       retry_after_seconds: Math.ceil(MEDIATION_DRAFT_TTL_MS / 1000),
     });
   }
+}
+
+function recordDraftLimitUsage({
+  map,
+  key,
+}: {
+  map: Map<string, { count: number; firstUsedAt: number }>;
+  key: string;
+}) {
+  const now = Date.now();
+  const normalizedKey = asText(key) || 'unknown';
+  const entry = map.get(normalizedKey);
+
+  if (!entry || now - entry.firstUsedAt > MEDIATION_DRAFT_TTL_MS) {
+    map.set(normalizedKey, { count: 1, firstUsedAt: now });
+    return;
+  }
+
+  entry.count += 1;
 }
 
 function toOptionalJsonObject(value: unknown) {
@@ -238,7 +258,7 @@ export function assertGuestAiAssistanceAllowed(req: any, guestSessionId: string)
 
 export function assertGuestAiMediationAllowed(req: any, params: { guestDraftId: string; guestSessionId: string }) {
   const ip = clientIpForRateLimit(req);
-  consumeDraftLimit({
+  assertDraftLimitAvailable({
     map: mediationDraftMap,
     key: `${ip}:${params.guestDraftId}`,
     limit: GUEST_AI_MEDIATION_DRAFT_LIMIT,
@@ -254,6 +274,17 @@ export function assertGuestAiMediationAllowed(req: any, params: { guestDraftId: 
     errorCode: 'guest_ai_mediation_limit_reached',
     errorMessage: GUEST_AI_LIMIT_MESSAGE,
     scope: 'trusted_ip',
+  });
+}
+
+export function recordGuestAiMediationSuccess(
+  req: any,
+  params: { guestDraftId: string; guestSessionId: string },
+) {
+  const ip = clientIpForRateLimit(req);
+  recordDraftLimitUsage({
+    map: mediationDraftMap,
+    key: `${ip}:${params.guestDraftId}`,
   });
 }
 
