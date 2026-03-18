@@ -9,14 +9,15 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const planTier = user.plan_tier || 'starter';
-    
-    // Professional has unlimited proposals
-    if (planTier === 'professional') {
-      return Response.json({ 
-        allowed: true, 
+    const planTier = String(user.plan_tier || '').trim().toLowerCase();
+
+    // All non-starter tiers (Early Access, Professional, Enterprise) have unlimited proposals
+    const STARTER_PLAN_ALIASES = new Set(['starter', 'free', '']);
+    if (!STARTER_PLAN_ALIASES.has(planTier)) {
+      return Response.json({
+        allowed: true,
         limit: 'unlimited',
-        used: 0
+        used: 0,
       });
     }
 

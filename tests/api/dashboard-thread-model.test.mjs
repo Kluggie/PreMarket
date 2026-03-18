@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { randomUUID } from 'node:crypto';
 import proposalsHandler from '../../server/routes/proposals/index.ts';
 import proposalArchiveHandler from '../../server/routes/proposals/[id]/archive.ts';
 import dashboardSummaryHandler from '../../server/routes/dashboard/summary.ts';
@@ -307,6 +308,43 @@ if (!hasDatabaseUrl()) {
 
     const summary = await getSummary(cookie);
     assert.equal(summary.starterUsage, null);
+  });
+
+  test('dashboard summary omits starter usage for early access user with NO billing row', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const userId = 'dashboard_ea_no_billing';
+    const email = 'dashboard-ea-no-billing@example.com';
+    const cookie = authCookie(userId, email);
+
+    const db = getDb();
+
+    // Only create a user row; no billingReferences row
+    await db
+      .insert(schema.users)
+      .values({ id: userId, email })
+      .onConflictDoNothing({ target: schema.users.id });
+
+    // Seed a betaSignups entry for this user (early access path)
+    await db
+      .insert(schema.betaSignups)
+      .values({
+        id: randomUUID(),
+        email,
+        emailNormalized: email.toLowerCase(),
+        userId,
+        source: 'pricing',
+        createdAt: new Date(),
+      })
+      .onConflictDoNothing({ target: schema.betaSignups.emailNormalized });
+
+    const summary = await getSummary(cookie);
+    assert.equal(
+      summary.starterUsage,
+      null,
+      'Early Access user with no billing row must not receive a starterUsage payload',
+    );
   });
 
   test('dashboard summary omits starter usage snapshot for enterprise users', async () => {

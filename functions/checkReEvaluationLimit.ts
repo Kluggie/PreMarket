@@ -15,15 +15,12 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Missing proposal_id' }, { status: 400 });
     }
 
-    const planTier = user.plan_tier || 'starter';
-    
-    // Get re-evaluation limit by plan
-    const limits = {
-      starter: 1,
-      professional: 3
-    };
-    
-    const limit = limits[planTier] || 1;
+    const planTier = String(user.plan_tier || '').trim().toLowerCase();
+
+    // Starter and unknown plans get 1 re-evaluation.
+    // All elevated tiers (Early Access, Professional, Enterprise) get 3.
+    const STARTER_PLAN_ALIASES = new Set(['starter', 'free', '']);
+    const limit = STARTER_PLAN_ALIASES.has(planTier) ? 1 : 3;
 
     // Count existing evaluation runs for this proposal
     const evaluations = await base44.entities.EvaluationRun.filter({

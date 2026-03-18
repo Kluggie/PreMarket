@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { randomUUID } from 'node:crypto';
 import { neon } from '@neondatabase/serverless';
 import { drizzle } from 'drizzle-orm/neon-http';
 import { eq } from 'drizzle-orm';
@@ -341,6 +342,82 @@ if (!hasDatabaseUrl()) {
         `Expected non-starter plan "${plan}" to bypass starter caps: ${JSON.stringify(result.body)}`,
       );
       assert.equal(result.body?.ok, true);
+    }
+  });
+
+  test('Early Access user with no billing row is NOT subject to proposal creation caps', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const userId = 'early_access_no_billing_create';
+    const email = 'early-access-no-billing@example.com';
+    const cookie = authCookie(userId, email);
+
+    // Seed the user with NO billing row - only a betaSignups entry
+    const db = await getDb();
+    await db
+      .insert(schema.users)
+      .values({ id: userId, email })
+      .onConflictDoNothing({ target: schema.users.id });
+
+    await db
+      .insert(schema.betaSignups)
+      .values({
+        id: randomUUID(),
+        email,
+        emailNormalized: email.toLowerCase(),
+        userId,
+        source: 'pricing',
+        createdAt: new Date(),
+      })
+      .onConflictDoNothing({ target: schema.betaSignups.emailNormalized });
+
+    // Seed 3 proposals (≥ starter monthly limit)
+    await seedProposal(userId, 'ea-nobilling-p1');
+    await seedProposal(userId, 'ea-nobilling-p2');
+    await seedProposal(userId, 'ea-nobilling-p3');
+
+    // 4th proposal must succeed – early access is not capped
+    const result = await createProposalViaApi(cookie, 'ea-nobilling-p4-should-pass');
+    assert.equal(
+      result.status,
+      201,
+      `Early Access user with no billing row must not be starter-capped: ${JSON.stringify(result.body)}`,
+    );
+    assert.equal(result.body?.ok, true);
+  });
+
+  test('Early Access user with billing row plan early_access_program bypasses proposal caps', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const userId = 'early_access_billing_create';
+    const email = 'early-access-billing@example.com';
+    const cookie = authCookie(userId, email);
+
+    const earlyAccessVariants = [
+      'early_access',
+      'early-access',
+      'early access',
+      'early_access_program',
+      'early-access-program',
+      'early access program',
+    ];
+
+    for (const [index, plan] of earlyAccessVariants.entries()) {
+      const uid = `ea_billing_create_${index}`;
+      const em = `ea-billing-create-${index}@example.com`;
+      await seedUserAndPlan(uid, em, plan);
+      await seedProposal(uid, `${plan}-p1`);
+      await seedProposal(uid, `${plan}-p2`);
+      await seedProposal(uid, `${plan}-p3`);
+
+      const result = await createProposalViaApi(authCookie(uid, em), `${plan}-p4`);
+      assert.equal(
+        result.status,
+        201,
+        `Early Access variant "${plan}" must bypass starter caps: ${JSON.stringify(result.body)}`,
+      );
     }
   });
 

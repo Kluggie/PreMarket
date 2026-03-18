@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, or, sql } from 'drizzle-orm';
 import { createAuthSession, getAuthSessionForUser, maybeTouchAuthSessionLastSeen } from './auth-sessions.js';
 import { ApiError } from './errors.js';
 import {
@@ -10,7 +10,29 @@ import {
 import { createSessionToken, getSessionFromRequest, setSessionCookie } from './session.js';
 import { getDb, hasDatabaseUrl, schema } from './db/client.js';
 
-function mapDatabaseUser(userRow, billingRow) {
+const EARLY_ACCESS_BILLING_ALIASES = new Set([
+  'early_access',
+  'early-access',
+  'early access',
+  'early_access_program',
+  'early-access-program',
+  'early access program',
+]);
+
+function resolvePlanTier(billingRow, betaRow) {
+  if (billingRow?.plan) {
+    return billingRow.plan;
+  }
+  // No billing row: the betaSignups table is exclusively for early-access
+  // members. Any entry here means the user is in Early Access, regardless of
+  // the source column value (e.g. 'pricing', 'early_access', null, etc.).
+  if (betaRow) {
+    return 'early_access';
+  }
+  return 'starter';
+}
+
+function mapDatabaseUser(userRow, billingRow, betaRow = null) {
   return {
     id: userRow.id,
     sub: userRow.id,
@@ -19,7 +41,7 @@ function mapDatabaseUser(userRow, billingRow) {
     full_name: userRow.fullName,
     picture: userRow.picture,
     role: userRow.role || 'user',
-    plan_tier: billingRow?.plan || 'starter',
+    plan_tier: resolvePlanTier(billingRow, betaRow),
     subscription_status: billingRow?.status || 'inactive',
     stripe_customer_id: billingRow?.stripeCustomerId || null,
     stripe_subscription_id: billingRow?.stripeSubscriptionId || null,
@@ -63,11 +85,19 @@ export async function upsertAuthUserFromSession(session, options = {}) {
     .select({
       user: schema.users,
       billing: schema.billingReferences,
+      beta: schema.betaSignups,
     })
     .from(schema.users)
     .leftJoin(
       schema.billingReferences,
       eq(schema.billingReferences.userId, schema.users.id),
+    )
+    .leftJoin(
+      schema.betaSignups,
+      or(
+        eq(schema.betaSignups.userId, schema.users.id),
+        eq(schema.betaSignups.emailNormalized, sql`lower(trim(${schema.users.email}))`),
+      ),
     )
     .where(eq(schema.users.id, session.sub))
     .limit(1);
@@ -76,7 +106,7 @@ export async function upsertAuthUserFromSession(session, options = {}) {
     throw new ApiError(500, 'user_upsert_failed', 'Unable to persist user record');
   }
 
-  return mapDatabaseUser(joinedRow.user, joinedRow.billing || null);
+  return mapDatabaseUser(joinedRow.user, joinedRow.billing || null, joinedRow.beta || null);
 }
 
 function toSessionIdentity(session) {
@@ -177,11 +207,19 @@ export async function getUserById(userId) {
     .select({
       user: schema.users,
       billing: schema.billingReferences,
+      beta: schema.betaSignups,
     })
     .from(schema.users)
     .leftJoin(
       schema.billingReferences,
       eq(schema.billingReferences.userId, schema.users.id),
+    )
+    .leftJoin(
+      schema.betaSignups,
+      or(
+        eq(schema.betaSignups.userId, schema.users.id),
+        eq(schema.betaSignups.emailNormalized, sql`lower(trim(${schema.users.email}))`),
+      ),
     )
     .where(eq(schema.users.id, userId))
     .limit(1);
@@ -190,7 +228,7 @@ export async function getUserById(userId) {
     return null;
   }
 
-  return mapDatabaseUser(joinedRow.user, joinedRow.billing || null);
+  return mapDatabaseUser(joinedRow.user, joinedRow.billing || null, joinedRow.beta || null);
 }
 
 export async function assertProposalOwnership(userId, proposalId) {
