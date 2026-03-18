@@ -267,7 +267,7 @@ test('My Profile shows only Profile tab and social link edits save + persist', a
   expect(pageErrors).toEqual([]);
 });
 
-test('My Profile explains incomplete public-directory opt-in and lists once display identity is configured', async ({ page }) => {
+test('My Profile lists opted-in profiles by full name without requiring pseudonym or privacy-mode changes', async ({ page }) => {
   const userId = uniqueId('profile_ui_directory_user');
   const email = `${userId}@example.com`;
   const publicName = `Directory ${uniqueId('Visible User')}`;
@@ -303,11 +303,19 @@ test('My Profile explains incomplete public-directory opt-in and lists once disp
 
   const saveButton = page.getByTestId('saveButton');
   const publicDirectorySwitch = page.locator('#profile-public-directory');
+  const privacyModeTrigger = page.getByTestId('profilePrivacyModeTrigger');
+  const pseudonymInput = page.getByTestId('profilePseudonymInput');
 
+  await expect(page.getByText('List this profile in the public directory.')).toBeVisible();
+  await expect(
+    page.getByText('Your full name will be shown in the directory. Turn this off if you do not want your profile publicly discoverable.'),
+  ).toBeVisible();
+  await expect(page.getByText(/Add a pseudonym or switch Privacy Mode to Public/i)).toHaveCount(0);
+  await expect(privacyModeTrigger).toContainText('Pseudonymous');
+  await expect(pseudonymInput).toHaveValue('');
   await publicDirectorySwitch.click();
-  await expect(page.getByTestId('profilePublicDirectoryStatus')).toContainText('Not visible yet.');
   await expect(page.getByTestId('profilePublicDirectoryStatus')).toContainText(
-    'Add a pseudonym or switch Privacy Mode to Public',
+    `Visible in the directory as ${publicName}.`,
   );
 
   const firstSaveResponsePromise = page.waitForResponse((response) => {
@@ -318,38 +326,14 @@ test('My Profile explains incomplete public-directory opt-in and lists once disp
   expect(firstSaveResponse.status()).toBe(200);
 
   await expect(page.getByText('No changes to save.')).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByTestId('profilePublicDirectoryStatus')).toContainText('Not visible yet.');
+  await expect(page.getByTestId('profilePublicDirectoryStatus')).toContainText(
+    `Visible in the directory as ${publicName}.`,
+  );
 
   await page.goto(`${BASE_URL}/directory`, {
     waitUntil: 'domcontentloaded',
   });
   const searchInput = page.getByPlaceholder('Search by name or keywords...');
-  await searchInput.fill(publicName);
-  await expect(page.getByText('No public entries match these filters.')).toBeVisible({ timeout: 60_000 });
-
-  await page.goto(`${BASE_URL}/profile`, {
-    waitUntil: 'domcontentloaded',
-  });
-  await expect(page.getByRole('heading', { name: 'My Profile' })).toBeVisible({ timeout: 120_000 });
-
-  await page.locator('#profile-privacy-mode').click();
-  await page.getByRole('option', { name: 'Public' }).click();
-  await expect(page.getByTestId('profilePublicDirectoryStatus')).toContainText(
-    `Visible in the directory as ${publicName}.`,
-  );
-
-  const secondSaveResponsePromise = page.waitForResponse((response) => {
-    return response.url().includes('/api/account/profile') && response.request().method() === 'PATCH';
-  });
-  await saveButton.click();
-  const secondSaveResponse = await secondSaveResponsePromise;
-  expect(secondSaveResponse.status()).toBe(200);
-
-  await expect(page.getByText('No changes to save.')).toBeVisible({ timeout: 30_000 });
-
-  await page.goto(`${BASE_URL}/directory`, {
-    waitUntil: 'domcontentloaded',
-  });
   await searchInput.fill(publicName);
   await expect(page.getByRole('link', { name: new RegExp(escapeRegExp(publicName)) })).toBeVisible({ timeout: 60_000 });
 
@@ -362,12 +346,12 @@ test('My Profile explains incomplete public-directory opt-in and lists once disp
   await expect(page.getByRole('heading', { name: 'My Profile' })).toBeVisible({ timeout: 120_000 });
 
   await publicDirectorySwitch.click();
-  const thirdSaveResponsePromise = page.waitForResponse((response) => {
+  const secondSaveResponsePromise = page.waitForResponse((response) => {
     return response.url().includes('/api/account/profile') && response.request().method() === 'PATCH';
   });
   await saveButton.click();
-  const thirdSaveResponse = await thirdSaveResponsePromise;
-  expect(thirdSaveResponse.status()).toBe(200);
+  const secondSaveResponse = await secondSaveResponsePromise;
+  expect(secondSaveResponse.status()).toBe(200);
 
   await page.goto(`${BASE_URL}/directory`, {
     waitUntil: 'domcontentloaded',

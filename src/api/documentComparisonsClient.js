@@ -289,6 +289,21 @@ export const documentComparisonsClient = {
     };
   },
 
+  async guestEvaluate(input = {}) {
+    const response = await request('/api/public/document-comparisons/evaluate', {
+      method: 'POST',
+      body: JSON.stringify(input || {}),
+    });
+    return {
+      comparison: response.comparison || null,
+      evaluation: response.evaluation || null,
+      evaluationResult: response.evaluation_result || null,
+      evaluationInputTrace: response.evaluation_input_trace || null,
+      requestId: response.request_id || null,
+      attemptCount: typeof response.attempt_count === 'number' ? response.attempt_count : 0,
+    };
+  },
+
   async coach(id, input = {}) {
     const response = await request(`/api/document-comparisons/${encodeId(id)}/coach`, {
       method: 'POST',
@@ -296,6 +311,24 @@ export const documentComparisonsClient = {
     });
     return {
       comparisonId: response.comparison_id || id,
+      cacheHash: response.cache_hash || null,
+      cached: Boolean(response.cached),
+      provider: typeof response.provider === 'string' ? response.provider : 'vertex',
+      model: typeof response.model === 'string' ? response.model : 'unknown',
+      promptVersion: typeof response.prompt_version === 'string' ? response.prompt_version : null,
+      coach: response.coach || null,
+      createdAt: response.created_at || null,
+      withheldCount: typeof response.withheld_count === 'number' ? response.withheld_count : 0,
+    };
+  },
+
+  async guestCoach(input = {}) {
+    const response = await request('/api/public/document-comparisons/coach', {
+      method: 'POST',
+      body: JSON.stringify(input || {}),
+    });
+    return {
+      comparisonId: response.comparison_id || null,
       cacheHash: response.cache_hash || null,
       cached: Boolean(response.cached),
       provider: typeof response.provider === 'string' ? response.provider : 'vertex',
@@ -329,6 +362,20 @@ export const documentComparisonsClient = {
     });
     return {
       comparisonId: response.comparison_id || id,
+      provider: typeof response.provider === 'string' ? response.provider : 'vertex',
+      model: typeof response.model === 'string' ? response.model : 'unknown',
+      companyBrief: response.company_brief || null,
+      generatedAt: response.generated_at || null,
+    };
+  },
+
+  async guestCompanyBrief(input = {}) {
+    const response = await request('/api/public/document-comparisons/company-brief', {
+      method: 'POST',
+      body: JSON.stringify(input || {}),
+    });
+    return {
+      comparisonId: response.comparison_id || null,
       provider: typeof response.provider === 'string' ? response.provider : 'vertex',
       model: typeof response.model === 'string' ? response.model : 'unknown',
       companyBrief: response.company_brief || null,

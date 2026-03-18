@@ -153,6 +153,10 @@ export default function Step3ReviewPackage({
   recipientEmail = '',
   onRecipientNameChange,
   onRecipientEmailChange,
+  runActionLabel = '',
+  runActionTestId = 'step2-run-evaluation-button',
+  actionButtonClassName = 'bg-blue-600 hover:bg-blue-700',
+  footerNote = null,
 }) {
   const counts = getDocumentCounts(documents);
   const confidentialDocs = documents.filter((d) => d.visibility === VISIBILITY_CONFIDENTIAL);
@@ -166,6 +170,7 @@ export default function Step3ReviewPackage({
     : finishStage === 'saving'
       ? 'Saving…'
       : RUN_AI_MEDIATION_LABEL;
+  const resolvedRunActionLabel = isRunning ? finishLabel : runActionLabel || RUN_AI_MEDIATION_LABEL;
 
   const totalChars = (confidentialBundle.text?.length || 0) + (sharedBundle.text?.length || 0);
 
@@ -310,6 +315,8 @@ export default function Step3ReviewPackage({
         </Alert>
       )}
 
+      {footerNote}
+
       {/* Navigation */}
       <div className="flex items-center justify-between pt-2">
         <Button
@@ -325,18 +332,18 @@ export default function Step3ReviewPackage({
           type="button"
           onClick={onRunEvaluation}
           disabled={isRunning || exceedsAnySizeLimit || !hasContent}
-          className="bg-blue-600 hover:bg-blue-700"
-          data-testid="step2-run-evaluation-button"
+          className={actionButtonClassName}
+          data-testid={runActionTestId}
         >
           {isRunning ? (
             <>
               <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              {finishLabel}
+              {resolvedRunActionLabel}
             </>
           ) : (
             <>
               <Sparkles className="w-4 h-4 mr-2" />
-              {RUN_AI_MEDIATION_LABEL}
+              {resolvedRunActionLabel}
             </>
           )}
         </Button>

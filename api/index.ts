@@ -84,6 +84,9 @@ import securityMfaBackupRegenerateHandler from '../server/routes/security/mfa/ba
 import directorySearchHandler from '../server/routes/directory/search.js';
 import directoryDetailHandler from '../server/routes/directory/detail.js';
 import publicTemplatesHandler from '../server/routes/public/templates.js';
+import publicDocumentComparisonsCoachHandler from '../server/routes/public/document-comparisons/coach.js';
+import publicDocumentComparisonsCompanyBriefHandler from '../server/routes/public/document-comparisons/company-brief.js';
+import publicDocumentComparisonsEvaluateHandler from '../server/routes/public/document-comparisons/evaluate.js';
 
 type VercelRequest = {
   method?: string;
@@ -287,6 +290,18 @@ export default async function handler(req: any, res: any) {
 
   if (pathname === '/api/public/templates' && method === 'GET') {
     return publicTemplatesHandler(req, res);
+  }
+
+  if (pathname === '/api/public/document-comparisons/coach' && method === 'POST') {
+    return publicDocumentComparisonsCoachHandler(req, res);
+  }
+
+  if (pathname === '/api/public/document-comparisons/company-brief' && method === 'POST') {
+    return publicDocumentComparisonsCompanyBriefHandler(req, res);
+  }
+
+  if (pathname === '/api/public/document-comparisons/evaluate' && method === 'POST') {
+    return publicDocumentComparisonsEvaluateHandler(req, res);
   }
 
   if (pathname === '/api/contact-requests' && method === 'POST') {

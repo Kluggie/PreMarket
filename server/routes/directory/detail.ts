@@ -44,10 +44,8 @@ export default async function handler(req: any, res: any) {
         throw new ApiError(404, 'not_found', 'Not found');
       }
 
-      const privacyMode = normalize(row.profile.privacyMode);
       const fullName = String(row.user?.fullName || '').trim();
-      const pseudonym = String(row.profile.pseudonym || '').trim();
-      const displayName = privacyMode === 'public' ? fullName || pseudonym : pseudonym;
+      const displayName = fullName;
 
       if (!displayName) {
         throw new ApiError(404, 'not_found', 'Not found');
@@ -58,8 +56,6 @@ export default async function handler(req: any, res: any) {
           kind: 'person',
           id: row.profile.id,
           displayName,
-          pseudonym: pseudonym || undefined,
-          privacy_mode: privacyMode || undefined,
           user_type: row.profile.userType || undefined,
           industry: row.profile.industry || undefined,
           location: row.profile.location || undefined,

@@ -21,7 +21,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import DocumentRichEditor from '@/components/document-comparison/DocumentRichEditor';
 import DocumentComparisonEditorErrorBoundary from '@/components/document-comparison/DocumentComparisonEditorErrorBoundary';
 import {
   buildCoachActionRequest,
@@ -45,7 +44,6 @@ import {
   getActiveThread,
   getLastAssistantEntry,
   MAX_THREADS,
-  normalizeThreadsOnLoad,
   renameThread,
   serializeThreadsForPersistence,
 } from '@/pages/document-comparison/suggestionThreads';
@@ -63,45 +61,50 @@ import {
   serializeDocumentsSession,
   VISIBILITY_CONFIDENTIAL,
   VISIBILITY_SHARED,
-  VISIBILITY_UNCLASSIFIED,
-  allDocumentsClassified,
-  buildDocumentsStateHash,
 } from '@/pages/document-comparison/documentsModel';
 import { getStarterLimitErrorCopy } from '@/lib/starterLimitErrorCopy';
 import Step1AddSources from '@/components/document-comparison/Step1AddSources';
 import Step2EditSources from '@/components/document-comparison/Step2EditSources';
 import Step3ReviewPackage from '@/components/document-comparison/Step3ReviewPackage';
+import { ComparisonDetailTabs } from '@/components/document-comparison/ComparisonDetailTabs';
 import ComparisonWorkflowShell from '@/components/document-comparison/ComparisonWorkflowShell';
-import { countWords, getDocumentComparisonTextLimits } from '@/config/aiLimits';
+import { getDocumentComparisonTextLimits } from '@/config/aiLimits';
+import {
+  clearGuestComparisonDraft,
+  clearGuestComparisonMigrationOverlay,
+  createGuestComparisonLocalId,
+  getOrCreateGuestComparisonSessionId,
+  readGuestComparisonDraft,
+  readGuestComparisonMigrationOverlay,
+  writeGuestComparisonDraft,
+  writeGuestComparisonMigrationOverlay,
+} from '@/pages/document-comparison/guestPreviewState';
+import {
+  buildGuestComparisonMigrationOverlay,
+  buildGuestComparisonMigrationPayload,
+} from '@/pages/document-comparison/guestPreviewMigration';
 import { toast } from 'sonner';
 import {
   AlertTriangle,
   ArrowLeft,
-  ArrowRight,
   Check,
   Copy,
-  FileText,
   Loader2,
   Lock,
-  MessageSquarePlus,
   MessagesSquare,
   Pencil,
   Plus,
-  Save,
   Sparkles,
   Trash2,
-  Upload,
   X,
 } from 'lucide-react';
 
 const CONFIDENTIAL_LABEL = 'Confidential Information';
 const SHARED_LABEL = 'Shared Information';
-const MAX_PREVIEW_CHARS = 500;
 const TOTAL_EDITOR_STEPS = 3;
 const TOTAL_WORKFLOW_STEPS = 3;
 const DIFF_CONTEXT_CHARS = 220;
-const GUEST_COMPARISON_DRAFT_KEY = 'pm:guest_doc_comparison_draft';
-const GUEST_COMPARISON_DRAFT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const GUEST_AI_MEDIATION_RUN_LIMIT = 1;
 // Background autosave: only fire after the user has been idle for ~30 seconds.
 // Immediate saves happen on step changes, doc switches, and unmount — so the
 // background timer is purely a safety-net for long open-editor sessions.
@@ -312,67 +315,12 @@ function textToHtml(value) {
     .join('');
 }
 
-function previewSnippet(value) {
-  const text = String(value || '').trim();
-  if (!text) {
-    return '';
-  }
-
-  if (text.length <= MAX_PREVIEW_CHARS) {
-    return text;
-  }
-
-  return `${text.slice(0, MAX_PREVIEW_CHARS)}...`;
-}
-
-function formatFileSize(bytes) {
-  const numeric = Number(bytes || 0);
-  if (!Number.isFinite(numeric) || numeric <= 0) {
-    return '0 B';
-  }
-
-  if (numeric < 1024) {
-    return `${numeric} B`;
-  }
-
-  if (numeric < 1024 * 1024) {
-    return `${(numeric / 1024).toFixed(1)} KB`;
-  }
-
-  return `${(numeric / (1024 * 1024)).toFixed(1)} MB`;
-}
-
 function fileToMetadata(file) {
   return {
     filename: file.name,
     mimeType: file.type || 'application/octet-stream',
     sizeBytes: Number(file.size || 0),
   };
-}
-
-function readGuestComparisonDraft() {
-  if (typeof window === 'undefined') {
-    return null;
-  }
-  try {
-    const raw = window.localStorage.getItem(GUEST_COMPARISON_DRAFT_KEY);
-    if (!raw) {
-      return null;
-    }
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') {
-      window.localStorage.removeItem(GUEST_COMPARISON_DRAFT_KEY);
-      return null;
-    }
-    const savedAt = Number(parsed.savedAt || 0);
-    if (!Number.isFinite(savedAt) || Date.now() - savedAt > GUEST_COMPARISON_DRAFT_MAX_AGE_MS) {
-      window.localStorage.removeItem(GUEST_COMPARISON_DRAFT_KEY);
-      return null;
-    }
-    return parsed;
-  } catch {
-    return null;
-  }
 }
 
 function parseDocJson(value) {
@@ -687,6 +635,26 @@ function getApiErrorCode(error) {
   return asText(error?.body?.error?.code || error?.body?.code || error?.code);
 }
 
+function isGuestAiLimitCode(code) {
+  const normalized = asText(code);
+  return normalized === 'guest_ai_assistance_limit_reached' || normalized === 'guest_ai_mediation_limit_reached';
+}
+
+function getGuestAiLimitMessage(error) {
+  const code = getApiErrorCode(error);
+  if (!isGuestAiLimitCode(code)) {
+    return '';
+  }
+  return (
+    asText(error?.message) ||
+    'Sign in to continue with more AI runs, save this comparison, and share results.'
+  );
+}
+
+function hasObjectContent(value) {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length > 0);
+}
+
 function isDocumentComparisonNotFoundError(error) {
   const status = Number(error?.status || 0);
   const code = getApiErrorCode(error);
@@ -762,11 +730,16 @@ export default function DocumentComparisonCreate({ allowGuestMode = false }) {
     );
   }
 
-  return <DocumentComparisonCreateEditor guestMode={allowGuestMode && !user} />;
+  return (
+    <DocumentComparisonCreateEditor
+      guestMode={allowGuestMode && !user}
+      allowGuestEntry={allowGuestMode}
+    />
+  );
 }
 
 // ── Authenticated editor (all hooks live here) ─────────────────────────────────
-function DocumentComparisonCreateEditor({ guestMode = false }) {
+function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = false }) {
   const navigate = useNavigate();
   const location = useLocation();
   const routeState = useRouteState();
@@ -785,7 +758,7 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
   // docA/docB (confidential/shared) bundles are derived from it.
   const [documents, setDocuments] = useState([]);
   const [activeDocId, setActiveDocId] = useState(null);
-  const [importingDocId, setImportingDocId] = useState(null);
+  const [, setImportingDocId] = useState(null);
 
   const [uiError, setUiError] = useState('');
   const [fullscreenDocId, setFullscreenDocId] = useState(null);
@@ -795,6 +768,7 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
   const [coachResult, setCoachResult] = useState(null);
   const [coachLoading, setCoachLoading] = useState(false);
   const [coachError, setCoachError] = useState('');
+  const [coachErrorCode, setCoachErrorCode] = useState('');
   const [coachNotConfigured, setCoachNotConfigured] = useState(false);
   const [coachCached, setCoachCached] = useState(false);
   const [coachWithheldCount, setCoachWithheldCount] = useState(0);
@@ -830,6 +804,12 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
   const [isFinishingComparison, setIsFinishingComparison] = useState(false);
   const [isRunningEvaluation, setIsRunningEvaluation] = useState(false);
   const [finishStage, setFinishStage] = useState('idle');
+  const [guestEvaluationPreview, setGuestEvaluationPreview] = useState(null);
+  const [guestEvaluationError, setGuestEvaluationError] = useState('');
+  const [guestEvaluationErrorCode, setGuestEvaluationErrorCode] = useState('');
+  const [guestEvaluationActiveTab, setGuestEvaluationActiveTab] = useState('report');
+  const [isMigratingGuestDraft, setIsMigratingGuestDraft] = useState(false);
+  const [guestMigrationError, setGuestMigrationError] = useState('');
 
   // ── Suggestion thread state ─────────────────────────────────────────────
   const [suggestionThreads, setSuggestionThreads] = useState([]);
@@ -877,6 +857,9 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
     website: '',
   });
   const companyContextSaveSeqRef = useRef(0);
+  const guestDraftIdRef = useRef('');
+  const guestSessionIdRef = useRef('');
+  const hasMigratedGuestDraftRef = useRef(false);
   const latestDraftStateRef = useRef({
     title: '',
     docAText: '',
@@ -959,10 +942,28 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
     setLastEditAt(resolvedTimestamp);
   };
 
-  const persistGuestDraft = useCallback((overrideStep) => {
+  const getGuestComparisonIds = useCallback(() => {
+    if (!guestDraftIdRef.current) {
+      guestDraftIdRef.current = createGuestComparisonLocalId('guest_doc_compare_draft');
+    }
+    if (!guestSessionIdRef.current) {
+      guestSessionIdRef.current = getOrCreateGuestComparisonSessionId();
+    }
+    return {
+      guestDraftId: guestDraftIdRef.current,
+      guestSessionId: guestSessionIdRef.current,
+    };
+  }, []);
+
+  const persistGuestDraft = useCallback((overrideStep, overrides = null) => {
     if (!isGuestMode || typeof window === 'undefined') {
       return;
     }
+    const { guestDraftId, guestSessionId } = getGuestComparisonIds();
+    const guestDraftOverrides =
+      overrides && typeof overrides === 'object' && !Array.isArray(overrides)
+        ? overrides
+        : {};
     const docs = Array.isArray(documents)
       ? documents.map((doc) => ({
           id: String(doc?.id || ''),
@@ -978,7 +979,9 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
         }))
       : [];
 
-    const payload = {
+    const basePayload = {
+      guestDraftId,
+      guestSessionId,
       step: clampStep(overrideStep || step || 1),
       title,
       documents: docs,
@@ -987,19 +990,59 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
       recipientEmail,
       companyContextName,
       companyContextWebsite,
+      aiState: {
+        suggestionThreads: suggestionThreadsRef.current,
+        activeSuggestionThreadId: activeSuggestionThreadIdRef.current,
+        coachResult,
+        coachResultHash,
+        coachCached,
+        coachWithheldCount,
+        coachRequestMeta,
+      },
+      guestEvaluationPreview:
+        guestEvaluationPreview && typeof guestEvaluationPreview === 'object'
+          ? guestEvaluationPreview
+          : null,
       savedAt: Date.now(),
     };
 
-    try {
-      window.localStorage.setItem(GUEST_COMPARISON_DRAFT_KEY, JSON.stringify(payload));
-    } catch {
-      // Ignore localStorage write failures.
-    }
+    const payload = {
+      ...basePayload,
+      ...(Object.prototype.hasOwnProperty.call(guestDraftOverrides, 'guestEvaluationPreview')
+        ? {
+            guestEvaluationPreview:
+              guestDraftOverrides.guestEvaluationPreview &&
+              typeof guestDraftOverrides.guestEvaluationPreview === 'object' &&
+              !Array.isArray(guestDraftOverrides.guestEvaluationPreview)
+                ? guestDraftOverrides.guestEvaluationPreview
+                : null,
+          }
+        : {}),
+      ...(guestDraftOverrides.aiState &&
+      typeof guestDraftOverrides.aiState === 'object' &&
+      !Array.isArray(guestDraftOverrides.aiState)
+        ? {
+            aiState: {
+              ...basePayload.aiState,
+              ...guestDraftOverrides.aiState,
+            },
+          }
+        : {}),
+    };
+
+    writeGuestComparisonDraft(payload);
   }, [
     activeDocId,
+    coachCached,
+    coachRequestMeta,
+    coachResult,
+    coachResultHash,
+    coachWithheldCount,
     companyContextName,
     companyContextWebsite,
     documents,
+    getGuestComparisonIds,
+    guestEvaluationPreview,
     isGuestMode,
     recipientEmail,
     recipientName,
@@ -1078,13 +1121,13 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
     [location.pathname, location.search, navigate],
   );
 
-  useEffect(() => {
-    if (!isGuestMode) {
-      return;
-    }
+  const requestGuestSignIn = useCallback(() => {
+    persistGuestDraft(stepRef.current || step || 1);
+    navigateToLogin(location.pathname + location.search);
+  }, [location.pathname, location.search, navigateToLogin, persistGuestDraft, step]);
 
-    const draft = readGuestComparisonDraft();
-    if (!draft) {
+  const applyGuestDraftToEditor = useCallback((draft, { replaceRoute = true } = {}) => {
+    if (!draft || typeof draft !== 'object') {
       return;
     }
 
@@ -1105,6 +1148,22 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
           }))
       : [];
 
+    const aiState =
+      draft.aiState && typeof draft.aiState === 'object' && !Array.isArray(draft.aiState)
+        ? draft.aiState
+        : {};
+    const restoredGuestEvaluation =
+      draft.guestEvaluationPreview &&
+      typeof draft.guestEvaluationPreview === 'object' &&
+      !Array.isArray(draft.guestEvaluationPreview)
+        ? draft.guestEvaluationPreview
+        : null;
+
+    guestDraftIdRef.current =
+      asText(draft.guestDraftId) || guestDraftIdRef.current || createGuestComparisonLocalId('guest_doc_compare_draft');
+    guestSessionIdRef.current =
+      asText(draft.guestSessionId) || guestSessionIdRef.current || getOrCreateGuestComparisonSessionId();
+
     setTitle(String(draft.title || ''));
     setDocuments(restoredDocuments);
     setActiveDocId(asText(draft.activeDocId) || restoredDocuments[0]?.id || null);
@@ -1112,6 +1171,29 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
     setRecipientEmail(String(draft.recipientEmail || ''));
     setCompanyContextName(String(draft.companyContextName || ''));
     setCompanyContextWebsite(String(draft.companyContextWebsite || ''));
+    companyContextPersistedRef.current = {
+      name: String(draft.companyContextName || ''),
+      website: String(draft.companyContextWebsite || ''),
+    };
+    setCompanyContextSaveState('idle');
+    setCompanyContextSaveError('');
+    setCompanyContextValidationError('');
+
+    setSuggestionThreads(Array.isArray(aiState.suggestionThreads) ? aiState.suggestionThreads : []);
+    setActiveSuggestionThreadId(asText(aiState.activeSuggestionThreadId) || null);
+    suggestionThreadsRef.current = Array.isArray(aiState.suggestionThreads) ? aiState.suggestionThreads : [];
+    activeSuggestionThreadIdRef.current = asText(aiState.activeSuggestionThreadId) || null;
+    setCoachResult(aiState.coachResult || null);
+    setCoachResultHash(asText(aiState.coachResultHash) || '');
+    setCoachCached(Boolean(aiState.coachCached));
+    setCoachWithheldCount(Number(aiState.coachWithheldCount || 0));
+    setCoachRequestMeta(aiState.coachRequestMeta || null);
+    setCoachError('');
+    setCoachErrorCode('');
+    setGuestEvaluationPreview(restoredGuestEvaluation);
+    setGuestEvaluationError('');
+    setGuestEvaluationErrorCode('');
+    setGuestEvaluationActiveTab('report');
 
     const { confidential, shared } = compileBundles(restoredDocuments);
     latestDraftStateRef.current = {
@@ -1151,9 +1233,84 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
     );
     setDraftDirty(false);
 
-    const restoredStep = clampStep(draft.step || routeState.step || 1);
-    updateRouteParams({ nextStep: restoredStep, replace: true });
-  }, [isGuestMode, routeState.step, updateRouteParams]);
+    if (replaceRoute) {
+      const restoredStep = clampStep(draft.step || routeState.step || 1);
+      updateRouteParams({ nextStep: restoredStep, replace: true });
+    }
+  }, [
+    routeState.step,
+    updateRouteParams,
+  ]);
+
+  useEffect(() => {
+    if (!isGuestMode) {
+      return;
+    }
+
+    const draft = readGuestComparisonDraft();
+    if (!draft) {
+      return;
+    }
+    applyGuestDraftToEditor(draft, { replaceRoute: true });
+  }, [applyGuestDraftToEditor, isGuestMode]);
+
+  const migrateGuestDraftToAuthenticatedFlow = useCallback(async (draft) => {
+    if (!draft || typeof draft !== 'object') {
+      return;
+    }
+
+    setIsMigratingGuestDraft(true);
+    setGuestMigrationError('');
+
+    try {
+      applyGuestDraftToEditor(draft, { replaceRoute: false });
+      const payload = buildGuestComparisonMigrationPayload(draft, {
+        sanitizeHtml: sanitizeEditorHtml,
+        partyALabel: CONFIDENTIAL_LABEL,
+        partyBLabel: SHARED_LABEL,
+      });
+      const comparison = await documentComparisonsClient.create(payload);
+      const comparisonIdFromMigration = asText(comparison?.id);
+      if (!comparisonIdFromMigration) {
+        throw new Error('Failed to save your preview after sign-in.');
+      }
+
+      const migrationOverlay = buildGuestComparisonMigrationOverlay(
+        draft,
+        comparisonIdFromMigration,
+      );
+      if (migrationOverlay) {
+        writeGuestComparisonMigrationOverlay(migrationOverlay);
+        setGuestEvaluationPreview(migrationOverlay.guestEvaluationPreview || null);
+        setGuestEvaluationActiveTab('report');
+      } else {
+        clearGuestComparisonMigrationOverlay();
+        setGuestEvaluationPreview(null);
+      }
+
+      clearGuestComparisonDraft();
+      setComparisonId(comparisonIdFromMigration);
+      comparisonIdRef.current = comparisonIdFromMigration;
+      const migratedProposalId = asText(comparison?.proposal_id);
+      setLinkedProposalId(migratedProposalId);
+      linkedProposalIdRef.current = migratedProposalId;
+      updateRouteParams({
+        nextDraftId: comparisonIdFromMigration,
+        nextProposalId: migratedProposalId,
+        nextStep: clampStep(draft.step || routeState.step || 1),
+        replace: true,
+      });
+      toast.success('Guest preview saved to your account.');
+    } catch (error) {
+      const message =
+        error?.message || 'Failed to migrate your guest preview after sign-in.';
+      setGuestMigrationError(message);
+      toast.error(message);
+      hasMigratedGuestDraftRef.current = false;
+    } finally {
+      setIsMigratingGuestDraft(false);
+    }
+  }, [applyGuestDraftToEditor, routeState.step, updateRouteParams]);
 
   const proposalLookup = useQuery({
     queryKey: ['document-comparison-proposal-lookup', routeState.proposalId],
@@ -1176,6 +1333,30 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
     retry: (failureCount, error) =>
       !isDocumentComparisonNotFoundError(error) && failureCount < 2,
   });
+
+  useEffect(() => {
+    if (isGuestMode || !allowGuestEntry || !user || routeState.token || resolvedDraftId) {
+      return;
+    }
+    if (hasMigratedGuestDraftRef.current) {
+      return;
+    }
+
+    const guestDraft = readGuestComparisonDraft();
+    if (!guestDraft) {
+      return;
+    }
+
+    hasMigratedGuestDraftRef.current = true;
+    void migrateGuestDraftToAuthenticatedFlow(guestDraft);
+  }, [
+    allowGuestEntry,
+    isGuestMode,
+    migrateGuestDraftToAuthenticatedFlow,
+    resolvedDraftId,
+    routeState.token,
+    user,
+  ]);
 
   useEffect(() => {
     if (!draftQuery.data?.comparison) {
@@ -1381,6 +1562,49 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
   ]);
 
   useEffect(() => {
+    if (isGuestMode) {
+      return;
+    }
+
+    const overlay = readGuestComparisonMigrationOverlay();
+    if (!overlay) {
+      return;
+    }
+
+    const targetComparisonId = asText(
+      comparisonId || resolvedDraftId || routeState.draftId || overlay.comparisonId,
+    );
+    if (!targetComparisonId || targetComparisonId !== asText(overlay.comparisonId)) {
+      return;
+    }
+
+    const comparison = draftQuery.data?.comparison || null;
+    const hasServerEvaluation =
+      asText(comparison?.status).toLowerCase() === 'evaluated' ||
+      hasObjectContent(comparison?.public_report || comparison?.publicReport);
+
+    if (hasServerEvaluation) {
+      clearGuestComparisonMigrationOverlay();
+      setGuestEvaluationPreview(null);
+      return;
+    }
+
+    if (
+      overlay.guestEvaluationPreview &&
+      typeof overlay.guestEvaluationPreview === 'object' &&
+      !Array.isArray(overlay.guestEvaluationPreview)
+    ) {
+      setGuestEvaluationPreview(overlay.guestEvaluationPreview);
+    }
+  }, [
+    comparisonId,
+    draftQuery.data?.comparison,
+    isGuestMode,
+    resolvedDraftId,
+    routeState.draftId,
+  ]);
+
+  useEffect(() => {
     if (!resolvedDraftId || !isDocumentComparisonNotFoundError(draftQuery.error)) {
       return;
     }
@@ -1461,6 +1685,7 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
   useEffect(() => {
     setCoachResult(null);
     setCoachError('');
+    setCoachErrorCode('');
     setCoachNotConfigured(false);
     setCoachCached(false);
     setCoachWithheldCount(0);
@@ -1478,6 +1703,8 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
     setIsFinishingComparison(false);
     setIsRunningEvaluation(false);
     setFinishStage('idle');
+    setGuestEvaluationError('');
+    setGuestEvaluationErrorCode('');
     // Note: suggestion threads are intentionally NOT reset here.
     // They are restored from metadata during draft hydration and
     // persist as long as the component is mounted.  The comparisonId
@@ -1992,11 +2219,7 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
   );
   const docACharacters = docAText.length;
   const docBCharacters = docBText.length;
-  const docAWords = countWords(docAText);
-  const docBWords = countWords(docBText);
   const totalCharacters = docACharacters + docBCharacters;
-  const docANearLimit = docACharacters >= limits.warningCharacterThreshold;
-  const docBNearLimit = docBCharacters >= limits.warningCharacterThreshold;
   const totalNearLimit = totalCharacters >= limits.totalWarningCharacterThreshold;
   const docAOverLimit = docACharacters > limits.perDocumentCharacterLimit;
   const docBOverLimit = docBCharacters > limits.perDocumentCharacterLimit;
@@ -2006,7 +2229,7 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
   const isStep2LoadingDraft = step >= 2 && Boolean(resolvedDraftId) && draftQuery.isLoading;
   const step2LoadError = step >= 2 && Boolean(resolvedDraftId) ? draftQuery.error : null;
   const editableSide = String(draftQuery.data?.permissions?.editable_side || 'a').toLowerCase();
-  const canUseOwnerCoach = !isGuestMode && !routeState.token && editableSide !== 'b';
+  const canUseCoach = !routeState.token && (isGuestMode || editableSide !== 'b');
   const coachSuggestions = Array.isArray(coachResult?.suggestions) ? coachResult.suggestions : [];
   const activeCoachHash = coachResultHash || 'unhashed';
   const appliedSuggestionIds = appliedSuggestionIdsByHash[activeCoachHash] || [];
@@ -2048,6 +2271,45 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
     coachResponseMetaParts.push('Limited public info found');
   }
   const coachResponseMeta = coachResponseMetaParts.join(' · ');
+  const coachLimitReached = isGuestAiLimitCode(coachErrorCode);
+  const guestEvaluationRunsUsed = Number(guestEvaluationPreview?.runCount || 0);
+  const guestMediationLimitReached =
+    isGuestMode &&
+    (
+      guestEvaluationRunsUsed >= GUEST_AI_MEDIATION_RUN_LIMIT ||
+      isGuestAiLimitCode(guestEvaluationErrorCode)
+    );
+  const previewEvaluationReport =
+    guestEvaluationPreview?.report ||
+    guestEvaluationPreview?.evaluationResult?.report ||
+    {};
+  const hasPreviewEvaluationReport = hasObjectContent(previewEvaluationReport);
+  const previewEvaluationRecommendation = asText(
+    guestEvaluationPreview?.evaluationResult?.recommendation ||
+      previewEvaluationReport?.recommendation ||
+      previewEvaluationReport?.fit_level,
+  );
+  const previewEvaluationTimelineItems = [
+    {
+      id: 'guest-preview-generated',
+      kind: 'sparkles',
+      tone: 'success',
+      title: isGuestMode ? 'Guest preview ready' : 'Preview restored after sign-in',
+      timestamp: guestEvaluationPreview?.completedAt
+        ? new Date(guestEvaluationPreview.completedAt).toLocaleString()
+        : 'Just now',
+    },
+    {
+      id: 'guest-preview-local',
+      kind: 'clock',
+      tone: 'neutral',
+      title: isGuestMode ? 'Saved in this browser' : 'Restored from guest preview',
+      timestamp: isGuestMode ? 'Local-only until sign-in' : 'Run AI Mediation to save permanently',
+    },
+  ];
+  const step3PrimaryActionLabel = guestMediationLimitReached
+    ? 'Sign in for more AI runs'
+    : 'Run AI Mediation';
 
   useEffect(() => {
     draftDirtyRef.current = draftDirty;
@@ -2070,6 +2332,56 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
     suggestionThreadsRef.current = suggestionThreads;
     activeSuggestionThreadIdRef.current = activeSuggestionThreadId;
   }, [suggestionThreads, activeSuggestionThreadId]);
+
+  useEffect(() => {
+    if (!isGuestMode) {
+      return;
+    }
+    if (
+      !coachResult &&
+      !guestEvaluationPreview &&
+      suggestionThreads.length === 0 &&
+      !companyContextName &&
+      !companyContextWebsite
+    ) {
+      return;
+    }
+    persistGuestDraft(stepRef.current || step || 1);
+  }, [
+    coachCached,
+    coachRequestMeta,
+    coachResult,
+    coachResultHash,
+    coachWithheldCount,
+    companyContextName,
+    companyContextWebsite,
+    guestEvaluationPreview,
+    isGuestMode,
+    persistGuestDraft,
+    step,
+    suggestionThreads,
+  ]);
+
+  useEffect(() => {
+    if (!isGuestMode) {
+      return;
+    }
+    const timeoutId = window.setTimeout(() => {
+      persistGuestDraft(stepRef.current || step || 1);
+    }, 400);
+    return () => window.clearTimeout(timeoutId);
+  }, [
+    activeDocId,
+    companyContextName,
+    companyContextWebsite,
+    documents,
+    isGuestMode,
+    persistGuestDraft,
+    recipientEmail,
+    recipientName,
+    step,
+    title,
+  ]);
 
   useEffect(() => {
     linkedProposalIdRef.current = linkedProposalId;
@@ -2324,7 +2636,6 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
         return next;
       });
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
 
@@ -2585,12 +2896,74 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
     };
   };
 
-  const finishToComparisonDetail = async () => {
-    if (isGuestMode) {
-      navigateToLogin(location.pathname + location.search);
+  const runGuestEvaluationPreview = async () => {
+    if (isFinishingComparison || isRunningEvaluation) {
+      return;
+    }
+    if (exceedsAnySizeLimit) {
+      toast.error(
+        `Document content exceeds the ${limits.model} limit. Reduce text before saving.`,
+      );
       return;
     }
 
+    setIsFinishingComparison(true);
+    setFinishStage('saving');
+    setIsRunningEvaluation(false);
+    setGuestEvaluationError('');
+    setGuestEvaluationErrorCode('');
+
+    try {
+      persistGuestDraft(3);
+      const evaluationPayload = buildEvaluationPayload();
+      const { guestDraftId, guestSessionId } = getGuestComparisonIds();
+
+      setFinishStage('evaluating');
+      setIsRunningEvaluation(true);
+      const evaluationResponse = await documentComparisonsClient.guestEvaluate({
+        ...evaluationPayload,
+        title: asText(title) || evaluationPayload.title || 'Untitled',
+        guestDraftId,
+        guestSessionId,
+        companyName: asText(companyContextName) || undefined,
+        companyWebsite: asText(companyContextWebsite) || undefined,
+      });
+
+      const preview = {
+        comparison: evaluationResponse?.comparison || null,
+        report:
+          evaluationResponse?.evaluation ||
+          evaluationResponse?.evaluationResult?.report ||
+          {},
+        evaluationResult: evaluationResponse?.evaluationResult || null,
+        evaluationInputTrace: evaluationResponse?.evaluationInputTrace || null,
+        requestId: evaluationResponse?.requestId || null,
+        completedAt: new Date().toISOString(),
+        runCount: GUEST_AI_MEDIATION_RUN_LIMIT,
+        limit: GUEST_AI_MEDIATION_RUN_LIMIT,
+      };
+
+      setGuestEvaluationPreview(preview);
+      setGuestEvaluationActiveTab('report');
+      persistGuestDraft(3, { guestEvaluationPreview: preview });
+      setShowFinishConfirmDialog(false);
+      updateRouteParams({ nextStep: 3, replace: true });
+      toast.success('AI mediation review ready');
+    } catch (error) {
+      const code = getApiErrorCode(error);
+      const guestLimitMessage = getGuestAiLimitMessage(error);
+      const message = guestLimitMessage || toEvaluationErrorMessage(error);
+      setGuestEvaluationError(message);
+      setGuestEvaluationErrorCode(code);
+      toast.error(message);
+    } finally {
+      setFinishStage('idle');
+      setIsRunningEvaluation(false);
+      setIsFinishingComparison(false);
+    }
+  };
+
+  const finishToComparisonDetail = async () => {
     if (isFinishingComparison) {
       return;
     }
@@ -2698,6 +3071,8 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
         queryClient.invalidateQueries({
           queryKey: ['document-comparison-detail', evaluatedComparison.id],
         });
+        clearGuestComparisonMigrationOverlay();
+        setGuestEvaluationPreview(null);
       }
 
       setShowFinishConfirmDialog(false);
@@ -2715,7 +3090,12 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
 
   const handleFinishClick = () => {
     if (isGuestMode) {
-      navigateToLogin(location.pathname + location.search);
+      const guestRunsUsed = Number(guestEvaluationPreview?.runCount || 0);
+      if (guestRunsUsed >= GUEST_AI_MEDIATION_RUN_LIMIT) {
+        requestGuestSignIn();
+        return;
+      }
+      runGuestEvaluationPreview();
       return;
     }
 
@@ -2731,8 +3111,8 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
 
   const ensureComparisonIdForCoach = useCallback(async () => {
     if (isGuestMode) {
-      setCoachError('Sign in to use AI suggestions.');
-      return '';
+      persistGuestDraft(Math.max(2, clampStep(step || 2)));
+      return 'guest-local';
     }
 
     if (comparisonId && !isDocumentComparisonNotFoundError(draftQuery.error)) {
@@ -2750,7 +3130,7 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
       toast.error(message);
       return '';
     }
-  }, [comparisonId, draftQuery.error, isGuestMode, runSaveDraftMutation, step]);
+  }, [comparisonId, draftQuery.error, isGuestMode, persistGuestDraft, runSaveDraftMutation, step]);
 
   const updateCompanyContextInDraftCache = useCallback(
     (nextComparisonId, nextCompanyName, nextCompanyWebsite) => {
@@ -2830,6 +3210,25 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
           setCompanyContextSaveError('');
         }
         return false;
+      }
+
+      if (isGuestMode) {
+        setCompanyContextName(trimmedCompanyName);
+        setCompanyContextWebsite(trimmedWebsite);
+        companyContextPersistedRef.current = {
+          name: trimmedCompanyName,
+          website: trimmedWebsite,
+        };
+        setCompanyContextSaveState('saved');
+        setCompanyContextSaveError('');
+        persistGuestDraft(stepRef.current || step || 2);
+        companyContextSavedTimerRef.current = setTimeout(() => {
+          setCompanyContextSaveState((current) =>
+            current === 'saved' ? 'idle' : current,
+          );
+          companyContextSavedTimerRef.current = null;
+        }, 1200);
+        return true;
       }
 
       const resolvedId =
@@ -2912,7 +3311,10 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
       companyContextSaveState,
       companyContextWebsite,
       ensureComparisonIdForCoach,
+      isGuestMode,
+      persistGuestDraft,
       queryClient,
+      step,
       updateCompanyContextInDraftCache,
     ],
   );
@@ -2974,6 +3376,7 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
 
     setCoachLoading(true);
     setCoachError('');
+    setCoachErrorCode('');
     setIsCoachResponseCopied(false);
 
     const normalizedAction = String(action || intent || '').trim().toLowerCase();
@@ -3014,7 +3417,16 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
         payload.doc_a_html = sanitizedDocAHtml;
         payload.doc_b_html = sanitizedDocBHtml;
       }
-      const response = await documentComparisonsClient.coach(resolvedId, payload);
+      const response = isGuestMode
+        ? await documentComparisonsClient.guestCoach({
+            ...payload,
+            title: asText(title) || 'Untitled',
+            guestDraftId: getGuestComparisonIds().guestDraftId,
+            guestSessionId: getGuestComparisonIds().guestSessionId,
+            companyName: asText(companyContextName) || undefined,
+            companyWebsite: asText(companyContextWebsite) || undefined,
+          })
+        : await documentComparisonsClient.coach(resolvedId, payload);
       const coach = response?.coach || null;
       setCoachResult(coach);
       setCoachResultHash(String(response?.cacheHash || ''));
@@ -3040,6 +3452,7 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
       };
       setCoachRequestMeta(requestMeta);
       setExpandedSuggestionIds([]);
+      setCoachErrorCode('');
 
       // ── Thread: append assistant entry ───────────────────────────────
       const assistantContent = asText(
@@ -3063,10 +3476,32 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
       if (!silent) {
         toast.success(response?.cached ? 'Loaded cached suggestions' : 'Suggestions ready');
       }
+      if (isGuestMode) {
+        persistGuestDraft(2, {
+          aiState: {
+            suggestionThreads: assistantAppended.threads,
+            activeSuggestionThreadId: assistantAppended.activeThreadId,
+            coachResult: coach,
+            coachResultHash: String(response?.cacheHash || ''),
+            coachCached: Boolean(response?.cached),
+            coachWithheldCount: Number(response?.withheldCount || 0),
+            coachRequestMeta: requestMeta,
+          },
+        });
+      }
       return response;
     } catch (error) {
       const status = Number(error?.status || 0);
       const code = asText(error?.body?.error?.code || error?.body?.code || error?.code);
+      const guestLimitMessage = getGuestAiLimitMessage(error);
+      if (guestLimitMessage) {
+        setCoachErrorCode(code);
+        setCoachError(guestLimitMessage);
+        if (!silent) {
+          toast.error(guestLimitMessage);
+        }
+        return null;
+      }
       if (status === 501 || code === 'not_configured') {
         const message = 'AI suggestions are unavailable because Vertex AI is not configured.';
         setCoachResult(null);
@@ -3076,6 +3511,7 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
         setCoachRequestMeta(null);
         setExpandedSuggestionIds([]);
         setCoachError(message);
+        setCoachErrorCode(code || 'not_configured');
         setCoachNotConfigured(true);
         if (!silent && !coachNotConfigured) {
           toast.error(message);
@@ -3094,6 +3530,7 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
         setCoachRequestMeta(null);
         setExpandedSuggestionIds([]);
         setCoachError(message);
+        setCoachErrorCode(code);
         if (!silent) {
           toast.error(message);
         }
@@ -3105,6 +3542,7 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
         error?.message ||
         'Suggestion request failed';
       setCoachError(message);
+      setCoachErrorCode(code);
       if (!silent) {
         toast.error(message);
       }
@@ -3144,12 +3582,26 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
 
     setCoachLoading(true);
     setCoachError('');
+    setCoachErrorCode('');
     setIsCoachResponseCopied(false);
 
     try {
-      const response = await documentComparisonsClient.companyBrief(resolvedId, {
-        lens: 'risk_negotiation',
-      });
+      const response = isGuestMode
+        ? await documentComparisonsClient.guestCompanyBrief({
+            title: asText(title) || 'Untitled',
+            guestDraftId: getGuestComparisonIds().guestDraftId,
+            guestSessionId: getGuestComparisonIds().guestSessionId,
+            companyName: asText(companyContextName) || undefined,
+            companyWebsite: asText(companyContextWebsite) || undefined,
+            lens: 'risk_negotiation',
+            doc_a_text: docAText,
+            doc_b_text: docBText,
+            doc_a_html: docAHtml,
+            doc_b_html: docBHtml,
+          })
+        : await documentComparisonsClient.companyBrief(resolvedId, {
+            lens: 'risk_negotiation',
+          });
       const brief = response?.companyBrief || {};
       const feedbackText = asText(brief.content);
       const sources = Array.isArray(brief.sources) ? brief.sources : [];
@@ -3158,8 +3610,7 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
       const fallbackText = limited
         ? 'Limited public info found.'
         : 'Company brief completed.';
-
-      setCoachResult({
+      const coachResultFromBrief = {
         version: 'coach-v1',
         summary: {
           overall: feedbackText || fallbackText,
@@ -3173,12 +3624,8 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
         company_brief_sources: sources,
         company_brief_searches: searches,
         company_brief_limited: limited,
-      });
-      setCoachResultHash('');
-      setCoachCached(false);
-      setCoachWithheldCount(0);
-      setCoachNotConfigured(false);
-      setCoachRequestMeta({
+      };
+      const companyBriefRequestMeta = {
         action: 'company_brief',
         mode: 'full',
         intent: 'company_brief',
@@ -3188,20 +3635,49 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
         selectionText: '',
         selectionTarget: null,
         selectionRange: null,
-      });
+      };
+
+      setCoachResult(coachResultFromBrief);
+      setCoachResultHash('');
+      setCoachCached(false);
+      setCoachWithheldCount(0);
+      setCoachNotConfigured(false);
+      setCoachErrorCode('');
+      setCoachRequestMeta(companyBriefRequestMeta);
       setExpandedSuggestionIds([]);
       if (!silent) {
         toast.success('Company brief ready');
+      }
+      if (isGuestMode) {
+        persistGuestDraft(2, {
+          aiState: {
+            coachResult: coachResultFromBrief,
+            coachResultHash: '',
+            coachCached: false,
+            coachWithheldCount: 0,
+            coachRequestMeta: companyBriefRequestMeta,
+          },
+        });
       }
       return response;
     } catch (error) {
       const status = Number(error?.status || 0);
       const code = asText(error?.body?.error?.code || error?.body?.code || error?.code);
+      const guestLimitMessage = getGuestAiLimitMessage(error);
+      if (guestLimitMessage) {
+        setCoachErrorCode(code);
+        setCoachError(guestLimitMessage);
+        if (!silent) {
+          toast.error(guestLimitMessage);
+        }
+        return null;
+      }
       if (status === 400 && code === 'missing_company_context') {
         setCompanyContextValidationError('Company name is required for Company Brief');
         companyContextNameInputRef.current?.focus?.();
         const message = 'Company name is required for Company Brief.';
         setCoachError(message);
+        setCoachErrorCode(code);
         if (!silent) {
           toast.error('Company context is missing.');
         }
@@ -3217,6 +3693,7 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
         setCoachRequestMeta(null);
         setExpandedSuggestionIds([]);
         setCoachError(message);
+        setCoachErrorCode(code || 'not_configured');
         setCoachNotConfigured(true);
         if (!silent && !coachNotConfigured) {
           toast.error(message);
@@ -3235,6 +3712,7 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
         setCoachRequestMeta(null);
         setExpandedSuggestionIds([]);
         setCoachError(message);
+        setCoachErrorCode(code);
         if (!silent) {
           toast.error(message);
         }
@@ -3246,6 +3724,7 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
         error?.message ||
         'Company brief request failed';
       setCoachError(message);
+      setCoachErrorCode(code);
       if (!silent) {
         toast.error(message);
       }
@@ -3264,7 +3743,7 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
   };
 
   useEffect(() => {
-    if (step !== 2 || !canUseOwnerCoach) {
+    if (step !== 2 || !canUseCoach) {
       if (companyContextSaveTimerRef.current) {
         clearTimeout(companyContextSaveTimerRef.current);
         companyContextSaveTimerRef.current = null;
@@ -3302,7 +3781,7 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
       }
     };
   }, [
-    canUseOwnerCoach,
+    canUseCoach,
     companyContextName,
     companyContextWebsite,
     flushCompanyContextSave,
@@ -3839,7 +4318,7 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
   // renderImportPanel and renderEditorPanel removed — now handled by Step1/Step2/Step3 components
 
   // Coach panel node — rendered inside Step 2 editor layout
-  const coachPanelNode = canUseOwnerCoach ? (
+  const coachPanelNode = canUseCoach ? (
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="text-base flex items-center gap-2">
@@ -4151,6 +4630,23 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
           </Alert>
         ) : null}
 
+        {isGuestMode && coachLimitReached ? (
+          <Alert className="bg-blue-50 border-blue-200">
+            <AlertDescription className="text-blue-900 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <span>Sign in to continue with more AI runs, save this comparison, and share results.</span>
+              <Button
+                type="button"
+                size="sm"
+                className="bg-blue-600 hover:bg-blue-700"
+                onClick={requestGuestSignIn}
+                data-testid="guest-coach-limit-signin"
+              >
+                Sign in to continue
+              </Button>
+            </AlertDescription>
+          </Alert>
+        ) : null}
+
         {coachResponseText ? (
           <div
             className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm transition-all duration-200"
@@ -4337,7 +4833,7 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
         }
         title="AI Negotiator"
         subtitle={isGuestMode
-          ? 'Review your documents and refine your position. Sign in when you are ready to run AI evaluation and share results.'
+          ? 'Review your documents, refine your position, and try a limited AI preview in this browser.'
           : 'Review your documents, refine your position, and generate negotiation guidance — all in a confidential workflow.'}
         step={step}
         totalSteps={TOTAL_WORKFLOW_STEPS}
@@ -4359,21 +4855,37 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
           </Alert>
         )}
 
+        {isMigratingGuestDraft && (
+          <Alert className="bg-blue-50 border-blue-200 mb-4" data-testid="doc-comparison-guest-migrating">
+            <Loader2 className="h-4 w-4 animate-spin text-blue-700" />
+            <AlertDescription className="text-blue-900">
+              Moving your guest preview into your account. Please wait a moment.
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {guestMigrationError && (
+          <Alert className="bg-amber-50 border-amber-200 mb-4" data-testid="doc-comparison-guest-migration-error">
+            <AlertTriangle className="h-4 w-4 text-amber-700" />
+            <AlertDescription className="text-amber-900">{guestMigrationError}</AlertDescription>
+          </Alert>
+        )}
+
         {isGuestMode && (
           <Alert className="bg-amber-50 border-amber-200 mb-4" data-testid="doc-comparison-guest-banner">
             <AlertTriangle className="h-4 w-4 text-amber-700" />
             <AlertDescription className="text-amber-800 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <span>
-                Preview mode: progress is saved in this browser. Sign in to run AI evaluation and open a shared comparison.
+                Preview mode: progress is saved in this browser. Sign in to save permanently, invite the other party, and access your comparison later.
               </span>
               <Button
                 type="button"
                 size="sm"
                 className="bg-blue-600 hover:bg-blue-700"
-                onClick={() => navigateToLogin(location.pathname + location.search)}
+                onClick={requestGuestSignIn}
                 data-testid="doc-comparison-guest-signin"
               >
-                Sign in to continue
+                Sign in to save & share
               </Button>
             </AlertDescription>
           </Alert>
@@ -4517,21 +5029,92 @@ function DocumentComparisonCreateEditor({ guestMode = false }) {
               exit={{ opacity: 0, x: -20 }}
               data-testid="doc-comparison-step-3"
             >
-              <Step3ReviewPackage
-                documents={documents}
-                confidentialBundle={confidentialBundle}
-                sharedBundle={sharedBundle}
-                isFinishing={isFinishingComparison || isRunningEvaluation}
-                finishStage={finishStage}
-                exceedsAnySizeLimit={exceedsAnySizeLimit}
-                saveDraftPending={saveDraftMutation.isPending}
-                onBack={() => jumpStep(2)}
-                onRunEvaluation={handleFinishClick}
-                recipientName={recipientName}
-                recipientEmail={recipientEmail}
-                onRecipientNameChange={setRecipientName}
-                onRecipientEmailChange={setRecipientEmail}
-              />
+              <div className="space-y-6">
+                <Step3ReviewPackage
+                  documents={documents}
+                  confidentialBundle={confidentialBundle}
+                  sharedBundle={sharedBundle}
+                  isFinishing={isFinishingComparison || isRunningEvaluation}
+                  finishStage={finishStage}
+                  exceedsAnySizeLimit={exceedsAnySizeLimit}
+                  saveDraftPending={saveDraftMutation.isPending}
+                  onBack={() => jumpStep(2)}
+                  onRunEvaluation={handleFinishClick}
+                  recipientName={recipientName}
+                  recipientEmail={recipientEmail}
+                  onRecipientNameChange={setRecipientName}
+                  onRecipientEmailChange={setRecipientEmail}
+                  runActionLabel={step3PrimaryActionLabel}
+                  footerNote={
+                    <>
+                      {guestEvaluationError ? (
+                        <Alert className="bg-red-50 border-red-200">
+                          <AlertTriangle className="h-4 w-4 text-red-700" />
+                          <AlertDescription className="text-red-900">
+                            {guestEvaluationError}
+                          </AlertDescription>
+                        </Alert>
+                      ) : null}
+                      {guestMediationLimitReached ? (
+                        <Alert className="bg-blue-50 border-blue-200" data-testid="guest-evaluation-limit-alert">
+                          <AlertDescription className="text-blue-900 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <span>Sign in to continue with more AI runs, save this comparison, and share results.</span>
+                            <Button
+                              type="button"
+                              size="sm"
+                              className="bg-blue-600 hover:bg-blue-700"
+                              onClick={requestGuestSignIn}
+                              data-testid="guest-evaluation-limit-signin"
+                            >
+                              Sign in to continue
+                            </Button>
+                          </AlertDescription>
+                        </Alert>
+                      ) : null}
+                    </>
+                  }
+                />
+
+                {hasPreviewEvaluationReport ? (
+                  <div className="space-y-4" data-testid="guest-evaluation-preview-panel">
+                    <Card>
+                      <CardHeader>
+                        <CardTitle>
+                          {isGuestMode ? 'Latest Preview AI Mediation Review' : 'Restored Preview AI Mediation Review'}
+                        </CardTitle>
+                        <CardDescription>
+                          {isGuestMode
+                            ? 'This preview result is saved in this browser until you sign in or discard it.'
+                            : 'This preview result was restored after sign-in. Run AI Mediation to save an account-owned result.'}
+                        </CardDescription>
+                      </CardHeader>
+                    </Card>
+
+                    <ComparisonDetailTabs
+                      activeTab={guestEvaluationActiveTab}
+                      onTabChange={setGuestEvaluationActiveTab}
+                      hasReportBadge={hasPreviewEvaluationReport}
+                      aiReportProps={{
+                        hasReport: hasPreviewEvaluationReport,
+                        hasEvaluations: true,
+                        noReportMessage: 'No preview AI mediation review yet.',
+                        report: previewEvaluationReport,
+                        recommendation: previewEvaluationRecommendation,
+                        timelineItems: previewEvaluationTimelineItems,
+                      }}
+                      proposalDetailsProps={{
+                        description: 'Read-only document content for both information documents.',
+                        leftLabel: CONFIDENTIAL_LABEL,
+                        rightLabel: SHARED_LABEL,
+                        leftText: confidentialBundle.text || '',
+                        leftHtml: confidentialBundle.html || '',
+                        rightText: sharedBundle.text || '',
+                        rightHtml: sharedBundle.html || '',
+                      }}
+                    />
+                  </div>
+                ) : null}
+              </div>
             </motion.div>
           )}
 	        </AnimatePresence>

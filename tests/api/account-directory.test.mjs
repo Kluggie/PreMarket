@@ -241,12 +241,20 @@ if (!hasDatabaseUrl()) {
     assert.equal(invalidLinkUpdateRes.jsonBody().error?.field, 'social_links.linkedin');
   });
 
-  test('directory search/detail returns public people/org entries and hides private profiles', async () => {
+  test('directory search/detail uses full name for opted-in people and keeps organization behavior unchanged', async () => {
     await ensureMigrated();
     await resetTables();
 
-    const publicCookie = getCookie('directory_public_user', 'public@example.com');
-    const privateCookie = getCookie('directory_private_user', 'private@example.com');
+    const publicCookie = makeSessionCookie({
+      sub: 'directory_public_user',
+      email: 'public@example.com',
+      name: 'Public Directory Person',
+    });
+    const privateCookie = makeSessionCookie({
+      sub: 'directory_private_user',
+      email: 'private@example.com',
+      name: 'Private Directory Person',
+    });
 
     const publicProfileRes = await callHandler(profileHandler, {
       method: 'PUT',
@@ -254,7 +262,7 @@ if (!hasDatabaseUrl()) {
       headers: { cookie: publicCookie },
       body: {
         profile: {
-          pseudonym: 'PublicAlias',
+          pseudonym: 'PublicAliasShouldBeIgnored',
           user_type: 'business',
           industry: 'Technology',
           location: 'NYC',
@@ -262,7 +270,7 @@ if (!hasDatabaseUrl()) {
           tagline: 'Helping founders secure better pilot partners',
           bio: 'Public bio',
           website: 'https://public.example.com',
-          privacy_mode: 'public',
+          privacy_mode: 'pseudonymous',
           is_public_directory: true,
         },
       },
@@ -330,6 +338,8 @@ if (!hasDatabaseUrl()) {
     assert.equal(searchPayload.items.some((item) => item.kind === 'org' && item.id === publicOrgId), true);
     assert.equal(searchPayload.items.some((item) => item.kind === 'org' && item.id === privateOrgId), false);
     const publicPerson = searchPayload.items.find((item) => item.kind === 'person' && item.id === publicProfileId);
+    assert.equal(publicPerson?.displayName, 'Public Directory Person');
+    assert.equal(publicPerson?.pseudonym, undefined);
     assert.equal(publicPerson?.tagline, 'Helping founders secure better pilot partners');
     const publicOrg = searchPayload.items.find((item) => item.kind === 'org' && item.id === publicOrgId);
     assert.equal(publicOrg?.tagline, 'Fast enterprise onboarding for partner ecosystems');
@@ -341,6 +351,8 @@ if (!hasDatabaseUrl()) {
     });
     assert.equal(personDetailRes.statusCode, 200);
     assert.equal(personDetailRes.jsonBody().item.kind, 'person');
+    assert.equal(personDetailRes.jsonBody().item.displayName, 'Public Directory Person');
+    assert.equal(personDetailRes.jsonBody().item.pseudonym, undefined);
     assert.equal(personDetailRes.jsonBody().item.tagline, 'Helping founders secure better pilot partners');
 
     const orgDetailRes = await callHandler(directoryDetailHandler, {
@@ -440,7 +452,7 @@ if (!hasDatabaseUrl()) {
     assert.equal(ids.includes(profileId), false, 'default profile must not appear in directory');
   });
 
-  test('profile opt-in persists from the default profile UI state but stays hidden without a public display name', async () => {
+  test('opted-in profile with full name appears even when privacy_mode is pseudonymous and pseudonym is empty', async () => {
     await ensureMigrated();
     await resetTables();
 
@@ -491,17 +503,32 @@ if (!hasDatabaseUrl()) {
     assert.equal(storedProfile?.privacy_mode, 'pseudonymous');
     assert.equal(storedProfile?.pseudonym, null);
 
-    const searchRes = await callHandler(directorySearchHandler, {
+    const peopleSearchRes = await callHandler(directorySearchHandler, {
       method: 'GET',
       url: '/api/directory/search',
       query: { mode: 'people', page: '1', pageSize: '50' },
     });
-    assert.equal(searchRes.statusCode, 200);
-    const ids = searchRes.jsonBody().items.map((i) => i.id);
+    assert.equal(peopleSearchRes.statusCode, 200);
+    const peoplePayload = peopleSearchRes.jsonBody();
     assert.equal(
-      ids.includes(saveRes.jsonBody().profile.id),
-      false,
-      'opted-in profile must stay hidden until it has a public display name',
+      peoplePayload.items.some((item) => item.id === saveRes.jsonBody().profile.id),
+      true,
+      'opted-in profile must appear in the People mode when a full name exists',
+    );
+    const peopleEntry = peoplePayload.items.find((item) => item.id === saveRes.jsonBody().profile.id);
+    assert.equal(peopleEntry?.displayName, 'Default State User');
+
+    const allSearchRes = await callHandler(directorySearchHandler, {
+      method: 'GET',
+      url: '/api/directory/search',
+      query: { mode: 'both', page: '1', pageSize: '50' },
+    });
+    assert.equal(allSearchRes.statusCode, 200);
+    const allIds = allSearchRes.jsonBody().items.map((i) => i.id);
+    assert.equal(
+      allIds.includes(saveRes.jsonBody().profile.id),
+      true,
+      'opted-in profile must appear in the All mode when a full name exists',
     );
   });
 
@@ -518,8 +545,8 @@ if (!hasDatabaseUrl()) {
       headers: { cookie },
       body: {
         profile: {
-          pseudonym: 'OptInAlias',
-          privacy_mode: 'public',
+          pseudonym: '',
+          privacy_mode: 'pseudonymous',
           industry: 'SaaS',
           location: 'Austin',
           tagline: 'Opt-in test profile',
@@ -579,16 +606,18 @@ if (!hasDatabaseUrl()) {
     await ensureMigrated();
     await resetTables();
 
-    // Create a profile opted-in but with NO pseudonym and no full_name
-    // – the API-level user has no fullName because we're using raw session cookies.
-    const cookie = getCookie('dir_anon_user', 'anon@example.com');
+    // Create a profile opted-in but with no full name in the authenticated user record.
+    const cookie = makeSessionCookie({
+      sub: 'dir_anon_user',
+      email: 'anon@example.com',
+      name: '',
+    });
     const saveRes = await callHandler(profileHandler, {
       method: 'PUT',
       url: '/api/account/profile',
       headers: { cookie },
       body: {
         profile: {
-          // no pseudonym, privacy_mode public but no name
           privacy_mode: 'pseudonymous',
           is_public_directory: true,
           industry: 'Technology',
@@ -604,6 +633,7 @@ if (!hasDatabaseUrl()) {
     });
     assert.equal(searchRes.statusCode, 200);
     const displayNames = searchRes.jsonBody().items.map((i) => i.displayName);
+    assert.equal(searchRes.jsonBody().items.length, 0);
     assert.equal(
       displayNames.includes('Anonymous User'),
       false,

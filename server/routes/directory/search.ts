@@ -156,23 +156,19 @@ export default async function handler(req: any, res: any) {
         : Promise.resolve([]),
     ]);
 
-    // Map person rows; use flatMap so entries with no displayable name are simply
-    // omitted – preventing any "Anonymous User" placeholder from appearing.
+    // Public person listings always use the account full name. Profiles with no
+    // full name are omitted so the directory never falls back to pseudonyms or
+    // placeholder identities.
     const publicPeople = peopleRows.flatMap((row) => {
       const profile = row.profile;
       const fullName = String(row.user?.fullName || '').trim();
-      const pseudonym = String(profile?.pseudonym || '').trim();
-      const privacyMode = String(profile?.privacyMode || '').trim().toLowerCase();
-
-      const displayName = privacyMode === 'public' ? fullName || pseudonym : pseudonym;
+      const displayName = fullName;
       if (!displayName) return [];
 
       return [{
         kind: 'person' as const,
         id: profile.id,
         displayName,
-        pseudonym: pseudonym || undefined,
-        privacy_mode: privacyMode || undefined,
         user_type: profile.userType || undefined,
         industry: profile.industry || undefined,
         location: profile.location || undefined,
@@ -227,7 +223,6 @@ export default async function handler(req: any, res: any) {
     const visiblePeople = publicPeople.filter((person) => {
       return matchesQueryAcrossFields(q, [
         person.displayName,
-        person.pseudonym,
         person.title,
         person.tagline,
         person.bio,

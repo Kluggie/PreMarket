@@ -192,47 +192,26 @@ function getAccountDirectoryName(user) {
   return normalizeText(user?.full_name || user?.fullName || user?.name);
 }
 
-function getPrivacyModeDescription(privacyMode) {
-  if (privacyMode === 'public') {
-    return 'Show your account full name in public directory listings.';
-  }
-
-  if (privacyMode === 'private') {
-    return 'Hide your full name and use a pseudonym if you still want to be discoverable.';
-  }
-
-  return 'Show a pseudonym instead of your account full name.';
+function getPrivacyModeDescription() {
+  return 'Controls how your identity is handled in non-public product flows.';
 }
 
-function getDirectoryVisibilityState(formData, user) {
-  const privacyMode = normalizeText(formData?.privacy_mode) || 'pseudonymous';
-  const pseudonym = normalizeText(formData?.pseudonym);
+function getDirectoryVisibilityState(user) {
   const accountName = getAccountDirectoryName(user);
-  const displayName = privacyMode === 'public' ? accountName : pseudonym;
+  const displayName = accountName;
 
   if (displayName) {
     return {
       isEligible: true,
       displayName,
-      privacyMode,
       message: '',
-    };
-  }
-
-  if (privacyMode === 'public') {
-    return {
-      isEligible: false,
-      displayName: '',
-      privacyMode,
-      message: 'Your profile needs an account full name before it can appear publicly in Public mode.',
     };
   }
 
   return {
     isEligible: false,
     displayName: '',
-    privacyMode,
-    message: 'Add a pseudonym or switch Privacy Mode to Public so your profile can appear in the directory.',
+    message: 'Your account needs a full name before it can appear in the public directory.',
   };
 }
 
@@ -380,13 +359,11 @@ export default function Profile() {
 
   const accountProfileName = getAccountProfileName(user);
   const directoryVisibility = useMemo(
-    () => getDirectoryVisibilityState(formData, user),
-    [formData, user],
+    () => getDirectoryVisibilityState(user),
+    [user],
   );
   const previewName = directoryVisibility.displayName ||
-    (directoryVisibility.privacyMode === 'public'
-      ? 'Add an account name to preview your public listing'
-      : 'Add a pseudonym to preview your public listing');
+    'Your full name will appear here in the public directory';
   const previewTitle = normalizeText(formData.title) || 'Add your title / role';
   const previewIndustry = normalizeText(formData.industry) || 'Select an industry';
   const previewLocation = normalizeText(formData.location) || 'City, Country';
@@ -568,7 +545,7 @@ export default function Profile() {
                     <div className="space-y-2">
                       <Label htmlFor="profile-full-name">Full Name</Label>
                       <Input id="profile-full-name" value={accountProfileName} disabled className="bg-slate-50" />
-                      <p className="text-xs text-slate-500">Managed by your account settings</p>
+                      <p className="text-xs text-slate-500">Managed by your account settings and used for public directory listings.</p>
                     </div>
 
                     <div className="space-y-2">
@@ -602,7 +579,7 @@ export default function Profile() {
                           <SelectItem value="private">Private</SelectItem>
                         </SelectContent>
                       </Select>
-                      <p className="text-xs text-slate-500">{getPrivacyModeDescription(formData.privacy_mode)}</p>
+                      <p className="text-xs text-slate-500">{getPrivacyModeDescription()}</p>
                     </div>
 
                     <div className="space-y-2">
@@ -612,11 +589,11 @@ export default function Profile() {
                         data-testid="profilePseudonymInput"
                         value={formData.pseudonym}
                         onChange={(event) => setField('pseudonym', event.target.value.slice(0, MAX_PSEUDONYM_LENGTH))}
-                        placeholder="Required for pseudonymous directory listings"
+                        placeholder="Used in pseudonymous product flows"
                         maxLength={MAX_PSEUDONYM_LENGTH}
                       />
                       <p className="text-xs text-slate-500">
-                        Used in directory listings whenever Privacy Mode is not Public.
+                        Used in pseudonymous product flows outside the public directory.
                       </p>
                     </div>
 
@@ -745,7 +722,7 @@ export default function Profile() {
                   <h2 id="profile-preview-heading" className="text-sm font-semibold text-slate-900 uppercase tracking-wide">
                     Profile Preview
                   </h2>
-                  <p className="text-sm text-slate-600">Directory card preview (not auto-saved)</p>
+                  <p className="text-sm text-slate-600">Public directory card preview (not auto-saved)</p>
 
                   <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-3 text-sm">
                     <div className="space-y-2">
@@ -781,6 +758,9 @@ export default function Profile() {
                     <div>
                       <Label htmlFor="profile-public-directory" className="font-medium text-slate-900">Public Directory</Label>
                       <p className="text-sm text-slate-600">List this profile in the public directory.</p>
+                      <p className="text-xs text-slate-500">
+                        Your full name will be shown in the directory. Turn this off if you do not want your profile publicly discoverable.
+                      </p>
                       {formData.is_public_directory ? (
                         directoryVisibility.isEligible ? (
                           <p data-testid="profilePublicDirectoryStatus" className="text-xs text-emerald-700">
