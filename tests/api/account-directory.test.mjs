@@ -440,6 +440,71 @@ if (!hasDatabaseUrl()) {
     assert.equal(ids.includes(profileId), false, 'default profile must not appear in directory');
   });
 
+  test('profile opt-in persists from the default profile UI state but stays hidden without a public display name', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const userId = 'dir_ui_default_state_user';
+    const cookie = makeSessionCookie({
+      sub: userId,
+      email: 'default-state@example.com',
+      name: 'Default State User',
+    });
+
+    const saveRes = await callHandler(profileHandler, {
+      method: 'PATCH',
+      url: '/api/account/profile',
+      headers: { cookie },
+      body: {
+        profile: {
+          pseudonym: '',
+          user_type: 'individual',
+          title: '',
+          tagline: '',
+          industry: '',
+          location: '',
+          bio: '',
+          website: '',
+          privacy_mode: 'pseudonymous',
+          social_links: {
+            linkedin: '',
+            twitter: '',
+            github: '',
+            crunchbase: '',
+          },
+          social_links_ai_consent: false,
+          is_public_directory: true,
+        },
+      },
+    });
+    assert.equal(saveRes.statusCode, 200);
+    assert.equal(saveRes.jsonBody().profile.is_public_directory, true);
+    assert.equal(saveRes.jsonBody().profile.privacy_mode, 'pseudonymous');
+    assert.equal(saveRes.jsonBody().profile.pseudonym, '');
+
+    const db = getDb();
+    const storedResult = await db.execute(
+      sql`select is_public_directory, privacy_mode, pseudonym from user_profiles where user_id = ${userId} limit 1`,
+    );
+    const storedProfile = storedResult?.rows?.[0] ?? storedResult?.[0] ?? null;
+    assert.equal(Boolean(storedProfile?.is_public_directory), true);
+    assert.equal(storedProfile?.privacy_mode, 'pseudonymous');
+    assert.equal(storedProfile?.pseudonym, null);
+
+    const searchRes = await callHandler(directorySearchHandler, {
+      method: 'GET',
+      url: '/api/directory/search',
+      query: { mode: 'people', page: '1', pageSize: '50' },
+    });
+    assert.equal(searchRes.statusCode, 200);
+    const ids = searchRes.jsonBody().items.map((i) => i.id);
+    assert.equal(
+      ids.includes(saveRes.jsonBody().profile.id),
+      false,
+      'opted-in profile must stay hidden until it has a public display name',
+    );
+  });
+
   test('profile appears in directory only after explicit opt-in and disappears after opt-out', async () => {
     await ensureMigrated();
     await resetTables();

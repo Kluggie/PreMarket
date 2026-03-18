@@ -29,6 +29,7 @@ import { toast } from 'sonner';
 import { createPageUrl } from '../utils';
 
 const MAX_TAGLINE_LENGTH = 80;
+const MAX_PSEUDONYM_LENGTH = 80;
 const MAX_LOCATION_LENGTH = 120;
 const MAX_WEBSITE_LENGTH = 280;
 const EMPTY_SOCIAL_LINKS = {
@@ -178,13 +179,61 @@ function createIndustryOptions(values) {
   return options.sort((a, b) => a.localeCompare(b));
 }
 
-function getDisplayName(user) {
+function getAccountProfileName(user) {
   const name = normalizeText(user?.full_name || user?.fullName || user?.name);
   if (name) {
     return name;
   }
 
   return normalizeText(user?.email) || 'Your name';
+}
+
+function getAccountDirectoryName(user) {
+  return normalizeText(user?.full_name || user?.fullName || user?.name);
+}
+
+function getPrivacyModeDescription(privacyMode) {
+  if (privacyMode === 'public') {
+    return 'Show your account full name in public directory listings.';
+  }
+
+  if (privacyMode === 'private') {
+    return 'Hide your full name and use a pseudonym if you still want to be discoverable.';
+  }
+
+  return 'Show a pseudonym instead of your account full name.';
+}
+
+function getDirectoryVisibilityState(formData, user) {
+  const privacyMode = normalizeText(formData?.privacy_mode) || 'pseudonymous';
+  const pseudonym = normalizeText(formData?.pseudonym);
+  const accountName = getAccountDirectoryName(user);
+  const displayName = privacyMode === 'public' ? accountName : pseudonym;
+
+  if (displayName) {
+    return {
+      isEligible: true,
+      displayName,
+      privacyMode,
+      message: '',
+    };
+  }
+
+  if (privacyMode === 'public') {
+    return {
+      isEligible: false,
+      displayName: '',
+      privacyMode,
+      message: 'Your profile needs an account full name before it can appear publicly in Public mode.',
+    };
+  }
+
+  return {
+    isEligible: false,
+    displayName: '',
+    privacyMode,
+    message: 'Add a pseudonym or switch Privacy Mode to Public so your profile can appear in the directory.',
+  };
 }
 
 const SOCIAL_LINK_FIELDS = [
@@ -329,7 +378,15 @@ export default function Profile() {
     [industryFacets, formData.industry],
   );
 
-  const previewName = getDisplayName(user);
+  const accountProfileName = getAccountProfileName(user);
+  const directoryVisibility = useMemo(
+    () => getDirectoryVisibilityState(formData, user),
+    [formData, user],
+  );
+  const previewName = directoryVisibility.displayName ||
+    (directoryVisibility.privacyMode === 'public'
+      ? 'Add an account name to preview your public listing'
+      : 'Add a pseudonym to preview your public listing');
   const previewTitle = normalizeText(formData.title) || 'Add your title / role';
   const previewIndustry = normalizeText(formData.industry) || 'Select an industry';
   const previewLocation = normalizeText(formData.location) || 'City, Country';
@@ -510,7 +567,7 @@ export default function Profile() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                     <div className="space-y-2">
                       <Label htmlFor="profile-full-name">Full Name</Label>
-                      <Input id="profile-full-name" value={previewName} disabled className="bg-slate-50" />
+                      <Input id="profile-full-name" value={accountProfileName} disabled className="bg-slate-50" />
                       <p className="text-xs text-slate-500">Managed by your account settings</p>
                     </div>
 
@@ -528,6 +585,39 @@ export default function Profile() {
                           <SelectItem value="business">Business User</SelectItem>
                         </SelectContent>
                       </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="profile-privacy-mode">Privacy Mode</Label>
+                      <Select
+                        value={formData.privacy_mode}
+                        onValueChange={(value) => setField('privacy_mode', value)}
+                      >
+                        <SelectTrigger id="profile-privacy-mode" data-testid="profilePrivacyModeTrigger">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="public">Public</SelectItem>
+                          <SelectItem value="pseudonymous">Pseudonymous</SelectItem>
+                          <SelectItem value="private">Private</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-slate-500">{getPrivacyModeDescription(formData.privacy_mode)}</p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="profile-pseudonym">Display Name (Pseudonym)</Label>
+                      <Input
+                        id="profile-pseudonym"
+                        data-testid="profilePseudonymInput"
+                        value={formData.pseudonym}
+                        onChange={(event) => setField('pseudonym', event.target.value.slice(0, MAX_PSEUDONYM_LENGTH))}
+                        placeholder="Required for pseudonymous directory listings"
+                        maxLength={MAX_PSEUDONYM_LENGTH}
+                      />
+                      <p className="text-xs text-slate-500">
+                        Used in directory listings whenever Privacy Mode is not Public.
+                      </p>
                     </div>
 
                     <div className="space-y-2">
@@ -692,8 +782,18 @@ export default function Profile() {
                       <Label htmlFor="profile-public-directory" className="font-medium text-slate-900">Public Directory</Label>
                       <p className="text-sm text-slate-600">List this profile in the public directory.</p>
                       {formData.is_public_directory ? (
+                        directoryVisibility.isEligible ? (
+                          <p data-testid="profilePublicDirectoryStatus" className="text-xs text-emerald-700">
+                            Visible in the directory as {directoryVisibility.displayName}.
+                          </p>
+                        ) : (
+                          <p data-testid="profilePublicDirectoryStatus" className="text-xs text-amber-700">
+                            Not visible yet. {directoryVisibility.message}
+                          </p>
+                        )
+                      ) : (
                         <p className="text-xs text-slate-500">Shows your name, title, industry, location, and tagline.</p>
-                      ) : null}
+                      )}
                     </div>
                     <Switch
                       id="profile-public-directory"
