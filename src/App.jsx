@@ -14,7 +14,7 @@ import DirectoryOrgDetail from '@/pages/DirectoryOrgDetail';
 import RecipientEditStep2 from '@/pages/RecipientEditStep2';
 import RecipientEditStep3 from '@/pages/RecipientEditStep3';
 import Verify from '@/pages/Verify';
-import GuestCreateOpportunity from '@/pages/GuestCreateOpportunity';
+
 
 const { Pages, Layout, mainPage } = pagesConfig;
 const mainPageKey = mainPage ?? Object.keys(Pages)[0];
@@ -196,7 +196,7 @@ const PublicRoutes = () => {
         path="/opportunities/new"
         element={
           <LayoutWrapper currentPageName="OpportunitiesNew">
-            <GuestCreateOpportunity />
+            <Pages.CreateProposalWithDrafts guestMode />
           </LayoutWrapper>
         }
       />

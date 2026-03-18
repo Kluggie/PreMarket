@@ -56,6 +56,7 @@ export const userProfiles = pgTable(
     emailVerified: boolean('email_verified').notNull().default(false),
     documentVerified: boolean('document_verified').notNull().default(false),
     verificationStatus: text('verification_status').notNull().default('unverified'),
+    isPublicDirectory: boolean('is_public_directory').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -65,6 +66,7 @@ export const userProfiles = pgTable(
     userProfilesPrivacyIdx: index('user_profiles_privacy_idx').on(table.privacyMode, table.updatedAt),
     userProfilesIndustryIdx: index('user_profiles_industry_idx').on(table.industry, table.updatedAt),
     userProfilesLocationIdx: index('user_profiles_location_idx').on(table.location, table.updatedAt),
+    userProfilesPublicDirIdx: index('user_profiles_public_dir_idx').on(table.isPublicDirectory, table.updatedAt),
   }),
 );
 

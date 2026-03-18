@@ -78,6 +78,7 @@ function mapProfileRow(profile) {
     email_verified: Boolean(profile.emailVerified),
     document_verified: Boolean(profile.documentVerified),
     verification_status: profile.verificationStatus || 'unverified',
+    is_public_directory: Boolean(profile.isPublicDirectory),
     created_date: profile.createdAt,
     updated_date: profile.updatedAt,
   };
@@ -134,6 +135,10 @@ function buildProfilePatch(source) {
 
   if (Object.prototype.hasOwnProperty.call(source, 'notification_settings')) {
     patch.notificationSettings = sanitizeNotificationSettings(source.notification_settings);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(source, 'is_public_directory')) {
+    patch.isPublicDirectory = toBoolean(source.is_public_directory);
   }
 
   if (Object.prototype.hasOwnProperty.call(source, 'email_verified')) {
@@ -216,6 +221,7 @@ export default async function handler(req: any, res: any) {
           emailVerified: false,
           documentVerified: false,
           verificationStatus: 'unverified',
+          isPublicDirectory: false,
           createdAt: now,
           updatedAt: now,
           ...patch,

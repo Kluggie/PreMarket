@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '../utils';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -26,6 +26,7 @@ import {
   FileText,
   Handshake,
   Lock,
+  LogIn,
   Sparkles,
   TrendingUp,
   User,
@@ -35,6 +36,8 @@ import {
 import { proposalsClient } from '@/api/proposalsClient';
 import { templatesClient } from '@/api/templatesClient';
 import { billingClient } from '@/api/billingClient';
+import { useAuth } from '@/lib/AuthContext';
+import { useGuestDraft } from '@/hooks/useGuestDraft';
 import { isPrivateModePlanEligible, PRIVATE_MODE_ELIGIBILITY_COPY } from '@/lib/privateModeEligibility';
 import { getStarterLimitErrorCopy } from '@/lib/starterLimitErrorCopy';
 import {
@@ -106,10 +109,41 @@ function serializeResponseValue(value) {
   return String(value);
 }
 
-export default function CreateProposalWithDrafts() {
+// ─── Sign-in Gate (shown in guest mode at Step 4) ────────────────────────────
+function SignInGate({ message, onSignIn }) {
+  return (
+    <div className="rounded-xl border-2 border-blue-200 bg-blue-50 p-6 text-center">
+      <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-blue-100">
+        <Lock className="h-6 w-6 text-blue-600" />
+      </div>
+      <h3 className="mb-1 text-lg font-semibold text-slate-900">Sign in to continue</h3>
+      <p className="mb-5 text-sm text-slate-600">{message}</p>
+      <Button
+        onClick={onSignIn}
+        className="bg-blue-600 hover:bg-blue-700 text-white gap-2"
+        data-testid="guest-signin-gate-btn"
+      >
+        <LogIn className="h-4 w-4" />
+        Sign in to invite the other party
+      </Button>
+      <p className="mt-3 text-xs text-slate-500">
+        Your progress has been saved in this browser on this device.
+      </p>
+    </div>
+  );
+}
+
+export default function CreateProposalWithDrafts({ guestMode = false }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const hasInitializedLoad = useRef(false);
+  const hasMigratedRef = useRef(false);
+
+  // ── Auth (used in both modes) ──────────────────────────────────────────
+  const { user, isLoadingAuth, navigateToLogin } = useAuth();
+
+  // ── Guest draft (localStorage, used only in guestMode) ────────────────
+  const { guestDraft, saveGuestDraft, clearGuestDraft, hasGuestDraft } = useGuestDraft();
 
   const [step, setStep] = useState(1);
   const [selectedTemplate, setSelectedTemplate] = useState(null);
@@ -132,17 +166,38 @@ export default function CreateProposalWithDrafts() {
     ? requestedStep
     : null;
 
-  const { data: templates = [], isLoading } = useQuery({
+  // ── Template list ─────────────────────────────────────────────────────
+  // Authenticated mode:  /api/templates  (requires auth)
+  // Guest mode:          /api/public/templates  (no auth)
+  const { data: authTemplatesData = [], isLoading: isLoadingAuthTemplates } = useQuery({
     queryKey: ['templates'],
     queryFn: () => templatesClient.list(),
+    enabled: !guestMode,
   });
 
+  const { data: publicTemplatesData, isLoading: isLoadingPublicTemplates } = useQuery({
+    queryKey: ['templates-public'],
+    queryFn: () =>
+      fetch('/api/public/templates')
+        .then((r) => { if (!r.ok) throw new Error('Failed to load templates'); return r.json(); })
+        .then((b) => b?.templates || []),
+    enabled: guestMode,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const templates = guestMode
+    ? (Array.isArray(publicTemplatesData) ? publicTemplatesData : [])
+    : authTemplatesData;
+  const isLoading = guestMode ? isLoadingPublicTemplates : isLoadingAuthTemplates;
+
+  // ── Billing (authenticated only; guest = starter defaults) ───────────
   const { data: billing } = useQuery({
     queryKey: ['billing-status'],
     queryFn: () => billingClient.get(),
+    enabled: !guestMode,
   });
   const planTier = String(billing?.plan_tier || 'starter').trim().toLowerCase();
-  const isPrivateModeEligible = isPrivateModePlanEligible(planTier);
+  const isPrivateModeEligible = !guestMode && isPrivateModePlanEligible(planTier);
 
   const getNormalizedParty = (question) => {
     if (question?.party) return question.party;
@@ -330,8 +385,43 @@ export default function CreateProposalWithDrafts() {
 
     const params = asSearchParams();
     const resumeDraftId = params.get('draft');
-    const templateId = params.get('template');
+    const templateSlugParam = params.get('template');
 
+    // ── Guest mode: restore from localStorage ────────────────────────────────
+    if (guestMode) {
+      hasInitializedLoad.current = true;
+      if (guestDraft) {
+        const template =
+          templates.find((t) => t.slug === guestDraft.templateSlug) ||
+          templates.find((t) => t.id === guestDraft.templateId) ||
+          null;
+        if (template) setSelectedTemplate(template);
+        setProposalTitle(guestDraft.proposalTitle || '');
+        setRecipientEmail(guestDraft.recipientEmail || '');
+        setPresetKey(guestDraft.presetKey || '');
+        setResponses(guestDraft.responses || {});
+        setVisibilitySettings(guestDraft.visibilitySettings || {});
+        const draftStep = Number(guestDraft.step || 1);
+        setStep(draftStep >= 1 && draftStep <= 3 ? draftStep : 1);
+        return;
+      }
+      // No saved draft – check for URL template param
+      if (templateSlugParam) {
+        const template = templates.find(
+          (t) =>
+            t.slug === templateSlugParam ||
+            t.template_key === templateSlugParam ||
+            t.id === templateSlugParam,
+        );
+        if (template) {
+          setSelectedTemplate(template);
+          setStep(1);
+        }
+      }
+      return;
+    }
+
+    // ── Authenticated mode: resume a server-side draft ────────────────────────
     if (resumeDraftId) {
       hasInitializedLoad.current = true;
       hydrateDraft(resumeDraftId).catch(() => {
@@ -340,8 +430,8 @@ export default function CreateProposalWithDrafts() {
       return;
     }
 
-    if (templateId && !selectedTemplate) {
-      const template = templates.find((entry) => entry.id === templateId);
+    if (templateSlugParam && !selectedTemplate) {
+      const template = templates.find((entry) => entry.id === templateSlugParam);
       if (template) {
         setSelectedTemplate(template);
         setStep(1);
@@ -349,7 +439,162 @@ export default function CreateProposalWithDrafts() {
     }
 
     hasInitializedLoad.current = true;
-  }, [templates]);
+  }, [guestMode, templates]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Guest mode: detect sign-in and migrate draft to the server ───────────────
+  useEffect(() => {
+    if (!guestMode || !user || hasMigratedRef.current || isLoadingAuth) return;
+    hasMigratedRef.current = true;
+    migrateGuestDraftAndRedirect();
+  }, [guestMode, user, isLoadingAuth]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Guest draft persistence (localStorage) ────────────────────────────────────
+  const persistGuestDraftState = useCallback(
+    (overrideStep) => {
+      if (!guestMode || !selectedTemplate) return;
+      saveGuestDraft({
+        templateSlug: selectedTemplate.slug,
+        templateId: selectedTemplate.id,
+        proposalTitle,
+        recipientEmail,
+        presetKey,
+        responses,
+        visibilitySettings,
+        step: overrideStep ?? step,
+      });
+    },
+    [guestMode, selectedTemplate, proposalTitle, recipientEmail, presetKey, responses, visibilitySettings, step, saveGuestDraft],
+  );
+
+  // ── Guest flow: sign-in trigger ───────────────────────────────────────────────
+  const handleGuestSignIn = useCallback(() => {
+    persistGuestDraftState(step);
+    localStorage.setItem('pm:guest_return_to', window.location.pathname + window.location.search);
+    window.dispatchEvent(
+      new CustomEvent('pm:auth:open-login', {
+        detail: { returnTo: window.location.pathname + window.location.search },
+      }),
+    );
+  }, [persistGuestDraftState, step]);
+
+  // ── Guest flow: clear draft and reset wizard ──────────────────────────────────
+  const handleClearDraft = useCallback(() => {
+    if (!guestMode) return;
+    clearGuestDraft();
+    navigate('/opportunities/new');
+    setStep(1);
+    setSelectedTemplate(null);
+    setProposalTitle('');
+    setRecipientEmail('');
+    setPresetKey('');
+    setResponses({});
+    setVisibilitySettings({});
+    setSaveError('');
+    setValidationErrors({});
+  }, [guestMode, clearGuestDraft, navigate]);
+
+  // ── Guest flow: post-auth migration ───────────────────────────────────────────
+  async function migrateGuestDraftAndRedirect() {
+    const draft = guestDraft;
+    if (!draft || !draft.templateSlug) {
+      navigate(createPageUrl('CreateOpportunity'));
+      return;
+    }
+
+    try {
+      // 1. Look up the template in the authenticated list
+      const templatesRes = await fetch('/api/templates');
+      if (!templatesRes.ok) throw new Error('Could not load templates after sign-in');
+      const templatesBody = await templatesRes.json();
+      const authedTemplates = Array.isArray(templatesBody?.templates) ? templatesBody.templates : [];
+      const template =
+        authedTemplates.find((t) => t.slug === draft.templateSlug) ||
+        authedTemplates.find((t) => t.id === draft.templateId) ||
+        null;
+
+      if (!template) {
+        clearGuestDraft();
+        navigate(createPageUrl('CreateOpportunity'));
+        return;
+      }
+
+      // 2. Create a server-side draft proposal
+      const createRes = await fetch(`/api/templates/${encodeURIComponent(template.id)}/use`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          title: draft.proposalTitle || `${template.name} Opportunity`,
+          partyBEmail: draft.recipientEmail?.trim() || null,
+          idempotencyKey: `guest-migrate:${template.id}:${draft.savedAt || Date.now()}`,
+        }),
+      });
+      if (!createRes.ok) throw new Error('Could not create draft after sign-in');
+      const createBody = await createRes.json();
+      const proposalId = createBody?.proposal?.id || null;
+      if (!proposalId) throw new Error('No proposal ID in migration response');
+
+      // 3. Migrate saved responses
+      const questions = Array.isArray(template.questions) ? template.questions : [];
+      const responseRows = _buildMigrationRows(draft.responses || {}, draft.visibilitySettings || {}, questions);
+
+      if (responseRows.length > 0) {
+        await fetch(`/api/proposals/${encodeURIComponent(proposalId)}/responses`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ responses: responseRows }),
+        });
+      }
+
+      // 4. Clear local draft and navigate into the authenticated flow
+      clearGuestDraft();
+      const resumeStep = Math.min(Number(draft.step || 2), 3);
+      navigate(createPageUrl(`CreateOpportunity?draft=${encodeURIComponent(proposalId)}&step=${resumeStep}`));
+    } catch (err) {
+      console.error('GuestMigration: failed', err);
+      navigate(createPageUrl('CreateOpportunity'));
+    }
+  }
+
+  function _buildMigrationRows(savedResponses, savedVisibility, questions) {
+    const byId = new Map(questions.map((q) => [q.id, q]));
+    return Object.entries(savedResponses)
+      .filter(([k]) => !k.startsWith('_'))
+      .map(([key, value]) => {
+        const [questionId, suffix] = key.includes('__') ? key.split('__') : [key, 'a'];
+        const question = byId.get(questionId);
+        if (!question) return null;
+        const enteredByParty = suffix === 'b' ? 'b' : 'a';
+        const roleType = question?.role_type || 'party_attribute';
+        const claimType =
+          roleType === 'shared_fact' ? 'shared_fact' : enteredByParty === 'b' ? 'counterparty_claim' : 'self';
+        const row = {
+          question_id: questionId,
+          section_id: question.section_id || null,
+          value: serializeResponseValue(value),
+          value_type: 'text',
+          range_min: null,
+          range_max: null,
+          visibility:
+            enteredByParty === 'b' || roleType === 'shared_fact'
+              ? 'full'
+              : normalizeVisibilitySetting(
+                  savedVisibility[key] || savedVisibility[questionId] || question.visibility_default,
+                ),
+          claim_type: claimType,
+          entered_by_party: enteredByParty,
+        };
+        if (value && typeof value === 'object' && value.type === 'range') {
+          row.value = null;
+          row.value_type = 'range';
+          row.range_min = String(value.min || '');
+          row.range_max = String(value.max || '');
+        }
+        return row;
+      })
+      .filter(Boolean);
+  }
 
   const buildResponseRows = () => {
     if (!selectedTemplate) {
@@ -556,14 +801,21 @@ export default function CreateProposalWithDrafts() {
       return;
     }
 
-    setIsSavingDraft(true);
     setSaveError('');
     setEvaluationError('');
+    setValidationErrors({});
 
+    // ── Guest mode: localStorage only, no server call ─────────────────
+    if (guestMode) {
+      persistGuestDraftState(2);
+      setStep(2);
+      return;
+    }
+
+    setIsSavingDraft(true);
     try {
       await persistDraft({ status: 'draft', createIfMissing: true, draftStepOverride: 2 });
       setStep(2);
-      setValidationErrors({});
     } catch (error) {
       setSaveError(getStarterLimitErrorCopy(error, 'create') || error?.message || 'Failed to save draft. Please try again.');
     } finally {
@@ -580,6 +832,14 @@ export default function CreateProposalWithDrafts() {
     setSaveError('');
 
     const nextStep = step + 1;
+
+    // ── Guest mode: localStorage only, no server call ─────────────────
+    if (guestMode) {
+      persistGuestDraftState(nextStep);
+      setStep(nextStep);
+      return;
+    }
+
     setIsSavingDraft(true);
     try {
       await persistDraft({ status: 'draft', createIfMissing: true, draftStepOverride: nextStep });
@@ -595,6 +855,12 @@ export default function CreateProposalWithDrafts() {
     setValidationErrors({});
     setSaveError('');
     setStep(targetStep);
+
+    // ── Guest mode: localStorage only, no server call ─────────────────
+    if (guestMode) {
+      persistGuestDraftState(targetStep);
+      return;
+    }
 
     if (draftProposalId) {
       try {
@@ -787,23 +1053,74 @@ export default function CreateProposalWithDrafts() {
   const totalSteps = 4;
   const progress = (step / totalSteps) * 100;
   const hasValidationErrors = Object.keys(validationErrors).length > 0;
-  const allTemplates = templates;
+
+  // ── Guest mode: show spinner while checking auth or running migration ─────
+  if (guestMode && isLoadingAuth) {
+    return (
+      <div className="fixed inset-0 flex items-center justify-center">
+        <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin" />
+      </div>
+    );
+  }
+  if (guestMode && user) {
+    return (
+      <div className="fixed inset-0 flex items-center justify-center">
+        <div className="w-8 h-8 border-4 border-slate-200 border-t-blue-600 rounded-full animate-spin" />
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-slate-50 py-8">
+    <div className="min-h-screen bg-slate-50 py-8" {...(guestMode ? { 'data-testid': 'guest-opportunity-page' } : {})}>
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="mb-8">
-          <Link to={createPageUrl('Templates')} className="inline-flex items-center text-slate-600 hover:text-slate-900 mb-4">
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Back to Template Library
-          </Link>
+          {guestMode ? (
+            <Link to="/" className="inline-flex items-center text-slate-600 hover:text-slate-900 mb-4">
+              <ArrowLeft className="w-4 h-4 mr-2" />
+              Back
+            </Link>
+          ) : (
+            <Link to={createPageUrl('Templates')} className="inline-flex items-center text-slate-600 hover:text-slate-900 mb-4">
+              <ArrowLeft className="w-4 h-4 mr-2" />
+              Back to Template Library
+            </Link>
+          )}
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-2xl font-bold text-slate-900">Create Opportunity</h1>
-              <p className="text-slate-500 mt-1">Fill out the template to create a pre-qualification opportunity.</p>
+              <h1 className="text-2xl font-bold text-slate-900">
+                {guestMode ? 'New Opportunity' : 'Create Opportunity'}
+              </h1>
+              <p className="text-slate-500 mt-1">
+                {guestMode
+                  ? 'Try the Opportunity creation flow — no account required for Steps 1–3.'
+                  : 'Fill out the template to create a pre-qualification opportunity.'}
+              </p>
             </div>
           </div>
         </div>
+
+        {/* Preview banner — guest mode only */}
+        {guestMode && (
+          <Alert className="mb-6 border-amber-200 bg-amber-50">
+            <Sparkles className="h-4 w-4 text-amber-600" />
+            <AlertDescription className="text-amber-800 flex items-center justify-between flex-wrap gap-2">
+              <span>
+                <strong>Preview mode</strong> — Your progress is saved on this device only.
+                Sign in to invite the other party and save permanently to your account.
+              </span>
+              {hasGuestDraft && (
+                <button
+                  type="button"
+                  data-testid="clear-draft-btn"
+                  onClick={handleClearDraft}
+                  className="text-xs underline text-amber-700 hover:text-amber-900 shrink-0"
+                >
+                  Clear draft
+                </button>
+              )}
+            </AlertDescription>
+          </Alert>
+        )}
 
         <div className="mb-8">
           <div className="flex items-center justify-between text-sm text-slate-500 mb-2">
@@ -834,12 +1151,13 @@ export default function CreateProposalWithDrafts() {
                   {isLoading ? (
                     <p className="text-sm text-slate-500">Loading templates...</p>
                   ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {allTemplates.map((template) => {
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4" data-testid="template-grid">
+                      {templates.map((template) => {
                         const Icon = iconMap[template.category] || FileText;
                         return (
                           <button
                             key={template.id}
+                            data-testid={`template-option-${template.slug}`}
                             onClick={() => {
                               setSelectedTemplate(template);
                             }}
@@ -877,6 +1195,7 @@ export default function CreateProposalWithDrafts() {
                   <div className="space-y-2">
                     <Label>Opportunity Title</Label>
                     <Input
+                      data-testid="opportunity-title-input"
                       value={proposalTitle}
                       onChange={(event) => setProposalTitle(event.target.value)}
                       placeholder={`${selectedTemplate?.name} Opportunity`}
@@ -889,6 +1208,7 @@ export default function CreateProposalWithDrafts() {
                     </Label>
                     <Input
                       type="email"
+                      data-testid="recipient-email-input"
                       value={recipientEmail}
                       onChange={(event) => {
                         setRecipientEmail(event.target.value);
@@ -978,8 +1298,8 @@ export default function CreateProposalWithDrafts() {
                     </div>
                   )}
 
-                  {/* ── Private Mode ── */}
-                  <div className={`rounded-xl border p-4 ${isPrivateModeEligible ? 'border-slate-200 bg-white' : 'border-slate-100 bg-slate-50'}`}>
+                  {/* ── Private Mode (hidden in guest mode) ── */}
+                  {!guestMode && <div className={`rounded-xl border p-4 ${isPrivateModeEligible ? 'border-slate-200 bg-white' : 'border-slate-100 bg-slate-50'}`}>
                     <div className="flex items-center justify-between gap-4">
                       <div className="flex items-center gap-2 min-w-0">
                         <EyeOff className={`w-4 h-4 flex-shrink-0 ${isPrivateModeEligible ? 'text-slate-600' : 'text-slate-400'}`} />
@@ -1015,7 +1335,7 @@ export default function CreateProposalWithDrafts() {
                         <li>Written content is not automatically scrubbed</li>
                       </ul>
                     )}
-                  </div>
+                  </div>}
 
                   <div className="flex justify-between mt-6">
                     <Button
@@ -1027,6 +1347,7 @@ export default function CreateProposalWithDrafts() {
                       Change Template
                     </Button>
                     <Button
+                      data-testid="step1-continue-btn"
                       onClick={handleStep1Continue}
                       disabled={
                         isSavingDraft ||
@@ -1075,7 +1396,7 @@ export default function CreateProposalWithDrafts() {
                   <ArrowLeft className="w-4 h-4 mr-2" />
                   Back
                 </Button>
-                <Button onClick={handleNext} disabled={isSavingDraft} className="bg-blue-600 hover:bg-blue-700">
+                <Button data-testid="step2-continue-btn" onClick={handleNext} disabled={isSavingDraft} className="bg-blue-600 hover:bg-blue-700">
                   Continue
                   <ArrowRight className="w-4 h-4 ml-2" />
                 </Button>
@@ -1115,7 +1436,7 @@ export default function CreateProposalWithDrafts() {
                   <ArrowLeft className="w-4 h-4 mr-2" />
                   Back
                 </Button>
-                <Button onClick={handleNext} disabled={isSavingDraft} className="bg-blue-600 hover:bg-blue-700">
+                <Button data-testid="step3-review-btn" onClick={handleNext} disabled={isSavingDraft} className="bg-blue-600 hover:bg-blue-700">
                   Review
                   <ArrowRight className="w-4 h-4 ml-2" />
                 </Button>
@@ -1174,33 +1495,48 @@ export default function CreateProposalWithDrafts() {
                     </div>
                   </div>
 
-                  {evaluationError && (
+                  {!guestMode && evaluationError && (
                     <Alert variant="destructive">
                       <AlertTriangle className="w-4 h-4" />
                       <AlertDescription>{evaluationError}</AlertDescription>
                     </Alert>
                   )}
 
-                  <div className="flex justify-between">
-                    <Button variant="outline" onClick={() => handleBack(3)}>
-                      <ArrowLeft className="w-4 h-4 mr-2" />
-                      Back
-                    </Button>
-                    <Button
-                      onClick={handleRunEvaluation}
-                      disabled={isSubmittingEvaluation}
-                      className={isProfileMatchingTemplate ? 'bg-purple-600 hover:bg-purple-700' : 'bg-blue-600 hover:bg-blue-700'}
-                    >
-                      {isSubmittingEvaluation ? (
-                        'Running Evaluation...'
-                      ) : (
-                        <>
-                          <Sparkles className="w-4 h-4 mr-2" />
-                          {isProfileMatchingTemplate ? 'Run Profile Evaluation' : 'Run Evaluation'}
-                        </>
-                      )}
-                    </Button>
-                  </div>
+                  {guestMode ? (
+                    <>
+                      <SignInGate
+                        message="Create a free account to run the AI evaluation and send your opportunity to the recipient."
+                        onSignIn={handleGuestSignIn}
+                      />
+                      <div className="flex justify-start mt-4">
+                        <Button variant="outline" onClick={() => handleBack(3)}>
+                          <ArrowLeft className="w-4 h-4 mr-2" />
+                          Back
+                        </Button>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex justify-between">
+                      <Button variant="outline" onClick={() => handleBack(3)}>
+                        <ArrowLeft className="w-4 h-4 mr-2" />
+                        Back
+                      </Button>
+                      <Button
+                        onClick={handleRunEvaluation}
+                        disabled={isSubmittingEvaluation}
+                        className={isProfileMatchingTemplate ? 'bg-purple-600 hover:bg-purple-700' : 'bg-blue-600 hover:bg-blue-700'}
+                      >
+                        {isSubmittingEvaluation ? (
+                          'Running Evaluation...'
+                        ) : (
+                          <>
+                            <Sparkles className="w-4 h-4 mr-2" />
+                            {isProfileMatchingTemplate ? 'Run Profile Evaluation' : 'Run Evaluation'}
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </motion.div>

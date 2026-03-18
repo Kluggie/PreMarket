@@ -1,4 +1,4 @@
-import { and, eq, or } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { ok } from '../../_lib/api-response.js';
 import { getDb, schema } from '../../_lib/db/client.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
@@ -108,10 +108,7 @@ export default async function handler(req: any, res: any) {
     const shouldLoadOrgs = mode === 'both' || mode === 'orgs';
 
     const peopleConditions = [
-      or(
-        eq(schema.userProfiles.privacyMode, 'public'),
-        eq(schema.userProfiles.privacyMode, 'pseudonymous'),
-      ),
+      eq(schema.userProfiles.isPublicDirectory, true),
     ] as any[];
 
     if (filters.user_type) {
@@ -159,16 +156,18 @@ export default async function handler(req: any, res: any) {
         : Promise.resolve([]),
     ]);
 
-    const publicPeople = peopleRows.map((row) => {
+    // Map person rows; use flatMap so entries with no displayable name are simply
+    // omitted – preventing any "Anonymous User" placeholder from appearing.
+    const publicPeople = peopleRows.flatMap((row) => {
       const profile = row.profile;
       const fullName = String(row.user?.fullName || '').trim();
       const pseudonym = String(profile?.pseudonym || '').trim();
       const privacyMode = String(profile?.privacyMode || '').trim().toLowerCase();
 
-      const displayName =
-        privacyMode === 'public' ? fullName || pseudonym || 'Anonymous User' : pseudonym || 'Anonymous User';
+      const displayName = privacyMode === 'public' ? fullName || pseudonym : pseudonym;
+      if (!displayName) return [];
 
-      return {
+      return [{
         kind: 'person' as const,
         id: profile.id,
         displayName,
@@ -197,7 +196,7 @@ export default async function handler(req: any, res: any) {
           normalizeDateForSort(profile.createdAt),
         _sortNewest: normalizeDateForSort(profile.createdAt),
         _sortName: normalize(displayName),
-      };
+      }];
     });
 
     const publicOrgs = orgRows.map((org) => {

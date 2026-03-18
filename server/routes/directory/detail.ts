@@ -37,7 +37,7 @@ export default async function handler(req: any, res: any) {
         })
         .from(schema.userProfiles)
         .leftJoin(schema.users, eq(schema.users.id, schema.userProfiles.userId))
-        .where(eq(schema.userProfiles.id, id))
+        .where(and(eq(schema.userProfiles.id, id), eq(schema.userProfiles.isPublicDirectory, true)))
         .limit(1);
 
       if (!row?.profile) {
@@ -45,14 +45,13 @@ export default async function handler(req: any, res: any) {
       }
 
       const privacyMode = normalize(row.profile.privacyMode);
-      if (privacyMode === 'private') {
-        throw new ApiError(404, 'not_found', 'Not found');
-      }
-
       const fullName = String(row.user?.fullName || '').trim();
       const pseudonym = String(row.profile.pseudonym || '').trim();
-      const displayName =
-        privacyMode === 'public' ? fullName || pseudonym || 'Anonymous User' : pseudonym || 'Anonymous User';
+      const displayName = privacyMode === 'public' ? fullName || pseudonym : pseudonym;
+
+      if (!displayName) {
+        throw new ApiError(404, 'not_found', 'Not found');
+      }
 
       ok(res, 200, {
         item: {

@@ -232,6 +232,10 @@
       "when": 1779040800000,
       "tag": "0032_starter_usage_events_type_idx",
       "breakpoints": true
-    }
-  ]
-}
+        },
+        {
+            "idx": 33,
+            "version": "7",
+            "when": 1779044400000,
+            "tag": "0033_profile_public_directory",
+            "breakpoints": true

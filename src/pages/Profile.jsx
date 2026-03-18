@@ -12,6 +12,7 @@ import { Card, CardContent, CardFooter, CardHeader, CardTitle, CardDescription }
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Switch } from '@/components/ui/switch';
 import {
   User,
   Linkedin,
@@ -48,6 +49,7 @@ const EMPTY_FORM_DATA = {
   privacy_mode: 'pseudonymous',
   social_links: EMPTY_SOCIAL_LINKS,
   social_links_ai_consent: false,
+  is_public_directory: false,
 };
 
 function normalizeText(value) {
@@ -135,6 +137,7 @@ function mapProfileToForm(profile) {
       ...(profile.social_links || {}),
     },
     social_links_ai_consent: Boolean(profile.social_links_ai_consent),
+    is_public_directory: Boolean(profile.is_public_directory),
   };
 }
 
@@ -153,6 +156,7 @@ function buildProfilePayload(formData) {
     privacy_mode: normalizeText(formData.privacy_mode) || 'pseudonymous',
     social_links: normalizeSocialLinks(formData.social_links),
     social_links_ai_consent: Boolean(formData.social_links_ai_consent),
+    is_public_directory: Boolean(formData.is_public_directory),
   };
 }
 
@@ -675,6 +679,28 @@ export default function Profile() {
                       </div>
                       <p className="text-slate-700">{previewTagline}</p>
                     </div>
+                  </div>
+                </section>
+
+                <section className="space-y-4" aria-labelledby="profile-public-directory-heading">
+                  <h2 id="profile-public-directory-heading" className="text-sm font-semibold text-slate-900 uppercase tracking-wide">
+                    Public Directory
+                  </h2>
+
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 flex items-center justify-between gap-4">
+                    <div>
+                      <Label htmlFor="profile-public-directory" className="font-medium text-slate-900">Public Directory</Label>
+                      <p className="text-sm text-slate-600">List this profile in the public directory.</p>
+                      {formData.is_public_directory ? (
+                        <p className="text-xs text-slate-500">Shows your name, title, industry, location, and tagline.</p>
+                      ) : null}
+                    </div>
+                    <Switch
+                      id="profile-public-directory"
+                      data-testid="profilePublicDirectoryToggle"
+                      checked={formData.is_public_directory}
+                      onCheckedChange={(checked) => setField('is_public_directory', checked)}
+                    />
                   </div>
                 </section>
               </CardContent>

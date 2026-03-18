@@ -263,6 +263,7 @@ if (!hasDatabaseUrl()) {
           bio: 'Public bio',
           website: 'https://public.example.com',
           privacy_mode: 'public',
+          is_public_directory: true,
         },
       },
     });
@@ -398,5 +399,198 @@ if (!hasDatabaseUrl()) {
     assert.equal(body.hasResendKey, true);
     assert.equal(body.fromDomain, 'mail.getpremarket.com');
     assert.equal(body.isValidConfig, true);
+  });
+
+  // ── Profile public-directory opt-in tests ───────────────────────────────
+
+  test('profile is private by default – does not appear in directory without explicit opt-in', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const cookie = getCookie('dir_default_user', 'default@example.com');
+
+    // Create profile WITHOUT setting is_public_directory
+    const saveRes = await callHandler(profileHandler, {
+      method: 'PUT',
+      url: '/api/account/profile',
+      headers: { cookie },
+      body: {
+        profile: {
+          pseudonym: 'DefaultAlias',
+          privacy_mode: 'public',
+          industry: 'Technology',
+          tagline: 'Should not appear in directory',
+        },
+      },
+    });
+    assert.equal(saveRes.statusCode, 200);
+    const profileId = saveRes.jsonBody().profile.id;
+
+    // is_public_directory should be false by default
+    assert.equal(saveRes.jsonBody().profile.is_public_directory, false);
+
+    // Directory search must NOT include this profile
+    const searchRes = await callHandler(directorySearchHandler, {
+      method: 'GET',
+      url: '/api/directory/search',
+      query: { mode: 'people', page: '1', pageSize: '50' },
+    });
+    assert.equal(searchRes.statusCode, 200);
+    const ids = searchRes.jsonBody().items.map((i) => i.id);
+    assert.equal(ids.includes(profileId), false, 'default profile must not appear in directory');
+  });
+
+  test('profile appears in directory only after explicit opt-in and disappears after opt-out', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const cookie = getCookie('dir_optin_user', 'optin@example.com');
+
+    // Step 1: create profile, opt-out
+    const createRes = await callHandler(profileHandler, {
+      method: 'PUT',
+      url: '/api/account/profile',
+      headers: { cookie },
+      body: {
+        profile: {
+          pseudonym: 'OptInAlias',
+          privacy_mode: 'public',
+          industry: 'SaaS',
+          location: 'Austin',
+          tagline: 'Opt-in test profile',
+          is_public_directory: false,
+        },
+      },
+    });
+    assert.equal(createRes.statusCode, 200);
+    const profileId = createRes.jsonBody().profile.id;
+
+    const searchBefore = await callHandler(directorySearchHandler, {
+      method: 'GET',
+      url: '/api/directory/search',
+      query: { mode: 'people', page: '1', pageSize: '50' },
+    });
+    assert.equal(searchBefore.jsonBody().items.some((i) => i.id === profileId), false,
+      'profile must not appear before opt-in');
+
+    // Step 2: opt-in
+    const optInRes = await callHandler(profileHandler, {
+      method: 'PUT',
+      url: '/api/account/profile',
+      headers: { cookie },
+      body: { profile: { is_public_directory: true } },
+    });
+    assert.equal(optInRes.statusCode, 200);
+    assert.equal(optInRes.jsonBody().profile.is_public_directory, true);
+
+    const searchAfterOptIn = await callHandler(directorySearchHandler, {
+      method: 'GET',
+      url: '/api/directory/search',
+      query: { mode: 'people', page: '1', pageSize: '50' },
+    });
+    assert.equal(searchAfterOptIn.jsonBody().items.some((i) => i.id === profileId), true,
+      'profile must appear after opt-in');
+
+    // Step 3: opt-out
+    const optOutRes = await callHandler(profileHandler, {
+      method: 'PUT',
+      url: '/api/account/profile',
+      headers: { cookie },
+      body: { profile: { is_public_directory: false } },
+    });
+    assert.equal(optOutRes.statusCode, 200);
+    assert.equal(optOutRes.jsonBody().profile.is_public_directory, false);
+
+    const searchAfterOptOut = await callHandler(directorySearchHandler, {
+      method: 'GET',
+      url: '/api/directory/search',
+      query: { mode: 'people', page: '1', pageSize: '50' },
+    });
+    assert.equal(searchAfterOptOut.jsonBody().items.some((i) => i.id === profileId), false,
+      'profile must not appear after opt-out');
+  });
+
+  test('no "Anonymous User" entries appear in public directory search results', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    // Create a profile opted-in but with NO pseudonym and no full_name
+    // – the API-level user has no fullName because we're using raw session cookies.
+    const cookie = getCookie('dir_anon_user', 'anon@example.com');
+    const saveRes = await callHandler(profileHandler, {
+      method: 'PUT',
+      url: '/api/account/profile',
+      headers: { cookie },
+      body: {
+        profile: {
+          // no pseudonym, privacy_mode public but no name
+          privacy_mode: 'pseudonymous',
+          is_public_directory: true,
+          industry: 'Technology',
+        },
+      },
+    });
+    assert.equal(saveRes.statusCode, 200);
+
+    const searchRes = await callHandler(directorySearchHandler, {
+      method: 'GET',
+      url: '/api/directory/search',
+      query: { mode: 'people', page: '1', pageSize: '50' },
+    });
+    assert.equal(searchRes.statusCode, 200);
+    const displayNames = searchRes.jsonBody().items.map((i) => i.displayName);
+    assert.equal(
+      displayNames.includes('Anonymous User'),
+      false,
+      '"Anonymous User" must never appear in directory results',
+    );
+  });
+
+  test('organization public-directory toggle still works correctly', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const cookie = getCookie('dir_org_owner', 'orgowner@example.com');
+
+    const createRes = await callHandler(organizationsHandler, {
+      method: 'POST',
+      url: '/api/account/organizations',
+      headers: { cookie },
+      body: {
+        organization: {
+          name: 'Org Directory Test',
+          industry: 'FinTech',
+          location: 'London',
+          tagline: 'Org parity test',
+          is_public_directory: false,
+        },
+      },
+    });
+    assert.equal(createRes.statusCode, 201);
+    const orgId = createRes.jsonBody().organization.id;
+
+    const searchBefore = await callHandler(directorySearchHandler, {
+      method: 'GET',
+      url: '/api/directory/search',
+      query: { mode: 'orgs', page: '1', pageSize: '50' },
+    });
+    assert.equal(searchBefore.jsonBody().items.some((i) => i.id === orgId), false,
+      'org must not appear when is_public_directory=false');
+
+    await callHandler(organizationByIdHandler, {
+      method: 'PATCH',
+      url: `/api/account/organizations/${orgId}`,
+      query: { id: orgId },
+      headers: { cookie },
+      body: { organization: { is_public_directory: true } },
+    });
+
+    const searchAfter = await callHandler(directorySearchHandler, {
+      method: 'GET',
+      url: '/api/directory/search',
+      query: { mode: 'orgs', page: '1', pageSize: '50' },
+    });
+    assert.equal(searchAfter.jsonBody().items.some((i) => i.id === orgId), true,
+      'org must appear after is_public_directory=true');
   });
 }
