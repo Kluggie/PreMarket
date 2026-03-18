@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm';
 import { getDb, schema } from './db/client.js';
 import { normalizeEmailCategory, sendCategorizedEmail } from './email-delivery.js';
 import { newId } from './ids.js';
+import { resolveNotificationTarget } from '../../src/lib/notificationTargets.js';
 
 export const DEFAULT_NOTIFICATION_SETTINGS = {
   email_notifications: true,
@@ -72,17 +73,24 @@ export function normalizeNotificationSettings(value: unknown) {
 }
 
 export function mapNotificationRow(row) {
+  const target = resolveNotificationTarget({
+    action_url: row.actionUrl || null,
+    event_type: row.eventType || 'general',
+    metadata: row.metadata || {},
+  });
+
   return {
     id: row.id,
     event_type: row.eventType || 'general',
     title: row.title || 'Notification',
     message: row.message || '',
-    action_url: row.actionUrl || null,
+    action_url: target.href || null,
     read: Boolean(row.readAt),
     read_at: row.readAt || null,
     dismissed: Boolean(row.dismissedAt),
     dismissed_at: row.dismissedAt || null,
     metadata: row.metadata || {},
+    target,
     created_date: row.createdAt,
     updated_date: row.updatedAt,
   };

@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import ProposalsChart from '@/components/dashboard/ProposalsChart';
+import { buildDocumentComparisonReportHref } from '@/lib/notificationTargets';
 import { formatRecipientShort } from '@/lib/recipientUtils';
 import {
   AGREEMENT_REQUESTED_LABEL,
@@ -385,9 +386,7 @@ export default function Dashboard() {
       if (normalizedResumeStep >= 3) {
         navigate(
           createPageUrl(
-            `DocumentComparisonDetail?id=${encodeURIComponent(
-              proposal.document_comparison_id,
-            )}&tab=report`,
+            buildDocumentComparisonReportHref(proposal.document_comparison_id),
           ),
         );
         return;

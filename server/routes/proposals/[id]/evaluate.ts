@@ -15,6 +15,11 @@ import { evaluateWithVertexV2 } from '../../../_lib/vertex-evaluation-v2.js';
 import { selectRelevantDocuments } from '../../../_lib/user-documents-context.js';
 import { assertStarterAiEvaluationAllowed } from '../../../_lib/starter-entitlements.js';
 import { buildMediationReviewSections } from '../../document-comparisons/_helpers.js';
+import {
+  buildDocumentComparisonReportHref,
+  buildLegacyOpportunityNotificationHref,
+  buildNotificationTargetMetadata,
+} from '../../../../src/lib/notificationTargets.js';
 
 function getProposalId(req: any, proposalIdParam?: string) {
   if (proposalIdParam && proposalIdParam.trim().length > 0) {
@@ -698,6 +703,16 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
     const [updatedProposal] = updatedProposalRows;
 
     try {
+      const comparisonId = asText(linkedComparison?.id || proposal.documentComparisonId);
+      const isComparisonNotification =
+        asLower(proposal.proposalType) === 'document_comparison' && Boolean(comparisonId);
+      const legacyActionUrl = buildLegacyOpportunityNotificationHref({
+        proposalId: proposal.id,
+      });
+      const canonicalActionUrl = isComparisonNotification
+        ? buildDocumentComparisonReportHref(comparisonId)
+        : null;
+
       await createNotificationEvent({
         db,
         userId: proposal.userId,
@@ -707,7 +722,18 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         dedupeKey: `evaluation_update:${proposal.id}:${saved.id}`,
         title: 'AI mediation review ready',
         message: `An AI mediation review is ready for "${proposal.title || 'your proposal'}".`,
-        actionUrl: `/ProposalDetail?id=${encodeURIComponent(proposal.id)}`,
+        actionUrl: canonicalActionUrl || legacyActionUrl,
+        metadata: isComparisonNotification
+          ? buildNotificationTargetMetadata({
+              route: 'DocumentComparisonDetail',
+              tab: 'report',
+              workflowType: 'document_comparison',
+              entityType: 'document_comparison',
+              comparisonId,
+              proposalId: proposal.id,
+              legacyActionUrl,
+            })
+          : null,
         emailSubject: 'AI mediation review ready',
         emailText: [
           `Your proposal "${proposal.title || 'Untitled Proposal'}" has a new AI mediation review.`,

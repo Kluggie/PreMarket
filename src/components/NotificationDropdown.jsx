@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Bell, Check, X } from 'lucide-react';
 import { createPageUrl } from '@/utils';
 import { notificationsClient } from '@/api/notificationsClient';
+import { resolveNotificationTarget } from '@/lib/notificationTargets';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -162,46 +163,50 @@ export default function NotificationDropdown({ user }) {
               )}
             </div>
           ) : (
-            displayedNotifications.map((notification) => (
-              <div 
-                key={notification.id} 
-                className={`relative group ${!notification.read ? 'bg-blue-50/50' : ''}`}
-              >
-                <Link
-                  to={notification.action_url || createPageUrl('Opportunities')}
-                  className={`block px-3 py-3 pr-10 hover:bg-slate-50 transition-colors ${!notification.read ? 'border-l-2 border-blue-500' : ''}`}
+            displayedNotifications.map((notification) => {
+              const target = notification.target || resolveNotificationTarget(notification);
+
+              return (
+                <div
+                  key={notification.id}
+                  className={`relative group ${!notification.read ? 'bg-blue-50/50' : ''}`}
                 >
-                  <div className="flex-1 min-w-0">
-                    <p className={`text-sm ${!notification.read ? 'font-semibold text-slate-900' : 'text-slate-600'}`}>
-                      {notification.title || 'Notification'}
-                    </p>
-                    <p className={`text-xs mt-0.5 line-clamp-2 ${!notification.read ? 'text-slate-600' : 'text-slate-500'}`}>
-                      {notification.message || ''}
-                    </p>
-                    {!notification.read && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-6 px-2 text-xs mt-1.5 hover:bg-blue-100"
-                        onClick={(e) => handleMarkAsRead(e, notification.id)}
-                      >
-                        <Check className="w-3 h-3 mr-1" />
-                        Mark as read
-                      </Button>
-                    )}
-                  </div>
-                </Link>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="absolute top-2 right-2 h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-slate-200"
-                  onClick={(e) => handleDismiss(e, notification.id)}
-                  title="Dismiss notification"
-                >
-                  <X className="w-4 h-4 text-slate-500" />
-                </Button>
-              </div>
-            ))
+                  <Link
+                    to={target.href || createPageUrl('Opportunities')}
+                    className={`block px-3 py-3 pr-10 hover:bg-slate-50 transition-colors ${!notification.read ? 'border-l-2 border-blue-500' : ''}`}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-sm ${!notification.read ? 'font-semibold text-slate-900' : 'text-slate-600'}`}>
+                        {notification.title || 'Notification'}
+                      </p>
+                      <p className={`text-xs mt-0.5 line-clamp-2 ${!notification.read ? 'text-slate-600' : 'text-slate-500'}`}>
+                        {notification.message || ''}
+                      </p>
+                      {!notification.read && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 px-2 text-xs mt-1.5 hover:bg-blue-100"
+                          onClick={(e) => handleMarkAsRead(e, notification.id)}
+                        >
+                          <Check className="w-3 h-3 mr-1" />
+                          Mark as read
+                        </Button>
+                      )}
+                    </div>
+                  </Link>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="absolute top-2 right-2 h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-slate-200"
+                    onClick={(e) => handleDismiss(e, notification.id)}
+                    title="Dismiss notification"
+                  >
+                    <X className="w-4 h-4 text-slate-500" />
+                  </Button>
+                </div>
+              );
+            })
           )}
         </div>
       </DropdownMenuContent>

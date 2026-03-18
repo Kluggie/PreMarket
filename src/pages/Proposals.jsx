@@ -6,6 +6,7 @@ import { createPageUrl } from '@/utils';
 import { useAuth } from '@/lib/AuthContext';
 import { proposalsClient } from '@/api/proposalsClient';
 import { dashboardClient } from '@/api/dashboardClient';
+import { buildDocumentComparisonReportHref } from '@/lib/notificationTargets';
 import { formatRecipientLabel, PRIVATE_SENDER_LABEL } from '@/lib/recipientUtils';
 import {
   getAgreementActionLabel,
@@ -677,9 +678,7 @@ export default function Proposals() {
       if (normalizedResumeStep >= 3) {
         navigate(
           createPageUrl(
-            `DocumentComparisonDetail?id=${encodeURIComponent(
-              proposal.document_comparison_id,
-            )}&tab=report`,
+            buildDocumentComparisonReportHref(proposal.document_comparison_id),
           ),
         );
         return;

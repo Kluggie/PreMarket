@@ -31,6 +31,11 @@ import {
 } from '../_helpers.js';
 import { assertDocumentComparisonWithinLimits } from '../_limits.js';
 import { assertStarterAiEvaluationAllowed } from '../../../_lib/starter-entitlements.js';
+import {
+  buildDocumentComparisonReportHref,
+  buildLegacyOpportunityNotificationHref,
+  buildNotificationTargetMetadata,
+} from '../../../../src/lib/notificationTargets.js';
 
 const CONFIDENTIAL_LABEL = 'Confidential Information';
 const SHARED_LABEL = 'Shared Information';
@@ -1944,6 +1949,10 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
         });
 
         try {
+          const legacyActionUrl = buildLegacyOpportunityNotificationHref({
+            proposalId: proposal.id,
+          });
+
           await createNotificationEvent({
             db,
             userId: proposal.userId,
@@ -1953,7 +1962,16 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
             dedupeKey: `evaluation_update:${proposal.id}:${existing.id}:${savedEvaluation?.id || 'document_comparison'}`,
             title: 'AI mediation review ready',
             message: `An AI mediation review is ready for "${proposal.title || 'your proposal'}".`,
-            actionUrl: `/ProposalDetail?id=${encodeURIComponent(proposal.id)}`,
+            actionUrl: buildDocumentComparisonReportHref(existing.id) || legacyActionUrl,
+            metadata: buildNotificationTargetMetadata({
+              route: 'DocumentComparisonDetail',
+              tab: 'report',
+              workflowType: 'document_comparison',
+              entityType: 'document_comparison',
+              comparisonId: existing.id,
+              proposalId: proposal.id,
+              legacyActionUrl,
+            }),
             emailSubject: 'AI mediation review ready',
             emailText: [
               `Your proposal "${proposal.title || 'Untitled Proposal'}" has a new AI mediation review.`,
