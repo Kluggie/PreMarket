@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '../utils';
+import { useAuth } from '@/lib/AuthContext';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { templatesClient } from '@/api/templatesClient';
@@ -103,6 +104,7 @@ function TemplateCardSkeleton() {
 }
 
 export default function Templates() {
+  const { user } = useAuth();
   const [showCustomRequest, setShowCustomRequest] = useState(false);
   const [customFormData, setCustomFormData] = useState({ name: '', email: '', message: '' });
   const [submitted, setSubmitted] = useState(false);
@@ -200,7 +202,7 @@ export default function Templates() {
         <div className="mb-12">
           <h2 className="text-xl font-semibold text-slate-900 mb-4">Tools</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            <Link to={createPageUrl('DocumentComparisonCreate')}>
+            <Link to={user ? createPageUrl('DocumentComparisonCreate') : '/opportunities/new'}>
               <Card className="border-0 shadow-sm hover:shadow-lg transition-all duration-300 cursor-pointer h-full">
                 <CardContent className="p-6">
                   <div className="w-12 h-12 rounded-lg bg-purple-100 flex items-center justify-center mb-4">

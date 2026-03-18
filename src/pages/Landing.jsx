@@ -5,15 +5,19 @@ import { Button } from '@/components/ui/button';
 import { 
   Shield, ArrowRight, CheckCircle2, Lock, Eye, FileText, BarChart3, RefreshCw
 } from 'lucide-react';
+import { useAuth } from '@/lib/AuthContext';
 
 // Set to true to restore the "View Documentation" CTA button on the landing page.
 const showDocumentationCta = false;
 
 export default function Landing() {
   const navigate = useNavigate();
+  const { user } = useAuth();
 
+  // Signed-in users go to the authenticated AI Negotiator tool.
+  // Signed-out users enter the public guest opportunity flow at /opportunities/new.
   const handleStartFree = () => {
-    navigate('/DocumentComparisonCreate');
+    navigate(user ? '/DocumentComparisonCreate' : '/opportunities/new');
   };
 
   const features = [
@@ -124,7 +128,7 @@ export default function Landing() {
                 Start Free
                 <ArrowRight className="ml-2 w-5 h-5" />
               </Button>
-              <Link to="/DocumentComparisonCreate">
+              <Link to={user ? '/DocumentComparisonCreate' : '/opportunities/new'}>
                 <Button variant="outline" size="lg" className="px-8 py-6 text-lg h-auto border-slate-200">
                   Try AI Deal Mediator
                 </Button>

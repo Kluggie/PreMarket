@@ -375,3 +375,78 @@ test('Authenticated create opportunity flow (/CreateOpportunity) still requires 
   // Guest page is at /opportunities/new, not /CreateOpportunity
   await expect(guestTitle).toHaveCount(0);
 });
+
+// ── Test 13: Landing "Start Free" routes unsigned-out users to /opportunities/new ──
+
+test('Landing page "Start Free" CTA routes signed-out users to /opportunities/new', async ({
+  page,
+}) => {
+  await setupUnauthenticatedMocks(page);
+  await page.goto(`${BASE_URL}/`, { waitUntil: 'domcontentloaded' });
+
+  // Click the primary "Start Free" button
+  const startBtn = page.locator('button', { hasText: /start free/i }).first();
+  await expect(startBtn).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+  await startBtn.click();
+
+  // Must land on the public guest flow — NOT on /DocumentComparisonCreate
+  await expect(page).toHaveURL(/opportunities\/new/, { timeout: NAV_TIMEOUT_MS });
+  await expect(page.locator('[data-testid="guest-opportunity-page"]')).toBeVisible({
+    timeout: LOAD_TIMEOUT_MS,
+  });
+});
+
+// ── Test 14: Landing "Try AI Deal Mediator" routes unsigned-out to /opportunities/new ──
+
+test('Landing page "Try AI Deal Mediator" CTA routes signed-out users to /opportunities/new', async ({
+  page,
+}) => {
+  await setupUnauthenticatedMocks(page);
+  await page.goto(`${BASE_URL}/`, { waitUntil: 'domcontentloaded' });
+
+  // Click the secondary "Try AI Deal Mediator" link
+  const mediatorLink = page.locator('a', { hasText: /try ai deal mediator/i }).first();
+  await expect(mediatorLink).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+  await mediatorLink.click();
+
+  // Must land on the public guest flow — NOT on /DocumentComparisonCreate
+  await expect(page).toHaveURL(/opportunities\/new/, { timeout: NAV_TIMEOUT_MS });
+  await expect(page.locator('[data-testid="guest-opportunity-page"]')).toBeVisible({
+    timeout: LOAD_TIMEOUT_MS,
+  });
+});
+
+// ── Test 15: /DocumentComparisonCreate shows auth gate when signed out ────────
+
+test('/DocumentComparisonCreate shows sign-in gate (not editing UI) for unsigned-out users', async ({
+  page,
+}) => {
+  await setupUnauthenticatedMocks(page);
+  await page.goto(`${BASE_URL}/DocumentComparisonCreate`, { waitUntil: 'domcontentloaded' });
+
+  // The auth gate sign-in button must be present
+  const signinBtn = page.locator('[data-testid="doc-comparison-signin-btn"]');
+  await expect(signinBtn).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+
+  // The editing UI (Step 1 Add Sources) must NOT be visible
+  await expect(page.locator('text=Add Sources')).toHaveCount(0);
+
+  // The "Authentication required" error banner must NOT appear — the gate prevents
+  // any authenticated API calls from being attempted
+  await expect(page.locator('text=Authentication required')).toHaveCount(0);
+});
+
+// ── Test 16: /DocumentComparisonCreate auth gate has "Try as guest" link ──────
+
+test('/DocumentComparisonCreate auth gate has "Try as guest" link to /opportunities/new', async ({
+  page,
+}) => {
+  await setupUnauthenticatedMocks(page);
+  await page.goto(`${BASE_URL}/DocumentComparisonCreate`, { waitUntil: 'domcontentloaded' });
+
+  // The "Try as guest" anchor must point to /opportunities/new
+  const guestLink = page.locator('a', { hasText: /try as guest/i });
+  await expect(guestLink).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+  const href = await guestLink.getAttribute('href');
+  expect(href).toContain('/opportunities/new');
+});

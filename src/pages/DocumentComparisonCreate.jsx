@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { createPageUrl } from '@/utils';
 import { documentComparisonsClient } from '@/api/documentComparisonsClient';
 import { proposalsClient } from '@/api/proposalsClient';
+import { useAuth } from '@/lib/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -81,6 +82,7 @@ import {
   Copy,
   FileText,
   Loader2,
+  Lock,
   MessageSquarePlus,
   MessagesSquare,
   Pencil,
@@ -684,7 +686,60 @@ function useRouteState() {
   }, [location.search]);
 }
 
+// ── Auth guard wrapper ─────────────────────────────────────────────────────────
+// DocumentComparisonCreate is an authenticated-only tool. Signed-out users who
+// land here (e.g. via a bookmark or old link) see a sign-in gate instead of
+// the editor UI that would make API calls failing with 401.
 export default function DocumentComparisonCreate() {
+  const { user, isLoadingAuth, navigateToLogin } = useAuth();
+  const location = useLocation();
+
+  if (isLoadingAuth) {
+    return (
+      <div className="fixed inset-0 flex items-center justify-center">
+        <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+        <div className="max-w-md w-full text-center">
+          <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-blue-100">
+            <Lock className="h-8 w-8 text-blue-600" />
+          </div>
+          <h1 className="text-2xl font-bold text-slate-900 mb-2">Sign in to use AI Negotiator</h1>
+          <p className="text-slate-600 mb-6">
+            Compare documents, add confidentiality controls, and generate AI negotiation guidance.
+            A free account is required.
+          </p>
+          <div className="flex flex-col sm:flex-row gap-3 justify-center">
+            <button
+              type="button"
+              data-testid="doc-comparison-signin-btn"
+              onClick={() => navigateToLogin(location.pathname + location.search)}
+              className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-6 py-3 text-sm font-semibold text-white hover:bg-blue-700 transition-colors"
+            >
+              Sign in
+            </button>
+            <Link
+              to="/opportunities/new"
+              className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-6 py-3 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+            >
+              Try as guest
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return <DocumentComparisonCreateEditor />;
+}
+
+// ── Authenticated editor (all hooks live here) ─────────────────────────────────
+function DocumentComparisonCreateEditor() {
   const navigate = useNavigate();
   const location = useLocation();
   const routeState = useRouteState();
