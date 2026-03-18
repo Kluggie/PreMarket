@@ -20,16 +20,24 @@ const EARLY_ACCESS_BILLING_ALIASES = new Set([
 ]);
 
 function resolvePlanTier(billingRow, betaRow) {
-  if (billingRow?.plan) {
-    return billingRow.plan;
+  const billingPlan = String(billingRow?.plan || '').trim().toLowerCase();
+
+  // If the billing row holds an explicitly elevated plan (not the 'starter' /
+  // 'free' default), always trust it — this is a real paid subscription.
+  if (billingPlan && billingPlan !== 'starter' && billingPlan !== 'free') {
+    return billingPlan;
   }
-  // No billing row: the betaSignups table is exclusively for early-access
-  // members. Any entry here means the user is in Early Access, regardless of
-  // the source column value (e.g. 'pricing', 'early_access', null, etc.).
+
+  // betaSignups membership means the user is Early Access. This overrides a
+  // default 'starter' billing row (which is just the system default, not an
+  // explicit plan assignment) as well as the no-billing-row case.
   if (betaRow) {
     return 'early_access';
   }
-  return 'starter';
+
+  // Fall back to whatever the billing row says (typically 'starter'), or
+  // 'starter' if no billing row exists at all.
+  return billingPlan || 'starter';
 }
 
 function mapDatabaseUser(userRow, billingRow, betaRow = null) {

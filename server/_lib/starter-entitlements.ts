@@ -42,12 +42,41 @@ function getMonthWindow(now = new Date()) {
 }
 
 export async function getUserPlanTier(db: any, userId: string) {
-  const [billingRow] = await db
-    .select({ plan: schema.billingReferences.plan })
-    .from(schema.billingReferences)
-    .where(eq(schema.billingReferences.userId, userId))
+  // Join through users so we can also check betaSignups via userId OR
+  // emailNormalized (for pre-account beta signups).
+  const [row] = await db
+    .select({
+      plan: schema.billingReferences.plan,
+      betaId: schema.betaSignups.id,
+    })
+    .from(schema.users)
+    .leftJoin(
+      schema.billingReferences,
+      eq(schema.billingReferences.userId, schema.users.id),
+    )
+    .leftJoin(
+      schema.betaSignups,
+      or(
+        eq(schema.betaSignups.userId, schema.users.id),
+        eq(schema.betaSignups.emailNormalized, sql`lower(trim(${schema.users.email}))`),
+      ),
+    )
+    .where(eq(schema.users.id, userId))
     .limit(1);
-  return normalizePlan(billingRow?.plan);
+
+  const billingPlan = normalizePlan(row?.plan);
+
+  // If the billing row carries an explicitly elevated plan, use it.
+  if (billingPlan && billingPlan !== 'starter' && billingPlan !== 'free') {
+    return billingPlan;
+  }
+
+  // betaSignups entry means Early Access — overrides a default 'starter' row.
+  if (row?.betaId) {
+    return 'early_access';
+  }
+
+  return billingPlan || 'starter';
 }
 
 export function isStarterPlan(planTier: unknown) {

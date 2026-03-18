@@ -387,6 +387,58 @@ if (!hasDatabaseUrl()) {
     assert.equal(result.body?.ok, true);
   });
 
+  test('Early Access user with default starter billing row AND betaSignup is NOT capped (regression)', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    // This is the exact bug scenario: billing_references.plan = 'starter' (the
+    // DB default) exists, but the user is also in betaSignups → Early Access.
+    // They must NOT be subject to any Starter limits.
+    const userId = 'ea_default_starter_billing';
+    const email = 'ea-default-starter-billing@example.com';
+    const cookie = authCookie(userId, email);
+
+    const db = await getDb();
+    await db
+      .insert(schema.users)
+      .values({ id: userId, email })
+      .onConflictDoNothing({ target: schema.users.id });
+
+    // Billing row with the DEFAULT plan value of 'starter'
+    await db
+      .insert(schema.billingReferences)
+      .values({ userId, plan: 'starter', status: 'inactive', updatedAt: new Date() })
+      .onConflictDoUpdate({
+        target: schema.billingReferences.userId,
+        set: { plan: 'starter', status: 'inactive', updatedAt: new Date() },
+      });
+
+    // betaSignups entry — the user IS in Early Access
+    await db
+      .insert(schema.betaSignups)
+      .values({
+        id: randomUUID(),
+        email,
+        emailNormalized: email.toLowerCase(),
+        userId,
+        source: 'pricing',
+        createdAt: new Date(),
+      })
+      .onConflictDoNothing({ target: schema.betaSignups.emailNormalized });
+
+    await seedProposal(userId, 'ea-default-p1');
+    await seedProposal(userId, 'ea-default-p2');
+    await seedProposal(userId, 'ea-default-p3');
+
+    const result = await createProposalViaApi(cookie, 'ea-default-p4-must-pass');
+    assert.equal(
+      result.status,
+      201,
+      `Early Access user with default starter billing row must not be capped: ${JSON.stringify(result.body)}`,
+    );
+    assert.equal(result.body?.ok, true);
+  });
+
   test('Early Access user with billing row plan early_access_program bypasses proposal caps', async () => {
     await ensureMigrated();
     await resetTables();
