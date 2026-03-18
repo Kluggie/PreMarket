@@ -196,7 +196,7 @@ const PublicRoutes = () => {
         path="/opportunities/new"
         element={
           <LayoutWrapper currentPageName="OpportunitiesNew">
-            <Pages.CreateProposalWithDrafts guestMode />
+            <Pages.DocumentComparisonCreate allowGuestMode />
           </LayoutWrapper>
         }
       />

@@ -100,6 +100,8 @@ const MAX_PREVIEW_CHARS = 500;
 const TOTAL_EDITOR_STEPS = 3;
 const TOTAL_WORKFLOW_STEPS = 3;
 const DIFF_CONTEXT_CHARS = 220;
+const GUEST_COMPARISON_DRAFT_KEY = 'pm:guest_doc_comparison_draft';
+const GUEST_COMPARISON_DRAFT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 // Background autosave: only fire after the user has been idle for ~30 seconds.
 // Immediate saves happen on step changes, doc switches, and unmount — so the
 // background timer is purely a safety-net for long open-editor sessions.
@@ -346,6 +348,31 @@ function fileToMetadata(file) {
     mimeType: file.type || 'application/octet-stream',
     sizeBytes: Number(file.size || 0),
   };
+}
+
+function readGuestComparisonDraft() {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  try {
+    const raw = window.localStorage.getItem(GUEST_COMPARISON_DRAFT_KEY);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') {
+      window.localStorage.removeItem(GUEST_COMPARISON_DRAFT_KEY);
+      return null;
+    }
+    const savedAt = Number(parsed.savedAt || 0);
+    if (!Number.isFinite(savedAt) || Date.now() - savedAt > GUEST_COMPARISON_DRAFT_MAX_AGE_MS) {
+      window.localStorage.removeItem(GUEST_COMPARISON_DRAFT_KEY);
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
 }
 
 function parseDocJson(value) {
@@ -690,7 +717,7 @@ function useRouteState() {
 // DocumentComparisonCreate is an authenticated-only tool. Signed-out users who
 // land here (e.g. via a bookmark or old link) see a sign-in gate instead of
 // the editor UI that would make API calls failing with 401.
-export default function DocumentComparisonCreate() {
+export default function DocumentComparisonCreate({ allowGuestMode = false }) {
   const { user, isLoadingAuth, navigateToLogin } = useAuth();
   const location = useLocation();
 
@@ -702,7 +729,7 @@ export default function DocumentComparisonCreate() {
     );
   }
 
-  if (!user) {
+  if (!user && !allowGuestMode) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
         <div className="max-w-md w-full text-center">
@@ -735,15 +762,17 @@ export default function DocumentComparisonCreate() {
     );
   }
 
-  return <DocumentComparisonCreateEditor />;
+  return <DocumentComparisonCreateEditor guestMode={allowGuestMode && !user} />;
 }
 
 // ── Authenticated editor (all hooks live here) ─────────────────────────────────
-function DocumentComparisonCreateEditor() {
+function DocumentComparisonCreateEditor({ guestMode = false }) {
   const navigate = useNavigate();
   const location = useLocation();
   const routeState = useRouteState();
   const queryClient = useQueryClient();
+  const { user, navigateToLogin } = useAuth();
+  const isGuestMode = Boolean(guestMode && !user);
 
   const step = routeState.step;
   const [comparisonId, setComparisonId] = useState(routeState.draftId);
@@ -930,6 +959,54 @@ function DocumentComparisonCreateEditor() {
     setLastEditAt(resolvedTimestamp);
   };
 
+  const persistGuestDraft = useCallback((overrideStep) => {
+    if (!isGuestMode || typeof window === 'undefined') {
+      return;
+    }
+    const docs = Array.isArray(documents)
+      ? documents.map((doc) => ({
+          id: String(doc?.id || ''),
+          title: String(doc?.title || 'Untitled Document'),
+          visibility: String(doc?.visibility || VISIBILITY_SHARED),
+          text: String(doc?.text || ''),
+          html: String(doc?.html || textToHtml(doc?.text || '')),
+          json: doc?.json || null,
+          source: String(doc?.source || 'typed'),
+          files: Array.isArray(doc?.files) ? doc.files : [],
+          importStatus: String(doc?.importStatus || 'idle'),
+          importError: String(doc?.importError || ''),
+        }))
+      : [];
+
+    const payload = {
+      step: clampStep(overrideStep || step || 1),
+      title,
+      documents: docs,
+      activeDocId: asText(activeDocId),
+      recipientName,
+      recipientEmail,
+      companyContextName,
+      companyContextWebsite,
+      savedAt: Date.now(),
+    };
+
+    try {
+      window.localStorage.setItem(GUEST_COMPARISON_DRAFT_KEY, JSON.stringify(payload));
+    } catch {
+      // Ignore localStorage write failures.
+    }
+  }, [
+    activeDocId,
+    companyContextName,
+    companyContextWebsite,
+    documents,
+    isGuestMode,
+    recipientEmail,
+    recipientName,
+    step,
+    title,
+  ]);
+
   const updateRouteParams = useCallback(
     ({
       nextStep,
@@ -1001,9 +1078,86 @@ function DocumentComparisonCreateEditor() {
     [location.pathname, location.search, navigate],
   );
 
+  useEffect(() => {
+    if (!isGuestMode) {
+      return;
+    }
+
+    const draft = readGuestComparisonDraft();
+    if (!draft) {
+      return;
+    }
+
+    const restoredDocuments = Array.isArray(draft.documents)
+      ? draft.documents
+          .filter((doc) => doc && typeof doc === 'object' && asText(doc.id))
+          .map((doc) => ({
+            id: String(doc.id),
+            title: String(doc.title || 'Untitled Document'),
+            visibility: String(doc.visibility || VISIBILITY_SHARED),
+            text: String(doc.text || ''),
+            html: String(doc.html || textToHtml(doc.text || '')),
+            json: doc.json || null,
+            source: String(doc.source || 'typed'),
+            files: Array.isArray(doc.files) ? doc.files : [],
+            importStatus: String(doc.importStatus || 'idle'),
+            importError: String(doc.importError || ''),
+          }))
+      : [];
+
+    setTitle(String(draft.title || ''));
+    setDocuments(restoredDocuments);
+    setActiveDocId(asText(draft.activeDocId) || restoredDocuments[0]?.id || null);
+    setRecipientName(String(draft.recipientName || ''));
+    setRecipientEmail(String(draft.recipientEmail || ''));
+    setCompanyContextName(String(draft.companyContextName || ''));
+    setCompanyContextWebsite(String(draft.companyContextWebsite || ''));
+
+    const { confidential, shared } = compileBundles(restoredDocuments);
+    latestDraftStateRef.current = {
+      ...latestDraftStateRef.current,
+      title: String(draft.title || ''),
+      docAText: confidential.text,
+      docAHtml: confidential.html,
+      docAJson: confidential.json,
+      docASource: confidential.source,
+      docAFiles: Array.isArray(confidential.files) ? confidential.files : [],
+      docBText: shared.text,
+      docBHtml: shared.html,
+      docBJson: shared.json,
+      docBSource: shared.source,
+      docBFiles: Array.isArray(shared.files) ? shared.files : [],
+      recipientName: String(draft.recipientName || ''),
+      recipientEmail: String(draft.recipientEmail || ''),
+    };
+    setLastSavedHash(
+      buildDraftStateHashFromSnapshot({
+        comparisonId: '',
+        linkedProposalId: '',
+        snapshot: {
+          title: String(draft.title || ''),
+          docAText: confidential.text,
+          docBText: shared.text,
+          docAHtml: confidential.html,
+          docBHtml: shared.html,
+          docAJson: confidential.json,
+          docBJson: shared.json,
+          docASource: confidential.source,
+          docBSource: shared.source,
+          docAFiles: Array.isArray(confidential.files) ? confidential.files : [],
+          docBFiles: Array.isArray(shared.files) ? shared.files : [],
+        },
+      }),
+    );
+    setDraftDirty(false);
+
+    const restoredStep = clampStep(draft.step || routeState.step || 1);
+    updateRouteParams({ nextStep: restoredStep, replace: true });
+  }, [isGuestMode, routeState.step, updateRouteParams]);
+
   const proposalLookup = useQuery({
     queryKey: ['document-comparison-proposal-lookup', routeState.proposalId],
-    enabled: Boolean(routeState.proposalId),
+    enabled: !isGuestMode && Boolean(routeState.proposalId),
     queryFn: () => proposalsClient.getById(routeState.proposalId),
   });
 
@@ -1014,7 +1168,7 @@ function DocumentComparisonCreateEditor() {
 
   const draftQuery = useQuery({
     queryKey: ['document-comparison-draft', resolvedDraftId, routeState.token],
-    enabled: Boolean(resolvedDraftId),
+    enabled: !isGuestMode && Boolean(resolvedDraftId),
     queryFn: () =>
       routeState.token
         ? documentComparisonsClient.getByIdWithToken(resolvedDraftId, routeState.token)
@@ -1361,6 +1515,16 @@ function DocumentComparisonCreateEditor() {
 
   const saveDraftMutation = useMutation({
     mutationFn: async ({ stepToSave, silent = false, nonBlocking = false }) => {
+      if (isGuestMode) {
+        persistGuestDraft(stepToSave);
+        return {
+          comparison: {
+            id: '',
+            draft_step: clampStep(stepToSave || step || 1),
+          },
+        };
+      }
+
       const saveStartedAtMs = Date.now();
       // Claim a sequence number before the network call so we can detect stale
       // responses if a newer save completes first.
@@ -1655,6 +1819,11 @@ function DocumentComparisonCreateEditor() {
   }, []);
 
   const persistLatestDraftSnapshot = useCallback(async ({ reason = 'component-unmount', stepToSave = 2 } = {}) => {
+    if (isGuestMode) {
+      persistGuestDraft(stepToSave);
+      return 'guest-local';
+    }
+
     if (saveMutationPendingRef.current || !isDirtyRef.current) {
       return null;
     }
@@ -1744,7 +1913,7 @@ function DocumentComparisonCreateEditor() {
       }
       return null;
     }
-  }, []);
+  }, [isGuestMode, persistGuestDraft]);
 
   useEffect(() => {
     if (lastSavedHash) {
@@ -1799,20 +1968,24 @@ function DocumentComparisonCreateEditor() {
 
   const progress = (step / TOTAL_WORKFLOW_STEPS) * 100;
   const isDirty = draftDirty || currentStateHash !== lastSavedHash;
-  const saveStatusLabel = saveDraftMutation.isPending
-    ? 'Saving...'
-    : saveDraftMutation.isError
-      ? 'Error'
-      : isDirty
-        ? 'Unsaved changes'
-        : 'Saved';
-  const saveStatusClassName = saveDraftMutation.isPending
-    ? 'text-blue-700'
-    : saveDraftMutation.isError
-      ? 'text-red-700'
-      : isDirty
-        ? 'text-amber-700'
-        : 'text-emerald-700';
+  const saveStatusLabel = isGuestMode
+    ? (isDirty ? 'Unsaved local changes' : 'Saved locally')
+    : saveDraftMutation.isPending
+      ? 'Saving...'
+      : saveDraftMutation.isError
+        ? 'Error'
+        : isDirty
+          ? 'Unsaved changes'
+          : 'Saved';
+  const saveStatusClassName = isGuestMode
+    ? (isDirty ? 'text-amber-700' : 'text-emerald-700')
+    : saveDraftMutation.isPending
+      ? 'text-blue-700'
+      : saveDraftMutation.isError
+        ? 'text-red-700'
+        : isDirty
+          ? 'text-amber-700'
+          : 'text-emerald-700';
   const limits = useMemo(
     () => getDocumentComparisonTextLimits(import.meta.env?.VITE_VERTEX_MODEL || ''),
     [],
@@ -1833,7 +2006,7 @@ function DocumentComparisonCreateEditor() {
   const isStep2LoadingDraft = step >= 2 && Boolean(resolvedDraftId) && draftQuery.isLoading;
   const step2LoadError = step >= 2 && Boolean(resolvedDraftId) ? draftQuery.error : null;
   const editableSide = String(draftQuery.data?.permissions?.editable_side || 'a').toLowerCase();
-  const canUseOwnerCoach = !routeState.token && editableSide !== 'b';
+  const canUseOwnerCoach = !isGuestMode && !routeState.token && editableSide !== 'b';
   const coachSuggestions = Array.isArray(coachResult?.suggestions) ? coachResult.suggestions : [];
   const activeCoachHash = coachResultHash || 'unhashed';
   const appliedSuggestionIds = appliedSuggestionIdsByHash[activeCoachHash] || [];
@@ -2157,6 +2330,11 @@ function DocumentComparisonCreateEditor() {
 
   const bestEffortSaveDraft = useCallback(
     async ({ reason = 'navigation', stepToSave = stepRef.current, requireDraftId = false } = {}) => {
+      if (isGuestMode) {
+        persistGuestDraft(stepToSave);
+        return 'guest-local';
+      }
+
       if (saveMutationPendingRef.current) {
         await waitForActiveSave();
       }
@@ -2201,7 +2379,7 @@ function DocumentComparisonCreateEditor() {
         return null;
       }
     },
-    [runSaveDraftMutation, waitForActiveSave],
+    [isGuestMode, persistGuestDraft, runSaveDraftMutation, waitForActiveSave],
   );
 
   // Save current document edits before switching tabs, then switch the active doc.
@@ -2217,6 +2395,11 @@ function DocumentComparisonCreateEditor() {
   );
 
   const ensureStep2DraftId = useCallback(async () => {
+    if (isGuestMode) {
+      persistGuestDraft(2);
+      return 'guest-local';
+    }
+
     const existingId = asText(comparisonIdRef.current);
     if (existingId) {
       return existingId;
@@ -2231,10 +2414,16 @@ function DocumentComparisonCreateEditor() {
       throw new Error('Failed to create comparison draft');
     }
     return persistedId;
-  }, [runSaveDraftMutation]);
+  }, [isGuestMode, persistGuestDraft, runSaveDraftMutation]);
 
   const jumpStep = async (nextStep) => {
     const bounded = clampStep(nextStep || 1);
+    if (isGuestMode) {
+      persistGuestDraft(bounded);
+      updateRouteParams({ nextStep: bounded, replace: true });
+      return;
+    }
+
     const currentStep = clampStep(stepRef.current || step || 1);
     const hadDraftIdBeforeTransition = Boolean(asText(comparisonIdRef.current));
     if (saveMutationPendingRef.current) {
@@ -2278,6 +2467,13 @@ function DocumentComparisonCreateEditor() {
   };
 
   const saveDraft = async (stepToSave = step) => {
+    if (isGuestMode) {
+      persistGuestDraft(stepToSave);
+      setDraftDirty(false);
+      toast.success('Draft saved locally');
+      return;
+    }
+
     if (exceedsAnySizeLimit) {
       toast.error(
         `Document content exceeds the ${limits.model} limit. Reduce text before saving.`,
@@ -2390,6 +2586,11 @@ function DocumentComparisonCreateEditor() {
   };
 
   const finishToComparisonDetail = async () => {
+    if (isGuestMode) {
+      navigateToLogin(location.pathname + location.search);
+      return;
+    }
+
     if (isFinishingComparison) {
       return;
     }
@@ -2513,6 +2714,11 @@ function DocumentComparisonCreateEditor() {
   };
 
   const handleFinishClick = () => {
+    if (isGuestMode) {
+      navigateToLogin(location.pathname + location.search);
+      return;
+    }
+
     if (saveDraftMutation.isPending || isFinishingComparison || isRunningEvaluation) {
       return;
     }
@@ -2524,6 +2730,11 @@ function DocumentComparisonCreateEditor() {
   };
 
   const ensureComparisonIdForCoach = useCallback(async () => {
+    if (isGuestMode) {
+      setCoachError('Sign in to use AI suggestions.');
+      return '';
+    }
+
     if (comparisonId && !isDocumentComparisonNotFoundError(draftQuery.error)) {
       return comparisonId;
     }
@@ -2539,7 +2750,7 @@ function DocumentComparisonCreateEditor() {
       toast.error(message);
       return '';
     }
-  }, [comparisonId, draftQuery.error, runSaveDraftMutation, step]);
+  }, [comparisonId, draftQuery.error, isGuestMode, runSaveDraftMutation, step]);
 
   const updateCompanyContextInDraftCache = useCallback(
     (nextComparisonId, nextCompanyName, nextCompanyWebsite) => {
@@ -3536,6 +3747,17 @@ function DocumentComparisonCreateEditor() {
   };
 
   useEffect(() => {
+    if (isGuestMode) {
+      if (!isDirty || saveDraftMutation.isPending) {
+        return undefined;
+      }
+
+      const timer = window.setTimeout(() => {
+        persistGuestDraft(stepRef.current || step);
+      }, 600);
+      return () => window.clearTimeout(timer);
+    }
+
     if (step < 2 || !isDirty || saveDraftMutation.isPending || !comparisonId) {
       return undefined;
     }
@@ -3563,9 +3785,16 @@ function DocumentComparisonCreateEditor() {
     }, delayMs);
 
     return () => window.clearTimeout(timer);
-  }, [bestEffortSaveDraft, comparisonId, currentStateHash, isDirty, saveDraftMutation.isPending, step]);
+  }, [bestEffortSaveDraft, comparisonId, currentStateHash, isDirty, isGuestMode, persistGuestDraft, saveDraftMutation.isPending, step]);
 
   useEffect(() => () => {
+    if (isGuestMode) {
+      if (isDirtyRef.current) {
+        persistGuestDraft(stepRef.current || step);
+      }
+      return;
+    }
+
     if (stepRef.current < 2 || !isDirtyRef.current || !comparisonIdRef.current) {
       return;
     }
@@ -3574,7 +3803,7 @@ function DocumentComparisonCreateEditor() {
       reason: 'component-unmount',
       stepToSave: 2,
     });
-  }, [persistLatestDraftSnapshot]);
+  }, [isGuestMode, persistGuestDraft, persistLatestDraftSnapshot, step]);
 
   useEffect(() => {
     const handlePopState = () => {
@@ -4060,9 +4289,22 @@ function DocumentComparisonCreateEditor() {
       <ComparisonWorkflowShell
         backSlot={
           <Link
-            to={createPageUrl('Opportunities')}
+            to={isGuestMode ? '/' : createPageUrl('Opportunities')}
             className="inline-flex items-center text-slate-600 hover:text-slate-900"
             onClick={async (event) => {
+              if (isGuestMode) {
+                if (!isDirty) {
+                  return;
+                }
+                const shouldLeave = window.confirm('You have unsaved changes. Leave this page?');
+                if (!shouldLeave) {
+                  event.preventDefault();
+                  return;
+                }
+                persistGuestDraft(step);
+                return;
+              }
+
               if (step >= 2) {
                 event.preventDefault();
                 if (isDirty) {
@@ -4090,11 +4332,13 @@ function DocumentComparisonCreateEditor() {
             }}
           >
             <ArrowLeft className="w-4 h-4 mr-2" />
-            Back to Proposals
+            {isGuestMode ? 'Back' : 'Back to Proposals'}
           </Link>
         }
         title="AI Negotiator"
-        subtitle="Review your documents, refine your position, and generate negotiation guidance — all in a confidential workflow."
+        subtitle={isGuestMode
+          ? 'Review your documents and refine your position. Sign in when you are ready to run AI evaluation and share results.'
+          : 'Review your documents, refine your position, and generate negotiation guidance — all in a confidential workflow.'}
         step={step}
         totalSteps={TOTAL_WORKFLOW_STEPS}
         progress={progress}
@@ -4112,6 +4356,26 @@ function DocumentComparisonCreateEditor() {
           <Alert className="bg-red-50 border-red-200 mb-4">
             <AlertTriangle className="h-4 w-4 text-red-700" />
             <AlertDescription className="text-red-800">{uiError}</AlertDescription>
+          </Alert>
+        )}
+
+        {isGuestMode && (
+          <Alert className="bg-amber-50 border-amber-200 mb-4" data-testid="doc-comparison-guest-banner">
+            <AlertTriangle className="h-4 w-4 text-amber-700" />
+            <AlertDescription className="text-amber-800 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <span>
+                Preview mode: progress is saved in this browser. Sign in to run AI evaluation and open a shared comparison.
+              </span>
+              <Button
+                type="button"
+                size="sm"
+                className="bg-blue-600 hover:bg-blue-700"
+                onClick={() => navigateToLogin(location.pathname + location.search)}
+                data-testid="doc-comparison-guest-signin"
+              >
+                Sign in to continue
+              </Button>
+            </AlertDescription>
           </Alert>
         )}
 
