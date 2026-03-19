@@ -8,6 +8,7 @@ import { readJsonBody } from '../../_lib/http.js';
 import { newId, newToken } from '../../_lib/ids.js';
 import { appendProposalHistory } from '../../_lib/proposal-history.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
+import { recordInitialSharedReportBaseline } from '../../_lib/shared-report-history.js';
 
 function asText(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
@@ -278,6 +279,16 @@ export default async function handler(req: any, res: any) {
         updatedAt: now,
       })
       .returning();
+
+    await recordInitialSharedReportBaseline({
+      db,
+      proposal,
+      comparison,
+      sharedLinkId: created.id,
+      authorUserId: auth.user.id,
+      newId,
+      now,
+    });
 
     await db
       .update(schema.proposals)

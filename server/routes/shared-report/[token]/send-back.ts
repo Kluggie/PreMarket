@@ -9,6 +9,12 @@ import { getResendConfig } from '../../../_lib/integrations.js';
 import { createNotificationEvent } from '../../../_lib/notifications.js';
 import { appendProposalHistory } from '../../../_lib/proposal-history.js';
 import {
+  getLinkRecipientAuthorRole,
+  HISTORY_AUTHOR_PROPOSER,
+  recordSharedReportContributionGroup,
+  resolveSharedReportLinkRound,
+} from '../../../_lib/shared-report-history.js';
+import {
   buildProposalThreadActivityValues,
   PROPOSAL_THREAD_ACTIVITY_SEND_BACK,
 } from '../../../_lib/proposal-thread-activity.js';
@@ -356,6 +362,12 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     const publicReport = toObject(latestEvaluation?.resultPublicReport);
     const evaluationResult = toObject((latestEvaluation?.resultJson as any)?.evaluation_result);
     const evaluationScore = toScoreFromPublicReport(publicReport);
+    const stableAuthorRole =
+      getLinkRecipientAuthorRole({
+        proposal: resolved.proposal,
+        link: resolved.link,
+      }) || RECIPIENT_ROLE;
+    const outgoingRoundNumber = resolveSharedReportLinkRound(toObject(resolved.link.reportMetadata)) + 1;
 
     // ── 3. Update comparison with latest shared text + report ──────────────
 
@@ -366,13 +378,39 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     );
 
     const sentSharedPayload = toObject(sentRevision?.sharedPayload || currentDraft.sharedPayload);
+    const sentConfidentialPayload = toObject(
+      sentRevision?.recipientConfidentialPayload || currentDraft.recipientConfidentialPayload,
+    );
     const updatedSharedText = extractSharedText(sentSharedPayload);
+    const updatedConfidentialText = extractSharedText(sentConfidentialPayload);
 
-    if (comparisonId && updatedSharedText) {
+    await recordSharedReportContributionGroup({
+      db: resolved.db,
+      proposalId: resolved.proposal.id,
+      comparisonId: comparisonId || null,
+      sharedLinkId: resolved.link.id,
+      authorRole: stableAuthorRole,
+      authorUserId: auth.user.id,
+      roundNumber: outgoingRoundNumber,
+      sourceKind: 'shared_report_send_back',
+      sharedPayload: sentSharedPayload,
+      confidentialPayload: sentConfidentialPayload,
+      newId,
+      now,
+    });
+
+    if (comparisonId) {
       const comparisonUpdate: Record<string, unknown> = {
-        docBText: updatedSharedText,
         updatedAt: now,
       };
+      if (stableAuthorRole === HISTORY_AUTHOR_PROPOSER) {
+        if (updatedSharedText) {
+          comparisonUpdate.docBText = updatedSharedText;
+        }
+        if (updatedConfidentialText) {
+          comparisonUpdate.docAText = updatedConfidentialText;
+        }
+      }
       // Update the public report on the comparison so the next round sees
       // the latest evaluation as the baseline report.
       if (latestEvaluation && Object.keys(publicReport).length > 0) {
@@ -450,7 +488,14 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         documentComparison: comparisonId && resolved.comparison
           ? {
               ...resolved.comparison,
-              docBText: updatedSharedText || resolved.comparison.docBText,
+              docAText:
+                stableAuthorRole === HISTORY_AUTHOR_PROPOSER && updatedConfidentialText
+                  ? updatedConfidentialText
+                  : resolved.comparison.docAText,
+              docBText:
+                stableAuthorRole === HISTORY_AUTHOR_PROPOSER && updatedSharedText
+                  ? updatedSharedText
+                  : resolved.comparison.docBText,
               publicReport: Object.keys(publicReport).length > 0 ? publicReport : resolved.comparison.publicReport,
               evaluationResult: Object.keys(evaluationResult).length > 0
                 ? evaluationResult

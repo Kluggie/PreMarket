@@ -4,6 +4,11 @@ import { logAuditEventBestEffort } from '../../_lib/audit-events.js';
 import { ApiError } from '../../_lib/errors.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 import {
+  getLinkRecipientAuthorRole,
+  loadSharedReportHistory,
+  resolveSharedReportLinkRound,
+} from '../../_lib/shared-report-history.js';
+import {
   buildDefaultConfidentialPayload,
   SHARED_REPORT_ROUTE,
   buildDefaultSharedPayload,
@@ -57,6 +62,16 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     const currentDraft = await getCurrentRecipientDraft(resolved.db, resolved.link.id);
     const latestEvaluation = await getLatestRecipientEvaluationRun(resolved.db, resolved.link.id);
     const latestSentRevision = await getLatestRecipientSentRevision(resolved.db, resolved.link.id);
+    const sharedHistory = await loadSharedReportHistory({
+      db: resolved.db,
+      proposal: resolved.proposal,
+      comparison: resolved.comparison,
+    });
+    const currentLinkRound = resolveSharedReportLinkRound(resolved.link.reportMetadata);
+    const draftAuthorRole = getLinkRecipientAuthorRole({
+      proposal: resolved.proposal,
+      link: resolved.link,
+    });
 
     if (process.env.NODE_ENV !== 'production') {
       console.info(
@@ -144,6 +159,15 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       },
       baseline_shared: baselineSharedPayload,
       baseline_ai_report: baselineAiReport,
+      shared_history: {
+        entries: sharedHistory.sharedEntries,
+        max_round_number: sharedHistory.maxRoundNumber,
+      },
+      party_context: {
+        draft_author_role: draftAuthorRole,
+        current_link_round: currentLinkRound,
+        next_outgoing_round: currentLinkRound + 1,
+      },
       latestEvaluation: mapEvaluationRunView(latestEvaluation),
       latestReport:
         latestEvaluation?.status === 'success' && latestEvaluation?.resultPublicReport

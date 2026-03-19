@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { sql } from 'drizzle-orm';
 import documentComparisonsHandler from '../../server/routes/document-comparisons/index.ts';
+import documentComparisonDetailHandler from '../../server/routes/document-comparisons/[id].ts';
+import documentComparisonEvaluateHandler from '../../server/routes/document-comparisons/[id]/evaluate.ts';
 import sharedLinksHandler from '../../server/routes/shared-links/index.ts';
 import sharedReportsHandler from '../../server/routes/shared-reports/index.ts';
 import proposalsHandler from '../../server/routes/proposals/index.ts';
@@ -87,6 +89,32 @@ async function createWorkspaceLink(cookie, proposalId, recipientEmail, overrides
   await sharedLinksHandler(req, res);
   assert.equal(res.statusCode, 201);
   return res.jsonBody().sharedLink;
+}
+
+async function getComparisonDetail(comparisonId, cookie, token = null) {
+  const query = token ? { id: comparisonId, token } : { id: comparisonId };
+  const req = createMockReq({
+    method: 'GET',
+    url: `/api/document-comparisons/${comparisonId}`,
+    headers: cookie ? { cookie } : {},
+    query,
+  });
+  const res = createMockRes();
+  await documentComparisonDetailHandler(req, res, comparisonId);
+  return res;
+}
+
+async function evaluateComparison(comparisonId, cookie, body = {}) {
+  const req = createMockReq({
+    method: 'POST',
+    url: `/api/document-comparisons/${comparisonId}/evaluate`,
+    headers: cookie ? { cookie } : {},
+    query: { id: comparisonId },
+    body,
+  });
+  const res = createMockRes();
+  await documentComparisonEvaluateHandler(req, res, comparisonId);
+  return res;
 }
 
 async function getRecipientWorkspace(token) {
@@ -1225,6 +1253,219 @@ if (!hasDatabaseUrl()) {
         delete process.env.VERTEX_MOCK;
       } else {
         process.env.VERTEX_MOCK = originalVertexMock;
+      }
+    }
+  });
+
+  test('bilateral shared history accumulates across rounds and renders back to both sides without overwriting proposer baseline', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = makeOwnerCookie('bilateral_history_owner');
+    const recipientCookie = makeRecipientCookie('bilateral_history_recipient', 'recipient@example.com');
+    const proposerSharedRound1 = 'PROPOSER_SHARED_ROUND_1_MARKER';
+    const recipientSharedRound2 = 'RECIPIENT_SHARED_ROUND_2_MARKER';
+    const proposerSharedRound3 = 'PROPOSER_SHARED_ROUND_3_MARKER';
+    const proposerPrivateRound1 = 'PROPOSER_PRIVATE_ROUND_1_MARKER';
+    const proposerPrivateRound3 = 'PROPOSER_PRIVATE_ROUND_3_MARKER';
+    const recipientPrivateRound2 = 'RECIPIENT_PRIVATE_ROUND_2_MARKER';
+
+    const comparison = await createComparison(ownerCookie, {
+      title: 'Bilateral Shared History',
+      docAText: `Owner private baseline ${proposerPrivateRound1}`,
+      docBText: `Owner shared baseline ${proposerSharedRound1}`,
+    });
+
+    const initialLink = await createSharedReportLink(ownerCookie, comparison.id, 'recipient@example.com', {
+      canEdit: true,
+      canEditConfidential: true,
+      canReevaluate: true,
+      canSendBack: true,
+      maxUses: 30,
+    });
+
+    const saveRound2 = await saveRecipientDraft(initialLink.token, {
+      shared_payload: { label: 'Shared Information', text: `Recipient response ${recipientSharedRound2}` },
+      recipient_confidential_payload: {
+        label: 'Confidential Information',
+        notes: `Recipient private note ${recipientPrivateRound2}`,
+      },
+      workflow_step: 2,
+    }, recipientCookie);
+    assert.equal(saveRound2.statusCode, 200);
+
+    const sendRound2 = await sendBackRecipientDraft(initialLink.token, {}, recipientCookie);
+    assert.equal(sendRound2.statusCode, 200);
+
+    const ownerDetailAfterRound2 = await getComparisonDetail(comparison.id, ownerCookie);
+    assert.equal(ownerDetailAfterRound2.statusCode, 200);
+    const ownerDetailBody = ownerDetailAfterRound2.jsonBody();
+    const ownerSharedHistory = ownerDetailBody.shared_history?.entries || [];
+    assert.equal(ownerSharedHistory.length >= 2, true);
+    assert.equal(ownerSharedHistory.some((entry) => String(entry.text || '').includes(proposerSharedRound1)), true);
+    assert.equal(ownerSharedHistory.some((entry) => String(entry.text || '').includes(recipientSharedRound2)), true);
+    assert.equal(ownerSharedHistory.some((entry) => String(entry.author_label || '') === 'Proposer'), true);
+    assert.equal(ownerSharedHistory.some((entry) => String(entry.author_label || '') === 'Recipient'), true);
+    assert.equal(String(ownerDetailBody.comparison?.doc_b_text || '').includes(proposerSharedRound1), true);
+    assert.equal(String(ownerDetailBody.comparison?.doc_b_text || '').includes(recipientSharedRound2), false);
+    assert.equal(JSON.stringify(ownerDetailBody).includes(recipientPrivateRound2), false);
+
+    const db = getDb();
+    const round2LinkRows = await db.execute(
+      sql`select token
+          from shared_links
+          where proposal_id = ${comparison.proposal_id}
+            and token <> ${initialLink.token}
+          order by created_at desc
+          limit 1`,
+    );
+    const round2Token = String(round2LinkRows.rows[0]?.token || '');
+    assert.notEqual(round2Token, '');
+
+    const ownerRound3Save = await saveRecipientDraft(round2Token, {
+      shared_payload: { label: 'Shared Information', text: `Owner follow-up ${proposerSharedRound3}` },
+      recipient_confidential_payload: {
+        label: 'Confidential Information',
+        notes: `Owner private follow-up ${proposerPrivateRound3}`,
+      },
+      workflow_step: 2,
+    }, ownerCookie);
+    assert.equal(ownerRound3Save.statusCode, 200);
+
+    const ownerRound3Send = await sendBackRecipientDraft(round2Token, {}, ownerCookie);
+    assert.equal(ownerRound3Send.statusCode, 200);
+
+    const round3LinkRows = await db.execute(
+      sql`select token
+          from shared_links
+          where proposal_id = ${comparison.proposal_id}
+            and token not in (${initialLink.token}, ${round2Token})
+          order by created_at desc
+          limit 1`,
+    );
+    const round3Token = String(round3LinkRows.rows[0]?.token || '');
+    assert.notEqual(round3Token, '');
+
+    const recipientWorkspaceRound3 = await getRecipientWorkspace(round3Token);
+    assert.equal(recipientWorkspaceRound3.statusCode, 200);
+    const recipientWorkspaceBody = recipientWorkspaceRound3.jsonBody();
+    const round3History = recipientWorkspaceBody.shared_history?.entries || [];
+    assert.equal(round3History.length >= 3, true);
+    assert.equal(round3History[0].round_number, 1);
+    assert.equal(round3History[1].round_number, 2);
+    assert.equal(round3History[2].round_number, 3);
+    assert.equal(String(round3History[0].author_label || ''), 'Proposer');
+    assert.equal(String(round3History[1].author_label || ''), 'Recipient');
+    assert.equal(String(round3History[2].author_label || ''), 'Proposer');
+    assert.equal(String(round3History[0].text || '').includes(proposerSharedRound1), true);
+    assert.equal(String(round3History[1].text || '').includes(recipientSharedRound2), true);
+    assert.equal(String(round3History[2].text || '').includes(proposerSharedRound3), true);
+    assert.equal(JSON.stringify(recipientWorkspaceBody).includes(proposerPrivateRound1), false);
+    assert.equal(JSON.stringify(recipientWorkspaceBody).includes(proposerPrivateRound3), false);
+    assert.equal(String(recipientWorkspaceBody.party_context?.draft_author_role || ''), 'recipient');
+  });
+
+  test('AI mediation inputs preserve authored proposer/recipient provenance for shared and confidential history', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = makeOwnerCookie('history_ai_owner');
+    const recipientCookie = makeRecipientCookie('history_ai_recipient', 'recipient@example.com');
+    const proposerShared = 'PROPOSER_SHARED_AI_CONTEXT_MARKER';
+    const proposerPrivate = 'PROPOSER_PRIVATE_AI_CONTEXT_MARKER';
+    const recipientShared = 'RECIPIENT_SHARED_AI_CONTEXT_MARKER';
+    const recipientPrivate = 'RECIPIENT_PRIVATE_AI_CONTEXT_MARKER';
+
+    const comparison = await createComparison(ownerCookie, {
+      title: 'AI History Provenance',
+      docAText: `Owner private baseline ${proposerPrivate}`,
+      docBText: `Owner shared baseline ${proposerShared}`,
+    });
+
+    const initialLink = await createSharedReportLink(ownerCookie, comparison.id, 'recipient@example.com', {
+      canEdit: true,
+      canEditConfidential: true,
+      canReevaluate: true,
+      canSendBack: true,
+      maxUses: 30,
+    });
+
+    const saveRecipientRes = await saveRecipientDraft(initialLink.token, {
+      shared_payload: { label: 'Shared Information', text: `Recipient shared update ${recipientShared}` },
+      recipient_confidential_payload: {
+        label: 'Confidential Information',
+        notes: `Recipient private update ${recipientPrivate}`,
+      },
+      workflow_step: 2,
+    }, recipientCookie);
+    assert.equal(saveRecipientRes.statusCode, 200);
+
+    const capturedInputs = [];
+    const previousEvaluator = globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
+    globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = async (input) => {
+      capturedInputs.push(input);
+      return {
+        report: {
+          recommendation: 'review',
+          executive_summary: 'Structured authored history was received.',
+          sections: [{ heading: 'Summary', bullets: ['History context available.'] }],
+        },
+        evaluation_provider: 'test',
+        similarity_score: 70,
+      };
+    };
+
+    try {
+      const recipientEvaluateRes = await evaluateRecipientDraft(initialLink.token, {}, recipientCookie);
+      assert.equal(recipientEvaluateRes.statusCode, 200);
+      assert.equal(capturedInputs.length >= 1, true);
+
+      const recipientEvalInput = capturedInputs[0];
+      assert.equal(String(recipientEvalInput.docBText || '').includes('Authored by Proposer'), true);
+      assert.equal(String(recipientEvalInput.docBText || '').includes(proposerShared), true);
+      assert.equal(String(recipientEvalInput.docBText || '').includes('Authored by Recipient'), true);
+      assert.equal(String(recipientEvalInput.docBText || '').includes(recipientShared), true);
+      assert.equal(String(recipientEvalInput.docAText || '').includes(proposerPrivate), true);
+      assert.equal(String(recipientEvalInput.docAText || '').includes(recipientPrivate), true);
+
+      const db = getDb();
+      const evalRunRows = await db.execute(
+        sql`select result_json
+            from shared_report_evaluation_runs
+            where proposal_id = ${comparison.proposal_id}
+            order by created_at desc
+            limit 1`,
+      );
+      const authoredHistory = evalRunRows.rows[0]?.result_json?.authored_history || {};
+      assert.equal(Array.isArray(authoredHistory.shared), true);
+      assert.equal(Array.isArray(authoredHistory.confidential), true);
+      assert.equal(authoredHistory.shared.some((entry) => String(entry.author_role || '') === 'proposer'), true);
+      assert.equal(authoredHistory.shared.some((entry) => String(entry.author_role || '') === 'recipient'), true);
+      assert.equal(authoredHistory.confidential.some((entry) => String(entry.author_role || '') === 'proposer'), true);
+      assert.equal(authoredHistory.confidential.some((entry) => String(entry.author_role || '') === 'recipient'), true);
+
+      const sendRound2 = await sendBackRecipientDraft(initialLink.token, {}, recipientCookie);
+      assert.equal(sendRound2.statusCode, 200);
+
+      capturedInputs.length = 0;
+      const ownerEvaluateRes = await evaluateComparison(comparison.id, ownerCookie, {});
+      assert.equal(ownerEvaluateRes.statusCode, 200);
+      assert.equal(capturedInputs.length >= 1, true);
+
+      const ownerEvalInput = capturedInputs[capturedInputs.length - 1];
+      assert.equal(String(ownerEvalInput.docBText || '').includes(proposerShared), true);
+      assert.equal(String(ownerEvalInput.docBText || '').includes(recipientShared), true);
+      assert.equal(String(ownerEvalInput.docAText || '').includes(proposerPrivate), true);
+      assert.equal(String(ownerEvalInput.docAText || '').includes(recipientPrivate), true);
+
+      const ownerInputTrace = ownerEvaluateRes.jsonBody().evaluation_input_trace || {};
+      assert.equal(Number(ownerInputTrace.authored_shared_entries || 0) >= 2, true);
+      assert.equal(Number(ownerInputTrace.authored_confidential_entries || 0) >= 2, true);
+    } finally {
+      if (previousEvaluator === undefined) {
+        delete globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
+      } else {
+        globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = previousEvaluator;
       }
     }
   });

@@ -867,6 +867,51 @@ export const sharedReportEvaluationRuns = pgTable(
   }),
 );
 
+export const sharedReportContributions = pgTable(
+  'shared_report_contributions',
+  {
+    id: text('id').primaryKey(),
+    proposalId: text('proposal_id')
+      .notNull()
+      .references(() => proposals.id, { onDelete: 'cascade' }),
+    comparisonId: text('comparison_id'),
+    sharedLinkId: text('shared_link_id').references(() => sharedLinks.id, { onDelete: 'set null' }),
+    authorRole: text('author_role').notNull(),
+    authorUserId: text('author_user_id').references(() => users.id, { onDelete: 'set null' }),
+    visibility: text('visibility').notNull(),
+    roundNumber: integer('round_number'),
+    sequenceIndex: integer('sequence_index').notNull(),
+    sourceKind: text('source_kind').notNull().default('manual'),
+    contentPayload: jsonb('content_payload').notNull().default(sql`'{}'::jsonb`),
+    previousContributionId: text('previous_contribution_id').references(
+      () => sharedReportContributions.id,
+      {
+        onDelete: 'set null',
+      },
+    ),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    sharedReportContributionsProposalSeqUnique: uniqueIndex(
+      'shared_report_contributions_proposal_seq_unique',
+    ).on(table.proposalId, table.sequenceIndex),
+    sharedReportContributionsProposalSeqIdx: index(
+      'shared_report_contributions_proposal_seq_idx',
+    ).on(table.proposalId, table.sequenceIndex),
+    sharedReportContributionsProposalVisibilityIdx: index(
+      'shared_report_contributions_proposal_visibility_idx',
+    ).on(table.proposalId, table.visibility, table.createdAt),
+    sharedReportContributionsProposalAuthorIdx: index(
+      'shared_report_contributions_proposal_author_idx',
+    ).on(table.proposalId, table.authorRole, table.createdAt),
+    sharedReportContributionsLinkIdx: index('shared_report_contributions_link_idx').on(
+      table.sharedLinkId,
+      table.createdAt,
+    ),
+  }),
+);
+
 export const sharedLinkResponses = pgTable(
   'shared_link_responses',
   {

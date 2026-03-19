@@ -119,6 +119,33 @@ function toStringList(value) {
   return value.map((entry) => asText(entry)).filter(Boolean);
 }
 
+function normalizeSharedHistoryEntries(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((entry) => ({
+      id: String(entry?.id || ''),
+      label: asText(entry?.visibility_label) || asText(entry?.label) || 'Shared Information',
+      authorLabel: asText(entry?.author_label) || 'Unknown',
+      roundNumber: Number(entry?.round_number || 0) || null,
+      text: asText(entry?.text),
+      html: asText(entry?.html),
+      source: asText(entry?.source) || 'typed',
+    }))
+    .filter((entry) => entry.label || entry.text || entry.html);
+}
+
+function buildSharedHistoryText(entries) {
+  return normalizeSharedHistoryEntries(entries)
+    .map((entry) => {
+      const roundLabel = entry.roundNumber ? `Round ${entry.roundNumber} - ` : '';
+      return `${roundLabel}${entry.label}\n\n${entry.text || ''}`;
+    })
+    .join('\n\n---\n\n')
+    .trim();
+}
+
 function extractConfidentialityWarnings(result) {
   if (!result || typeof result !== 'object' || Array.isArray(result)) {
     return {
@@ -381,6 +408,14 @@ export default function DocumentComparisonDetail() {
   });
 
   const comparison = comparisonQuery.data?.comparison || null;
+  const sharedHistoryEntries = useMemo(
+    () => normalizeSharedHistoryEntries(comparisonQuery.data?.sharedHistory?.entries),
+    [comparisonQuery.data?.sharedHistory?.entries],
+  );
+  const liveSharedText = useMemo(
+    () => buildSharedHistoryText(sharedHistoryEntries) || String(comparison?.doc_b_text || ''),
+    [comparison?.doc_b_text, sharedHistoryEntries],
+  );
   const loadedComparisonId = asText(comparison?.id);
   const hasMismatchedComparisonPayload =
     Boolean(loadedComparisonId) &&
@@ -393,7 +428,7 @@ export default function DocumentComparisonDetail() {
     .trim()
     .split(/\s+/g)
     .filter(Boolean).length;
-  const sharedWordCount = String(comparison?.doc_b_text || '')
+  const sharedWordCount = String(liveSharedText || '')
     .trim()
     .split(/\s+/g)
     .filter(Boolean).length;
@@ -883,13 +918,32 @@ export default function DocumentComparisonDetail() {
               timelineItems,
             }}
             proposalDetailsProps={{
-              description: 'Read-only document content for both information documents.',
+              description: 'Read-only confidential information plus cumulative authored shared history.',
               leftLabel: comparison.party_a_label || CONFIDENTIAL_LABEL,
               rightLabel: comparison.party_b_label || SHARED_LABEL,
               leftText: comparison.doc_a_text || '',
               leftHtml: comparison.doc_a_html || '',
-              rightText: comparison.doc_b_text || '',
+              rightText: liveSharedText || '',
               rightHtml: comparison.doc_b_html || '',
+              documents: sharedHistoryEntries.length > 0
+                ? [
+                    {
+                      label: comparison.party_a_label || CONFIDENTIAL_LABEL,
+                      text: comparison.doc_a_text || '',
+                      html: comparison.doc_a_html || '',
+                      badges: [comparison.doc_a_source || 'typed'],
+                    },
+                    ...sharedHistoryEntries.map((entry) => ({
+                      label:
+                        entry.roundNumber
+                          ? `Round ${entry.roundNumber} - ${entry.label}`
+                          : entry.label,
+                      text: entry.text || '',
+                      html: entry.html || '',
+                      badges: [entry.authorLabel, entry.source || 'typed'],
+                    })),
+                  ]
+                : undefined,
             }}
           />
         </div>

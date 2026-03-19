@@ -3,6 +3,10 @@ import { ok } from '../../_lib/api-response.js';
 import { getDb, schema } from '../../_lib/db/client.js';
 import { ApiError } from '../../_lib/errors.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
+import {
+  buildSharedHistoryComposite,
+  loadSharedReportHistory,
+} from '../../_lib/shared-report-history.js';
 import { buildRecipientSafeEvaluationProjection } from '../document-comparisons/_helpers.js';
 
 function asText(value: unknown) {
@@ -96,19 +100,20 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
             .limit(1)
         : [null];
 
+    const sharedHistory = await loadSharedReportHistory({
+      db,
+      proposal,
+      comparison,
+    });
+    const sharedContent = buildSharedHistoryComposite(sharedHistory.sharedEntries);
+
     const projection = buildRecipientSafeEvaluationProjection({
       evaluationResult: comparison?.evaluationResult || {},
       publicReport: comparison?.publicReport || {},
       confidentialText: comparison?.docAText || '',
-      sharedText: comparison?.docBText || '',
+      sharedText: sharedContent.text || comparison?.docBText || '',
       title: comparison?.title || proposal.title || 'Shared Report',
     });
-
-    const comparisonInputs = toObject(comparison?.inputs);
-    const sharedHtml =
-      typeof comparisonInputs.doc_b_html === 'string' && comparisonInputs.doc_b_html.trim().length > 0
-        ? comparisonInputs.doc_b_html
-        : null;
 
     ok(res, 200, {
       sharedReport: {
@@ -119,8 +124,12 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         status: proposal.status || updatedLink.status,
         shared_content: {
           label: 'Shared Information',
-          text: comparison?.docBText || '',
-          html: sharedHtml,
+          text: sharedContent.text || comparison?.docBText || '',
+          html: sharedContent.html,
+        },
+        shared_history: {
+          entries: sharedHistory.sharedEntries,
+          max_round_number: sharedHistory.maxRoundNumber,
         },
         ai_report: projection.public_report || {},
         uses: updatedLink.uses,

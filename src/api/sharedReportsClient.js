@@ -131,6 +131,7 @@ export const sharedReportsClient = {
     const response = await request(`/api/sharedReports/${encodeToken(token)}`);
     return {
       sharedReport: response.sharedReport || null,
+      sharedHistory: response.sharedReport?.shared_history || null,
     };
   },
 
@@ -143,6 +144,8 @@ export const sharedReportsClient = {
       baseline: response.baseline || null,
       baselineShared: response.baseline_shared || null,
       baselineAiReport: response.baseline_ai_report || null,
+      sharedHistory: response.shared_history || null,
+      partyContext: response.party_context || null,
       recipientDraft: response.recipientDraft || null,
       latestEvaluation: response.latestEvaluation || null,
       latestSentRevision: response.latestSentRevision || null,

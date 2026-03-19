@@ -20,6 +20,12 @@ import {
   generateDocumentComparisonCoach,
 } from '../../../_lib/vertex-coach.js';
 import { extractSafeMediatorContext } from '../../../_lib/coach-mediator-context.js';
+import {
+  buildDraftContributionEntries,
+  formatContributionsForAi,
+  HISTORY_AUTHOR_PROPOSER,
+  loadSharedReportHistory,
+} from '../../../_lib/shared-report-history.js';
 import { ensureComparisonFound } from '../_helpers.js';
 import { assertDocumentComparisonWithinLimits } from '../_limits.js';
 
@@ -315,6 +321,15 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
         ? existing.inputs
         : {};
     const companyContext = resolveComparisonCompanyContext(existing, existingInputs);
+    const linkedProposal =
+      existing.proposalId
+        ? await db
+            .select()
+            .from(schema.proposals)
+            .where(eq(schema.proposals.id, existing.proposalId))
+            .limit(1)
+            .then((rows) => rows[0] || null)
+        : null;
     const useRequestDocumentOverrides = intent !== 'custom_prompt';
     const resolvedDocA = resolveCoachDocumentSide({
       requestText: useRequestDocumentOverrides ? body.docAText ?? body.doc_a_text : undefined,
@@ -334,6 +349,73 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     const docBText = resolvedDocB.text;
     const docAHtml = resolvedDocA.html;
     const docBHtml = resolvedDocB.html;
+    const sharedHistory = linkedProposal
+      ? await loadSharedReportHistory({
+          db,
+          proposal: linkedProposal,
+          comparison: existing,
+        })
+      : {
+          contributions: [],
+          maxRoundNumber: 0,
+        };
+    const historyContributions = Array.isArray(sharedHistory?.contributions)
+      ? sharedHistory.contributions
+      : [];
+    const latestProposerSharedEntry = [...historyContributions]
+      .reverse()
+      .find((entry) => entry.authorRole === HISTORY_AUTHOR_PROPOSER && entry.visibility === 'shared');
+    const latestProposerConfidentialEntry = [...historyContributions]
+      .reverse()
+      .find((entry) => entry.authorRole === HISTORY_AUTHOR_PROPOSER && entry.visibility === 'confidential');
+    const draftEntries = buildDraftContributionEntries({
+      authorRole: HISTORY_AUTHOR_PROPOSER,
+      roundNumber: (Number(sharedHistory?.maxRoundNumber || 0) || 0) + 1,
+      sharedPayload: {
+        label: 'Shared by Proposer',
+        text: docBText,
+        html: docBHtml,
+        source: resolvedDocB.source,
+      },
+      confidentialPayload: {
+        label: 'Confidential to Proposer',
+        text: docAText,
+        notes: docAText,
+        html: docAHtml,
+        source: resolvedDocA.source,
+      },
+      sourceKind: 'draft',
+      updatedAt: existing.updatedAt,
+    });
+    const appendedDraftEntries = draftEntries.filter((entry) => {
+      const candidateText = asText(entry?.contentPayload?.text || entry?.contentPayload?.notes);
+      if (!candidateText) {
+        return false;
+      }
+      if (entry.visibility === 'shared') {
+        return candidateText !== asText(latestProposerSharedEntry?.contentPayload?.text);
+      }
+      return candidateText !== asText(
+        latestProposerConfidentialEntry?.contentPayload?.text ||
+        latestProposerConfidentialEntry?.contentPayload?.notes,
+      );
+    });
+    const sharedHistoryContext = linkedProposal
+      ? formatContributionsForAi([
+          ...historyContributions.filter((entry) => entry.visibility === 'shared'),
+          ...appendedDraftEntries.filter((entry) => entry.visibility === 'shared'),
+        ])
+      : '';
+    const confidentialHistoryContext = linkedProposal
+      ? formatContributionsForAi([
+          ...historyContributions.filter(
+            (entry) =>
+              entry.visibility === 'confidential' &&
+              entry.authorRole === HISTORY_AUTHOR_PROPOSER,
+          ),
+          ...appendedDraftEntries.filter((entry) => entry.visibility === 'confidential'),
+        ])
+      : '';
 
     logCoachDebug('content_resolved', {
       comparison_id: comparisonId,
@@ -372,6 +454,8 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       companyWebsite: companyContext.companyWebsite,
       threadHistory: threadHistory.length > 0 ? threadHistory : undefined,
       mediatorContext,
+      sharedHistoryContext,
+      confidentialHistoryContext,
     });
     const cacheHashPrefix = cacheHash.slice(0, 12);
 
@@ -421,6 +505,8 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       otherPartyCanaryTokens: resolveOtherPartyCanaryTokens(existing, existingInputs),
       threadHistory: threadHistory.length > 0 ? threadHistory : undefined,
       mediatorContext,
+      sharedHistoryContext,
+      confidentialHistoryContext,
     });
     const relevanceGuarded = applyCoachRelevanceGuard({
       coachResult: generated.result,

@@ -12,6 +12,13 @@ import { readJsonBody } from '../../../_lib/http.js';
 import { newId } from '../../../_lib/ids.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 import {
+  buildDraftContributionEntries,
+  formatContributionsForAi,
+  getLinkRecipientAuthorRole,
+  loadSharedReportHistory,
+  resolveSharedReportLinkRound,
+} from '../../../_lib/shared-report-history.js';
+import {
   applyCoachLeakGuard,
   applyCoachRelevanceGuard,
   buildCoachCacheHash,
@@ -273,6 +280,38 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
 
     const docAText = resolvedDocA.text;
     const docBText = resolvedDocB.text;
+    const sharedHistory = await loadSharedReportHistory({
+      db: resolved.db,
+      proposal: resolved.proposal,
+      comparison: resolved.comparison,
+    });
+    const draftAuthorRole = getLinkRecipientAuthorRole({
+      proposal: resolved.proposal,
+      link: resolved.link,
+    });
+    const outgoingRoundNumber = resolveSharedReportLinkRound(resolved.link.reportMetadata) + 1;
+    const draftEntries = buildDraftContributionEntries({
+      authorRole: draftAuthorRole,
+      roundNumber: outgoingRoundNumber,
+      sharedPayload,
+      confidentialPayload,
+      sourceKind: 'draft',
+      createdAt: currentDraft?.createdAt || null,
+      updatedAt: currentDraft?.updatedAt || null,
+    });
+    const visibleConfidentialHistoryEntries = sharedHistory.contributions.filter(
+      (entry) =>
+        entry.visibility === 'confidential' &&
+        entry.authorRole === draftAuthorRole,
+    );
+    const sharedHistoryContext = formatContributionsForAi([
+      ...sharedHistory.contributions.filter((entry) => entry.visibility === 'shared'),
+      ...draftEntries.filter((entry) => entry.visibility === 'shared'),
+    ]);
+    const confidentialHistoryContext = formatContributionsForAi([
+      ...visibleConfidentialHistoryEntries,
+      ...draftEntries.filter((entry) => entry.visibility === 'confidential'),
+    ]);
 
     assertDocumentComparisonWithinLimits({
       docAText,
@@ -331,6 +370,8 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       companyWebsite: companyWebsite || undefined,
       threadHistory: threadHistory.length > 0 ? threadHistory : undefined,
       mediatorContext,
+      sharedHistoryContext,
+      confidentialHistoryContext,
     });
 
     const [cached] = await resolved.db
@@ -372,6 +413,8 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       companyWebsite: companyWebsite || undefined,
       threadHistory: threadHistory.length > 0 ? threadHistory : undefined,
       mediatorContext,
+      sharedHistoryContext,
+      confidentialHistoryContext,
     });
     const relevanceGuarded = applyCoachRelevanceGuard({
       coachResult: generated.result,

@@ -111,6 +111,35 @@ function renderDocumentReadOnly({ text, html }) {
   return <div className="whitespace-pre-wrap text-sm text-slate-800">{safeText}</div>;
 }
 
+function normalizeSharedHistoryEntries(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((entry) => ({
+      id: String(entry?.id || ''),
+      label: asText(entry?.visibility_label) || asText(entry?.label) || 'Shared Information',
+      authorLabel: asText(entry?.author_label) || 'Unknown',
+      roundNumber: Number(entry?.round_number || 0) || null,
+      text: asText(entry?.text),
+      html: asText(entry?.html),
+      source: asText(entry?.source) || 'typed',
+    }))
+    .filter((entry) => entry.label || entry.text || entry.html);
+}
+
+function buildSharedHistoryText(entries) {
+  const normalizedEntries = normalizeSharedHistoryEntries(entries);
+  return normalizedEntries
+    .map((entry) => {
+      const roundLabel = entry.roundNumber ? `Round ${entry.roundNumber} - ` : '';
+      const content = entry.text || '';
+      return `${roundLabel}${entry.label}\n\n${content}`;
+    })
+    .join('\n\n---\n\n')
+    .trim();
+}
+
 function getStatusLabel(status) {
   const normalized = String(status || 'draft').toLowerCase();
   const visibleStatusLabel = getVisibleProposalStatusLabel(normalized);
@@ -213,7 +242,7 @@ function triggerJsonDownload(filename, payload) {
   URL.revokeObjectURL(url);
 }
 
-async function downloadProposalInfoPdf(proposal, comparison) {
+async function downloadProposalInfoPdf(proposal, comparison, sharedHistoryEntries = []) {
   const { jsPDF } = await import('jspdf');
   const pdf = new jsPDF({
     unit: 'pt',
@@ -256,11 +285,12 @@ async function downloadProposalInfoPdf(proposal, comparison) {
   y += 8;
 
   if (comparison) {
+    const sharedHistoryText = buildSharedHistoryText(sharedHistoryEntries);
     writeLine(CONFIDENTIAL_LABEL, { bold: true });
     writeLine(comparison.doc_a_text || '');
     y += 8;
     writeLine(SHARED_LABEL, { bold: true });
-    writeLine(comparison.doc_b_text || '');
+    writeLine(sharedHistoryText || comparison.doc_b_text || '');
   } else {
     writeLine('No linked document comparison content was found for this opportunity.');
   }
@@ -296,6 +326,14 @@ export default function ProposalDetail() {
   });
 
   const comparison = comparisonQuery.data?.comparison || null;
+  const sharedHistoryEntries = useMemo(
+    () => normalizeSharedHistoryEntries(comparisonQuery.data?.sharedHistory?.entries),
+    [comparisonQuery.data?.sharedHistory?.entries],
+  );
+  const liveSharedText = useMemo(
+    () => buildSharedHistoryText(sharedHistoryEntries) || String(comparison?.doc_b_text || ''),
+    [comparison?.doc_b_text, sharedHistoryEntries],
+  );
   const versionHistory = useMemo(() => {
     if (detailVersions.length > 0) {
       return detailVersions;
@@ -378,12 +416,12 @@ export default function ProposalDetail() {
     }
   }, [selectedVersionId, versionHistory]);
   const confidentialLength = String(comparison?.doc_a_text || '').length;
-  const sharedLength = String(comparison?.doc_b_text || '').length;
+  const sharedLength = String(liveSharedText || '').length;
   const confidentialWordCount = String(comparison?.doc_a_text || '')
     .trim()
     .split(/\s+/g)
     .filter(Boolean).length;
-  const sharedWordCount = String(comparison?.doc_b_text || '')
+  const sharedWordCount = String(liveSharedText || '')
     .trim()
     .split(/\s+/g)
     .filter(Boolean).length;
@@ -481,7 +519,7 @@ export default function ProposalDetail() {
   });
 
   const downloadProposalMutation = useMutation({
-    mutationFn: () => downloadProposalInfoPdf(proposal, comparison),
+    mutationFn: () => downloadProposalInfoPdf(proposal, comparison, sharedHistoryEntries),
     onSuccess: () => {
       toast.success('Opportunity info PDF downloaded');
     },
@@ -992,11 +1030,35 @@ export default function ProposalDetail() {
                             <Badge variant="outline">{sharedWordCount} words</Badge>
                           </div>
                         </div>
-                        <div className="rounded-xl border border-slate-200 bg-white p-4 max-h-[400px] overflow-auto">
-                          {renderDocumentReadOnly({
-                            text: comparison?.doc_b_text || '',
-                            html: comparison?.doc_b_html || '',
-                          })}
+                        <div className="space-y-4">
+                          {(sharedHistoryEntries.length > 0 ? sharedHistoryEntries : [
+                            {
+                              id: 'live-shared-fallback',
+                              label: comparison?.party_b_label || SHARED_LABEL,
+                              text: comparison?.doc_b_text || '',
+                              html: comparison?.doc_b_html || '',
+                              source: comparison?.doc_b_source || 'typed',
+                              roundNumber: null,
+                              authorLabel: 'Proposer',
+                            },
+                          ]).map((entry) => (
+                            <div
+                              key={entry.id}
+                              className="rounded-xl border border-slate-200 bg-white p-4 max-h-[400px] overflow-auto"
+                            >
+                              <div className="mb-3 flex flex-wrap items-center gap-2">
+                                <Badge variant="outline">
+                                  {entry.roundNumber ? `Round ${entry.roundNumber}` : 'Current'}
+                                </Badge>
+                                <Badge variant="outline">{entry.authorLabel}</Badge>
+                                <Badge variant="outline">{entry.source || 'typed'}</Badge>
+                              </div>
+                              {renderDocumentReadOnly({
+                                text: entry.text || '',
+                                html: entry.html || '',
+                              })}
+                            </div>
+                          ))}
                         </div>
                       </div>
                     </>

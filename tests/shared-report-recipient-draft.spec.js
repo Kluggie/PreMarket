@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
+import { sql } from 'drizzle-orm';
 import { ensureTestEnv, makeSessionCookie } from './helpers/auth.mjs';
-import { ensureMigrated } from './helpers/db.mjs';
+import { ensureMigrated, getDb } from './helpers/db.mjs';
 
 const BASE_URL = process.env.PLAYWRIGHT_TEST_BASE_URL || 'http://localhost:4273';
 const LOAD_TIMEOUT_MS = 120_000;
@@ -432,5 +433,103 @@ test.describe('Shared Report Recipient Draft', () => {
     await expect(page).toHaveURL(new RegExp(`/shared-report/${encodeURIComponent(token)}`), {
       timeout: LOAD_TIMEOUT_MS,
     });
+  });
+
+  test('Shared report Step 0 shows cumulative bilateral history with round and author labels after multi-round send-back', async ({ page, request }) => {
+    const ownerId = uniqueId('history_owner');
+    const recipientEmail = `${uniqueId('history_recipient')}@example.com`;
+    const ownerCookie = makeSessionCookie({
+      sub: ownerId,
+      email: `${ownerId}@example.com`,
+      name: 'Shared Owner',
+    });
+    const recipientCookie = makeStableEmailCookie(recipientEmail);
+
+    const proposerRound1 = `PROPOSER_UI_ROUND_1_${uniqueId('marker')}`;
+    const recipientRound2 = `RECIPIENT_UI_ROUND_2_${uniqueId('marker')}`;
+    const proposerRound3 = `PROPOSER_UI_ROUND_3_${uniqueId('marker')}`;
+
+    const comparison = await createComparison(request, ownerCookie, {
+      title: `Shared History UI ${uniqueId('title')}`,
+      docAText: 'Owner private baseline.',
+      docBText: `Owner shared baseline ${proposerRound1}`,
+    });
+    const sharedLink = await createSharedReportLink(
+      request,
+      ownerCookie,
+      comparison.id,
+      recipientEmail,
+    );
+
+    const initialToken = sharedLink.token;
+    expect(initialToken).toBeTruthy();
+
+    const round2Save = await request.post(`${BASE_URL}/api/shared-report/${encodeURIComponent(initialToken)}/draft`, {
+      headers: { cookie: recipientCookie },
+      data: {
+        shared_payload: { label: 'Shared Information', text: `Recipient reply ${recipientRound2}` },
+        recipient_confidential_payload: { label: 'Confidential Information', notes: 'Recipient private note.' },
+        workflow_step: 2,
+      },
+    });
+    expect(round2Save.status()).toBe(200);
+
+    const round2Send = await request.post(`${BASE_URL}/api/shared-report/${encodeURIComponent(initialToken)}/send-back`, {
+      headers: { cookie: recipientCookie },
+      data: {},
+    });
+    expect(round2Send.status()).toBe(200);
+
+    const db = getDb();
+    const round2LinkRows = await db.execute(
+      sql`select token
+          from shared_links
+          where proposal_id = ${comparison.proposal_id}
+            and token <> ${initialToken}
+          order by created_at desc
+          limit 1`,
+    );
+    const round2Token = String(round2LinkRows.rows[0]?.token || '');
+    expect(round2Token).toBeTruthy();
+
+    const round3Save = await request.post(`${BASE_URL}/api/shared-report/${encodeURIComponent(round2Token)}/draft`, {
+      headers: { cookie: ownerCookie },
+      data: {
+        shared_payload: { label: 'Shared Information', text: `Owner follow-up ${proposerRound3}` },
+        recipient_confidential_payload: { label: 'Confidential Information', notes: 'Owner private follow-up.' },
+        workflow_step: 2,
+      },
+    });
+    expect(round3Save.status()).toBe(200);
+
+    const round3Send = await request.post(`${BASE_URL}/api/shared-report/${encodeURIComponent(round2Token)}/send-back`, {
+      headers: { cookie: ownerCookie },
+      data: {},
+    });
+    expect(round3Send.status()).toBe(200);
+
+    const round3LinkRows = await db.execute(
+      sql`select token
+          from shared_links
+          where proposal_id = ${comparison.proposal_id}
+            and token not in (${initialToken}, ${round2Token})
+          order by created_at desc
+          limit 1`,
+    );
+    const round3Token = String(round3LinkRows.rows[0]?.token || '');
+    expect(round3Token).toBeTruthy();
+
+    await applySessionCookie(page.context(), recipientCookie);
+    await page.goto(`${BASE_URL}/shared-report/${encodeURIComponent(round3Token)}`, {
+      waitUntil: 'domcontentloaded',
+    });
+
+    await expectComparisonStep(page, 0);
+    await expect(page.getByText('Round 1 - Shared by Proposer')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+    await expect(page.getByText('Round 2 - Shared by Recipient')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+    await expect(page.getByText('Round 3 - Shared by Proposer')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+    await expect(page.getByText(proposerRound1)).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+    await expect(page.getByText(recipientRound2)).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+    await expect(page.getByText(proposerRound3)).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
   });
 });

@@ -10,6 +10,12 @@ import { createNotificationEvent } from '../../../_lib/notifications.js';
 import { appendProposalHistory } from '../../../_lib/proposal-history.js';
 import { assertProposalOpenForNegotiation, buildPendingWonReset } from '../../../_lib/proposal-outcomes.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
+import {
+  buildDraftContributionEntries,
+  formatContributionsForAi,
+  HISTORY_AUTHOR_PROPOSER,
+  loadSharedReportHistory,
+} from '../../../_lib/shared-report-history.js';
 import { evaluateDocumentComparisonWithVertex } from '../../../_lib/vertex-evaluation.js';
 import { evaluateWithVertexV2 } from '../../../_lib/vertex-evaluation-v2.js';
 import { getVertexConfig } from '../../../_lib/integrations.js';
@@ -761,6 +767,10 @@ function resolveDocumentComparisonEngine(req: any): 'v1' | 'v2' {
     return queryEngine;
   }
 
+  if (typeof (globalThis as any).__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ === 'function') {
+    return 'v1';
+  }
+
   const runtimeEnv = asLower(process.env.NODE_ENV || '');
   const configuredEngine = asLower(process.env.EVAL_ENGINE || '');
   if (runtimeEnv !== 'test' && (configuredEngine === 'v1' || configuredEngine === 'v2')) {
@@ -1270,15 +1280,92 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       recipientConfidentialText,
     });
     const counterpartyCanaryTokens = resolveOtherPartyCanaryTokens(existing, existingInputs);
+    const sharedHistory = linkedProposal
+      ? await loadSharedReportHistory({
+          db,
+          proposal: linkedProposal,
+          comparison: existing,
+        })
+      : {
+          contributions: [],
+          maxRoundNumber: 0,
+        };
+    const historyContributions = Array.isArray(sharedHistory?.contributions)
+      ? sharedHistory.contributions
+      : [];
+    const latestProposerSharedEntry = [...historyContributions]
+      .reverse()
+      .find((entry) => entry.authorRole === HISTORY_AUTHOR_PROPOSER && entry.visibility === 'shared');
+    const latestProposerConfidentialEntry = [...historyContributions]
+      .reverse()
+      .find((entry) => entry.authorRole === HISTORY_AUTHOR_PROPOSER && entry.visibility === 'confidential');
+    const currentDraftEntries = buildDraftContributionEntries({
+      authorRole: HISTORY_AUTHOR_PROPOSER,
+      roundNumber: (Number(sharedHistory?.maxRoundNumber || 0) || 0) + 1,
+      sharedPayload: {
+        label: 'Shared by Proposer',
+        text: draft.docBText,
+        html: asText(draft.inputs?.doc_b_html),
+        json: draft.inputs?.doc_b_json,
+        source: asText(draft.inputs?.doc_b_source) || 'typed',
+        files: Array.isArray(draft.inputs?.doc_b_files) ? draft.inputs.doc_b_files : [],
+      },
+      confidentialPayload: {
+        label: 'Confidential to Proposer',
+        text: draft.docAText,
+        notes: draft.docAText,
+        html: asText(draft.inputs?.doc_a_html),
+        json: draft.inputs?.doc_a_json,
+        source: asText(draft.inputs?.doc_a_source) || 'typed',
+        files: Array.isArray(draft.inputs?.doc_a_files) ? draft.inputs.doc_a_files : [],
+      },
+      sourceKind: 'draft',
+      updatedAt: existing.updatedAt,
+    });
+    const appendedDraftEntries = currentDraftEntries.filter((entry) => {
+      const candidateText = asText(entry?.contentPayload?.text || entry?.contentPayload?.notes);
+      if (!candidateText) {
+        return false;
+      }
+      if (entry.visibility === 'shared') {
+        return candidateText !== asText(latestProposerSharedEntry?.contentPayload?.text);
+      }
+      return candidateText !== asText(
+        latestProposerConfidentialEntry?.contentPayload?.text ||
+        latestProposerConfidentialEntry?.contentPayload?.notes,
+      );
+    });
+    const attributedSharedEntries = linkedProposal
+      ? [
+          ...historyContributions.filter((entry) => entry.visibility === 'shared'),
+          ...appendedDraftEntries.filter((entry) => entry.visibility === 'shared'),
+        ]
+      : [];
+    const attributedConfidentialEntries = linkedProposal
+      ? [
+          ...historyContributions.filter((entry) => entry.visibility === 'confidential'),
+          ...appendedDraftEntries.filter((entry) => entry.visibility === 'confidential'),
+        ]
+      : [];
+    const evaluationSharedText = linkedProposal
+      ? formatContributionsForAi(attributedSharedEntries)
+      : draft.docBText;
+    const evaluationConfidentialText = linkedProposal
+      ? formatContributionsForAi(attributedConfidentialEntries)
+      : draft.docAText;
     const inputSource = hasRequestInputOverride(body) ? 'request_body' : 'db';
     const inputVersion = getInputVersionFromMetadata(existing?.metadata);
     const evaluationInputTrace = buildEvaluationInputTrace({
       comparisonId: existing.id,
       source: inputSource,
-      confidentialText: draft.docAText,
-      sharedText: draft.docBText,
+      confidentialText: evaluationConfidentialText,
+      sharedText: evaluationSharedText,
       inputVersion,
     });
+    if (linkedProposal) {
+      evaluationInputTrace.authored_shared_entries = attributedSharedEntries.length;
+      evaluationInputTrace.authored_confidential_entries = attributedConfidentialEntries.length;
+    }
     logEvaluationInputTrace({
       requestId,
       comparisonId: existing.id,
@@ -1286,8 +1373,8 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       inputTrace: evaluationInputTrace,
     });
     assertDocumentComparisonWithinLimits({
-      docAText: draft.docAText,
-      docBText: draft.docBText,
+      docAText: evaluationConfidentialText,
+      docBText: evaluationSharedText,
     });
     const sharedLength = Number(evaluationInputTrace.shared_length || 0);
     const confidentialLength = Number(evaluationInputTrace.confidential_length || 0);
@@ -1416,8 +1503,8 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
           let v2Result: any;
           try {
             v2Result = await evaluateWithVertexV2({
-              sharedText: draft.docBText || '',
-              confidentialText: draft.docAText || '',
+              sharedText: evaluationSharedText || '',
+              confidentialText: evaluationConfidentialText || '',
               requestId,
               enforceLeakGuard: false,
               // Model routing — resolved inside the lib via env vars if not set here.
@@ -1543,8 +1630,8 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
         } else {
           evaluated = await evaluateComparison!({
             title: draft.title,
-            docAText: draft.docAText,
-            docBText: draft.docBText,
+            docAText: evaluationConfidentialText,
+            docBText: evaluationSharedText,
             docASpans: [],
             docBSpans: [],
             partyALabel: CONFIDENTIAL_LABEL,
@@ -1704,7 +1791,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       const healed = await applyCounterpartyConfidentialitySelfHeal({
         evaluation: evaluation as Record<string, any>,
         title: draft.title,
-        sharedText: draft.docBText || '',
+        sharedText: evaluationSharedText || '',
         requesterConfidentialText: draft.docAText || '',
         counterpartyConfidentialText,
         counterpartyCanaryTokens,

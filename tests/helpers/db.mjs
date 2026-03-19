@@ -185,6 +185,7 @@ export async function resetTables() {
       shared_report_deliveries,
       shared_report_recipient_revisions,
       shared_report_evaluation_runs,
+      shared_report_contributions,
       shared_link_responses,
       snapshot_access,
       proposal_snapshots,

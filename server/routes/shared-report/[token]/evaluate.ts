@@ -10,6 +10,14 @@ import {
 import { ApiError } from '../../../_lib/errors.js';
 import { newId } from '../../../_lib/ids.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
+import {
+  buildDraftContributionEntries,
+  buildSharedHistoryComposite,
+  formatContributionsForAi,
+  getLinkRecipientAuthorRole,
+  loadSharedReportHistory,
+  resolveSharedReportLinkRound,
+} from '../../../_lib/shared-report-history.js';
 import { evaluateDocumentComparisonWithVertex } from '../../../_lib/vertex-evaluation.js';
 import { evaluateWithVertexV2 } from '../../../_lib/vertex-evaluation-v2.js';
 import {
@@ -67,6 +75,10 @@ function resolveDocumentComparisonEngine(req: any): 'v1' | 'v2' {
   const queryEngine = asLower(req.query?.engine || '');
   if (queryEngine === 'v1' || queryEngine === 'v2') {
     return queryEngine;
+  }
+
+  if (typeof (globalThis as any).__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ === 'function') {
+    return 'v1';
   }
 
   const runtimeEnv = asLower(process.env.NODE_ENV || '');
@@ -287,8 +299,9 @@ async function getExchangeHistory(
       const text = asText(entry?.text ?? entry);
       if (text) missingQuestions.push(text);
     }
+    const roundNumber = Number(inputTrace?.exchange_round || 0);
     return {
-      round: index + 1,
+      round: Number.isFinite(roundNumber) && roundNumber >= 1 ? Math.floor(roundNumber) : index + 1,
       evaluationRunId: run.id,
       sharedTextSnapshot: asText(snapshot?.text),
       sharedTextLength: Number(inputTrace?.shared_length || 0) || 0,
@@ -423,25 +436,70 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
 
     const sharedPayload = toObject(currentDraft.sharedPayload);
     const confidentialPayload = toObject(currentDraft.recipientConfidentialPayload);
+    const sharedHistory = await loadSharedReportHistory({
+      db: resolved.db,
+      proposal: resolved.proposal,
+      comparison: resolved.comparison,
+    });
+    const draftAuthorRole = getLinkRecipientAuthorRole({
+      proposal: resolved.proposal,
+      link: resolved.link,
+    });
+    const outgoingRoundNumber = resolveSharedReportLinkRound(resolved.link.reportMetadata) + 1;
 
     assertPayloadSize(sharedPayload, 'shared_payload');
     assertPayloadSize(confidentialPayload, 'recipient_confidential_payload');
 
     const sharedFallbackText = String(resolved.comparison?.docBText || defaultSharedPayload.text || '');
-    const proposerConfidentialText = sanitizeEditorText(String(resolved.comparison?.docAText || ''));
-    const sharedText = coercePayloadText(sharedPayload, sharedFallbackText);
-    const sharedHtml = coercePayloadHtml(sharedPayload, sharedText);
-    const recipientConfidentialText = coercePayloadText(confidentialPayload, '');
-    const confidentialBundle = buildConfidentialBundle({
-      proposerConfidentialText,
-      recipientConfidentialText,
+    const currentRoundSharedText = coercePayloadText(sharedPayload, sharedFallbackText);
+    const currentRoundRecipientConfidentialText = coercePayloadText(confidentialPayload, '');
+    const draftEntries = buildDraftContributionEntries({
+      authorRole: draftAuthorRole,
+      roundNumber: outgoingRoundNumber,
+      sharedPayload,
+      confidentialPayload,
+      sourceKind: 'draft',
+      createdAt: currentDraft.createdAt,
+      updatedAt: currentDraft.updatedAt,
     });
+    const draftSharedEntries = draftEntries.filter((entry) => entry.visibility === 'shared');
+    const draftConfidentialEntries = draftEntries.filter((entry) => entry.visibility === 'confidential');
+    const sharedHistoryEntriesForAi = [
+      ...sharedHistory.contributions.filter((entry) => entry.visibility === 'shared'),
+      ...draftSharedEntries,
+    ];
+    const confidentialHistoryEntriesForAi = [
+      ...sharedHistory.contributions.filter((entry) => entry.visibility === 'confidential'),
+      ...draftConfidentialEntries,
+    ];
+    const sharedText = formatContributionsForAi(sharedHistoryEntriesForAi);
+    const confidentialBundle = formatContributionsForAi(confidentialHistoryEntriesForAi);
+    const sharedHtml = buildSharedHistoryComposite([
+      ...sharedHistory.sharedEntries,
+      ...draftSharedEntries.map((entry) => ({
+        id: entry.id,
+        visibility_label: `Shared by ${entry.authorLabel}`,
+        label: entry.contentPayload?.label || `Shared by ${entry.authorLabel}`,
+        text: entry.contentPayload?.text || '',
+        html: entry.contentPayload?.html || '',
+        source: entry.contentPayload?.source || 'typed',
+        files: entry.contentPayload?.files || [],
+      })),
+    ]).html;
 
     // ── Exchange history: include previous rounds' shared text ──────────────
     const exchangeHistory = await getExchangeHistory(resolved.db, resolved.link.id);
+    const sharedSnapshotByRound = new Map(
+      sharedHistory.sharedRoundSnapshots.map((entry) => [Number(entry.round || 0), entry.sharedTextSnapshot]),
+    );
+    const normalizedExchangeHistory = exchangeHistory.map((entry) => ({
+      ...entry,
+      sharedTextSnapshot:
+        sharedSnapshotByRound.get(Number(entry.round || 0)) || entry.sharedTextSnapshot,
+    }));
 
     // ── Build convergence digest from prior evaluation rounds ───────────────
-    const priorEvalSnapshots: ExchangeRoundSnapshot[] = exchangeHistory.map((h) => ({
+    const priorEvalSnapshots: ExchangeRoundSnapshot[] = normalizedExchangeHistory.map((h) => ({
       round: h.round,
       sharedTextSnapshot: h.sharedTextSnapshot,
       missingQuestions: h.missingQuestions || [],
@@ -453,10 +511,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     const budgeted = buildBudgetedContext({
       currentSharedText: sharedText,
       confidentialText: confidentialBundle,
-      historyRounds: exchangeHistory.map((h) => ({
-        round: h.round,
-        sharedTextSnapshot: h.sharedTextSnapshot,
-      })),
+      historyRounds: [],
       priorEvaluationRounds: priorEvalSnapshots,
     });
     const evaluationSharedText = budgeted.sharedText;
@@ -622,12 +677,15 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
             evaluation_result: projection.evaluation_result || {},
             input_trace: {
               shared_length: sharedText.length,
+              current_round_shared_length: currentRoundSharedText.length,
               evaluation_shared_length: evaluationSharedText.length,
               confidential_length: confidentialBundle.length,
-              proposer_confidential_length: proposerConfidentialText.length,
-              recipient_confidential_length: recipientConfidentialText.length,
-              exchange_round: exchangeHistory.length + 1,
-              previous_rounds: exchangeHistory.length,
+              current_round_confidential_length: currentRoundRecipientConfidentialText.length,
+              exchange_round: outgoingRoundNumber,
+              previous_rounds: normalizedExchangeHistory.length,
+              attributed_shared_entries: sharedHistoryEntriesForAi.length,
+              attributed_confidential_entries: confidentialHistoryEntriesForAi.length,
+              current_round_author_role: draftAuthorRole,
               budget_was_trimmed: budgeted.wasTrimmed,
               estimated_input_chars: budgeted.budget.totalChars,
               estimated_input_tokens: budgeted.estimatedTokens,
@@ -643,13 +701,33 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
               convergence_open_questions: convergenceDigest?.openQuestions?.length || 0,
               convergence_resolved_questions: convergenceDigest?.resolvedQuestions?.length || 0,
             },
-            exchange_history: exchangeHistory.map((round) => ({
+            exchange_history: normalizedExchangeHistory.map((round) => ({
               round: round.round,
               evaluation_run_id: round.evaluationRunId,
               shared_text_length: round.sharedTextLength,
               confidential_length: round.confidentialLength,
               created_at: round.createdAt,
             })),
+            authored_history: {
+              shared: sharedHistoryEntriesForAi.map((entry) => ({
+                contribution_id: entry.id,
+                author_role: entry.authorRole,
+                visibility: entry.visibility,
+                round_number: entry.roundNumber,
+                source_kind: entry.sourceKind,
+                text_length: Number(String(entry?.contentPayload?.text || '').length),
+              })),
+              confidential: confidentialHistoryEntriesForAi.map((entry) => ({
+                contribution_id: entry.id,
+                author_role: entry.authorRole,
+                visibility: entry.visibility,
+                round_number: entry.roundNumber,
+                source_kind: entry.sourceKind,
+                text_length: Number(
+                  String(entry?.contentPayload?.text || entry?.contentPayload?.notes || '').length,
+                ),
+              })),
+            },
             shared_snapshot: {
               text: sharedText,
               html: sharedHtml,

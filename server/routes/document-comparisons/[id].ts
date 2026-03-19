@@ -6,6 +6,7 @@ import { ApiError } from '../../_lib/errors.js';
 import { readJsonBody } from '../../_lib/http.js';
 import { appendProposalHistory } from '../../_lib/proposal-history.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
+import { loadSharedReportHistory } from '../../_lib/shared-report-history.js';
 import {
   htmlToEditorText,
   sanitizeEditorHtml,
@@ -376,6 +377,16 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     }
 
     if (req.method === 'GET') {
+      const sharedHistory = proposal
+        ? await loadSharedReportHistory({
+            db,
+            proposal,
+            comparison: existing,
+          })
+        : {
+            sharedEntries: [],
+            maxRoundNumber: 0,
+          };
       const hasEvaluationAttempt = proposal?.id
         ? await db
             .select({ id: schema.proposalEvaluations.id })
@@ -431,6 +442,10 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
               updated_date: proposal.updatedAt,
             }
           : null,
+        shared_history: {
+          entries: sharedHistory.sharedEntries,
+          max_round_number: sharedHistory.maxRoundNumber,
+        },
         permissions: {
           access_mode: accessMode,
           editable_side: editableSide,

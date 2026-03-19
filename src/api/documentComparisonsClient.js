@@ -236,6 +236,7 @@ export const documentComparisonsClient = {
     return {
       comparison: response.comparison || null,
       proposal: response.proposal || null,
+      sharedHistory: response.shared_history || null,
       permissions: response.permissions || null,
     };
   },
@@ -251,6 +252,7 @@ export const documentComparisonsClient = {
     return {
       comparison: response.comparison || null,
       proposal: response.proposal || null,
+      sharedHistory: response.shared_history || null,
       permissions: response.permissions || null,
     };
   },

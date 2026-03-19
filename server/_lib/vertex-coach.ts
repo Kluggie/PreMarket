@@ -147,6 +147,8 @@ type GenerateCoachParams = {
    * See coach-mediator-context.ts for the safety contract.
    */
   mediatorContext?: SafeMediatorContext | null;
+  sharedHistoryContext?: string;
+  confidentialHistoryContext?: string;
 };
 
 function asText(value: unknown) {
@@ -423,6 +425,10 @@ export function buildCoachPrompt(params: GenerateCoachParams) {
     '   - evidence.confidential_quotes MUST be [] for shared suggestions.',
     '   - If confidential context helps, convert it into a generic recommendation without revealing hidden details.',
     '6) For confidential suggestions (target doc_a/scope=confidential), confidential references are allowed.',
+    '7) If authored history context is provided, use it to track who contributed each item across rounds.',
+    '   - Treat sharedHistoryContext and confidentialHistoryContext as background context only.',
+    '   - Do not suggest edits that rewrite prior read-only contributions from the other party.',
+    '   - Never reveal the other party\'s confidential history verbatim.',
     '',
     ...buildIntentSpecificRules(params),
     '',
@@ -445,6 +451,8 @@ export function buildCoachPrompt(params: GenerateCoachParams) {
     '',
     'Shared Document (doc_b):',
     includeSharedDoc ? wrapRawUserContent('shared_doc', params.docBText || '(empty)') : '(not provided for this intent)',
+    formatAuthoredHistoryBlock('Shared History Context', 'shared_history_context', params.sharedHistoryContext),
+    formatAuthoredHistoryBlock('Confidential History Context', 'confidential_history_context', params.confidentialHistoryContext),
     formatMediatorContextBlock(params.mediatorContext ?? null),
     formatThreadHistoryBlock(params.threadHistory),
   ].join('\n');
@@ -501,6 +509,16 @@ function formatThreadHistoryBlock(threadHistory?: ThreadHistoryEntry[]) {
   return lines.join('\n');
 }
 
+const MAX_HISTORY_CONTEXT_CHARS = 12_000;
+
+function formatAuthoredHistoryBlock(label: string, tag: string, value?: string) {
+  const text = asText(value).slice(0, MAX_HISTORY_CONTEXT_CHARS);
+  if (!text) {
+    return '';
+  }
+  return ['', `${label}:`, wrapRawUserContent(tag, text)].join('\n');
+}
+
 function buildCustomPromptFeedbackPrompt(params: GenerateCoachParams, strictMode = false) {
   const userPrompt = asText(params.promptText).slice(0, MAX_CUSTOM_PROMPT_CHARS);
   const sharedText = String(params.docBText || '');
@@ -534,6 +552,8 @@ function buildCustomPromptFeedbackPrompt(params: GenerateCoachParams, strictMode
     `Website: ${companyWebsite}`,
     wrapRawUserContent('shared_text', sharedText || '(empty)'),
     wrapRawUserContent('user_confidential_text', userConfidentialText || '(empty)'),
+    formatAuthoredHistoryBlock('Shared History Context', 'shared_history_context', params.sharedHistoryContext),
+    formatAuthoredHistoryBlock('Confidential History Context', 'confidential_history_context', params.confidentialHistoryContext),
     ...(selectionText
       ? [
           wrapRawUserContent('selection', selectionText),
@@ -1576,6 +1596,8 @@ export function buildCoachCacheHash(params: {
   companyWebsite?: string;
   threadHistory?: ThreadHistoryEntry[];
   mediatorContext?: SafeMediatorContext | null;
+  sharedHistoryContext?: string;
+  confidentialHistoryContext?: string;
 }) {
   const historyToken = Array.isArray(params.threadHistory) && params.threadHistory.length > 0
     ? params.threadHistory.map((e) => `${e.role}:${String(e.content || '').slice(0, 500)}`).join('|')
@@ -1599,6 +1621,8 @@ export function buildCoachCacheHash(params: {
         String(params.companyWebsite || ''),
         String(params.selectionText || ''),
         String(params.promptText || ''),
+        String(params.sharedHistoryContext || ''),
+        String(params.confidentialHistoryContext || ''),
         historyToken,
         mediatorToken,
       ].join('\n---\n'),

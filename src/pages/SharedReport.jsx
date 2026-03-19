@@ -198,6 +198,69 @@ function coercePayloadToDocument(payload, fallbackLabel, fallbackText = '') {
   };
 }
 
+function getPartyRoleLabel(value) {
+  return asText(value).toLowerCase() === OWNER_PROPOSER ? 'Proposer' : 'Recipient';
+}
+
+function buildDefaultDraftDocuments(owner) {
+  const resolvedOwner = asText(owner).toLowerCase() === OWNER_PROPOSER
+    ? OWNER_PROPOSER
+    : OWNER_RECIPIENT;
+  return [
+    createDocument({
+      title: 'My New Shared Contribution',
+      visibility: VISIBILITY_SHARED,
+      owner: resolvedOwner,
+    }),
+    createDocument({
+      title: 'My Confidential Notes',
+      visibility: VISIBILITY_CONFIDENTIAL,
+      owner: resolvedOwner,
+    }),
+  ];
+}
+
+function composeSharedDocuments(documents) {
+  const sharedDocs = Array.isArray(documents)
+    ? documents.filter((doc) => doc?.visibility === VISIBILITY_SHARED)
+    : [];
+  if (!sharedDocs.length) {
+    return {
+      text: '',
+      html: '<p></p>',
+      source: 'typed',
+      files: [],
+    };
+  }
+
+  const text = sharedDocs
+    .map((doc) => {
+      const content = doc.text || htmlToText(doc.html || '');
+      const title = asText(doc.title);
+      return title ? `${title}\n\n${content}` : content;
+    })
+    .join('\n\n---\n\n')
+    .trim();
+
+  const html = sharedDocs
+    .map((doc) => {
+      const title = asText(doc.title);
+      const titleHtml = title ? `<p><strong>${escapeHtml(title)}</strong></p>` : '';
+      const bodyHtml = asText(doc.html) || textToHtml(doc.text || '');
+      return `${titleHtml}${bodyHtml || '<p></p>'}`;
+    })
+    .join('<hr/><p></p>');
+
+  return {
+    text,
+    html: html || '<p></p>',
+    source: sharedDocs.some((doc) => asText(doc.source).toLowerCase() === 'uploaded')
+      ? 'uploaded'
+      : (sharedDocs[sharedDocs.length - 1]?.source || 'typed'),
+    files: sharedDocs.flatMap((doc) => (Array.isArray(doc.files) ? doc.files : [])),
+  };
+}
+
 function formatDateTime(value) {
   if (!value) return 'Never';
   const parsed = new Date(value);
@@ -372,9 +435,18 @@ export default function SharedReport() {
   const comparison = workspaceQuery.data?.comparison || null;
   const baseline = workspaceQuery.data?.baseline || {};
   const defaults = workspaceQuery.data?.defaults || {};
+  const sharedHistory = workspaceQuery.data?.sharedHistory || null;
+  const partyContext = workspaceQuery.data?.partyContext || null;
   const recipientDraft = workspaceQuery.data?.recipientDraft || workspaceQuery.data?.currentDraft || null;
   const latestEvaluation = workspaceQuery.data?.latestEvaluation || null;
   const latestSentRevision = workspaceQuery.data?.latestSentRevision || null;
+  const sharedHistoryEntries = useMemo(
+    () => (Array.isArray(sharedHistory?.entries) ? sharedHistory.entries : []),
+    [sharedHistory?.entries],
+  );
+  const draftDocumentOwner = asText(partyContext?.draft_author_role).toLowerCase() === OWNER_PROPOSER
+    ? OWNER_PROPOSER
+    : OWNER_RECIPIENT;
   const baselineSharedPayload = useMemo(
     () => baseline?.shared_payload || workspaceQuery.data?.baselineShared || defaults.shared_payload || {},
     [baseline?.shared_payload, defaults.shared_payload, workspaceQuery.data?.baselineShared],
@@ -425,32 +497,54 @@ export default function SharedReport() {
   const canReevaluate = Boolean(share?.permissions?.can_reevaluate);
   const canSendBack = Boolean(share?.permissions?.can_send_back);
 
-  // ── Proposer shared document (locked, read-only baseline from comparison) ──
-  const proposerSharedDoc = useMemo(() => {
+  const sharedHistoryDocuments = useMemo(() => {
+    if (sharedHistoryEntries.length > 0) {
+      return sharedHistoryEntries.map((entry, index) =>
+        createDocument({
+          id: `shared-history-${entry.id || index}`,
+          title:
+            entry.round_number
+              ? `Round ${entry.round_number} - ${entry.visibility_label || `Shared by ${entry.author_label || getPartyRoleLabel(entry.author_role)}`}`
+              : (entry.visibility_label || `Shared by ${entry.author_label || getPartyRoleLabel(entry.author_role)}`),
+          visibility: VISIBILITY_SHARED,
+          owner: asText(entry.author_role).toLowerCase() === OWNER_PROPOSER
+            ? OWNER_PROPOSER
+            : OWNER_RECIPIENT,
+          source: entry.source || 'typed',
+          text: entry.text || '',
+          html: entry.html || '',
+          json: entry.json || null,
+          files: entry.files || [],
+          importStatus: Array.isArray(entry.files) && entry.files.length > 0 ? 'imported' : 'idle',
+        }),
+      );
+    }
+
     const text = baselineSharedDocument.text || '';
     const html = baselineSharedDocument.html || '';
-    if (!text && !htmlToText(html)) return null;
-    return createDocument({
-      id: 'proposer-shared',
-      title: baselineSharedDocument.label || SHARED_LABEL,
-      visibility: VISIBILITY_SHARED,
-      owner: OWNER_PROPOSER,
-      source: baselineSharedDocument.source || 'typed',
-      text,
-      html,
-      json: baselineSharedDocument.json || null,
-      files: baselineSharedDocument.files || [],
-      importStatus: (baselineSharedDocument.files || []).length > 0 ? 'imported' : 'idle',
-    });
-  }, [baselineSharedDocument]);
+    if (!text && !htmlToText(html)) {
+      return [];
+    }
+    return [
+      createDocument({
+        id: 'shared-history-baseline',
+        title: baselineSharedDocument.label || 'Round 1 - Shared by Proposer',
+        visibility: VISIBILITY_SHARED,
+        owner: OWNER_PROPOSER,
+        source: baselineSharedDocument.source || 'typed',
+        text,
+        html,
+        json: baselineSharedDocument.json || null,
+        files: baselineSharedDocument.files || [],
+        importStatus: (baselineSharedDocument.files || []).length > 0 ? 'imported' : 'idle',
+      }),
+    ];
+  }, [baselineSharedDocument, sharedHistoryEntries]);
 
-  // ── Combined documents for display (proposer shared + recipient documents) ──
+  // ── Combined documents for display (read-only shared history + editable draft docs) ──
   const allDisplayDocuments = useMemo(() => {
-    const all = [];
-    if (proposerSharedDoc) all.push(proposerSharedDoc);
-    all.push(...recipientDocuments);
-    return all;
-  }, [proposerSharedDoc, recipientDocuments]);
+    return [...sharedHistoryDocuments, ...recipientDocuments];
+  }, [sharedHistoryDocuments, recipientDocuments]);
 
   // ── Compiled bundles from recipient documents (for draft persistence + coach) ──
   const compiledRecipientBundles = useMemo(
@@ -458,72 +552,38 @@ export default function SharedReport() {
     [recipientDocuments],
   );
 
-  // ── Step 3 bundles: full proposal state (proposer shared + recipient docs) ──
-  // For the Proposal tab on Step 3 we need the FULL current shared state,
-  // which includes proposer shared content + any recipient shared content.
-  // Confidential stays recipient-only (never reveal the other party's private data).
+  // ── Step 3 bundles: full proposal state (shared history + current draft docs) ──
   const step3Bundles = useMemo(() => {
     const recipientBundles = compileBundles(recipientDocuments);
-    // Build the combined shared text/html by prepending proposer shared content
-    const proposerText = proposerSharedDoc?.text || '';
-    const proposerHtml = proposerSharedDoc?.html || '';
-    const recipientSharedText = recipientBundles.shared.text || '';
-    const recipientSharedHtml = recipientBundles.shared.html || '';
-
-    let combinedSharedText = '';
-    let combinedSharedHtml = '';
-    let combinedSource = recipientBundles.shared.source || 'typed';
-    let combinedFiles = [...(recipientBundles.shared.files || [])];
-
-    if (proposerText || htmlToText(proposerHtml)) {
-      const proposerLabel = proposerSharedDoc?.title || 'Proposer Shared Information';
-      const proposerSection = `${proposerLabel}\n\n${proposerText}`;
-      const proposerSectionHtml = `<p><strong>${proposerLabel}</strong></p>${proposerHtml}`;
-      if (recipientSharedText) {
-        combinedSharedText = proposerSection + '\n\n---\n\n' + recipientSharedText;
-        combinedSharedHtml = proposerSectionHtml + '<hr/><p></p>' + recipientSharedHtml;
-      } else {
-        combinedSharedText = proposerSection;
-        combinedSharedHtml = proposerSectionHtml;
-      }
-      if (proposerSharedDoc?.source === 'uploaded' || recipientBundles.shared.source === 'uploaded') {
-        combinedSource = 'uploaded';
-      }
-      if (Array.isArray(proposerSharedDoc?.files)) {
-        combinedFiles = [...proposerSharedDoc.files, ...combinedFiles];
-      }
-    } else {
-      combinedSharedText = recipientSharedText;
-      combinedSharedHtml = recipientSharedHtml;
-    }
+    const combinedShared = composeSharedDocuments([
+      ...sharedHistoryDocuments,
+      ...recipientDocuments.filter((doc) => doc.visibility === VISIBILITY_SHARED),
+    ]);
 
     return {
       confidential: recipientBundles.confidential,
       shared: {
-        text: combinedSharedText,
-        html: combinedSharedHtml || '<p></p>',
+        text: combinedShared.text,
+        html: combinedShared.html || '<p></p>',
         json: null,
-        source: combinedSource,
-        files: combinedFiles,
+        source: combinedShared.source || recipientBundles.shared.source || 'typed',
+        files: combinedShared.files || [],
       },
     };
-  }, [recipientDocuments, proposerSharedDoc]);
+  }, [recipientDocuments, sharedHistoryDocuments]);
 
   // ── Locked / read-only doc IDs ──
   const lockedDocIds = useMemo(() => {
-    const ids = [];
-    if (proposerSharedDoc) ids.push('proposer-shared');
-    return ids;
-  }, [proposerSharedDoc]);
+    return sharedHistoryDocuments.map((doc) => doc.id);
+  }, [sharedHistoryDocuments]);
 
   const readOnlyDocIds = useMemo(() => {
-    const ids = [];
-    if (proposerSharedDoc) ids.push('proposer-shared');
+    const ids = [...sharedHistoryDocuments.map((doc) => doc.id)];
     if (requiresRecipientVerification) {
       recipientDocuments.forEach((d) => ids.push(d.id));
     }
     return ids;
-  }, [proposerSharedDoc, recipientDocuments, requiresRecipientVerification]);
+  }, [sharedHistoryDocuments, recipientDocuments, requiresRecipientVerification]);
 
   // ── Recipient CRUD handlers ──
   const handleAddFiles = useCallback((files) => {
@@ -531,7 +591,7 @@ export default function SharedReport() {
       createDocument({
         title: file.name.replace(/\.(docx|pdf)$/i, ''),
         source: 'uploaded',
-        owner: OWNER_RECIPIENT,
+        owner: draftDocumentOwner,
         _pendingFile: file,
       }),
     );
@@ -543,13 +603,13 @@ export default function SharedReport() {
         importForDocument(doc.id, doc._pendingFile);
       }
     });
-  }, []);
+  }, [draftDocumentOwner]);
 
   const handleAddTypedDocument = useCallback(() => {
-    const doc = createDocument({ owner: OWNER_RECIPIENT });
+    const doc = createDocument({ owner: draftDocumentOwner });
     setRecipientDocuments((prev) => [...prev, doc]);
     setDraftDirty(true);
-  }, []);
+  }, [draftDocumentOwner]);
 
   const handleRemoveDoc = useCallback((id) => {
     setRecipientDocuments((prev) => prev.filter((d) => d.id !== id));
@@ -723,7 +783,7 @@ export default function SharedReport() {
           id: 'legacy-conf',
           title: CONFIDENTIAL_LABEL,
           visibility: VISIBILITY_CONFIDENTIAL,
-          owner: OWNER_RECIPIENT,
+          owner: draftDocumentOwner,
           source: recipientConfidentialDocument.source || 'typed',
           text: confText,
           html: confHtml,
@@ -740,7 +800,7 @@ export default function SharedReport() {
           id: 'legacy-shared',
           title: SHARED_LABEL,
           visibility: VISIBILITY_SHARED,
-          owner: OWNER_RECIPIENT,
+          owner: draftDocumentOwner,
           source: recipientSharedDocument.source || 'typed',
           text: draftSharedText,
           html: recipientSharedDocument.html || '',
@@ -750,11 +810,7 @@ export default function SharedReport() {
         }));
       }
       if (docs.length === 0) {
-        docs.push(createDocument({
-          title: 'My Confidential Notes',
-          visibility: VISIBILITY_CONFIDENTIAL,
-          owner: OWNER_RECIPIENT,
-        }));
+        docs.push(...buildDefaultDraftDocuments(draftDocumentOwner));
       }
       setRecipientDocuments(docs);
     } else if (latestSentRevision) {
@@ -775,7 +831,7 @@ export default function SharedReport() {
             id: 'sent-conf',
             title: CONFIDENTIAL_LABEL,
             visibility: VISIBILITY_CONFIDENTIAL,
-            owner: OWNER_RECIPIENT,
+            owner: draftDocumentOwner,
             source: sentConfPayload.source || 'typed',
             text: sentConfText,
             html: sentConfHtml,
@@ -793,7 +849,7 @@ export default function SharedReport() {
             id: 'sent-shared',
             title: SHARED_LABEL,
             visibility: VISIBILITY_SHARED,
-            owner: OWNER_RECIPIENT,
+            owner: draftDocumentOwner,
             source: sentSharedPayload.source || 'typed',
             text: sentSharedText,
             html: sentSharedHtml,
@@ -803,17 +859,13 @@ export default function SharedReport() {
           }));
         }
         if (sentDocs2.length === 0) {
-          sentDocs2.push(createDocument({
-            title: 'My Confidential Notes',
-            visibility: VISIBILITY_CONFIDENTIAL,
-            owner: OWNER_RECIPIENT,
-          }));
+          sentDocs2.push(...buildDefaultDraftDocuments(draftDocumentOwner));
         }
         setRecipientDocuments(sentDocs2);
       }
     } else {
-      // No draft and no sent revision — start with empty (user can add documents)
-      setRecipientDocuments([]);
+      // No draft and no sent revision — start with a fresh additive draft.
+      setRecipientDocuments(buildDefaultDraftDocuments(draftDocumentOwner));
     }
 
     // Auto-select first recipient document for Step 2 editor
@@ -839,6 +891,7 @@ export default function SharedReport() {
   }, [
     workspaceQuery.data,
     comparison?.title,
+    draftDocumentOwner,
     isAuthenticated,
     parent?.title,
     recipientDraft,
@@ -849,6 +902,16 @@ export default function SharedReport() {
     step,
     stepHydrated,
   ]);
+
+  useEffect(() => {
+    if (recipientActiveDocId && allDisplayDocuments.some((doc) => doc.id === recipientActiveDocId)) {
+      return;
+    }
+    const nextDocId = recipientDocuments[0]?.id || allDisplayDocuments[0]?.id || null;
+    if (nextDocId) {
+      setRecipientActiveDocId(nextDocId);
+    }
+  }, [allDisplayDocuments, recipientActiveDocId, recipientDocuments]);
 
   useEffect(() => {
     if (requiresRecipientVerification && step !== 0) {
@@ -1865,7 +1928,7 @@ export default function SharedReport() {
           createDocument({
             title: targetVisibility === VISIBILITY_SHARED ? SHARED_LABEL : CONFIDENTIAL_LABEL,
             visibility: targetVisibility,
-            owner: OWNER_RECIPIENT,
+            owner: draftDocumentOwner,
             source: 'typed',
             text: updatedText,
             html: updatedHtml,
@@ -2414,15 +2477,28 @@ export default function SharedReport() {
                 timelineItems: baseTimelineItems,
               }}
               proposalDetailsProps={{
-                description: 'Read-only baseline opportunity content shared by the proposer.',
-                documents: [
-                  {
-                    label: baselineSharedDocument.label || 'Opportunity',
-                    text: baselineSharedDocument.text || '',
-                    html: baselineSharedDocument.html || '',
-                    badges: [baselineSharedDocument.source || 'typed'],
-                  },
-                ],
+                description: 'Read-only cumulative shared history. Each round stays labeled by author and remains immutable.',
+                documents: sharedHistoryEntries.length > 0
+                  ? sharedHistoryEntries.map((entry) => ({
+                      label:
+                        entry.round_number
+                          ? `Round ${entry.round_number} - ${entry.visibility_label || `Shared by ${entry.author_label || getPartyRoleLabel(entry.author_role)}`}`
+                          : (entry.visibility_label || `Shared by ${entry.author_label || getPartyRoleLabel(entry.author_role)}`),
+                      text: entry.text || '',
+                      html: entry.html || '',
+                      badges: [
+                        entry.source || 'typed',
+                        entry.author_label || getPartyRoleLabel(entry.author_role),
+                      ],
+                    }))
+                  : [
+                      {
+                        label: baselineSharedDocument.label || 'Round 1 - Shared by Proposer',
+                        text: baselineSharedDocument.text || '',
+                        html: baselineSharedDocument.html || '',
+                        badges: [baselineSharedDocument.source || 'typed'],
+                      },
+                    ],
               }}
             />
 

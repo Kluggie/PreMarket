@@ -5,6 +5,10 @@ import { getDb, schema } from '../../_lib/db/client.js';
 import { toCanonicalAppUrl } from '../../_lib/env.js';
 import { ApiError } from '../../_lib/errors.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
+import {
+  buildSharedHistoryComposite,
+  loadSharedReportHistory,
+} from '../../_lib/shared-report-history.js';
 import { buildRecipientSafeEvaluationProjection } from '../document-comparisons/_helpers.js';
 
 function getToken(req: any, tokenParam?: string) {
@@ -173,12 +177,24 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         ])
       : [[], [], null];
 
+    const sharedHistory = proposal
+      ? await loadSharedReportHistory({
+          db,
+          proposal,
+          comparison,
+        })
+      : {
+          sharedEntries: [],
+          maxRoundNumber: 0,
+        };
+    const sharedContent = buildSharedHistoryComposite(sharedHistory.sharedEntries);
+
     const comparisonProjection = comparison
       ? buildRecipientSafeEvaluationProjection({
           evaluationResult: comparison.evaluationResult || {},
           publicReport: comparison.publicReport || {},
           confidentialText: comparison.docAText || '',
-          sharedText: comparison.docBText || '',
+          sharedText: sharedContent.text || comparison.docBText || '',
           title: comparison.title || proposal?.title || 'Document Comparison',
         })
       : null;
@@ -257,11 +273,8 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
                 ? inputs.doc_b_source
                 : 'typed';
             })(),
-            shared_doc_text: comparison.docBText || '',
-            shared_doc_html: (() => {
-              const inputs = toObject(comparison.inputs);
-              return typeof inputs.doc_b_html === 'string' ? inputs.doc_b_html : null;
-            })(),
+            shared_doc_text: sharedContent.text || comparison.docBText || '',
+            shared_doc_html: sharedContent.html,
             shared_doc_json: (() => {
               const inputs = toObject(comparison.inputs);
               return inputs.doc_b_json && typeof inputs.doc_b_json === 'object' && !Array.isArray(inputs.doc_b_json)
@@ -269,12 +282,9 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
                 : null;
             })(),
             doc_a_text: '',
-            doc_b_text: comparison.docBText || '',
+            doc_b_text: sharedContent.text || comparison.docBText || '',
             doc_a_html: '',
-            doc_b_html: (() => {
-              const inputs = toObject(comparison.inputs);
-              return typeof inputs.doc_b_html === 'string' ? inputs.doc_b_html : '';
-            })(),
+            doc_b_html: sharedContent.html,
             doc_a_json: null,
             doc_b_json: (() => {
               const inputs = toObject(comparison.inputs);
@@ -284,6 +294,10 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
             })(),
             doc_a_spans: [],
             doc_b_spans: [],
+            shared_history: {
+              entries: sharedHistory.sharedEntries,
+              max_round_number: sharedHistory.maxRoundNumber,
+            },
             evaluation_result: comparisonProjection?.evaluation_result || {},
             public_report: comparisonProjection?.public_report || {},
             updated_date: comparison.updatedAt,

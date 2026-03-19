@@ -239,7 +239,13 @@
       "when": 1779044400000,
       "tag": "0033_profile_public_directory",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1779300000000,
+      "tag": "0034_shared_report_contributions",
+      "breakpoints": true
     }
   ]
 }
-
