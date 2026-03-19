@@ -17,40 +17,48 @@ function normalizePerspectiveRole(value) {
   return '';
 }
 
-export function formatStartedByLabel(role) {
-  const normalized = normalizePerspectiveRole(role);
-  return normalized ? `Started by ${normalized}` : '';
+function normalizeActorRole(value) {
+  const normalized = asLower(value);
+  if (normalized === 'party_a') {
+    return 'party_a';
+  }
+  if (normalized === 'party_b') {
+    return 'party_b';
+  }
+  return '';
 }
 
-export function formatLastUpdateByLabel(role) {
-  const normalized = normalizePerspectiveRole(role);
-  return normalized ? `Last update from ${normalized}` : '';
+export function formatProposalOwnershipLabel(proposal = {}) {
+  const startedBy = normalizePerspectiveRole(proposal?.started_by_role);
+  if (startedBy === 'you') {
+    return 'Our proposal';
+  }
+  if (startedBy === 'counterparty') {
+    return 'Their proposal';
+  }
+
+  const actorRole = normalizeActorRole(proposal?.outcome?.actor_role);
+  if (actorRole === 'party_a') {
+    return 'Our proposal';
+  }
+  if (actorRole === 'party_b') {
+    return 'Their proposal';
+  }
+
+  return 'Our proposal';
 }
 
 export function formatExchangeCountLabel(count) {
   const numeric = Number(count);
-  if (!Number.isFinite(numeric) || numeric <= 0) {
-    return '';
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    return '0 exchanges';
   }
   const rounded = Math.floor(numeric);
   return `${rounded} exchange${rounded === 1 ? '' : 's'}`;
 }
 
-export function buildThreadContextParts(proposal = {}, options = {}) {
-  const parts = [];
-  const startedBy = formatStartedByLabel(proposal?.started_by_role);
-  const lastUpdate = formatLastUpdateByLabel(proposal?.last_update_by_role);
-  if (startedBy) {
-    parts.push(startedBy);
-  }
-  if (lastUpdate) {
-    parts.push(lastUpdate);
-  }
-  if (options.includeExchangeCount) {
-    const exchanges = formatExchangeCountLabel(proposal?.exchange_count);
-    if (exchanges) {
-      parts.push(exchanges);
-    }
-  }
-  return parts;
+export function buildCompactProposalSubtitle(proposal = {}) {
+  const ownership = formatProposalOwnershipLabel(proposal);
+  const exchanges = formatExchangeCountLabel(proposal?.exchange_count);
+  return `${ownership} · ${exchanges}`;
 }

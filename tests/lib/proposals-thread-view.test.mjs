@@ -34,7 +34,9 @@ test('proposals page uses one canonical primary status chip and simplified filte
   assert.match(proposalsPage, /All origins/);
   assert.match(proposalsPage, /Started by you/);
   assert.match(proposalsPage, /Started by counterparty/);
-  assert.match(threadContextUi, /Last update from/);
+  assert.match(threadContextUi, /Our proposal/);
+  assert.match(threadContextUi, /Their proposal/);
+  assert.match(threadContextUi, /exchange/);
   assert.match(proposalsPage, /PrimaryStatusBadge/);
   assert.match(proposalsPage, /Needs Reply/);
   assert.match(proposalsPage, /Under Review/);
@@ -48,4 +50,7 @@ test('proposals page uses one canonical primary status chip and simplified filte
   assert.doesNotMatch(proposalsPage, /MutualInterestBadge/);
   assert.doesNotMatch(proposalsPage, /Link \{sharedReportStatus/);
   assert.doesNotMatch(proposalsPage, /Waiting on Other Party/);
+  assert.doesNotMatch(proposalsPage, /proposal\.template_name \|\| 'Custom Template'/);
+  assert.doesNotMatch(threadContextUi, /Started by/);
+  assert.doesNotMatch(threadContextUi, /Last update from/);
 });

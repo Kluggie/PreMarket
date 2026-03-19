@@ -26,6 +26,14 @@ const ORIGIN_FILTER_ALIASES = {
   started_by_counterparty: 'started_by_counterparty',
 };
 
+function coerceExchangeCount(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    return null;
+  }
+  return Math.floor(numeric);
+}
+
 function asText(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
@@ -73,6 +81,42 @@ function deriveLastUpdateByRole({ actorRole, latestDirection, threadActivity, is
   }
 
   return null;
+}
+
+function deriveExchangeCount({
+  explicitExchangeCount,
+  isDraft,
+  sentAt,
+  receivedAt,
+  latestDirection,
+  threadActivityType,
+}) {
+  const explicit = coerceExchangeCount(explicitExchangeCount);
+  if (explicit !== null && explicit > 0) {
+    return explicit;
+  }
+
+  if (isDraft) {
+    return explicit ?? 0;
+  }
+
+  let fallback = 0;
+  if (sentAt || receivedAt || latestDirection) {
+    fallback = 1;
+  }
+
+  if (sentAt && receivedAt && receivedAt.getTime() > sentAt.getTime()) {
+    fallback = Math.max(fallback, 2);
+  }
+
+  const normalizedActivityType = asLower(threadActivityType);
+  if (normalizedActivityType === 'proposal.send_back') {
+    fallback = Math.max(fallback, 2);
+  } else if (normalizedActivityType === 'proposal.sent' || normalizedActivityType === 'proposal.received') {
+    fallback = Math.max(fallback, 1);
+  }
+
+  return fallback;
 }
 
 export function deriveProposalPrimaryStatus(input = {}) {
@@ -254,6 +298,14 @@ export function getProposalThreadState(proposal, currentUser, options = {}) {
     threadActivity,
     isDraft,
   });
+  const exchangeCount = deriveExchangeCount({
+    explicitExchangeCount: options.exchangeCount,
+    isDraft,
+    sentAt,
+    receivedAt,
+    latestDirection,
+    threadActivityType: threadActivity?.activityType,
+  });
 
   return {
     actorRole,
@@ -269,6 +321,7 @@ export function getProposalThreadState(proposal, currentUser, options = {}) {
     isMutualInterest,
     latestDirection,
     lastUpdateByRole,
+    exchangeCount,
     needsResponse,
     primaryStatusKey: primaryStatus.key,
     primaryStatusLabel: primaryStatus.label,

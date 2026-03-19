@@ -1046,8 +1046,10 @@ test(
 
     assert.equal(ownerStartedRow?.started_by_role, 'you');
     assert.equal(ownerStartedRow?.last_update_by_role, 'you');
+    assert.equal(Number(ownerStartedRow?.exchange_count) >= 1, true);
     assert.equal(counterpartyStartedRow?.started_by_role, 'counterparty');
     assert.equal(counterpartyStartedRow?.last_update_by_role, 'counterparty');
+    assert.equal(Number(counterpartyStartedRow?.exchange_count) >= 1, true);
 
     const startedByYouRows = await listProposals(ownerCookie, {
       tab: 'inbox',

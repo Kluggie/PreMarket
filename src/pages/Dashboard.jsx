@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import ProposalsChart from '@/components/dashboard/ProposalsChart';
 import { buildDocumentComparisonReportHref } from '@/lib/notificationTargets';
 import { formatRecipientShort } from '@/lib/recipientUtils';
-import { buildThreadContextParts } from '@/lib/proposalThreadContextUi';
+import { buildCompactProposalSubtitle } from '@/lib/proposalThreadContextUi';
 import {
   AGREEMENT_REQUESTED_LABEL,
 } from '@/lib/proposalOutcomeUi';
@@ -75,8 +75,7 @@ function CompactProposalRow({ proposal, onOpen }) {
     proposal.counterparty_email || proposal.party_b_email || proposal.party_a_email,
   );
   const lastUpdated = proposal.last_activity_at || proposal.updated_date || proposal.created_date;
-  const templateName = proposal.template_name || 'Custom Template';
-  const threadContextParts = buildThreadContextParts(proposal, { includeExchangeCount: true });
+  const rowSubtitle = buildCompactProposalSubtitle(proposal);
 
   return (
     <button
@@ -89,11 +88,8 @@ function CompactProposalRow({ proposal, onOpen }) {
           <h4 className="text-sm font-semibold text-slate-900 truncate">{proposal.title || 'Untitled Opportunity'}</h4>
           <StatusBadge proposal={proposal} />
         </div>
-        <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5 min-w-0 flex-wrap">
-          <span className="truncate">{templateName}</span>
-          {threadContextParts.map((part, index) => (
-            <span key={`${part}-${index}`} className="truncate">• {part}</span>
-          ))}
+        <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5 min-w-0">
+          <span className="truncate">{rowSubtitle}</span>
         </div>
         <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5 min-w-0">
           <span className="truncate">With: {recipientLabel}</span>

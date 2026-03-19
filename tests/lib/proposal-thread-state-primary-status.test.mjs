@@ -69,6 +69,7 @@ test('thread context derives started-by and last-update roles for each viewer pe
   );
   assert.equal(ownerView.startedByRole, 'you');
   assert.equal(ownerView.lastUpdateByRole, 'counterparty');
+  assert.equal(ownerView.exchangeCount, 2);
   assert.equal(matchesProposalThreadOrigin(ownerView, 'started_by_you'), true);
   assert.equal(matchesProposalThreadOrigin(ownerView, 'started_by_counterparty'), false);
 
@@ -88,6 +89,36 @@ test('thread context derives started-by and last-update roles for each viewer pe
   );
   assert.equal(counterpartyView.startedByRole, 'counterparty');
   assert.equal(counterpartyView.lastUpdateByRole, 'you');
+  assert.equal(counterpartyView.exchangeCount, 2);
   assert.equal(matchesProposalThreadOrigin(counterpartyView, 'started_by_counterparty'), true);
   assert.equal(matchesProposalThreadOrigin(counterpartyView, 'started_by_you'), false);
+});
+
+test('thread context uses canonical exchange count override when provided', () => {
+  const proposal = {
+    id: 'proposal_thread_exchange_override',
+    userId: 'owner_user',
+    status: 'sent',
+    sentAt: '2026-03-19T08:00:00.000Z',
+    createdAt: '2026-03-19T08:00:00.000Z',
+    updatedAt: '2026-03-19T08:10:00.000Z',
+    partyAEmail: 'owner@example.com',
+    partyBEmail: 'counterparty@example.com',
+  };
+  const threadState = getProposalThreadState(
+    proposal,
+    { id: 'owner_user', email: 'owner@example.com' },
+    {
+      actorRole: 'party_a',
+      exchangeCount: 7,
+      outcome: {
+        actor_role: 'party_a',
+        final_status: 'sent',
+        pending: false,
+        requested_by_current_user: false,
+        requested_by_counterparty: false,
+      },
+    },
+  );
+  assert.equal(threadState.exchangeCount, 7);
 });

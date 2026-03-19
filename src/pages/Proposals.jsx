@@ -11,7 +11,7 @@ import { formatRecipientLabel, PRIVATE_SENDER_LABEL } from '@/lib/recipientUtils
 import {
   getAgreementActionLabel,
 } from '@/lib/proposalOutcomeUi';
-import { buildThreadContextParts } from '@/lib/proposalThreadContextUi';
+import { buildCompactProposalSubtitle } from '@/lib/proposalThreadContextUi';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
@@ -347,7 +347,7 @@ function ProposalRow({
     actionsDisabled || !outcome.can_mark_won || Boolean(outcome.requested_by_current_user);
   const lostActionDisabled = actionsDisabled || !outcome.can_mark_lost;
   const continueActionDisabled = actionsDisabled || !canContinueNegotiating;
-  const threadContextParts = buildThreadContextParts(proposal, { includeExchangeCount: true });
+  const rowSubtitle = buildCompactProposalSubtitle(proposal);
   const helperText = outcome.requested_by_current_user
     ? 'Waiting for the counterparty to confirm the agreement.'
     : outcome.requested_by_counterparty
@@ -378,10 +378,7 @@ function ProposalRow({
             </div>
 
             <div className="flex items-center gap-2 text-sm text-slate-500 flex-wrap">
-              <span>{proposal.template_name || 'Custom Template'}</span>
-              {threadContextParts.map((part, index) => (
-                <span key={`${part}-${index}`}>· {part}</span>
-              ))}
+              <span>{rowSubtitle}</span>
             </div>
 
             <div className="flex items-center gap-2 text-sm text-slate-500 flex-wrap">

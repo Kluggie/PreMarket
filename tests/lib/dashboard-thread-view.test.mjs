@@ -46,12 +46,15 @@ test('dashboard keeps action buckets but drops inbox-only routing and mutual-int
   assert.match(dashboard, /Waiting on counterparty/);
   assert.match(dashboard, /Needs review \/ verify/);
   assert.match(dashboard, /Opportunities\?tab=all&status=win_confirmation_requested/);
-  assert.match(dashboard, /buildThreadContextParts/);
-  assert.match(threadContextUi, /Started by/);
-  assert.match(threadContextUi, /Last update from/);
+  assert.match(dashboard, /buildCompactProposalSubtitle/);
+  assert.match(threadContextUi, /Our proposal/);
+  assert.match(threadContextUi, /Their proposal/);
+  assert.match(threadContextUi, /exchange/);
 
   assert.doesNotMatch(dashboard, /Mutual interest ready/);
   assert.doesNotMatch(dashboard, /Opportunities\?tab=inbox&inbox=win_confirmation_requested/);
+  assert.doesNotMatch(threadContextUi, /Started by/);
+  assert.doesNotMatch(threadContextUi, /Last update from/);
 });
 
 test('dashboard chart returns to the visible legacy metric story', () => {

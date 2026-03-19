@@ -1,4 +1,4 @@
-import { and, desc, eq, ilike, inArray, or } from 'drizzle-orm';
+import { and, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
 import { ok } from '../../_lib/api-response.js';
 import { requireUser } from '../../_lib/auth.js';
 import { getDatabaseIdentitySnapshot, getDb, schema } from '../../_lib/db/client.js';
@@ -35,6 +35,7 @@ import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 
 const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 100;
+const EXCHANGE_EVENT_TYPES = ['proposal.sent', 'proposal.received', 'proposal.send_back'];
 
 function normalizeEmail(value: unknown) {
   return typeof value === 'string' ? value.trim().toLowerCase() : '';
@@ -54,6 +55,14 @@ function clampResumeStep(value: unknown, fallback = 1) {
     return fallback;
   }
   return Math.min(Math.max(Math.floor(numeric), 1), 3);
+}
+
+function normalizeNonNegativeInteger(value: unknown) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    return null;
+  }
+  return Math.floor(numeric);
 }
 
 function hasStep2DraftContent(comparison: any) {
@@ -154,6 +163,7 @@ function mapProposalRow(
   threadState,
   sharedReportLink = null,
   resumeStepOverride: unknown = null,
+  exchangeCountOverride: unknown = null,
 ) {
   const effectiveStatus = threadState.outcome.final_status || proposal.status;
   const sharedReportToken = String(sharedReportLink?.token || '').trim();
@@ -164,6 +174,11 @@ function mapProposalRow(
   const isPrivateMode = Boolean((proposal as any).isPrivateMode);
   const actorRole = String(threadState.outcome?.actor_role || threadState?.actorRole || '').trim().toLowerCase();
   const maskSender = shouldMaskPrivateSender(isPrivateMode, actorRole);
+  const normalizedExchangeCount = normalizeNonNegativeInteger(exchangeCountOverride);
+  const exchangeCount =
+    normalizedExchangeCount !== null
+      ? normalizedExchangeCount
+      : normalizeNonNegativeInteger(threadState.exchangeCount) ?? 0;
 
   const base = {
     id: proposal.id,
@@ -212,6 +227,7 @@ function mapProposalRow(
     latest_direction: threadState.latestDirection,
     started_by_role: threadState.startedByRole || null,
     last_update_by_role: threadState.lastUpdateByRole || null,
+    exchange_count: exchangeCount,
     needs_response: threadState.needsResponse,
     waiting_on_other_party: threadState.waitingOnOtherParty,
     win_confirmation_requested: threadState.winConfirmationRequested,
@@ -524,8 +540,15 @@ export default async function handler(req: any, res: any) {
             .filter(Boolean),
         ),
       );
+      const pageProposalIds = Array.from(
+        new Set(
+          pageRows
+            .map((row) => asText(row?.id))
+            .filter(Boolean),
+        ),
+      );
 
-      const [documentComparisonRows, documentComparisonEvaluationRows] = await Promise.all([
+      const [documentComparisonRows, documentComparisonEvaluationRows, exchangeCountRows] = await Promise.all([
         documentComparisonIds.length > 0
           ? db
               .select({
@@ -548,6 +571,21 @@ export default async function handler(req: any, res: any) {
               })
               .from(schema.proposalEvaluations)
               .where(inArray(schema.proposalEvaluations.proposalId, documentComparisonProposalIds))
+          : Promise.resolve([]),
+        pageProposalIds.length > 0
+          ? db
+              .select({
+                proposalId: schema.proposalEvents.proposalId,
+                exchangeCount: sql<number>`count(*)`,
+              })
+              .from(schema.proposalEvents)
+              .where(
+                and(
+                  inArray(schema.proposalEvents.proposalId, pageProposalIds),
+                  inArray(schema.proposalEvents.eventType, EXCHANGE_EVENT_TYPES),
+                ),
+              )
+              .groupBy(schema.proposalEvents.proposalId)
           : Promise.resolve([]),
       ]);
 
@@ -582,6 +620,15 @@ export default async function handler(req: any, res: any) {
         });
         resumeStepByProposalId.set(proposalId, resumeStep);
       });
+      const exchangeCountByProposalId = new Map<string, number>();
+      exchangeCountRows.forEach((row) => {
+        const proposalId = asText(row?.proposalId);
+        const exchangeCount = normalizeNonNegativeInteger((row as any)?.exchangeCount);
+        if (!proposalId || exchangeCount === null) {
+          return;
+        }
+        exchangeCountByProposalId.set(proposalId, exchangeCount);
+      });
 
       console.info(
         JSON.stringify({
@@ -613,6 +660,7 @@ export default async function handler(req: any, res: any) {
             threadState,
             sharedReportByProposalId.get(String(row.id || '')) || null,
             resumeStepByProposalId.get(String(row.id || '')) || null,
+            exchangeCountByProposalId.get(String(row.id || '')) ?? null,
           ),
         ),
         page: {
