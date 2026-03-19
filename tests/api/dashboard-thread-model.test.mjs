@@ -23,6 +23,12 @@ function addDays(input, days) {
   return value;
 }
 
+function startOfDay(input) {
+  const value = new Date(input);
+  value.setHours(0, 0, 0, 0);
+  return value;
+}
+
 async function seedProfessionalPlan(userId, email) {
   const db = getDb();
   await db
@@ -265,13 +271,14 @@ if (!hasDatabaseUrl()) {
     assert.ok(mutualProposal?.id);
 
     const now = new Date();
+    const thresholdReachedAt = addDays(now, -1);
     await insertProposalEvent({
       proposalId: mutualProposal.id,
       proposalUserId: ownerUserId,
       actorUserId: 'dashboard_range_recipient_actor',
       actorRole: 'party_b',
       eventType: 'proposal.send_back',
-      createdAt: addDays(now, -1),
+      createdAt: thresholdReachedAt,
     });
     await insertProposalEvent({
       proposalId: mutualProposal.id,
@@ -296,8 +303,22 @@ if (!hasDatabaseUrl()) {
       'Mutual Interest should count each qualifying opportunity once even after extra rounds',
     );
 
-    const sevenDayActivity = aggregateThreadActivity(await getActivity(ownerCookie, '7'));
+    const sevenDayPoints = await getActivity(ownerCookie, '7');
+    const sevenDayActivity = aggregateThreadActivity(sevenDayPoints);
     assert.equal(sevenDayActivity.legacySent, 2);
+    const mutualTotalFromActivity = sevenDayPoints.reduce(
+      (sum, point) => sum + Number(point?.mutual || 0),
+      0,
+    );
+    assert.equal(mutualTotalFromActivity, sevenDaySummary.mutualInterestCount);
+    const mutualDays = sevenDayPoints.filter((point) => Number(point?.mutual || 0) > 0);
+    assert.equal(mutualDays.length, 1, 'Mutual Interest should be plotted once per qualifying opportunity');
+    assert.equal(Number(mutualDays[0]?.mutual || 0), 1);
+    assert.equal(
+      String(mutualDays[0]?.date || ''),
+      startOfDay(thresholdReachedAt).toISOString().slice(0, 10),
+      'Mutual Interest should plot on the day exchange_count first reached 2',
+    );
   });
 
   test('dashboard summary range filters won/lost counts while all-time remains lifetime', async () => {

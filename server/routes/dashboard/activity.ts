@@ -131,10 +131,28 @@ export default async function handler(req: any, res: any) {
               ),
             )
         : [];
+    const exchangeTimelineByProposalId = new Map<string, Date[]>();
+    eventRows.forEach((eventRow) => {
+      const proposalId = String(eventRow.proposalId || '').trim();
+      const eventType = String(eventRow.eventType || '').trim().toLowerCase();
+      const eventAt = toDateOrNull(eventRow.createdAt);
+      if (!proposalId || !eventAt || !ACTIVE_ROUND_EVENT_TYPES.has(eventType)) {
+        return;
+      }
+      const existing = exchangeTimelineByProposalId.get(proposalId) || [];
+      existing.push(eventAt);
+      exchangeTimelineByProposalId.set(proposalId, existing);
+    });
+    exchangeTimelineByProposalId.forEach((timeline, proposalId) => {
+      exchangeTimelineByProposalId.set(
+        proposalId,
+        [...timeline].sort((a, b) => a.getTime() - b.getTime()),
+      );
+    });
 
     const relevantDates = threadRows
       .flatMap(({ row, threadState }) => {
-        const status = String(row.status || '').trim().toLowerCase();
+        const proposalId = String(row.id || '').trim();
         const finalOutcome = getProposalOutcomeState(row).finalStatus;
         const sentAt = toDateOrNull(row.sentAt);
         const receivedAt = toDateOrNull(row.receivedAt);
@@ -143,6 +161,13 @@ export default async function handler(req: any, res: any) {
         const createdAt = toDateOrNull(row.createdAt);
         const threadActivityAt = toDateOrNull(row.lastThreadActivityAt || threadState.threadActivityAt);
         const archivedAt = toDateOrNull(threadState.archivedAt);
+        const exchangeTimeline = exchangeTimelineByProposalId.get(proposalId) || [];
+        const mutualQualifiedAt =
+          exchangeTimeline.length >= 2
+            ? exchangeTimeline[1]
+            : Number(threadState.exchangeCount || 0) >= 2
+              ? receivedAt || threadActivityAt || updatedAt || sentAt
+              : null;
         const dates = [] as Date[];
 
         if (createdAt) {
@@ -151,12 +176,8 @@ export default async function handler(req: any, res: any) {
         if (sentAt) {
           dates.push(sentAt);
         }
-        if (status === 'mutual_interest' || status === 'received') {
-          if (receivedAt) {
-            dates.push(receivedAt);
-          } else if (updatedAt) {
-            dates.push(updatedAt);
-          }
+        if (mutualQualifiedAt) {
+          dates.push(mutualQualifiedAt);
         }
         if ((finalOutcome === 'won' || finalOutcome === 'lost') && closedAt) {
           dates.push(closedAt);
@@ -232,12 +253,20 @@ export default async function handler(req: any, res: any) {
         return;
       }
 
-      const status = String(row.status || '').trim().toLowerCase();
+      const proposalId = String(row.id || '').trim();
       const finalOutcome = getProposalOutcomeState(row).finalStatus;
       const sentAt = toDateOrNull(row.sentAt);
       const receivedAt = toDateOrNull(row.receivedAt);
       const closedAt = toDateOrNull(row.closedAt);
       const updatedAt = toDateOrNull(row.updatedAt);
+      const threadActivityAt = toDateOrNull(row.lastThreadActivityAt || threadState.threadActivityAt);
+      const exchangeTimeline = exchangeTimelineByProposalId.get(proposalId) || [];
+      const mutualQualifiedAt =
+        exchangeTimeline.length >= 2
+          ? exchangeTimeline[1]
+          : Number(threadState.exchangeCount || 0) >= 2
+            ? receivedAt || threadActivityAt || updatedAt || sentAt
+            : null;
 
       if (!sentAt) {
         return;
@@ -255,8 +284,8 @@ export default async function handler(req: any, res: any) {
         incrementPoint(sentAt, 'sent');
       }
 
-      if (status === 'mutual_interest' || (status === 'received' && !isRecipient)) {
-        incrementPoint(receivedAt || updatedAt || sentAt, 'mutual');
+      if (mutualQualifiedAt) {
+        incrementPoint(mutualQualifiedAt, 'mutual');
       }
 
       if (finalOutcome === 'won') {
