@@ -608,6 +608,20 @@ export default function DocumentComparisonDetail() {
     },
   });
 
+  const downloadAiReportWebParityMutation = useMutation({
+    mutationFn: () => documentComparisonsClient.downloadPdf(comparisonId, { format: 'web-parity' }),
+    onSuccess: () => {
+      toast.success('AI mediation review web-layout PDF download started');
+    },
+    onError: (error) => {
+      if (error?.code === 'not_configured' || Number(error?.status || 0) === 501) {
+        toast.error('AI mediation review PDF is not configured in this environment yet.');
+        return;
+      }
+      toast.error(error?.message || 'AI mediation review web-layout PDF download unavailable');
+    },
+  });
+
   const createShareLinkMutation = useMutation({
     mutationFn: async (options = {}) => {
       const recipientEmail = asText(options?.recipientEmail) || asText(shareRecipientEmail) || null;
@@ -857,6 +871,14 @@ export default function DocumentComparisonDetail() {
             >
               <Download className="w-4 h-4 mr-2" />
               Download AI Mediation Review PDF
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => downloadAiReportWebParityMutation.mutate()}
+              disabled={downloadAiReportWebParityMutation.isPending}
+            >
+              <Download className="w-4 h-4 mr-2" />
+              Download AI Review PDF (Web Layout)
             </Button>
             <Button onClick={() => setIsShareDialogOpen(true)} disabled={!proposal?.id}>
               <Send className="w-4 h-4 mr-2" />

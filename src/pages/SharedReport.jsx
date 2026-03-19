@@ -1257,6 +1257,20 @@ export default function SharedReport() {
       toast.error(error?.message || 'Unable to download AI mediation review PDF');
     },
   });
+
+  const downloadSharedAiReportWebParityPdfMutation = useMutation({
+    mutationFn: () => sharedReportsClient.downloadRecipientAiReportPdf(token, { format: 'web-parity' }),
+    onSuccess: () => {
+      toast.success('AI mediation review web-layout PDF download started');
+    },
+    onError: (error) => {
+      if (error?.code === 'not_configured' || Number(error?.status || 0) === 501) {
+        toast.error('AI mediation review PDF is not configured in this environment yet.');
+        return;
+      }
+      toast.error(error?.message || 'Unable to download AI mediation review web-layout PDF');
+    },
+  });
   const parentIsClosed = parentOutcomeState === 'won' || parentOutcomeState === 'lost';
   const outcomeActionDisabled = markOutcomeMutation.isPending || continueNegotiationMutation.isPending;
   const outcomeHelperText = parentOutcome?.requested_by_current_user
@@ -2547,6 +2561,15 @@ export default function SharedReport() {
               >
                 {downloadSharedAiReportPdfMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
                 Download AI Mediation Review PDF
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => downloadSharedAiReportWebParityPdfMutation.mutate()}
+                disabled={downloadSharedAiReportWebParityPdfMutation.isPending}
+              >
+                {downloadSharedAiReportWebParityPdfMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                Download AI Review PDF (Web Layout)
               </Button>
             </div>
 

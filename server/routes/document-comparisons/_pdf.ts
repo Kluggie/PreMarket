@@ -39,6 +39,36 @@ export type PdfDocument = {
   sections: PdfSection[];
 };
 
+export type PdfWebParityMetric = {
+  label: string;
+  value: string;
+};
+
+export type PdfWebParityTimelineItem = {
+  label: string;
+  value: string;
+};
+
+export type PdfWebParitySection = {
+  heading: string;
+  paragraphs?: string[];
+  bullets?: string[];
+  numberedBullets?: boolean;
+};
+
+export type PdfWebParityDocument = {
+  title: string;
+  subtitle?: string;
+  comparisonId?: string | null;
+  generatedAt?: Date;
+  opportunityLabel?: string;
+  completionStateLabel?: string;
+  metrics?: PdfWebParityMetric[];
+  timelineItems?: PdfWebParityTimelineItem[];
+  footerNote?: string;
+  sections: PdfWebParitySection[];
+};
+
 /**
  * Splits a prose paragraph into individual bullet strings by detecting
  * sentence boundaries (`. ` followed by an uppercase letter).  Entries
@@ -622,6 +652,347 @@ export async function renderProfessionalPdfBuffer(document: PdfDocument): Promis
     setFont('normal', 7.5, C.label);
     if (footerNote) pdf.text(footerNote, mL, fy);
     pdf.text(`Page ${p} of ${totalPages}`, pageWidth - mR, fy, { align: 'right' });
+  }
+
+  return Buffer.from(pdf.output('arraybuffer'));
+}
+
+export async function renderWebParityPdfBuffer(document: PdfWebParityDocument): Promise<Buffer> {
+  const { jsPDF } = await import('jspdf');
+  const pdf = new jsPDF({ unit: 'pt', format: 'a4' });
+
+  const pageWidth = pdf.internal.pageSize.getWidth();
+  const pageHeight = pdf.internal.pageSize.getHeight();
+  const mL = 46;
+  const mR = 46;
+  const mT = 42;
+  const mB = 38;
+  const contentW = pageWidth - mL - mR;
+  const contentBottom = pageHeight - mB - 18;
+  let y = mT;
+
+  const colors = {
+    text: [15, 23, 42] as [number, number, number],
+    muted: [100, 116, 139] as [number, number, number],
+    border: [226, 232, 240] as [number, number, number],
+    panel: [248, 250, 252] as [number, number, number],
+    dark: [15, 23, 42] as [number, number, number],
+    darkText: [255, 255, 255] as [number, number, number],
+    successBg: [220, 252, 231] as [number, number, number],
+    successBorder: [134, 239, 172] as [number, number, number],
+    successText: [22, 101, 52] as [number, number, number],
+    metricBg: [255, 255, 255] as [number, number, number],
+  };
+
+  const setFont = (wt: 'normal' | 'bold' | 'italic', size: number, rgb: [number, number, number]) => {
+    pdf.setFont('helvetica', wt);
+    pdf.setFontSize(size);
+    pdf.setTextColor(rgb[0], rgb[1], rgb[2]);
+  };
+
+  const ensureSpace = (height: number) => {
+    if (y + height <= contentBottom) {
+      return;
+    }
+    pdf.addPage();
+    y = mT;
+  };
+
+  const wrapLineCount = (text: string, maxW: number, size: number) => {
+    pdf.setFontSize(size);
+    const lines = pdf.splitTextToSize(normalizePdfText(text), maxW) as string[];
+    return Math.max(1, lines.length);
+  };
+
+  const writeWrappedText = (opts: {
+    text: string;
+    x: number;
+    maxW: number;
+    size: number;
+    wt?: 'normal' | 'bold' | 'italic';
+    color?: [number, number, number];
+    lineHeight: number;
+    gapAfter?: number;
+  }) => {
+    const safe = normalizePdfText(opts.text);
+    if (!safe) return;
+    const lines = pdf.splitTextToSize(safe, opts.maxW) as string[];
+    ensureSpace(lines.length * opts.lineHeight + (opts.gapAfter ?? 0));
+    setFont(opts.wt ?? 'normal', opts.size, opts.color ?? colors.text);
+    lines.forEach((line) => {
+      pdf.text(line, opts.x, y);
+      y += opts.lineHeight;
+    });
+    if (opts.gapAfter) y += opts.gapAfter;
+  };
+
+  const drawBadge = (opts: {
+    x: number;
+    yPos: number;
+    text: string;
+    bg: [number, number, number];
+    border: [number, number, number];
+    color: [number, number, number];
+    wt?: 'normal' | 'bold';
+    size?: number;
+    padX?: number;
+    height?: number;
+  }) => {
+    const textSafe = normalizePdfText(opts.text);
+    const padX = opts.padX ?? 8;
+    const height = opts.height ?? 20;
+    const size = opts.size ?? 10;
+    pdf.setFont('helvetica', opts.wt ?? 'normal');
+    pdf.setFontSize(size);
+    const textWidth = pdf.getTextWidth(textSafe);
+    const width = textWidth + padX * 2;
+    pdf.setFillColor(opts.bg[0], opts.bg[1], opts.bg[2]);
+    pdf.rect(opts.x, opts.yPos, width, height, 'F');
+    pdf.setDrawColor(opts.border[0], opts.border[1], opts.border[2]);
+    pdf.setLineWidth(0.75);
+    pdf.rect(opts.x, opts.yPos, width, height, 'S');
+    setFont(opts.wt ?? 'normal', size, opts.color);
+    pdf.text(textSafe, opts.x + padX, opts.yPos + 13);
+    return width;
+  };
+
+  const titleSafe = normalizePdfText(document.title || 'AI Mediation Review');
+  const subtitleSafe = normalizePdfText(document.subtitle || '');
+  const opportunityLabelSafe = normalizePdfText(document.opportunityLabel || 'Opportunity');
+  const completionStateSafe = normalizePdfText(document.completionStateLabel || 'Complete');
+  const hasSubtitle =
+    Boolean(subtitleSafe) &&
+    subtitleSafe.localeCompare(titleSafe, undefined, { sensitivity: 'accent' }) !== 0;
+
+  ensureSpace(70);
+  let badgeX = mL;
+  const badgeY = y;
+  badgeX += drawBadge({
+    x: badgeX,
+    yPos: badgeY,
+    text: opportunityLabelSafe,
+    bg: colors.panel,
+    border: colors.border,
+    color: colors.muted,
+    wt: 'bold',
+    size: 10,
+    padX: 10,
+    height: 22,
+  });
+  badgeX += 8;
+  badgeX += drawBadge({
+    x: badgeX,
+    yPos: badgeY,
+    text: titleSafe,
+    bg: colors.dark,
+    border: colors.dark,
+    color: colors.darkText,
+    wt: 'bold',
+    size: 11,
+    padX: 10,
+    height: 22,
+  });
+  badgeX += 8;
+  pdf.setFont('helvetica', 'bold');
+  pdf.setFontSize(10);
+  const completionBadgeWidth = pdf.getTextWidth(completionStateSafe) + 20;
+  if (badgeX + completionBadgeWidth > pageWidth - mR) {
+    y += 28;
+    badgeX = mL;
+  }
+  drawBadge({
+    x: badgeX,
+    yPos: y,
+    text: completionStateSafe,
+    bg: colors.successBg,
+    border: colors.successBorder,
+    color: colors.successText,
+    wt: 'bold',
+    size: 10,
+    padX: 10,
+    height: 22,
+  });
+  y += 32;
+
+  if (hasSubtitle) {
+    writeWrappedText({
+      text: subtitleSafe,
+      x: mL,
+      maxW: contentW,
+      size: 13,
+      wt: 'bold',
+      color: colors.text,
+      lineHeight: 16,
+      gapAfter: 2,
+    });
+  }
+
+  const generatedAt = document.generatedAt || new Date();
+  const rawId = asText(document.comparisonId);
+  const shortId = rawId
+    ? rawId.replace(/^[a-z_-]+/i, '').replace(/^[-_]/, '').slice(0, 8) || rawId.slice(0, 12)
+    : '';
+  const metaText =
+    `Generated: ${formatGeneratedAt(generatedAt)}` +
+    (shortId ? ` | ID: ${shortId}` : '');
+  writeWrappedText({
+    text: metaText,
+    x: mL,
+    maxW: contentW,
+    size: 8.5,
+    wt: 'normal',
+    color: colors.muted,
+    lineHeight: 12,
+    gapAfter: 10,
+  });
+
+  const metrics = Array.isArray(document.metrics)
+    ? document.metrics
+        .map((metric) => ({
+          label: normalizePdfText(metric?.label || ''),
+          value: normalizePdfText(metric?.value || ''),
+        }))
+        .filter((metric) => metric.label && metric.value)
+    : [];
+  if (metrics.length > 0) {
+    const colGap = 8;
+    const colCount = Math.min(3, metrics.length);
+    const colW = (contentW - (colCount - 1) * colGap) / colCount;
+    const rowHeight = 52;
+    ensureSpace(rowHeight + 14);
+    const rowY = y;
+    metrics.slice(0, colCount).forEach((metric, index) => {
+      const boxX = mL + index * (colW + colGap);
+      pdf.setFillColor(colors.metricBg[0], colors.metricBg[1], colors.metricBg[2]);
+      pdf.rect(boxX, rowY, colW, rowHeight, 'F');
+      pdf.setDrawColor(colors.border[0], colors.border[1], colors.border[2]);
+      pdf.setLineWidth(0.75);
+      pdf.rect(boxX, rowY, colW, rowHeight, 'S');
+      setFont('bold', 8.5, colors.muted);
+      pdf.text(metric.label.toUpperCase(), boxX + 10, rowY + 14);
+      setFont('bold', 12, colors.text);
+      const metricLines = pdf.splitTextToSize(metric.value, colW - 20) as string[];
+      pdf.text(metricLines[0] || metric.value, boxX + 10, rowY + 33);
+    });
+    y += rowHeight + 14;
+  }
+
+  const timelineItems = Array.isArray(document.timelineItems)
+    ? document.timelineItems
+        .map((item) => ({
+          label: normalizePdfText(item?.label || ''),
+          value: normalizePdfText(item?.value || ''),
+        }))
+        .filter((item) => item.label)
+    : [];
+  if (timelineItems.length > 0) {
+    let timelineHeight = 36;
+    timelineItems.forEach((item) => {
+      timelineHeight += wrapLineCount(item.label, contentW - 30, 11) * 14;
+      timelineHeight += wrapLineCount(item.value || '-', contentW - 30, 10) * 13;
+      timelineHeight += 6;
+    });
+    ensureSpace(timelineHeight + 12);
+    const top = y;
+    pdf.setFillColor(colors.panel[0], colors.panel[1], colors.panel[2]);
+    pdf.rect(mL, top, contentW, timelineHeight, 'F');
+    pdf.setDrawColor(colors.border[0], colors.border[1], colors.border[2]);
+    pdf.setLineWidth(0.75);
+    pdf.rect(mL, top, contentW, timelineHeight, 'S');
+
+    let timelineY = top + 16;
+    setFont('bold', 12, colors.text);
+    pdf.text('Activity Timeline', mL + 12, timelineY);
+    timelineY += 16;
+
+    timelineItems.forEach((item) => {
+      setFont('bold', 10.5, colors.text);
+      const labelLines = pdf.splitTextToSize(item.label, contentW - 24) as string[];
+      labelLines.forEach((line) => {
+        pdf.text(line, mL + 12, timelineY);
+        timelineY += 13;
+      });
+      setFont('normal', 10, colors.muted);
+      const valueLines = pdf.splitTextToSize(item.value || '-', contentW - 24) as string[];
+      valueLines.forEach((line) => {
+        pdf.text(line, mL + 12, timelineY);
+        timelineY += 12;
+      });
+      timelineY += 5;
+    });
+
+    y += timelineHeight + 12;
+  }
+
+  const sections = Array.isArray(document.sections) ? document.sections : [];
+  sections.forEach((section, sectionIndex) => {
+    const heading = normalizePdfText(section?.heading || `Section ${sectionIndex + 1}`);
+    const paragraphs = Array.isArray(section?.paragraphs)
+      ? section.paragraphs.map((paragraph) => normalizePdfText(paragraph)).filter(Boolean)
+      : [];
+    const bullets = Array.isArray(section?.bullets)
+      ? section.bullets.map((bullet) => normalizeBullet(bullet)).filter(Boolean)
+      : [];
+    const hasContent = paragraphs.length > 0 || bullets.length > 0;
+    if (!heading || !hasContent) {
+      return;
+    }
+
+    const headingHeight = 24;
+    ensureSpace(headingHeight + 20);
+    if (sectionIndex > 0) {
+      pdf.setDrawColor(colors.border[0], colors.border[1], colors.border[2]);
+      pdf.setLineWidth(0.75);
+      pdf.line(mL, y - 6, pageWidth - mR, y - 6);
+    }
+    setFont('bold', 9.5, colors.muted);
+    pdf.text(heading.toUpperCase(), mL, y + 10);
+    y += headingHeight;
+
+    paragraphs.forEach((paragraph, paragraphIndex) => {
+      writeWrappedText({
+        text: paragraph,
+        x: mL,
+        maxW: contentW,
+        size: 11,
+        wt: 'normal',
+        color: colors.text,
+        lineHeight: 15,
+        gapAfter: paragraphIndex < paragraphs.length - 1 ? 6 : 8,
+      });
+    });
+
+    if (bullets.length > 0) {
+      const useNumbered = section.numberedBullets === true;
+      bullets.forEach((bullet, bulletIndex) => {
+        const prefix = useNumbered ? `${bulletIndex + 1}.` : '-';
+        const textX = mL + (useNumbered ? 18 : 14);
+        const prefixX = mL;
+        const wrapped = pdf.splitTextToSize(bullet, contentW - (textX - mL)) as string[];
+        ensureSpace(wrapped.length * 14 + 2);
+        setFont('bold', 10.5, colors.text);
+        pdf.text(prefix, prefixX, y);
+        setFont('normal', 10.5, colors.text);
+        wrapped.forEach((line) => {
+          pdf.text(line, textX, y);
+          y += 14;
+        });
+        y += 2;
+      });
+      y += 6;
+    }
+  });
+
+  const totalPages = pdf.getNumberOfPages();
+  const footerNote = normalizePdfText(document.footerNote || '');
+  for (let page = 1; page <= totalPages; page += 1) {
+    pdf.setPage(page);
+    const fy = pageHeight - 18;
+    setFont('normal', 8, colors.muted);
+    if (footerNote) {
+      pdf.text(footerNote, mL, fy);
+    }
+    pdf.text(`Page ${page} of ${totalPages}`, pageWidth - mR, fy, { align: 'right' });
   }
 
   return Buffer.from(pdf.output('arraybuffer'));

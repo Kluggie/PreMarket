@@ -414,9 +414,14 @@ export const documentComparisonsClient = {
     };
   },
 
-  async downloadPdf(id) {
+  async downloadPdf(id, options = {}) {
+    const searchParams = new URLSearchParams();
+    if (options?.format) {
+      searchParams.set('format', String(options.format));
+    }
+    const query = searchParams.toString();
     return downloadPdfFile(
-      `/api/document-comparisons/${encodeId(id)}/download/pdf`,
+      `/api/document-comparisons/${encodeId(id)}/download/pdf${query ? `?${query}` : ''}`,
       'document-comparison-ai-mediation-review.pdf',
     );
   },

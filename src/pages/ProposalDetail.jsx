@@ -556,6 +556,24 @@ export default function ProposalDetail() {
     },
   });
 
+  const downloadAiReportWebParityMutation = useMutation({
+    mutationFn: async () => {
+      if (!proposal?.document_comparison_id) {
+        const notConfigured = new Error('AI mediation review PDF is not configured');
+        notConfigured.code = 'not_configured';
+        notConfigured.status = 501;
+        throw notConfigured;
+      }
+      return documentComparisonsClient.downloadPdf(proposal.document_comparison_id, { format: 'web-parity' });
+    },
+    onSuccess: () => {
+      toast.success('AI mediation review web-layout PDF download started');
+    },
+    onError: (error) => {
+      toast.error(error?.message || 'AI mediation review web-layout PDF is not configured');
+    },
+  });
+
   const markOutcomeMutation = useMutation({
     mutationFn: (status) => proposalsClient.markOutcome(proposalId, status),
     onSuccess: (updatedProposal) => {
@@ -792,6 +810,14 @@ export default function ProposalDetail() {
               <Button variant="outline" onClick={() => downloadAiReportMutation.mutate()} disabled={downloadAiReportMutation.isPending}>
                 <Download className="w-4 h-4 mr-2" />
                 Download AI Mediation Review PDF
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => downloadAiReportWebParityMutation.mutate()}
+                disabled={downloadAiReportWebParityMutation.isPending}
+              >
+                <Download className="w-4 h-4 mr-2" />
+                Download AI Review PDF (Web Layout)
               </Button>
               {canArchive ? (
                 <Button

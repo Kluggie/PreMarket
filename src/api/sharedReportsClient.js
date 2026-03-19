@@ -263,9 +263,14 @@ export const sharedReportsClient = {
     };
   },
 
-  async downloadRecipientAiReportPdf(token) {
+  async downloadRecipientAiReportPdf(token, options = {}) {
+    const search = new URLSearchParams();
+    if (options?.format) {
+      search.set('format', String(options.format));
+    }
+    const query = search.toString();
     return downloadPdfFile(
-      `/api/shared-report/${encodeToken(token)}/download/pdf`,
+      `/api/shared-report/${encodeToken(token)}/download/pdf${query ? `?${query}` : ''}`,
       'shared-report-ai-mediation-review.pdf',
     );
   },

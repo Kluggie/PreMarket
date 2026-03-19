@@ -17,13 +17,21 @@ import {
 } from '../_shared.js';
 import {
   renderProfessionalPdfBuffer,
+  renderWebParityPdfBuffer,
   sendPdf,
   slugify,
   splitIntoBullets,
   toParagraphs,
   type PdfDecisionPanel,
   type PdfSection,
+  type PdfWebParitySection,
 } from '../../document-comparisons/_pdf.js';
+import {
+  filterLegacySectionsForDisplay,
+  MISSING_OR_REDACTED_INFO_LABEL,
+  OPEN_QUESTIONS_LABEL,
+  splitV2WhyBodyParagraphs,
+} from '../../../../src/lib/aiReportUtils.js';
 
 const SHARED_REPORT_DOWNLOAD_PDF_ROUTE = `${SHARED_REPORT_ROUTE}/download/pdf`;
 
@@ -40,6 +48,91 @@ function toScore(value: unknown) {
     return 0;
   }
   return Math.max(0, Math.min(100, Math.round(numeric)));
+}
+
+function getPdfFormat(req: any): 'legacy' | 'web-parity' {
+  const raw = Array.isArray(req.query?.format) ? req.query.format[0] : req.query?.format;
+  const normalized = String(raw || '').trim().toLowerCase();
+  if (normalized === 'web-parity' || normalized === 'web_parity') {
+    return 'web-parity';
+  }
+  return 'legacy';
+}
+
+function formatDateTime(value: unknown) {
+  if (!value) return '-';
+  const parsed = new Date(String(value));
+  if (Number.isNaN(parsed.getTime())) return '-';
+  return parsed.toLocaleString();
+}
+
+function toTitleCase(value: string) {
+  return value.replace(/\w\S*/g, (word) => word.charAt(0).toUpperCase() + word.slice(1));
+}
+
+function buildWebParitySections(params: {
+  report: Record<string, any>;
+  legacySections: any[];
+  missingItems: string[];
+  fallbackSummary: string;
+}): PdfWebParitySection[] {
+  const sections: PdfWebParitySection[] = [];
+  const { report, legacySections, missingItems, fallbackSummary } = params;
+  const isV2 = Array.isArray(report.why) && report.why.length > 0;
+
+  if (isV2) {
+    (report.why as unknown[]).forEach((entryRaw) => {
+      const entry = asText(entryRaw);
+      if (!entry) return;
+      const { heading, body } = parseV2WhyEntry(entry);
+      const paragraphs = splitV2WhyBodyParagraphs(body);
+      const safeParagraphs = (paragraphs.length > 0 ? paragraphs : [body]).map((item) => asText(item)).filter(Boolean);
+      if (!safeParagraphs.length) return;
+      sections.push({
+        heading: heading || 'Analysis',
+        paragraphs: safeParagraphs,
+      });
+    });
+
+    if (missingItems.length > 0) {
+      sections.push({
+        heading: OPEN_QUESTIONS_LABEL,
+        bullets: missingItems,
+      });
+    }
+
+    const redactions = Array.isArray(report.redactions)
+      ? (report.redactions as unknown[]).map((entry) => asText(entry)).filter(Boolean)
+      : [];
+    if (redactions.length > 0) {
+      sections.push({
+        heading: MISSING_OR_REDACTED_INFO_LABEL,
+        bullets: redactions,
+      });
+    }
+  } else {
+    const filteredLegacy = filterLegacySectionsForDisplay(legacySections as any[]);
+    filteredLegacy.forEach((section: any, index: number) => {
+      const heading =
+        asText(section?.heading) ||
+        asText(section?.key) ||
+        `Section ${index + 1}`;
+      const bullets = (Array.isArray(section?.bullets) ? section.bullets : [])
+        .map((bullet: unknown) => asText(bullet))
+        .filter(Boolean);
+      if (!bullets.length) return;
+      sections.push({ heading, bullets });
+    });
+  }
+
+  if (sections.length === 0) {
+    sections.push({
+      heading: 'Executive Summary',
+      paragraphs: [fallbackSummary || 'No AI mediation review content is available yet.'],
+    });
+  }
+
+  return sections;
 }
 
 export default async function handler(req: any, res: any, tokenParam?: string) {
@@ -118,6 +211,71 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       : [];
 
     const decisionStatus = getDecisionStatusDetails(report);
+    const pdfFormat = getPdfFormat(req);
+    if (pdfFormat === 'web-parity') {
+      const title = buildMediationReviewTitle(
+        resolved.comparison?.title,
+        resolved.proposal?.title,
+        report.title,
+        evaluationResult.title,
+      );
+      const subtitle = buildMediationReviewSubtitle(
+        resolved.comparison?.title,
+        resolved.proposal?.title,
+        report.title,
+        evaluationResult.title,
+      );
+      const comparisonId =
+        asText(resolved.comparison?.id) ||
+        asText(resolved.proposal?.documentComparisonId) ||
+        'shared-report';
+      const filenameBase = slugify(title) || 'ai-mediation-review';
+      const filename =
+        filenameBase === 'ai-mediation-review'
+          ? 'ai-mediation-review-web-parity.pdf'
+          : `${filenameBase}-ai-mediation-review-web-parity.pdf`;
+      const recommendationRaw =
+        asText(report.recommendation) ||
+        asText(evaluationResult.recommendation) ||
+        asText(report.fit_level) ||
+        'pending';
+      const recommendationMetric = recommendationRaw ? toTitleCase(recommendationRaw) : 'Pending';
+      const sections = buildWebParitySections({
+        report,
+        legacySections: legacySections as any[],
+        missingItems,
+        fallbackSummary:
+          asText(report.summary) ||
+          asText(evaluationResult.summary) ||
+          'No AI mediation summary is available yet.',
+      });
+      const completionStateLabel = sections.length > 0 ? 'Complete' : 'Pending';
+
+      const pdfBuffer = await renderWebParityPdfBuffer({
+        title: MEDIATION_REVIEW_TITLE,
+        subtitle,
+        comparisonId,
+        opportunityLabel: 'Opportunity',
+        completionStateLabel,
+        metrics: [
+          { label: 'Recommendation', value: recommendationMetric },
+          { label: 'Status', value: decisionStatus.label || 'Unknown' },
+          {
+            label: OPEN_QUESTIONS_LABEL,
+            value: `${missingItems.length} item${missingItems.length === 1 ? '' : 's'}`,
+          },
+        ],
+        timelineItems: [
+          { label: 'Opportunity Created', value: formatDateTime(resolved.comparison?.createdAt) },
+          { label: 'Last Updated', value: formatDateTime(resolved.comparison?.updatedAt) },
+        ],
+        footerNote: 'Shared report -- recipient-safe content only',
+        sections,
+      });
+      sendPdf(res, filename, pdfBuffer);
+      return;
+    }
+
     const fitStatusInfo =
       decisionStatus.tone === 'success'
         ? { status: decisionStatus.label, color: [22, 163, 74] as [number, number, number] }
