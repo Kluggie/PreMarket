@@ -1,24 +1,35 @@
 import { ApiError } from '../../../_lib/errors.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
+import { loadSharedReportHistory } from '../../../_lib/shared-report-history.js';
 import {
   buildDefaultSharedPayload,
-  getPayloadText,
   getToken,
   resolveSharedReportToken,
   SHARED_REPORT_ROUTE,
 } from '../_shared.js';
 import {
-  parseTextIntoSections,
-  renderProfessionalPdfBuffer,
+  renderOpportunityHistoryPdfBuffer,
   sendPdf,
   slugify,
-  type PdfSection,
 } from '../../document-comparisons/_pdf.js';
 
 const SHARED_REPORT_DOWNLOAD_PROPOSAL_PDF_ROUTE = `${SHARED_REPORT_ROUTE}/download/proposal-pdf`;
 
 function asText(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function formatDateTime(value: unknown) {
+  if (!value) return '';
+  const date = value instanceof Date ? value : new Date(value as any);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleString('en-US', {
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
 }
 
 export default async function handler(req: any, res: any, tokenParam?: string) {
@@ -38,82 +49,83 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       enforceMaxUses: true,
     });
 
-    const sharedPayload = buildDefaultSharedPayload({
+    const sharedHistory = await loadSharedReportHistory({
+      db: resolved.db,
       proposal: resolved.proposal,
       comparison: resolved.comparison,
     });
-    const sharedText = getPayloadText(sharedPayload, asText(resolved.comparison?.docBText || ''));
+    const sharedEntries = Array.isArray(sharedHistory?.sharedEntries)
+      ? sharedHistory.sharedEntries
+      : [];
 
-    const sections: PdfSection[] = [
-      {
-        heading: 'Proposal Brief',
-        level: 1,
-        paragraphs: [],
-        caption: 'Recipient-safe shared proposal details',
-      },
-    ];
-
-    const SHARED_PRIORITY = [
-      {
-        label: 'Opportunity Overview',
-        keywords: ['overview', 'summary', 'background', 'context', 'introduction'],
-        caption: 'What this engagement is and why it matters',
-      },
-      {
-        label: 'Current Environment',
-        keywords: ['current', 'environment', 'existing', 'state', 'situation', 'problem', 'challenge'],
-        caption: 'The buyer current-state landscape and pain points',
-      },
-      {
-        label: 'Scope & Deliverables',
-        keywords: ['scope', 'deliverable', 'work', 'service', 'feature', 'module', 'solution'],
-        caption: 'What is included in the proposed engagement',
-      },
-      {
-        label: 'Timeline & Success Criteria',
-        keywords: ['timeline', 'schedule', 'milestone', 'deadline', 'success', 'kpi', 'metric', 'outcome'],
-        caption: 'Delivery schedule and how success will be measured',
-      },
-    ];
-
-    const normalizeSubsections = (
-      subs: { heading: string; paragraphs?: string[]; bullets?: string[] }[],
-      priority: { label: string; keywords: string[]; caption?: string }[],
-    ): PdfSection[] => {
-      const used = new Set<number>();
-      const result: PdfSection[] = [];
-      subs.forEach((sub) => {
-        const headingLower = asText(sub.heading).toLowerCase();
-        let matched = -1;
-        for (let i = 0; i < priority.length; i += 1) {
-          if (used.has(i)) continue;
-          if (priority[i].keywords.some((keyword) => headingLower.includes(keyword))) {
-            matched = i;
-            break;
-          }
+    const roundEntries = sharedEntries
+      .map((entry: any, index: number) => {
+        const roundNumber = Number(entry?.round_number || 0) > 0
+          ? Math.floor(Number(entry.round_number))
+          : index + 1;
+        const authorLabel = asText(entry?.author_label) || 'Unknown';
+        const visibilityLabel = asText(entry?.visibility_label) || `Shared by ${authorLabel}`;
+        const sourceLabel = asText(entry?.source) || 'typed';
+        const timestampLabel = formatDateTime(entry?.updated_at || entry?.created_at);
+        const files = Array.isArray(entry?.files)
+          ? entry.files
+              .map((file: any) => asText(file?.filename || file?.name))
+              .filter(Boolean)
+          : [];
+        const html = asText(entry?.html);
+        const text = asText(entry?.text);
+        if (!html && !text && files.length === 0) {
+          return null;
         }
-        const label = matched >= 0 ? priority[matched].label : sub.heading;
-        const caption = matched >= 0 ? priority[matched].caption : undefined;
-        if (matched >= 0) used.add(matched);
-        result.push({
-          heading: label,
-          level: 2,
-          paragraphs: sub.paragraphs,
-          bullets: sub.bullets,
-          caption,
-        });
-      });
-      return result;
-    };
+        return {
+          id: asText(entry?.id) || `shared-round-${index + 1}`,
+          roundLabel: `Round ${roundNumber} \u2014 ${visibilityLabel}`,
+          authorLabel,
+          sourceLabel,
+          timestampLabel,
+          html,
+          text,
+          files,
+        };
+      })
+      .filter(Boolean);
 
-    if (sharedText.trim().length > 0) {
-      const sharedSections = parseTextIntoSections(sharedText, 'Overview');
-      normalizeSubsections(sharedSections, SHARED_PRIORITY).forEach((section) => sections.push(section));
-    } else {
-      sections.push({
-        heading: 'Opportunity Overview',
-        level: 2,
-        paragraphs: ['No shared proposal content available yet.'],
+    const defaultSharedPayload = buildDefaultSharedPayload({
+      proposal: resolved.proposal,
+      comparison: resolved.comparison,
+    });
+    if (
+      roundEntries.length === 0 &&
+      (
+        asText(defaultSharedPayload?.text) ||
+        asText(defaultSharedPayload?.html) ||
+        (Array.isArray(defaultSharedPayload?.files) && defaultSharedPayload.files.length > 0)
+      )
+    ) {
+      roundEntries.push({
+        id: 'shared-round-1',
+        roundLabel: 'Round 1 \u2014 Shared by Proposer',
+        authorLabel: 'Proposer',
+        sourceLabel: asText(defaultSharedPayload?.source) || 'typed',
+        timestampLabel: formatDateTime(resolved.comparison?.updatedAt || resolved.proposal?.updatedAt),
+        html: asText(defaultSharedPayload?.html),
+        text: asText(defaultSharedPayload?.text),
+        files: Array.isArray(defaultSharedPayload?.files)
+          ? defaultSharedPayload.files
+              .map((file: any) => asText(file?.filename || file?.name))
+              .filter(Boolean)
+          : [],
+      });
+    }
+
+    if (roundEntries.length === 0) {
+      roundEntries.push({
+        id: 'shared-round-empty',
+        roundLabel: 'Round 1 \u2014 Shared by Proposer',
+        authorLabel: 'Proposer',
+        sourceLabel: 'typed',
+        timestampLabel: formatDateTime(resolved.comparison?.updatedAt || resolved.proposal?.updatedAt),
+        text: 'No shared history is available yet.',
       });
     }
 
@@ -125,13 +137,23 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       asText(resolved.comparison?.id) ||
       asText(resolved.proposal?.documentComparisonId) ||
       'shared-report';
-    const filename = `${slugify(title)}-proposal.pdf`;
-    const pdfBuffer = await renderProfessionalPdfBuffer({
+    const filename = `${slugify(title)}-opportunity-shared-history.pdf`;
+    const pdfBuffer = await renderOpportunityHistoryPdfBuffer({
       title,
-      subtitle: 'Proposal',
       comparisonId,
-      footerNote: 'Shared report -- recipient-safe content only',
-      sections,
+      historyHeading: 'Shared History',
+      metadataItems: [
+        {
+          label: 'Opportunity Created',
+          value: formatDateTime(resolved.comparison?.createdAt || resolved.proposal?.createdAt),
+        },
+        {
+          label: 'Last Updated',
+          value: formatDateTime(resolved.comparison?.updatedAt || resolved.proposal?.updatedAt),
+        },
+      ].filter((item) => item.value),
+      footerNote: 'Shared report | recipient-safe shared history',
+      entries: roundEntries as any,
     });
     sendPdf(res, filename, pdfBuffer);
   });

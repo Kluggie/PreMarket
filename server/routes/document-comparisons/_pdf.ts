@@ -67,6 +67,33 @@ export type PdfWebParityDocument = {
   sections: PdfWebParitySection[];
 };
 
+export type PdfOpportunityHistoryEntry = {
+  id?: string;
+  roundLabel: string;
+  authorLabel?: string;
+  sourceLabel?: string;
+  timestampLabel?: string;
+  html?: string;
+  text?: string;
+  files?: string[];
+};
+
+export type PdfOpportunityHistoryMetaItem = {
+  label: string;
+  value: string;
+};
+
+export type PdfOpportunityHistoryDocument = {
+  title: string;
+  subtitle?: string;
+  comparisonId?: string | null;
+  generatedAt?: Date;
+  footerNote?: string;
+  historyHeading?: string;
+  metadataItems?: PdfOpportunityHistoryMetaItem[];
+  entries: PdfOpportunityHistoryEntry[];
+};
+
 /**
  * Splits a prose paragraph into individual bullet strings by detecting
  * sentence boundaries (`. ` followed by an uppercase letter).  Entries
@@ -180,6 +207,15 @@ function normalizeWebParityPdfText(value: unknown) {
     .replace(/\s--\s/g, ' — ')
     .replace(/([A-Za-z0-9])--([A-Za-z0-9])/g, '$1—$2')
     .replace(/([:;,.!?])--(\s|$)/g, '$1—$2')
+    .trim();
+}
+
+function normalizeOpportunityPdfText(value: unknown) {
+  return String(value || '')
+    .replace(/\r/g, '')
+    .replace(/\u00A0/g, ' ')
+    .replace(/\u2026/g, '...')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
     .trim();
 }
 
@@ -812,19 +848,32 @@ export async function renderWebParityPdfBuffer(document: PdfWebParityDocument): 
     const minRowHeight = 52;
     const metricValueMaxW = colW - 20;
     const metricValueSizes = [11, 10.5, 10, 9.5, 9, 8.5];
-    const fitMetricValue = (value: string) => {
+    const fitMetricValue = (label: string, value: string) => {
+      const isStatusMetric = label.trim().toLowerCase() === 'status';
+      const baseMaxW = isStatusMetric ? Math.max(36, metricValueMaxW - 8) : metricValueMaxW;
+      const statusWrapW = Math.max(30, baseMaxW * 0.72);
       for (const size of metricValueSizes) {
         pdf.setFont('helvetica', 'bold');
         pdf.setFontSize(size);
-        const lines = pdf.splitTextToSize(value, metricValueMaxW) as string[];
-        if (lines.length <= 2) {
+        let lines = pdf.splitTextToSize(value, baseMaxW) as string[];
+        if (isStatusMetric && lines.length === 1 && /\s/.test(value)) {
+          const width = pdf.getTextWidth(lines[0] || '');
+          if (width > baseMaxW * 0.82) {
+            lines = pdf.splitTextToSize(value, statusWrapW) as string[];
+          }
+        }
+        const widestLine = Math.max(0, ...lines.map((line) => pdf.getTextWidth(line)));
+        if (lines.length <= 2 && widestLine <= baseMaxW + 0.5) {
           return { size, lineHeight: Math.max(10, Math.round(size + 1)), lines };
         }
       }
       const fallbackSize = metricValueSizes[metricValueSizes.length - 1];
       pdf.setFont('helvetica', 'bold');
       pdf.setFontSize(fallbackSize);
-      const fallbackLines = pdf.splitTextToSize(value, metricValueMaxW) as string[];
+      let fallbackLines = pdf.splitTextToSize(value, baseMaxW) as string[];
+      if (isStatusMetric && fallbackLines.length === 1 && /\s/.test(value)) {
+        fallbackLines = pdf.splitTextToSize(value, statusWrapW) as string[];
+      }
       return {
         size: fallbackSize,
         lineHeight: Math.max(10, Math.round(fallbackSize + 1)),
@@ -833,7 +882,7 @@ export async function renderWebParityPdfBuffer(document: PdfWebParityDocument): 
     };
     for (let rowStart = 0; rowStart < metrics.length; rowStart += colCount) {
       const row = metrics.slice(rowStart, rowStart + colCount);
-      const rowLayouts = row.map((metric) => fitMetricValue(metric.value));
+      const rowLayouts = row.map((metric) => fitMetricValue(metric.label, metric.value));
       const maxValueHeight = Math.max(
         0,
         ...rowLayouts.map((layout) => layout.lines.length * layout.lineHeight),
@@ -968,6 +1017,881 @@ export async function renderWebParityPdfBuffer(document: PdfWebParityDocument): 
       });
       y += 6;
     }
+  });
+
+  const totalPages = pdf.getNumberOfPages();
+  const footerNote = normalizeText(document.footerNote || '');
+  for (let page = 1; page <= totalPages; page += 1) {
+    pdf.setPage(page);
+    const fy = pageHeight - 18;
+    setFont('normal', 8, colors.muted);
+    if (footerNote) {
+      pdf.text(footerNote, mL, fy);
+    }
+    pdf.text(`Page ${page} of ${totalPages}`, pageWidth - mR, fy, { align: 'right' });
+  }
+
+  return Buffer.from(pdf.output('arraybuffer'));
+}
+
+export async function renderOpportunityHistoryPdfBuffer(
+  document: PdfOpportunityHistoryDocument,
+): Promise<Buffer> {
+  const [{ jsPDF }, { JSDOM }] = await Promise.all([
+    import('jspdf'),
+    import('jsdom'),
+  ]);
+  const pdf = new jsPDF({ unit: 'pt', format: 'a4' });
+
+  const pageWidth = pdf.internal.pageSize.getWidth();
+  const pageHeight = pdf.internal.pageSize.getHeight();
+  const mL = 44;
+  const mR = 44;
+  const mT = 42;
+  const mB = 38;
+  const contentW = pageWidth - mL - mR;
+  const contentBottom = pageHeight - mB - 18;
+  let y = mT;
+
+  const colors = {
+    text: [15, 23, 42] as [number, number, number],
+    muted: [100, 116, 139] as [number, number, number],
+    brand: [37, 99, 235] as [number, number, number],
+    border: [226, 232, 240] as [number, number, number],
+    panel: [248, 250, 252] as [number, number, number],
+    quote: [191, 219, 254] as [number, number, number],
+    link: [29, 78, 216] as [number, number, number],
+  };
+
+  const dom = new JSDOM('<!doctype html><html><body></body></html>');
+  const parser = new dom.window.DOMParser();
+
+  const setFont = (
+    wt: 'normal' | 'bold' | 'italic' | 'bolditalic',
+    size: number,
+    rgb: [number, number, number],
+  ) => {
+    pdf.setFont('helvetica', wt as any);
+    pdf.setFontSize(size);
+    pdf.setTextColor(rgb[0], rgb[1], rgb[2]);
+  };
+
+  const normalizeText = (value: unknown) => normalizeOpportunityPdfText(value);
+
+  const ensureSpace = (height: number) => {
+    if (y + height <= contentBottom) return;
+    pdf.addPage();
+    y = mT;
+  };
+
+  const writeWrapped = (opts: {
+    text: string;
+    x: number;
+    maxW: number;
+    size: number;
+    wt?: 'normal' | 'bold' | 'italic' | 'bolditalic';
+    color?: [number, number, number];
+    lineHeight: number;
+    gapAfter?: number;
+  }) => {
+    const safe = normalizeText(opts.text);
+    if (!safe) return;
+    const lines = pdf.splitTextToSize(safe, opts.maxW) as string[];
+    ensureSpace(lines.length * opts.lineHeight + (opts.gapAfter ?? 0));
+    setFont(opts.wt ?? 'normal', opts.size, opts.color ?? colors.text);
+    lines.forEach((line) => {
+      pdf.text(line, opts.x, y);
+      y += opts.lineHeight;
+    });
+    if (opts.gapAfter) y += opts.gapAfter;
+  };
+
+  const parseCssColor = (value: string) => {
+    const safe = String(value || '').trim().toLowerCase();
+    if (!safe) return null;
+    let rgb: [number, number, number] | null = null;
+    const hex = safe.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+    if (hex) {
+      const raw = hex[1].length === 3
+        ? hex[1].split('').map((char) => char + char).join('')
+        : hex[1];
+      rgb = [
+        parseInt(raw.slice(0, 2), 16),
+        parseInt(raw.slice(2, 4), 16),
+        parseInt(raw.slice(4, 6), 16),
+      ];
+    }
+    const rgbMatch = safe.match(/^rgba?\((\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})(?:\s*,\s*[\d.]+)?\)$/i);
+    if (rgbMatch) {
+      rgb = [
+        Math.max(0, Math.min(255, Number(rgbMatch[1]))),
+        Math.max(0, Math.min(255, Number(rgbMatch[2]))),
+        Math.max(0, Math.min(255, Number(rgbMatch[3]))),
+      ];
+    }
+    if (!rgb) return null;
+    const [r, g, b] = rgb.map((channel) => channel / 255);
+    const toLinear = (channel: number) =>
+      channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+    const luminance = 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b);
+    const whiteContrast = (1.05) / (luminance + 0.05);
+    if (whiteContrast < 3) {
+      return null;
+    }
+    return rgb;
+  };
+
+  type InlineState = {
+    bold?: boolean;
+    italic?: boolean;
+    underline?: boolean;
+    link?: string;
+    color?: [number, number, number];
+  };
+  type InlineRun = InlineState & { text: string };
+  type RichBlock =
+    | {
+        kind: 'paragraph';
+        runs: InlineRun[];
+        indent: number;
+        quote: boolean;
+        headingLevel?: number;
+        prefix?: string;
+      }
+    | {
+        kind: 'rule';
+        indent: number;
+        quote: boolean;
+      }
+    | {
+        kind: 'table';
+        indent: number;
+        quote: boolean;
+        rows: string[][];
+      };
+
+  const sameInlineStyle = (left?: InlineState, right?: InlineState) =>
+    Boolean(left?.bold) === Boolean(right?.bold) &&
+    Boolean(left?.italic) === Boolean(right?.italic) &&
+    Boolean(left?.underline) === Boolean(right?.underline) &&
+    String(left?.link || '') === String(right?.link || '') &&
+    String(left?.color?.join(',') || '') === String(right?.color?.join(',') || '');
+
+  const appendRun = (runs: InlineRun[], next: InlineRun) => {
+    if (!next.text) return;
+    const previous = runs[runs.length - 1];
+    if (previous && sameInlineStyle(previous, next)) {
+      previous.text += next.text;
+      return;
+    }
+    runs.push(next);
+  };
+
+  const collectInlineRuns = (node: any, state: InlineState, runs: InlineRun[]) => {
+    if (!node) return;
+    if (node.nodeType === 3) {
+      appendRun(runs, {
+        ...state,
+        text: String(node.nodeValue || '').replace(/\u00A0/g, ' '),
+      });
+      return;
+    }
+    if (node.nodeType !== 1) {
+      return;
+    }
+    const element = node as any;
+    const tag = String(element.tagName || '').toLowerCase();
+    if (tag === 'br') {
+      appendRun(runs, { ...state, text: '\n' });
+      return;
+    }
+    const next: InlineState = { ...state };
+    if (tag === 'strong' || tag === 'b') next.bold = true;
+    if (tag === 'em' || tag === 'i') next.italic = true;
+    if (tag === 'u') next.underline = true;
+    if (tag === 'a') {
+      const href = normalizeText(element.getAttribute?.('href') || '');
+      if (href) {
+        next.link = href;
+      }
+      next.color = colors.link;
+      next.underline = true;
+    }
+    const styleAttr = normalizeText(element.getAttribute?.('style') || '');
+    if (styleAttr) {
+      const colorMatch = styleAttr.match(/(?:^|;)\s*color\s*:\s*([^;]+)/i);
+      if (colorMatch) {
+        const parsed = parseCssColor(colorMatch[1]);
+        if (parsed) {
+          next.color = parsed;
+        }
+      }
+    }
+    Array.from(element.childNodes || []).forEach((child) => collectInlineRuns(child, next, runs));
+  };
+
+  const runsHaveVisibleContent = (runs: InlineRun[]) =>
+    runs.some((run) => String(run.text || '').replace(/\s+/g, '').length > 0);
+
+  const blockTags = new Set([
+    'p',
+    'div',
+    'section',
+    'article',
+    'h1',
+    'h2',
+    'h3',
+    'h4',
+    'h5',
+    'h6',
+    'ul',
+    'ol',
+    'li',
+    'blockquote',
+    'table',
+    'thead',
+    'tbody',
+    'tr',
+    'td',
+    'th',
+    'pre',
+    'code',
+    'hr',
+  ]);
+
+  const elementHasBlockChildren = (element: any) =>
+    Array.from(element?.childNodes || []).some(
+      (child: any) => child?.nodeType === 1 && blockTags.has(String(child.tagName || '').toLowerCase()),
+    );
+
+  const parseBlocksFromHtml = (rawHtml: string, fallbackText = ''): RichBlock[] => {
+    const blocks: RichBlock[] = [];
+    const pushParagraph = (
+      node: any,
+      opts: {
+        indent: number;
+        quote: boolean;
+        headingLevel?: number;
+        prefix?: string;
+      },
+    ) => {
+      const runs: InlineRun[] = [];
+      Array.from(node?.childNodes || []).forEach((child) => collectInlineRuns(child, {}, runs));
+      if (!runsHaveVisibleContent(runs)) return;
+      blocks.push({
+        kind: 'paragraph',
+        runs,
+        indent: opts.indent,
+        quote: opts.quote,
+        headingLevel: opts.headingLevel,
+        prefix: opts.prefix,
+      });
+    };
+
+    const extractPlainText = (node: any) => {
+      const runs: InlineRun[] = [];
+      collectInlineRuns(node, {}, runs);
+      return normalizeText(
+        runs
+          .map((run) => run.text || '')
+          .join('')
+          .replace(/\n{3,}/g, '\n\n')
+          .replace(/[ \t]{2,}/g, ' '),
+      );
+    };
+
+    const walkNodes = (nodes: any[], context: { indent: number; quote: boolean }) => {
+      nodes.forEach((node) => {
+        if (!node) return;
+        if (node.nodeType === 3) {
+          const text = normalizeText(node.nodeValue || '');
+          if (!text) return;
+          blocks.push({
+            kind: 'paragraph',
+            runs: [{ text }],
+            indent: context.indent,
+            quote: context.quote,
+          });
+          return;
+        }
+        if (node.nodeType !== 1) return;
+        const element = node as any;
+        const tag = String(element.tagName || '').toLowerCase();
+
+        if (/^h[1-6]$/.test(tag)) {
+          pushParagraph(element, {
+            indent: context.indent,
+            quote: context.quote,
+            headingLevel: Number(tag.slice(1)),
+          });
+          return;
+        }
+
+        if (tag === 'p' || tag === 'section' || tag === 'article') {
+          pushParagraph(element, context);
+          return;
+        }
+
+        if (tag === 'div') {
+          if (elementHasBlockChildren(element)) {
+            walkNodes(Array.from(element.childNodes || []), context);
+          } else {
+            pushParagraph(element, context);
+          }
+          return;
+        }
+
+        if (tag === 'blockquote') {
+          if (elementHasBlockChildren(element)) {
+            walkNodes(Array.from(element.childNodes || []), {
+              indent: context.indent + 1,
+              quote: true,
+            });
+          } else {
+            pushParagraph(element, {
+              indent: context.indent + 1,
+              quote: true,
+            });
+          }
+          return;
+        }
+
+        if (tag === 'ul' || tag === 'ol') {
+          const items = Array.from(element.children || []).filter(
+            (child: any) => String(child.tagName || '').toLowerCase() === 'li',
+          );
+          items.forEach((li: any, index: number) => {
+            const prefix = tag === 'ol' ? `${index + 1}.` : '\u2022';
+            const inlineRuns: InlineRun[] = [];
+            Array.from(li.childNodes || []).forEach((child: any) => {
+              if (child?.nodeType === 1) {
+                const childTag = String(child.tagName || '').toLowerCase();
+                if (childTag === 'ul' || childTag === 'ol') {
+                  return;
+                }
+              }
+              collectInlineRuns(child, {}, inlineRuns);
+            });
+            if (runsHaveVisibleContent(inlineRuns)) {
+              blocks.push({
+                kind: 'paragraph',
+                runs: inlineRuns,
+                indent: context.indent + 1,
+                quote: context.quote,
+                prefix,
+              });
+            }
+            Array.from(li.childNodes || []).forEach((child: any) => {
+              if (child?.nodeType !== 1) return;
+              const childTag = String(child.tagName || '').toLowerCase();
+              if (childTag === 'ul' || childTag === 'ol') {
+                walkNodes([child], {
+                  indent: context.indent + 1,
+                  quote: context.quote,
+                });
+              }
+            });
+          });
+          return;
+        }
+
+        if (tag === 'hr') {
+          blocks.push({
+            kind: 'rule',
+            indent: context.indent,
+            quote: context.quote,
+          });
+          return;
+        }
+
+        if (tag === 'pre' || tag === 'code') {
+          const preText = String(element.textContent || '').replace(/\r/g, '').trim();
+          if (preText) {
+            blocks.push({
+              kind: 'paragraph',
+              runs: [{ text: preText }],
+              indent: context.indent,
+              quote: context.quote,
+            });
+          }
+          return;
+        }
+
+        if (tag === 'table') {
+          const rowNodes = Array.from(element.querySelectorAll?.('tr') || []);
+          const rows: string[][] = rowNodes
+            .map((row: any) => {
+              const cells = Array.from(row.children || []).filter((cell: any) => {
+                const cellTag = String(cell.tagName || '').toLowerCase();
+                return cellTag === 'td' || cellTag === 'th';
+              });
+              return cells.map((cell: any) => extractPlainText(cell));
+            })
+            .filter((row: string[]) => row.some((cell) => normalizeText(cell)));
+          if (rows.length > 0) {
+            blocks.push({
+              kind: 'table',
+              rows,
+              indent: context.indent,
+              quote: context.quote,
+            });
+          }
+          return;
+        }
+
+        if (elementHasBlockChildren(element)) {
+          walkNodes(Array.from(element.childNodes || []), context);
+          return;
+        }
+
+        pushParagraph(element, context);
+      });
+    };
+
+    const html = normalizeText(rawHtml);
+    if (html) {
+      try {
+        const parsed = parser.parseFromString(`<body>${html}</body>`, 'text/html');
+        walkNodes(Array.from(parsed.body?.childNodes || []), { indent: 0, quote: false });
+      } catch {
+        // Fall through to plain-text fallback.
+      }
+    }
+
+    if (blocks.length > 0) {
+      return blocks;
+    }
+
+    const fallback = String(fallbackText || '').replace(/\r/g, '').trim();
+    if (!fallback) {
+      return [];
+    }
+    return fallback
+      .split(/\n{2,}/g)
+      .map((paragraph) => normalizeText(paragraph))
+      .filter(Boolean)
+      .map((paragraph) => ({
+        kind: 'paragraph',
+        runs: [{ text: paragraph }],
+        indent: 0,
+        quote: false,
+      }));
+  };
+
+  type WrappedPiece = InlineState & {
+    text: string;
+    width: number;
+  };
+  type WrappedLine = {
+    pieces: WrappedPiece[];
+  };
+
+  const resolveFontStyle = (
+    style: InlineState,
+    forceBold = false,
+  ): 'normal' | 'bold' | 'italic' | 'bolditalic' => {
+    const bold = forceBold || Boolean(style.bold);
+    const italic = Boolean(style.italic);
+    if (bold && italic) return 'bolditalic';
+    if (bold) return 'bold';
+    if (italic) return 'italic';
+    return 'normal';
+  };
+
+  const measureText = (
+    text: string,
+    size: number,
+    style: InlineState,
+    forceBold = false,
+  ) => {
+    pdf.setFont('helvetica', resolveFontStyle(style, forceBold) as any);
+    pdf.setFontSize(size);
+    return pdf.getTextWidth(text);
+  };
+
+  const tokenizeRuns = (runs: InlineRun[]) => {
+    const tokens: Array<{ newline?: boolean; text?: string; style?: InlineState }> = [];
+    runs.forEach((run) => {
+      const source = String(run.text || '');
+      const chunks = source.split('\n');
+      chunks.forEach((chunk, chunkIndex) => {
+        const parts = chunk.split(/(\s+)/);
+        parts.forEach((part) => {
+          if (!part) return;
+          tokens.push({
+            text: part,
+            style: run,
+          });
+        });
+        if (chunkIndex < chunks.length - 1) {
+          tokens.push({ newline: true });
+        }
+      });
+    });
+    return tokens;
+  };
+
+  const wrapRuns = (
+    runs: InlineRun[],
+    maxW: number,
+    size: number,
+    forceBold = false,
+  ): WrappedLine[] => {
+    const lines: WrappedLine[] = [];
+    let current: WrappedLine = { pieces: [] };
+    let currentWidth = 0;
+    const pushCurrent = () => {
+      lines.push(current);
+      current = { pieces: [] };
+      currentWidth = 0;
+    };
+    const tokens = tokenizeRuns(runs);
+
+    const appendToken = (tokenText: string, tokenStyle: InlineState) => {
+      if (!tokenText) return;
+      if (/^\s+$/.test(tokenText) && current.pieces.length === 0) {
+        return;
+      }
+      const width = measureText(tokenText, size, tokenStyle, forceBold);
+      if (currentWidth + width <= maxW || current.pieces.length === 0) {
+        current.pieces.push({ ...tokenStyle, text: tokenText, width });
+        currentWidth += width;
+        return;
+      }
+
+      if (/^\s+$/.test(tokenText)) {
+        pushCurrent();
+        return;
+      }
+
+      if (width <= maxW) {
+        pushCurrent();
+        current.pieces.push({ ...tokenStyle, text: tokenText, width });
+        currentWidth = width;
+        return;
+      }
+
+      let remaining = tokenText;
+      while (remaining.length > 0) {
+        if (current.pieces.length > 0) {
+          pushCurrent();
+        }
+        let chunk = '';
+        let chunkWidth = 0;
+        for (const character of remaining) {
+          const candidate = chunk + character;
+          const candidateWidth = measureText(candidate, size, tokenStyle, forceBold);
+          if (candidateWidth <= maxW || chunk.length === 0) {
+            chunk = candidate;
+            chunkWidth = candidateWidth;
+          } else {
+            break;
+          }
+        }
+        current.pieces.push({ ...tokenStyle, text: chunk, width: chunkWidth });
+        currentWidth = chunkWidth;
+        remaining = remaining.slice(chunk.length);
+        if (remaining.length > 0) {
+          pushCurrent();
+        }
+      }
+    };
+
+    tokens.forEach((token) => {
+      if (token.newline) {
+        pushCurrent();
+        return;
+      }
+      appendToken(String(token.text || ''), token.style || {});
+    });
+
+    if (current.pieces.length > 0 || lines.length === 0) {
+      lines.push(current);
+    }
+    return lines;
+  };
+
+  const renderTable = (rows: string[][], indent: number, quote: boolean) => {
+    const offsetX = indent * 14 + (quote ? 10 : 0);
+    const tableX = mL + offsetX;
+    const tableW = contentW - offsetX;
+    const columnCount = Math.max(1, ...rows.map((row) => row.length));
+    const colW = tableW / columnCount;
+    rows.forEach((row) => {
+      const cells = Array.from({ length: columnCount }).map((_, index) => normalizeText(row[index] || '-'));
+      const cellLines = cells.map((cell) => pdf.splitTextToSize(cell, colW - 10) as string[]);
+      const rowHeight = Math.max(20, ...cellLines.map((lines) => lines.length * 11 + 8));
+      ensureSpace(rowHeight + 2);
+      const rowTop = y;
+      if (quote) {
+        pdf.setDrawColor(colors.quote[0], colors.quote[1], colors.quote[2]);
+        pdf.setLineWidth(1);
+        pdf.line(tableX - 8, rowTop, tableX - 8, rowTop + rowHeight);
+      }
+      cells.forEach((_, cellIndex) => {
+        const cellX = tableX + cellIndex * colW;
+        pdf.setDrawColor(colors.border[0], colors.border[1], colors.border[2]);
+        pdf.setLineWidth(0.6);
+        pdf.rect(cellX, rowTop, colW, rowHeight, 'S');
+        setFont('normal', 9.5, colors.text);
+        const lines = cellLines[cellIndex];
+        let textY = rowTop + 12;
+        lines.forEach((line) => {
+          pdf.text(line, cellX + 5, textY);
+          textY += 11;
+        });
+      });
+      y += rowHeight;
+    });
+    y += 8;
+  };
+
+  const renderParagraph = (block: Extract<RichBlock, { kind: 'paragraph' }>) => {
+    const headingLevel = Number(block.headingLevel || 0);
+    const size =
+      headingLevel === 1 ? 15
+      : headingLevel === 2 ? 13
+      : headingLevel === 3 ? 12
+      : 10.5;
+    const lineHeight = headingLevel > 0 ? Math.round(size + 4) : 14;
+    const gapAfter = headingLevel > 0 ? 6 : 4;
+    const forceBold = headingLevel > 0;
+    const offsetX = block.indent * 14 + (block.quote ? 10 : 0);
+    const prefix = block.prefix || '';
+    const prefixGap = prefix ? 12 : 0;
+    const textX = mL + offsetX + prefixGap;
+    const maxW = Math.max(120, contentW - offsetX - prefixGap);
+    const lines = wrapRuns(block.runs, maxW, size, forceBold);
+    const blockHeight = Math.max(lineHeight, lines.length * lineHeight) + gapAfter;
+    ensureSpace(blockHeight + 2);
+    const startY = y;
+
+    if (block.quote) {
+      pdf.setDrawColor(colors.quote[0], colors.quote[1], colors.quote[2]);
+      pdf.setLineWidth(1.25);
+      pdf.line(mL + offsetX - 8, startY - lineHeight + 4, mL + offsetX - 8, startY + lines.length * lineHeight - 8);
+    }
+
+    if (prefix) {
+      setFont('bold', 10.5, colors.muted);
+      pdf.text(prefix, mL + offsetX, startY);
+    }
+
+    let lineY = startY;
+    lines.forEach((line) => {
+      let x = textX;
+      line.pieces.forEach((piece) => {
+        const style = resolveFontStyle(piece, forceBold);
+        const color = piece.color || (piece.link ? colors.link : colors.text);
+        setFont(style, size, color);
+        pdf.text(piece.text, x, lineY);
+        if (piece.underline) {
+          pdf.setDrawColor(color[0], color[1], color[2]);
+          pdf.setLineWidth(0.5);
+          pdf.line(x, lineY + 1.5, x + piece.width, lineY + 1.5);
+        }
+        x += piece.width;
+      });
+      lineY += lineHeight;
+    });
+
+    y = startY + lines.length * lineHeight + gapAfter;
+  };
+
+  const renderRichBlocks = (blocks: RichBlock[]) => {
+    blocks.forEach((block, blockIndex) => {
+      if (block.kind === 'rule') {
+        ensureSpace(10);
+        pdf.setDrawColor(colors.border[0], colors.border[1], colors.border[2]);
+        pdf.setLineWidth(0.6);
+        pdf.line(mL + block.indent * 14, y, pageWidth - mR, y);
+        y += 10;
+        return;
+      }
+      if (block.kind === 'table') {
+        renderTable(block.rows, block.indent, block.quote);
+        return;
+      }
+      renderParagraph(block);
+      if (blockIndex === blocks.length - 1) {
+        y += 2;
+      }
+    });
+  };
+
+  const titleSafe = normalizeText(document.title || 'Opportunity');
+  const subtitleSafe = normalizeText(document.subtitle || '');
+  const generatedAt = document.generatedAt || new Date();
+  const rawId = asText(document.comparisonId);
+  const shortId = rawId
+    ? rawId.replace(/^[a-z_-]+/i, '').replace(/^[-_]/, '').slice(0, 8) || rawId.slice(0, 12)
+    : '';
+  const metaText =
+    `Generated: ${formatGeneratedAt(generatedAt)}` +
+    (shortId ? ` | ID: ${shortId}` : '');
+
+  writeWrapped({
+    text: 'PreMarket',
+    x: mL,
+    maxW: contentW,
+    size: 10.5,
+    wt: 'bold',
+    color: colors.brand,
+    lineHeight: 14,
+    gapAfter: 3,
+  });
+  writeWrapped({
+    text: titleSafe,
+    x: mL,
+    maxW: contentW,
+    size: 20,
+    wt: 'bold',
+    color: colors.text,
+    lineHeight: 24,
+    gapAfter: 2,
+  });
+  if (subtitleSafe) {
+    writeWrapped({
+      text: subtitleSafe,
+      x: mL,
+      maxW: contentW,
+      size: 12,
+      wt: 'normal',
+      color: colors.text,
+      lineHeight: 15,
+      gapAfter: 1,
+    });
+  }
+  writeWrapped({
+    text: metaText,
+    x: mL,
+    maxW: contentW,
+    size: 8.5,
+    wt: 'normal',
+    color: colors.muted,
+    lineHeight: 12,
+    gapAfter: 8,
+  });
+
+  const metadataItems = Array.isArray(document.metadataItems)
+    ? document.metadataItems
+        .map((item) => ({
+          label: normalizeText(item?.label || ''),
+          value: normalizeText(item?.value || ''),
+        }))
+        .filter((item) => item.label && item.value)
+    : [];
+  metadataItems.forEach((item) => {
+    writeWrapped({
+      text: `${item.label}: ${item.value}`,
+      x: mL,
+      maxW: contentW,
+      size: 8.5,
+      wt: 'normal',
+      color: colors.muted,
+      lineHeight: 11,
+      gapAfter: 1,
+    });
+  });
+
+  ensureSpace(18);
+  pdf.setDrawColor(colors.border[0], colors.border[1], colors.border[2]);
+  pdf.setLineWidth(0.8);
+  pdf.line(mL, y, pageWidth - mR, y);
+  y += 14;
+
+  writeWrapped({
+    text: normalizeText(document.historyHeading || 'Shared History'),
+    x: mL,
+    maxW: contentW,
+    size: 12.5,
+    wt: 'bold',
+    color: colors.text,
+    lineHeight: 16,
+    gapAfter: 8,
+  });
+
+  const entries = Array.isArray(document.entries) ? document.entries : [];
+  entries.forEach((entry, index) => {
+    const roundLabel = normalizeText(entry.roundLabel || `Round ${index + 1}`);
+    const authorLabel = normalizeText(entry.authorLabel || '');
+    const sourceLabel = normalizeText(entry.sourceLabel || '');
+    const timestampLabel = normalizeText(entry.timestampLabel || '');
+    const fileList = Array.isArray(entry.files)
+      ? entry.files.map((file) => normalizeText(file)).filter(Boolean)
+      : [];
+
+    if (index > 0) {
+      ensureSpace(14);
+      pdf.setDrawColor(colors.border[0], colors.border[1], colors.border[2]);
+      pdf.setLineWidth(0.6);
+      pdf.line(mL, y, pageWidth - mR, y);
+      y += 12;
+    }
+
+    writeWrapped({
+      text: roundLabel,
+      x: mL,
+      maxW: contentW,
+      size: 11.5,
+      wt: 'bold',
+      color: colors.text,
+      lineHeight: 15,
+      gapAfter: 2,
+    });
+
+    const rowMeta = [
+      authorLabel ? `Author: ${authorLabel}` : '',
+      sourceLabel ? `Source: ${sourceLabel}` : '',
+      timestampLabel ? `Shared: ${timestampLabel}` : '',
+    ]
+      .filter(Boolean)
+      .join(' | ');
+    if (rowMeta) {
+      writeWrapped({
+        text: rowMeta,
+        x: mL,
+        maxW: contentW,
+        size: 8.5,
+        wt: 'normal',
+        color: colors.muted,
+        lineHeight: 11,
+        gapAfter: 4,
+      });
+    }
+
+    if (fileList.length > 0) {
+      writeWrapped({
+        text: `Files: ${fileList.join(', ')}`,
+        x: mL,
+        maxW: contentW,
+        size: 8.5,
+        wt: 'normal',
+        color: colors.muted,
+        lineHeight: 11,
+        gapAfter: 4,
+      });
+    }
+
+    const blocks = parseBlocksFromHtml(
+      String(entry.html || ''),
+      String(entry.text || ''),
+    );
+    if (blocks.length > 0) {
+      renderRichBlocks(blocks);
+    } else {
+      writeWrapped({
+        text: '(No shared content provided)',
+        x: mL,
+        maxW: contentW,
+        size: 10,
+        wt: 'italic',
+        color: colors.muted,
+        lineHeight: 13,
+        gapAfter: 6,
+      });
+    }
+    y += 6;
   });
 
   const totalPages = pdf.getNumberOfPages();
