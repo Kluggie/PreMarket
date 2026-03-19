@@ -7,11 +7,7 @@ import { documentComparisonsClient } from '@/api/documentComparisonsClient';
 import { proposalsClient } from '@/api/proposalsClient';
 import { useAuth } from '@/lib/AuthContext';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   Dialog,
@@ -21,6 +17,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import SuggestionCoachPanel from '@/components/document-comparison/SuggestionCoachPanel';
 import DocumentComparisonEditorErrorBoundary from '@/components/document-comparison/DocumentComparisonEditorErrorBoundary';
 import {
   buildCoachActionRequest,
@@ -33,6 +30,13 @@ import {
   shouldHydrateComparisonDraft,
 } from '@/pages/document-comparison/hydration';
 import { buildComparisonDraftSavePayload } from '@/pages/document-comparison/draftPayload';
+import {
+  applySuggestedTextChange,
+  buildDiffPreview,
+  buildWordDiffPreview,
+  getNormalizedSuggestionId,
+  getSuggestionChangeSummary,
+} from '@/pages/document-comparison/coachSuggestionUtils';
 import {
   appendAssistantEntry,
   appendUserEntry,
@@ -90,23 +94,14 @@ import { toast } from 'sonner';
 import {
   AlertTriangle,
   ArrowLeft,
-  Check,
-  Copy,
   Loader2,
   Lock,
-  MessagesSquare,
-  Pencil,
-  Plus,
-  Sparkles,
-  Trash2,
-  X,
 } from 'lucide-react';
 
 const CONFIDENTIAL_LABEL = 'Confidential Information';
 const SHARED_LABEL = 'Shared Information';
 const TOTAL_EDITOR_STEPS = 3;
 const TOTAL_WORKFLOW_STEPS = 3;
-const DIFF_CONTEXT_CHARS = 220;
 const GUEST_AI_MEDIATION_RUN_LIMIT = 1;
 // Background autosave: only fire after the user has been idle for ~30 seconds.
 // Immediate saves happen on step changes, doc switches, and unmount — so the
@@ -125,143 +120,6 @@ const COACH_INTENT_LABELS = {
 
 function asText(value) {
   return typeof value === 'string' ? value.trim() : '';
-}
-
-function parseCoachResponseBlocks(value) {
-  const lines = String(value || '')
-    .replace(/\r/g, '')
-    .split('\n');
-  const blocks = [];
-
-  let index = 0;
-  while (index < lines.length) {
-    const rawLine = lines[index] || '';
-    const line = rawLine.trim();
-    if (!line) {
-      index += 1;
-      continue;
-    }
-
-    const headingMatch = line.match(/^#{1,6}\s+(.*)$/);
-    if (headingMatch) {
-      blocks.push({
-        type: 'heading',
-        text: headingMatch[1].trim(),
-      });
-      index += 1;
-      continue;
-    }
-
-    const orderedItemMatch = line.match(/^\d+[.)]\s+(.*)$/);
-    if (orderedItemMatch) {
-      const items = [];
-      while (index < lines.length) {
-        const orderedLine = String(lines[index] || '').trim();
-        const match = orderedLine.match(/^\d+[.)]\s+(.*)$/);
-        if (!match) {
-          break;
-        }
-        const itemText = String(match[1] || '').trim();
-        if (itemText) {
-          items.push(itemText);
-        }
-        index += 1;
-      }
-      if (items.length) {
-        blocks.push({ type: 'ordered', items });
-      }
-      continue;
-    }
-
-    const bulletItemMatch = line.match(/^[-*]\s+(.*)$/);
-    if (bulletItemMatch) {
-      const items = [];
-      while (index < lines.length) {
-        const bulletLine = String(lines[index] || '').trim();
-        const match = bulletLine.match(/^[-*]\s+(.*)$/);
-        if (!match) {
-          break;
-        }
-        const itemText = String(match[1] || '').trim();
-        if (itemText) {
-          items.push(itemText);
-        }
-        index += 1;
-      }
-      if (items.length) {
-        blocks.push({ type: 'unordered', items });
-      }
-      continue;
-    }
-
-    const paragraphLines = [];
-    while (index < lines.length) {
-      const paragraphLine = String(lines[index] || '');
-      const paragraphLineTrimmed = paragraphLine.trim();
-      if (!paragraphLineTrimmed) {
-        break;
-      }
-      if (/^#{1,6}\s+/.test(paragraphLineTrimmed) || /^\d+[.)]\s+/.test(paragraphLineTrimmed) || /^[-*]\s+/.test(paragraphLineTrimmed)) {
-        break;
-      }
-      paragraphLines.push(paragraphLine);
-      index += 1;
-    }
-    if (paragraphLines.length) {
-      blocks.push({
-        type: 'paragraph',
-        text: paragraphLines.join('\n').trim(),
-      });
-    } else {
-      index += 1;
-    }
-  }
-
-  return blocks;
-}
-
-function CoachResponseText({ text = '' }) {
-  const blocks = parseCoachResponseBlocks(text);
-  if (!blocks.length) {
-    return <p className="text-sm leading-6 text-slate-700 whitespace-pre-wrap">{String(text || '').trim()}</p>;
-  }
-
-  return (
-    <div className="space-y-3">
-      {blocks.map((block, index) => {
-        if (block.type === 'heading') {
-          return (
-            <h4 key={`coach-response-heading-${index}`} className="text-sm font-semibold text-slate-900">
-              {block.text}
-            </h4>
-          );
-        }
-        if (block.type === 'unordered') {
-          return (
-            <ul key={`coach-response-unordered-${index}`} className="list-disc space-y-1 pl-5 text-sm leading-6 text-slate-700">
-              {block.items.map((item, itemIndex) => (
-                <li key={`coach-response-unordered-item-${index}-${itemIndex}`}>{item}</li>
-              ))}
-            </ul>
-          );
-        }
-        if (block.type === 'ordered') {
-          return (
-            <ol key={`coach-response-ordered-${index}`} className="list-decimal space-y-1 pl-5 text-sm leading-6 text-slate-700">
-              {block.items.map((item, itemIndex) => (
-                <li key={`coach-response-ordered-item-${index}-${itemIndex}`}>{item}</li>
-              ))}
-            </ol>
-          );
-        }
-        return (
-          <p key={`coach-response-paragraph-${index}`} className="text-sm leading-6 text-slate-700 whitespace-pre-wrap">
-            {block.text}
-          </p>
-        );
-      })}
-    </div>
-  );
 }
 
 function clampStep(value) {
@@ -379,224 +237,6 @@ function buildDraftStateHashFromSnapshot({
     docAFiles: Array.isArray(snapshot.docAFiles) ? snapshot.docAFiles : [],
     docBFiles: Array.isArray(snapshot.docBFiles) ? snapshot.docBFiles : [],
   });
-}
-
-function escapeRegExp(value) {
-  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function applySuggestedTextChange({ currentText, op, nextText, headingHint, selectedText }) {
-  const base = String(currentText || '');
-  const incoming = String(nextText || '').trim();
-  if (!incoming) {
-    return base;
-  }
-
-  if (op === 'append') {
-    return base.trim() ? `${base.trim()}\n\n${incoming}` : incoming;
-  }
-
-  if (op === 'replace_selection') {
-    const selection = String(selectedText || '').trim();
-    if (selection && base.includes(selection)) {
-      return base.replace(selection, incoming);
-    }
-    return base.trim() ? `${base.trim()}\n\n${incoming}` : incoming;
-  }
-
-  if (op === 'insert_after_heading') {
-    const hint = String(headingHint || '').trim();
-    if (!hint) {
-      return base.trim() ? `${base.trim()}\n\n${incoming}` : incoming;
-    }
-    const lines = base.split('\n');
-    const index = lines.findIndex((line) => line.toLowerCase().includes(hint.toLowerCase()));
-    if (index < 0) {
-      return base.trim() ? `${base.trim()}\n\n${incoming}` : incoming;
-    }
-    const nextLines = [...lines.slice(0, index + 1), '', incoming, ...lines.slice(index + 1)];
-    return nextLines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
-  }
-
-  if (op === 'replace_section') {
-    const hint = String(headingHint || '').trim();
-    if (!hint) {
-      return incoming;
-    }
-    const pattern = new RegExp(`${escapeRegExp(hint)}[\\s\\S]*?(?=\\n\\n[^\\n]+:|$)`, 'i');
-    if (pattern.test(base)) {
-      return base.replace(pattern, `${hint}\n${incoming}`).trim();
-    }
-    return base.trim() ? `${base.trim()}\n\n${incoming}` : incoming;
-  }
-
-  return base.trim() ? `${base.trim()}\n\n${incoming}` : incoming;
-}
-
-function buildDiffPreview(beforeText, afterText) {
-  const before = String(beforeText || '');
-  const after = String(afterText || '');
-  if (before === after) {
-    const snippet = before.length > 0 ? before.slice(0, DIFF_CONTEXT_CHARS * 2) : '(No content)';
-    return {
-      beforeHtml: escapeHtml(snippet),
-      afterHtml: escapeHtml(snippet),
-    };
-  }
-
-  let prefixLength = 0;
-  const maxPrefix = Math.min(before.length, after.length);
-  while (prefixLength < maxPrefix && before[prefixLength] === after[prefixLength]) {
-    prefixLength += 1;
-  }
-
-  let beforeSuffixStart = before.length;
-  let afterSuffixStart = after.length;
-  while (
-    beforeSuffixStart > prefixLength &&
-    afterSuffixStart > prefixLength &&
-    before[beforeSuffixStart - 1] === after[afterSuffixStart - 1]
-  ) {
-    beforeSuffixStart -= 1;
-    afterSuffixStart -= 1;
-  }
-
-  const sliceStart = Math.max(0, prefixLength - DIFF_CONTEXT_CHARS);
-  const beforeSliceEnd = Math.min(before.length, beforeSuffixStart + DIFF_CONTEXT_CHARS);
-  const afterSliceEnd = Math.min(after.length, afterSuffixStart + DIFF_CONTEXT_CHARS);
-  const leadingEllipsis = sliceStart > 0 ? '…' : '';
-  const trailingEllipsis =
-    beforeSliceEnd < before.length || afterSliceEnd < after.length ? '…' : '';
-
-  const prefixContext = before.slice(sliceStart, prefixLength);
-  const removedText = before.slice(prefixLength, beforeSuffixStart);
-  const addedText = after.slice(prefixLength, afterSuffixStart);
-  const suffixContext = before.slice(beforeSuffixStart, beforeSliceEnd);
-
-  return {
-    beforeHtml:
-      `${leadingEllipsis}${escapeHtml(prefixContext)}` +
-      `${removedText ? `<span class="bg-rose-100 text-rose-800 line-through rounded-sm px-0.5">${escapeHtml(removedText)}</span>` : ''}` +
-      `${escapeHtml(suffixContext)}${trailingEllipsis}`,
-    afterHtml:
-      `${leadingEllipsis}${escapeHtml(prefixContext)}` +
-      `${addedText ? `<span class="bg-emerald-100 text-emerald-800 rounded-sm px-0.5">${escapeHtml(addedText)}</span>` : ''}` +
-      `${escapeHtml(suffixContext)}${trailingEllipsis}`,
-  };
-}
-
-function getSuggestionChangeSummary(op, headingHint) {
-  if (op === 'append') {
-    return 'This will append text at the end of the target document.';
-  }
-  if (op === 'replace_selection') {
-    return 'This will replace the current selected text if found, otherwise append the proposal.';
-  }
-  if (op === 'insert_after_heading') {
-    return headingHint
-      ? `This will insert text after heading "${headingHint}".`
-      : 'This will insert text after a heading when available, otherwise append.';
-  }
-  if (op === 'replace_section') {
-    return headingHint
-      ? `This will replace the section matching "${headingHint}" when found.`
-      : 'This will replace a section when detected, otherwise append.';
-  }
-  return 'This will apply the proposed text change to the target document.';
-}
-
-function getNormalizedSuggestionId(suggestion, fallbackIndex = -1) {
-  const explicitId = String(suggestion?.id || '').trim();
-  if (explicitId) {
-    return explicitId;
-  }
-  const title = String(suggestion?.title || '').trim();
-  const target = String(suggestion?.proposed_change?.target || '').trim();
-  const text = String(suggestion?.proposed_change?.text || '').trim().slice(0, 32);
-  const seed = [title, target, text, fallbackIndex >= 0 ? String(fallbackIndex) : ''].join('|');
-  return seed || `suggestion-${fallbackIndex >= 0 ? fallbackIndex : 'unknown'}`;
-}
-
-function tokenizeWords(value) {
-  return String(value || '')
-    .trim()
-    .split(/\s+/g)
-    .filter(Boolean);
-}
-
-function buildWordDiffPreview(beforeText, afterText) {
-  const beforeWords = tokenizeWords(beforeText);
-  const afterWords = tokenizeWords(afterText);
-  if (!beforeWords.length && !afterWords.length) {
-    return {
-      beforeHtml: '(No content)',
-      afterHtml: '(No content)',
-    };
-  }
-
-  const dp = Array.from({ length: beforeWords.length + 1 }, () =>
-    Array.from({ length: afterWords.length + 1 }, () => 0),
-  );
-  for (let i = beforeWords.length - 1; i >= 0; i -= 1) {
-    for (let j = afterWords.length - 1; j >= 0; j -= 1) {
-      if (beforeWords[i] === afterWords[j]) {
-        dp[i][j] = dp[i + 1][j + 1] + 1;
-      } else {
-        dp[i][j] = Math.max(dp[i + 1][j], dp[i][j + 1]);
-      }
-    }
-  }
-
-  const beforeParts = [];
-  const afterParts = [];
-  let i = 0;
-  let j = 0;
-  while (i < beforeWords.length && j < afterWords.length) {
-    if (beforeWords[i] === afterWords[j]) {
-      const safe = escapeHtml(beforeWords[i]);
-      beforeParts.push(safe);
-      afterParts.push(safe);
-      i += 1;
-      j += 1;
-      continue;
-    }
-
-    if (dp[i + 1][j] >= dp[i][j + 1]) {
-      beforeParts.push(`<span class="bg-rose-100 text-rose-800 line-through rounded-sm px-0.5">${escapeHtml(beforeWords[i])}</span>`);
-      i += 1;
-    } else {
-      afterParts.push(`<span class="bg-emerald-100 text-emerald-800 rounded-sm px-0.5">${escapeHtml(afterWords[j])}</span>`);
-      j += 1;
-    }
-  }
-
-  while (i < beforeWords.length) {
-    beforeParts.push(`<span class="bg-rose-100 text-rose-800 line-through rounded-sm px-0.5">${escapeHtml(beforeWords[i])}</span>`);
-    i += 1;
-  }
-  while (j < afterWords.length) {
-    afterParts.push(`<span class="bg-emerald-100 text-emerald-800 rounded-sm px-0.5">${escapeHtml(afterWords[j])}</span>`);
-    j += 1;
-  }
-
-  return {
-    beforeHtml: beforeParts.join(' '),
-    afterHtml: afterParts.join(' '),
-  };
-}
-
-function getSuggestionCategoryLabel(category) {
-  const normalized = String(category || '').trim().toLowerCase();
-  if (normalized === 'negotiation') {
-    return 'Negotiation';
-  }
-  if (normalized === 'risk') {
-    return 'Risk';
-  }
-  if (normalized === 'wording') {
-    return 'Wording';
-  }
-  return '';
 }
 
 function toEvaluationErrorMessage(error) {
@@ -832,7 +472,6 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
   /** threadId being renamed inline, or null */
   const [renamingThreadId, setRenamingThreadId] = useState(null);
   const [renameInputValue, setRenameInputValue] = useState('');
-  const renameInputRef = useRef(null);
   const suggestionThreadsRef = useRef([]);
   const activeSuggestionThreadIdRef = useRef(null);
   const [ignoredRouteDraftId, setIgnoredRouteDraftId] = useState('');
@@ -2942,10 +2581,10 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
         comparisonId: comparisonId || null,
         isNewComparison,
         capturedFromEditor: {
-          docATextLength: Number(editorAText.length),
-          docBTextLength: Number(editorBText.length),
-          hasDocAJson: Boolean(editorAJson),
-          hasDocBJson: Boolean(editorBJson),
+          docATextLength: Number((snap.docAText || '').length),
+          docBTextLength: Number((snap.docBText || '').length),
+          hasDocAJson: Boolean(snap.docAJson),
+          hasDocBJson: Boolean(snap.docBJson),
         },
         timestamp: new Date().toISOString(),
       });
@@ -4036,8 +3675,6 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
     setDeletingThreadId(null); // cancel delete if open
     setRenamingThreadId(threadId);
     setRenameInputValue(currentTitle || '');
-    // Focus input on next tick
-    setTimeout(() => renameInputRef.current?.focus(), 0);
   }, []);
 
   const handleConfirmRename = useCallback(() => {
@@ -4428,318 +4065,74 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
 
   // Coach panel node — rendered inside Step 2 editor layout
   const coachPanelNode = canUseCoach ? (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-base flex items-center gap-2">
-          <Sparkles className="w-4 h-4 text-blue-600" />
-          Ask for suggestions
-          {coachCached ? <Badge variant="outline">Cached</Badge> : null}
-        </CardTitle>
-        <CardDescription>
-          Generate suggestions only when you click an action. No background requests.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {/* ── Thread bar ──────────────────────────────────────────────── */}
-        <div className="flex items-center justify-between gap-2 rounded-md border border-slate-200 bg-slate-50/60 px-3 py-2" data-testid="suggestion-thread-bar">
-          <div className="flex items-center gap-2 text-xs text-slate-600 min-w-0">
-            <MessagesSquare className="w-3.5 h-3.5 shrink-0 text-slate-500" />
-            {activeThread ? (
-              <span className="truncate" title={activeThread.title}>
-                {activeThread.title}
-                {activeThreadEntryCount > 0 ? (
-                  <span className="ml-1 text-slate-400">
-                    ({Math.ceil(activeThreadEntryCount / 2)} {Math.ceil(activeThreadEntryCount / 2) === 1 ? 'exchange' : 'exchanges'})
-                  </span>
-                ) : null}
-              </span>
-            ) : (
-              <span className="text-slate-400">No active thread</span>
-            )}
-          </div>
-          <div className="flex items-center gap-1 shrink-0">
-            {suggestionThreads.length > 1 ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-7 text-xs px-2"
-                onClick={() => setShowThreadHistory((v) => !v)}
-                data-testid="toggle-thread-history"
-              >
-                {showThreadHistory ? 'Hide' : `${suggestionThreads.length}/${MAX_THREADS}`}
-              </Button>
-            ) : null}
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-7 text-xs px-2"
-              disabled={coachLoading || !canStartNewThread}
-              onClick={handleStartNewThread}
-              title={atThreadLimit ? 'Max 3 threads — delete one to start fresh' : undefined}
-              data-testid="start-new-thread"
-            >
-              <Plus className="w-3.5 h-3.5 mr-1" />
-              New thread
-            </Button>
-          </div>
-        </div>
-        {atThreadLimit ? (
-          <p className="text-[11px] text-slate-400 -mt-2 text-right" data-testid="thread-limit-notice">
-            Max 3 threads. Delete one to start fresh.
-          </p>
-        ) : null}
-
-        {/* ── Thread history panel ────────────────────────────────────── */}
-        {showThreadHistory && suggestionThreads.length > 0 ? (
-          <div className="rounded-md border border-slate-200 bg-white divide-y divide-slate-100" data-testid="thread-history-panel">
-            {suggestionThreads.map((thread) => {
-              const isActive = thread.id === activeSuggestionThreadId;
-              const entryCount = thread.entries?.length || 0;
-              const exchangeCount = Math.ceil(entryCount / 2);
-              const isDeleting = deletingThreadId === thread.id;
-              const isRenaming = renamingThreadId === thread.id;
-              return (
-                <div
-                  key={thread.id}
-                  className={`group flex items-center gap-2 px-3 py-2 text-xs transition-colors ${
-                    isActive ? 'bg-blue-50/60 border-l-2 border-blue-500' : 'hover:bg-slate-50'
-                  }`}
-                  data-testid={`thread-history-item-${thread.id}`}
-                >
-                  {/* Title or rename input */}
-                  {isRenaming ? (
-                    <input
-                      ref={renameInputRef}
-                      className="flex-1 min-w-0 text-xs border border-blue-400 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-400"
-                      value={renameInputValue}
-                      onChange={(e) => setRenameInputValue(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') handleConfirmRename();
-                        if (e.key === 'Escape') handleCancelRename();
-                      }}
-                      data-testid={`thread-rename-input-${thread.id}`}
-                    />
-                  ) : (
-                    <button
-                      type="button"
-                      className={`flex-1 min-w-0 text-left truncate font-medium ${isActive ? 'text-blue-700' : 'text-slate-700'}`}
-                      onClick={() => handleSelectThread(thread.id)}
-                      title={thread.title}
-                    >
-                      {thread.title || 'Thread'}
-                    </button>
-                  )}
-
-                  {/* Right side: count + actions */}
-                  {isDeleting ? (
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <span className="text-red-600 font-medium">Delete?</span>
-                      <button
-                        type="button"
-                        className="text-red-600 hover:text-red-700 font-semibold"
-                        onClick={() => handleConfirmDeleteThread(thread.id)}
-                        data-testid={`thread-confirm-delete-${thread.id}`}
-                      >
-                        Yes
-                      </button>
-                      <button
-                        type="button"
-                        className="text-slate-400 hover:text-slate-600"
-                        onClick={handleCancelDelete}
-                        data-testid={`thread-cancel-delete-${thread.id}`}
-                      >
-                        No
-                      </button>
-                    </div>
-                  ) : isRenaming ? (
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <button
-                        type="button"
-                        className="text-blue-600 hover:text-blue-700 font-semibold"
-                        onClick={handleConfirmRename}
-                        data-testid={`thread-confirm-rename-${thread.id}`}
-                      >
-                        Save
-                      </button>
-                      <button
-                        type="button"
-                        className="text-slate-400 hover:text-slate-600"
-                        onClick={handleCancelRename}
-                        data-testid={`thread-cancel-rename-${thread.id}`}
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span className="text-slate-400">
-                        {exchangeCount > 0 ? `${exchangeCount} ex.` : 'empty'}
-                      </span>
-                      <button
-                        type="button"
-                        className="text-slate-300 hover:text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity"
-                        onClick={() => handleStartRename(thread.id, thread.title)}
-                        title="Rename"
-                        data-testid={`thread-rename-btn-${thread.id}`}
-                      >
-                        <Pencil className="w-3 h-3" />
-                      </button>
-                      <button
-                        type="button"
-                        className="text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
-                        onClick={() => handleDeleteThread(thread.id)}
-                        title="Delete thread"
-                        data-testid={`thread-delete-btn-${thread.id}`}
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </button>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        ) : null}
-        <div className="grid gap-4 lg:grid-cols-2">
-          <div className="h-full rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="space-y-3">
-              <div className="space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                    Company
-                  </p>
-                  {companyContextStatusText ? (
-                    <p
-                      className={`text-xs ${companyContextStatusClassName}`}
-                      data-testid="company-context-save-status"
-                    >
-                      {companyContextStatusText}
-                    </p>
-                  ) : null}
-                </div>
-                <div className="space-y-2">
-                  <Input
-                    ref={companyContextNameInputRef}
-                    data-testid="company-context-name-input-inline"
-                    placeholder="Company name"
-                    value={companyContextName}
-                    onChange={handleCompanyContextNameChange}
-                    onBlur={handleCompanyContextBlur}
-                  />
-                  <Input
-                    data-testid="company-context-website-input-inline"
-                    placeholder="Website"
-                    value={companyContextWebsite}
-                    onChange={handleCompanyContextWebsiteChange}
-                    onBlur={handleCompanyContextBlur}
-                  />
-                </div>
-                {companyContextValidationError ? (
-                  <p className="text-xs text-red-700" data-testid="company-context-validation-error">
-                    {companyContextValidationError}
-                  </p>
-                ) : null}
-                {companyContextSaveError ? (
-                  <div className="flex items-center gap-2 text-xs text-red-700" data-testid="company-context-inline-error">
-                    <span>{companyContextSaveError}</span>
-                    <button
-                      type="button"
-                      className="underline underline-offset-2"
-                      onClick={retryCompanyContextSave}
-                      disabled={isSavingCompanyContext}
-                    >
-                      Retry
-                    </button>
-                  </div>
-                ) : null}
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="w-full mt-1"
-                  disabled={coachLoading || coachNotConfigured}
-                  onClick={handleCompanyBriefAction}
-                  data-testid="coach-company-brief-action"
-                >
-                  {coachLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
-                  Generate Company Brief
-                </Button>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <p className="w-full text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">Suggested Prompts</p>
-                {DOCUMENT_COMPARISON_COACH_ACTIONS.map((option) => (
-                  <Button
-                    key={option.id}
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={coachLoading || coachNotConfigured}
-                    onClick={() => {
-                      const request = buildCoachActionRequest(option, selectionContext);
-                      if (!request) return;
-                      runCoach(request);
-                    }}
-                  >
-                    {coachLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
-                    {option.label}
-                  </Button>
-                ))}
-              </div>
-            </div>
-          </div>
-          <div className="h-full rounded-lg border border-slate-200 bg-slate-50/60 p-4 shadow-sm" data-testid="coach-custom-prompt-panel">
-            <div className="flex h-full flex-col gap-3">
-              <div className="space-y-1">
-                <Label htmlFor="coach-custom-prompt-input" className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                  Custom prompt
-                </Label>
-                <p className="text-xs text-slate-500">Ask for feedback, risks, gaps, strategy…</p>
-              </div>
-              <Textarea
-                id="coach-custom-prompt-input"
-                data-testid="coach-custom-prompt-input"
-                rows={5}
-                className="min-h-[140px] w-full resize-y bg-white"
-                placeholder="Ask for feedback, risks, gaps, strategy…"
-                value={customPromptText}
-                onChange={(event) => setCustomPromptText(event.target.value)}
-                onKeyDown={handleCustomPromptKeyDown}
-                disabled={coachLoading || coachNotConfigured}
-              />
-              <div className="flex justify-end">
-                <Button
-                  type="button"
-                  data-testid="coach-custom-prompt-run"
-                  onClick={runCustomPromptCoach}
-                  disabled={coachLoading || coachNotConfigured || !asText(customPromptText)}
-                >
-                  {coachLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-                  {coachLoading ? 'Running...' : 'Run'}
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {coachNotConfigured ? (
-          <Alert className="bg-amber-50 border-amber-200">
-            <AlertTriangle className="h-4 w-4 text-amber-700" />
-            <AlertDescription className="text-amber-800">
-              AI suggestions are unavailable because Vertex AI is not configured.
-            </AlertDescription>
-          </Alert>
-        ) : null}
-
-        {!coachNotConfigured && coachError ? (
-          <Alert className="bg-red-50 border-red-200">
-            <AlertTriangle className="h-4 w-4 text-red-700" />
-            <AlertDescription className="text-red-800">{coachError}</AlertDescription>
-          </Alert>
-        ) : null}
-
-        {isGuestMode && coachLimitReached ? (
+    <SuggestionCoachPanel
+      activeThread={activeThread}
+      activeThreadEntryCount={activeThreadEntryCount}
+      atThreadLimit={atThreadLimit}
+      canStartNewThread={canStartNewThread}
+      coachCached={coachCached}
+      coachError={coachError}
+      coachLoading={coachLoading}
+      coachNotConfigured={coachNotConfigured}
+      coachResponseLabel={coachResponseLabel}
+      coachResponseMeta={coachResponseMeta}
+      coachResponseText={coachResponseText}
+      companyBriefSources={coachIntentKey === 'company_brief' ? companyBriefSources : []}
+      companyContextName={companyContextName}
+      companyContextNameInputRef={companyContextNameInputRef}
+      companyContextSaveError={companyContextSaveError}
+      companyContextStatusClassName={companyContextStatusClassName}
+      companyContextStatusText={companyContextStatusText}
+      companyContextValidationError={companyContextValidationError}
+      companyContextWebsite={companyContextWebsite}
+      customPromptText={customPromptText}
+      deletingThreadId={deletingThreadId}
+      expandedSuggestionIds={expandedSuggestionIds}
+      isApplyingReviewSuggestion={isApplyingReviewSuggestion}
+      isCoachResponseCopied={isCoachResponseCopied}
+      isCustomPromptResponse={isCustomPromptResponse}
+      isSavingCompanyContext={isSavingCompanyContext}
+      leftDocLabel={CONFIDENTIAL_LABEL}
+      onCancelDelete={handleCancelDelete}
+      onCancelRename={handleCancelRename}
+      onClearCoachResponse={clearCoachResponse}
+      onClosePendingReviewSuggestion={() => setPendingReviewSuggestion(null)}
+      onCompanyContextBlur={handleCompanyContextBlur}
+      onCompanyContextNameChange={(value) => handleCompanyContextNameChange({ target: { value } })}
+      onCompanyContextWebsiteChange={(value) => handleCompanyContextWebsiteChange({ target: { value } })}
+      onConfirmCoachSuggestionApply={confirmCoachSuggestionApply}
+      onConfirmDeleteThread={handleConfirmDeleteThread}
+      onConfirmRename={handleConfirmRename}
+      onCopyCoachResponse={copyCoachResponse}
+      onCopyPendingProposedText={copyPendingProposedText}
+      onCustomPromptKeyDown={handleCustomPromptKeyDown}
+      onCustomPromptTextChange={setCustomPromptText}
+      onDeleteThread={handleDeleteThread}
+      onDismissSuggestion={dismissSuggestion}
+      onOpenCoachSuggestionReview={openCoachSuggestionReview}
+      onRetryCompanyContextSave={retryCompanyContextSave}
+      onRunCompanyBrief={handleCompanyBriefAction}
+      onRunCustomPrompt={runCustomPromptCoach}
+      onRunSuggestedPrompt={(option) => {
+        const request = buildCoachActionRequest(option, selectionContext);
+        if (!request) return;
+        runCoach(request);
+      }}
+      onSelectThread={handleSelectThread}
+      onStartNewThread={handleStartNewThread}
+      onStartRename={handleStartRename}
+      onToggleSuggestionExpanded={toggleSuggestionExpanded}
+      onToggleThreadHistory={() => setShowThreadHistory((value) => !value)}
+      onRenameInputValueChange={setRenameInputValue}
+      pendingReviewSuggestion={pendingReviewSuggestion}
+      renamingThreadId={renamingThreadId}
+      renameInputValue={renameInputValue}
+      rightDocLabel={SHARED_LABEL}
+      showThreadHistory={showThreadHistory}
+      suggestedPromptOptions={DOCUMENT_COMPARISON_COACH_ACTIONS}
+      suggestionThreads={suggestionThreads}
+      supplementaryAlert={
+        isGuestMode && coachLimitReached ? (
           <Alert className="bg-blue-50 border-blue-200">
             <AlertDescription className="text-blue-900 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <span>Sign in to continue with more AI runs, save this comparison, and share results.</span>
@@ -4754,115 +4147,10 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
               </Button>
             </AlertDescription>
           </Alert>
-        ) : null}
-
-        {coachResponseText ? (
-          <div
-            className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm transition-all duration-200"
-            data-testid={isCustomPromptResponse ? 'coach-custom-prompt-feedback' : 'coach-response-feedback'}
-          >
-            <div className="flex items-start justify-between gap-3 border-b border-slate-200 bg-slate-50/70 px-4 py-3">
-              <div className="space-y-1">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">{coachResponseLabel}</p>
-                {coachResponseMeta ? <p className="text-xs text-slate-500">{coachResponseMeta}</p> : null}
-              </div>
-              <div className="flex items-center gap-1">
-                <Button type="button" size="sm" variant="outline" onClick={copyCoachResponse} disabled={!coachResponseText}>
-                  {isCoachResponseCopied ? <Check className="mr-2 h-4 w-4" /> : <Copy className="mr-2 h-4 w-4" />}
-                  {isCoachResponseCopied ? 'Copied' : 'Copy'}
-                </Button>
-                <Button type="button" size="icon" variant="ghost" aria-label="Clear response" onClick={clearCoachResponse}>
-                  <X className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-            <div className="min-h-[132px] px-4 py-4">
-              <CoachResponseText text={coachResponseText} />
-              {coachIntentKey === 'company_brief' && companyBriefSources.length > 0 ? (
-                <div className="mt-4 border-t border-slate-200 pt-3">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Sources</p>
-                  <ul className="mt-2 space-y-1 text-xs text-slate-600" data-testid="company-brief-sources">
-                    {companyBriefSources.map((source, index) => {
-                      const sourceTitle = asText(source?.title) || `Source ${index + 1}`;
-                      const url = asText(source?.url);
-                      if (!url) {
-                        return (
-                          <li key={`company-brief-source-${index}`}>
-                            [{index + 1}] {sourceTitle}
-                          </li>
-                        );
-                      }
-                      return (
-                        <li key={`company-brief-source-${index}`}>
-                          [{index + 1}]{' '}
-                          <a href={url} target="_blank" rel="noreferrer" className="text-blue-700 underline-offset-2 hover:underline">
-                            {sourceTitle}
-                          </a>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
-              ) : null}
-            </div>
-          </div>
-        ) : null}
-
-        {visibleCoachSuggestions.length > 0 ? (
-          <div className="space-y-2">
-            {visibleCoachSuggestions.slice(0, 12).map((suggestion, index) => {
-              const suggestionId = getNormalizedSuggestionId(suggestion, index);
-              const expanded = expandedSuggestionIds.includes(suggestionId);
-              const isShared = suggestion?.scope === 'shared' || suggestion?.proposed_change?.target === 'doc_b';
-              const categoryLabel = getSuggestionCategoryLabel(suggestion?.category);
-              return (
-                <div key={suggestionId || `coach-suggestion-${index}`} className="rounded-lg border border-slate-200 bg-white p-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <Badge variant="outline">{String(suggestion?.severity || 'info')}</Badge>
-                      <Badge variant={isShared ? 'secondary' : 'outline'}>
-                        {isShared ? 'Shared-safe' : 'Confidential-only'}
-                      </Badge>
-                      {categoryLabel ? <Badge variant="outline">{categoryLabel}</Badge> : null}
-                      <span className="text-sm font-medium text-slate-800">{suggestion?.title || 'Suggestion'}</span>
-                    </div>
-                    <div className="flex gap-2">
-                      <Button type="button" size="sm" onClick={() => openCoachSuggestionReview(suggestion, suggestionId)}>
-                        Review & Apply
-                      </Button>
-                      <Button type="button" size="sm" variant="outline" onClick={() => toggleSuggestionExpanded(suggestionId)}>
-                        {expanded ? 'Hide' : 'Explain'}
-                      </Button>
-                      <Button type="button" size="sm" variant="ghost" onClick={() => dismissSuggestion(suggestionId)}>
-                        Ignore
-                      </Button>
-                    </div>
-                  </div>
-                  {expanded ? (
-                    <div className="mt-2 space-y-2 text-sm text-slate-600">
-                      <p>{suggestion?.rationale || 'No rationale provided.'}</p>
-                      <div className="rounded border border-slate-200 bg-slate-50 p-2 whitespace-pre-wrap">
-                        {suggestion?.proposed_change?.text || ''}
-                      </div>
-                      {isShared && Array.isArray(suggestion?.evidence?.shared_quotes) && suggestion.evidence.shared_quotes.length ? (
-                        <div>
-                          <p className="text-xs font-semibold text-slate-500 mb-1">Shared evidence</p>
-                          <ul className="list-disc pl-5 text-xs text-slate-600">
-                            {suggestion.evidence.shared_quotes.map((quote) => (
-                              <li key={`${suggestionId}-${quote.slice(0, 24)}`}>{quote}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
-        ) : null}
-      </CardContent>
-    </Card>
+        ) : null
+      }
+      visibleCoachSuggestions={visibleCoachSuggestions}
+    />
   ) : null;
 
   return (
@@ -5275,137 +4563,6 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
           </DialogContent>
         </Dialog>
 
-        <Dialog
-          open={Boolean(pendingReviewSuggestion)}
-          onOpenChange={(open) => {
-            if (!open) {
-              setPendingReviewSuggestion(null);
-            }
-          }}
-        >
-          <DialogContent className="sm:max-w-4xl max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle>Review Suggested Change</DialogTitle>
-              <DialogDescription>
-                Confirm this suggestion before applying it to{' '}
-                {pendingReviewSuggestion?.target === 'a' ? CONFIDENTIAL_LABEL : SHARED_LABEL}.
-              </DialogDescription>
-            </DialogHeader>
-
-            <div className="space-y-4">
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="outline">
-                  {String(pendingReviewSuggestion?.suggestion?.severity || 'info')}
-                </Badge>
-                <Badge
-                  variant={pendingReviewSuggestion?.isShared ? 'secondary' : 'outline'}
-                >
-                  {pendingReviewSuggestion?.isShared ? 'Shared-safe' : 'Confidential-only'}
-                </Badge>
-                {getSuggestionCategoryLabel(pendingReviewSuggestion?.suggestion?.category) ? (
-                  <Badge variant="outline">
-                    {getSuggestionCategoryLabel(pendingReviewSuggestion?.suggestion?.category)}
-                  </Badge>
-                ) : null}
-                <span className="text-sm font-medium text-slate-800">
-                  {pendingReviewSuggestion?.suggestion?.title || 'Suggestion'}
-                </span>
-              </div>
-
-              <p className="text-sm text-slate-600">
-                {pendingReviewSuggestion?.suggestion?.rationale || 'No rationale provided.'}
-              </p>
-
-              <p className="text-xs text-slate-500">
-                {pendingReviewSuggestion?.changeSummary || ''}
-              </p>
-
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <div className="rounded-lg border border-slate-200 bg-white">
-                  <div className="border-b border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600">
-                    Original
-                  </div>
-                  <div
-                    className="px-3 py-3 text-sm text-slate-700 whitespace-pre-wrap min-h-[120px]"
-                    dangerouslySetInnerHTML={{
-                      __html: pendingReviewSuggestion?.diffPreview?.beforeHtml || '',
-                    }}
-                  />
-                </div>
-                <div className="rounded-lg border border-slate-200 bg-white">
-                  <div className="border-b border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600">
-                    Proposed
-                  </div>
-                  <div
-                    className="px-3 py-3 text-sm text-slate-700 whitespace-pre-wrap min-h-[120px]"
-                    dangerouslySetInnerHTML={{
-                      __html: pendingReviewSuggestion?.diffPreview?.afterHtml || '',
-                    }}
-                  />
-                </div>
-              </div>
-
-              {pendingReviewSuggestion?.isShared &&
-              Array.isArray(pendingReviewSuggestion?.suggestion?.evidence?.shared_quotes) &&
-              pendingReviewSuggestion.suggestion.evidence.shared_quotes.length > 0 ? (
-                <div>
-                  <p className="text-xs font-semibold text-slate-500 mb-1">Shared evidence</p>
-                  <ul className="list-disc pl-5 text-xs text-slate-600 space-y-1">
-                    {pendingReviewSuggestion.suggestion.evidence.shared_quotes.map((quote) => (
-                      <li key={`pending-review-shared-${quote.slice(0, 30)}`}>{quote}</li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
-
-              {!pendingReviewSuggestion?.isShared &&
-              Array.isArray(pendingReviewSuggestion?.suggestion?.evidence?.confidential_quotes) &&
-              pendingReviewSuggestion.suggestion.evidence.confidential_quotes.length > 0 ? (
-                <div>
-                  <p className="text-xs font-semibold text-slate-500 mb-1">Confidential evidence</p>
-                  <ul className="list-disc pl-5 text-xs text-slate-600 space-y-1">
-                    {pendingReviewSuggestion.suggestion.evidence.confidential_quotes.map((quote) => (
-                      <li key={`pending-review-conf-${quote.slice(0, 30)}`}>{quote}</li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
-            </div>
-
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={copyPendingProposedText}
-                disabled={!pendingReviewSuggestion?.nextText}
-              >
-                Copy proposed text
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setPendingReviewSuggestion(null)}
-                disabled={isApplyingReviewSuggestion}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="button"
-                onClick={confirmCoachSuggestionApply}
-                disabled={isApplyingReviewSuggestion}
-              >
-                {isApplyingReviewSuggestion ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Applying...
-                  </>
-                ) : (
-                  'Confirm & Apply'
-                )}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
       </ComparisonWorkflowShell>
     </div>
   );

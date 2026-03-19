@@ -226,6 +226,15 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     const selectionTarget = parseSelectionTarget(body.selectionTarget || body.selection_target);
     const selectionText = sanitizeEditorText(body.selectionText || body.selection_text || '').slice(0, 20000);
     const promptText = asText(body.promptText || body.prompt_text || '').slice(0, MAX_CUSTOM_PROMPT_CHARS);
+    const rawThreadHistory = Array.isArray(body.threadHistory) ? body.threadHistory : [];
+    const threadHistory = rawThreadHistory
+      .filter((entry: any) => entry && (entry.role === 'user' || entry.role === 'assistant') && typeof entry.content === 'string')
+      .slice(-6)
+      .map((entry: any) => ({
+        role: entry.role as 'user' | 'assistant',
+        content: String(entry.content || '').slice(0, 2000),
+        ...(entry.promptType ? { promptType: String(entry.promptType) } : {}),
+      }));
     validateIntentMode({
       intent,
       mode,
@@ -320,6 +329,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       promptText: promptText || undefined,
       companyName: companyName || undefined,
       companyWebsite: companyWebsite || undefined,
+      threadHistory: threadHistory.length > 0 ? threadHistory : undefined,
       mediatorContext,
     });
 
@@ -360,6 +370,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       promptText: promptText || undefined,
       companyName: companyName || undefined,
       companyWebsite: companyWebsite || undefined,
+      threadHistory: threadHistory.length > 0 ? threadHistory : undefined,
       mediatorContext,
     });
     const relevanceGuarded = applyCoachRelevanceGuard({

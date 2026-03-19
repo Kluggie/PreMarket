@@ -7,6 +7,7 @@ import sharedReportsHandler from '../../server/routes/shared-reports/index.ts';
 import proposalsHandler from '../../server/routes/proposals/index.ts';
 import sharedReportRecipientTokenHandler from '../../server/routes/shared-report/[token].ts';
 import sharedReportRecipientDraftHandler from '../../server/routes/shared-report/[token]/draft.ts';
+import sharedReportRecipientCoachHandler from '../../server/routes/shared-report/[token]/coach.ts';
 import sharedReportRecipientEvaluateHandler from '../../server/routes/shared-report/[token]/evaluate.ts';
 import sharedReportRecipientSendBackHandler from '../../server/routes/shared-report/[token]/send-back.ts';
 import sharedReportVerifyStartHandler from '../../server/routes/shared-report/[token]/verify/start.ts';
@@ -122,6 +123,19 @@ async function evaluateRecipientDraft(token, body = {}, cookie = null) {
   });
   const res = createMockRes();
   await sharedReportRecipientEvaluateHandler(req, res, token);
+  return res;
+}
+
+async function coachRecipientDraft(token, body = {}, cookie = null) {
+  const req = createMockReq({
+    method: 'POST',
+    url: `/api/shared-report/${token}/coach`,
+    query: { token },
+    headers: cookie ? { cookie } : {},
+    body,
+  });
+  const res = createMockRes();
+  await sharedReportRecipientCoachHandler(req, res, token);
   return res;
 }
 
@@ -1129,5 +1143,89 @@ if (!hasDatabaseUrl()) {
     const sendBackRes = await sendBackRecipientDraft(viewOnlyLink.token, {}, recipientCookie);
     assert.equal(sendBackRes.statusCode, 403);
     assert.equal(sendBackRes.jsonBody().error.code, 'send_back_not_allowed');
+  });
+
+  test('Prompt2 custom prompt threads include prior history without leaking proposer confidential text', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = makeOwnerCookie('p2_threaded_custom_prompt');
+    const proposerConfidential = 'PROPOSER_SECRET_4512';
+    const comparison = await createComparison(ownerCookie, {
+      title: 'Recipient Threaded Custom Prompt',
+      docAText: `Never leak ${proposerConfidential}`,
+      docBText: 'Shared baseline visible to the recipient.',
+    });
+    const link = await createSharedReportLink(
+      ownerCookie,
+      comparison.id,
+      'recipient@example.com',
+      {
+        canEdit: true,
+        canEditConfidential: true,
+        canReevaluate: true,
+        canSendBack: true,
+        maxUses: 20,
+      },
+    );
+    const recipientCookie = makeRecipientCookie(
+      'p2_threaded_custom_prompt_recipient',
+      'recipient@example.com',
+    );
+
+    const originalVertexMock = process.env.VERTEX_MOCK;
+    const originalOverride = globalThis.__PREMARKET_TEST_VERTEX_CUSTOM_COACH_CALL__;
+    const capturedCalls = [];
+    process.env.VERTEX_MOCK = '0';
+    globalThis.__PREMARKET_TEST_VERTEX_CUSTOM_COACH_CALL__ = async (input) => {
+      capturedCalls.push(input);
+      return {
+        provider: 'mock',
+        model: 'shared-report-thread-history-test',
+        text: 'Thread-aware custom prompt feedback.',
+      };
+    };
+
+    try {
+      const coachRes = await coachRecipientDraft(link.token, {
+        action: 'custom_prompt',
+        intent: 'custom_prompt',
+        mode: 'full',
+        promptText: 'Continue our earlier discussion.',
+        threadHistory: [
+          { role: 'user', content: 'What are the biggest risks?', promptType: 'risks' },
+          { role: 'assistant', content: 'Focus on implementation risk and renewal terms.' },
+        ],
+      }, recipientCookie);
+
+      assert.equal(coachRes.statusCode, 200);
+      assert.equal(capturedCalls.length, 1);
+
+      const modelPrompt = String(capturedCalls[0]?.prompt || '');
+      assert.equal(modelPrompt.includes('Prior conversation in this session'), true);
+      assert.equal(modelPrompt.includes('User [risks]: What are the biggest risks?'), true);
+      assert.equal(
+        modelPrompt.includes('Assistant: Focus on implementation risk and renewal terms.'),
+        true,
+      );
+      assert.equal(modelPrompt.includes('Shared baseline visible to the recipient.'), true);
+      assert.equal(modelPrompt.includes(proposerConfidential), false);
+      assert.equal(
+        String(coachRes.jsonBody().coach.custom_feedback || '').includes('Thread-aware custom prompt feedback.'),
+        true,
+      );
+    } finally {
+      if (originalOverride === undefined) {
+        delete globalThis.__PREMARKET_TEST_VERTEX_CUSTOM_COACH_CALL__;
+      } else {
+        globalThis.__PREMARKET_TEST_VERTEX_CUSTOM_COACH_CALL__ = originalOverride;
+      }
+
+      if (originalVertexMock === undefined) {
+        delete process.env.VERTEX_MOCK;
+      } else {
+        process.env.VERTEX_MOCK = originalVertexMock;
+      }
+    }
   });
 }

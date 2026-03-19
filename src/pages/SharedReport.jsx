@@ -4,9 +4,9 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { sharedReportsClient } from '@/api/sharedReportsClient';
 import { documentComparisonsClient } from '@/api/documentComparisonsClient';
 import { useAuth } from '@/lib/AuthContext';
-import DocumentRichEditor from '@/components/document-comparison/DocumentRichEditor';
 import DocumentComparisonEditorErrorBoundary from '@/components/document-comparison/DocumentComparisonEditorErrorBoundary';
 import ComparisonWorkflowShell from '@/components/document-comparison/ComparisonWorkflowShell';
+import SuggestionCoachPanel from '@/components/document-comparison/SuggestionCoachPanel';
 import Step1AddSources from '@/components/document-comparison/Step1AddSources';
 import Step2EditSources from '@/components/document-comparison/Step2EditSources';
 import ComparisonEvaluationStep from '@/components/document-comparison/ComparisonEvaluationStep';
@@ -14,43 +14,66 @@ import {
   buildCoachActionRequest,
   DOCUMENT_COMPARISON_COACH_ACTIONS,
 } from '@/components/document-comparison/coachActions';
-import { VISIBILITY_CONFIDENTIAL, VISIBILITY_SHARED, OWNER_PROPOSER, OWNER_RECIPIENT, createDocument, compileBundles, serializeDocumentsForDraft, deserializeDocumentsFromDraft } from '@/pages/document-comparison/documentsModel';
+import {
+  VISIBILITY_CONFIDENTIAL,
+  VISIBILITY_SHARED,
+  OWNER_PROPOSER,
+  OWNER_RECIPIENT,
+  createDocument,
+  compileBundles,
+  serializeDocumentsForDraft,
+  deserializeDocumentsFromDraft,
+} from '@/pages/document-comparison/documentsModel';
 import { sanitizeEditorHtml } from '@/components/document-comparison/editorSanitization';
+import {
+  applySuggestedTextChange,
+  buildDiffPreview,
+  buildWordDiffPreview,
+  getNormalizedSuggestionId,
+  getSuggestionChangeSummary,
+} from '@/pages/document-comparison/coachSuggestionUtils';
+import {
+  appendAssistantEntry,
+  appendUserEntry,
+  buildThreadHistoryForRequest,
+  canCreateThread,
+  createThread,
+  deleteThread,
+  getActiveThread,
+  getLastAssistantEntry,
+  MAX_THREADS,
+  renameThread,
+} from '@/pages/document-comparison/suggestionThreads';
+import {
+  buildRecipientEditorStateWithAi,
+  restoreRecipientEditorAiState,
+} from '@/pages/shared-report/recipientEditorAiState';
 import {
   ComparisonDetailTabs,
 } from '@/components/document-comparison/ComparisonDetailTabs';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Progress } from '@/components/ui/progress';
 import { toast } from 'sonner';
 import {
   getRunAiMediationLabel,
   MEDIATION_REVIEW_LABEL,
-  RUN_AI_MEDIATION_LABEL,
 } from '@/lib/aiReportUtils';
 import {
   AlertTriangle,
-  ArrowLeft,
   ArrowRight,
-  Check,
-  Copy,
-  FileText,
   Loader2,
-  Save,
   Send,
-  Sparkles,
-  Upload,
-  X,
 } from 'lucide-react';
 
 const CONFIDENTIAL_LABEL = 'Confidential Information';
 const SHARED_LABEL = 'Shared Information';
 const TOTAL_WORKFLOW_STEPS = 3;
+const STEP2_AUTOSAVE_DEBOUNCE_MS = 30_000;
+const STEP2_AUTOSAVE_MIN_INTERVAL_MS = 30_000;
 const COACH_INTENT_LABELS = {
   improve_shared: 'Improve shared writing',
   negotiate: 'Negotiation strategy',
@@ -69,143 +92,6 @@ function clampStep(value, fallback = 0) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return fallback;
   return Math.min(Math.max(Math.floor(numeric), 0), TOTAL_WORKFLOW_STEPS);
-}
-
-function parseCoachResponseBlocks(value) {
-  const lines = String(value || '')
-    .replace(/\r/g, '')
-    .split('\n');
-  const blocks = [];
-
-  let index = 0;
-  while (index < lines.length) {
-    const rawLine = lines[index] || '';
-    const line = rawLine.trim();
-    if (!line) {
-      index += 1;
-      continue;
-    }
-
-    const headingMatch = line.match(/^#{1,6}\s+(.*)$/);
-    if (headingMatch) {
-      blocks.push({
-        type: 'heading',
-        text: headingMatch[1].trim(),
-      });
-      index += 1;
-      continue;
-    }
-
-    const orderedItemMatch = line.match(/^\d+[.)]\s+(.*)$/);
-    if (orderedItemMatch) {
-      const items = [];
-      while (index < lines.length) {
-        const orderedLine = String(lines[index] || '').trim();
-        const match = orderedLine.match(/^\d+[.)]\s+(.*)$/);
-        if (!match) {
-          break;
-        }
-        const itemText = String(match[1] || '').trim();
-        if (itemText) {
-          items.push(itemText);
-        }
-        index += 1;
-      }
-      if (items.length) {
-        blocks.push({ type: 'ordered', items });
-      }
-      continue;
-    }
-
-    const bulletItemMatch = line.match(/^[-*]\s+(.*)$/);
-    if (bulletItemMatch) {
-      const items = [];
-      while (index < lines.length) {
-        const bulletLine = String(lines[index] || '').trim();
-        const match = bulletLine.match(/^[-*]\s+(.*)$/);
-        if (!match) {
-          break;
-        }
-        const itemText = String(match[1] || '').trim();
-        if (itemText) {
-          items.push(itemText);
-        }
-        index += 1;
-      }
-      if (items.length) {
-        blocks.push({ type: 'unordered', items });
-      }
-      continue;
-    }
-
-    const paragraphLines = [];
-    while (index < lines.length) {
-      const paragraphLine = String(lines[index] || '');
-      const paragraphLineTrimmed = paragraphLine.trim();
-      if (!paragraphLineTrimmed) {
-        break;
-      }
-      if (/^#{1,6}\s+/.test(paragraphLineTrimmed) || /^\d+[.)]\s+/.test(paragraphLineTrimmed) || /^[-*]\s+/.test(paragraphLineTrimmed)) {
-        break;
-      }
-      paragraphLines.push(paragraphLine);
-      index += 1;
-    }
-    if (paragraphLines.length) {
-      blocks.push({
-        type: 'paragraph',
-        text: paragraphLines.join('\n').trim(),
-      });
-    } else {
-      index += 1;
-    }
-  }
-
-  return blocks;
-}
-
-function CoachResponseText({ text = '' }) {
-  const blocks = parseCoachResponseBlocks(text);
-  if (!blocks.length) {
-    return <p className="text-sm leading-6 text-slate-700 whitespace-pre-wrap">{String(text || '').trim()}</p>;
-  }
-
-  return (
-    <div className="space-y-3">
-      {blocks.map((block, index) => {
-        if (block.type === 'heading') {
-          return (
-            <h4 key={`coach-response-heading-${index}`} className="text-sm font-semibold text-slate-900">
-              {block.text}
-            </h4>
-          );
-        }
-        if (block.type === 'unordered') {
-          return (
-            <ul key={`coach-response-unordered-${index}`} className="list-disc space-y-1 pl-5 text-sm leading-6 text-slate-700">
-              {block.items.map((item, itemIndex) => (
-                <li key={`coach-response-unordered-item-${index}-${itemIndex}`}>{item}</li>
-              ))}
-            </ul>
-          );
-        }
-        if (block.type === 'ordered') {
-          return (
-            <ol key={`coach-response-ordered-${index}`} className="list-decimal space-y-1 pl-5 text-sm leading-6 text-slate-700">
-              {block.items.map((item, itemIndex) => (
-                <li key={`coach-response-ordered-item-${index}-${itemIndex}`}>{item}</li>
-              ))}
-            </ol>
-          );
-        }
-        return (
-          <p key={`coach-response-paragraph-${index}`} className="text-sm leading-6 text-slate-700 whitespace-pre-wrap">
-            {block.text}
-          </p>
-        );
-      })}
-    </div>
-  );
 }
 
 function escapeHtml(value) {
@@ -439,11 +325,40 @@ export default function SharedReport() {
   const [coachCached, setCoachCached] = useState(false);
   const [coachWithheldCount, setCoachWithheldCount] = useState(0);
   const [coachRequestMeta, setCoachRequestMeta] = useState(null);
+  const [coachResultHash, setCoachResultHash] = useState('');
+  const [appliedSuggestionIdsByHash, setAppliedSuggestionIdsByHash] = useState({});
+  const [ignoredSuggestionIdsByHash, setIgnoredSuggestionIdsByHash] = useState({});
+  const [expandedSuggestionIds, setExpandedSuggestionIds] = useState([]);
+  const [selectionContext, setSelectionContext] = useState({ side: 'b', text: '', range: null });
+  const [replaceSelectionRequest, setReplaceSelectionRequest] = useState({
+    side: null,
+    id: 0,
+    from: 0,
+    to: 0,
+    text: '',
+  });
+  const [focusEditorRequest, setFocusEditorRequest] = useState({ side: null, id: 0, jumpText: '' });
+  const [pendingReviewSuggestion, setPendingReviewSuggestion] = useState(null);
+  const [isApplyingReviewSuggestion, setIsApplyingReviewSuggestion] = useState(false);
   const [isCoachResponseCopied, setIsCoachResponseCopied] = useState(false);
   const [companyContextName, setCompanyContextName] = useState('');
   const [companyContextWebsite, setCompanyContextWebsite] = useState('');
+  const [companyContextSaveState, setCompanyContextSaveState] = useState('idle');
+  const [companyContextSaveError, setCompanyContextSaveError] = useState('');
+  const [companyContextValidationError, setCompanyContextValidationError] = useState('');
+  const [isSavingCompanyContext, setIsSavingCompanyContext] = useState(false);
+  const [suggestionThreads, setSuggestionThreads] = useState([]);
+  const [activeSuggestionThreadId, setActiveSuggestionThreadId] = useState(null);
+  const [showThreadHistory, setShowThreadHistory] = useState(false);
+  const [deletingThreadId, setDeletingThreadId] = useState(null);
+  const [renamingThreadId, setRenamingThreadId] = useState(null);
+  const [renameInputValue, setRenameInputValue] = useState('');
 
   const activeImportRequestRef = useRef({ id: 0, controller: null });
+  const companyContextNameInputRef = useRef(null);
+  const suggestionThreadsRef = useRef([]);
+  const activeSuggestionThreadIdRef = useRef(null);
+  const lastStep2AutosaveAtRef = useRef(0);
 
   const workspaceQuery = useQuery({
     queryKey: ['shared-report-recipient-workspace', token],
@@ -507,8 +422,6 @@ export default function SharedReport() {
   const requiresRecipientVerification =
     Boolean(isAuthenticated && invitedEmail) && !authorizedForCurrentUser;
 
-  const canEditShared = Boolean(share?.permissions?.can_edit_shared);
-  const canEditConfidential = Boolean(share?.permissions?.can_edit_confidential);
   const canReevaluate = Boolean(share?.permissions?.can_reevaluate);
   const canSendBack = Boolean(share?.permissions?.can_send_back);
 
@@ -690,8 +603,37 @@ export default function SharedReport() {
     setCoachCached(false);
     setCoachWithheldCount(0);
     setCoachRequestMeta(null);
+    setCoachResultHash('');
+    setAppliedSuggestionIdsByHash({});
+    setIgnoredSuggestionIdsByHash({});
+    setExpandedSuggestionIds([]);
+    setSelectionContext({ side: 'b', text: '', range: null });
+    setReplaceSelectionRequest({ side: null, id: 0, from: 0, to: 0, text: '' });
+    setFocusEditorRequest({ side: null, id: 0, jumpText: '' });
+    setPendingReviewSuggestion(null);
+    setIsApplyingReviewSuggestion(false);
     setIsCoachResponseCopied(false);
+    setCompanyContextName('');
+    setCompanyContextWebsite('');
+    setCompanyContextSaveState('idle');
+    setCompanyContextSaveError('');
+    setCompanyContextValidationError('');
+    setIsSavingCompanyContext(false);
+    setSuggestionThreads([]);
+    setActiveSuggestionThreadId(null);
+    setShowThreadHistory(false);
+    setDeletingThreadId(null);
+    setRenamingThreadId(null);
+    setRenameInputValue('');
+    suggestionThreadsRef.current = [];
+    activeSuggestionThreadIdRef.current = null;
+    lastStep2AutosaveAtRef.current = 0;
   }, [token]);
+
+  useEffect(() => {
+    suggestionThreadsRef.current = suggestionThreads;
+    activeSuggestionThreadIdRef.current = activeSuggestionThreadId;
+  }, [suggestionThreads, activeSuggestionThreadId]);
 
   useEffect(
     () => () => {
@@ -720,19 +662,52 @@ export default function SharedReport() {
     if (!workspaceQuery.data) return;
 
     setTitle(asText(comparison?.title) || asText(parent?.title) || 'Shared Report');
+    const editorState =
+      recipientDraft?.editor_state ||
+      latestSentRevision?.editor_state ||
+      {};
+    const restoredAiState = restoreRecipientEditorAiState(editorState);
+    const nextCompanyContextName =
+      restoredAiState.companyContextName || asText(comparison?.company_name);
+    const nextCompanyContextWebsite =
+      restoredAiState.companyContextWebsite || asText(comparison?.company_website);
 
-    // Pre-populate company context from comparison data (if the proposer set it)
-    if (!companyContextName) {
-      const savedName = asText(comparison?.company_name);
-      if (savedName) setCompanyContextName(savedName);
-    }
-    if (!companyContextWebsite) {
-      const savedWebsite = asText(comparison?.company_website);
-      if (savedWebsite) setCompanyContextWebsite(savedWebsite);
-    }
+    setCompanyContextName(nextCompanyContextName);
+    setCompanyContextWebsite(nextCompanyContextWebsite);
+    setCompanyContextSaveState(
+      nextCompanyContextName || nextCompanyContextWebsite ? 'saved' : 'idle',
+    );
+    setCompanyContextSaveError('');
+    setCompanyContextValidationError('');
+    setSuggestionThreads(restoredAiState.suggestionThreads);
+    setActiveSuggestionThreadId(restoredAiState.activeSuggestionThreadId);
+    suggestionThreadsRef.current = restoredAiState.suggestionThreads;
+    activeSuggestionThreadIdRef.current = restoredAiState.activeSuggestionThreadId;
+    const restoredActiveThread = restoredAiState.suggestionThreads.find(
+      (thread) => thread.id === restoredAiState.activeSuggestionThreadId,
+    );
+    const restoredAssistant = restoredActiveThread
+      ? getLastAssistantEntry(restoredActiveThread)
+      : null;
+    setCoachResult(restoredAssistant?.coachResult || null);
+    setCoachResultHash(restoredAssistant?.coachResultHash || '');
+    setCoachCached(Boolean(restoredAssistant?.coachCached));
+    setCoachWithheldCount(Number(restoredAssistant?.withheldCount || 0));
+    setCoachRequestMeta(restoredAssistant?.coachRequestMeta || null);
+    setCoachError('');
+    setCoachNotConfigured(false);
+    setIsCoachResponseCopied(false);
+    setExpandedSuggestionIds([]);
+    setAppliedSuggestionIdsByHash({});
+    setIgnoredSuggestionIdsByHash({});
+    setPendingReviewSuggestion(null);
+    setIsApplyingReviewSuggestion(false);
+    setShowThreadHistory(false);
+    setDeletingThreadId(null);
+    setRenamingThreadId(null);
+    setRenameInputValue('');
 
     // ── Hydrate recipient documents ──
-    const editorState = recipientDraft?.editor_state || {};
     const savedDocs = editorState.documents;
 
     if (Array.isArray(savedDocs) && savedDocs.length > 0) {
@@ -881,6 +856,28 @@ export default function SharedReport() {
     }
   }, [requiresRecipientVerification, step]);
 
+  useEffect(() => {
+    if (companyContextSaveState !== 'saved') {
+      return undefined;
+    }
+    const timeoutId = window.setTimeout(() => {
+      setCompanyContextSaveState('idle');
+    }, 1200);
+    return () => window.clearTimeout(timeoutId);
+  }, [companyContextSaveState]);
+
+  useEffect(() => {
+    if (!draftDirty) {
+      return undefined;
+    }
+    const handleBeforeUnload = (event) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [draftDirty]);
+
   const getMismatchInvitedEmail = (error) => {
     const fromBody = asText(error?.body?.error?.invitedEmail).toLowerCase();
     if (fromBody) return fromBody;
@@ -906,6 +903,10 @@ export default function SharedReport() {
   const buildDraftInput = (stepToSave = step) => {
     const sharedBundle = compiledRecipientBundles.shared;
     const confBundle = compiledRecipientBundles.confidential;
+    const baseEditorState =
+      recipientDraft?.editor_state ||
+      latestSentRevision?.editor_state ||
+      {};
     return {
       shared_payload: {
         label: SHARED_LABEL,
@@ -925,12 +926,15 @@ export default function SharedReport() {
         files: confBundle.files || [],
       },
       workflow_step: clampStep(stepToSave, 0),
-      editor_state: {
-        step: clampStep(stepToSave, 0),
-        mode: 'recipient_document_comparison_v2',
-        updated_at: new Date().toISOString(),
+      editor_state: buildRecipientEditorStateWithAi({
+        activeSuggestionThreadId: activeSuggestionThreadIdRef.current,
+        baseEditorState,
+        companyContextName,
+        companyContextWebsite,
         documents: serializeDocumentsForDraft(recipientDocuments),
-      },
+        step: clampStep(stepToSave, 0),
+        suggestionThreads: suggestionThreadsRef.current,
+      }),
     };
   };
 
@@ -940,6 +944,9 @@ export default function SharedReport() {
     },
     onSuccess: async (_data, variables) => {
       setDraftDirty(false);
+      setCompanyContextSaveState('saved');
+      setCompanyContextSaveError('');
+      setIsSavingCompanyContext(false);
       if (!variables?.silent) {
         toast.success('Draft saved');
       }
@@ -956,9 +963,61 @@ export default function SharedReport() {
         handleRecipientMismatch(error);
         return;
       }
+      if (step === 2 && (companyContextName || companyContextWebsite)) {
+        setCompanyContextSaveError(toFriendlySaveError(error));
+        setCompanyContextSaveState('idle');
+      }
+      setIsSavingCompanyContext(false);
       toast.error(toFriendlySaveError(error));
     },
   });
+
+  useEffect(() => {
+    if (
+      !isAuthenticated ||
+      requiresRecipientVerification ||
+      step < 2 ||
+      !draftDirty ||
+      saveDraftMutation.isPending
+    ) {
+      return undefined;
+    }
+
+    const now = Date.now();
+    const msSinceLastAutosave = now - lastStep2AutosaveAtRef.current;
+    const delayMs =
+      msSinceLastAutosave >= STEP2_AUTOSAVE_MIN_INTERVAL_MS
+        ? STEP2_AUTOSAVE_DEBOUNCE_MS
+        : Math.max(
+            STEP2_AUTOSAVE_DEBOUNCE_MS,
+            STEP2_AUTOSAVE_MIN_INTERVAL_MS - msSinceLastAutosave,
+          );
+
+    const timer = window.setTimeout(() => {
+      if (!draftDirty) {
+        return;
+      }
+      lastStep2AutosaveAtRef.current = Date.now();
+      setIsSavingCompanyContext(true);
+      setCompanyContextSaveState('saving');
+      setCompanyContextSaveError('');
+      saveDraftMutation.mutate({ stepToSave: 2, silent: true });
+    }, delayMs);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    activeSuggestionThreadId,
+    companyContextName,
+    companyContextWebsite,
+    draftDirty,
+    isAuthenticated,
+    recipientDocuments,
+    requiresRecipientVerification,
+    saveDraftMutation,
+    step,
+    suggestionThreads,
+    title,
+  ]);
 
   const evaluateMutation = useMutation({
     mutationFn: async () => {
@@ -1232,11 +1291,31 @@ export default function SharedReport() {
 
     setCoachLoading(true);
     setCoachError('');
+    setCompanyContextValidationError('');
     setIsCoachResponseCopied(false);
+    setExpandedSuggestionIds([]);
 
     try {
       const normalizedAction = String(action || intent || '').trim().toLowerCase();
       const isCustomPromptRequest = normalizedAction === 'custom_prompt';
+      const userContent = isCustomPromptRequest
+        ? String(promptText || '').trim()
+        : (COACH_INTENT_LABELS[intent] || action || intent || 'prompt');
+      const appended = appendUserEntry(
+        suggestionThreadsRef.current,
+        activeSuggestionThreadIdRef.current,
+        { content: userContent, promptType: intent || action, intent },
+      );
+      setSuggestionThreads(appended.threads);
+      setActiveSuggestionThreadId(appended.activeThreadId);
+      suggestionThreadsRef.current = appended.threads;
+      activeSuggestionThreadIdRef.current = appended.activeThreadId;
+      setDraftDirty(true);
+      setCompanyContextSaveState('idle');
+      const threadHistory = buildThreadHistoryForRequest(
+        appended.threads,
+        appended.activeThreadId,
+      );
       const payload = {
         action: action || undefined,
         mode,
@@ -1244,6 +1323,7 @@ export default function SharedReport() {
         promptText: isCustomPromptRequest ? String(promptText || '').trim() : undefined,
         selectionText: selectionText || undefined,
         selectionTarget: selectionTarget || undefined,
+        threadHistory: threadHistory.length > 0 ? threadHistory : undefined,
         company_name: asText(companyContextName) || undefined,
         company_website: asText(companyContextWebsite) || undefined,
       };
@@ -1263,10 +1343,11 @@ export default function SharedReport() {
       const response = await sharedReportsClient.coachRecipient(token, payload);
       const coach = response?.coach || null;
       setCoachResult(coach);
+      setCoachResultHash(String(response?.cacheHash || ''));
       setCoachCached(Boolean(response?.cached));
       setCoachWithheldCount(Number(response?.withheldCount || 0));
       setCoachNotConfigured(false);
-      setCoachRequestMeta({
+      const requestMeta = {
         action: action || '',
         mode,
         intent,
@@ -1282,7 +1363,27 @@ export default function SharedReport() {
                 to: Number(selectionRange.to),
               }
             : null,
-      });
+      };
+      setCoachRequestMeta(requestMeta);
+      const assistantContent = asText(
+        coach?.custom_feedback || coach?.summary?.overall || '',
+      );
+      const assistantAppended = appendAssistantEntry(
+        suggestionThreadsRef.current,
+        activeSuggestionThreadIdRef.current,
+        {
+          content: assistantContent,
+          coachResult: coach,
+          coachResultHash: String(response?.cacheHash || ''),
+          coachCached: Boolean(response?.cached),
+          coachRequestMeta: requestMeta,
+          withheldCount: Number(response?.withheldCount || 0),
+        },
+      );
+      setSuggestionThreads(assistantAppended.threads);
+      suggestionThreadsRef.current = assistantAppended.threads;
+      setDraftDirty(true);
+      setCompanyContextSaveState('idle');
       toast.success(response?.cached ? 'Loaded cached suggestions' : 'Suggestions ready');
       return response;
     } catch (error) {
@@ -1291,9 +1392,11 @@ export default function SharedReport() {
       if (status === 501 || code === 'not_configured') {
         const message = 'AI suggestions are unavailable because Vertex AI is not configured.';
         setCoachResult(null);
+        setCoachResultHash('');
         setCoachCached(false);
         setCoachWithheldCount(0);
         setCoachRequestMeta(null);
+        setExpandedSuggestionIds([]);
         setCoachError(message);
         setCoachNotConfigured(true);
         toast.error(message);
@@ -1326,6 +1429,8 @@ export default function SharedReport() {
   const runCompanyBrief = async () => {
     const name = asText(companyContextName);
     if (!name) {
+      setCompanyContextValidationError('Company name is required for Company Brief');
+      companyContextNameInputRef.current?.focus?.();
       toast.error('Enter a company name first.');
       return null;
     }
@@ -1341,7 +1446,10 @@ export default function SharedReport() {
 
     setCoachLoading(true);
     setCoachError('');
+    setCoachResultHash('');
+    setExpandedSuggestionIds([]);
     setIsCoachResponseCopied(false);
+    setCompanyContextValidationError('');
 
     try {
       const response = await sharedReportsClient.companyBriefRecipient(token, {
@@ -1360,6 +1468,7 @@ export default function SharedReport() {
         company_brief_searches: brief.searches || [],
         company_brief_limited: Boolean(brief.limited),
       });
+      setCoachResultHash('');
       setCoachCached(false);
       setCoachWithheldCount(0);
       setCoachRequestMeta({
@@ -1370,11 +1479,20 @@ export default function SharedReport() {
         model: response?.model || 'unknown',
         provider: response?.provider || 'vertex',
       });
+      setCoachError('');
+      setCoachNotConfigured(false);
       toast.success('Company Brief ready');
       return response;
     } catch (error) {
       const status = Number(error?.status || 0);
       const code = asText(error?.body?.error?.code || error?.body?.code || error?.code);
+      if (status === 400 && code === 'missing_company_context') {
+        setCompanyContextValidationError('Company name is required for Company Brief');
+        companyContextNameInputRef.current?.focus?.();
+        setCoachError('Company name is required for Company Brief.');
+        toast.error('Company context is missing.');
+        return null;
+      }
       if (status === 501 || code === 'not_configured') {
         setCoachNotConfigured(true);
         setCoachError('AI suggestions are unavailable because Vertex AI is not configured.');
@@ -1391,19 +1509,24 @@ export default function SharedReport() {
   };
 
   const handleCustomPromptKeyDown = (event) => {
-    if (event.key !== 'Enter' || event.shiftKey) {
+    if (coachLoading || coachNotConfigured) {
       return;
     }
-    event.preventDefault();
-    runCustomPromptCoach();
+    const key = String(event?.key || '').toLowerCase();
+    if (key === 'enter' && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      runCustomPromptCoach();
+    }
   };
 
   const clearCoachResponse = () => {
     setCoachResult(null);
+    setCoachResultHash('');
     setCoachError('');
     setCoachCached(false);
     setCoachWithheldCount(0);
     setCoachRequestMeta(null);
+    setExpandedSuggestionIds([]);
     setIsCoachResponseCopied(false);
   };
 
@@ -1413,16 +1536,389 @@ export default function SharedReport() {
       return;
     }
     if (!navigator.clipboard?.writeText) {
-      toast.error('Clipboard is not available in this browser');
+      toast.error('Clipboard is unavailable in this browser.');
       return;
     }
     try {
       await navigator.clipboard.writeText(responseText);
       setIsCoachResponseCopied(true);
-      toast.success('Response copied');
+      toast.success('Response copied.');
     } catch {
-      toast.error('Unable to copy response');
+      toast.error('Could not copy response.');
     }
+  };
+
+  const restoreCoachStateFromThread = useCallback((thread) => {
+    const lastAssistant = thread ? getLastAssistantEntry(thread) : null;
+    if (lastAssistant) {
+      setCoachResult(lastAssistant.coachResult || null);
+      setCoachResultHash(lastAssistant.coachResultHash || '');
+      setCoachCached(lastAssistant.coachCached || false);
+      setCoachWithheldCount(lastAssistant.withheldCount || 0);
+      setCoachRequestMeta(lastAssistant.coachRequestMeta || null);
+    } else {
+      setCoachResult(null);
+      setCoachResultHash('');
+      setCoachCached(false);
+      setCoachWithheldCount(0);
+      setCoachRequestMeta(null);
+    }
+    setExpandedSuggestionIds([]);
+    setCoachError('');
+    setIsCoachResponseCopied(false);
+  }, []);
+
+  const handleStartNewThread = useCallback(() => {
+    const currentThreads = suggestionThreadsRef.current;
+    const currentActiveId = activeSuggestionThreadIdRef.current;
+
+    if (!canCreateThread(currentThreads, currentActiveId)) {
+      if (currentThreads.length >= MAX_THREADS) {
+        toast.info('Max 3 threads — delete one to start fresh.');
+      }
+      return;
+    }
+
+    const result = createThread(currentThreads, currentActiveId);
+    setSuggestionThreads(result.threads);
+    setActiveSuggestionThreadId(result.activeThreadId);
+    suggestionThreadsRef.current = result.threads;
+    activeSuggestionThreadIdRef.current = result.activeThreadId;
+    setDraftDirty(true);
+    setCompanyContextSaveState('idle');
+    setCoachResult(null);
+    setCoachResultHash('');
+    setCoachCached(false);
+    setCoachWithheldCount(0);
+    setCoachRequestMeta(null);
+    setExpandedSuggestionIds([]);
+    setCoachError('');
+    setIsCoachResponseCopied(false);
+  }, []);
+
+  const handleSelectThread = useCallback((threadId) => {
+    if (!threadId || threadId === activeSuggestionThreadIdRef.current) {
+      return;
+    }
+    const thread = suggestionThreadsRef.current.find((entry) => entry.id === threadId);
+    if (!thread) {
+      return;
+    }
+    setActiveSuggestionThreadId(threadId);
+    activeSuggestionThreadIdRef.current = threadId;
+    restoreCoachStateFromThread(thread);
+    setShowThreadHistory(false);
+    setDraftDirty(true);
+    setCompanyContextSaveState('idle');
+  }, [restoreCoachStateFromThread]);
+
+  const handleDeleteThread = useCallback((threadId) => {
+    setDeletingThreadId(threadId);
+  }, []);
+
+  const handleCancelDelete = useCallback(() => {
+    setDeletingThreadId(null);
+  }, []);
+
+  const handleConfirmDeleteThread = useCallback((threadId) => {
+    const currentThreads = suggestionThreadsRef.current;
+    const currentActiveId = activeSuggestionThreadIdRef.current;
+    const wasActive = currentActiveId === threadId;
+
+    let result = deleteThread(currentThreads, currentActiveId, threadId);
+    if (result.threads.length === 0) {
+      const fresh = createThread([], null);
+      result = { threads: fresh.threads, activeThreadId: fresh.activeThreadId };
+    }
+
+    setSuggestionThreads(result.threads);
+    setActiveSuggestionThreadId(result.activeThreadId);
+    suggestionThreadsRef.current = result.threads;
+    activeSuggestionThreadIdRef.current = result.activeThreadId;
+    setDeletingThreadId(null);
+    setDraftDirty(true);
+    setCompanyContextSaveState('idle');
+
+    if (wasActive) {
+      const nextActiveThread =
+        result.threads.find((entry) => entry.id === result.activeThreadId) || null;
+      restoreCoachStateFromThread(nextActiveThread);
+    }
+  }, [restoreCoachStateFromThread]);
+
+  const handleStartRename = useCallback((threadId, currentTitle) => {
+    setDeletingThreadId(null);
+    setRenamingThreadId(threadId);
+    setRenameInputValue(currentTitle || '');
+  }, []);
+
+  const handleConfirmRename = useCallback(() => {
+    const threadId = renamingThreadId;
+    const newTitle = renameInputValue.trim();
+    if (threadId && newTitle) {
+      const updated = renameThread(suggestionThreadsRef.current, threadId, newTitle);
+      setSuggestionThreads(updated);
+      suggestionThreadsRef.current = updated;
+      setDraftDirty(true);
+      setCompanyContextSaveState('idle');
+    }
+    setRenamingThreadId(null);
+    setRenameInputValue('');
+  }, [renamingThreadId, renameInputValue]);
+
+  const handleCancelRename = useCallback(() => {
+    setRenamingThreadId(null);
+    setRenameInputValue('');
+  }, []);
+
+  const copyPendingProposedText = async () => {
+    if (!pendingReviewSuggestion?.nextText) {
+      toast.error('No proposed text to copy.');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(String(pendingReviewSuggestion.nextText || ''));
+      toast.success('Proposed text copied.');
+    } catch {
+      toast.error('Could not copy proposed text.');
+    }
+  };
+
+  const markSuggestionApplied = (suggestionIdValue, suggestionHashValue) => {
+    const suggestionId = String(suggestionIdValue || '');
+    const suggestionHash = String(suggestionHashValue || activeCoachHash || 'unhashed');
+    if (!suggestionId) {
+      return;
+    }
+    setAppliedSuggestionIdsByHash((previous) => {
+      const current = Array.isArray(previous[suggestionHash]) ? previous[suggestionHash] : [];
+      if (current.includes(suggestionId)) {
+        return previous;
+      }
+      return {
+        ...previous,
+        [suggestionHash]: [...current, suggestionId],
+      };
+    });
+    setExpandedSuggestionIds((previous) => previous.filter((id) => id !== suggestionId));
+  };
+
+  const openCoachSuggestionReview = (suggestion, suggestionIdOverride = '') => {
+    const target = suggestion?.proposed_change?.target === 'doc_a' ? 'a' : 'b';
+    const op = String(suggestion?.proposed_change?.op || 'append');
+    const nextText = String(suggestion?.proposed_change?.text || '');
+    const headingHint = String(suggestion?.proposed_change?.heading_hint || '');
+    const requestIntent = String(coachRequestMeta?.intent || '').trim().toLowerCase();
+    const isRewriteSelectionIntent = requestIntent === 'rewrite_selection' && op === 'replace_selection';
+    const requestSelectionTarget = String(coachRequestMeta?.selectionTarget || '').toLowerCase();
+    const requestSelectionSide =
+      requestSelectionTarget === 'confidential'
+        ? 'a'
+        : requestSelectionTarget === 'shared'
+          ? 'b'
+          : null;
+    const selectionRangeFromRequest =
+      isRewriteSelectionIntent &&
+      coachRequestMeta?.selectionRange &&
+      requestSelectionSide === target &&
+      Number.isFinite(coachRequestMeta.selectionRange.from) &&
+      Number.isFinite(coachRequestMeta.selectionRange.to)
+        ? {
+            from: Number(coachRequestMeta.selectionRange.from),
+            to: Number(coachRequestMeta.selectionRange.to),
+          }
+        : null;
+    const selectedText = isRewriteSelectionIntent
+      ? String(coachRequestMeta?.selectionText || '').trim()
+      : selectionContext.side === target
+        ? String(selectionContext.text || '').trim()
+        : '';
+    const targetVisibility = target === 'a' ? VISIBILITY_CONFIDENTIAL : VISIBILITY_SHARED;
+    const currentTargetDoc = recipientDocuments.find(
+      (document) =>
+        document.owner === OWNER_RECIPIENT && document.visibility === targetVisibility,
+    );
+    const currentText = String(currentTargetDoc?.text || '');
+    const updatedText = applySuggestedTextChange({
+      currentText,
+      op,
+      nextText,
+      headingHint,
+      selectedText,
+    });
+    const isShared = suggestion?.scope === 'shared' || suggestion?.proposed_change?.target === 'doc_b';
+    const diffPreview = isRewriteSelectionIntent
+      ? buildWordDiffPreview(selectedText, nextText)
+      : buildDiffPreview(currentText, updatedText);
+    const jumpText = String(nextText || selectedText || headingHint || '').trim();
+
+    setPendingReviewSuggestion({
+      suggestion,
+      suggestionId: String(suggestionIdOverride || getNormalizedSuggestionId(suggestion)),
+      coachHash: activeCoachHash,
+      target,
+      op,
+      nextText,
+      selectedText,
+      headingHint,
+      currentText,
+      updatedText,
+      intent: requestIntent,
+      selectionRange: selectionRangeFromRequest,
+      isShared,
+      diffPreview,
+      jumpText: jumpText.slice(0, 280),
+      changeSummary: isRewriteSelectionIntent
+        ? 'This will replace only the selected snippet in the target editor.'
+        : getSuggestionChangeSummary(op, headingHint),
+    });
+  };
+
+  const handleReplaceSelectionApplied = (result) => {
+    const requestId = Number(result?.id || 0);
+    if (!pendingReviewSuggestion || requestId !== Number(replaceSelectionRequest.id || 0)) {
+      return;
+    }
+
+    setReplaceSelectionRequest({ side: null, id: 0, from: 0, to: 0, text: '' });
+
+    if (!result?.success) {
+      setIsApplyingReviewSuggestion(false);
+      toast.error('Could not apply rewrite to the selected text. Please reselect and try again.');
+      return;
+    }
+
+    markSuggestionApplied(
+      pendingReviewSuggestion.suggestionId,
+      pendingReviewSuggestion.coachHash,
+    );
+    setPendingReviewSuggestion(null);
+    setIsApplyingReviewSuggestion(false);
+    setDraftDirty(true);
+    setCompanyContextSaveState('idle');
+    setFocusEditorRequest({
+      side: pendingReviewSuggestion.target,
+      id: Date.now(),
+      jumpText: String(result?.text || '').trim().slice(0, 280),
+    });
+    toast.success('Suggestion applied locally. Click Save Draft to persist.');
+  };
+
+  const confirmCoachSuggestionApply = () => {
+    if (!pendingReviewSuggestion) {
+      return;
+    }
+
+    setIsApplyingReviewSuggestion(true);
+    const target = pendingReviewSuggestion.target === 'a' ? 'a' : 'b';
+    const jumpText = String(pendingReviewSuggestion.jumpText || '').trim();
+    const suggestionId = String(pendingReviewSuggestion.suggestionId || '');
+    const suggestionHash = String(pendingReviewSuggestion.coachHash || activeCoachHash || 'unhashed');
+    const isRewriteSelection = pendingReviewSuggestion.intent === 'rewrite_selection';
+
+    if (isRewriteSelection) {
+      const range = pendingReviewSuggestion.selectionRange;
+      const nextText = String(pendingReviewSuggestion.nextText || '').trim();
+      if (!range || !Number.isFinite(range.from) || !Number.isFinite(range.to) || range.to <= range.from) {
+        setIsApplyingReviewSuggestion(false);
+        toast.error('Selection is no longer available. Re-select text and request rewrite again.');
+        return;
+      }
+      if (!nextText) {
+        setIsApplyingReviewSuggestion(false);
+        toast.error('No rewritten text returned for this suggestion.');
+        return;
+      }
+      const requestId = Date.now();
+      setReplaceSelectionRequest({
+        side: target,
+        id: requestId,
+        from: Number(range.from),
+        to: Number(range.to),
+        text: nextText,
+      });
+      return;
+    }
+
+    const targetVisibility = target === 'a' ? VISIBILITY_CONFIDENTIAL : VISIBILITY_SHARED;
+    const updatedText = String(pendingReviewSuggestion.updatedText || '');
+    const updatedHtml = sanitizeEditorHtml(textToHtml(updatedText));
+
+    setRecipientDocuments((previous) => {
+      let applied = false;
+      const next = previous.map((document) => {
+        if (!applied && document.owner === OWNER_RECIPIENT && document.visibility === targetVisibility) {
+          applied = true;
+          return {
+            ...document,
+            text: updatedText,
+            html: updatedHtml,
+            json: null,
+            source: 'typed',
+          };
+        }
+        return document;
+      });
+
+      if (!applied) {
+        next.push(
+          createDocument({
+            title: targetVisibility === VISIBILITY_SHARED ? SHARED_LABEL : CONFIDENTIAL_LABEL,
+            visibility: targetVisibility,
+            owner: OWNER_RECIPIENT,
+            source: 'typed',
+            text: updatedText,
+            html: updatedHtml,
+            json: null,
+          }),
+        );
+      }
+
+      return next;
+    });
+
+    markSuggestionApplied(suggestionId, suggestionHash);
+    setPendingReviewSuggestion(null);
+    setIsApplyingReviewSuggestion(false);
+    setDraftDirty(true);
+    setCompanyContextSaveState('idle');
+    setFocusEditorRequest({
+      side: target,
+      id: Date.now(),
+      jumpText,
+    });
+    toast.success('Suggestion applied locally. Click Save Draft to persist.');
+  };
+
+  const toggleSuggestionExpanded = (suggestionId) => {
+    const normalizedId = String(suggestionId || '');
+    if (!normalizedId) {
+      return;
+    }
+    setExpandedSuggestionIds((previous) =>
+      previous.includes(normalizedId)
+        ? previous.filter((id) => id !== normalizedId)
+        : [...previous, normalizedId],
+    );
+  };
+
+  const dismissSuggestion = (suggestionId) => {
+    const normalizedId = String(suggestionId || '');
+    if (!normalizedId) {
+      return;
+    }
+    const suggestionHash = String(activeCoachHash || 'unhashed');
+    setIgnoredSuggestionIdsByHash((previous) => {
+      const current = Array.isArray(previous[suggestionHash]) ? previous[suggestionHash] : [];
+      if (current.includes(normalizedId)) {
+        return previous;
+      }
+      return {
+        ...previous,
+        [suggestionHash]: [...current, normalizedId],
+      };
+    });
+    setExpandedSuggestionIds((previous) => previous.filter((id) => id !== normalizedId));
   };
 
   const sendToProposer = async () => {
@@ -1551,11 +2047,37 @@ export default function SharedReport() {
       : []),
   ];
   const coachSuggestions = Array.isArray(coachResult?.suggestions) ? coachResult.suggestions : [];
+  const activeCoachHash = coachResultHash || 'unhashed';
+  const appliedSuggestionIds = appliedSuggestionIdsByHash[activeCoachHash] || [];
+  const ignoredSuggestionIds = ignoredSuggestionIdsByHash[activeCoachHash] || [];
+  const hiddenSuggestionIds = new Set([...appliedSuggestionIds, ...ignoredSuggestionIds]);
   const visibleCoachSuggestions = coachSuggestions.filter(
-    (suggestion) => String(suggestion?.visibility || 'visible').toLowerCase() !== 'hidden',
+    (suggestion, index) =>
+      String(suggestion?.visibility || 'visible').toLowerCase() !== 'hidden' &&
+      !hiddenSuggestionIds.has(getNormalizedSuggestionId(suggestion, index)),
   );
   const coachResponseText = asText(coachResult?.custom_feedback || coachResult?.summary?.overall || '');
   const coachIntentKey = String(coachRequestMeta?.intent || '').toLowerCase();
+  const activeThread = getActiveThread(suggestionThreads, activeSuggestionThreadId);
+  const activeThreadEntryCount = activeThread?.entries?.length || 0;
+  const canStartNewThread = canCreateThread(suggestionThreads, activeSuggestionThreadId);
+  const atThreadLimit = suggestionThreads.length >= MAX_THREADS;
+  const companyBriefSources = Array.isArray(coachResult?.company_brief_sources) ? coachResult.company_brief_sources : [];
+  const companyBriefLimited = Boolean(coachResult?.company_brief_limited);
+  const companyContextHasValues = Boolean(companyContextName || companyContextWebsite);
+  const companyContextStatusText = companyContextHasValues
+    ? companyContextSaveState === 'saving'
+      ? 'Saving...'
+      : companyContextSaveState === 'saved'
+        ? 'Saved'
+        : ''
+    : '';
+  const companyContextStatusClassName = companyContextSaveState === 'saving'
+    ? 'text-blue-700'
+    : companyContextSaveState === 'saved'
+      ? 'text-emerald-700'
+      : 'text-slate-500';
+  const isCustomPromptResponse = coachIntentKey === 'custom_prompt';
   const coachResponseLabel = COACH_INTENT_LABELS[coachIntentKey] || 'Suggestion feedback';
   const coachResponseMetaParts = [];
   if (visibleCoachSuggestions.length > 0) {
@@ -1573,9 +2095,16 @@ export default function SharedReport() {
       `${coachWithheldCount} shared suggestion${coachWithheldCount === 1 ? '' : 's'} withheld for safety`,
     );
   }
+  if (coachIntentKey === 'company_brief' && companyBriefSources.length > 0) {
+    coachResponseMetaParts.push(
+      `${companyBriefSources.length} source${companyBriefSources.length === 1 ? '' : 's'}`,
+    );
+  }
+  if (coachIntentKey === 'company_brief' && companyBriefLimited) {
+    coachResponseMetaParts.push('Limited public info found');
+  }
   const coachResponseMeta = coachResponseMetaParts.join(' · ');
   const canRunCoach = Boolean(canReevaluate) && !requiresRecipientVerification;
-  const companyBriefSources = Array.isArray(coachResult?.company_brief_sources) ? coachResult.company_brief_sources : [];
 
   if (!token) {
     return (
@@ -1622,206 +2151,104 @@ export default function SharedReport() {
   // Extracted so it can be passed as `coachPanel` prop to Step2EditSources,
   // matching the proposer flow where the coach panel renders at the top of Step 2.
   const coachPanelNode = (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-base flex items-center gap-2">
-          <Sparkles className="w-4 h-4 text-blue-600" />
-          Ask for suggestions
-          {coachCached ? <Badge variant="outline">Cached</Badge> : null}
-        </CardTitle>
-        <CardDescription>
-          Generate suggestions only when you click an action. No background requests.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="grid gap-4 lg:grid-cols-2">
-          <div className="h-full rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="space-y-3">
-              <div className="space-y-2">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                  Company
-                </p>
-                <div className="space-y-2">
-                  <Input
-                    data-testid="company-context-name-input-inline"
-                    placeholder="Company name"
-                    value={companyContextName}
-                    onChange={(e) => setCompanyContextName(e.target.value)}
-                  />
-                  <Input
-                    data-testid="company-context-website-input-inline"
-                    placeholder="Website"
-                    value={companyContextWebsite}
-                    onChange={(e) => setCompanyContextWebsite(e.target.value)}
-                  />
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <p className="w-full text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">Suggested Prompts</p>
-                {DOCUMENT_COMPARISON_COACH_ACTIONS.map((option) => (
-                  <Button
-                    key={option.id}
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={coachLoading || coachNotConfigured || !canRunCoach}
-                    onClick={() => {
-                      const request = buildCoachActionRequest(option, null);
-                      if (!request) return;
-                      runCoach(request);
-                    }}
-                  >
-                    {coachLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
-                    {option.label}
-                  </Button>
-                ))}
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={coachLoading || coachNotConfigured || !canRunCoach}
-                  onClick={() => { if (!coachLoading && !coachNotConfigured) runCompanyBrief(); }}
-                  data-testid="coach-company-brief-action"
-                >
-                  {coachLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
-                  Company Brief
-                </Button>
-              </div>
-              {!canReevaluate ? (
-                <p className="text-xs text-amber-700">AI support is disabled for this shared link.</p>
-              ) : null}
-            </div>
-          </div>
-          <div
-            className="h-full rounded-lg border border-slate-200 bg-slate-50/60 p-4 shadow-sm"
-            data-testid="coach-custom-prompt-panel"
-          >
-            <div className="flex h-full flex-col gap-3">
-              <div className="space-y-1">
-                <Label htmlFor="coach-custom-prompt-input" className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                  Custom prompt
-                </Label>
-                <p className="text-xs text-slate-500">Ask for feedback, risks, gaps, strategy...</p>
-              </div>
-              <Textarea
-                id="coach-custom-prompt-input"
-                data-testid="coach-custom-prompt-input"
-                rows={5}
-                className="min-h-[140px] w-full resize-y bg-white"
-                placeholder="Ask for feedback, risks, gaps, strategy..."
-                value={customPromptText}
-                onChange={(event) => setCustomPromptText(event.target.value)}
-                onKeyDown={handleCustomPromptKeyDown}
-                disabled={coachLoading || coachNotConfigured || !canRunCoach}
-              />
-              <div className="flex justify-end">
-                <Button
-                  type="button"
-                  data-testid="coach-custom-prompt-run"
-                  onClick={runCustomPromptCoach}
-                  disabled={coachLoading || coachNotConfigured || !canRunCoach || !asText(customPromptText)}
-                >
-                  {coachLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-                  {coachLoading ? 'Running...' : 'Run'}
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {coachNotConfigured ? (
-          <Alert className="bg-amber-50 border-amber-200">
-            <AlertTriangle className="h-4 w-4 text-amber-700" />
-            <AlertDescription className="text-amber-800">
-              AI suggestions are unavailable because Vertex AI is not configured.
-            </AlertDescription>
-          </Alert>
-        ) : null}
-
-        {!coachNotConfigured && coachError ? (
-          <Alert className="bg-red-50 border-red-200">
-            <AlertTriangle className="h-4 w-4 text-red-700" />
-            <AlertDescription className="text-red-800">{coachError}</AlertDescription>
-          </Alert>
-        ) : null}
-
-        {coachResponseText ? (
-          <div
-            className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm transition-all duration-200"
-            data-testid={coachIntentKey === 'custom_prompt' ? 'coach-custom-prompt-feedback' : 'coach-response-feedback'}
-          >
-            <div className="flex items-start justify-between gap-3 border-b border-slate-200 bg-slate-50/70 px-4 py-3">
-              <div className="space-y-1">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">{coachResponseLabel}</p>
-                {coachResponseMeta ? <p className="text-xs text-slate-500">{coachResponseMeta}</p> : null}
-              </div>
-              <div className="flex items-center gap-1">
-                <Button type="button" size="sm" variant="outline" onClick={copyCoachResponse} disabled={!coachResponseText}>
-                  {isCoachResponseCopied ? <Check className="mr-2 h-4 w-4" /> : <Copy className="mr-2 h-4 w-4" />}
-                  {isCoachResponseCopied ? 'Copied' : 'Copy'}
-                </Button>
-                <Button type="button" size="icon" variant="ghost" aria-label="Clear response" onClick={clearCoachResponse}>
-                  <X className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-            <div className="min-h-[132px] px-4 py-4">
-              <CoachResponseText text={coachResponseText} />
-              {coachIntentKey === 'company_brief' && companyBriefSources.length > 0 ? (
-                <div className="mt-4 border-t border-slate-200 pt-3">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Sources</p>
-                  <ul className="mt-2 space-y-1 text-xs text-slate-600" data-testid="company-brief-sources">
-                    {companyBriefSources.map((source, index) => {
-                      const sourceTitle = asText(source?.title) || `Source ${index + 1}`;
-                      const url = asText(source?.url);
-                      if (!url) {
-                        return (
-                          <li key={`company-brief-source-${index}`}>
-                            [{index + 1}] {sourceTitle}
-                          </li>
-                        );
-                      }
-                      return (
-                        <li key={`company-brief-source-${index}`}>
-                          [{index + 1}]{' '}
-                          <a href={url} target="_blank" rel="noreferrer" className="text-blue-700 underline-offset-2 hover:underline">
-                            {sourceTitle}
-                          </a>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
-              ) : null}
-            </div>
-          </div>
-        ) : null}
-
-        {visibleCoachSuggestions.length > 0 ? (
-          <div className="space-y-2">
-            {visibleCoachSuggestions.slice(0, 12).map((suggestion, index) => {
-              const isShared = suggestion?.scope === 'shared' || suggestion?.proposed_change?.target === 'doc_b';
-              return (
-                <div key={`coach-suggestion-${index}`} className="rounded-lg border border-slate-200 bg-white p-3">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge variant="outline">{String(suggestion?.severity || 'info')}</Badge>
-                    <Badge variant={isShared ? 'secondary' : 'outline'}>
-                      {isShared ? 'Shared-safe' : 'Confidential-only'}
-                    </Badge>
-                    <span className="text-sm font-medium text-slate-800">{suggestion?.title || 'Suggestion'}</span>
-                  </div>
-                  {asText(suggestion?.explanation || suggestion?.rationale) ? (
-                    <p className="mt-2 text-sm text-slate-600">
-                      {asText(suggestion?.explanation || suggestion?.rationale)}
-                    </p>
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
-        ) : null}
-      </CardContent>
-    </Card>
+    <SuggestionCoachPanel
+      activeThread={activeThread}
+      activeThreadEntryCount={activeThreadEntryCount}
+      atThreadLimit={atThreadLimit}
+      canStartNewThread={canStartNewThread}
+      coachCached={coachCached}
+      coachError={coachError}
+      coachLoading={coachLoading}
+      coachNotConfigured={coachNotConfigured}
+      coachResponseLabel={coachResponseLabel}
+      coachResponseMeta={coachResponseMeta}
+      coachResponseText={coachResponseText}
+      companyBriefSources={coachIntentKey === 'company_brief' ? companyBriefSources : []}
+      companyContextName={companyContextName}
+      companyContextNameInputRef={companyContextNameInputRef}
+      companyContextSaveError={companyContextSaveError}
+      companyContextStatusClassName={companyContextStatusClassName}
+      companyContextStatusText={companyContextStatusText}
+      companyContextValidationError={companyContextValidationError}
+      companyContextWebsite={companyContextWebsite}
+      customPromptText={customPromptText}
+      deletingThreadId={deletingThreadId}
+      disableCompanyBrief={!canRunCoach}
+      disableCustomPrompt={!canRunCoach}
+      disableSuggestedPrompts={!canRunCoach}
+      expandedSuggestionIds={expandedSuggestionIds}
+      isApplyingReviewSuggestion={isApplyingReviewSuggestion}
+      isCoachResponseCopied={isCoachResponseCopied}
+      isCustomPromptResponse={isCustomPromptResponse}
+      isSavingCompanyContext={isSavingCompanyContext}
+      leftDocLabel={CONFIDENTIAL_LABEL}
+      onCancelDelete={handleCancelDelete}
+      onCancelRename={handleCancelRename}
+      onClearCoachResponse={clearCoachResponse}
+      onClosePendingReviewSuggestion={() => {
+        setPendingReviewSuggestion(null);
+        setIsApplyingReviewSuggestion(false);
+      }}
+      onCompanyContextBlur={() => {}}
+      onCompanyContextNameChange={(value) => {
+        setCompanyContextName(value);
+        setCompanyContextValidationError('');
+        setCompanyContextSaveError('');
+        setCompanyContextSaveState('idle');
+        setDraftDirty(true);
+      }}
+      onCompanyContextWebsiteChange={(value) => {
+        setCompanyContextWebsite(value);
+        setCompanyContextSaveError('');
+        setCompanyContextSaveState('idle');
+        setDraftDirty(true);
+      }}
+      onConfirmCoachSuggestionApply={confirmCoachSuggestionApply}
+      onConfirmDeleteThread={handleConfirmDeleteThread}
+      onConfirmRename={handleConfirmRename}
+      onCopyCoachResponse={copyCoachResponse}
+      onCopyPendingProposedText={copyPendingProposedText}
+      onCustomPromptKeyDown={handleCustomPromptKeyDown}
+      onCustomPromptTextChange={setCustomPromptText}
+      onDeleteThread={handleDeleteThread}
+      onDismissSuggestion={dismissSuggestion}
+      onOpenCoachSuggestionReview={openCoachSuggestionReview}
+      onRetryCompanyContextSave={() => {
+        if (saveDraftMutation.isPending) {
+          return;
+        }
+        setIsSavingCompanyContext(true);
+        setCompanyContextSaveState('saving');
+        setCompanyContextSaveError('');
+        saveDraftMutation.mutate({ stepToSave: 2, silent: true });
+      }}
+      onRunCompanyBrief={runCompanyBrief}
+      onRunCustomPrompt={runCustomPromptCoach}
+      onRunSuggestedPrompt={(option) => {
+        const request = buildCoachActionRequest(option, selectionContext);
+        if (!request) return;
+        runCoach(request);
+      }}
+      onSelectThread={handleSelectThread}
+      onStartNewThread={handleStartNewThread}
+      onStartRename={handleStartRename}
+      onToggleSuggestionExpanded={toggleSuggestionExpanded}
+      onToggleThreadHistory={() => setShowThreadHistory((value) => !value)}
+      onRenameInputValueChange={setRenameInputValue}
+      pendingReviewSuggestion={pendingReviewSuggestion}
+      renamingThreadId={renamingThreadId}
+      renameInputValue={renameInputValue}
+      rightDocLabel={SHARED_LABEL}
+      showThreadHistory={showThreadHistory}
+      suggestedPromptOptions={DOCUMENT_COMPARISON_COACH_ACTIONS}
+      suggestionThreads={suggestionThreads}
+      supplementaryAlert={
+        !canReevaluate ? (
+          <p className="text-xs text-amber-700">AI support is disabled for this shared link.</p>
+        ) : null
+      }
+      visibleCoachSuggestions={visibleCoachSuggestions}
+    />
   );
 
   return (
@@ -2061,7 +2488,12 @@ export default function SharedReport() {
               limits={{ perDocumentCharacterLimit: 300000, warningCharacterThreshold: 255000 }}
               saveDraftPending={saveDraftMutation.isPending}
               exceedsAnySizeLimit={false}
-              onSaveDraft={() => saveDraftMutation.mutate({ stepToSave: 2 })}
+              onSaveDraft={() => {
+                setIsSavingCompanyContext(true);
+                setCompanyContextSaveState('saving');
+                setCompanyContextSaveError('');
+                saveDraftMutation.mutate({ stepToSave: 2 });
+              }}
               onBack={() => setStep(1)}
               onContinue={runEvaluationFromStep2}
               continueLabel={getRunAiMediationLabel({
@@ -2070,6 +2502,25 @@ export default function SharedReport() {
               })}
               continueDisabled={evaluateMutation.isPending || !canReevaluate || requiresRecipientVerification}
               coachPanel={coachPanelNode}
+              focusEditorRequest={focusEditorRequest}
+              replaceSelectionRequest={replaceSelectionRequest}
+              onReplaceSelectionApplied={handleReplaceSelectionApplied}
+              onSelectionChange={({ text: selectedText, range }) => {
+                const activeDoc =
+                  allDisplayDocuments.find(
+                    (document) => document.id === (recipientActiveDocId || allDisplayDocuments[0]?.id),
+                  ) || null;
+                const normalized = String(selectedText || '').trim();
+                setSelectionContext({
+                  side: activeDoc?.visibility === VISIBILITY_CONFIDENTIAL ? 'a' : 'b',
+                  text: normalized,
+                  range:
+                    range && Number.isFinite(range.from) && Number.isFinite(range.to)
+                      ? { from: Number(range.from), to: Number(range.to) }
+                      : null,
+                });
+              }}
+              onRenameDoc={handleRenameDoc}
             />
           </DocumentComparisonEditorErrorBoundary>
         ) : null}

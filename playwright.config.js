@@ -29,7 +29,7 @@ export default defineConfig({
           timeout: 180_000,
         },
         {
-          command: 'npm run dev -- --port 4273',
+          command: 'VITE_LOCAL_API_INDEX_PROXY=1 npm run dev -- --port 4273',
           url: 'http://localhost:4273',
           reuseExistingServer: false,
           timeout: 180_000,

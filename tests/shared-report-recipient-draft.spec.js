@@ -85,6 +85,13 @@ async function typeInEditor(page, selector, text) {
   await page.keyboard.type(text, { delay: 6 });
 }
 
+async function expectComparisonStep(page, step) {
+  await expect(page.getByRole('heading', { name: 'Document Comparison' })).toBeVisible({
+    timeout: LOAD_TIMEOUT_MS,
+  });
+  await expect(page.getByText(`Step ${step} of 3`)).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+}
+
 test.beforeAll(async () => {
   await ensureMigrated();
 });
@@ -134,14 +141,14 @@ test.describe('Shared Report Recipient Draft', () => {
     );
     expect(workspaceResponse.status()).toBe(200);
 
-    await expect(page.getByText('Step 0: Overview')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+    await expectComparisonStep(page, 0);
     await expect(page.locator('pre')).toContainText(proposerSharedMarker, { timeout: LOAD_TIMEOUT_MS });
 
     await page.getByRole('button', { name: 'Edit Opportunity' }).click();
-    await expect(page.getByText('Step 1: Upload and Import')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+    await expectComparisonStep(page, 1);
 
     await page.getByRole('button', { name: 'Continue to Editor' }).click();
-    await expect(page.getByText('Step 2: Editor')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+    await expectComparisonStep(page, 2);
     await expect(page.locator('[data-testid="doc-a-editor"]')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
     await expect(page.locator('[data-testid="doc-b-editor"]')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
 
@@ -173,6 +180,161 @@ test.describe('Shared Report Recipient Draft', () => {
     });
   });
 
+  test('Step 2 recipient suggestions support threaded history, switching, continuation, and reload restore', async ({ page, request }) => {
+    const ownerId = uniqueId('recipient_thread_owner');
+    const ownerCookie = makeSessionCookie({
+      sub: ownerId,
+      email: `${ownerId}@example.com`,
+      name: 'Shared Owner',
+    });
+
+    const recipientEmail = `${uniqueId('recipient_thread')}@example.com`;
+    const comparison = await createComparison(request, ownerCookie, {
+      title: `Recipient Threaded Suggestions ${uniqueId('title')}`,
+      docAText: 'Recipient-private notes remain private.',
+      docBText: 'Shared baseline visible to recipient and proposer.',
+    });
+    const sharedLink = await createSharedReportLink(
+      request,
+      ownerCookie,
+      comparison.id,
+      recipientEmail,
+    );
+    const token = sharedLink.token;
+    expect(token).toBeTruthy();
+
+    const recipientCookie = makeStableEmailCookie(recipientEmail);
+    await applySessionCookie(page.context(), recipientCookie);
+
+    const coachBodies = [];
+    await page.route(`**/api/shared-report/${encodeURIComponent(token)}/coach`, async (route) => {
+      const body = JSON.parse(route.request().postData() || '{}');
+      coachBodies.push(body);
+      const promptText = String(body.promptText || '').trim();
+      const responseText = promptText
+        ? `Custom response for ${promptText}`
+        : body.intent === 'risks'
+          ? 'Risk response for thread one.'
+          : 'Suggestions ready.';
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          comparison_id: comparison.id,
+          cache_hash: `hash_${coachBodies.length}`,
+          cached: false,
+          provider: 'mock',
+          model: 'shared-report-thread-e2e',
+          withheld_count: 0,
+          coach: {
+            version: 'coach-v1',
+            summary: { overall: responseText },
+            custom_feedback: responseText,
+            suggestions: [
+              {
+                id: `suggestion_${coachBodies.length}`,
+                severity: 'info',
+                scope: 'shared',
+                title: 'Shared wording suggestion',
+                rationale: 'Keep the shared summary concise.',
+                proposed_change: {
+                  target: 'doc_b',
+                  op: 'append',
+                  text: `Added clause ${coachBodies.length}.`,
+                },
+                evidence: {
+                  shared_quotes: ['Shared baseline visible to recipient and proposer.'],
+                },
+              },
+            ],
+          },
+        }),
+      });
+    });
+
+    await page.goto(`${BASE_URL}/shared-report/${encodeURIComponent(token)}`, {
+      waitUntil: 'domcontentloaded',
+    });
+    await expectComparisonStep(page, 0);
+    await page.getByRole('button', { name: 'Edit Opportunity' }).click();
+    await expectComparisonStep(page, 1);
+    await page.getByRole('button', { name: 'Continue to Editor' }).click();
+    await expectComparisonStep(page, 2);
+
+    await page.getByRole('button', { name: 'Risks & Gaps' }).click();
+    await expect(page.getByTestId('coach-response-feedback')).toContainText('Risk response for thread one.', {
+      timeout: LOAD_TIMEOUT_MS,
+    });
+
+    await page.getByTestId('start-new-thread').click();
+    await expect(page.getByTestId('coach-response-feedback')).toHaveCount(0);
+    await expect(page.getByTestId('suggestion-thread-bar')).toContainText('New thread');
+
+    const customPromptInput = page.getByTestId('coach-custom-prompt-input');
+    await customPromptInput.fill('Thread two follow-up');
+    await page.getByTestId('coach-custom-prompt-run').click();
+    await expect(page.getByTestId('coach-custom-prompt-feedback')).toContainText(
+      'Custom response for Thread two follow-up',
+      { timeout: LOAD_TIMEOUT_MS },
+    );
+    await expect(page.getByTestId('suggestion-thread-bar')).toContainText('Thread two follow-up');
+
+    const threadHistoryPanel = page.getByTestId('thread-history-panel');
+    await page.getByTestId('toggle-thread-history').click();
+    await expect(threadHistoryPanel.getByRole('button', { name: 'Risks & Gaps' })).toBeVisible({
+      timeout: LOAD_TIMEOUT_MS,
+    });
+    await expect(threadHistoryPanel.getByRole('button', { name: 'Thread two follow-up' })).toBeVisible({
+      timeout: LOAD_TIMEOUT_MS,
+    });
+    await threadHistoryPanel.getByRole('button', { name: 'Risks & Gaps' }).click();
+    await expect(page.getByTestId('suggestion-thread-bar')).toContainText('Risks & Gaps');
+    await expect(page.getByTestId('coach-response-feedback')).toContainText('Risk response for thread one.', {
+      timeout: LOAD_TIMEOUT_MS,
+    });
+
+    await customPromptInput.fill('Second pass on first thread');
+    await page.getByTestId('coach-custom-prompt-run').click();
+    await expect(page.getByTestId('coach-custom-prompt-feedback')).toContainText(
+      'Custom response for Second pass on first thread',
+      { timeout: LOAD_TIMEOUT_MS },
+    );
+    await expect(page.getByTestId('suggestion-thread-bar')).toContainText('Risks & Gaps');
+
+    expect(coachBodies).toHaveLength(3);
+    expect(Array.isArray(coachBodies[1]?.threadHistory)).toBe(true);
+    expect(coachBodies[1].threadHistory).toHaveLength(1);
+    expect(Array.isArray(coachBodies[2]?.threadHistory)).toBe(true);
+    expect(
+      coachBodies[2].threadHistory.some((entry) => String(entry.content || '').includes('Risk response for thread one.')),
+    ).toBe(true);
+
+    const saveResponsePromise = page.waitForResponse(
+      (response) =>
+        response.url().includes(`/api/shared-report/${encodeURIComponent(token)}/draft`) &&
+        response.request().method() === 'POST' &&
+        response.status() === 200,
+      { timeout: LOAD_TIMEOUT_MS },
+    );
+    await page.getByRole('button', { name: 'Save Draft' }).click();
+    await saveResponsePromise;
+
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await expectComparisonStep(page, 2);
+    await expect(page.getByTestId('coach-custom-prompt-feedback')).toContainText(
+      'Custom response for Second pass on first thread',
+      { timeout: LOAD_TIMEOUT_MS },
+    );
+
+    await page.getByTestId('toggle-thread-history').click();
+    await expect(threadHistoryPanel.getByRole('button', { name: 'Risks & Gaps' })).toBeVisible({
+      timeout: LOAD_TIMEOUT_MS,
+    });
+    await expect(threadHistoryPanel.getByRole('button', { name: 'Thread two follow-up' })).toBeVisible({
+      timeout: LOAD_TIMEOUT_MS,
+    });
+  });
+
   test('Anonymous recipient can view Step 0 but must sign in before editing', async ({ page, request }) => {
     const ownerId = uniqueId('recipient_owner_gate');
     const recipientEmail = `${uniqueId('recipient_gate')}@example.com`;
@@ -194,7 +356,7 @@ test.describe('Shared Report Recipient Draft', () => {
     const sharedReportUrl = `${BASE_URL}/shared-report/${encodeURIComponent(token)}`;
     await page.goto(sharedReportUrl, { waitUntil: 'domcontentloaded' });
 
-    await expect(page.getByText('Step 0: Overview')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+    await expectComparisonStep(page, 0);
     await expect(page.getByText('Sign in to edit and respond.')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
 
     await page.getByRole('button', { name: 'Edit Opportunity' }).click();
@@ -232,9 +394,8 @@ test.describe('Shared Report Recipient Draft', () => {
       waitUntil: 'domcontentloaded',
     });
 
-    await expect(page.getByText('Step 0: Overview')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+    await expectComparisonStep(page, 0);
     await expect(page.getByText('Sign in to edit and respond.')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
-    await expect(page.getByText('Step 0 of 3')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
     await expect(page.locator('[data-testid="doc-a-editor"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="doc-b-editor"]')).toHaveCount(0);
   });
