@@ -165,6 +165,24 @@ function normalizePdfText(value: unknown) {
     .trim();
 }
 
+function normalizeWebParityPdfText(value: unknown) {
+  const normalized = String(value || '')
+    .replace(/\r/g, '')
+    .replace(/\u2018|\u2019/g, "'")
+    .replace(/\u201C|\u201D/g, '"')
+    .replace(/\u00A0/g, ' ')
+    .replace(/\u2026/g, '...')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
+
+  // Convert prose-style ASCII double hyphens into a typographic em dash.
+  // Single-hyphen compounds (e.g. sign-ready, real-time) are preserved.
+  return normalized
+    .replace(/\s--\s/g, ' — ')
+    .replace(/([A-Za-z0-9])--([A-Za-z0-9])/g, '$1—$2')
+    .replace(/([:;,.!?])--(\s|$)/g, '$1—$2')
+    .trim();
+}
+
 function toSafeLines(value: unknown) {
   return normalizePdfText(value)
     .split(/\n+/g)
@@ -688,6 +706,10 @@ export async function renderWebParityPdfBuffer(document: PdfWebParityDocument): 
     pdf.setTextColor(rgb[0], rgb[1], rgb[2]);
   };
 
+  const normalizeText = (value: unknown) => normalizeWebParityPdfText(value);
+  const normalizeWebParityBullet = (value: unknown) =>
+    normalizeText(value).replace(/^[-*+\d.()\u2022 ]+/, '').trim();
+
   const ensureSpace = (height: number) => {
     if (y + height <= contentBottom) {
       return;
@@ -698,7 +720,7 @@ export async function renderWebParityPdfBuffer(document: PdfWebParityDocument): 
 
   const wrapLineCount = (text: string, maxW: number, size: number) => {
     pdf.setFontSize(size);
-    const lines = pdf.splitTextToSize(normalizePdfText(text), maxW) as string[];
+    const lines = pdf.splitTextToSize(normalizeText(text), maxW) as string[];
     return Math.max(1, lines.length);
   };
 
@@ -712,7 +734,7 @@ export async function renderWebParityPdfBuffer(document: PdfWebParityDocument): 
     lineHeight: number;
     gapAfter?: number;
   }) => {
-    const safe = normalizePdfText(opts.text);
+    const safe = normalizeText(opts.text);
     if (!safe) return;
     const lines = pdf.splitTextToSize(safe, opts.maxW) as string[];
     ensureSpace(lines.length * opts.lineHeight + (opts.gapAfter ?? 0));
@@ -724,8 +746,8 @@ export async function renderWebParityPdfBuffer(document: PdfWebParityDocument): 
     if (opts.gapAfter) y += opts.gapAfter;
   };
 
-  const titleSafe = normalizePdfText(document.title || 'AI Mediation Review');
-  const subtitleSafe = normalizePdfText(document.subtitle || '');
+  const titleSafe = normalizeText(document.title || 'AI Mediation Review');
+  const subtitleSafe = normalizeText(document.subtitle || '');
   const hasSubtitle =
     Boolean(subtitleSafe) &&
     subtitleSafe.localeCompare(titleSafe, undefined, { sensitivity: 'accent' }) !== 0;
@@ -776,8 +798,8 @@ export async function renderWebParityPdfBuffer(document: PdfWebParityDocument): 
   const metrics = Array.isArray(document.metrics)
     ? document.metrics
         .map((metric) => ({
-          label: normalizePdfText(metric?.label || ''),
-          value: normalizePdfText(metric?.value || ''),
+          label: normalizeText(metric?.label || ''),
+          value: normalizeText(metric?.value || ''),
         }))
         .filter((metric) => metric.label && metric.value)
     : [];
@@ -785,9 +807,21 @@ export async function renderWebParityPdfBuffer(document: PdfWebParityDocument): 
     const colGap = 8;
     const colCount = Math.min(4, Math.max(1, metrics.length));
     const colW = (contentW - (colCount - 1) * colGap) / colCount;
-    const rowHeight = 52;
+    const metricLabelY = 14;
+    const metricValueFontSize = 11;
+    const metricValueY = 31;
+    const metricValueLineHeight = 12;
+    const minRowHeight = 52;
     for (let rowStart = 0; rowStart < metrics.length; rowStart += colCount) {
       const row = metrics.slice(rowStart, rowStart + colCount);
+      const rowValueLines = row.map((metric) =>
+        pdf.splitTextToSize(metric.value, colW - 20) as string[],
+      );
+      const maxLines = Math.max(1, ...rowValueLines.map((lines) => lines.length));
+      const rowHeight = Math.max(
+        minRowHeight,
+        metricValueY + maxLines * metricValueLineHeight + 8,
+      );
       ensureSpace(rowHeight + 8);
       const rowY = y;
       row.forEach((metric, index) => {
@@ -798,10 +832,12 @@ export async function renderWebParityPdfBuffer(document: PdfWebParityDocument): 
         pdf.setLineWidth(0.75);
         pdf.rect(boxX, rowY, colW, rowHeight, 'S');
         setFont('bold', 8.5, colors.muted);
-        pdf.text(metric.label.toUpperCase(), boxX + 10, rowY + 14);
-        setFont('bold', 12, colors.text);
-        const metricLines = pdf.splitTextToSize(metric.value, colW - 20) as string[];
-        pdf.text(metricLines[0] || metric.value, boxX + 10, rowY + 33);
+        pdf.text(metric.label.toUpperCase(), boxX + 10, rowY + metricLabelY);
+        setFont('bold', metricValueFontSize, colors.text);
+        const metricLines = rowValueLines[index];
+        metricLines.forEach((line, lineIndex) => {
+          pdf.text(line, boxX + 10, rowY + metricValueY + lineIndex * metricValueLineHeight);
+        });
       });
       y += rowHeight + 8;
     }
@@ -811,8 +847,8 @@ export async function renderWebParityPdfBuffer(document: PdfWebParityDocument): 
   const timelineItems = Array.isArray(document.timelineItems)
     ? document.timelineItems
         .map((item) => ({
-          label: normalizePdfText(item?.label || ''),
-          value: normalizePdfText(item?.value || ''),
+          label: normalizeText(item?.label || ''),
+          value: normalizeText(item?.value || ''),
         }))
         .filter((item) => item.label)
     : [];
@@ -857,12 +893,12 @@ export async function renderWebParityPdfBuffer(document: PdfWebParityDocument): 
 
   const sections = Array.isArray(document.sections) ? document.sections : [];
   sections.forEach((section, sectionIndex) => {
-    const heading = normalizePdfText(section?.heading || `Section ${sectionIndex + 1}`);
+    const heading = normalizeText(section?.heading || `Section ${sectionIndex + 1}`);
     const paragraphs = Array.isArray(section?.paragraphs)
-      ? section.paragraphs.map((paragraph) => normalizePdfText(paragraph)).filter(Boolean)
+      ? section.paragraphs.map((paragraph) => normalizeText(paragraph)).filter(Boolean)
       : [];
     const bullets = Array.isArray(section?.bullets)
-      ? section.bullets.map((bullet) => normalizeBullet(bullet)).filter(Boolean)
+      ? section.bullets.map((bullet) => normalizeWebParityBullet(bullet)).filter(Boolean)
       : [];
     const hasContent = paragraphs.length > 0 || bullets.length > 0;
     if (!heading || !hasContent) {
@@ -915,7 +951,7 @@ export async function renderWebParityPdfBuffer(document: PdfWebParityDocument): 
   });
 
   const totalPages = pdf.getNumberOfPages();
-  const footerNote = normalizePdfText(document.footerNote || '');
+  const footerNote = normalizeText(document.footerNote || '');
   for (let page = 1; page <= totalPages; page += 1) {
     pdf.setPage(page);
     const fy = pageHeight - 18;
