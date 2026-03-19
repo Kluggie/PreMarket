@@ -808,19 +808,39 @@ export async function renderWebParityPdfBuffer(document: PdfWebParityDocument): 
     const colCount = Math.min(4, Math.max(1, metrics.length));
     const colW = (contentW - (colCount - 1) * colGap) / colCount;
     const metricLabelY = 14;
-    const metricValueFontSize = 11;
     const metricValueY = 31;
-    const metricValueLineHeight = 12;
     const minRowHeight = 52;
+    const metricValueMaxW = colW - 20;
+    const metricValueSizes = [11, 10.5, 10, 9.5, 9, 8.5];
+    const fitMetricValue = (value: string) => {
+      for (const size of metricValueSizes) {
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(size);
+        const lines = pdf.splitTextToSize(value, metricValueMaxW) as string[];
+        if (lines.length <= 2) {
+          return { size, lineHeight: Math.max(10, Math.round(size + 1)), lines };
+        }
+      }
+      const fallbackSize = metricValueSizes[metricValueSizes.length - 1];
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(fallbackSize);
+      const fallbackLines = pdf.splitTextToSize(value, metricValueMaxW) as string[];
+      return {
+        size: fallbackSize,
+        lineHeight: Math.max(10, Math.round(fallbackSize + 1)),
+        lines: fallbackLines,
+      };
+    };
     for (let rowStart = 0; rowStart < metrics.length; rowStart += colCount) {
       const row = metrics.slice(rowStart, rowStart + colCount);
-      const rowValueLines = row.map((metric) =>
-        pdf.splitTextToSize(metric.value, colW - 20) as string[],
+      const rowLayouts = row.map((metric) => fitMetricValue(metric.value));
+      const maxValueHeight = Math.max(
+        0,
+        ...rowLayouts.map((layout) => layout.lines.length * layout.lineHeight),
       );
-      const maxLines = Math.max(1, ...rowValueLines.map((lines) => lines.length));
       const rowHeight = Math.max(
         minRowHeight,
-        metricValueY + maxLines * metricValueLineHeight + 8,
+        metricValueY + maxValueHeight + 8,
       );
       ensureSpace(rowHeight + 8);
       const rowY = y;
@@ -833,10 +853,10 @@ export async function renderWebParityPdfBuffer(document: PdfWebParityDocument): 
         pdf.rect(boxX, rowY, colW, rowHeight, 'S');
         setFont('bold', 8.5, colors.muted);
         pdf.text(metric.label.toUpperCase(), boxX + 10, rowY + metricLabelY);
-        setFont('bold', metricValueFontSize, colors.text);
-        const metricLines = rowValueLines[index];
-        metricLines.forEach((line, lineIndex) => {
-          pdf.text(line, boxX + 10, rowY + metricValueY + lineIndex * metricValueLineHeight);
+        const layout = rowLayouts[index];
+        setFont('bold', layout.size, colors.text);
+        layout.lines.forEach((line, lineIndex) => {
+          pdf.text(line, boxX + 10, rowY + metricValueY + lineIndex * layout.lineHeight);
         });
       });
       y += rowHeight + 8;
