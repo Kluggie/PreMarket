@@ -212,14 +212,21 @@ if (!hasDatabaseUrl()) {
     assert.equal(ownerWonRes.statusCode, 403);
     assert.equal(ownerWonRes.jsonBody().error?.code, 'outcome_not_allowed');
 
-    const ownerLostRes = await markOutcome(ownerCookie, roundOne.id, { outcome: 'lost' });
-    assert.equal(ownerLostRes.statusCode, 403);
-    assert.equal(ownerLostRes.jsonBody().error?.code, 'outcome_not_allowed');
-
     const recipientWonRes = await markOutcome(recipientCookie, roundOne.id, { outcome: 'won' });
     assert.equal(recipientWonRes.statusCode, 200);
     assert.equal(recipientWonRes.jsonBody().proposal.outcome.state, 'pending_won');
     assert.notEqual(recipientWonRes.jsonBody().proposal.status, 'won');
+
+    const ownerDirectLost = await createProposal(ownerCookie, {
+      title: 'Owner Direct Lost Proposal',
+      status: 'sent',
+      sentAt: new Date().toISOString(),
+      partyBEmail: 'recipient-rounds@example.com',
+    });
+    const ownerLostRes = await markOutcome(ownerCookie, ownerDirectLost.id, { outcome: 'lost' });
+    assert.equal(ownerLostRes.statusCode, 200);
+    assert.equal(ownerLostRes.jsonBody().proposal.outcome.state, 'lost');
+    assert.equal(ownerLostRes.jsonBody().proposal.status, 'lost');
 
     const laterRound = await createProposal(ownerCookie, {
       title: 'Later Round Proposal',

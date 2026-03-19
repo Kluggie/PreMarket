@@ -297,8 +297,16 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
     }
 
     const eligibility = getProposalOutcomeEligibility(existing, actorRole);
-    if (!eligibility.eligible) {
-      throw new ApiError(403, 'outcome_not_allowed', eligibility.reason || 'Outcome not allowed');
+    const requestedActionAllowed =
+      requestedAction === PROPOSAL_OUTCOME_WON
+        ? Boolean(eligibility.canMarkWon)
+        : Boolean(eligibility.canMarkLost);
+    if (!requestedActionAllowed) {
+      const failureReason =
+        requestedAction === PROPOSAL_OUTCOME_WON
+          ? eligibility.reasonWon || eligibility.reason
+          : eligibility.reasonLost || eligibility.reason;
+      throw new ApiError(403, 'outcome_not_allowed', failureReason || 'Outcome not allowed');
     }
 
     const actorExistingOutcome =

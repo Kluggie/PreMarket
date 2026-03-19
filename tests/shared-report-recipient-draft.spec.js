@@ -399,7 +399,7 @@ test.describe('Shared Report Recipient Draft', () => {
     await expect(page.locator('[data-testid="doc-b-editor"]')).toHaveCount(0);
   });
 
-  test('Recipient proposals received tab shows shared report and opens token route', async ({ page, request }) => {
+  test('Recipient proposals inbox tab shows shared report and opens token route', async ({ page, request }) => {
     const ownerId = uniqueId('received_owner');
     const recipientEmail = `${uniqueId('received_recipient')}@example.com`;
     const ownerCookie = makeSessionCookie({
@@ -421,10 +421,10 @@ test.describe('Shared Report Recipient Draft', () => {
     const recipientCookie = makeStableEmailCookie(recipientEmail);
     await applySessionCookie(page.context(), recipientCookie);
 
-    await page.goto(`${BASE_URL}/Proposals?tab=received`, {
+    await page.goto(`${BASE_URL}/Proposals?tab=inbox`, {
       waitUntil: 'domcontentloaded',
     });
-    await page.getByRole('tab', { name: /^Received/ }).click();
+    await page.getByRole('tab', { name: /^Inbox/ }).click();
     await expect(page.getByText(proposalTitle)).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
 
     await page.getByRole('button', { name: new RegExp(proposalTitle) }).click();
@@ -529,5 +529,9 @@ test.describe('Shared Report Recipient Draft', () => {
     await expect(page.getByText(proposerRound1)).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
     await expect(page.getByText(recipientRound2)).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
     await expect(page.getByText(proposerRound3)).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+    await expect(page.getByRole('button', { name: /Request Agreement|Confirm Agreement/ })).toBeVisible({
+      timeout: LOAD_TIMEOUT_MS,
+    });
+    await expect(page.getByRole('button', { name: 'Mark as Lost' })).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
   });
 });

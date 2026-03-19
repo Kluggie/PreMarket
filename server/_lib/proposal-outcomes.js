@@ -166,48 +166,81 @@ export function getProposalOutcomeEligibility(proposal, actorRole) {
   if (!proposal?.sentAt) {
     return {
       eligible: false,
+      canMarkWon: false,
+      canMarkLost: false,
       reason: 'Drafts cannot be marked as agreed or lost.',
+      reasonWon: 'Drafts cannot be marked as agreed or lost.',
+      reasonLost: 'Drafts cannot be marked as agreed or lost.',
     };
   }
 
   if (!actorRole) {
     return {
       eligible: false,
+      canMarkWon: false,
+      canMarkLost: false,
       reason: 'Only the proposer or recipient can mark an outcome.',
+      reasonWon: 'Only the proposer or recipient can mark an outcome.',
+      reasonLost: 'Only the proposer or recipient can mark an outcome.',
     };
   }
 
   if (outcome.finalStatus === PROPOSAL_OUTCOME_WON) {
     return {
       eligible: false,
+      canMarkWon: false,
+      canMarkLost: false,
       reason: 'This proposal has already been marked as agreed.',
+      reasonWon: 'This proposal has already been marked as agreed.',
+      reasonLost: 'This proposal has already been marked as agreed.',
     };
   }
 
   if (outcome.finalStatus === PROPOSAL_OUTCOME_LOST) {
     return {
       eligible: false,
+      canMarkWon: false,
+      canMarkLost: false,
       reason: 'This proposal has already been marked as lost.',
+      reasonWon: 'This proposal has already been marked as lost.',
+      reasonLost: 'This proposal has already been marked as lost.',
     };
   }
 
   if (actorRole === PROPOSAL_PARTY_B) {
     return {
       eligible: true,
+      canMarkWon: true,
+      canMarkLost: true,
       reason: null,
+      reasonWon: null,
+      reasonLost: null,
     };
   }
 
-  if (actorRole === PROPOSAL_PARTY_A && proposal?.receivedAt) {
+  if (actorRole === PROPOSAL_PARTY_A) {
+    const canMarkWon = Boolean(proposal?.receivedAt);
+    const canMarkLost = true;
+    const reasonWon = canMarkWon
+      ? null
+      : 'The proposer can only request agreement after the recipient responds at least once.';
     return {
-      eligible: true,
-      reason: null,
+      eligible: canMarkWon || canMarkLost,
+      canMarkWon,
+      canMarkLost,
+      reason: reasonWon,
+      reasonWon,
+      reasonLost: null,
     };
   }
 
   return {
     eligible: false,
-    reason: 'The proposer can only mark an outcome after the recipient responds at least once.',
+    canMarkWon: false,
+    canMarkLost: false,
+    reason: 'Outcome not allowed.',
+    reasonWon: 'Outcome not allowed.',
+    reasonLost: 'Outcome not allowed.',
   };
 }
 
@@ -234,10 +267,15 @@ export function mapProposalOutcomeForUser(proposal, currentUser, options = {}) {
     party_a_outcome_at: proposal?.partyAOutcomeAt || null,
     party_b_outcome: asLower(proposal?.partyBOutcome) || null,
     party_b_outcome_at: proposal?.partyBOutcomeAt || null,
-    can_mark_won: eligibility.eligible,
-    can_mark_lost: eligibility.eligible,
+    can_mark_won: Boolean(eligibility.canMarkWon),
+    can_mark_lost: Boolean(eligibility.canMarkLost),
     can_continue_negotiating: Boolean(actorRole && outcome.pending),
-    eligibility_reason: eligibility.reason,
+    eligibility_reason:
+      !eligibility.canMarkWon && !eligibility.canMarkLost
+        ? eligibility.reasonWon || eligibility.reasonLost || eligibility.reason
+        : null,
+    eligibility_reason_won: eligibility.reasonWon || null,
+    eligibility_reason_lost: eligibility.reasonLost || null,
   };
 }
 

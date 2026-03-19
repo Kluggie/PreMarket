@@ -142,6 +142,11 @@ function buildSharedHistoryText(entries) {
 
 function getStatusLabel(status) {
   const normalized = String(status || 'draft').toLowerCase();
+  if (normalized === 'needs_reply') return 'Needs Reply';
+  if (normalized === 'under_review') return 'Under Review';
+  if (normalized === 'waiting_on_counterparty') return 'Waiting on Counterparty';
+  if (normalized === 'closed_won') return 'Closed: Won';
+  if (normalized === 'closed_lost') return 'Closed: Lost';
   const visibleStatusLabel = getVisibleProposalStatusLabel(normalized);
   if (visibleStatusLabel) {
     return visibleStatusLabel;
@@ -164,6 +169,11 @@ function getStatusLabel(status) {
 function getStatusClass(status) {
   const normalized = String(status || 'draft').toLowerCase();
   if (normalized === 'draft') return 'bg-slate-100 text-slate-700';
+  if (normalized === 'needs_reply') return 'bg-rose-100 text-rose-700';
+  if (normalized === 'under_review') return 'bg-violet-100 text-violet-700';
+  if (normalized === 'waiting_on_counterparty') return 'bg-slate-100 text-slate-700';
+  if (normalized === 'closed_won') return 'bg-emerald-100 text-emerald-700';
+  if (normalized === 'closed_lost') return 'bg-rose-100 text-rose-700';
   if (normalized === 'sent') return 'bg-blue-100 text-blue-700';
   if (normalized === 'received') return 'bg-amber-100 text-amber-700';
   if (normalized === 'under_verification' || normalized === 're_evaluated') {
@@ -665,6 +675,8 @@ export default function ProposalDetail() {
     : outcome.requested_by_current_user
       ? `You requested agreement on this proposal. It becomes ${AGREED_LABEL.toLowerCase()} only after the counterparty confirms the agreement.`
       : '';
+  const primaryStatusKey = asLower(proposal.primary_status_key || proposal.status);
+  const primaryStatusLabel = asText(proposal.primary_status_label) || getStatusLabel(primaryStatusKey);
 
   return (
     <div className="min-h-screen bg-slate-50 py-6">
@@ -682,7 +694,7 @@ export default function ProposalDetail() {
               <div className="space-y-3 text-sm">
                 <div className="flex items-center gap-3">
                   <span className="text-slate-500 uppercase tracking-wide font-semibold">Status</span>
-                  <Badge className={getStatusClass(proposal.status)}>{getStatusLabel(proposal.status)}</Badge>
+                  <Badge className={getStatusClass(primaryStatusKey)}>{primaryStatusLabel}</Badge>
                 </div>
                 <div className="flex items-center gap-3">
                   <span className="text-slate-500 uppercase tracking-wide font-semibold">Created</span>
@@ -879,7 +891,7 @@ export default function ProposalDetail() {
                           tooltip={
                             outcome.requested_by_current_user
                               ? 'Waiting for the counterparty to confirm the agreement.'
-                              : outcome.eligibility_reason
+                              : outcome.eligibility_reason_won || outcome.eligibility_reason
                           }
                           onClick={() => markOutcomeMutation.mutate('won')}
                         >
@@ -891,7 +903,7 @@ export default function ProposalDetail() {
                           variant="outline"
                           className="text-rose-600 border-rose-200 hover:bg-rose-50"
                           disabled={outcomeActionDisabled || !outcome.can_mark_lost}
-                          tooltip={outcome.eligibility_reason}
+                          tooltip={outcome.eligibility_reason_lost || outcome.eligibility_reason}
                           onClick={() => markOutcomeMutation.mutate('lost')}
                         >
                           <XCircle className="w-3.5 h-3.5 mr-1.5" />

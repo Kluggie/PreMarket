@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { sharedReportsClient } from '@/api/sharedReportsClient';
+import { proposalsClient } from '@/api/proposalsClient';
 import { documentComparisonsClient } from '@/api/documentComparisonsClient';
 import { useAuth } from '@/lib/AuthContext';
 import DocumentComparisonEditorErrorBoundary from '@/components/document-comparison/DocumentComparisonEditorErrorBoundary';
@@ -63,10 +64,16 @@ import {
   MEDIATION_REVIEW_LABEL,
 } from '@/lib/aiReportUtils';
 import {
+  getAgreementActionLabel,
+  shouldShowPendingAgreementResponseActions,
+} from '@/lib/proposalOutcomeUi';
+import {
   AlertTriangle,
   ArrowRight,
+  CheckCircle2,
   Loader2,
   Send,
+  XCircle,
 } from 'lucide-react';
 
 const CONFIDENTIAL_LABEL = 'Confidential Information';
@@ -200,6 +207,27 @@ function coercePayloadToDocument(payload, fallbackLabel, fallbackText = '') {
 
 function getPartyRoleLabel(value) {
   return asText(value).toLowerCase() === OWNER_PROPOSER ? 'Proposer' : 'Recipient';
+}
+
+function getPrimaryStatusLabel(value) {
+  const normalized = asText(value).toLowerCase();
+  if (normalized === 'draft') return 'Draft';
+  if (normalized === 'needs_reply') return 'Needs Reply';
+  if (normalized === 'under_review') return 'Under Review';
+  if (normalized === 'waiting_on_counterparty') return 'Waiting on Counterparty';
+  if (normalized === 'closed_won') return 'Closed: Won';
+  if (normalized === 'closed_lost') return 'Closed: Lost';
+  return 'Needs Reply';
+}
+
+function getPrimaryStatusClass(value) {
+  const normalized = asText(value).toLowerCase();
+  if (normalized === 'closed_won') return 'bg-emerald-100 text-emerald-700 border-emerald-200';
+  if (normalized === 'closed_lost') return 'bg-rose-100 text-rose-700 border-rose-200';
+  if (normalized === 'draft') return 'bg-slate-100 text-slate-700 border-slate-200';
+  if (normalized === 'under_review') return 'bg-violet-100 text-violet-700 border-violet-200';
+  if (normalized === 'waiting_on_counterparty') return 'bg-slate-100 text-slate-700 border-slate-200';
+  return 'bg-rose-100 text-rose-700 border-rose-200';
 }
 
 function buildDefaultDraftDocuments(owner) {
@@ -364,6 +392,7 @@ export default function SharedReport() {
   const params = useParams();
   const location = useLocation();
   const { user, isAuthenticated, isLoadingAuth, navigateToLogin, logout } = useAuth();
+  const queryClient = useQueryClient();
   const token = useMemo(
     () => getTokenFromRoute(params.token, location.search),
     [params.token, location.search],
@@ -432,6 +461,11 @@ export default function SharedReport() {
 
   const share = workspaceQuery.data?.share || null;
   const parent = workspaceQuery.data?.parent || null;
+  const parentOutcome = parent?.outcome || {};
+  const parentOutcomeState = asText(parentOutcome?.state || parent?.status).toLowerCase();
+  const parentPrimaryStatusKey = asText(parent?.primary_status_key).toLowerCase();
+  const parentPrimaryStatusLabel =
+    asText(parent?.primary_status_label) || getPrimaryStatusLabel(parentPrimaryStatusKey);
   const comparison = workspaceQuery.data?.comparison || null;
   const baseline = workspaceQuery.data?.baseline || {};
   const defaults = workspaceQuery.data?.defaults || {};
@@ -496,6 +530,15 @@ export default function SharedReport() {
 
   const canReevaluate = Boolean(share?.permissions?.can_reevaluate);
   const canSendBack = Boolean(share?.permissions?.can_send_back);
+  const canUpdateOutcomeFromStep0 = Boolean(
+    isAuthenticated &&
+    asText(parent?.proposal_id) &&
+    parentOutcome?.actor_role,
+  );
+  const showContinueNegotiatingButton = Boolean(
+    parentOutcomeState === 'pending_won' &&
+    shouldShowPendingAgreementResponseActions(parentOutcome),
+  );
 
   const sharedHistoryDocuments = useMemo(() => {
     if (sharedHistoryEntries.length > 0) {
@@ -1127,6 +1170,46 @@ export default function SharedReport() {
     },
   });
 
+  const markOutcomeMutation = useMutation({
+    mutationFn: (nextOutcome) =>
+      proposalsClient.markOutcome(asText(parent?.proposal_id), nextOutcome),
+    onSuccess: async (updatedProposal) => {
+      const nextState = asText(updatedProposal?.outcome?.state || updatedProposal?.status).toLowerCase();
+      if (nextState === 'pending_won') {
+        toast.success('Agreement Requested');
+      } else if (nextState === 'won') {
+        toast.success('Marked as Agreed');
+      } else {
+        toast.success('Marked as Lost');
+      }
+      await workspaceQuery.refetch();
+      queryClient.invalidateQueries(['proposals-list']);
+      queryClient.invalidateQueries(['proposal-detail', asText(parent?.proposal_id)]);
+      queryClient.invalidateQueries(['dashboard-summary']);
+      queryClient.invalidateQueries(['dashboard-proposals-all']);
+      queryClient.invalidateQueries(['dashboard-proposals-agreement-requests']);
+    },
+    onError: (error) => {
+      toast.error(error?.message || 'Failed to update opportunity outcome');
+    },
+  });
+
+  const continueNegotiationMutation = useMutation({
+    mutationFn: () => proposalsClient.continueNegotiation(asText(parent?.proposal_id)),
+    onSuccess: async () => {
+      toast.success('Cleared pending agreement request');
+      await workspaceQuery.refetch();
+      queryClient.invalidateQueries(['proposals-list']);
+      queryClient.invalidateQueries(['proposal-detail', asText(parent?.proposal_id)]);
+      queryClient.invalidateQueries(['dashboard-summary']);
+      queryClient.invalidateQueries(['dashboard-proposals-all']);
+      queryClient.invalidateQueries(['dashboard-proposals-agreement-requests']);
+    },
+    onError: (error) => {
+      toast.error(error?.message || 'Failed to continue negotiating');
+    },
+  });
+
   const verifyStartMutation = useMutation({
     mutationFn: () => sharedReportsClient.startRecipientVerification(token),
     onSuccess: () => {
@@ -1174,6 +1257,19 @@ export default function SharedReport() {
       toast.error(error?.message || 'Unable to download AI mediation review PDF');
     },
   });
+  const parentIsClosed = parentOutcomeState === 'won' || parentOutcomeState === 'lost';
+  const outcomeActionDisabled = markOutcomeMutation.isPending || continueNegotiationMutation.isPending;
+  const outcomeHelperText = parentOutcome?.requested_by_current_user
+    ? 'Waiting for the counterparty to confirm the agreement.'
+    : parentOutcome?.requested_by_counterparty
+      ? 'The counterparty requested agreement on this opportunity.'
+      : asText(
+          (!parentOutcome?.can_mark_won
+            ? parentOutcome?.eligibility_reason_won || parentOutcome?.eligibility_reason
+            : !parentOutcome?.can_mark_lost
+              ? parentOutcome?.eligibility_reason_lost || parentOutcome?.eligibility_reason
+              : ''),
+        );
 
   const importForDocument = async (docId, file) => {
     if (!file) {
@@ -2453,6 +2549,61 @@ export default function SharedReport() {
                 Download AI Mediation Review PDF
               </Button>
             </div>
+
+            {canUpdateOutcomeFromStep0 ? (
+              <Card className="border border-slate-200">
+                <CardContent className="pt-4 space-y-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge className={`border font-medium ${getPrimaryStatusClass(parentPrimaryStatusKey)}`}>
+                      {parentPrimaryStatusLabel}
+                    </Badge>
+                    {!parentIsClosed ? (
+                      <>
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="bg-emerald-600 hover:bg-emerald-700"
+                          disabled={
+                            outcomeActionDisabled ||
+                            !parentOutcome?.can_mark_won ||
+                            Boolean(parentOutcome?.requested_by_current_user)
+                          }
+                          onClick={() => markOutcomeMutation.mutate('won')}
+                        >
+                          <CheckCircle2 className="w-4 h-4 mr-2" />
+                          {getAgreementActionLabel(parentOutcome)}
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="text-rose-600 border-rose-200 hover:bg-rose-50"
+                          disabled={outcomeActionDisabled || !parentOutcome?.can_mark_lost}
+                          onClick={() => markOutcomeMutation.mutate('lost')}
+                        >
+                          <XCircle className="w-4 h-4 mr-2" />
+                          Mark as Lost
+                        </Button>
+                        {showContinueNegotiatingButton ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            disabled={outcomeActionDisabled || !parentOutcome?.can_continue_negotiating}
+                            onClick={() => continueNegotiationMutation.mutate()}
+                          >
+                            Continue Negotiating
+                          </Button>
+                        ) : null}
+                      </>
+                    ) : null}
+                  </div>
+                  {outcomeHelperText ? (
+                    <p className="text-xs text-slate-500">{outcomeHelperText}</p>
+                  ) : null}
+                </CardContent>
+              </Card>
+            ) : null}
 
             <ComparisonDetailTabs
               activeTab={recipientDetailTab}

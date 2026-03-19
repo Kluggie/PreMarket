@@ -7,6 +7,14 @@ import {
 import { getProposalThreadActivity } from './proposal-thread-activity.js';
 
 const REVIEW_STATUS_VALUES = new Set(['under_verification', 're_evaluated', 'evaluated']);
+const PRIMARY_STATUS_LABELS = {
+  draft: 'Draft',
+  needs_reply: 'Needs Reply',
+  under_review: 'Under Review',
+  waiting_on_counterparty: 'Waiting on Counterparty',
+  closed_won: 'Closed: Won',
+  closed_lost: 'Closed: Lost',
+};
 
 function asText(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -14,6 +22,77 @@ function asText(value) {
 
 function asLower(value) {
   return asText(value).toLowerCase();
+}
+
+function getPrimaryStatusLabel(value) {
+  const normalized = asLower(value);
+  return PRIMARY_STATUS_LABELS[normalized] || PRIMARY_STATUS_LABELS.needs_reply;
+}
+
+export function deriveProposalPrimaryStatus(input = {}) {
+  const bucket = asLower(input.bucket);
+  const finalStatus = asLower(input.finalStatus);
+  const latestDirection = asLower(input.latestDirection);
+  const needsResponse = Boolean(input.needsResponse);
+  const waitingOnOtherParty = Boolean(input.waitingOnOtherParty);
+  const hasReviewStatus = Boolean(asLower(input.reviewStatus));
+
+  if (bucket === 'drafts') {
+    return {
+      key: 'draft',
+      label: getPrimaryStatusLabel('draft'),
+    };
+  }
+
+  if (bucket === 'closed') {
+    const closedKey = finalStatus === 'lost' ? 'closed_lost' : 'closed_won';
+    return {
+      key: closedKey,
+      label: getPrimaryStatusLabel(closedKey),
+    };
+  }
+
+  const inboundActionNeeded = needsResponse || latestDirection === 'received';
+
+  if (hasReviewStatus && inboundActionNeeded) {
+    return {
+      key: 'under_review',
+      label: getPrimaryStatusLabel('under_review'),
+    };
+  }
+
+  if (waitingOnOtherParty && !inboundActionNeeded) {
+    return {
+      key: 'waiting_on_counterparty',
+      label: getPrimaryStatusLabel('waiting_on_counterparty'),
+    };
+  }
+
+  if (inboundActionNeeded) {
+    return {
+      key: 'needs_reply',
+      label: getPrimaryStatusLabel('needs_reply'),
+    };
+  }
+
+  if (hasReviewStatus) {
+    return {
+      key: 'under_review',
+      label: getPrimaryStatusLabel('under_review'),
+    };
+  }
+
+  if (waitingOnOtherParty || latestDirection === 'sent') {
+    return {
+      key: 'waiting_on_counterparty',
+      label: getPrimaryStatusLabel('waiting_on_counterparty'),
+    };
+  }
+
+  return {
+    key: 'needs_reply',
+    label: getPrimaryStatusLabel('needs_reply'),
+  };
 }
 
 export function toDateOrNull(value) {
@@ -114,6 +193,14 @@ export function getProposalThreadState(proposal, currentUser, options = {}) {
   } else if (isClosed) {
     directionalStatus = finalStatus;
   }
+  const primaryStatus = deriveProposalPrimaryStatus({
+    bucket,
+    finalStatus,
+    latestDirection,
+    needsResponse,
+    waitingOnOtherParty,
+    reviewStatus,
+  });
 
   return {
     actorRole,
@@ -129,6 +216,8 @@ export function getProposalThreadState(proposal, currentUser, options = {}) {
     isMutualInterest,
     latestDirection,
     needsResponse,
+    primaryStatusKey: primaryStatus.key,
+    primaryStatusLabel: primaryStatus.label,
     reviewStatus,
     sortAt:
       bucket === 'inbox'
@@ -179,28 +268,37 @@ export function matchesProposalThreadStatus(threadState, statusFilter) {
 
   switch (normalizedStatus) {
     case 'draft':
-      return threadState.bucket === 'drafts';
+      return threadState.primaryStatusKey === 'draft';
     case 'sent':
       return threadState.latestDirection === 'sent';
     case 'received':
       return threadState.latestDirection === 'received';
     case 'under_review':
-      return Boolean(threadState.reviewStatus);
+      return threadState.primaryStatusKey === 'under_review';
+    case 'needs_reply':
+    case 'needs_response':
+      return threadState.primaryStatusKey === 'needs_reply';
+    case 'waiting_on_counterparty':
+    case 'waiting_on_other_party':
+      return threadState.primaryStatusKey === 'waiting_on_counterparty';
     case 'mutual_interest':
       return threadState.isMutualInterest;
     case 'agreement_requested':
     case 'win_confirmation_requested':
       return threadState.winConfirmationRequested;
-    case 'needs_response':
-      return threadState.needsResponse && !threadState.winConfirmationRequested;
-    case 'waiting_on_other_party':
-      return threadState.waitingOnOtherParty;
+    case 'closed_won':
+      return threadState.primaryStatusKey === 'closed_won';
+    case 'closed_lost':
+      return threadState.primaryStatusKey === 'closed_lost';
     case 'won':
-      return threadState.bucket === 'closed' && threadState.directionalStatus === 'won';
+      return threadState.primaryStatusKey === 'closed_won';
     case 'lost':
-      return threadState.bucket === 'closed' && threadState.directionalStatus === 'lost';
+      return threadState.primaryStatusKey === 'closed_lost';
     default:
-      return asLower(threadState.directionalStatus) === normalizedStatus;
+      return (
+        asLower(threadState.primaryStatusKey) === normalizedStatus ||
+        asLower(threadState.directionalStatus) === normalizedStatus
+      );
   }
 }
 
@@ -215,8 +313,10 @@ export function matchesProposalInboxFilter(threadState, inboxFilter) {
   }
 
   switch (normalizedFilter) {
+    case 'needs_reply':
     case 'needs_response':
       return threadState.needsResponse && !threadState.winConfirmationRequested;
+    case 'waiting_on_counterparty':
     case 'waiting_on_other_party':
       return threadState.waitingOnOtherParty;
     case 'win_confirmation_requested':

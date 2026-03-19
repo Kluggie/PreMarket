@@ -26,26 +26,22 @@ test('proposals page uses Inbox/Drafts/Closed/Archived as the top-level tabs', (
   assert.match(proposalsPage, /Manage live opportunity threads across inbox, drafts, closed, and archived\./);
 });
 
-test('proposals page keeps row-level tags and a compact actionable status dropdown without inbox chips', () => {
+test('proposals page uses one canonical primary status chip and simplified filter labels', () => {
   const proposalsPage = readRepoFile('src/pages/Proposals.jsx');
 
   assert.match(proposalsPage, /All states/);
+  assert.match(proposalsPage, /PrimaryStatusBadge/);
   assert.match(proposalsPage, /Needs Reply/);
-  assert.match(proposalsPage, /Waiting/);
-  assert.match(proposalsPage, /Pending Win/);
-
-  assert.match(proposalsPage, /Sent/);
-  assert.match(proposalsPage, /Received/);
   assert.match(proposalsPage, /Under Review/);
-  assert.match(proposalsPage, /AI Review/);
-  assert.match(proposalsPage, /Mutual Interest/);
-  assert.match(proposalsPage, /Won/);
-  assert.match(proposalsPage, /Lost/);
+  assert.match(proposalsPage, /Waiting on Counterparty/);
+  assert.match(proposalsPage, /Pending Win Confirmation/);
+  assert.match(proposalsPage, /Closed: Won/);
+  assert.match(proposalsPage, /Closed: Lost/);
 
-  assert.doesNotMatch(proposalsPage, /Needs Your Response/);
+  assert.doesNotMatch(proposalsPage, /DirectionBadge/);
+  assert.doesNotMatch(proposalsPage, /ReviewBadge/);
+  assert.doesNotMatch(proposalsPage, /MutualInterestBadge/);
+  assert.doesNotMatch(proposalsPage, /Link \{sharedReportStatus/);
+  assert.doesNotMatch(proposalsPage, /Received/);
   assert.doesNotMatch(proposalsPage, /Waiting on Other Party/);
-  assert.doesNotMatch(proposalsPage, /Win Confirmation Requested/);
-  assert.doesNotMatch(proposalsPage, /handleInboxFilterChange/);
-  assert.doesNotMatch(proposalsPage, /normalizedInboxFilter/);
-  assert.doesNotMatch(proposalsPage, /activeTab === 'inbox' \? \(/);
 });

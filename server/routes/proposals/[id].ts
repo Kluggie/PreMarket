@@ -21,6 +21,7 @@ import {
   mapProposalOutcomeForUser,
   PROPOSAL_PARTY_A,
 } from '../../_lib/proposal-outcomes.js';
+import { getProposalThreadState } from '../../_lib/proposal-thread-state.js';
 import {
   applyPrivateModeMask,
   isPlanEligibleForPrivateMode,
@@ -43,6 +44,10 @@ function mapProposalRow(proposal, currentUser, options: Record<string, unknown> 
   const archivedAt = getProposalArchivedAtForActor(proposal, outcome.actor_role);
   const isPrivateMode = Boolean((proposal as any).isPrivateMode);
   const actorRole = String(options?.actorRole || outcome?.actor_role || '').trim().toLowerCase();
+  const threadState = getProposalThreadState(proposal, currentUser, {
+    actorRole,
+    outcome,
+  });
   const maskSender = shouldMaskPrivateSender(isPrivateMode, actorRole);
 
   const base = {
@@ -50,6 +55,14 @@ function mapProposalRow(proposal, currentUser, options: Record<string, unknown> 
     title: proposal.title,
     status: effectiveStatus,
     status_reason: proposal.statusReason || null,
+    primary_status_key: threadState.primaryStatusKey,
+    primary_status_label: threadState.primaryStatusLabel,
+    thread_bucket: threadState.bucket,
+    latest_direction: threadState.latestDirection,
+    needs_response: threadState.needsResponse,
+    waiting_on_other_party: threadState.waitingOnOtherParty,
+    win_confirmation_requested: threadState.winConfirmationRequested,
+    review_status: threadState.reviewStatus,
     outcome,
     template_id: proposal.templateId,
     template_name: proposal.templateName,

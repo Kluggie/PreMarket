@@ -170,6 +170,8 @@ function mapProposalRow(
     status: effectiveStatus,
     status_reason: proposal.statusReason || null,
     directional_status: threadState.directionalStatus,
+    primary_status_key: threadState.primaryStatusKey,
+    primary_status_label: threadState.primaryStatusLabel,
     outcome: threadState.outcome,
     list_type: threadState.listType,
     shared_report_token: hasSharedReportLink ? sharedReportToken : null,

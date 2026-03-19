@@ -22,7 +22,8 @@ import {
   AlertCircle,
   FileText,
   Eye,
-  BarChart3,
+  Clock,
+  CheckCircle2,
 } from 'lucide-react';
 import { proposalsClient } from '@/api/proposalsClient';
 import { dashboardClient } from '@/api/dashboardClient';
@@ -32,25 +33,27 @@ const DASHBOARD_WON_LABEL = 'Won';
 
 const statusConfig = {
   draft: { color: 'bg-slate-100 text-slate-700', icon: FileText, label: 'Draft' },
-  sent: { color: 'bg-blue-100 text-blue-700', icon: Send, label: 'Sent' },
-  received: { color: 'bg-amber-100 text-amber-700', icon: Inbox, label: 'Received' },
-  under_review: { color: 'bg-purple-100 text-purple-700', icon: Eye, label: 'Under Review' },
-  ai_review: { color: 'bg-indigo-100 text-indigo-700', icon: BarChart3, label: 'AI Review' },
-  mutual_interest: { color: 'bg-green-100 text-green-700', icon: Users, label: 'Mutual Interest' },
-  won: { color: 'bg-emerald-100 text-emerald-700', label: DASHBOARD_WON_LABEL },
-  lost: { color: 'bg-rose-100 text-rose-700', label: 'Lost' },
-  closed: { color: 'bg-slate-100 text-slate-600', label: 'Closed' },
-  withdrawn: { color: 'bg-red-100 text-red-700', label: 'Withdrawn' },
+  needs_reply: { color: 'bg-rose-100 text-rose-700', icon: AlertCircle, label: 'Needs Reply' },
+  under_review: { color: 'bg-violet-100 text-violet-700', icon: Eye, label: 'Under Review' },
+  waiting_on_counterparty: { color: 'bg-slate-100 text-slate-700', icon: Clock, label: 'Waiting on Counterparty' },
+  closed_won: { color: 'bg-emerald-100 text-emerald-700', icon: CheckCircle2, label: 'Closed: Won' },
+  closed_lost: { color: 'bg-rose-100 text-rose-700', icon: XCircle, label: 'Closed: Lost' },
 };
 
 function getCompactStatusKey(proposal) {
-  const normalizedStatus = String(proposal?.status || '').toLowerCase();
+  const primaryStatusKey = String(proposal?.primary_status_key || '').toLowerCase();
+  if (statusConfig[primaryStatusKey]) {
+    return primaryStatusKey;
+  }
+
   if (proposal?.thread_bucket === 'drafts') return 'draft';
-  if (normalizedStatus === 'won' || normalizedStatus === 'lost') return normalizedStatus;
-  if (String(proposal?.review_status || '').toLowerCase() === 're_evaluated') return 'ai_review';
+
+  const normalizedStatus = String(proposal?.status || '').toLowerCase();
+  if (normalizedStatus === 'won') return 'closed_won';
+  if (normalizedStatus === 'lost') return 'closed_lost';
   if (proposal?.review_status) return 'under_review';
-  if (proposal?.is_mutual_interest) return 'mutual_interest';
-  return String(proposal?.latest_direction || '').toLowerCase() || 'draft';
+  if (proposal?.waiting_on_other_party) return 'waiting_on_counterparty';
+  return 'needs_reply';
 }
 
 function StatusBadge({ proposal }) {
@@ -63,35 +66,6 @@ function StatusBadge({ proposal }) {
       {config.label}
     </Badge>
   );
-}
-
-function ActionBadge({ proposal }) {
-  if (proposal?.win_confirmation_requested) {
-    return (
-      <Badge className="bg-amber-100 text-amber-700 text-[0.6875rem] px-2 py-0.5 h-5 font-medium">
-        <Trophy className="w-3 h-3 mr-1" />
-        Pending Win
-      </Badge>
-    );
-  }
-
-  if (proposal?.needs_response) {
-    return (
-      <Badge className="bg-rose-100 text-rose-700 text-[0.6875rem] px-2 py-0.5 h-5 font-medium">
-        Needs Reply
-      </Badge>
-    );
-  }
-
-  if (proposal?.waiting_on_other_party) {
-    return (
-      <Badge className="bg-slate-100 text-slate-700 text-[0.6875rem] px-2 py-0.5 h-5 font-medium">
-        Waiting
-      </Badge>
-    );
-  }
-
-  return null;
 }
 
 function CompactProposalRow({ proposal, onOpen }) {
@@ -112,7 +86,6 @@ function CompactProposalRow({ proposal, onOpen }) {
         <div className="flex items-center gap-2 flex-wrap">
           <h4 className="text-sm font-semibold text-slate-900 truncate">{proposal.title || 'Untitled Opportunity'}</h4>
           <StatusBadge proposal={proposal} />
-          <ActionBadge proposal={proposal} />
         </div>
         <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5 min-w-0">
           <span className="truncate">{templateName}</span>
@@ -521,7 +494,7 @@ export default function Dashboard() {
 
                 {bucketedProposals.waitingOnOtherParty.length > 0 ? (
                   <ActionRequiredBucket
-                    title="Waiting on other party"
+                    title="Waiting on counterparty"
                     proposals={bucketedProposals.waitingOnOtherParty}
                     onOpen={handleOpenProposal}
                   />

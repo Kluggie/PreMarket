@@ -265,8 +265,22 @@ export function buildShareView(link: any) {
   };
 }
 
-export function buildParentView(params: { proposal: any; comparison: any; owner: any }) {
-  const { proposal, comparison, owner } = params;
+export function buildParentView(params: {
+  proposal: any;
+  comparison: any;
+  owner: any;
+  outcome?: Record<string, unknown> | null;
+  primaryStatusKey?: string | null;
+  primaryStatusLabel?: string | null;
+}) {
+  const {
+    proposal,
+    comparison,
+    owner,
+    outcome = null,
+    primaryStatusKey = null,
+    primaryStatusLabel = null,
+  } = params;
   const isPrivateMode = Boolean((proposal as any)?.isPrivateMode);
   return {
     id: proposal.id,
@@ -274,6 +288,9 @@ export function buildParentView(params: { proposal: any; comparison: any; owner:
     comparison_id: comparison?.id || proposal.documentComparisonId || null,
     title: asText(comparison?.title) || asText(proposal.title) || 'Shared Report',
     status: asText(proposal.status) || null,
+    outcome: outcome || null,
+    primary_status_key: asText(primaryStatusKey) || null,
+    primary_status_label: asText(primaryStatusLabel) || null,
     created_at: proposal.createdAt || null,
     proposer_name: isPrivateMode ? PRIVATE_SENDER_LABEL : asText(owner?.fullName) || null,
     proposer_email: isPrivateMode ? null : normalizeEmail(owner?.email) || null,

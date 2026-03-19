@@ -38,7 +38,6 @@ test('proposal detail keeps outcome actions on the overview shell and out of the
 
 test('step-editing screens do not render proposal outcome controls', () => {
   const stepFiles = [
-    'src/pages/SharedReport.jsx',
     'src/pages/DocumentComparisonDetail.jsx',
     'src/pages/RecipientEditStep2.jsx',
     'src/pages/RecipientEditStep3.jsx',
@@ -53,6 +52,15 @@ test('step-editing screens do not render proposal outcome controls', () => {
   assert.doesNotMatch(combined, /Confirm Agreement/);
   assert.doesNotMatch(combined, /Request Agreement/);
   assert.doesNotMatch(combined, /getAgreementActionLabel/);
+});
+
+test('shared report step 0 keeps opportunity closure controls on the overview shell', () => {
+  const sharedReport = readRepoFile('src/pages/SharedReport.jsx');
+
+  assert.match(sharedReport, /STEP 0 — Baseline overview/);
+  assert.match(sharedReport, /getAgreementActionLabel\(parentOutcome\)/);
+  assert.match(sharedReport, /Mark as Lost/);
+  assert.match(sharedReport, /Continue Negotiating/);
 });
 
 test('pending agreement response actions are only wired for the responding party on step 0', () => {

@@ -829,21 +829,33 @@ test(
 
     const waitingRows = await listProposals(ownerCookie, {
       tab: 'inbox',
+      status: 'waiting_on_counterparty',
+      limit: '20',
+    });
+    const legacyWaitingRows = await listProposals(ownerCookie, {
+      tab: 'inbox',
       status: 'waiting_on_other_party',
       limit: '20',
     });
     assert.equal(waitingRows.some((entry) => entry.id === waitingThread.id), true);
+    assert.equal(legacyWaitingRows.some((entry) => entry.id === waitingThread.id), true);
     assert.equal(waitingRows.some((entry) => entry.id === needsReplyThread.id), false);
     assert.equal(waitingRows.some((entry) => entry.id === pendingWinThread.id), false);
 
     const replyRows = await listProposals(ownerCookie, {
       tab: 'inbox',
+      status: 'needs_reply',
+      limit: '20',
+    });
+    const legacyReplyRows = await listProposals(ownerCookie, {
+      tab: 'inbox',
       status: 'needs_response',
       limit: '20',
     });
     assert.equal(replyRows.some((entry) => entry.id === needsReplyThread.id), true);
+    assert.equal(legacyReplyRows.some((entry) => entry.id === needsReplyThread.id), true);
     assert.equal(replyRows.some((entry) => entry.id === waitingThread.id), false);
-    assert.equal(replyRows.some((entry) => entry.id === pendingWinThread.id), false);
+    assert.equal(replyRows.some((entry) => entry.id === pendingWinThread.id), true);
 
     const pendingWinRows = await listProposals(ownerCookie, {
       tab: 'inbox',
@@ -853,6 +865,139 @@ test(
     assert.equal(pendingWinRows.some((entry) => entry.id === pendingWinThread.id), true);
     assert.equal(pendingWinRows.some((entry) => entry.id === waitingThread.id), false);
     assert.equal(pendingWinRows.some((entry) => entry.id === needsReplyThread.id), false);
+  },
+);
+
+test(
+  'list rows expose one canonical primary status and normalize legacy labels',
+  { skip: !dbAvailable ? 'DATABASE_URL not set' : false },
+  async () => {
+    await ensureMigrated();
+
+    const runId = Date.now();
+    const ownerCookie = makeSessionCookie({
+      sub: `workflow-primary-status-owner-${runId}`,
+      email: `workflow-primary-status-owner-${runId}@example.com`,
+    });
+    const recipientCookie = makeSessionCookie({
+      sub: `workflow-primary-status-recipient-${runId}`,
+      email: `workflow-primary-status-recipient-${runId}@example.com`,
+    });
+    const recipientEmail = `workflow-primary-status-recipient-${runId}@example.com`;
+    await seedProfessionalPlan(
+      `workflow-primary-status-owner-${runId}`,
+      `workflow-primary-status-owner-${runId}@example.com`,
+    );
+    await seedProfessionalPlan(
+      `workflow-primary-status-recipient-${runId}`,
+      `workflow-primary-status-recipient-${runId}@example.com`,
+    );
+
+    const draftThread = await createProposal(ownerCookie, {
+      title: `Primary Status Draft ${Date.now()}`,
+      status: 'draft',
+      partyBEmail: recipientEmail,
+    });
+
+    const waitingThread = await createProposal(ownerCookie, {
+      title: `Primary Status Waiting ${Date.now()}`,
+      status: 'draft',
+      partyBEmail: recipientEmail,
+    });
+    await sendProposal(ownerCookie, waitingThread.id, { recipientEmail });
+
+    const needsReplyThread = await createProposal(ownerCookie, {
+      title: `Primary Status Needs Reply ${Date.now()}`,
+      status: 'draft',
+      partyBEmail: recipientEmail,
+    });
+    const needsReplySend = await sendProposal(ownerCookie, needsReplyThread.id, { recipientEmail });
+    await respondToSharedLink(needsReplySend.sharedLink.token, {
+      responderEmail: recipientEmail,
+      responses: [{ questionId: 'q_primary_status_needs_reply', value: 'Counterparty reply' }],
+    });
+
+    const underReviewThread = await createProposal(ownerCookie, {
+      title: `Primary Status Under Review ${Date.now()}`,
+      status: 'draft',
+      partyBEmail: recipientEmail,
+    });
+    const underReviewSend = await sendProposal(ownerCookie, underReviewThread.id, { recipientEmail });
+    await respondToSharedLink(underReviewSend.sharedLink.token, {
+      responderEmail: recipientEmail,
+      responses: [{ questionId: 'q_primary_status_under_review', value: 'Counterparty update' }],
+    });
+    const reviewPatchRes = await callHandler(
+      proposalDetailHandler,
+      {
+        method: 'PATCH',
+        url: `/api/proposals/${underReviewThread.id}`,
+        headers: { cookie: ownerCookie },
+        query: { id: underReviewThread.id },
+        body: { status: 'under_verification' },
+      },
+      underReviewThread.id,
+    );
+    assert.equal(reviewPatchRes.statusCode, 200, 'Marking thread under review should succeed');
+
+    const lostThread = await createProposal(ownerCookie, {
+      title: `Primary Status Lost ${Date.now()}`,
+      status: 'sent',
+      sentAt: new Date().toISOString(),
+      partyBEmail: recipientEmail,
+    });
+    await markOutcome(recipientCookie, lostThread.id, { outcome: 'lost' });
+
+    const wonThread = await createProposal(ownerCookie, {
+      title: `Primary Status Won ${Date.now()}`,
+      status: 'received',
+      sentAt: new Date().toISOString(),
+      receivedAt: new Date().toISOString(),
+      partyBEmail: recipientEmail,
+    });
+    await markOutcome(recipientCookie, wonThread.id, { outcome: 'won' });
+    await markOutcome(ownerCookie, wonThread.id, { outcome: 'won' });
+
+    const allRows = await listProposals(ownerCookie, { tab: 'all', limit: '80' });
+    const byId = new Map(allRows.map((row) => [row.id, row]));
+
+    const draftRow = byId.get(draftThread.id);
+    const waitingRow = byId.get(waitingThread.id);
+    const needsReplyRow = byId.get(needsReplyThread.id);
+    const underReviewRow = byId.get(underReviewThread.id);
+    const lostRow = byId.get(lostThread.id);
+    const wonRow = byId.get(wonThread.id);
+
+    assert.equal(draftRow?.primary_status_key, 'draft');
+    assert.equal(draftRow?.primary_status_label, 'Draft');
+    assert.equal(waitingRow?.primary_status_key, 'waiting_on_counterparty');
+    assert.equal(waitingRow?.primary_status_label, 'Waiting on Counterparty');
+    assert.equal(needsReplyRow?.primary_status_key, 'needs_reply');
+    assert.equal(needsReplyRow?.primary_status_label, 'Needs Reply');
+    assert.equal(underReviewRow?.primary_status_key, 'under_review');
+    assert.equal(underReviewRow?.primary_status_label, 'Under Review');
+    assert.equal(lostRow?.primary_status_key, 'closed_lost');
+    assert.equal(lostRow?.primary_status_label, 'Closed: Lost');
+    assert.equal(wonRow?.primary_status_key, 'closed_won');
+    assert.equal(wonRow?.primary_status_label, 'Closed: Won');
+
+    const allowedPrimaryStatuses = new Set([
+      'draft',
+      'needs_reply',
+      'under_review',
+      'waiting_on_counterparty',
+      'closed_won',
+      'closed_lost',
+    ]);
+    allRows.forEach((row) => {
+      assert.equal(
+        allowedPrimaryStatuses.has(String(row?.primary_status_key || '')),
+        true,
+        `Unexpected primary status key: ${row?.primary_status_key}`,
+      );
+      assert.equal(String(row?.primary_status_label || '').includes('Received'), false);
+      assert.equal(String(row?.primary_status_label || '').includes('Link Active'), false);
+    });
   },
 );
 

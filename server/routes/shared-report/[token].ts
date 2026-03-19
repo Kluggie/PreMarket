@@ -8,6 +8,8 @@ import {
   loadSharedReportHistory,
   resolveSharedReportLinkRound,
 } from '../../_lib/shared-report-history.js';
+import { mapProposalOutcomeForUser } from '../../_lib/proposal-outcomes.js';
+import { getProposalThreadState } from '../../_lib/proposal-thread-state.js';
 import {
   buildDefaultConfidentialPayload,
   SHARED_REPORT_ROUTE,
@@ -104,6 +106,17 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       recipient_confidential_payload: buildDefaultConfidentialPayload(),
     };
     const recipientAuthorization = getRecipientAuthorizationState(resolved.link, currentUser);
+    const parentOutcome = currentUser
+      ? mapProposalOutcomeForUser(resolved.proposal, currentUser, {
+          authorizedRecipientUserId: resolved.link.authorizedUserId,
+        })
+      : null;
+    const parentThreadState = parentOutcome
+      ? getProposalThreadState(resolved.proposal, currentUser, {
+          actorRole: parentOutcome.actor_role || null,
+          outcome: parentOutcome,
+        })
+      : null;
     const shareView: any = buildShareView(resolved.link);
     const isAuthenticated = Boolean(currentUser);
     const canViewAuthorizationDetails = Boolean(isAuthenticated && recipientAuthorization.aliasVerifiedMatch);
@@ -143,6 +156,9 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         proposal: resolved.proposal,
         comparison: resolved.comparison,
         owner: resolved.owner,
+        outcome: parentOutcome,
+        primaryStatusKey: parentThreadState?.primaryStatusKey || null,
+        primaryStatusLabel: parentThreadState?.primaryStatusLabel || null,
       }),
       comparison: {
         id: resolved.comparison?.id || resolved.proposal.documentComparisonId || null,

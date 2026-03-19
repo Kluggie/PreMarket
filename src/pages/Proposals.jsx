@@ -43,13 +43,10 @@ import {
   FileText,
   ChevronRight,
   Clock,
-  Users,
-  Eye,
   EyeOff,
-  AlertTriangle,
   AlertCircle,
   CheckCircle2,
-  BarChart3,
+  Eye,
   MoreHorizontal,
   Archive,
   ArchiveRestore,
@@ -58,9 +55,37 @@ import {
   XCircle,
 } from 'lucide-react';
 
-const DIRECTION_BADGE_CONFIG = {
-  sent: { color: 'bg-blue-100 text-blue-700', icon: Send, label: 'Sent' },
-  received: { color: 'bg-amber-100 text-amber-700', icon: Inbox, label: 'Received' },
+const PRIMARY_STATUS_BADGE_CONFIG = {
+  needs_reply: {
+    color: 'bg-rose-100 text-rose-700',
+    icon: AlertCircle,
+    label: 'Needs Reply',
+  },
+  under_review: {
+    color: 'bg-violet-100 text-violet-700',
+    icon: Eye,
+    label: 'Under Review',
+  },
+  draft: {
+    color: 'bg-slate-100 text-slate-700',
+    icon: FileText,
+    label: 'Draft',
+  },
+  waiting_on_counterparty: {
+    color: 'bg-slate-100 text-slate-700',
+    icon: Clock,
+    label: 'Waiting on Counterparty',
+  },
+  closed_won: {
+    color: 'bg-emerald-100 text-emerald-700',
+    icon: CheckCircle2,
+    label: 'Closed: Won',
+  },
+  closed_lost: {
+    color: 'bg-rose-100 text-rose-700',
+    icon: XCircle,
+    label: 'Closed: Lost',
+  },
 };
 
 const TAB_ALIASES = {
@@ -70,11 +95,18 @@ const TAB_ALIASES = {
   mutual_interest: 'inbox',
 };
 const TAB_VALUES = new Set(['inbox', 'drafts', 'closed', 'archived']);
-const STATUS_FILTER_VALUES = new Set(['all', 'needs_response', 'waiting_on_other_party', 'win_confirmation_requested']);
+const STATUS_FILTER_VALUES = new Set([
+  'all',
+  'needs_reply',
+  'under_review',
+  'waiting_on_counterparty',
+  'win_confirmation_requested',
+]);
 const STATUS_FILTER_ALIASES = {
   agreement_requested: 'win_confirmation_requested',
-  needs_reply: 'needs_response',
-  waiting: 'waiting_on_other_party',
+  needs_response: 'needs_reply',
+  waiting_on_other_party: 'waiting_on_counterparty',
+  waiting: 'waiting_on_counterparty',
   pending_win: 'win_confirmation_requested',
 };
 
@@ -92,115 +124,50 @@ function normalizeStatusFilterValue(value) {
   return STATUS_FILTER_VALUES.has(aliasedValue) ? aliasedValue : 'all';
 }
 
-function DirectionBadge({ direction }) {
-  const config = DIRECTION_BADGE_CONFIG[String(direction || '').toLowerCase()];
-  if (!config) {
-    return null;
+function resolvePrimaryStatus(proposal) {
+  const primaryStatusKey = String(proposal?.primary_status_key || '').trim().toLowerCase();
+  if (PRIMARY_STATUS_BADGE_CONFIG[primaryStatusKey]) {
+    return PRIMARY_STATUS_BADGE_CONFIG[primaryStatusKey];
   }
+
+  if (proposal?.thread_bucket === 'drafts') {
+    return PRIMARY_STATUS_BADGE_CONFIG.draft;
+  }
+
+  const normalizedStatus = String(proposal?.status || '').trim().toLowerCase();
+  if (normalizedStatus === 'won') {
+    return PRIMARY_STATUS_BADGE_CONFIG.closed_won;
+  }
+  if (normalizedStatus === 'lost') {
+    return PRIMARY_STATUS_BADGE_CONFIG.closed_lost;
+  }
+  if (proposal?.review_status) {
+    return PRIMARY_STATUS_BADGE_CONFIG.under_review;
+  }
+  if (proposal?.waiting_on_other_party) {
+    return PRIMARY_STATUS_BADGE_CONFIG.waiting_on_counterparty;
+  }
+  return PRIMARY_STATUS_BADGE_CONFIG.needs_reply;
+}
+
+function PrimaryStatusBadge({ proposal }) {
+  const config = resolvePrimaryStatus(proposal);
   const Icon = config.icon;
 
   return (
     <Badge className={`${config.color} font-medium`}>
-      <Icon className="w-3 h-3 mr-1" />
-      {config.label}
-    </Badge>
-  );
-}
-
-function OutcomeStateBadge({ status }) {
-  const normalizedStatus = String(status || '').trim().toLowerCase();
-  if (normalizedStatus === 'won') {
-    return (
-      <Badge className="bg-emerald-100 text-emerald-700 font-medium">
-        <CheckCircle2 className="w-3 h-3 mr-1" />
-        Won
-      </Badge>
-    );
-  }
-  if (normalizedStatus === 'lost') {
-    return (
-      <Badge className="bg-rose-100 text-rose-700 font-medium">
-        <AlertTriangle className="w-3 h-3 mr-1" />
-        Lost
-      </Badge>
-    );
-  }
-  if (normalizedStatus === 'draft') {
-    return (
-      <Badge className="bg-slate-100 text-slate-700 font-medium">
-        <FileText className="w-3 h-3 mr-1" />
-        Draft
-      </Badge>
-    );
-  }
-  return null;
-}
-
-function ReviewBadge({ reviewStatus }) {
-  const normalizedStatus = String(reviewStatus || '').trim().toLowerCase();
-  if (!normalizedStatus) {
-    return null;
-  }
-  return (
-    <Badge className="bg-purple-100 text-purple-700 font-medium">
-      {normalizedStatus === 're_evaluated' ? (
-        <BarChart3 className="w-3 h-3 mr-1" />
-      ) : (
-        <Eye className="w-3 h-3 mr-1" />
-      )}
-      {normalizedStatus === 're_evaluated' ? 'AI Review' : 'Under Review'}
-    </Badge>
-  );
-}
-
-function ActionStateBadge({ proposal }) {
-  if (proposal?.win_confirmation_requested) {
-    return (
-      <Badge className="bg-amber-100 text-amber-700 font-medium">
-        <Trophy className="w-3 h-3 mr-1" />
-        Pending Win
-      </Badge>
-    );
-  }
-
-  if (proposal?.needs_response) {
-    return (
-      <Badge className="bg-rose-100 text-rose-700 font-medium">
-        <AlertCircle className="w-3 h-3 mr-1" />
-        Needs Reply
-      </Badge>
-    );
-  }
-
-  if (proposal?.waiting_on_other_party) {
-    return (
-      <Badge className="bg-slate-100 text-slate-700 font-medium">
-        <Clock className="w-3 h-3 mr-1" />
-        Waiting
-      </Badge>
-    );
-  }
-
-  return null;
-}
-
-function MutualInterestBadge({ isMutualInterest }) {
-  if (!isMutualInterest) {
-    return null;
-  }
-
-  return (
-    <Badge className="bg-green-100 text-green-700 font-medium">
-      <Users className="w-3 h-3 mr-1" />
-      Mutual Interest
+      {Icon ? <Icon className="w-3 h-3 mr-1" /> : null}
+      {String(proposal?.primary_status_label || config.label)}
     </Badge>
   );
 }
 
 function getRowIcon(proposal) {
-  const normalizedStatus = String(proposal?.status || '').trim().toLowerCase();
-  if (normalizedStatus === 'won') return CheckCircle2;
-  if (normalizedStatus === 'lost') return XCircle;
+  const primaryStatusKey = String(proposal?.primary_status_key || '').trim().toLowerCase();
+  if (primaryStatusKey === 'closed_won') return CheckCircle2;
+  if (primaryStatusKey === 'closed_lost') return XCircle;
+  if (primaryStatusKey === 'needs_reply') return AlertCircle;
+  if (primaryStatusKey === 'under_review') return Eye;
   if (proposal?.thread_bucket === 'archived') return Archive;
   if (String(proposal?.latest_direction || '').toLowerCase() === 'received') return Inbox;
   if (String(proposal?.latest_direction || '').toLowerCase() === 'sent') return Send;
@@ -228,9 +195,10 @@ function formatUpdatedAt(value) {
 function getStatusOptions() {
   return [
     { value: 'all', label: 'All states' },
-    { value: 'needs_response', label: 'Needs Reply' },
-    { value: 'waiting_on_other_party', label: 'Waiting' },
-    { value: 'win_confirmation_requested', label: 'Pending Win' },
+    { value: 'needs_reply', label: 'Needs Reply' },
+    { value: 'under_review', label: 'Under Review' },
+    { value: 'waiting_on_counterparty', label: 'Waiting on Counterparty' },
+    { value: 'win_confirmation_requested', label: 'Pending Win Confirmation' },
   ];
 }
 
@@ -256,14 +224,21 @@ function getEmptyStateCopy(activeTab, statusFilter) {
     };
   }
 
-  if (statusFilter === 'needs_response') {
+  if (statusFilter === 'needs_reply') {
     return {
       title: 'No opportunities need a reply.',
       description: 'When a counterparty sends back an update, it will appear here.',
     };
   }
 
-  if (statusFilter === 'waiting_on_other_party') {
+  if (statusFilter === 'under_review') {
+    return {
+      title: 'No opportunities are under review.',
+      description: 'Threads with in-progress review work will appear here.',
+    };
+  }
+
+  if (statusFilter === 'waiting_on_counterparty') {
     return {
       title: 'Nothing is waiting right now.',
       description: 'Opportunities you sent most recently will appear here until the counterparty replies.',
@@ -313,8 +288,6 @@ function ProposalRow({
 }) {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const Icon = getRowIcon(proposal);
-  const hasSharedReportLink = Boolean(proposal.shared_report_token);
-  const sharedReportStatus = String(proposal.shared_report_status || '').trim().toLowerCase();
   const sharedReportDate =
     proposal.shared_report_last_updated_at ||
     proposal.last_activity_at ||
@@ -322,7 +295,6 @@ function ProposalRow({
     proposal.created_at ||
     proposal.shared_report_sent_at ||
     null;
-  const isDraft = proposal.thread_bucket === 'drafts';
   const isArchived = proposal.thread_bucket === 'archived';
   const outcome = proposal.outcome || {};
   const outcomeState = String(outcome.state || proposal.status || '').toLowerCase();
@@ -337,7 +309,11 @@ function ProposalRow({
     ? 'Waiting for the counterparty to confirm the agreement.'
     : outcome.requested_by_counterparty
       ? 'The counterparty requested agreement on this proposal.'
-      : outcome.eligibility_reason;
+      : (!outcome.can_mark_won
+          ? (outcome.eligibility_reason_won || outcome.eligibility_reason)
+          : !outcome.can_mark_lost
+            ? (outcome.eligibility_reason_lost || outcome.eligibility_reason)
+            : null);
   const deleteCopy = getDeleteCopy(proposal);
 
   return (
@@ -355,22 +331,7 @@ function ProposalRow({
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1 flex-wrap">
               <h3 className="font-medium text-slate-900 truncate">{proposal.title || 'Untitled Opportunity'}</h3>
-              <OutcomeStateBadge status={isDraft ? 'draft' : proposal.status} />
-              <DirectionBadge direction={proposal.latest_direction} />
-              <ActionStateBadge proposal={proposal} />
-              <ReviewBadge reviewStatus={proposal.review_status} />
-              <MutualInterestBadge isMutualInterest={proposal.is_mutual_interest} />
-              {isArchived && (
-                <Badge variant="outline" className="text-xs text-slate-500">
-                  <Archive className="w-3 h-3 mr-1" />
-                  Archived
-                </Badge>
-              )}
-              {hasSharedReportLink ? (
-                <Badge variant="outline" className="text-xs capitalize">
-                  Link {sharedReportStatus || 'active'}
-                </Badge>
-              ) : null}
+              <PrimaryStatusBadge proposal={proposal} />
             </div>
 
             <div className="flex items-center gap-4 text-sm text-slate-500">

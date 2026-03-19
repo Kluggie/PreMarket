@@ -42,7 +42,7 @@ test('dashboard keeps action buckets but drops inbox-only routing and mutual-int
 
   assert.match(dashboard, /Needs your response/);
   assert.match(dashboard, /Drafts not sent/);
-  assert.match(dashboard, /Waiting on other party/);
+  assert.match(dashboard, /Waiting on counterparty/);
   assert.match(dashboard, /Needs review \/ verify/);
   assert.match(dashboard, /Opportunities\?tab=all&status=win_confirmation_requested/);
 
