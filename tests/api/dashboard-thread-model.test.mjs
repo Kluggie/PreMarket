@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomUUID } from 'node:crypto';
+import { eq } from 'drizzle-orm';
 import proposalsHandler from '../../server/routes/proposals/index.ts';
 import proposalArchiveHandler from '../../server/routes/proposals/[id]/archive.ts';
 import dashboardSummaryHandler from '../../server/routes/dashboard/summary.ts';
@@ -14,6 +15,12 @@ ensureTestEnv();
 
 function authCookie(sub, email) {
   return makeSessionCookie({ sub, email });
+}
+
+function addDays(input, days) {
+  const value = new Date(input);
+  value.setDate(value.getDate() + days);
+  return value;
 }
 
 async function seedProfessionalPlan(userId, email) {
@@ -115,6 +122,31 @@ async function getSummary(cookie) {
   return res.jsonBody().summary;
 }
 
+async function getSummaryWithRange(cookie, range) {
+  const res = await callHandler(dashboardSummaryHandler, {
+    method: 'GET',
+    url: '/api/dashboard/summary',
+    headers: { cookie },
+    query: range ? { range } : {},
+  });
+  assert.equal(res.statusCode, 200);
+  return res.jsonBody().summary;
+}
+
+async function insertProposalEvent({ proposalId, proposalUserId, actorUserId, actorRole, eventType, createdAt }) {
+  const db = getDb();
+  await db.insert(schema.proposalEvents).values({
+    id: randomUUID(),
+    proposalId,
+    proposalUserId,
+    actorUserId,
+    actorRole,
+    eventType,
+    eventData: {},
+    createdAt,
+  });
+}
+
 async function getActivity(cookie, range = '30') {
   const res = await callHandler(dashboardActivityHandler, {
     method: 'GET',
@@ -197,6 +229,120 @@ if (!hasDatabaseUrl()) {
     assert.equal(activity.activeRounds >= 4, true);
     assert.equal(activity.closedThreads >= 2, true);
     assert.equal(activity.archivedThreads, 0);
+  });
+
+  test('dashboard summary range keeps opportunity-level counting and uses exchange_count>=2 for mutual interest', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerUserId = 'dashboard_range_owner';
+    const ownerEmail = 'dashboard-range-owner@example.com';
+    const ownerCookie = authCookie(ownerUserId, ownerEmail);
+    await seedProfessionalPlan(ownerUserId, ownerEmail);
+
+    const oldSentProposal = await createProposal(ownerCookie, {
+      title: 'Old Sent Opportunity',
+      status: 'sent',
+      sentAt: addDays(new Date(), -45).toISOString(),
+      partyBEmail: 'dashboard-range-recipient@example.com',
+    });
+    assert.ok(oldSentProposal?.id);
+
+    const recentSentProposal = await createProposal(ownerCookie, {
+      title: 'Recent Sent Opportunity',
+      status: 'sent',
+      sentAt: addDays(new Date(), -2).toISOString(),
+      partyBEmail: 'dashboard-range-recipient@example.com',
+    });
+    assert.ok(recentSentProposal?.id);
+
+    const mutualProposal = await createProposal(ownerCookie, {
+      title: 'Recent Two-Way Opportunity',
+      status: 'sent',
+      sentAt: addDays(new Date(), -1).toISOString(),
+      partyBEmail: 'dashboard-range-recipient@example.com',
+    });
+    assert.ok(mutualProposal?.id);
+
+    const now = new Date();
+    await insertProposalEvent({
+      proposalId: mutualProposal.id,
+      proposalUserId: ownerUserId,
+      actorUserId: 'dashboard_range_recipient_actor',
+      actorRole: 'party_b',
+      eventType: 'proposal.send_back',
+      createdAt: addDays(now, -1),
+    });
+    await insertProposalEvent({
+      proposalId: mutualProposal.id,
+      proposalUserId: ownerUserId,
+      actorUserId: ownerUserId,
+      actorRole: 'party_a',
+      eventType: 'proposal.send_back',
+      createdAt: now,
+    });
+
+    const allTimeSummary = await getSummary(ownerCookie);
+    assert.equal(allTimeSummary.sentCount, 3);
+    assert.equal(allTimeSummary.receivedCount, 0);
+    assert.equal(allTimeSummary.mutualInterestCount, 1);
+
+    const sevenDaySummary = await getSummaryWithRange(ownerCookie, '7');
+    assert.equal(sevenDaySummary.sentCount, 2);
+    assert.equal(sevenDaySummary.receivedCount, 0);
+    assert.equal(
+      sevenDaySummary.mutualInterestCount,
+      1,
+      'Mutual Interest should count each qualifying opportunity once even after extra rounds',
+    );
+
+    const sevenDayActivity = aggregateThreadActivity(await getActivity(ownerCookie, '7'));
+    assert.equal(sevenDayActivity.legacySent, 2);
+  });
+
+  test('dashboard summary range filters won/lost counts while all-time remains lifetime', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerUserId = 'dashboard_range_outcome_owner';
+    const ownerEmail = 'dashboard-range-outcome-owner@example.com';
+    const ownerCookie = authCookie(ownerUserId, ownerEmail);
+    await seedProfessionalPlan(ownerUserId, ownerEmail);
+
+    const wonProposal = await createProposal(ownerCookie, {
+      title: 'Won Outside Window',
+      status: 'won',
+      sentAt: addDays(new Date(), -60).toISOString(),
+      partyBEmail: 'dashboard-range-recipient@example.com',
+    });
+    const lostProposal = await createProposal(ownerCookie, {
+      title: 'Lost Inside Window',
+      status: 'lost',
+      sentAt: addDays(new Date(), -2).toISOString(),
+      partyBEmail: 'dashboard-range-recipient@example.com',
+    });
+
+    const db = getDb();
+    const wonClosedAt = addDays(new Date(), -60);
+    await db
+      .update(schema.proposals)
+      .set({
+        closedAt: wonClosedAt,
+        partyAOutcomeAt: wonClosedAt,
+        partyBOutcomeAt: wonClosedAt,
+        updatedAt: wonClosedAt,
+      })
+      .where(eq(schema.proposals.id, wonProposal.id));
+
+    const sevenDaySummary = await getSummaryWithRange(ownerCookie, '7');
+    assert.equal(sevenDaySummary.wonCount, 0);
+    assert.equal(sevenDaySummary.lostCount, 1);
+
+    const allTimeSummary = await getSummary(ownerCookie);
+    assert.equal(allTimeSummary.wonCount, 1);
+    assert.equal(allTimeSummary.lostCount, 1);
+
+    assert.ok(lostProposal?.id);
   });
 
   test('dashboard archived activity is user-scoped while legacy directional counts stay archive-hidden for the archiver', async () => {

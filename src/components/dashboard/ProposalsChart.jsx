@@ -8,8 +8,13 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { AlertCircle, Calendar } from 'lucide-react';
 import { dashboardClient } from '@/api/dashboardClient';
 
-export default function ProposalsChart() {
-  const [timeRange, setTimeRange] = useState('30');
+export default function ProposalsChart({ timeRange: selectedTimeRange = null, onTimeRangeChange = null }) {
+  const [localTimeRange, setLocalTimeRange] = useState('30');
+  const isRangeControlled = typeof selectedTimeRange === 'string' && selectedTimeRange.trim().length > 0;
+  const timeRange = isRangeControlled ? selectedTimeRange : localTimeRange;
+  const setTimeRange = isRangeControlled && typeof onTimeRangeChange === 'function'
+    ? onTimeRangeChange
+    : setLocalTimeRange;
   const [visibleSeries, setVisibleSeries] = useState({
     sent: true,
     received: true,

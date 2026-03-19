@@ -1,8 +1,13 @@
 import { request } from '@/api/httpClient';
 
 export const dashboardClient = {
-  async getSummary() {
-    const response = await request('/api/dashboard/summary');
+  async getSummary(range = null) {
+    const searchParams = new URLSearchParams();
+    if (range) {
+      searchParams.set('range', String(range));
+    }
+    const query = searchParams.toString();
+    const response = await request(`/api/dashboard/summary${query ? `?${query}` : ''}`);
     // request() throws on non-2xx, on 200+non-JSON, and on body.ok===false.
     // If summary is still missing after a successful response, throw rather than
     // silently returning fake zeroes — an API failure must not look like

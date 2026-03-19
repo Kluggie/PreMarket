@@ -14,12 +14,14 @@ function readRepoFile(relativePath) {
 test('dashboard restores the old proposal metric row instead of inbox bucket cards', () => {
   const dashboard = readRepoFile('src/pages/Dashboard.jsx');
 
-  assert.match(dashboard, /label: 'Sent'/);
-  assert.match(dashboard, /label: 'Received'/);
+  assert.match(dashboard, /label: 'Sent Opportunities'/);
+  assert.match(dashboard, /label: 'Received Opportunities'/);
   assert.match(dashboard, /label: 'Mutual Interest'/);
   assert.match(dashboard, /const DASHBOARD_WON_LABEL = 'Won'/);
   assert.match(dashboard, /label: DASHBOARD_WON_LABEL/);
   assert.match(dashboard, /label: 'Lost'/);
+  assert.match(dashboard, /dashboardClient\.getSummary\(dashboardRange\)/);
+  assert.match(dashboard, /<ProposalsChart timeRange=\{dashboardRange\} onTimeRangeChange=\{setDashboardRange\} \/>/);
   assert.match(dashboard, /summary\?\.sentCount/);
   assert.match(dashboard, /summary\?\.receivedCount/);
   assert.match(dashboard, /summary\?\.mutualInterestCount/);

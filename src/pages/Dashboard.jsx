@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { createPageUrl } from '@/utils';
@@ -235,6 +235,7 @@ function StarterUsageCard({ starterUsage }) {
 
 export default function Dashboard() {
   const navigate = useNavigate();
+  const [dashboardRange, setDashboardRange] = useState('30');
 
   const {
     data: summary,
@@ -243,8 +244,8 @@ export default function Dashboard() {
     error: summaryErrorObj,
     refetch: refetchSummary,
   } = useQuery({
-    queryKey: ['dashboard-summary'],
-    queryFn: () => dashboardClient.getSummary(),
+    queryKey: ['dashboard-summary', dashboardRange],
+    queryFn: () => dashboardClient.getSummary(dashboardRange),
     retry: 2,
   });
 
@@ -262,13 +263,13 @@ export default function Dashboard() {
   const primaryStats = useMemo(
     () => [
       {
-        label: 'Sent',
+        label: 'Sent Opportunities',
         value: summary?.sentCount ?? 0,
         icon: Send,
         color: 'from-blue-500 to-blue-600',
       },
       {
-        label: 'Received',
+        label: 'Received Opportunities',
         value: summary?.receivedCount ?? 0,
         icon: Inbox,
         color: 'from-indigo-500 to-indigo-600',
@@ -445,7 +446,7 @@ export default function Dashboard() {
         ) : null}
 
         <div className="mb-8">
-          <ProposalsChart />
+          <ProposalsChart timeRange={dashboardRange} onTimeRangeChange={setDashboardRange} />
         </div>
 
         {loadingProposals ? (
