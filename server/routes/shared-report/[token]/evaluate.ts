@@ -495,7 +495,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     const normalizedExchangeHistory = exchangeHistory.map((entry) => ({
       ...entry,
       sharedTextSnapshot:
-        sharedSnapshotByRound.get(Number(entry.round || 0)) || entry.sharedTextSnapshot,
+        asText(sharedSnapshotByRound.get(Number(entry.round || 0))) || entry.sharedTextSnapshot,
     }));
 
     // ── Build convergence digest from prior evaluation rounds ───────────────

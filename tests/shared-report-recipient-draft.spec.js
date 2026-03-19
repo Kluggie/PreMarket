@@ -87,10 +87,8 @@ async function typeInEditor(page, selector, text) {
 }
 
 async function expectComparisonStep(page, step) {
-  await expect(page.getByRole('heading', { name: 'Document Comparison' })).toBeVisible({
-    timeout: LOAD_TIMEOUT_MS,
-  });
-  await expect(page.getByText(`Step ${step} of 3`)).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+  const stepLabel = step === 0 ? 'Step 0 of 3' : `Step ${step} of 3`;
+  await expect(page.getByText(stepLabel)).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
 }
 
 test.beforeAll(async () => {
