@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { deriveProposalPrimaryStatus } from '../../server/_lib/proposal-thread-state.js';
+import {
+  deriveProposalPrimaryStatus,
+  getProposalThreadState,
+  matchesProposalThreadOrigin,
+} from '../../server/_lib/proposal-thread-state.js';
 
 test('deriveProposalPrimaryStatus maps active thread states into the canonical model', () => {
   assert.deepEqual(
@@ -32,4 +36,58 @@ test('deriveProposalPrimaryStatus maps active thread states into the canonical m
     deriveProposalPrimaryStatus({ bucket: 'closed', finalStatus: 'lost' }),
     { key: 'closed_lost', label: 'Closed: Lost' },
   );
+});
+
+test('thread context derives started-by and last-update roles for each viewer perspective', () => {
+  const baseProposal = {
+    id: 'proposal_thread_context_test',
+    userId: 'owner_user',
+    status: 'sent',
+    sentAt: '2026-03-19T08:00:00.000Z',
+    createdAt: '2026-03-19T08:00:00.000Z',
+    updatedAt: '2026-03-19T08:10:00.000Z',
+    lastThreadActivityAt: '2026-03-19T08:10:00.000Z',
+    lastThreadActorRole: 'party_b',
+    lastThreadActivityType: 'proposal.send_back',
+    partyAEmail: 'owner@example.com',
+    partyBEmail: 'counterparty@example.com',
+  };
+
+  const ownerView = getProposalThreadState(
+    baseProposal,
+    { id: 'owner_user', email: 'owner@example.com' },
+    {
+      actorRole: 'party_a',
+      outcome: {
+        actor_role: 'party_a',
+        final_status: 'sent',
+        pending: false,
+        requested_by_current_user: false,
+        requested_by_counterparty: false,
+      },
+    },
+  );
+  assert.equal(ownerView.startedByRole, 'you');
+  assert.equal(ownerView.lastUpdateByRole, 'counterparty');
+  assert.equal(matchesProposalThreadOrigin(ownerView, 'started_by_you'), true);
+  assert.equal(matchesProposalThreadOrigin(ownerView, 'started_by_counterparty'), false);
+
+  const counterpartyView = getProposalThreadState(
+    baseProposal,
+    { id: 'counterparty_user', email: 'counterparty@example.com' },
+    {
+      actorRole: 'party_b',
+      outcome: {
+        actor_role: 'party_b',
+        final_status: 'sent',
+        pending: false,
+        requested_by_current_user: false,
+        requested_by_counterparty: false,
+      },
+    },
+  );
+  assert.equal(counterpartyView.startedByRole, 'counterparty');
+  assert.equal(counterpartyView.lastUpdateByRole, 'you');
+  assert.equal(matchesProposalThreadOrigin(counterpartyView, 'started_by_counterparty'), true);
+  assert.equal(matchesProposalThreadOrigin(counterpartyView, 'started_by_you'), false);
 });

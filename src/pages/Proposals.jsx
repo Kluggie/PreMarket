@@ -11,6 +11,7 @@ import { formatRecipientLabel, PRIVATE_SENDER_LABEL } from '@/lib/recipientUtils
 import {
   getAgreementActionLabel,
 } from '@/lib/proposalOutcomeUi';
+import { buildThreadContextParts } from '@/lib/proposalThreadContextUi';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
@@ -109,6 +110,19 @@ const STATUS_FILTER_ALIASES = {
   waiting: 'waiting_on_counterparty',
   pending_win: 'win_confirmation_requested',
 };
+const ORIGIN_FILTER_VALUES = new Set([
+  'all',
+  'started_by_you',
+  'started_by_counterparty',
+]);
+const ORIGIN_FILTER_ALIASES = {
+  you: 'started_by_you',
+  me: 'started_by_you',
+  started_by_me: 'started_by_you',
+  counterparty: 'started_by_counterparty',
+  other: 'started_by_counterparty',
+  started_by_other: 'started_by_counterparty',
+};
 
 function normalizeTabValue(value) {
   const nextValue = String(value || '').trim().toLowerCase();
@@ -122,6 +136,12 @@ function normalizeStatusFilterValue(value) {
   const nextValue = String(value || '').trim().toLowerCase();
   const aliasedValue = STATUS_FILTER_ALIASES[nextValue] || nextValue;
   return STATUS_FILTER_VALUES.has(aliasedValue) ? aliasedValue : 'all';
+}
+
+function normalizeOriginFilterValue(value) {
+  const nextValue = String(value || '').trim().toLowerCase();
+  const aliasedValue = ORIGIN_FILTER_ALIASES[nextValue] || nextValue;
+  return ORIGIN_FILTER_VALUES.has(aliasedValue) ? aliasedValue : 'all';
 }
 
 function resolvePrimaryStatus(proposal) {
@@ -202,7 +222,15 @@ function getStatusOptions() {
   ];
 }
 
-function getEmptyStateCopy(activeTab, statusFilter) {
+function getOriginOptions() {
+  return [
+    { value: 'all', label: 'All origins' },
+    { value: 'started_by_you', label: 'Started by you' },
+    { value: 'started_by_counterparty', label: 'Started by counterparty' },
+  ];
+}
+
+function getEmptyStateCopy(activeTab, statusFilter, originFilter) {
   if (activeTab === 'drafts') {
     return {
       title: 'No draft opportunities yet.',
@@ -249,6 +277,20 @@ function getEmptyStateCopy(activeTab, statusFilter) {
     return {
       title: 'No pending win requests.',
       description: 'Agreement requests that need your confirmation will appear here.',
+    };
+  }
+
+  if (originFilter === 'started_by_you') {
+    return {
+      title: 'No opportunities started by you.',
+      description: 'Threads you initiated will appear here.',
+    };
+  }
+
+  if (originFilter === 'started_by_counterparty') {
+    return {
+      title: 'No opportunities started by counterparty.',
+      description: 'Threads initiated by the other party will appear here.',
     };
   }
 
@@ -305,6 +347,7 @@ function ProposalRow({
     actionsDisabled || !outcome.can_mark_won || Boolean(outcome.requested_by_current_user);
   const lostActionDisabled = actionsDisabled || !outcome.can_mark_lost;
   const continueActionDisabled = actionsDisabled || !canContinueNegotiating;
+  const threadContextParts = buildThreadContextParts(proposal, { includeExchangeCount: true });
   const helperText = outcome.requested_by_current_user
     ? 'Waiting for the counterparty to confirm the agreement.'
     : outcome.requested_by_counterparty
@@ -334,8 +377,14 @@ function ProposalRow({
               <PrimaryStatusBadge proposal={proposal} />
             </div>
 
-            <div className="flex items-center gap-4 text-sm text-slate-500">
+            <div className="flex items-center gap-2 text-sm text-slate-500 flex-wrap">
               <span>{proposal.template_name || 'Custom Template'}</span>
+              {threadContextParts.map((part, index) => (
+                <span key={`${part}-${index}`}>· {part}</span>
+              ))}
+            </div>
+
+            <div className="flex items-center gap-2 text-sm text-slate-500 flex-wrap">
               {proposal.is_private_mode && (proposal.outcome?.actor_role === 'party_b' || !proposal.counterparty_email) && !proposal.owner_user_id ? (
                 <span className="flex items-center gap-1">
                   <EyeOff className="w-3 h-3" />
@@ -474,15 +523,20 @@ export default function Proposals() {
     const params = new URLSearchParams(location.search || '');
     return normalizeStatusFilterValue(params.get('status'));
   });
+  const [originFilter, setOriginFilter] = useState(() => {
+    const params = new URLSearchParams(location.search || '');
+    return normalizeOriginFilterValue(params.get('origin'));
+  });
   const [searchQuery, setSearchQuery] = useState('');
   const [cursor, setCursor] = useState(null);
   const [cursorHistory, setCursorHistory] = useState([]);
 
   const normalizedSearch = useMemo(() => searchQuery.trim(), [searchQuery]);
   const statusOptions = useMemo(() => getStatusOptions(), []);
+  const originOptions = useMemo(() => getOriginOptions(), []);
   const emptyState = useMemo(
-    () => getEmptyStateCopy(activeTab, statusFilter),
-    [activeTab, statusFilter],
+    () => getEmptyStateCopy(activeTab, statusFilter, originFilter),
+    [activeTab, statusFilter, originFilter],
   );
   const refreshProposalQueries = () => {
     queryClient.invalidateQueries(['proposals-list']);
@@ -496,6 +550,7 @@ export default function Proposals() {
     const params = new URLSearchParams(location.search || '');
     const urlTab = normalizeTabValue(params.get('tab'));
     const urlStatus = normalizeStatusFilterValue(params.get('status'));
+    const urlOrigin = normalizeOriginFilterValue(params.get('origin'));
 
     if (urlTab !== activeTab) {
       setActiveTab(urlTab);
@@ -503,12 +558,15 @@ export default function Proposals() {
     if (urlStatus !== statusFilter) {
       setStatusFilter(urlStatus);
     }
-  }, [location.search, activeTab, statusFilter]);
+    if (urlOrigin !== originFilter) {
+      setOriginFilter(urlOrigin);
+    }
+  }, [location.search, activeTab, statusFilter, originFilter]);
 
   useEffect(() => {
     setCursor(null);
     setCursorHistory([]);
-  }, [activeTab, statusFilter, normalizedSearch]);
+  }, [activeTab, statusFilter, originFilter, normalizedSearch]);
 
   const { data: summary, isLoading: summaryLoading, isError: summaryError } = useQuery({
     queryKey: ['dashboard-summary'],
@@ -518,11 +576,12 @@ export default function Proposals() {
   });
 
   const { data, isLoading, isError, error, refetch } = useQuery({
-    queryKey: ['proposals-list', activeTab, statusFilter, normalizedSearch, cursor],
+    queryKey: ['proposals-list', activeTab, statusFilter, originFilter, normalizedSearch, cursor],
     queryFn: () =>
       proposalsClient.listWithMeta({
         tab: activeTab,
         status: statusFilter,
+        origin: originFilter,
         query: normalizedSearch,
         limit: 20,
         cursor,
@@ -710,6 +769,26 @@ export default function Proposals() {
     );
   };
 
+  const handleOriginFilterChange = (nextOrigin) => {
+    const normalizedOrigin = normalizeOriginFilterValue(nextOrigin);
+    setOriginFilter(normalizedOrigin);
+
+    const params = new URLSearchParams(location.search || '');
+    if (normalizedOrigin === 'all') {
+      params.delete('origin');
+    } else {
+      params.set('origin', normalizedOrigin);
+    }
+    const nextSearch = params.toString();
+    navigate(
+      {
+        pathname: location.pathname,
+        search: nextSearch ? `?${nextSearch}` : '',
+      },
+      { replace: true },
+    );
+  };
+
   const handleNextPage = () => {
     if (!page?.nextCursor) {
       return;
@@ -775,7 +854,7 @@ export default function Proposals() {
 
         <Card className="border-0 shadow-sm mb-6">
           <CardContent className="p-4">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div className="relative md:col-span-2">
                 <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                 <Input
@@ -791,6 +870,18 @@ export default function Proposals() {
                 </SelectTrigger>
                 <SelectContent>
                   {statusOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={originFilter} onValueChange={handleOriginFilterChange}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Filter by origin" />
+                </SelectTrigger>
+                <SelectContent>
+                  {originOptions.map((option) => (
                     <SelectItem key={option.value} value={option.value}>
                       {option.label}
                     </SelectItem>

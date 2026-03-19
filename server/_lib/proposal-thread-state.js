@@ -15,6 +15,16 @@ const PRIMARY_STATUS_LABELS = {
   closed_won: 'Closed: Won',
   closed_lost: 'Closed: Lost',
 };
+const ORIGIN_FILTER_ALIASES = {
+  you: 'started_by_you',
+  me: 'started_by_you',
+  started_by_me: 'started_by_you',
+  started_by_you: 'started_by_you',
+  counterparty: 'started_by_counterparty',
+  other: 'started_by_counterparty',
+  started_by_other: 'started_by_counterparty',
+  started_by_counterparty: 'started_by_counterparty',
+};
 
 function asText(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -27,6 +37,42 @@ function asLower(value) {
 function getPrimaryStatusLabel(value) {
   const normalized = asLower(value);
   return PRIMARY_STATUS_LABELS[normalized] || PRIMARY_STATUS_LABELS.needs_reply;
+}
+
+function deriveStartedByRole(proposal, actorRole, currentUser) {
+  if (actorRole === PROPOSAL_PARTY_A) {
+    return 'you';
+  }
+  if (actorRole === PROPOSAL_PARTY_B) {
+    return 'counterparty';
+  }
+
+  const ownerUserId = asText(proposal?.userId || proposal?.user_id);
+  const currentUserId = asText(currentUser?.id || currentUser?.userId);
+  if (ownerUserId && currentUserId) {
+    return ownerUserId === currentUserId ? 'you' : 'counterparty';
+  }
+
+  return null;
+}
+
+function deriveLastUpdateByRole({ actorRole, latestDirection, threadActivity, isDraft }) {
+  if (isDraft) {
+    return 'you';
+  }
+  if (latestDirection === 'sent') {
+    return 'you';
+  }
+  if (latestDirection === 'received') {
+    return 'counterparty';
+  }
+
+  const activityActorRole = asLower(threadActivity?.actorRole);
+  if (activityActorRole && actorRole) {
+    return activityActorRole === actorRole ? 'you' : 'counterparty';
+  }
+
+  return null;
 }
 
 export function deriveProposalPrimaryStatus(input = {}) {
@@ -201,6 +247,13 @@ export function getProposalThreadState(proposal, currentUser, options = {}) {
     waitingOnOtherParty,
     reviewStatus,
   });
+  const startedByRole = deriveStartedByRole(proposal, actorRole, currentUser);
+  const lastUpdateByRole = deriveLastUpdateByRole({
+    actorRole,
+    latestDirection,
+    threadActivity,
+    isDraft,
+  });
 
   return {
     actorRole,
@@ -215,10 +268,12 @@ export function getProposalThreadState(proposal, currentUser, options = {}) {
     isLatestVersion: true,
     isMutualInterest,
     latestDirection,
+    lastUpdateByRole,
     needsResponse,
     primaryStatusKey: primaryStatus.key,
     primaryStatusLabel: primaryStatus.label,
     reviewStatus,
+    startedByRole,
     sortAt:
       bucket === 'inbox'
         ? threadActivity?.at || createdAt
@@ -234,6 +289,14 @@ export function getProposalThreadState(proposal, currentUser, options = {}) {
     winConfirmationRequested,
     listType,
   };
+}
+
+function normalizeOriginFilter(value) {
+  const normalized = asLower(value);
+  if (!normalized || normalized === 'all') {
+    return 'all';
+  }
+  return ORIGIN_FILTER_ALIASES[normalized] || normalized;
 }
 
 export function matchesProposalThreadBucket(threadState, tab) {
@@ -325,4 +388,20 @@ export function matchesProposalInboxFilter(threadState, inboxFilter) {
     default:
       return true;
   }
+}
+
+export function matchesProposalThreadOrigin(threadState, originFilter) {
+  const normalizedOrigin = normalizeOriginFilter(originFilter);
+  if (!normalizedOrigin || normalizedOrigin === 'all') {
+    return true;
+  }
+
+  if (normalizedOrigin === 'started_by_you') {
+    return asLower(threadState.startedByRole) === 'you';
+  }
+  if (normalizedOrigin === 'started_by_counterparty') {
+    return asLower(threadState.startedByRole) === 'counterparty';
+  }
+
+  return true;
 }

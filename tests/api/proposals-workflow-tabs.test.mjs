@@ -1002,6 +1002,98 @@ test(
 );
 
 test(
+  'origin filter and row thread-context fields derive from canonical server roles',
+  { skip: !dbAvailable ? 'DATABASE_URL not set' : false },
+  async () => {
+    await ensureMigrated();
+
+    const runId = Date.now();
+    const ownerUserId = `workflow-origin-owner-${runId}`;
+    const ownerEmail = `workflow-origin-owner-${runId}@example.com`;
+    const counterpartyUserId = `workflow-origin-counterparty-${runId}`;
+    const counterpartyEmail = `workflow-origin-counterparty-${runId}@example.com`;
+    const ownerCookie = makeSessionCookie({
+      sub: ownerUserId,
+      email: ownerEmail,
+    });
+    const counterpartyCookie = makeSessionCookie({
+      sub: counterpartyUserId,
+      email: counterpartyEmail,
+    });
+    await seedProfessionalPlan(ownerUserId, ownerEmail);
+    await seedProfessionalPlan(counterpartyUserId, counterpartyEmail);
+
+    const ownerStartedThread = await createProposal(ownerCookie, {
+      title: `Origin Started by You ${runId}`,
+      status: 'sent',
+      sentAt: new Date(Date.now() - 60_000).toISOString(),
+      summary: `owner-origin-${runId}`,
+      partyBEmail: counterpartyEmail,
+    });
+
+    const counterpartyStartedThread = await createProposal(counterpartyCookie, {
+      title: `Origin Started by Counterparty ${runId}`,
+      status: 'sent',
+      sentAt: new Date().toISOString(),
+      summary: `counterparty-origin-${runId}`,
+      partyBEmail: ownerEmail,
+    });
+
+    const allRows = await listProposals(ownerCookie, { tab: 'all', limit: '80' });
+    const byId = new Map(allRows.map((row) => [row.id, row]));
+    const ownerStartedRow = byId.get(ownerStartedThread.id);
+    const counterpartyStartedRow = byId.get(counterpartyStartedThread.id);
+
+    assert.equal(ownerStartedRow?.started_by_role, 'you');
+    assert.equal(ownerStartedRow?.last_update_by_role, 'you');
+    assert.equal(counterpartyStartedRow?.started_by_role, 'counterparty');
+    assert.equal(counterpartyStartedRow?.last_update_by_role, 'counterparty');
+
+    const startedByYouRows = await listProposals(ownerCookie, {
+      tab: 'inbox',
+      origin: 'started_by_you',
+      limit: '40',
+    });
+    assert.equal(startedByYouRows.some((entry) => entry.id === ownerStartedThread.id), true);
+    assert.equal(startedByYouRows.some((entry) => entry.id === counterpartyStartedThread.id), false);
+
+    const startedByCounterpartyRows = await listProposals(ownerCookie, {
+      tab: 'inbox',
+      origin: 'started_by_counterparty',
+      limit: '40',
+    });
+    assert.equal(startedByCounterpartyRows.some((entry) => entry.id === counterpartyStartedThread.id), true);
+    assert.equal(startedByCounterpartyRows.some((entry) => entry.id === ownerStartedThread.id), false);
+
+    const startedByYouWaitingRows = await listProposals(ownerCookie, {
+      tab: 'inbox',
+      origin: 'started_by_you',
+      status: 'waiting_on_counterparty',
+      query: `owner-origin-${runId}`,
+      limit: '20',
+    });
+    assert.equal(startedByYouWaitingRows.some((entry) => entry.id === ownerStartedThread.id), true);
+    assert.equal(startedByYouWaitingRows.some((entry) => entry.id === counterpartyStartedThread.id), false);
+
+    const startedByCounterpartyNeedsReplyRows = await listProposals(ownerCookie, {
+      tab: 'inbox',
+      origin: 'started_by_counterparty',
+      status: 'needs_reply',
+      query: `counterparty-origin-${runId}`,
+      limit: '20',
+    });
+    assert.equal(
+      startedByCounterpartyNeedsReplyRows.some((entry) => entry.id === counterpartyStartedThread.id),
+      true,
+    );
+    assert.equal(
+      startedByCounterpartyNeedsReplyRows.some((entry) => entry.id === ownerStartedThread.id),
+      false,
+    );
+  },
+);
+
+test(
   'archive and unarchive do not change Inbox ordering without new thread activity',
   { skip: !dbAvailable ? 'DATABASE_URL not set' : false },
   async () => {

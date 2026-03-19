@@ -12,6 +12,7 @@ import {
 import {
   getProposalThreadState,
   matchesProposalInboxFilter,
+  matchesProposalThreadOrigin,
   matchesProposalThreadBucket,
   matchesProposalThreadStatus,
   toDateOrNull,
@@ -209,6 +210,8 @@ function mapProposalRow(
     party_b_outcome_at: proposal.partyBOutcomeAt || null,
     thread_bucket: threadState.bucket,
     latest_direction: threadState.latestDirection,
+    started_by_role: threadState.startedByRole || null,
+    last_update_by_role: threadState.lastUpdateByRole || null,
     needs_response: threadState.needsResponse,
     waiting_on_other_party: threadState.waitingOnOtherParty,
     win_confirmation_requested: threadState.winConfirmationRequested,
@@ -304,10 +307,12 @@ export default async function handler(req: any, res: any) {
       const query = String(req.query?.query || req.query?.q || '').trim();
       const rawStatusFilter = String(req.query?.status || '').trim().toLowerCase();
       const rawInboxFilter = String(req.query?.inbox || '').trim().toLowerCase();
+      const rawOriginFilter = String(req.query?.origin || '').trim().toLowerCase();
       const cursor = decodeCursor(String(req.query?.cursor || ''));
       const tab = rawTab || rawInboxFilter ? rawTab || 'inbox' : 'all';
       const inboxFilter = rawInboxFilter;
       const statusFilter = rawStatusFilter;
+      const originFilter = rawOriginFilter;
 
       const hasUserEmail = typeof auth.user.email === 'string' && auth.user.email.trim().length > 0;
       const dbIdentity = getDatabaseIdentitySnapshot();
@@ -367,6 +372,7 @@ export default async function handler(req: any, res: any) {
           tab,
           statusFilter: statusFilter || 'all',
           inboxFilter: inboxFilter || 'all',
+          originFilter: originFilter || 'all',
           hasSearchQuery: Boolean(query),
           recipientSharedProposalCount: recipientSharedProposalIds.length,
           recipientSharedLinkMatchesByEmail: recipientSharedLinkMatchCounts.email,
@@ -399,6 +405,7 @@ export default async function handler(req: any, res: any) {
               tab,
               statusFilter,
               inboxFilter,
+              originFilter,
               recipientSharedProposalCount: recipientSharedProposalIds.length,
               recipientSharedLinkMatchesByEmail: recipientSharedLinkMatchCounts.email,
               recipientSharedLinkMatchesByAuthorizedUser: recipientSharedLinkMatchCounts.authorized,
@@ -437,6 +444,7 @@ export default async function handler(req: any, res: any) {
         }))
         .filter(({ threadState }) => matchesProposalThreadBucket(threadState, tab))
         .filter(({ threadState }) => matchesProposalThreadStatus(threadState, statusFilter))
+        .filter(({ threadState }) => matchesProposalThreadOrigin(threadState, originFilter))
         .filter(({ threadState }) =>
           tab === 'inbox' ? matchesProposalInboxFilter(threadState, inboxFilter) : true,
         )
@@ -477,6 +485,7 @@ export default async function handler(req: any, res: any) {
             tab,
             statusFilter,
             inboxFilter,
+            originFilter,
             hasSearchQuery: Boolean(query),
           }),
         );
@@ -584,6 +593,7 @@ export default async function handler(req: any, res: any) {
           tab,
           statusFilter: statusFilter || 'all',
           inboxFilter: inboxFilter || 'all',
+          originFilter: originFilter || 'all',
           resultCount: pageRows.length,
           fetchedCount: rows.length,
           matchedCount: filteredEntries.length,

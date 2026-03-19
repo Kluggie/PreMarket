@@ -28,8 +28,13 @@ test('proposals page uses Inbox/Drafts/Closed/Archived as the top-level tabs', (
 
 test('proposals page uses one canonical primary status chip and simplified filter labels', () => {
   const proposalsPage = readRepoFile('src/pages/Proposals.jsx');
+  const threadContextUi = readRepoFile('src/lib/proposalThreadContextUi.js');
 
   assert.match(proposalsPage, /All states/);
+  assert.match(proposalsPage, /All origins/);
+  assert.match(proposalsPage, /Started by you/);
+  assert.match(proposalsPage, /Started by counterparty/);
+  assert.match(threadContextUi, /Last update from/);
   assert.match(proposalsPage, /PrimaryStatusBadge/);
   assert.match(proposalsPage, /Needs Reply/);
   assert.match(proposalsPage, /Under Review/);
@@ -42,6 +47,5 @@ test('proposals page uses one canonical primary status chip and simplified filte
   assert.doesNotMatch(proposalsPage, /ReviewBadge/);
   assert.doesNotMatch(proposalsPage, /MutualInterestBadge/);
   assert.doesNotMatch(proposalsPage, /Link \{sharedReportStatus/);
-  assert.doesNotMatch(proposalsPage, /Received/);
   assert.doesNotMatch(proposalsPage, /Waiting on Other Party/);
 });

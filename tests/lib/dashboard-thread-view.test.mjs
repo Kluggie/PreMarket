@@ -39,12 +39,16 @@ test('dashboard restores the old proposal metric row instead of inbox bucket car
 
 test('dashboard keeps action buckets but drops inbox-only routing and mutual-interest action cards', () => {
   const dashboard = readRepoFile('src/pages/Dashboard.jsx');
+  const threadContextUi = readRepoFile('src/lib/proposalThreadContextUi.js');
 
   assert.match(dashboard, /Needs your response/);
   assert.match(dashboard, /Drafts not sent/);
   assert.match(dashboard, /Waiting on counterparty/);
   assert.match(dashboard, /Needs review \/ verify/);
   assert.match(dashboard, /Opportunities\?tab=all&status=win_confirmation_requested/);
+  assert.match(dashboard, /buildThreadContextParts/);
+  assert.match(threadContextUi, /Started by/);
+  assert.match(threadContextUi, /Last update from/);
 
   assert.doesNotMatch(dashboard, /Mutual interest ready/);
   assert.doesNotMatch(dashboard, /Opportunities\?tab=inbox&inbox=win_confirmation_requested/);
