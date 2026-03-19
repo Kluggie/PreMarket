@@ -227,6 +227,13 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     if (pdfFormat === 'web-parity') {
       const reviewTitle = buildMediationReviewTitle(comparison.title, report.title, evaluationResult.title);
       const reviewSubtitle = buildMediationReviewSubtitle(comparison.title, report.title, evaluationResult.title);
+      const resolvedWebParityTitle = (() => {
+        const preferred = asText(reviewSubtitle) || asText(reviewTitle);
+        if (preferred && preferred.toLowerCase() !== MEDIATION_REVIEW_TITLE.toLowerCase()) {
+          return preferred;
+        }
+        return 'Opportunity';
+      })();
       const filenameBase = slugify(reviewTitle) || 'ai-mediation-review';
       const filename =
         filenameBase === 'ai-mediation-review'
@@ -257,8 +264,8 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
         : sections;
 
       const pdfBuffer = await renderWebParityPdfBuffer({
-        title: MEDIATION_REVIEW_TITLE,
-        subtitle: reviewSubtitle,
+        title: resolvedWebParityTitle,
+        subtitle: '',
         comparisonId: comparison.id,
         metrics: [
           { label: 'Recommendation', value: recommendationMetric },

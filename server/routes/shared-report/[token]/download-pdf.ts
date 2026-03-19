@@ -225,6 +225,13 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         report.title,
         evaluationResult.title,
       );
+      const resolvedWebParityTitle = (() => {
+        const preferred = asText(subtitle) || asText(title);
+        if (preferred && preferred.toLowerCase() !== MEDIATION_REVIEW_TITLE.toLowerCase()) {
+          return preferred;
+        }
+        return 'Opportunity';
+      })();
       const comparisonId =
         asText(resolved.comparison?.id) ||
         asText(resolved.proposal?.documentComparisonId) ||
@@ -261,8 +268,8 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         : sections;
 
       const pdfBuffer = await renderWebParityPdfBuffer({
-        title: MEDIATION_REVIEW_TITLE,
-        subtitle,
+        title: resolvedWebParityTitle,
+        subtitle: '',
         comparisonId,
         metrics: [
           { label: 'Recommendation', value: recommendationMetric },

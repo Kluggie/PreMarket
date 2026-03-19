@@ -734,10 +734,10 @@ export async function renderWebParityPdfBuffer(document: PdfWebParityDocument): 
     text: titleSafe,
     x: mL,
     maxW: contentW,
-    size: 24,
+    size: 20,
     wt: 'bold',
     color: colors.text,
-    lineHeight: 28,
+    lineHeight: 24,
     gapAfter: 2,
   });
 

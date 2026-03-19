@@ -2,7 +2,7 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Tabs, TabsContent } from '@/components/ui/tabs';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { BarChart3, Clock, FileText, Loader2, Sparkles } from 'lucide-react';
 import {
@@ -418,17 +418,54 @@ export function ComparisonProposalDetailsTab({
 export function ComparisonDetailTabs({
   activeTab = 'report',
   onTabChange,
+  hasReportBadge = false,
+  tabOrder = ['report', 'details'],
   detailsTabLabel = 'Opportunity',
   aiReportProps = {},
   proposalDetailsProps = {},
 }) {
+  const orderedTabs = Array.isArray(tabOrder)
+    ? tabOrder.filter((tab, index, source) => ['report', 'details'].includes(tab) && source.indexOf(tab) === index)
+    : ['report', 'details'];
+
   return (
     <Tabs value={activeTab} onValueChange={onTabChange}>
-      <TabsContent value="report" className="mt-0" aria-label={MEDIATION_REVIEW_LABEL}>
+      <TabsList className="bg-white border border-slate-200 p-1">
+        {orderedTabs.map((tab) => {
+          if (tab === 'report') {
+            return (
+              <TabsTrigger
+                key="report"
+                value="report"
+                className="data-[state=active]:bg-slate-900 data-[state=active]:text-white"
+              >
+                <BarChart3 className="w-4 h-4 mr-2" />
+                {MEDIATION_REVIEW_LABEL}
+                {hasReportBadge ? (
+                  <Badge className="ml-2 bg-green-100 text-green-700 text-xs">Complete</Badge>
+                ) : null}
+              </TabsTrigger>
+            );
+          }
+
+          return (
+            <TabsTrigger
+              key="details"
+              value="details"
+              className="data-[state=active]:bg-slate-900 data-[state=active]:text-white"
+            >
+              <FileText className="w-4 h-4 mr-2" />
+              {detailsTabLabel}
+            </TabsTrigger>
+          );
+        })}
+      </TabsList>
+
+      <TabsContent value="report" className="mt-6" aria-label={MEDIATION_REVIEW_LABEL}>
         <ComparisonAiReportTab {...aiReportProps} />
       </TabsContent>
 
-      <TabsContent value="details" className="mt-0">
+      <TabsContent value="details" className="mt-6">
         <ComparisonProposalDetailsTab title={detailsTabLabel} {...proposalDetailsProps} />
       </TabsContent>
     </Tabs>
