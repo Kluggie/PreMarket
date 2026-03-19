@@ -249,16 +249,24 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
           asText(evaluationResult.summary) ||
           'No AI mediation summary is available yet.',
       });
-      const completionStateLabel = sections.length > 0 ? 'Complete' : 'Pending';
+      const decisionExplanation = asText(decisionStatus.explanation);
+      const webParitySections = decisionExplanation
+        ? [
+            ...sections,
+            {
+              heading: 'Decision Explanation',
+              paragraphs: [decisionExplanation],
+            },
+          ]
+        : sections;
 
       const pdfBuffer = await renderWebParityPdfBuffer({
         title: MEDIATION_REVIEW_TITLE,
         subtitle,
         comparisonId,
-        opportunityLabel: 'Opportunity',
-        completionStateLabel,
         metrics: [
           { label: 'Recommendation', value: recommendationMetric },
+          { label: 'Confidence', value: `${confidence}%` },
           { label: 'Status', value: decisionStatus.label || 'Unknown' },
           {
             label: OPEN_QUESTIONS_LABEL,
@@ -270,7 +278,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
           { label: 'Last Updated', value: formatDateTime(resolved.comparison?.updatedAt) },
         ],
         footerNote: 'Shared report -- recipient-safe content only',
-        sections,
+        sections: webParitySections,
       });
       sendPdf(res, filename, pdfBuffer);
       return;

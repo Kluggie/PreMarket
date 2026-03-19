@@ -61,8 +61,6 @@ export type PdfWebParityDocument = {
   subtitle?: string;
   comparisonId?: string | null;
   generatedAt?: Date;
-  opportunityLabel?: string;
-  completionStateLabel?: string;
   metrics?: PdfWebParityMetric[];
   timelineItems?: PdfWebParityTimelineItem[];
   footerNote?: string;
@@ -726,103 +724,32 @@ export async function renderWebParityPdfBuffer(document: PdfWebParityDocument): 
     if (opts.gapAfter) y += opts.gapAfter;
   };
 
-  const drawBadge = (opts: {
-    x: number;
-    yPos: number;
-    text: string;
-    bg: [number, number, number];
-    border: [number, number, number];
-    color: [number, number, number];
-    wt?: 'normal' | 'bold';
-    size?: number;
-    padX?: number;
-    height?: number;
-  }) => {
-    const textSafe = normalizePdfText(opts.text);
-    const padX = opts.padX ?? 8;
-    const height = opts.height ?? 20;
-    const size = opts.size ?? 10;
-    pdf.setFont('helvetica', opts.wt ?? 'normal');
-    pdf.setFontSize(size);
-    const textWidth = pdf.getTextWidth(textSafe);
-    const width = textWidth + padX * 2;
-    pdf.setFillColor(opts.bg[0], opts.bg[1], opts.bg[2]);
-    pdf.rect(opts.x, opts.yPos, width, height, 'F');
-    pdf.setDrawColor(opts.border[0], opts.border[1], opts.border[2]);
-    pdf.setLineWidth(0.75);
-    pdf.rect(opts.x, opts.yPos, width, height, 'S');
-    setFont(opts.wt ?? 'normal', size, opts.color);
-    pdf.text(textSafe, opts.x + padX, opts.yPos + 13);
-    return width;
-  };
-
   const titleSafe = normalizePdfText(document.title || 'AI Mediation Review');
   const subtitleSafe = normalizePdfText(document.subtitle || '');
-  const opportunityLabelSafe = normalizePdfText(document.opportunityLabel || 'Opportunity');
-  const completionStateSafe = normalizePdfText(document.completionStateLabel || 'Complete');
   const hasSubtitle =
     Boolean(subtitleSafe) &&
     subtitleSafe.localeCompare(titleSafe, undefined, { sensitivity: 'accent' }) !== 0;
 
-  ensureSpace(70);
-  let badgeX = mL;
-  const badgeY = y;
-  badgeX += drawBadge({
-    x: badgeX,
-    yPos: badgeY,
-    text: opportunityLabelSafe,
-    bg: colors.panel,
-    border: colors.border,
-    color: colors.muted,
-    wt: 'bold',
-    size: 10,
-    padX: 10,
-    height: 22,
-  });
-  badgeX += 8;
-  badgeX += drawBadge({
-    x: badgeX,
-    yPos: badgeY,
+  writeWrappedText({
     text: titleSafe,
-    bg: colors.dark,
-    border: colors.dark,
-    color: colors.darkText,
+    x: mL,
+    maxW: contentW,
+    size: 24,
     wt: 'bold',
-    size: 11,
-    padX: 10,
-    height: 22,
+    color: colors.text,
+    lineHeight: 28,
+    gapAfter: 2,
   });
-  badgeX += 8;
-  pdf.setFont('helvetica', 'bold');
-  pdf.setFontSize(10);
-  const completionBadgeWidth = pdf.getTextWidth(completionStateSafe) + 20;
-  if (badgeX + completionBadgeWidth > pageWidth - mR) {
-    y += 28;
-    badgeX = mL;
-  }
-  drawBadge({
-    x: badgeX,
-    yPos: y,
-    text: completionStateSafe,
-    bg: colors.successBg,
-    border: colors.successBorder,
-    color: colors.successText,
-    wt: 'bold',
-    size: 10,
-    padX: 10,
-    height: 22,
-  });
-  y += 32;
 
   if (hasSubtitle) {
     writeWrappedText({
       text: subtitleSafe,
       x: mL,
       maxW: contentW,
-      size: 13,
+      size: 14,
       wt: 'bold',
       color: colors.text,
-      lineHeight: 16,
+      lineHeight: 17,
       gapAfter: 2,
     });
   }
@@ -856,25 +783,29 @@ export async function renderWebParityPdfBuffer(document: PdfWebParityDocument): 
     : [];
   if (metrics.length > 0) {
     const colGap = 8;
-    const colCount = Math.min(3, metrics.length);
+    const colCount = Math.min(4, Math.max(1, metrics.length));
     const colW = (contentW - (colCount - 1) * colGap) / colCount;
     const rowHeight = 52;
-    ensureSpace(rowHeight + 14);
-    const rowY = y;
-    metrics.slice(0, colCount).forEach((metric, index) => {
-      const boxX = mL + index * (colW + colGap);
-      pdf.setFillColor(colors.metricBg[0], colors.metricBg[1], colors.metricBg[2]);
-      pdf.rect(boxX, rowY, colW, rowHeight, 'F');
-      pdf.setDrawColor(colors.border[0], colors.border[1], colors.border[2]);
-      pdf.setLineWidth(0.75);
-      pdf.rect(boxX, rowY, colW, rowHeight, 'S');
-      setFont('bold', 8.5, colors.muted);
-      pdf.text(metric.label.toUpperCase(), boxX + 10, rowY + 14);
-      setFont('bold', 12, colors.text);
-      const metricLines = pdf.splitTextToSize(metric.value, colW - 20) as string[];
-      pdf.text(metricLines[0] || metric.value, boxX + 10, rowY + 33);
-    });
-    y += rowHeight + 14;
+    for (let rowStart = 0; rowStart < metrics.length; rowStart += colCount) {
+      const row = metrics.slice(rowStart, rowStart + colCount);
+      ensureSpace(rowHeight + 8);
+      const rowY = y;
+      row.forEach((metric, index) => {
+        const boxX = mL + index * (colW + colGap);
+        pdf.setFillColor(colors.metricBg[0], colors.metricBg[1], colors.metricBg[2]);
+        pdf.rect(boxX, rowY, colW, rowHeight, 'F');
+        pdf.setDrawColor(colors.border[0], colors.border[1], colors.border[2]);
+        pdf.setLineWidth(0.75);
+        pdf.rect(boxX, rowY, colW, rowHeight, 'S');
+        setFont('bold', 8.5, colors.muted);
+        pdf.text(metric.label.toUpperCase(), boxX + 10, rowY + 14);
+        setFont('bold', 12, colors.text);
+        const metricLines = pdf.splitTextToSize(metric.value, colW - 20) as string[];
+        pdf.text(metricLines[0] || metric.value, boxX + 10, rowY + 33);
+      });
+      y += rowHeight + 8;
+    }
+    y += 6;
   }
 
   const timelineItems = Array.isArray(document.timelineItems)

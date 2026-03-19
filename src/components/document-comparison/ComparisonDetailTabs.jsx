@@ -2,12 +2,13 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { BarChart3, Clock, FileText, Loader2, Sparkles } from 'lucide-react';
 import {
   hasV2Report,
-  getDecisionStatusInfo,
+  getDecisionStatusDetails,
+  getConfidencePercent,
   MEDIATION_REVIEW_LABEL,
   MISSING_OR_REDACTED_INFO_LABEL,
   OPEN_QUESTIONS_LABEL,
@@ -87,6 +88,7 @@ export function ComparisonAiReportTab({
   runDetailsHref = '',
   report = {},
   recommendation = '',
+  confidenceFallbackScore = null,
   timelineItems = [],
 }) {
   const safeReport = report && typeof report === 'object' && !Array.isArray(report) ? report : {};
@@ -95,7 +97,13 @@ export function ComparisonAiReportTab({
   const reportSectionsFiltered = isV2 ? [] : filterLegacySectionsForDisplay(reportSections);
   const showRunDetailsLink = Boolean(runDetailsHref) && (hasReport || hasEvaluations);
   const normalizedTimelineItems = Array.isArray(timelineItems) ? timelineItems : [];
-  const decisionStatus = getDecisionStatusInfo(safeReport);
+  const decisionStatus = getDecisionStatusDetails(safeReport);
+  const confidencePercent = getConfidencePercent(
+    safeReport,
+    confidenceFallbackScore ?? safeReport?.similarity_score ?? null,
+  );
+  const openQuestionsCount = Array.isArray(safeReport.missing) ? safeReport.missing.length : 0;
+  const decisionExplanation = asText(decisionStatus.explanation);
   const decisionToneClass =
     decisionStatus.tone === 'success'
       ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
@@ -180,17 +188,19 @@ export function ComparisonAiReportTab({
               </Badge>
             </div>
             <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Confidence</span>
+              <Badge variant="outline">{confidencePercent}%</Badge>
+            </div>
+            <div className="flex items-center gap-2">
               <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Status</span>
               <Badge className={decisionToneClass}>{decisionStatus.label}</Badge>
             </div>
-            {isV2 && Array.isArray(safeReport.missing) && safeReport.missing.length > 0 ? (
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">{OPEN_QUESTIONS_LABEL}</span>
-                <Badge className="bg-amber-100 text-amber-700 border-amber-200">
-                  {safeReport.missing.length} item{safeReport.missing.length !== 1 ? 's' : ''}
-                </Badge>
-              </div>
-            ) : null}
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">{OPEN_QUESTIONS_LABEL}</span>
+              <Badge className="bg-amber-100 text-amber-700 border-amber-200">
+                {openQuestionsCount} item{openQuestionsCount !== 1 ? 's' : ''}
+              </Badge>
+            </div>
             {showRunDetailsLink ? (
               <div className="ml-auto">
                 <Link
@@ -276,6 +286,13 @@ export function ComparisonAiReportTab({
                       </li>
                     ))}
                   </ul>
+                </div>
+              ) : null}
+
+              {decisionExplanation ? (
+                <div className="border-t border-slate-100 pt-6" data-testid="decision-explanation">
+                  <h2 className="text-sm font-semibold text-slate-700 mb-3">Decision Explanation</h2>
+                  <p className="text-sm text-slate-700 leading-relaxed">{decisionExplanation}</p>
                 </div>
               ) : null}
 
@@ -401,54 +418,17 @@ export function ComparisonProposalDetailsTab({
 export function ComparisonDetailTabs({
   activeTab = 'report',
   onTabChange,
-  hasReportBadge = false,
-  tabOrder = ['report', 'details'],
   detailsTabLabel = 'Opportunity',
   aiReportProps = {},
   proposalDetailsProps = {},
 }) {
-  const orderedTabs = Array.isArray(tabOrder)
-    ? tabOrder.filter((tab, index, source) => ['report', 'details'].includes(tab) && source.indexOf(tab) === index)
-    : ['report', 'details'];
-
   return (
     <Tabs value={activeTab} onValueChange={onTabChange}>
-      <TabsList className="bg-white border border-slate-200 p-1">
-        {orderedTabs.map((tab) => {
-          if (tab === 'report') {
-            return (
-              <TabsTrigger
-                key="report"
-                value="report"
-                className="data-[state=active]:bg-slate-900 data-[state=active]:text-white"
-              >
-                <BarChart3 className="w-4 h-4 mr-2" />
-                {MEDIATION_REVIEW_LABEL}
-                {hasReportBadge ? (
-                  <Badge className="ml-2 bg-green-100 text-green-700 text-xs">Complete</Badge>
-                ) : null}
-              </TabsTrigger>
-            );
-          }
-
-          return (
-            <TabsTrigger
-              key="details"
-              value="details"
-              className="data-[state=active]:bg-slate-900 data-[state=active]:text-white"
-            >
-              <FileText className="w-4 h-4 mr-2" />
-              {detailsTabLabel}
-            </TabsTrigger>
-          );
-        })}
-      </TabsList>
-
-      <TabsContent value="report" className="mt-6">
+      <TabsContent value="report" className="mt-0" aria-label={MEDIATION_REVIEW_LABEL}>
         <ComparisonAiReportTab {...aiReportProps} />
       </TabsContent>
 
-      <TabsContent value="details" className="mt-6">
+      <TabsContent value="details" className="mt-0">
         <ComparisonProposalDetailsTab title={detailsTabLabel} {...proposalDetailsProps} />
       </TabsContent>
     </Tabs>
