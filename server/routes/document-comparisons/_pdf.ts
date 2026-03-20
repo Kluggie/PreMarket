@@ -1924,6 +1924,25 @@ export async function renderOpportunityHistoryPdfBuffer(
     gapAfter: 8,
   });
 
+  const htmlToPlainText = (value: unknown) =>
+    String(value || '')
+      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, ' ')
+      .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, ' ')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/(p|div|section|article|h[1-6]|li|tr|table|blockquote)>/gi, '\n')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&amp;/gi, '&')
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>')
+      .replace(/&quot;/gi, '"')
+      .replace(/&#39;/gi, "'")
+      .replace(/\r/g, '')
+      .replace(/[\t ]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .replace(/[ \t]{2,}/g, ' ')
+      .trim();
+
   const entries = Array.isArray(document.entries) ? document.entries : [];
   entries.forEach((entry, index) => {
     const roundLabel = normalizeText(entry.roundLabel || `Round ${index + 1}`);
@@ -1986,13 +2005,33 @@ export async function renderOpportunityHistoryPdfBuffer(
       });
     }
 
-    const blocks = parseBlocksFromHtml(
-      String(entry.html || ''),
-      String(entry.text || ''),
-    );
-    if (blocks.length > 0) {
-      renderRichBlocks(blocks);
-    } else {
+    let renderedContent = false;
+    try {
+      const blocks = parseBlocksFromHtml(
+        String(entry.html || ''),
+        String(entry.text || ''),
+      );
+      if (blocks.length > 0) {
+        renderRichBlocks(blocks);
+        renderedContent = true;
+      }
+    } catch {
+      const fallbackText = normalizeText(String(entry.text || '') || htmlToPlainText(entry.html));
+      if (fallbackText) {
+        writeWrapped({
+          text: fallbackText,
+          x: mL,
+          maxW: contentW,
+          size: 10.5,
+          wt: 'normal',
+          color: colors.text,
+          lineHeight: 14,
+          gapAfter: 6,
+        });
+        renderedContent = true;
+      }
+    }
+    if (!renderedContent) {
       writeWrapped({
         text: '(No shared content provided)',
         x: mL,

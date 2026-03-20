@@ -52,7 +52,6 @@ import {
 import {
   ComparisonDetailTabs,
 } from '@/components/document-comparison/ComparisonDetailTabs';
-import OpportunityActionGroups from '@/components/document-comparison/OpportunityActionGroups';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -94,6 +93,34 @@ const COACH_INTENT_LABELS = {
 
 function asText(value) {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function renderActionButtons(actions) {
+  if (!Array.isArray(actions) || actions.length === 0) {
+    return null;
+  }
+  return actions
+    .filter((action) => asText(action?.label) && typeof action?.onClick === 'function')
+    .map((action, index) => {
+      const Icon = action?.icon || null;
+      const key = asText(action?.key) || `action-${index}`;
+      const isLoading = Boolean(action?.loading);
+      return (
+        <Button
+          key={key}
+          type="button"
+          size="sm"
+          variant={asText(action?.variant) || 'outline'}
+          className={asText(action?.className) || undefined}
+          onClick={action.onClick}
+          disabled={Boolean(action?.disabled) || isLoading}
+        >
+          {isLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+          {!isLoading && Icon ? <Icon className="w-4 h-4 mr-2" /> : null}
+          {asText(action.label)}
+        </Button>
+      );
+    });
 }
 
 function clampStep(value, fallback = 0) {
@@ -2504,18 +2531,32 @@ export default function SharedReport() {
                 </div>
                 {step === 0 ? (
                   <div className="border-t border-slate-200 pt-4">
-                    <OpportunityActionGroups
-                      variant="inline"
-                      layout="split"
-                      downloads={step0DownloadActions}
-                      statusActions={step0StatusActions}
-                      statusBadge={(
-                        <Badge className={`border font-medium ${getPrimaryStatusClass(parentPrimaryStatusKey)}`}>
-                          {parentPrimaryStatusLabel}
-                        </Badge>
-                      )}
-                      statusHelperText={canUpdateOutcomeFromStep0 ? outcomeHelperText : ''}
-                    />
+                    <div className="grid gap-4 sm:grid-cols-2 sm:gap-6">
+                      <div className="space-y-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            Status
+                          </p>
+                          <Badge className={`border font-medium ${getPrimaryStatusClass(parentPrimaryStatusKey)}`}>
+                            {parentPrimaryStatusLabel}
+                          </Badge>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          {renderActionButtons(step0StatusActions)}
+                        </div>
+                        {canUpdateOutcomeFromStep0 && outcomeHelperText ? (
+                          <p className="text-xs text-slate-500">{outcomeHelperText}</p>
+                        ) : null}
+                      </div>
+                      <div className="space-y-2">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          Downloads
+                        </p>
+                        <div className="flex flex-wrap items-center gap-2">
+                          {renderActionButtons(step0DownloadActions)}
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 ) : null}
               </CardContent>
