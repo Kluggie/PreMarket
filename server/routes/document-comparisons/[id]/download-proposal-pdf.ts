@@ -7,6 +7,7 @@ import { loadSharedReportHistory } from '../../../_lib/shared-report-history.js'
 import {
   getComparisonId,
   renderOpportunityHistoryPdfBuffer,
+  renderProfessionalPdfBuffer,
   sendPdf,
   slugify,
 } from '../_pdf.js';
@@ -26,6 +27,56 @@ function formatDateTime(value: unknown) {
     hour: 'numeric',
     minute: '2-digit',
   });
+}
+
+function htmlToText(value: unknown) {
+  return String(value || '')
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, ' ')
+    .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, ' ')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|section|article|h[1-6]|li|tr|table|blockquote)>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/\r/g, '')
+    .replace(/[\t ]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+}
+
+function buildFallbackSections(entries: any[]) {
+  return [
+    {
+      heading: 'Shared History',
+      level: 1 as const,
+      paragraphs: [],
+    },
+    ...entries.map((entry: any) => {
+      const captionBits = [
+        asText(entry?.authorLabel) ? `Author: ${asText(entry.authorLabel)}` : '',
+        asText(entry?.sourceLabel) ? `Source: ${asText(entry.sourceLabel)}` : '',
+        asText(entry?.timestampLabel) ? `Shared: ${asText(entry.timestampLabel)}` : '',
+      ].filter(Boolean);
+      const files = Array.isArray(entry?.files) ? entry.files.map((file: any) => asText(file)).filter(Boolean) : [];
+      const bodyText =
+        asText(entry?.text) ||
+        htmlToText(entry?.html) ||
+        '(No shared content provided)';
+      return {
+        heading: asText(entry?.roundLabel) || 'Shared Round',
+        level: 2 as const,
+        caption: captionBits.join(' | '),
+        paragraphs: files.length > 0
+          ? [bodyText, `Files: ${files.join(', ')}`]
+          : [bodyText],
+      };
+    }),
+  ];
 }
 
 export default async function handler(req: any, res: any, comparisonIdParam?: string) {
@@ -145,7 +196,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     }
 
     const filename = `${slugify(comparison.title)}-opportunity-shared-history.pdf`;
-    const pdfBuffer = await renderOpportunityHistoryPdfBuffer({
+    const pdfInput = {
       title: comparison.title || 'Opportunity',
       comparisonId: comparison.id,
       historyHeading: 'Shared History',
@@ -161,7 +212,28 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       ].filter((item) => item.value),
       footerNote: 'Recipient-safe shared history export',
       entries: roundEntries as any,
-    });
+    };
+    let pdfBuffer: Buffer;
+    try {
+      pdfBuffer = await renderOpportunityHistoryPdfBuffer(pdfInput);
+    } catch (error: any) {
+      console.error(
+        JSON.stringify({
+          level: 'error',
+          route: '/api/document-comparisons/[id]/download/proposal-pdf',
+          action: 'opportunity_pdf_render_failed',
+          comparisonId: comparison.id,
+          message: asText(error?.message) || 'unknown_error',
+        }),
+      );
+      pdfBuffer = await renderProfessionalPdfBuffer({
+        title: pdfInput.title,
+        subtitle: 'Opportunity',
+        comparisonId: comparison.id,
+        footerNote: pdfInput.footerNote,
+        sections: buildFallbackSections(roundEntries as any[]),
+      });
+    }
     sendPdf(res, filename, pdfBuffer);
   });
 }

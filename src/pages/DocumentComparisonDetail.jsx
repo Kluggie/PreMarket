@@ -14,6 +14,7 @@ import { Label } from '@/components/ui/label';
 import {
   ComparisonDetailTabs,
 } from '@/components/document-comparison/ComparisonDetailTabs';
+import OpportunityActionGroups from '@/components/document-comparison/OpportunityActionGroups';
 import {
   Dialog,
   DialogContent,
@@ -821,6 +822,35 @@ export default function DocumentComparisonDetail() {
         ]
       : []),
   ];
+  const detailDownloadActions = [
+    {
+      key: 'opportunity-pdf',
+      label: 'Opportunity PDF',
+      onClick: () => downloadProposalPdfMutation.mutate(),
+      disabled: downloadProposalPdfMutation.isPending,
+      loading: downloadProposalPdfMutation.isPending,
+      variant: 'outline',
+      icon: Download,
+    },
+    {
+      key: 'ai-review-pdf',
+      label: 'AI Mediation Review PDF',
+      onClick: () => downloadAiReportMutation.mutate(),
+      disabled: downloadAiReportMutation.isPending,
+      loading: downloadAiReportMutation.isPending,
+      variant: 'outline',
+      icon: Download,
+    },
+    {
+      key: 'ai-review-web-layout-pdf',
+      label: 'AI Review PDF (Web Layout)',
+      onClick: () => downloadAiReportWebParityMutation.mutate(),
+      disabled: downloadAiReportWebParityMutation.isPending,
+      loading: downloadAiReportWebParityMutation.isPending,
+      variant: 'outline',
+      icon: Download,
+    },
+  ];
 
   return (
     <div className="min-h-screen bg-slate-50 py-6">
@@ -856,35 +886,15 @@ export default function DocumentComparisonDetail() {
               <ArrowLeft className="w-4 h-4 mr-2" />
               Edit Opportunity
             </Button>
-            <Button
-              variant="outline"
-              onClick={() => downloadProposalPdfMutation.mutate()}
-              disabled={downloadProposalPdfMutation.isPending}
-            >
-              <Download className="w-4 h-4 mr-2" />
-              Download Opportunity Details PDF
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => downloadAiReportMutation.mutate()}
-              disabled={downloadAiReportMutation.isPending}
-            >
-              <Download className="w-4 h-4 mr-2" />
-              Download AI Mediation Review PDF
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => downloadAiReportWebParityMutation.mutate()}
-              disabled={downloadAiReportWebParityMutation.isPending}
-            >
-              <Download className="w-4 h-4 mr-2" />
-              Download AI Review PDF (Web Layout)
-            </Button>
             <Button onClick={() => setIsShareDialogOpen(true)} disabled={!proposal?.id}>
               <Send className="w-4 h-4 mr-2" />
               Share
             </Button>
           </div>
+
+          <OpportunityActionGroups
+            downloads={detailDownloadActions}
+          />
 
           <Card className="border border-slate-200 shadow-sm">
             <CardHeader>

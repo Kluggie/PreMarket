@@ -52,6 +52,7 @@ import {
 import {
   ComparisonDetailTabs,
 } from '@/components/document-comparison/ComparisonDetailTabs';
+import OpportunityActionGroups from '@/components/document-comparison/OpportunityActionGroups';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -1284,6 +1285,69 @@ export default function SharedReport() {
               ? parentOutcome?.eligibility_reason_lost || parentOutcome?.eligibility_reason
               : ''),
         );
+
+  const step0DownloadActions = [
+    {
+      key: 'opportunity-pdf',
+      label: 'Opportunity PDF',
+      onClick: () => downloadSharedProposalPdfMutation.mutate(),
+      disabled: downloadSharedProposalPdfMutation.isPending,
+      loading: downloadSharedProposalPdfMutation.isPending,
+      variant: 'outline',
+    },
+    {
+      key: 'ai-review-pdf',
+      label: 'AI Mediation Review PDF',
+      onClick: () => downloadSharedAiReportPdfMutation.mutate(),
+      disabled: downloadSharedAiReportPdfMutation.isPending,
+      loading: downloadSharedAiReportPdfMutation.isPending,
+      variant: 'outline',
+    },
+    {
+      key: 'ai-review-web-layout-pdf',
+      label: 'AI Review PDF (Web Layout)',
+      onClick: () => downloadSharedAiReportWebParityPdfMutation.mutate(),
+      disabled: downloadSharedAiReportWebParityPdfMutation.isPending,
+      loading: downloadSharedAiReportWebParityPdfMutation.isPending,
+      variant: 'outline',
+    },
+  ];
+  const step0StatusActions = canUpdateOutcomeFromStep0 && !parentIsClosed
+    ? [
+        {
+          key: 'request-agreement',
+          label: getAgreementActionLabel(parentOutcome),
+          onClick: () => markOutcomeMutation.mutate('won'),
+          disabled:
+            outcomeActionDisabled ||
+            !parentOutcome?.can_mark_won ||
+            Boolean(parentOutcome?.requested_by_current_user),
+          icon: CheckCircle2,
+          variant: 'default',
+          className: 'bg-emerald-600 hover:bg-emerald-700',
+        },
+        {
+          key: 'mark-lost',
+          label: 'Mark as Lost',
+          onClick: () => markOutcomeMutation.mutate('lost'),
+          disabled: outcomeActionDisabled || !parentOutcome?.can_mark_lost,
+          icon: XCircle,
+          variant: 'outline',
+          className: 'text-rose-600 border-rose-200 hover:bg-rose-50',
+        },
+        ...(showContinueNegotiatingButton
+          ? [
+              {
+                key: 'continue-negotiating',
+                label: 'Continue Negotiating',
+                onClick: () => continueNegotiationMutation.mutate(),
+                disabled: outcomeActionDisabled || !parentOutcome?.can_continue_negotiating,
+                variant: 'outline',
+              },
+            ]
+          : []),
+      ]
+    : [];
 
   const importForDocument = async (docId, file) => {
     if (!file) {
@@ -2543,90 +2607,18 @@ export default function SharedReport() {
             ════════════════════════════════════════════════════════════ */}
         {step === 0 ? (
           <div className="space-y-6">
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => downloadSharedProposalPdfMutation.mutate()}
-                disabled={downloadSharedProposalPdfMutation.isPending}
-              >
-                {downloadSharedProposalPdfMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-                Download Opportunity PDF
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => downloadSharedAiReportPdfMutation.mutate()}
-                disabled={downloadSharedAiReportPdfMutation.isPending}
-              >
-                {downloadSharedAiReportPdfMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-                Download AI Mediation Review PDF
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => downloadSharedAiReportWebParityPdfMutation.mutate()}
-                disabled={downloadSharedAiReportWebParityPdfMutation.isPending}
-              >
-                {downloadSharedAiReportWebParityPdfMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-                Download AI Review PDF (Web Layout)
-              </Button>
-            </div>
-
-            {canUpdateOutcomeFromStep0 ? (
-              <Card className="border border-slate-200">
-                <CardContent className="pt-4 space-y-3">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge className={`border font-medium ${getPrimaryStatusClass(parentPrimaryStatusKey)}`}>
-                      {parentPrimaryStatusLabel}
-                    </Badge>
-                    {!parentIsClosed ? (
-                      <>
-                        <Button
-                          type="button"
-                          size="sm"
-                          className="bg-emerald-600 hover:bg-emerald-700"
-                          disabled={
-                            outcomeActionDisabled ||
-                            !parentOutcome?.can_mark_won ||
-                            Boolean(parentOutcome?.requested_by_current_user)
-                          }
-                          onClick={() => markOutcomeMutation.mutate('won')}
-                        >
-                          <CheckCircle2 className="w-4 h-4 mr-2" />
-                          {getAgreementActionLabel(parentOutcome)}
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          className="text-rose-600 border-rose-200 hover:bg-rose-50"
-                          disabled={outcomeActionDisabled || !parentOutcome?.can_mark_lost}
-                          onClick={() => markOutcomeMutation.mutate('lost')}
-                        >
-                          <XCircle className="w-4 h-4 mr-2" />
-                          Mark as Lost
-                        </Button>
-                        {showContinueNegotiatingButton ? (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            disabled={outcomeActionDisabled || !parentOutcome?.can_continue_negotiating}
-                            onClick={() => continueNegotiationMutation.mutate()}
-                          >
-                            Continue Negotiating
-                          </Button>
-                        ) : null}
-                      </>
-                    ) : null}
-                  </div>
-                  {outcomeHelperText ? (
-                    <p className="text-xs text-slate-500">{outcomeHelperText}</p>
-                  ) : null}
-                </CardContent>
-              </Card>
-            ) : null}
+            <OpportunityActionGroups
+              downloads={step0DownloadActions}
+              statusActions={step0StatusActions}
+              statusBadge={
+                canUpdateOutcomeFromStep0 ? (
+                  <Badge className={`border font-medium ${getPrimaryStatusClass(parentPrimaryStatusKey)}`}>
+                    {parentPrimaryStatusLabel}
+                  </Badge>
+                ) : null
+              }
+              statusHelperText={canUpdateOutcomeFromStep0 ? outcomeHelperText : ''}
+            />
 
             <ComparisonDetailTabs
               activeTab={recipientDetailTab}
