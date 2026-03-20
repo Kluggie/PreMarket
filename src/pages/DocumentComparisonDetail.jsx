@@ -865,10 +865,17 @@ export default function DocumentComparisonDetail() {
 
         <div className="space-y-6 min-w-0">
           <Card className="border border-slate-200 shadow-sm">
-            <CardContent className="pt-6">
+            <CardContent className="pt-6 space-y-5">
               <h1 className="text-[2.4rem] lg:text-[3.15rem] font-bold text-slate-900 leading-tight break-words">
                 {comparison.title}
               </h1>
+              <div className="border-t border-slate-200 pt-4">
+                <OpportunityActionGroups
+                  variant="inline"
+                  layout="split"
+                  downloads={detailDownloadActions}
+                />
+              </div>
             </CardContent>
           </Card>
 
@@ -891,10 +898,6 @@ export default function DocumentComparisonDetail() {
               Share
             </Button>
           </div>
-
-          <OpportunityActionGroups
-            downloads={detailDownloadActions}
-          />
 
           <Card className="border border-slate-200 shadow-sm">
             <CardHeader>

@@ -20,6 +20,17 @@ function asText(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function asRawText(value: unknown) {
+  return typeof value === 'string' ? value.replace(/\r/g, '') : '';
+}
+
+function toFallbackHeading(value: unknown) {
+  return asText(value)
+    .replace(/\s--\s/g, ' - ')
+    .replace(/[—–]/g, '-')
+    .replace(/\s{2,}/g, ' ');
+}
+
 function formatDateTime(value: unknown) {
   if (!value) return '';
   const date = value instanceof Date ? value : new Date(value as any);
@@ -72,7 +83,7 @@ function buildFallbackSections(entries: any[]) {
         htmlToText(entry?.html) ||
         '(No shared content provided)';
       return {
-        heading: asText(entry?.roundLabel) || 'Shared Round',
+        heading: toFallbackHeading(entry?.roundLabel) || 'Shared Round',
         level: 2 as const,
         caption: captionBits.join(' | '),
         paragraphs: files.length > 0
@@ -123,9 +134,9 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
               .map((file: any) => asText(file?.filename || file?.name))
               .filter(Boolean)
           : [];
-        const html = asText(entry?.html);
-        const text = asText(entry?.text);
-        if (!html && !text && files.length === 0) {
+        const html = asRawText(entry?.html);
+        const text = asRawText(entry?.text);
+        if (!asText(html) && !asText(text) && files.length === 0) {
           return null;
         }
         return {
@@ -159,8 +170,8 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         authorLabel: 'Proposer',
         sourceLabel: asText(defaultSharedPayload?.source) || 'typed',
         timestampLabel: formatDateTime(resolved.comparison?.updatedAt || resolved.proposal?.updatedAt),
-        html: asText(defaultSharedPayload?.html),
-        text: asText(defaultSharedPayload?.text),
+        html: asRawText(defaultSharedPayload?.html),
+        text: asRawText(defaultSharedPayload?.text),
         files: Array.isArray(defaultSharedPayload?.files)
           ? defaultSharedPayload.files
               .map((file: any) => asText(file?.filename || file?.name))
@@ -221,7 +232,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       );
       pdfBuffer = await renderProfessionalPdfBuffer({
         title,
-        subtitle: 'Opportunity',
+        subtitle: '',
         comparisonId,
         footerNote: pdfInput.footerNote,
         sections: buildFallbackSections(roundEntries as any[]),

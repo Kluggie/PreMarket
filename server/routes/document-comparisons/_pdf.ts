@@ -192,6 +192,13 @@ function normalizePdfText(value: unknown) {
     .trim();
 }
 
+function normalizeProseDoubleDashes(value: string) {
+  return String(value || '')
+    .replace(/\s--\s/g, ' — ')
+    .replace(/([A-Za-z0-9])--([A-Za-z0-9])/g, '$1—$2')
+    .replace(/([:;,.!?])--(\s|$)/g, '$1—$2');
+}
+
 function normalizeWebParityPdfText(value: unknown) {
   const normalized = String(value || '')
     .replace(/\r/g, '')
@@ -203,20 +210,18 @@ function normalizeWebParityPdfText(value: unknown) {
 
   // Convert prose-style ASCII double hyphens into a typographic em dash.
   // Single-hyphen compounds (e.g. sign-ready, real-time) are preserved.
-  return normalized
-    .replace(/\s--\s/g, ' — ')
-    .replace(/([A-Za-z0-9])--([A-Za-z0-9])/g, '$1—$2')
-    .replace(/([:;,.!?])--(\s|$)/g, '$1—$2')
-    .trim();
+  return normalizeProseDoubleDashes(normalized).trim();
 }
 
 function normalizeOpportunityPdfText(value: unknown) {
-  return String(value || '')
+  const normalized = String(value || '')
     .replace(/\r/g, '')
+    .replace(/\u2018|\u2019/g, "'")
+    .replace(/\u201C|\u201D/g, '"')
     .replace(/\u00A0/g, ' ')
     .replace(/\u2026/g, '...')
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
-    .trim();
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
+  return normalizeProseDoubleDashes(normalized).trim();
 }
 
 function toSafeLines(value: unknown) {
@@ -1168,6 +1173,12 @@ export async function renderOpportunityHistoryPdfBuffer(
         indent: number;
         quote: boolean;
         rows: string[][];
+      }
+    | {
+        kind: 'spacer';
+        indent: number;
+        quote: boolean;
+        lines?: number;
       };
 
   const sameInlineStyle = (left?: InlineState, right?: InlineState) =>
@@ -1226,6 +1237,28 @@ export async function renderOpportunityHistoryPdfBuffer(
           next.color = parsed;
         }
       }
+      const weightMatch = styleAttr.match(/(?:^|;)\s*font-weight\s*:\s*([^;]+)/i);
+      if (weightMatch) {
+        const rawWeight = String(weightMatch[1] || '').trim().toLowerCase();
+        const numericWeight = Number(rawWeight);
+        if (rawWeight === 'bold' || rawWeight === 'bolder' || (Number.isFinite(numericWeight) && numericWeight >= 600)) {
+          next.bold = true;
+        }
+      }
+      const fontStyleMatch = styleAttr.match(/(?:^|;)\s*font-style\s*:\s*([^;]+)/i);
+      if (fontStyleMatch) {
+        const rawStyle = String(fontStyleMatch[1] || '').trim().toLowerCase();
+        if (rawStyle.includes('italic') || rawStyle.includes('oblique')) {
+          next.italic = true;
+        }
+      }
+      const decorationMatch = styleAttr.match(/(?:^|;)\s*text-decoration(?:-line)?\s*:\s*([^;]+)/i);
+      if (decorationMatch) {
+        const rawDecoration = String(decorationMatch[1] || '').trim().toLowerCase();
+        if (rawDecoration.includes('underline')) {
+          next.underline = true;
+        }
+      }
     }
     Array.from(element.childNodes || []).forEach((child) => collectInlineRuns(child, next, runs));
   };
@@ -1266,6 +1299,14 @@ export async function renderOpportunityHistoryPdfBuffer(
 
   const parseBlocksFromHtml = (rawHtml: string, fallbackText = ''): RichBlock[] => {
     const blocks: RichBlock[] = [];
+    const pushSpacer = (indent: number, quote: boolean, lines = 1) => {
+      blocks.push({
+        kind: 'spacer',
+        indent,
+        quote,
+        lines: Math.max(1, Math.min(4, Number(lines) || 1)),
+      });
+    };
     const pushParagraph = (
       node: any,
       opts: {
@@ -1273,11 +1314,18 @@ export async function renderOpportunityHistoryPdfBuffer(
         quote: boolean;
         headingLevel?: number;
         prefix?: string;
+        preserveBlank?: boolean;
       },
     ) => {
       const runs: InlineRun[] = [];
       Array.from(node?.childNodes || []).forEach((child) => collectInlineRuns(child, {}, runs));
-      if (!runsHaveVisibleContent(runs)) return;
+      if (!runsHaveVisibleContent(runs)) {
+        if (opts.preserveBlank) {
+          const explicitBreaks = Array.from(node?.querySelectorAll?.('br') || []).length;
+          pushSpacer(opts.indent, opts.quote, Math.max(1, explicitBreaks));
+        }
+        return;
+      }
       blocks.push({
         kind: 'paragraph',
         runs,
@@ -1318,6 +1366,11 @@ export async function renderOpportunityHistoryPdfBuffer(
         const element = node as any;
         const tag = String(element.tagName || '').toLowerCase();
 
+        if (tag === 'br') {
+          pushSpacer(context.indent, context.quote, 1);
+          return;
+        }
+
         if (/^h[1-6]$/.test(tag)) {
           pushParagraph(element, {
             indent: context.indent,
@@ -1328,7 +1381,7 @@ export async function renderOpportunityHistoryPdfBuffer(
         }
 
         if (tag === 'p' || tag === 'section' || tag === 'article') {
-          pushParagraph(element, context);
+          pushParagraph(element, { ...context, preserveBlank: true });
           return;
         }
 
@@ -1336,7 +1389,7 @@ export async function renderOpportunityHistoryPdfBuffer(
           if (elementHasBlockChildren(element)) {
             walkNodes(Array.from(element.childNodes || []), context);
           } else {
-            pushParagraph(element, context);
+            pushParagraph(element, { ...context, preserveBlank: true });
           }
           return;
         }
@@ -1351,6 +1404,7 @@ export async function renderOpportunityHistoryPdfBuffer(
             pushParagraph(element, {
               indent: context.indent + 1,
               quote: true,
+              preserveBlank: true,
             });
           }
           return;
@@ -1448,8 +1502,8 @@ export async function renderOpportunityHistoryPdfBuffer(
       });
     };
 
-    const html = normalizeText(rawHtml);
-    if (html) {
+    const html = typeof rawHtml === 'string' ? rawHtml : '';
+    if (asText(html)) {
       try {
         const parsed = parser.parseFromString(`<body>${html}</body>`, 'text/html');
         walkNodes(Array.from(parsed.body?.childNodes || []), { indent: 0, quote: false });
@@ -1462,20 +1516,51 @@ export async function renderOpportunityHistoryPdfBuffer(
       return blocks;
     }
 
-    const fallback = String(fallbackText || '').replace(/\r/g, '').trim();
-    if (!fallback) {
+    const fallbackRaw = String(fallbackText || '').replace(/\r/g, '');
+    if (!fallbackRaw.trim()) {
       return [];
     }
-    return fallback
-      .split(/\n{2,}/g)
-      .map((paragraph) => normalizeText(paragraph))
-      .filter(Boolean)
-      .map((paragraph) => ({
+
+    const fallbackBlocks: RichBlock[] = [];
+    const lines = fallbackRaw.split('\n');
+    let paragraphLines: string[] = [];
+    let blankLineCount = 0;
+
+    const flushParagraph = () => {
+      if (!paragraphLines.length) return;
+      fallbackBlocks.push({
         kind: 'paragraph',
-        runs: [{ text: paragraph }],
+        runs: [{ text: paragraphLines.join('\n') }],
         indent: 0,
         quote: false,
-      }));
+      });
+      paragraphLines = [];
+    };
+
+    const flushSpacer = () => {
+      if (blankLineCount <= 0) return;
+      fallbackBlocks.push({
+        kind: 'spacer',
+        indent: 0,
+        quote: false,
+        lines: Math.max(1, Math.min(4, blankLineCount)),
+      });
+      blankLineCount = 0;
+    };
+
+    lines.forEach((line) => {
+      const normalizedLine = normalizeText(line);
+      if (!normalizedLine) {
+        flushParagraph();
+        blankLineCount += 1;
+        return;
+      }
+      flushSpacer();
+      paragraphLines.push(normalizedLine);
+    });
+
+    flushParagraph();
+    return fallbackBlocks;
   };
 
   type WrappedPiece = InlineState & {
@@ -1700,6 +1785,12 @@ export async function renderOpportunityHistoryPdfBuffer(
 
   const renderRichBlocks = (blocks: RichBlock[]) => {
     blocks.forEach((block, blockIndex) => {
+      if (block.kind === 'spacer') {
+        const spacerHeight = Math.max(8, (block.lines || 1) * 10);
+        ensureSpace(spacerHeight);
+        y += spacerHeight;
+        return;
+      }
       if (block.kind === 'rule') {
         ensureSpace(10);
         pdf.setDrawColor(colors.border[0], colors.border[1], colors.border[2]);
@@ -1721,6 +1812,10 @@ export async function renderOpportunityHistoryPdfBuffer(
 
   const titleSafe = normalizeText(document.title || 'Opportunity');
   const subtitleSafe = normalizeText(document.subtitle || '');
+  const hasSubtitle =
+    Boolean(subtitleSafe) &&
+    subtitleSafe.toLowerCase() !== 'opportunity' &&
+    subtitleSafe.localeCompare(titleSafe, undefined, { sensitivity: 'accent' }) !== 0;
   const generatedAt = document.generatedAt || new Date();
   const rawId = asText(document.comparisonId);
   const shortId = rawId
@@ -1750,7 +1845,7 @@ export async function renderOpportunityHistoryPdfBuffer(
     lineHeight: 24,
     gapAfter: 2,
   });
-  if (subtitleSafe) {
+  if (hasSubtitle) {
     writeWrapped({
       text: subtitleSafe,
       x: mL,

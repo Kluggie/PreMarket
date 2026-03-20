@@ -2509,7 +2509,7 @@ export default function SharedReport() {
                   Created: {formatDateTime(parent.created_at)} • Expires: {formatDateTime(share.expires_at)}
                 </CardDescription>
               </CardHeader>
-              <CardContent className="pt-0">
+              <CardContent className="pt-0 space-y-4">
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-1">
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Sent by</p>
@@ -2524,6 +2524,22 @@ export default function SharedReport() {
                     </p>
                   </div>
                 </div>
+                {step === 0 ? (
+                  <div className="border-t border-slate-200 pt-4">
+                    <OpportunityActionGroups
+                      variant="inline"
+                      layout="split"
+                      downloads={step0DownloadActions}
+                      statusActions={step0StatusActions}
+                      statusBadge={(
+                        <Badge className={`border font-medium ${getPrimaryStatusClass(parentPrimaryStatusKey)}`}>
+                          {parentPrimaryStatusLabel}
+                        </Badge>
+                      )}
+                      statusHelperText={canUpdateOutcomeFromStep0 ? outcomeHelperText : ''}
+                    />
+                  </div>
+                ) : null}
               </CardContent>
             </Card>
 
@@ -2607,19 +2623,6 @@ export default function SharedReport() {
             ════════════════════════════════════════════════════════════ */}
         {step === 0 ? (
           <div className="space-y-6">
-            <OpportunityActionGroups
-              downloads={step0DownloadActions}
-              statusActions={step0StatusActions}
-              statusBadge={
-                canUpdateOutcomeFromStep0 ? (
-                  <Badge className={`border font-medium ${getPrimaryStatusClass(parentPrimaryStatusKey)}`}>
-                    {parentPrimaryStatusLabel}
-                  </Badge>
-                ) : null
-              }
-              statusHelperText={canUpdateOutcomeFromStep0 ? outcomeHelperText : ''}
-            />
-
             <ComparisonDetailTabs
               activeTab={recipientDetailTab}
               onTabChange={setRecipientDetailTab}

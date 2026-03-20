@@ -16,6 +16,17 @@ function asText(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function asRawText(value: unknown) {
+  return typeof value === 'string' ? value.replace(/\r/g, '') : '';
+}
+
+function toFallbackHeading(value: unknown) {
+  return asText(value)
+    .replace(/\s--\s/g, ' - ')
+    .replace(/[—–]/g, '-')
+    .replace(/\s{2,}/g, ' ');
+}
+
 function formatDateTime(value: unknown) {
   if (!value) return '';
   const date = value instanceof Date ? value : new Date(value as any);
@@ -68,7 +79,7 @@ function buildFallbackSections(entries: any[]) {
         htmlToText(entry?.html) ||
         '(No shared content provided)';
       return {
-        heading: asText(entry?.roundLabel) || 'Shared Round',
+        heading: toFallbackHeading(entry?.roundLabel) || 'Shared Round',
         level: 2 as const,
         caption: captionBits.join(' | '),
         paragraphs: files.length > 0
@@ -146,9 +157,9 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
               .map((file: any) => asText(file?.filename || file?.name))
               .filter(Boolean)
           : [];
-        const html = asText(entry?.html);
-        const text = asText(entry?.text);
-        if (!html && !text && files.length === 0) {
+        const html = asRawText(entry?.html);
+        const text = asRawText(entry?.text);
+        if (!asText(html) && !asText(text) && files.length === 0) {
           return null;
         }
         return {
@@ -169,8 +180,8 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
           .map((file: any) => asText(file?.filename || file?.name))
           .filter(Boolean)
       : [];
-    const fallbackText = asText(comparison.docBText || '');
-    const fallbackHtml = asText((comparison.inputs || {}).doc_b_html || '');
+    const fallbackText = asRawText(comparison.docBText || '');
+    const fallbackHtml = asRawText((comparison.inputs || {}).doc_b_html || '');
     if (roundEntries.length === 0 && (fallbackText || fallbackHtml || fallbackDocBFiles.length > 0)) {
       roundEntries.push({
         id: 'shared-round-1',
@@ -228,7 +239,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       );
       pdfBuffer = await renderProfessionalPdfBuffer({
         title: pdfInput.title,
-        subtitle: 'Opportunity',
+        subtitle: '',
         comparisonId: comparison.id,
         footerNote: pdfInput.footerNote,
         sections: buildFallbackSections(roundEntries as any[]),
