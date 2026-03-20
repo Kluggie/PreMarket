@@ -115,24 +115,23 @@ function buildSendBackEmail(params: {
   shareUrl: string;
   roundNumber: number;
 }) {
-  const { senderName, proposalTitle, shareUrl, roundNumber } = params;
+  const { senderName, proposalTitle, shareUrl } = params;
   const escapedSenderName = escapeHtml(senderName);
   const escapedTitle = escapeHtml(proposalTitle);
   const escapedShareUrl = escapeHtml(shareUrl);
 
-  const subject = `Updated proposal returned for review — ${proposalTitle}`;
+  const subject = `Updated opportunity ready for review — ${proposalTitle}`;
 
   const text = [
-    `${senderName} has returned an updated proposal for your review.`,
+    `${senderName} returned an updated opportunity.`,
     '',
-    `Proposal: ${proposalTitle}`,
-    `Exchange round: ${roundNumber}`,
+    `Opportunity: ${proposalTitle}`,
     '',
-    `Review the updated proposal: ${shareUrl}`,
+    `Review the updated opportunity: ${shareUrl}`,
     '',
-    'Sign in to PreMarket to review the proposal and continue the negotiation.',
+    'Sign in to PreMarket to review the latest changes.',
     '',
-    'If you weren\'t expecting this email, you can safely ignore it.',
+    "If you weren't expecting this email, you can safely ignore it.",
   ].join('\n');
 
   const html = [
@@ -147,19 +146,19 @@ function buildSendBackEmail(params: {
     '<tr>',
     '<td style="padding:30px 32px 20px;border-bottom:1px solid #eef2f7;">',
     '<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#0f172a;font-size:18px;font-weight:700;line-height:1.2;">PreMarket</div>',
-    '<div style="margin-top:6px;display:inline-block;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:12px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:#334155;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:999px;padding:5px 10px;">Updated Proposal</div>',
+    '<div style="margin-top:6px;display:inline-block;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:12px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:#334155;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:999px;padding:5px 10px;">Updated Opportunity</div>',
     '</td>',
     '</tr>',
     '<tr>',
     '<td style="padding:28px 32px 0;">',
-    `<h1 style="margin:0;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#0f172a;font-size:23px;font-weight:700;line-height:1.32;">${escapedSenderName} returned an updated proposal</h1>`,
+    `<h1 style="margin:0;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#0f172a;font-size:23px;font-weight:700;line-height:1.32;">${escapedSenderName} returned an updated opportunity</h1>`,
     '</td>',
     '</tr>',
     '<tr>',
     '<td style="padding:24px 32px 0;">',
     '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;">',
     '<tr>',
-    '<td style="padding:14px 16px 6px;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:11px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:#64748b;">Proposal</td>',
+    '<td style="padding:14px 16px 6px;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:11px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:#64748b;">Opportunity</td>',
     '</tr>',
     '<tr>',
     `<td style="padding:0 16px 16px;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:16px;font-weight:600;line-height:1.5;color:#0f172a;">${escapedTitle}</td>`,
@@ -169,12 +168,12 @@ function buildSendBackEmail(params: {
     '</tr>',
     '<tr>',
     '<td style="padding:20px 32px 0;">',
-    `<p style="margin:0;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:1.65;color:#1e293b;">An updated version of this proposal has been sent back for your review (exchange round ${roundNumber}). Sign in to review the changes and continue the negotiation.</p>`,
+    `<p style="margin:0;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:1.65;color:#1e293b;">An updated version is ready for your review. Review the latest changes and continue the discussion.</p>`,
     '</td>',
     '</tr>',
     '<tr>',
     '<td style="padding:28px 32px 24px;text-align:center;">',
-    `<a href="${escapedShareUrl}" target="_blank" rel="noopener noreferrer" style="display:inline-block;min-width:196px;background:#0f172a;color:#ffffff;text-decoration:none;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:15px;font-weight:600;padding:13px 28px;border-radius:10px;">Review Updated Proposal</a>`,
+    `<a href="${escapedShareUrl}" target="_blank" rel="noopener noreferrer" style="display:inline-block;min-width:196px;background:#0f172a;color:#ffffff;text-decoration:none;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:15px;font-weight:600;padding:13px 28px;border-radius:10px;">Review Updated Opportunity</a>`,
     '</td>',
     '</tr>',
     '<tr>',
@@ -185,7 +184,7 @@ function buildSendBackEmail(params: {
     '</tr>',
     '<tr>',
     '<td style="padding:18px 32px 26px;border-top:1px solid #eef2f7;">',
-    '<p style="margin:0 0 6px;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:1.6;color:#64748b;">This proposal was shared with you via PreMarket.</p>',
+    '<p style="margin:0 0 6px;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:1.6;color:#64748b;">This opportunity was shared with you via PreMarket.</p>',
     '<p style="margin:0;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:1.6;color:#64748b;">If you weren&apos;t expecting this email, you can safely ignore it.</p>',
     '</td>',
     '</tr>',
@@ -602,16 +601,16 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         eventType: 'evaluation_update',
         emailCategory: 'evaluation_complete',
         dedupeKey: `shared_report_send_back:${resolved.link.id}:${sentRevision?.id || currentDraft.id}`,
-        title: 'Updated proposal returned for review',
-        message: `An updated version of "${title}" has been sent back for your review (round ${nextRound}).`,
+        title: 'Updated opportunity ready for review',
+        message: `An updated version of "${title}" is ready for your review.`,
         actionUrl: notificationUrl,
-        emailSubject: `Updated proposal returned for review — ${title}`,
+        emailSubject: `Updated opportunity ready for review — ${title}`,
         emailText: [
-          `An updated version of "${title}" has been sent back for your review.`,
+          `An updated version of "${title}" is ready for your review.`,
           '',
           returnLinkUrl
-            ? `Review the updated proposal: ${returnLinkUrl}`
-            : 'Sign in to review the updated comparison details.',
+            ? `Review the updated opportunity: ${returnLinkUrl}`
+            : 'Sign in to review the latest changes.',
         ].join('\n'),
         // Disable the notification system's own email — we already sent directly
         sendEmail: false,

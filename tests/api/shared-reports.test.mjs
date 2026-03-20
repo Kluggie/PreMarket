@@ -274,26 +274,26 @@ if (!hasDatabaseUrl()) {
       const subject = String(capturedPayload?.subject || '');
       assert.equal(subject === '3', false);
       assert.equal(subject.includes('3'), true);
-      assert.equal(subject.toLowerCase().includes('shared'), true);
-      assert.equal(subject.toLowerCase().includes('premarket'), true);
+      assert.equal(subject.toLowerCase().includes('opportunity'), true);
+      assert.equal(subject.toLowerCase().includes('invited'), true);
 
       const text = String(capturedPayload?.text || '');
-      assert.equal(text.includes('shared a proposal with you on PreMarket'), true);
-      assert.equal(text.includes('Proposal\n3'), true);
+      assert.equal(text.includes('invited you to review an opportunity on PreMarket'), true);
+      assert.equal(text.includes('Opportunity\n3'), true);
       assert.equal(text.includes('Summary'), true);
-      assert.equal(text.includes('View Proposal:'), true);
+      assert.equal(text.includes('Review Opportunity:'), true);
       assert.equal(text.toLowerCase().includes('shared a report'), false);
       assert.equal(text.includes('Open Shared Report'), false);
       assert.equal(text.includes('Shared by:'), false);
 
-      const summaryMatch = text.match(/Summary\n(.+)\n\nView Proposal:/);
+      const summaryMatch = text.match(/Summary\n(.+)\n\nReview Opportunity:/);
       assert.equal(Boolean(summaryMatch && summaryMatch[1]), true);
       assert.equal(String(summaryMatch?.[1] || '').length <= 183, true);
 
       const html = String(capturedPayload?.html || '');
-      assert.equal(html.includes('View Proposal'), true);
+      assert.equal(html.includes('Review Opportunity'), true);
       assert.equal(html.includes('Summary'), true);
-      assert.equal(html.includes('shared a proposal with you'), true);
+      assert.equal(html.includes('invited you to review an opportunity'), true);
       assert.equal(html.includes('Open Shared Report'), false);
       assert.equal(html.toLowerCase().includes('shared a report'), false);
       assert.equal(html.includes('Shared by:'), false);
@@ -383,12 +383,12 @@ if (!hasDatabaseUrl()) {
       assert.equal(sendRes.statusCode, 200);
 
       const text = String(capturedPayload?.text || '');
-      const summaryMatch = text.match(/Summary\n(.+)\n\nView Proposal:/);
+      const summaryMatch = text.match(/Summary\n(.+)\n\nReview Opportunity:/);
       const preview = String(summaryMatch?.[1] || '').trim();
       assert.equal(preview.toLowerCase().includes('document comparison workflow'), false);
       assert.equal(
         preview,
-        'A business proposal has been shared with you for review on PreMarket.',
+        'An opportunity has been shared with you for review on PreMarket.',
       );
     } finally {
       globalThis.fetch = originalFetch;

@@ -698,7 +698,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
             emailText: [
               eventConfig.message,
               '',
-              'Sign in to PreMarket to review proposal details.',
+              'Sign in to PreMarket to review opportunity details.',
             ].join('\n'),
           });
         } catch {

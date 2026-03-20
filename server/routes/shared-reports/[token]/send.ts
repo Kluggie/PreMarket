@@ -16,7 +16,7 @@ import { assertProposalOpenForNegotiation, buildPendingWonReset } from '../../..
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 import { buildRecipientSafeEvaluationProjection } from '../../document-comparisons/_helpers.js';
 
-const DEFAULT_SUMMARY_PREVIEW = 'A business proposal has been shared with you for review on PreMarket.';
+const DEFAULT_SUMMARY_PREVIEW = 'An opportunity has been shared with you for review on PreMarket.';
 const SUMMARY_TARGET_MIN = 100;
 const SUMMARY_TARGET_PREFERRED = 150;
 const SUMMARY_TARGET_MAX = 180;
@@ -220,7 +220,7 @@ function toNaturalLanguagePreview(value: unknown) {
   }
 
   return ensureSentenceEnding(
-    summarizePreviewText(`A proposal outlining ${base.charAt(0).toLowerCase()}${base.slice(1)}`),
+    summarizePreviewText(`An opportunity outlining ${base.charAt(0).toLowerCase()}${base.slice(1)}`),
   );
 }
 
@@ -321,27 +321,27 @@ function buildSharedProposalEmail(params: {
   summaryPreview: string;
 }) {
   const senderName = normalizeInlineText(params.senderName) || 'A PreMarket user';
-  const proposalTitle = normalizeInlineText(params.proposalTitle) || 'Untitled proposal';
+  const proposalTitle = normalizeInlineText(params.proposalTitle) || 'Untitled opportunity';
   const shareUrl = asText(params.shareUrl);
   const summaryPreview = toNaturalLanguagePreview(params.summaryPreview) || DEFAULT_SUMMARY_PREVIEW;
 
-  const subject = `${senderName} shared "${proposalTitle}" with you on PreMarket`;
+  const subject = `${senderName} invited you to review an opportunity — ${proposalTitle}`;
   const text = [
-    'PreMarket | Proposal Shared',
+    'PreMarket | Opportunity Invite',
     '',
-    `${senderName} shared a proposal with you on PreMarket.`,
+    `${senderName} invited you to review an opportunity on PreMarket.`,
     '',
-    'Proposal',
+    'Opportunity',
     proposalTitle,
     '',
     'Summary',
     summaryPreview,
     '',
-    `View Proposal: ${shareUrl}`,
+    `Review Opportunity: ${shareUrl}`,
     '',
     `If the button doesn't work, open this link: ${shareUrl}`,
     '',
-    'This proposal was shared with you via PreMarket.',
+    'This opportunity was shared with you via PreMarket.',
     "If you weren't expecting this email, you can safely ignore it.",
   ].join('\n');
 
@@ -360,19 +360,20 @@ function buildSharedProposalEmail(params: {
     '<tr>',
     '<td style="padding:30px 32px 20px;border-bottom:1px solid #eef2f7;">',
     '<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#0f172a;font-size:18px;font-weight:700;line-height:1.2;">PreMarket</div>',
-    '<div style="margin-top:6px;display:inline-block;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:12px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:#334155;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:999px;padding:5px 10px;">Proposal Shared</div>',
+    '<div style="margin-top:6px;display:inline-block;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:12px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:#334155;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:999px;padding:5px 10px;">Opportunity Invite</div>',
     '</td>',
     '</tr>',
     '<tr>',
     '<td style="padding:28px 32px 0;">',
-    `<h1 style="margin:0;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#0f172a;font-size:23px;font-weight:700;line-height:1.32;">${escapedSenderName} shared a proposal with you</h1>`,
+    `<h1 style="margin:0;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#0f172a;font-size:23px;font-weight:700;line-height:1.32;">${escapedSenderName} invited you to review an opportunity</h1>`,
+    '<p style="margin:12px 0 0;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:1.65;color:#1e293b;">Review the shared materials and, if relevant, add your information to support a more complete assessment.</p>',
     '</td>',
     '</tr>',
     '<tr>',
     '<td style="padding:24px 32px 0;">',
     '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;">',
     '<tr>',
-    '<td style="padding:14px 16px 6px;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:11px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:#64748b;">Proposal</td>',
+    '<td style="padding:14px 16px 6px;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:11px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:#64748b;">Opportunity</td>',
     '</tr>',
     '<tr>',
     `<td style="padding:0 16px 16px;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:16px;font-weight:600;line-height:1.5;color:#0f172a;">${escapedTitle}</td>`,
@@ -388,7 +389,7 @@ function buildSharedProposalEmail(params: {
     '</tr>',
     '<tr>',
     '<td style="padding:28px 32px 24px;text-align:center;">',
-    `<a href="${escapedShareUrl}" target="_blank" rel="noopener noreferrer" style="display:inline-block;min-width:196px;background:#0f172a;color:#ffffff;text-decoration:none;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:15px;font-weight:600;padding:13px 28px;border-radius:10px;">View Proposal</a>`,
+    `<a href="${escapedShareUrl}" target="_blank" rel="noopener noreferrer" style="display:inline-block;min-width:196px;background:#0f172a;color:#ffffff;text-decoration:none;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:15px;font-weight:600;padding:13px 28px;border-radius:10px;">Review Opportunity</a>`,
     '</td>',
     '</tr>',
     '<tr>',
@@ -399,7 +400,7 @@ function buildSharedProposalEmail(params: {
     '</tr>',
     '<tr>',
     '<td style="padding:18px 32px 26px;border-top:1px solid #eef2f7;">',
-    '<p style="margin:0 0 6px;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:1.6;color:#64748b;">This proposal was shared with you via PreMarket.</p>',
+    '<p style="margin:0 0 6px;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:1.6;color:#64748b;">This opportunity was shared with you via PreMarket.</p>',
     '<p style="margin:0;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:1.6;color:#64748b;">If you weren&apos;t expecting this email, you can safely ignore it.</p>',
     '</td>',
     '</tr>',
@@ -527,7 +528,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       : [null];
 
     const senderName = normalizeInlineText((auth.user as any)?.name) || asText(auth.user.email) || 'A PreMarket user';
-    const title = normalizeInlineText(proposal.title) || 'Untitled proposal';
+    const title = normalizeInlineText(proposal.title) || 'Untitled opportunity';
     const shareUrl = buildShareUrl(link.token);
     const summaryPreview = buildSummaryPreview({ proposal, comparison });
     assertProposalOpenForNegotiation(proposal);
