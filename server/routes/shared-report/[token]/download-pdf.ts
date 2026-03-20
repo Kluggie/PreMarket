@@ -56,6 +56,7 @@ function getPdfFormat(req: any): 'legacy' | 'web-parity' {
   if (normalized === 'web-parity' || normalized === 'web_parity') {
     return 'web-parity';
   }
+  // Backward-compatible default path used by the legacy AI mediation PDF renderer.
   return 'legacy';
 }
 

@@ -1245,8 +1245,8 @@ export default function SharedReport() {
     },
   });
 
-  const downloadSharedAiReportPdfMutation = useMutation({
-    mutationFn: () => sharedReportsClient.downloadRecipientAiReportPdf(token),
+  const downloadSharedAiMediationReviewPdfMutation = useMutation({
+    mutationFn: () => sharedReportsClient.downloadRecipientAiReportPdf(token, { format: 'web-parity' }),
     onSuccess: () => {
       toast.success('AI mediation review PDF download started');
     },
@@ -1256,20 +1256,6 @@ export default function SharedReport() {
         return;
       }
       toast.error(error?.message || 'Unable to download AI mediation review PDF');
-    },
-  });
-
-  const downloadSharedAiReportWebParityPdfMutation = useMutation({
-    mutationFn: () => sharedReportsClient.downloadRecipientAiReportPdf(token, { format: 'web-parity' }),
-    onSuccess: () => {
-      toast.success('AI mediation review web-layout PDF download started');
-    },
-    onError: (error) => {
-      if (error?.code === 'not_configured' || Number(error?.status || 0) === 501) {
-        toast.error('AI mediation review PDF is not configured in this environment yet.');
-        return;
-      }
-      toast.error(error?.message || 'Unable to download AI mediation review web-layout PDF');
     },
   });
   const parentIsClosed = parentOutcomeState === 'won' || parentOutcomeState === 'lost';
@@ -1296,19 +1282,11 @@ export default function SharedReport() {
       variant: 'outline',
     },
     {
-      key: 'ai-review-pdf',
+      key: 'ai-mediation-review-pdf',
       label: 'AI Mediation Review PDF',
-      onClick: () => downloadSharedAiReportPdfMutation.mutate(),
-      disabled: downloadSharedAiReportPdfMutation.isPending,
-      loading: downloadSharedAiReportPdfMutation.isPending,
-      variant: 'outline',
-    },
-    {
-      key: 'ai-review-web-layout-pdf',
-      label: 'AI Review PDF (Web Layout)',
-      onClick: () => downloadSharedAiReportWebParityPdfMutation.mutate(),
-      disabled: downloadSharedAiReportWebParityPdfMutation.isPending,
-      loading: downloadSharedAiReportWebParityPdfMutation.isPending,
+      onClick: () => downloadSharedAiMediationReviewPdfMutation.mutate(),
+      disabled: downloadSharedAiMediationReviewPdfMutation.isPending,
+      loading: downloadSharedAiMediationReviewPdfMutation.isPending,
       variant: 'outline',
     },
   ];
@@ -2491,8 +2469,8 @@ export default function SharedReport() {
   return (
     <div className="min-h-screen bg-slate-50 py-6">
       <ComparisonWorkflowShell
-        title="Document Comparison"
-        subtitle="Compare Shared Information and Confidential Information with recipient-safe reporting."
+        title="Opportunity Workspace"
+        subtitle="Review recipient-safe shared history and AI mediation insights."
         step={step}
         totalSteps={TOTAL_WORKFLOW_STEPS}
         progress={progress}

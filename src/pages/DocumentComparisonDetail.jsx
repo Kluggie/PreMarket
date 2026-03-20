@@ -595,8 +595,8 @@ export default function DocumentComparisonDetail() {
     },
   });
 
-  const downloadAiReportMutation = useMutation({
-    mutationFn: () => documentComparisonsClient.downloadPdf(comparisonId),
+  const downloadAiMediationReviewPdfMutation = useMutation({
+    mutationFn: () => documentComparisonsClient.downloadPdf(comparisonId, { format: 'web-parity' }),
     onSuccess: () => {
       toast.success('AI mediation review PDF download started');
     },
@@ -606,20 +606,6 @@ export default function DocumentComparisonDetail() {
         return;
       }
       toast.error(error?.message || 'AI mediation review PDF download unavailable');
-    },
-  });
-
-  const downloadAiReportWebParityMutation = useMutation({
-    mutationFn: () => documentComparisonsClient.downloadPdf(comparisonId, { format: 'web-parity' }),
-    onSuccess: () => {
-      toast.success('AI mediation review web-layout PDF download started');
-    },
-    onError: (error) => {
-      if (error?.code === 'not_configured' || Number(error?.status || 0) === 501) {
-        toast.error('AI mediation review PDF is not configured in this environment yet.');
-        return;
-      }
-      toast.error(error?.message || 'AI mediation review web-layout PDF download unavailable');
     },
   });
 
@@ -833,20 +819,11 @@ export default function DocumentComparisonDetail() {
       icon: Download,
     },
     {
-      key: 'ai-review-pdf',
+      key: 'ai-mediation-review-pdf',
       label: 'AI Mediation Review PDF',
-      onClick: () => downloadAiReportMutation.mutate(),
-      disabled: downloadAiReportMutation.isPending,
-      loading: downloadAiReportMutation.isPending,
-      variant: 'outline',
-      icon: Download,
-    },
-    {
-      key: 'ai-review-web-layout-pdf',
-      label: 'AI Review PDF (Web Layout)',
-      onClick: () => downloadAiReportWebParityMutation.mutate(),
-      disabled: downloadAiReportWebParityMutation.isPending,
-      loading: downloadAiReportWebParityMutation.isPending,
+      onClick: () => downloadAiMediationReviewPdfMutation.mutate(),
+      disabled: downloadAiMediationReviewPdfMutation.isPending,
+      loading: downloadAiMediationReviewPdfMutation.isPending,
       variant: 'outline',
       icon: Download,
     },

@@ -538,25 +538,7 @@ export default function ProposalDetail() {
     },
   });
 
-  const downloadAiReportMutation = useMutation({
-    mutationFn: async () => {
-      if (!proposal?.document_comparison_id) {
-        const notConfigured = new Error('AI mediation review PDF is not configured');
-        notConfigured.code = 'not_configured';
-        notConfigured.status = 501;
-        throw notConfigured;
-      }
-      return documentComparisonsClient.downloadPdf(proposal.document_comparison_id);
-    },
-    onSuccess: () => {
-      toast.success('AI mediation review PDF download started');
-    },
-    onError: (error) => {
-      toast.error(error?.message || 'AI mediation review PDF is not configured');
-    },
-  });
-
-  const downloadAiReportWebParityMutation = useMutation({
+  const downloadAiMediationReviewPdfMutation = useMutation({
     mutationFn: async () => {
       if (!proposal?.document_comparison_id) {
         const notConfigured = new Error('AI mediation review PDF is not configured');
@@ -567,10 +549,10 @@ export default function ProposalDetail() {
       return documentComparisonsClient.downloadPdf(proposal.document_comparison_id, { format: 'web-parity' });
     },
     onSuccess: () => {
-      toast.success('AI mediation review web-layout PDF download started');
+      toast.success('AI mediation review PDF download started');
     },
     onError: (error) => {
-      toast.error(error?.message || 'AI mediation review web-layout PDF is not configured');
+      toast.error(error?.message || 'AI mediation review PDF is not configured');
     },
   });
 
@@ -807,17 +789,13 @@ export default function ProposalDetail() {
                 <Send className="w-4 h-4 mr-2" />
                 Share Updated Version
               </Button>
-              <Button variant="outline" onClick={() => downloadAiReportMutation.mutate()} disabled={downloadAiReportMutation.isPending}>
-                <Download className="w-4 h-4 mr-2" />
-                Download AI Mediation Review PDF
-              </Button>
               <Button
                 variant="outline"
-                onClick={() => downloadAiReportWebParityMutation.mutate()}
-                disabled={downloadAiReportWebParityMutation.isPending}
+                onClick={() => downloadAiMediationReviewPdfMutation.mutate()}
+                disabled={downloadAiMediationReviewPdfMutation.isPending}
               >
                 <Download className="w-4 h-4 mr-2" />
-                Download AI Review PDF (Web Layout)
+                Download AI Mediation Review PDF
               </Button>
               {canArchive ? (
                 <Button

@@ -37,7 +37,7 @@ function ActionRow({ actions, align = 'start' }) {
   return (
     <div className={cx(
       'flex flex-wrap items-center gap-2',
-      align === 'end' ? 'justify-start lg:justify-end' : '',
+      align === 'end' ? 'justify-start sm:justify-end' : '',
     )}
     >
       {normalized.map((action) => {
@@ -98,10 +98,10 @@ export default function OpportunityActionGroups({
   ) : null;
 
   const splitDownloadsSection = hasDownloads ? (
-    <div className={cx('space-y-2', isSplit ? 'lg:ml-auto' : '')}>
+    <div className={cx('space-y-2', isSplit ? 'sm:justify-self-end' : '')}>
       <p className={cx(
         'text-[11px] font-semibold uppercase tracking-widest text-slate-500',
-        isSplit ? 'lg:text-right' : '',
+        isSplit ? 'sm:text-right' : '',
       )}
       >
         Downloads
@@ -111,10 +111,17 @@ export default function OpportunityActionGroups({
   ) : null;
 
   const body = isSplit ? (
-    <div className={cx('flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between', !showCard ? className : '')}>
-      {splitStatusSection}
-      {splitDownloadsSection}
-    </div>
+    hasStatusSection && hasDownloads ? (
+      <div className={cx('grid gap-4 sm:grid-cols-2 sm:items-end', !showCard ? className : '')}>
+        {splitStatusSection}
+        {splitDownloadsSection}
+      </div>
+    ) : (
+      <div className={cx('space-y-4', !showCard ? className : '')}>
+        {splitStatusSection}
+        {splitDownloadsSection}
+      </div>
+    )
   ) : (
     <div className={cx('space-y-4', !showCard ? className : '')}>
       {hasDownloads ? (

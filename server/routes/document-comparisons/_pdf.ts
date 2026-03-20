@@ -624,11 +624,16 @@ export async function renderProfessionalPdfBuffer(document: PdfDocument): Promis
       const linesOnPage = Math.floor(spaceLeft / lineH);
       if (lines.length > 1 && linesOnPage <= 1) {
         ensureSpace(9999, true);
-      } else {
-        ensureSpace(Math.min(lines.length, 2) * lineH + 5);
       }
       setFont('normal', 10.5, C.bodyText);
-      lines.forEach((line: string) => { pdf.text(line, bodyX, y); y += lineH; });
+      lines.forEach((line: string) => {
+        if (y + lineH > contentBottom) {
+          ensureSpace(9999, true);
+          setFont('normal', 10.5, C.bodyText);
+        }
+        pdf.text(line, bodyX, y);
+        y += lineH;
+      });
       y += (pi < paragraphs.length - 1 ? 5 : 4);
     });
 
@@ -1062,6 +1067,7 @@ export async function renderOpportunityHistoryPdfBuffer(
     text: [15, 23, 42] as [number, number, number],
     muted: [100, 116, 139] as [number, number, number],
     brand: [37, 99, 235] as [number, number, number],
+    headerBg: [219, 234, 254] as [number, number, number],
     border: [226, 232, 240] as [number, number, number],
     panel: [248, 250, 252] as [number, number, number],
     quote: [191, 219, 254] as [number, number, number],
@@ -1083,8 +1089,8 @@ export async function renderOpportunityHistoryPdfBuffer(
 
   const normalizeText = (value: unknown) => normalizeOpportunityPdfText(value);
 
-  const ensureSpace = (height: number) => {
-    if (y + height <= contentBottom) return;
+  const ensureSpace = (height: number, forceBreak = false) => {
+    if (!forceBreak && y + height <= contentBottom) return;
     pdf.addPage();
     y = mT;
   };
@@ -1747,40 +1753,48 @@ export async function renderOpportunityHistoryPdfBuffer(
     const textX = mL + offsetX + prefixGap;
     const maxW = Math.max(120, contentW - offsetX - prefixGap);
     const lines = wrapRuns(block.runs, maxW, size, forceBold);
-    const blockHeight = Math.max(lineHeight, lines.length * lineHeight) + gapAfter;
-    ensureSpace(blockHeight + 2);
-    const startY = y;
-
-    if (block.quote) {
-      pdf.setDrawColor(colors.quote[0], colors.quote[1], colors.quote[2]);
-      pdf.setLineWidth(1.25);
-      pdf.line(mL + offsetX - 8, startY - lineHeight + 4, mL + offsetX - 8, startY + lines.length * lineHeight - 8);
+    if (lines.length > 1) {
+      const spaceLeft = contentBottom - y;
+      const linesOnPage = Math.floor(spaceLeft / lineHeight);
+      if (linesOnPage <= 1) {
+        ensureSpace(9999, true);
+      }
     }
 
-    if (prefix) {
-      setFont('bold', 10.5, colors.muted);
-      pdf.text(prefix, mL + offsetX, startY);
-    }
+    lines.forEach((line, lineIndex) => {
+      if (y + lineHeight > contentBottom) {
+        ensureSpace(9999, true);
+      }
 
-    let lineY = startY;
-    lines.forEach((line) => {
+      if (block.quote) {
+        pdf.setDrawColor(colors.quote[0], colors.quote[1], colors.quote[2]);
+        pdf.setLineWidth(1.25);
+        pdf.line(mL + offsetX - 8, y - lineHeight + 4, mL + offsetX - 8, y + 2);
+      }
+
+      if (prefix && lineIndex === 0) {
+        setFont('bold', 10.5, colors.muted);
+        pdf.text(prefix, mL + offsetX, y);
+      }
+
       let x = textX;
       line.pieces.forEach((piece) => {
         const style = resolveFontStyle(piece, forceBold);
         const color = piece.color || (piece.link ? colors.link : colors.text);
         setFont(style, size, color);
-        pdf.text(piece.text, x, lineY);
+        pdf.text(piece.text, x, y);
         if (piece.underline) {
           pdf.setDrawColor(color[0], color[1], color[2]);
           pdf.setLineWidth(0.5);
-          pdf.line(x, lineY + 1.5, x + piece.width, lineY + 1.5);
+          pdf.line(x, y + 1.5, x + piece.width, y + 1.5);
         }
         x += piece.width;
       });
-      lineY += lineHeight;
+
+      y += lineHeight;
     });
 
-    y = startY + lines.length * lineHeight + gapAfter;
+    y += gapAfter;
   };
 
   const renderRichBlocks = (blocks: RichBlock[]) => {
@@ -1824,6 +1838,10 @@ export async function renderOpportunityHistoryPdfBuffer(
   const metaText =
     `Generated: ${formatGeneratedAt(generatedAt)}` +
     (shortId ? ` | ID: ${shortId}` : '');
+
+  const headerBandHeight = 96;
+  pdf.setFillColor(colors.headerBg[0], colors.headerBg[1], colors.headerBg[2]);
+  pdf.rect(0, 0, pageWidth, headerBandHeight, 'F');
 
   writeWrapped({
     text: 'PreMarket',
