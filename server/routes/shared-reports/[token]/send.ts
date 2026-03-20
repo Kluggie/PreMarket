@@ -5,7 +5,7 @@ import { getDb, schema } from '../../../_lib/db/client.js';
 import { toCanonicalAppUrl } from '../../../_lib/env.js';
 import { ApiError } from '../../../_lib/errors.js';
 import { readJsonBody } from '../../../_lib/http.js';
-import { newId } from '../../../_lib/ids.js';
+import { newId, newToken } from '../../../_lib/ids.js';
 import { getResendConfig } from '../../../_lib/integrations.js';
 import { appendProposalHistory } from '../../../_lib/proposal-history.js';
 import {
@@ -514,24 +514,149 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
 
     const reportMetadata = toObject(link.reportMetadata);
     const comparisonId = asText(reportMetadata.comparison_id) || asText(proposal.documentComparisonId);
-    const [comparison] = comparisonId
+
+    // ── Multi-recipient independence: fork when sending to a different person ──
+    const existingLinkRecipient = normalizeEmail(link.recipientEmail);
+    const existingProposalRecipient = normalizeEmail(proposal.partyBEmail);
+    const needsFork = Boolean(
+      proposal.sentAt &&
+        (existingLinkRecipient || existingProposalRecipient) &&
+        (existingLinkRecipient ? existingLinkRecipient !== recipientEmail : existingProposalRecipient !== recipientEmail),
+    );
+
+    let targetProposal = proposal;
+    let targetLink = link;
+    let targetComparisonId = comparisonId;
+
+    if (needsFork) {
+      const forkedProposalId = newId('proposal');
+      let forkedComparisonId: string | null = null;
+
+      // Create forked proposal first (before comparison, to satisfy FK)
+      const [forkedRow] = await db
+        .insert(schema.proposals)
+        .values({
+          id: forkedProposalId,
+          userId: proposal.userId,
+          title: proposal.title,
+          status: 'draft',
+          statusReason: proposal.statusReason,
+          templateId: proposal.templateId,
+          templateName: proposal.templateName,
+          proposalType: proposal.proposalType,
+          draftStep: proposal.draftStep,
+          sourceProposalId: proposal.id,
+          documentComparisonId: null,
+          partyAEmail: proposal.partyAEmail,
+          partyBEmail: recipientEmail,
+          partyBName: null,
+          summary: proposal.summary,
+          isPrivateMode: proposal.isPrivateMode,
+          payload: proposal.payload,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .returning();
+
+      // Clone document comparison if one exists
+      if (comparisonId) {
+        const [sourceComparison] = await db
+          .select()
+          .from(schema.documentComparisons)
+          .where(eq(schema.documentComparisons.id, comparisonId))
+          .limit(1);
+
+        if (sourceComparison) {
+          const newCompId = newId('comparison');
+          await db.insert(schema.documentComparisons).values({
+            id: newCompId,
+            userId: sourceComparison.userId,
+            proposalId: forkedProposalId,
+            title: sourceComparison.title,
+            status: sourceComparison.status,
+            draftStep: sourceComparison.draftStep,
+            partyALabel: sourceComparison.partyALabel,
+            partyBLabel: sourceComparison.partyBLabel,
+            companyName: sourceComparison.companyName,
+            companyWebsite: sourceComparison.companyWebsite,
+            recipientName: sourceComparison.recipientName,
+            recipientEmail: recipientEmail,
+            docAText: sourceComparison.docAText,
+            docBText: sourceComparison.docBText,
+            docASpans: sourceComparison.docASpans,
+            docBSpans: sourceComparison.docBSpans,
+            evaluationResult: sourceComparison.evaluationResult,
+            publicReport: sourceComparison.publicReport,
+            inputs: sourceComparison.inputs,
+            metadata: sourceComparison.metadata,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          });
+          forkedComparisonId = newCompId;
+          targetComparisonId = newCompId;
+
+          // Link the forked proposal to its comparison
+          await db
+            .update(schema.proposals)
+            .set({ documentComparisonId: forkedComparisonId, updatedAt: new Date() })
+            .where(eq(schema.proposals.id, forkedProposalId));
+          forkedRow.documentComparisonId = forkedComparisonId;
+        }
+      }
+
+      targetProposal = forkedRow;
+
+      // Create a new shared link for the forked proposal
+      const forkedToken = newToken(24);
+      const [forkedLink] = await db
+        .insert(schema.sharedLinks)
+        .values({
+          id: newId('share'),
+          token: forkedToken,
+          userId: auth.user.id,
+          proposalId: forkedProposalId,
+          recipientEmail,
+          status: 'active',
+          mode: 'shared_report',
+          canView: link.canView,
+          canEdit: link.canEdit,
+          canEditConfidential: link.canEditConfidential,
+          canReevaluate: link.canReevaluate,
+          canSendBack: link.canSendBack,
+          maxUses: link.maxUses,
+          uses: 0,
+          expiresAt: link.expiresAt,
+          idempotencyKey: null,
+          reportMetadata: {
+            ...reportMetadata,
+            comparison_id: forkedComparisonId || null,
+          },
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .returning();
+
+      targetLink = forkedLink;
+    }
+
+    const [comparison] = targetComparisonId
       ? await db
           .select()
           .from(schema.documentComparisons)
           .where(
             and(
-              eq(schema.documentComparisons.id, comparisonId),
-              eq(schema.documentComparisons.proposalId, proposal.id),
+              eq(schema.documentComparisons.id, targetComparisonId),
+              eq(schema.documentComparisons.proposalId, targetProposal.id),
             ),
           )
           .limit(1)
       : [null];
 
     const senderName = normalizeInlineText((auth.user as any)?.name) || asText(auth.user.email) || 'A PreMarket user';
-    const title = normalizeInlineText(proposal.title) || 'Untitled opportunity';
-    const shareUrl = buildShareUrl(link.token);
-    const summaryPreview = buildSummaryPreview({ proposal, comparison });
-    assertProposalOpenForNegotiation(proposal);
+    const title = normalizeInlineText(targetProposal.title) || 'Untitled opportunity';
+    const shareUrl = buildShareUrl(targetLink.token);
+    const summaryPreview = buildSummaryPreview({ proposal: targetProposal, comparison });
+    assertProposalOpenForNegotiation(targetProposal);
     const emailContent = buildSharedProposalEmail({
       senderName,
       proposalTitle: title,
@@ -543,8 +668,8 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     if (!resend.ready) {
       const delivery = await createDeliveryLog({
         db,
-        sharedLinkId: link.id,
-        proposalId: proposal.id,
+        sharedLinkId: targetLink.id,
+        proposalId: targetProposal.id,
         userId: auth.user.id,
         sentToEmail: recipientEmail,
         status: 'failed',
@@ -586,8 +711,8 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     } catch (error: any) {
       const delivery = await createDeliveryLog({
         db,
-        sharedLinkId: link.id,
-        proposalId: proposal.id,
+        sharedLinkId: targetLink.id,
+        proposalId: targetProposal.id,
         userId: auth.user.id,
         sentToEmail: recipientEmail,
         status: 'failed',
@@ -599,8 +724,8 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     if (!response.ok) {
       const delivery = await createDeliveryLog({
         db,
-        sharedLinkId: link.id,
-        proposalId: proposal.id,
+        sharedLinkId: targetLink.id,
+        proposalId: targetProposal.id,
         userId: auth.user.id,
         sentToEmail: recipientEmail,
         status: 'failed',
@@ -617,8 +742,8 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     const providerMessageId = asText(responseBody?.id) || null;
     const delivery = await createDeliveryLog({
       db,
-      sharedLinkId: link.id,
-      proposalId: proposal.id,
+      sharedLinkId: targetLink.id,
+      proposalId: targetProposal.id,
       userId: auth.user.id,
       sentToEmail: recipientEmail,
       status: 'sent',
@@ -626,16 +751,19 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       lastError: null,
     });
 
-    await db
-      .update(schema.sharedLinks)
-      .set({
-        recipientEmail,
-        updatedAt: new Date(),
-      })
-      .where(eq(schema.sharedLinks.id, link.id));
+    // Only update recipientEmail on the link if NOT forked (same recipient resend)
+    if (!needsFork) {
+      await db
+        .update(schema.sharedLinks)
+        .set({
+          recipientEmail,
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.sharedLinks.id, targetLink.id));
+    }
 
     const proposalSentAt = new Date();
-    const proposalPendingWonReset = buildPendingWonReset(proposal, proposalSentAt) || {};
+    const proposalPendingWonReset = buildPendingWonReset(targetProposal, proposalSentAt) || {};
     const threadActivity = buildProposalThreadActivityValues({
       activityAt: proposalSentAt,
       actorRole: 'party_a',
@@ -655,11 +783,11 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         ...proposalPendingWonReset,
         updatedAt: proposalSentAt,
       })
-      .where(eq(schema.proposals.id, proposal.id));
+      .where(eq(schema.proposals.id, targetProposal.id));
 
     await appendProposalHistory(db, {
       proposal: {
-        ...proposal,
+        ...targetProposal,
         status: 'sent',
         sentAt: proposalSentAt,
         partyBEmail: recipientEmail,
@@ -674,7 +802,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       eventType: 'proposal.sent',
       sharedLinks: [
         {
-          ...link,
+          ...targetLink,
           recipientEmail,
         },
       ],
@@ -683,12 +811,13 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       eventData: {
         recipient_email: recipientEmail,
         source: 'shared_report_email',
+        forked_from_proposal_id: needsFork ? proposal.id : undefined,
       },
     });
 
     ok(res, 200, {
       sent: true,
-      token: link.token,
+      token: targetLink.token,
       url: shareUrl,
       delivery: {
         id: delivery.id,

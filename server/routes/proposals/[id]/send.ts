@@ -210,14 +210,105 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
     });
 
     const sentAt = new Date();
-    const pendingWonReset = buildPendingWonReset(existing, sentAt) || {};
+
+    // ── Multi-recipient independence: fork when sending to a different person ──
+    // If the proposal was already sent to a different recipient, clone it so
+    // each recipient gets a fully independent thread/item.
+    const existingRecipient = normalizeEmail(existing.partyBEmail);
+    const needsFork = Boolean(
+      existing.sentAt &&
+        existingRecipient &&
+        existingRecipient !== recipientEmail,
+    );
+
+    let targetProposal = existing;
+
+    if (needsFork) {
+      const forkedProposalId = newId('proposal');
+      let forkedComparisonId: string | null = null;
+
+      // Create forked proposal first (before comparison, to satisfy FK)
+      const [forkedRow] = await db
+        .insert(schema.proposals)
+        .values({
+          id: forkedProposalId,
+          userId: existing.userId,
+          title: existing.title,
+          status: 'draft',
+          statusReason: existing.statusReason,
+          templateId: existing.templateId,
+          templateName: existing.templateName,
+          proposalType: existing.proposalType,
+          draftStep: existing.draftStep,
+          sourceProposalId: existing.id,
+          documentComparisonId: null,
+          partyAEmail: existing.partyAEmail,
+          partyBEmail: recipientEmail,
+          partyBName: null,
+          summary: existing.summary,
+          isPrivateMode: existing.isPrivateMode,
+          payload: existing.payload,
+          createdAt: sentAt,
+          updatedAt: sentAt,
+        })
+        .returning();
+
+      // Clone document comparison if one exists
+      if (existing.documentComparisonId) {
+        const [sourceComparison] = await db
+          .select()
+          .from(schema.documentComparisons)
+          .where(eq(schema.documentComparisons.id, existing.documentComparisonId))
+          .limit(1);
+
+        if (sourceComparison) {
+          const newComparisonId = newId('comparison');
+          await db.insert(schema.documentComparisons).values({
+            id: newComparisonId,
+            userId: sourceComparison.userId,
+            proposalId: forkedProposalId,
+            title: sourceComparison.title,
+            status: sourceComparison.status,
+            draftStep: sourceComparison.draftStep,
+            partyALabel: sourceComparison.partyALabel,
+            partyBLabel: sourceComparison.partyBLabel,
+            companyName: sourceComparison.companyName,
+            companyWebsite: sourceComparison.companyWebsite,
+            recipientName: sourceComparison.recipientName,
+            recipientEmail: recipientEmail,
+            docAText: sourceComparison.docAText,
+            docBText: sourceComparison.docBText,
+            docASpans: sourceComparison.docASpans,
+            docBSpans: sourceComparison.docBSpans,
+            evaluationResult: sourceComparison.evaluationResult,
+            publicReport: sourceComparison.publicReport,
+            inputs: sourceComparison.inputs,
+            metadata: sourceComparison.metadata,
+            createdAt: sentAt,
+            updatedAt: sentAt,
+          });
+          forkedComparisonId = newComparisonId;
+
+          // Link the forked proposal to its comparison
+          await db
+            .update(schema.proposals)
+            .set({ documentComparisonId: forkedComparisonId, updatedAt: sentAt })
+            .where(eq(schema.proposals.id, forkedProposalId));
+          forkedRow.documentComparisonId = forkedComparisonId;
+        }
+      }
+
+      targetProposal = forkedRow;
+    }
+
+    const pendingWonReset = buildPendingWonReset(targetProposal, sentAt) || {};
     const nextProposal = {
-      ...existing,
+      ...targetProposal,
       status: 'sent',
       draftStep: 4,
       partyBEmail: recipientEmail,
       sentAt,
-      lastSharedAt: createShareLink ? sentAt : existing.lastSharedAt || null,
+      lastSharedAt: createShareLink ? sentAt : targetProposal.lastSharedAt || null,
       ...buildProposalThreadActivityValues({
         activityAt: sentAt,
         actorRole: 'party_a',
@@ -237,7 +328,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
             id: newId('share'),
             token: newToken(24),
             userId: auth.user.id,
-            proposalId: existing.id,
+            proposalId: targetProposal.id,
             recipientEmail,
             status: 'active',
             mode: 'workspace',
@@ -263,6 +354,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
             eventData: {
               recipient_email: recipientEmail,
               has_shared_link: true,
+              forked_from_proposal_id: needsFork ? existing.id : undefined,
             },
             sharedLinks: [sharedLinkValues],
             createdAt: sentAt,
@@ -284,7 +376,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
                 ...pendingWonReset,
                 updatedAt: nextProposal.updatedAt,
               })
-              .where(eq(schema.proposals.id, existing.id))
+              .where(eq(schema.proposals.id, targetProposal.id))
               .returning(),
             db.insert(schema.sharedLinks).values(sharedLinkValues).returning(),
             ...historyQueries,
@@ -324,6 +416,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         eventData: {
           recipient_email: recipientEmail,
           has_shared_link: false,
+          forked_from_proposal_id: needsFork ? existing.id : undefined,
         },
         createdAt: sentAt,
         requestId: context.requestId,
@@ -342,7 +435,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
             ...pendingWonReset,
             updatedAt: nextProposal.updatedAt,
           })
-          .where(eq(schema.proposals.id, existing.id))
+          .where(eq(schema.proposals.id, targetProposal.id))
           .returning(),
         ...historyQueries,
       ]);
