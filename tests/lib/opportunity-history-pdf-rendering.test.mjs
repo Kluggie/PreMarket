@@ -134,3 +134,33 @@ test('opportunity PDF paginates long rich content without clipping and preserves
   assert.ok(roundTwoIndex >= 0, 'Expected Round 2 marker to be present');
   assert.ok(tailIndex < roundTwoIndex, 'Round 2 appeared before Round 1 completed');
 });
+
+test('opportunity PDF renderOpportunityHistoryPdfBuffer still produces a light-blue header even when html content is empty (text-only fallback path)', async () => {
+  // Simulates the retry path used in both download handlers when the primary
+  // render throws: entries are retried with html='' so jsdom is not needed, but
+  // the light-blue header must still be present.
+  const buffer = await renderOpportunityHistoryPdfBuffer({
+    title: 'Text-Only Fallback Verification',
+    comparisonId: 'cmp_text_only_fallback',
+    entries: [
+      {
+        roundLabel: 'Round 1 — Shared by Proposer',
+        html: '',
+        text: 'Plain text content only, no HTML.',
+      },
+    ],
+  });
+
+  const stream = buffer.toString('latin1');
+  // Must use the light-blue header (219/255≈0.86, 234/255≈0.92, 254/255≈1.0)
+  assert.match(
+    stream,
+    /0\.86 0\.92 1\. rg[\s\S]{0,140}-96\. re[\s\S]{0,20}\nf/,
+    'Text-only fallback must still produce a light-blue header rectangle',
+  );
+  // Must NOT use the dark-navy slate-900 header colour from renderProfessionalPdfBuffer
+  assert.ok(
+    !stream.includes('0.059 0.090 0.165 rg'),
+    'Dark-navy header colour must not appear in the Opportunity PDF output',
+  );
+});

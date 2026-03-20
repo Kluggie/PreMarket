@@ -9,7 +9,6 @@ import {
 } from '../_shared.js';
 import {
   renderOpportunityHistoryPdfBuffer,
-  renderProfessionalPdfBuffer,
   sendPdf,
   slugify,
 } from '../../document-comparisons/_pdf.js';
@@ -24,13 +23,6 @@ function asRawText(value: unknown) {
   return typeof value === 'string' ? value.replace(/\r/g, '') : '';
 }
 
-function toFallbackHeading(value: unknown) {
-  return asText(value)
-    .replace(/\s--\s/g, ' - ')
-    .replace(/[—–]/g, '-')
-    .replace(/\s{2,}/g, ' ');
-}
-
 function formatDateTime(value: unknown) {
   if (!value) return '';
   const date = value instanceof Date ? value : new Date(value as any);
@@ -42,56 +34,6 @@ function formatDateTime(value: unknown) {
     hour: 'numeric',
     minute: '2-digit',
   });
-}
-
-function htmlToText(value: unknown) {
-  return String(value || '')
-    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, ' ')
-    .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, ' ')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|div|section|article|h[1-6]|li|tr|table|blockquote)>/gi, '\n')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/\r/g, '')
-    .replace(/[\t ]+\n/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .replace(/[ \t]{2,}/g, ' ')
-    .trim();
-}
-
-function buildFallbackSections(entries: any[]) {
-  return [
-    {
-      heading: 'Shared History',
-      level: 1 as const,
-      paragraphs: [],
-    },
-    ...entries.map((entry: any) => {
-      const captionBits = [
-        asText(entry?.authorLabel) ? `Author: ${asText(entry.authorLabel)}` : '',
-        asText(entry?.sourceLabel) ? `Source: ${asText(entry.sourceLabel)}` : '',
-        asText(entry?.timestampLabel) ? `Shared: ${asText(entry.timestampLabel)}` : '',
-      ].filter(Boolean);
-      const files = Array.isArray(entry?.files) ? entry.files.map((file: any) => asText(file)).filter(Boolean) : [];
-      const bodyText =
-        asText(entry?.text) ||
-        htmlToText(entry?.html) ||
-        '(No shared content provided)';
-      return {
-        heading: toFallbackHeading(entry?.roundLabel) || 'Shared Round',
-        level: 2 as const,
-        caption: captionBits.join(' | '),
-        paragraphs: files.length > 0
-          ? [bodyText, `Files: ${files.join(', ')}`]
-          : [bodyText],
-      };
-    }),
-  ];
 }
 
 export default async function handler(req: any, res: any, tokenParam?: string) {
@@ -230,12 +172,12 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
           message: asText(error?.message) || 'unknown_error',
         }),
       );
-      pdfBuffer = await renderProfessionalPdfBuffer({
-        title,
-        subtitle: '',
-        comparisonId,
-        footerNote: pdfInput.footerNote,
-        sections: buildFallbackSections(roundEntries as any[]),
+      // Retry with html stripped so jsdom is not required; this preserves the
+      // light-blue opportunity header and prevents the dark-navy professional
+      // renderer from being used for this export path.
+      pdfBuffer = await renderOpportunityHistoryPdfBuffer({
+        ...pdfInput,
+        entries: (roundEntries as any[]).map((e: any) => ({ ...e, html: '' })),
       });
     }
     sendPdf(res, filename, pdfBuffer);

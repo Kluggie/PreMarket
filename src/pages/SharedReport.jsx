@@ -2515,23 +2515,15 @@ export default function SharedReport() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="pt-0 space-y-4">
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-1">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Sent by</p>
-                    <p className="text-sm font-medium text-slate-900 break-all">
-                      {senderEmail || 'Unavailable'}
-                    </p>
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Sent to</p>
-                    <p className="text-sm font-medium text-slate-900 break-all">
-                      {recipientEmailDisplay || 'Unavailable until verification'}
-                    </p>
-                  </div>
-                </div>
                 {step === 0 ? (
-                  <div className="border-t border-slate-200 pt-4">
-                    <div className="grid gap-4 sm:grid-cols-2 sm:gap-6">
+                  <div className="grid gap-6 sm:grid-cols-2">
+                    <div className="space-y-4">
+                      <div className="space-y-1">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Sent by</p>
+                        <p className="text-sm font-medium text-slate-900 break-all">
+                          {senderEmail || 'Unavailable'}
+                        </p>
+                      </div>
                       <div className="space-y-2">
                         <div className="flex flex-wrap items-center gap-2">
                           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -2548,6 +2540,14 @@ export default function SharedReport() {
                           <p className="text-xs text-slate-500">{outcomeHelperText}</p>
                         ) : null}
                       </div>
+                    </div>
+                    <div className="space-y-4">
+                      <div className="space-y-1">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Sent to</p>
+                        <p className="text-sm font-medium text-slate-900 break-all">
+                          {recipientEmailDisplay || 'Unavailable until verification'}
+                        </p>
+                      </div>
                       <div className="space-y-2">
                         <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                           Downloads
@@ -2558,7 +2558,22 @@ export default function SharedReport() {
                       </div>
                     </div>
                   </div>
-                ) : null}
+                ) : (
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-1">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Sent by</p>
+                      <p className="text-sm font-medium text-slate-900 break-all">
+                        {senderEmail || 'Unavailable'}
+                      </p>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Sent to</p>
+                      <p className="text-sm font-medium text-slate-900 break-all">
+                        {recipientEmailDisplay || 'Unavailable until verification'}
+                      </p>
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
 

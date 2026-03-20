@@ -1047,10 +1047,7 @@ export async function renderWebParityPdfBuffer(document: PdfWebParityDocument): 
 export async function renderOpportunityHistoryPdfBuffer(
   document: PdfOpportunityHistoryDocument,
 ): Promise<Buffer> {
-  const [{ jsPDF }, { JSDOM }] = await Promise.all([
-    import('jspdf'),
-    import('jsdom'),
-  ]);
+  const { jsPDF } = await import('jspdf');
   const pdf = new jsPDF({ unit: 'pt', format: 'a4' });
 
   const pageWidth = pdf.internal.pageSize.getWidth();
@@ -1074,8 +1071,18 @@ export async function renderOpportunityHistoryPdfBuffer(
     link: [29, 78, 216] as [number, number, number],
   };
 
-  const dom = new JSDOM('<!doctype html><html><body></body></html>');
-  const parser = new dom.window.DOMParser();
+  // jsdom is loaded lazily and gracefully: if the import fails (e.g. in edge
+  // environments where native modules are unavailable), HTML content for each
+  // entry falls back to plain-text rendering.  The light-blue header and all
+  // other layout logic remain unaffected.
+  let parser: any = null;
+  try {
+    const { JSDOM } = await import('jsdom');
+    const jsdomInst = new JSDOM('<!doctype html><html><body></body></html>');
+    parser = new jsdomInst.window.DOMParser();
+  } catch {
+    // jsdom unavailable; HTML entries will degrade to plain-text per entry
+  }
 
   const setFont = (
     wt: 'normal' | 'bold' | 'italic' | 'bolditalic',
