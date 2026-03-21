@@ -423,6 +423,7 @@ export function ComparisonDetailTabs({
   detailsTabLabel = 'Opportunity',
   aiReportProps = {},
   proposalDetailsProps = {},
+  leadingElement = null,
 }) {
   const orderedTabs = Array.isArray(tabOrder)
     ? tabOrder.filter((tab, index, source) => ['report', 'details'].includes(tab) && source.indexOf(tab) === index)
@@ -430,7 +431,9 @@ export function ComparisonDetailTabs({
 
   return (
     <Tabs value={activeTab} onValueChange={onTabChange}>
-      <TabsList className="bg-white border border-slate-200 p-1">
+      <div className="flex flex-wrap items-center gap-2">
+        {leadingElement}
+        <TabsList className="bg-white border border-slate-200 p-1">
         {orderedTabs.map((tab) => {
           if (tab === 'report') {
             return (
@@ -459,8 +462,7 @@ export function ComparisonDetailTabs({
             </TabsTrigger>
           );
         })}
-      </TabsList>
-
+      </TabsList>      </div>
       <TabsContent value="report" className="mt-6" aria-label={MEDIATION_REVIEW_LABEL}>
         <ComparisonAiReportTab {...aiReportProps} />
       </TabsContent>

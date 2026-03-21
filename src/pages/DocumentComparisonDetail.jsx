@@ -833,13 +833,13 @@ export default function DocumentComparisonDetail() {
               <h1 className="text-3xl font-bold text-slate-900 leading-tight break-words">{comparison.title}</h1>
               <p className="mt-1.5 text-sm text-slate-500 flex flex-wrap items-center gap-x-4 gap-y-1">
                 <span>
-                  <span className="font-medium text-slate-600">Proposer:</span>{' '}
+                  <span className="font-medium text-slate-600">From:</span>{' '}
                   {proposal?.party_a_email || 'Not specified'}
                   <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-slate-100 text-slate-500 font-medium">You</span>
                 </span>
                 <span className="text-slate-300" aria-hidden>·</span>
                 <span>
-                  <span className="font-medium text-slate-600">Recipient:</span>{' '}
+                  <span className="font-medium text-slate-600">To:</span>{' '}
                   {[proposal?.party_b_name || comparison?.recipient_name, proposal?.party_b_email || comparison?.recipient_email].filter(Boolean).join(' · ') || 'Not specified'}
                 </span>
               </p>
@@ -882,27 +882,25 @@ export default function DocumentComparisonDetail() {
             </div>
           </div>
 
-          {/* ── Edit Opportunity: standalone workflow action ─────────────── */}
-          <div>
-            <Button
-              variant="outline"
-              onClick={() =>
-                navigate(
-                  createPageUrl(
-                    `DocumentComparisonCreate?draft=${encodeURIComponent(comparison.id)}&step=2`,
-                  ),
-                )
-              }
-            >
-              <ArrowLeft className="w-4 h-4 mr-2" />
-              Edit Opportunity
-            </Button>
-          </div>
-
           <ComparisonDetailTabs
             activeTab={activeTab}
             onTabChange={setActiveTab}
             hasReportBadge={hasReport}
+            leadingElement={
+              <Button
+                variant="outline"
+                onClick={() =>
+                  navigate(
+                    createPageUrl(
+                      `DocumentComparisonCreate?draft=${encodeURIComponent(comparison.id)}&step=2`,
+                    ),
+                  )
+                }
+              >
+                <ArrowLeft className="w-4 h-4 mr-2" />
+                Edit Opportunity
+              </Button>
+            }
             aiReportProps={{
               isEvaluationRunning,
               isPollingTimedOut,
