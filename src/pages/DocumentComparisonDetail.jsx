@@ -33,7 +33,9 @@ import {
   Copy,
   Download,
   Loader2,
+  Plus,
   Send,
+  X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -54,23 +56,21 @@ function isValidEmail(value) {
   return EMAIL_RE.test(asText(value));
 }
 
-function parseRecipientEmails(raw) {
-  return [...new Set(
-    String(raw || '')
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean),
-  )];
+function newRecipientRow() {
+  return { id: `r_${Math.random().toString(36).slice(2)}`, name: '', email: '', emailError: '' };
 }
 
-function validateRecipientEmails(raw) {
-  const emails = parseRecipientEmails(raw);
-  if (emails.length === 0) return null;
-  const invalid = emails.filter((e) => !isValidEmail(e));
-  if (invalid.length > 0) {
-    return `Invalid email address${invalid.length > 1 ? 'es' : ''}: ${invalid.join(', ')}`;
-  }
-  return null;
+function getActiveRows(rows) {
+  return rows.filter((r) => asText(r.email) !== '' || asText(r.name) !== '');
+}
+
+function validateRows(rows) {
+  return rows.map((row) => {
+    const email = asText(row.email);
+    if (!email) return { ...row, emailError: '' };
+    if (!isValidEmail(email)) return { ...row, emailError: 'Invalid email address' };
+    return { ...row, emailError: '' };
+  });
 }
 
 function toSafeNumber(value, fallback = 0) {
@@ -410,8 +410,7 @@ export default function DocumentComparisonDetail() {
   const initialTab = useMemo(() => parseDetailTab(location.search), [location.search]);
   const [activeTab, setActiveTab] = useState(initialTab);
   const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
-  const [shareRecipientEmail, setShareRecipientEmail] = useState('');
-  const [shareEmailError, setShareEmailError] = useState('');
+  const [shareRecipients, setShareRecipients] = useState(() => [newRecipientRow()]);
   const [selectedShareToken, setSelectedShareToken] = useState('');
   const [isShareLinkInitializedForOpen, setIsShareLinkInitializedForOpen] = useState(false);
   const [evaluationPollDeadline, setEvaluationPollDeadline] = useState(null);
@@ -487,16 +486,16 @@ export default function DocumentComparisonDetail() {
     if (!isShareDialogOpen) {
       return;
     }
-    // Pre-fill the share dialog with the most authoritative recipient email we have:
-    // 1) Whatever the user already typed (preserve it)
-    // 2) The linked proposal's party_b_email
-    // 3) The comparison's own recipient_email (set in Step 3)
-    setShareRecipientEmail(
-      (current) =>
-        current ||
-        asText(proposal?.party_b_email) ||
-        asText(comparison?.recipient_email),
-    );
+    // Pre-fill the first recipient row with the most authoritative email we have,
+    // but only if the row is still blank (preserve any user edits).
+    const prefill = asText(proposal?.party_b_email) || asText(comparison?.recipient_email);
+    if (!prefill) return;
+    setShareRecipients((current) => {
+      if (current.length === 1 && !asText(current[0].email) && !asText(current[0].name)) {
+        return [{ ...current[0], email: prefill }];
+      }
+      return current;
+    });
   }, [isShareDialogOpen, proposal?.party_b_email, comparison?.recipient_email]);
 
   useEffect(() => {
@@ -643,7 +642,7 @@ export default function DocumentComparisonDetail() {
 
   const createShareLinkMutation = useMutation({
     mutationFn: async (options = {}) => {
-      const recipientEmail = asText(options?.recipientEmail) || asText(shareRecipientEmail) || null;
+      const recipientEmail = asText(options?.recipientEmail) || null;
       const response = await sharedReportsClient.create({
         comparisonId,
         recipientEmail,
@@ -689,14 +688,13 @@ export default function DocumentComparisonDetail() {
     }
 
     setIsShareLinkInitializedForOpen(true);
-    createShareLinkMutation.mutate({ silent: true, recipientEmail: asText(shareRecipientEmail) || null });
+    createShareLinkMutation.mutate({ silent: true, recipientEmail: null });
   }, [
     comparisonId,
     createShareLinkMutation,
     createShareLinkMutation.isPending,
     isShareDialogOpen,
     isShareLinkInitializedForOpen,
-    shareRecipientEmail,
     sharedReports.length,
     sharedReportsQuery.isFetching,
     sharedReportsQuery.isLoading,
@@ -705,8 +703,9 @@ export default function DocumentComparisonDetail() {
   const sendShareEmailMutation = useMutation({
     mutationFn: async (token) => {
       let workingToken = asText(token);
-      const recipientEmails = parseRecipientEmails(shareRecipientEmail);
-      const primaryEmail = recipientEmails[0] || null;
+      // Collect only rows that have a non-empty email (already validated before calling)
+      const activeRecipients = getActiveRows(shareRecipients).filter((r) => asText(r.email));
+      const primaryEmail = activeRecipients[0]?.email || null;
 
       if (!workingToken) {
         const created = await sharedReportsClient.create({
@@ -720,22 +719,24 @@ export default function DocumentComparisonDetail() {
         throw new Error('Shared report link could not be created');
       }
 
-      // Send to each address in sequence; use the same token for all
+      // Send to each recipient in sequence using the same base token;
+      // the server forks for each new email address automatically.
       const results = [];
-      for (const email of (recipientEmails.length > 0 ? recipientEmails : [null])) {
+      for (const recipient of (activeRecipients.length > 0 ? activeRecipients : [{ email: null }])) {
         const result = await sharedReportsClient.send(workingToken, {
-          recipientEmail: email,
+          recipientEmail: recipient.email,
         });
         results.push(result);
       }
-      return results[results.length - 1];
+      return { last: results[results.length - 1], count: results.length };
     },
     onSuccess: async (payload) => {
-      if (payload?.token) {
-        setSelectedShareToken(payload.token);
+      if (payload?.last?.token) {
+        setSelectedShareToken(payload.last.token);
       }
       await queryClient.invalidateQueries({ queryKey: ['shared-reports', comparisonId] });
-      toast.success('Shared report email sent');
+      const count = payload?.count ?? 1;
+      toast.success(count > 1 ? `Shared report sent to ${count} recipients` : 'Shared report email sent');
     },
     onError: (error) => {
       if (error?.code === 'not_configured' || Number(error?.status || 0) === 501) {
@@ -992,8 +993,7 @@ export default function DocumentComparisonDetail() {
         onOpenChange={(nextOpen) => {
           setIsShareDialogOpen(nextOpen);
           if (!nextOpen) {
-            setShareRecipientEmail('');
-            setShareEmailError('');
+            setShareRecipients([newRecipientRow()]);
             setIsShareLinkInitializedForOpen(false);
           }
         }}
@@ -1007,30 +1007,73 @@ export default function DocumentComparisonDetail() {
           </DialogHeader>
 
           <div className="space-y-4">
+            {/* ── Recipient rows ───────────────────────────────────────── */}
             <div className="space-y-2">
-              <Label htmlFor="shared-report-recipient">Recipient email(s) (optional)</Label>
-              <Input
-                id="shared-report-recipient"
-                type="text"
-                placeholder="alice@example.com, bob@example.com"
-                value={shareRecipientEmail}
-                onChange={(event) => {
-                  setShareRecipientEmail(event.target.value);
-                  setShareEmailError('');
-                }}
-              />
-              <p className="text-xs text-slate-500">Enter one or more email addresses separated by commas</p>
-              {shareEmailError ? (
-                <p className="text-xs text-red-600">{shareEmailError}</p>
-              ) : null}
+              <div className="grid grid-cols-[1fr_1.4fr_auto] gap-x-2 mb-1">
+                <p className="text-xs font-medium text-slate-500 pl-1">Name (optional)</p>
+                <p className="text-xs font-medium text-slate-500 pl-1">Email</p>
+                <span />
+              </div>
+              {shareRecipients.map((row, index) => (
+                <div key={row.id} className="grid grid-cols-[1fr_1.4fr_auto] gap-x-2 items-start">
+                  <Input
+                    type="text"
+                    placeholder="Name"
+                    value={row.name}
+                    onChange={(e) =>
+                      setShareRecipients((prev) =>
+                        prev.map((r) => (r.id === row.id ? { ...r, name: e.target.value } : r)),
+                      )
+                    }
+                  />
+                  <div className="space-y-1">
+                    <Input
+                      type="email"
+                      placeholder="email@example.com"
+                      value={row.email}
+                      className={row.emailError ? 'border-red-400 focus-visible:ring-red-400' : ''}
+                      onChange={(e) =>
+                        setShareRecipients((prev) =>
+                          prev.map((r) =>
+                            r.id === row.id ? { ...r, email: e.target.value, emailError: '' } : r,
+                          ),
+                        )
+                      }
+                    />
+                    {row.emailError ? (
+                      <p className="text-xs text-red-600">{row.emailError}</p>
+                    ) : null}
+                  </div>
+                  <button
+                    type="button"
+                    aria-label="Remove recipient"
+                    className="mt-2 text-slate-400 hover:text-slate-600 disabled:opacity-30"
+                    disabled={shareRecipients.length === 1}
+                    onClick={() =>
+                      setShareRecipients((prev) => prev.filter((r) => r.id !== row.id))
+                    }
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+              <button
+                type="button"
+                className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800 mt-1"
+                onClick={() => setShareRecipients((prev) => [...prev, newRecipientRow()])}
+              >
+                <Plus className="w-4 h-4" />
+                Add recipient
+              </button>
             </div>
 
             <div className="flex flex-wrap gap-2">
               <Button
                 onClick={() => {
-                  const validationError = validateRecipientEmails(shareRecipientEmail);
-                  if (validationError) {
-                    setShareEmailError(validationError);
+                  const validated = validateRows(shareRecipients);
+                  const hasErrors = validated.some((r) => r.emailError);
+                  if (hasErrors) {
+                    setShareRecipients(validated);
                     return;
                   }
                   sendShareEmailMutation.mutate(activeSharedReport?.token || '');
