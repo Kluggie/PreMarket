@@ -8,6 +8,12 @@ import { sharedReportsClient } from '@/api/sharedReportsClient';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -23,6 +29,7 @@ import {
 } from '@/components/ui/dialog';
 import {
   ArrowLeft,
+  ChevronDown,
   Copy,
   Download,
   Loader2,
@@ -820,26 +827,65 @@ export default function DocumentComparisonDetail() {
         </Link>
 
         <div className="space-y-4 min-w-0">
-          {/* ── Title + party metadata ───────────────────────────────────── */}
-          <div>
-            <h1 className="text-3xl font-bold text-slate-900 leading-tight break-words">{comparison.title}</h1>
-            <p className="mt-1.5 text-sm text-slate-500 flex flex-wrap items-center gap-x-4 gap-y-1">
-              <span>
-                <span className="font-medium text-slate-600">Proposer:</span>{' '}
-                {proposal?.party_a_email || 'Not specified'}
-                <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-slate-100 text-slate-500 font-medium">You</span>
-              </span>
-              <span className="text-slate-300" aria-hidden>·</span>
-              <span>
-                <span className="font-medium text-slate-600">Recipient:</span>{' '}
-                {[proposal?.party_b_name || comparison?.recipient_name, proposal?.party_b_email || comparison?.recipient_email].filter(Boolean).join(' · ') || 'Not specified'}
-              </span>
-            </p>
+          {/* ── Header: title + right utility actions ─────────────────────── */}
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <h1 className="text-3xl font-bold text-slate-900 leading-tight break-words">{comparison.title}</h1>
+              <p className="mt-1.5 text-sm text-slate-500 flex flex-wrap items-center gap-x-4 gap-y-1">
+                <span>
+                  <span className="font-medium text-slate-600">Proposer:</span>{' '}
+                  {proposal?.party_a_email || 'Not specified'}
+                  <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-slate-100 text-slate-500 font-medium">You</span>
+                </span>
+                <span className="text-slate-300" aria-hidden>·</span>
+                <span>
+                  <span className="font-medium text-slate-600">Recipient:</span>{' '}
+                  {[proposal?.party_b_name || comparison?.recipient_name, proposal?.party_b_email || comparison?.recipient_email].filter(Boolean).join(' · ') || 'Not specified'}
+                </span>
+              </p>
+            </div>
+
+            {/* Right: share + export utilities */}
+            <div className="flex shrink-0 items-center gap-2">
+              <Button onClick={() => setIsShareDialogOpen(true)} disabled={!proposal?.id}>
+                <Send className="w-4 h-4 mr-2" />
+                Share
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="outline"
+                    disabled={downloadProposalPdfMutation.isPending && downloadAiMediationReviewPdfMutation.isPending}
+                  >
+                    <Download className="w-4 h-4 mr-2" />
+                    Download
+                    <ChevronDown className="w-3.5 h-3.5 ml-1.5" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem
+                    onClick={() => downloadProposalPdfMutation.mutate()}
+                    disabled={downloadProposalPdfMutation.isPending}
+                  >
+                    <Download className="w-4 h-4 mr-2" />
+                    Opportunity PDF
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => downloadAiMediationReviewPdfMutation.mutate()}
+                    disabled={downloadAiMediationReviewPdfMutation.isPending}
+                  >
+                    <Download className="w-4 h-4 mr-2" />
+                    AI Mediation Review PDF
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           </div>
 
-          {/* ── Primary action row ───────────────────────────────────────── */}
-          <div className="flex flex-wrap items-center gap-2">
+          {/* ── Edit Opportunity: standalone workflow action ─────────────── */}
+          <div>
             <Button
+              variant="outline"
               onClick={() =>
                 navigate(
                   createPageUrl(
@@ -850,30 +896,6 @@ export default function DocumentComparisonDetail() {
             >
               <ArrowLeft className="w-4 h-4 mr-2" />
               Edit Opportunity
-            </Button>
-            <Button onClick={() => setIsShareDialogOpen(true)} disabled={!proposal?.id}>
-              <Send className="w-4 h-4 mr-2" />
-              Share
-            </Button>
-
-            {/* Divider */}
-            <div className="h-6 w-px bg-slate-200 mx-1" aria-hidden />
-
-            <Button
-              variant="outline"
-              onClick={() => downloadProposalPdfMutation.mutate()}
-              disabled={downloadProposalPdfMutation.isPending}
-            >
-              <Download className="w-4 h-4 mr-2" />
-              Opportunity PDF
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => downloadAiMediationReviewPdfMutation.mutate()}
-              disabled={downloadAiMediationReviewPdfMutation.isPending}
-            >
-              <Download className="w-4 h-4 mr-2" />
-              AI Mediation Review PDF
             </Button>
           </div>
 
