@@ -678,189 +678,156 @@ export default function ProposalDetail() {
   const primaryStatusKey = asLower(proposal.primary_status_key || proposal.status);
   const primaryStatusLabel = asText(proposal.primary_status_label) || getStatusLabel(primaryStatusKey);
 
+  // Derive party display strings
+  const proposerDisplay = proposal.is_private_mode && !proposal.party_a_email
+    ? 'Private sender'
+    : asText(proposal.party_a_email) || 'Not specified';
+  const recipientParts = [proposal.party_b_name, proposal.party_b_email].filter(Boolean);
+  const recipientDisplay = recipientParts.length > 0 ? recipientParts.join(' · ') : 'Not specified';
+
   return (
     <div className="min-h-screen bg-slate-50 py-6">
-      <div className="max-w-[1400px] mx-auto px-6 space-y-6">
+      <div className="max-w-[1400px] mx-auto px-6 space-y-4">
         <Link to={createPageUrl('Opportunities')} className="inline-flex items-center text-slate-600 hover:text-slate-900">
           <ArrowLeft className="w-4 h-4 mr-2" />
           Back to Opportunities
         </Link>
 
-        <div className="grid grid-cols-1 xl:grid-cols-[340px_1fr] gap-6 items-start">
-          <Card className="border border-slate-200 shadow-sm">
-            <CardContent className="pt-6 space-y-5">
-              <h1 className="text-5xl font-bold text-slate-900 leading-tight break-words">{proposal.title}</h1>
-              <div className="h-px bg-slate-200" />
-              <div className="space-y-3 text-sm">
-                <div className="flex items-center gap-3">
-                  <span className="text-slate-500 uppercase tracking-wide font-semibold">Status</span>
-                  <Badge className={getStatusClass(primaryStatusKey)}>{primaryStatusLabel}</Badge>
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-slate-500 uppercase tracking-wide font-semibold">Created</span>
-                  <span className="text-slate-800">{formatDate(proposal.created_date)}</span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-slate-500 uppercase tracking-wide font-semibold">Total Characters</span>
-                  <Badge variant="outline">{confidentialLength + sharedLength}</Badge>
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-slate-500 uppercase tracking-wide font-semibold">Last Updated</span>
-                  <span className="text-slate-800">{formatDate(proposal.updated_date)}</span>
-                </div>
-              </div>
+        {/* ── Title + party metadata ───────────────────────────────────── */}
+        <div>
+          <h1 className="text-3xl font-bold text-slate-900 leading-tight break-words">{proposal.title}</h1>
+          <p className="mt-1.5 text-sm text-slate-500 flex flex-wrap items-center gap-x-4 gap-y-1">
+            <span>
+              <span className="font-medium text-slate-600">Proposer:</span>{' '}
+              {proposerDisplay}
+              <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-slate-100 text-slate-500 font-medium">You</span>
+            </span>
+            <span className="text-slate-300" aria-hidden>·</span>
+            <span>
+              <span className="font-medium text-slate-600">Recipient:</span>{' '}
+              {recipientDisplay}
+            </span>
+            <span className="text-slate-300" aria-hidden>·</span>
+            <Badge className={`${getStatusClass(primaryStatusKey)} text-xs`}>{primaryStatusLabel}</Badge>
+          </p>
+        </div>
 
-              {/* Report metadata — only shown once there's been at least one evaluation */}
-              {evaluations.length > 0 && (
-                <>
-                  <div className="h-px bg-slate-200" />
-                  <div className="space-y-3 text-sm">
-                    <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">{MEDIATION_REVIEW_LABEL}</p>
-                    <div className="flex items-center justify-between">
-                      <span className="text-slate-500 font-medium">Recommendation</span>
-                      <Badge className="capitalize bg-slate-100 text-slate-700 border-slate-200">
-                        {latestResult?.recommendation || '—'}
-                      </Badge>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-slate-500 font-medium">Status</span>
-                      <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200">Complete</Badge>
-                    </div>
-                    {suggestedAdditionsCount > 0 && (
-                      <div className="flex items-center justify-between">
-                        <span className="text-slate-500 font-medium">{OPEN_QUESTIONS_LABEL}</span>
-                        <Badge className="bg-amber-100 text-amber-700 border-amber-200">
-                          {suggestedAdditionsCount} item{suggestedAdditionsCount !== 1 ? 's' : ''}
-                        </Badge>
-                      </div>
-                    )}
-                    {latestEvaluation && (
-                      <div className="flex items-center justify-between">
-                        <span className="text-slate-500 font-medium">Last Run</span>
-                        <span className="text-slate-700 text-xs">{formatDate(latestEvaluation.created_date)}</span>
-                      </div>
-                    )}
-                    {proposal.document_comparison_id && (
-                      <div className="pt-1">
-                        <button
-                          type="button"
-                          className="text-xs text-slate-500 hover:text-slate-700 inline-flex items-center gap-1"
-                          onClick={() => navigate(createPageUrl(`DocumentComparisonRunDetails?id=${encodeURIComponent(proposal.document_comparison_id)}`))}
-                        >
-                          <BarChart3 className="w-3 h-3" />
-                          Run details
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </>
-              )}
-            </CardContent>
-          </Card>
+        {/* ── Primary action row ───────────────────────────────────────── */}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Primary actions */}
+          <Button
+            onClick={() => {
+              if (proposal.proposal_type === 'document_comparison' && proposal.document_comparison_id) {
+                navigate(
+                  createPageUrl(
+                    `DocumentComparisonCreate?draft=${encodeURIComponent(proposal.document_comparison_id)}&proposalId=${encodeURIComponent(proposal.id)}&step=2`,
+                  ),
+                );
+                return;
+              }
+              navigate(createPageUrl(`CreateOpportunity?draft=${encodeURIComponent(proposal.id)}&step=4`));
+            }}
+            disabled={isClosed || viewingHistoricalVersion}
+          >
+            <ArrowRight className="w-4 h-4 mr-2" />
+            Edit Opportunity
+          </Button>
+          <Button
+            onClick={() => shareMutation.mutate()}
+            disabled={shareMutation.isPending || isClosed || viewingHistoricalVersion}
+          >
+            <Send className="w-4 h-4 mr-2" />
+            Share
+          </Button>
 
-          <div className="space-y-5">
-            <div className="flex flex-wrap gap-3">
-              <Button variant="outline" onClick={() => downloadProposalMutation.mutate()} disabled={downloadProposalMutation.isPending}>
-                <Download className="w-4 h-4 mr-2" />
-                Download Opportunity Details PDF
-              </Button>
+          {/* Divider */}
+          <div className="h-6 w-px bg-slate-200 mx-1" aria-hidden />
+
+          {/* Secondary utility actions */}
+          <Button variant="outline" onClick={() => downloadProposalMutation.mutate()} disabled={downloadProposalMutation.isPending}>
+            <Download className="w-4 h-4 mr-2" />
+            Opportunity PDF
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => downloadAiMediationReviewPdfMutation.mutate()}
+            disabled={downloadAiMediationReviewPdfMutation.isPending}
+          >
+            <Download className="w-4 h-4 mr-2" />
+            AI Mediation Review PDF
+          </Button>
+
+          {/* Archive / Delete — lower-emphasis, pushed right with margin */}
+          <div className="flex items-center gap-2 ml-auto">
+            {canArchive ? (
               <Button
-                variant="outline"
+                variant="ghost"
+                size="sm"
                 onClick={() => {
-                  if (proposal.proposal_type === 'document_comparison' && proposal.document_comparison_id) {
-                    navigate(
-                      createPageUrl(
-                        `DocumentComparisonCreate?draft=${encodeURIComponent(proposal.document_comparison_id)}&proposalId=${encodeURIComponent(proposal.id)}&step=2`,
-                      ),
-                    );
+                  if (proposal.archived_at) {
+                    unarchiveMutation.mutate();
                     return;
                   }
-                  navigate(createPageUrl(`CreateOpportunity?draft=${encodeURIComponent(proposal.id)}&step=4`));
+                  archiveMutation.mutate();
                 }}
-                disabled={isClosed || viewingHistoricalVersion}
+                disabled={archiveActionDisabled}
+                className="text-slate-500 hover:text-slate-700"
               >
-                <ArrowRight className="w-4 h-4 mr-2" />
-                Edit Proposal
+                {proposal.archived_at ? (
+                  <ArchiveRestore className="w-4 h-4 mr-1.5" />
+                ) : (
+                  <Archive className="w-4 h-4 mr-1.5" />
+                )}
+                {proposal.archived_at ? 'Unarchive' : 'Archive'}
               </Button>
-              <Button
-                onClick={() => shareMutation.mutate()}
-                disabled={shareMutation.isPending || isClosed || viewingHistoricalVersion}
-              >
-                <Send className="w-4 h-4 mr-2" />
-                Share Updated Version
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => downloadAiMediationReviewPdfMutation.mutate()}
-                disabled={downloadAiMediationReviewPdfMutation.isPending}
-              >
-                <Download className="w-4 h-4 mr-2" />
-                Download AI Mediation Review PDF
-              </Button>
-              {canArchive ? (
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    if (proposal.archived_at) {
-                      unarchiveMutation.mutate();
-                      return;
-                    }
-                    archiveMutation.mutate();
-                  }}
-                  disabled={archiveActionDisabled}
-                >
-                  {proposal.archived_at ? (
-                    <ArchiveRestore className="w-4 h-4 mr-2" />
-                  ) : (
-                    <Archive className="w-4 h-4 mr-2" />
-                  )}
-                  {proposal.archived_at ? 'Unarchive' : 'Archive'}
+            ) : null}
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="ghost" size="sm" className="text-rose-600 hover:text-rose-700 hover:bg-rose-50" disabled={deleteMutation.isPending}>
+                  <Trash2 className="w-4 h-4 mr-1.5" />
+                  Delete
                 </Button>
-              ) : null}
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button variant="outline" className="text-rose-700 border-rose-200 hover:bg-rose-50" disabled={deleteMutation.isPending}>
-                    <Trash2 className="w-4 h-4 mr-2" />
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>{deleteDialogTitle}</AlertDialogTitle>
+                  <AlertDialogDescription>{deleteDialogDescription}</AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={() => deleteMutation.mutate()}
+                    className="bg-rose-600 hover:bg-rose-700"
+                  >
                     Delete
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>{deleteDialogTitle}</AlertDialogTitle>
-                    <AlertDialogDescription>{deleteDialogDescription}</AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                    <AlertDialogAction
-                      onClick={() => deleteMutation.mutate()}
-                      className="bg-rose-600 hover:bg-rose-700"
-                    >
-                      Delete
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-            </div>
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </div>
+        </div>
 
-            <Tabs value={activeTab} onValueChange={setActiveTab}>
-              <TabsList className="bg-white border border-slate-200 p-1">
-                <TabsTrigger value="proposal" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
-                  <FileText className="w-4 h-4 mr-2" />
-                  Opportunity
-                </TabsTrigger>
-                <TabsTrigger value="history" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
-                  <History className="w-4 h-4 mr-2" />
-                  Version History
-                  {versionHistory.length > 0 ? (
-                    <Badge className="ml-2 bg-slate-100 text-slate-700 text-xs">{versionHistory.length}</Badge>
-                  ) : null}
-                </TabsTrigger>
-                <TabsTrigger value="report" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
-                  <BarChart3 className="w-4 h-4 mr-2" />
-                  {MEDIATION_REVIEW_LABEL}
-                  {evaluations.length > 0 && <Badge className="ml-2 bg-green-100 text-green-700 text-xs">Complete</Badge>}
-                </TabsTrigger>
-              </TabsList>
+        {/* ── Main content (full width) ────────────────────────────────── */}
+        <div className="space-y-5">
+          <Tabs value={activeTab} onValueChange={setActiveTab}>
+            <TabsList className="bg-white border border-slate-200 p-1">
+              <TabsTrigger value="proposal" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
+                <FileText className="w-4 h-4 mr-2" />
+                Opportunity
+              </TabsTrigger>
+              <TabsTrigger value="history" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
+                <History className="w-4 h-4 mr-2" />
+                Version History
+                {versionHistory.length > 0 ? (
+                  <Badge className="ml-2 bg-slate-100 text-slate-700 text-xs">{versionHistory.length}</Badge>
+                ) : null}
+              </TabsTrigger>
+              <TabsTrigger value="report" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
+                <BarChart3 className="w-4 h-4 mr-2" />
+                {MEDIATION_REVIEW_LABEL}
+                {evaluations.length > 0 && <Badge className="ml-2 bg-green-100 text-green-700 text-xs">Complete</Badge>}
+              </TabsTrigger>
+            </TabsList>
 
 
               <TabsContent value="report" className="mt-6 space-y-5">
@@ -1266,7 +1233,6 @@ export default function ProposalDetail() {
 
             </Tabs>
           </div>
-        </div>
       </div>
     </div>
   );
