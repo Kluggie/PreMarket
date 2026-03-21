@@ -304,3 +304,104 @@ test('detail page routing uses different proposal IDs for each recipient thread'
   assert.ok(detailUrlAlice.includes(proposalIdAlice));
   assert.ok(detailUrlBob.includes(proposalIdBob));
 });
+
+// ─── Navigation: inbox row click must produce a valid in-app route ──────────
+
+// Inline minimal implementations matching the real helpers for isolated testing:
+
+function createPageUrl(pageName) {
+  return '/' + pageName.replace(/ /g, '-');
+}
+
+function buildDocumentComparisonDetailHref({ comparisonId, tab } = {}) {
+  const normalizedComparisonId = String(comparisonId || '').trim();
+  if (!normalizedComparisonId) return null;
+  const params = new URLSearchParams();
+  params.set('id', normalizedComparisonId);
+  if (tab) params.set('tab', String(tab));
+  return `/DocumentComparisonDetail?${params.toString()}`;
+}
+
+function buildDocumentComparisonReportHref(comparisonId) {
+  return buildDocumentComparisonDetailHref({ comparisonId, tab: 'report' });
+}
+
+test('buildDocumentComparisonReportHref returns a valid absolute path', () => {
+  const href = buildDocumentComparisonReportHref('comparison_abc123');
+  assert.ok(href, 'must return a non-null value');
+  assert.ok(href.startsWith('/'), 'must start with /');
+  assert.ok(href.includes('DocumentComparisonDetail'), 'must contain route name');
+  assert.ok(href.includes('id=comparison_abc123'), 'must include comparison id');
+  assert.ok(href.includes('tab=report'), 'must include tab=report');
+  // Must NOT start with // (double slash caused by createPageUrl wrapping)
+  assert.ok(!href.startsWith('//'), 'must not start with double slash');
+});
+
+test('createPageUrl wrapping buildDocumentComparisonReportHref produces a broken double-slash URL', () => {
+  // This documents the bug that was fixed: wrapping an already-absolute path
+  // in createPageUrl prepends / again, producing //DocumentComparisonDetail?...
+  const href = buildDocumentComparisonReportHref('comparison_abc123');
+  const wrapped = createPageUrl(href);
+  assert.ok(wrapped.startsWith('//'), 'wrapping confirms the double-slash bug');
+  assert.ok(!href.startsWith('//'), 'the original href is correct without wrapping');
+});
+
+test('Proposals.jsx uses navigate(buildDocumentComparisonReportHref(...)) without createPageUrl wrapper', () => {
+  const proposalsCode = readRepoFile('src/pages/Proposals.jsx');
+
+  // The correct pattern: navigate directly with the already-absolute href
+  assert.match(
+    proposalsCode,
+    /navigate\s*\(\s*buildDocumentComparisonReportHref\s*\(/,
+    'must call navigate(buildDocumentComparisonReportHref(...)) directly',
+  );
+
+  // Must NOT have createPageUrl wrapping buildDocumentComparisonReportHref
+  assert.doesNotMatch(
+    proposalsCode,
+    /createPageUrl\s*\(\s*buildDocumentComparisonReportHref/,
+    'must not wrap buildDocumentComparisonReportHref in createPageUrl',
+  );
+});
+
+test('Dashboard.jsx uses navigate(buildDocumentComparisonReportHref(...)) without createPageUrl wrapper', () => {
+  const dashboardCode = readRepoFile('src/pages/Dashboard.jsx');
+
+  // The correct pattern: navigate directly with the already-absolute href
+  assert.match(
+    dashboardCode,
+    /navigate\s*\(\s*buildDocumentComparisonReportHref\s*\(/,
+    'must call navigate(buildDocumentComparisonReportHref(...)) directly',
+  );
+
+  // Must NOT have createPageUrl wrapping buildDocumentComparisonReportHref
+  assert.doesNotMatch(
+    dashboardCode,
+    /createPageUrl\s*\(\s*buildDocumentComparisonReportHref/,
+    'must not wrap buildDocumentComparisonReportHref in createPageUrl',
+  );
+});
+
+test('forked opportunity row for recipient A navigates to its own comparison detail', () => {
+  const comparisonIdA = 'comparison_alice_fork';
+  const hrefA = buildDocumentComparisonReportHref(comparisonIdA);
+  assert.equal(hrefA, `/DocumentComparisonDetail?id=${encodeURIComponent(comparisonIdA)}&tab=report`);
+  assert.ok(hrefA.startsWith('/DocumentComparisonDetail'), 'correct route for A');
+  assert.ok(!hrefA.startsWith('//'), 'no double slash for A');
+});
+
+test('forked opportunity row for recipient B navigates to its own comparison detail', () => {
+  const comparisonIdB = 'comparison_bob_fork';
+  const hrefB = buildDocumentComparisonReportHref(comparisonIdB);
+  assert.equal(hrefB, `/DocumentComparisonDetail?id=${encodeURIComponent(comparisonIdB)}&tab=report`);
+  assert.ok(hrefB.startsWith('/DocumentComparisonDetail'), 'correct route for B');
+  assert.ok(!hrefB.startsWith('//'), 'no double slash for B');
+});
+
+test('both forked recipient rows navigate to different comparison detail URLs', () => {
+  const hrefA = buildDocumentComparisonReportHref('comparison_alice_fork');
+  const hrefB = buildDocumentComparisonReportHref('comparison_bob_fork');
+  assert.notEqual(hrefA, hrefB, 'each recipient must navigate to a different URL');
+  assert.ok(hrefA.includes('comparison_alice_fork'));
+  assert.ok(hrefB.includes('comparison_bob_fork'));
+});

@@ -693,11 +693,7 @@ export default function Proposals() {
         : 1;
 
       if (normalizedResumeStep >= 3) {
-        navigate(
-          createPageUrl(
-            buildDocumentComparisonReportHref(proposal.document_comparison_id),
-          ),
-        );
+        navigate(buildDocumentComparisonReportHref(proposal.document_comparison_id));
         return;
       }
 
