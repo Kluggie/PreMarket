@@ -413,6 +413,7 @@ export default function DocumentComparisonDetail() {
   const [shareRecipients, setShareRecipients] = useState(() => [newRecipientRow()]);
   const [selectedShareToken, setSelectedShareToken] = useState('');
   const [isShareLinkInitializedForOpen, setIsShareLinkInitializedForOpen] = useState(false);
+  const [sendResults, setSendResults] = useState(null);
   const [evaluationPollDeadline, setEvaluationPollDeadline] = useState(null);
 
 
@@ -703,7 +704,6 @@ export default function DocumentComparisonDetail() {
   const sendShareEmailMutation = useMutation({
     mutationFn: async (token) => {
       let workingToken = asText(token);
-      // Collect only rows that have a non-empty email (already validated before calling)
       const activeRecipients = getActiveRows(shareRecipients).filter((r) => asText(r.email));
       const primaryEmail = activeRecipients[0]?.email || null;
 
@@ -719,24 +719,50 @@ export default function DocumentComparisonDetail() {
         throw new Error('Shared report link could not be created');
       }
 
-      // Send to each recipient in sequence using the same base token;
-      // the server forks for each new email address automatically.
+      // Send per-recipient, catching individual failures so a single bad address
+      // does not abort the whole batch.
+      const groups = activeRecipients.length > 0 ? activeRecipients : [{ name: '', email: null }];
       const results = [];
-      for (const recipient of (activeRecipients.length > 0 ? activeRecipients : [{ email: null }])) {
-        const result = await sharedReportsClient.send(workingToken, {
-          recipientEmail: recipient.email,
-        });
-        results.push(result);
+      for (const recipient of groups) {
+        try {
+          const result = await sharedReportsClient.send(workingToken, {
+            recipientEmail: recipient.email,
+          });
+          results.push({
+            name: recipient.name || '',
+            email: recipient.email,
+            status: 'sent',
+            error: null,
+            token: result.token,
+          });
+        } catch (err) {
+          results.push({
+            name: recipient.name || '',
+            email: recipient.email,
+            status: 'failed',
+            error: asText(err?.message) || 'Send failed',
+            token: null,
+          });
+        }
       }
-      return { last: results[results.length - 1], count: results.length };
+      const lastSent = [...results].reverse().find((r) => r.status === 'sent') || null;
+      return { results, lastSent, count: results.length };
     },
     onSuccess: async (payload) => {
-      if (payload?.last?.token) {
-        setSelectedShareToken(payload.last.token);
+      if (payload?.lastSent?.token) {
+        setSelectedShareToken(payload.lastSent.token);
       }
+      setSendResults(payload.results);
       await queryClient.invalidateQueries({ queryKey: ['shared-reports', comparisonId] });
-      const count = payload?.count ?? 1;
-      toast.success(count > 1 ? `Shared report sent to ${count} recipients` : 'Shared report email sent');
+      const sent = payload.results.filter((r) => r.status === 'sent').length;
+      const failed = payload.results.filter((r) => r.status === 'failed').length;
+      if (sent > 0 && failed === 0) {
+        toast.success(sent > 1 ? `Shared report sent to ${sent} recipients` : 'Shared report email sent');
+      } else if (sent > 0 && failed > 0) {
+        toast.warning(`Sent to ${sent} recipient${sent > 1 ? 's' : ''}; ${failed} failed`);
+      } else {
+        toast.error('Failed to send to all recipients');
+      }
     },
     onError: (error) => {
       if (error?.code === 'not_configured' || Number(error?.status || 0) === 501) {
@@ -995,6 +1021,7 @@ export default function DocumentComparisonDetail() {
           if (!nextOpen) {
             setShareRecipients([newRecipientRow()]);
             setIsShareLinkInitializedForOpen(false);
+            setSendResults(null);
           }
         }}
       >
@@ -1002,7 +1029,7 @@ export default function DocumentComparisonDetail() {
           <DialogHeader>
             <DialogTitle>Send Shared Report</DialogTitle>
             <DialogDescription>
-              Share one recipient-safe report link. Confidential information stays private and never appears in email content.
+              Send recipient-safe report links by email. Confidential information stays private and never appears in email content.
             </DialogDescription>
           </DialogHeader>
 
@@ -1076,6 +1103,7 @@ export default function DocumentComparisonDetail() {
                     setShareRecipients(validated);
                     return;
                   }
+                  setSendResults(null);
                   sendShareEmailMutation.mutate(activeSharedReport?.token || '');
                 }}
                 disabled={createShareLinkMutation.isPending || sendShareEmailMutation.isPending}
@@ -1088,6 +1116,35 @@ export default function DocumentComparisonDetail() {
                 Send email
               </Button>
             </div>
+
+            {sendResults && sendResults.length > 0 ? (
+              <div className="rounded-lg border border-slate-200 divide-y divide-slate-100">
+                {sendResults.map((r, i) => (
+                  <div key={i} className="flex items-start gap-3 px-3 py-2.5">
+                    <div
+                      className={`mt-1 flex-shrink-0 w-2 h-2 rounded-full ${
+                        r.status === 'sent' ? 'bg-green-500' : 'bg-red-500'
+                      }`}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-slate-800 leading-snug">
+                        {r.status === 'sent' ? 'Sent' : 'Failed'}
+                        {r.name ? (
+                          <span className="font-normal text-slate-500"> · {r.name}</span>
+                        ) : null}
+                      </p>
+                      <p className="text-xs text-slate-500 truncate">{r.email || '\u2014'}</p>
+                      {r.status === 'sent' ? (
+                        <p className="text-xs text-slate-400 mt-0.5">Accepted for delivery by email provider</p>
+                      ) : null}
+                      {r.status === 'failed' && r.error ? (
+                        <p className="text-xs text-red-600 mt-0.5">{r.error}</p>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
 
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3">
               <div className="flex flex-wrap items-center gap-2">
@@ -1102,14 +1159,17 @@ export default function DocumentComparisonDetail() {
               </div>
 
               <div className="space-y-2">
-                <Label>Share URL</Label>
+                <Label>Private report link</Label>
                 <Input
                   readOnly
                   value={activeShareUrl}
-                  placeholder={isShareLinkPanelLoading ? 'Creating shared link...' : 'Shared link unavailable'}
+                  placeholder={isShareLinkPanelLoading ? 'Creating link...' : 'Link unavailable'}
                 />
+                <p className="text-xs text-slate-500">
+                  Token-protected link — anyone with this link can view the report. Only invited recipients can respond or add information.
+                </p>
                 {!activeSharedReport && isShareLinkPanelLoading ? (
-                  <p className="text-xs text-slate-500">Preparing shared link...</p>
+                  <p className="text-xs text-slate-500">Preparing link...</p>
                 ) : null}
               </div>
 
