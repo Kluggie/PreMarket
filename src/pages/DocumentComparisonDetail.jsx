@@ -7,14 +7,13 @@ import { proposalsClient } from '@/api/proposalsClient';
 import { sharedReportsClient } from '@/api/sharedReportsClient';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
   ComparisonDetailTabs,
 } from '@/components/document-comparison/ComparisonDetailTabs';
-import OpportunityActionGroups from '@/components/document-comparison/OpportunityActionGroups';
 import {
   Dialog,
   DialogContent,
@@ -808,26 +807,6 @@ export default function DocumentComparisonDetail() {
         ]
       : []),
   ];
-  const detailDownloadActions = [
-    {
-      key: 'opportunity-pdf',
-      label: 'Opportunity PDF',
-      onClick: () => downloadProposalPdfMutation.mutate(),
-      disabled: downloadProposalPdfMutation.isPending,
-      loading: downloadProposalPdfMutation.isPending,
-      variant: 'outline',
-      icon: Download,
-    },
-    {
-      key: 'ai-mediation-review-pdf',
-      label: 'AI Mediation Review PDF',
-      onClick: () => downloadAiMediationReviewPdfMutation.mutate(),
-      disabled: downloadAiMediationReviewPdfMutation.isPending,
-      loading: downloadAiMediationReviewPdfMutation.isPending,
-      variant: 'outline',
-      icon: Download,
-    },
-  ];
 
   return (
     <div className="min-h-screen bg-slate-50 py-6">
@@ -840,25 +819,27 @@ export default function DocumentComparisonDetail() {
           Back to Opportunities
         </Link>
 
-        <div className="space-y-6 min-w-0">
-          <Card className="border border-slate-200 shadow-sm">
-            <CardContent className="pt-6 space-y-5">
-              <h1 className="text-[2.4rem] lg:text-[3.15rem] font-bold text-slate-900 leading-tight break-words">
-                {comparison.title}
-              </h1>
-              <div className="border-t border-slate-200 pt-4">
-                <OpportunityActionGroups
-                  variant="inline"
-                  layout="split"
-                  downloads={detailDownloadActions}
-                />
-              </div>
-            </CardContent>
-          </Card>
+        <div className="space-y-4 min-w-0">
+          {/* ── Title + party metadata ───────────────────────────────────── */}
+          <div>
+            <h1 className="text-3xl font-bold text-slate-900 leading-tight break-words">{comparison.title}</h1>
+            <p className="mt-1.5 text-sm text-slate-500 flex flex-wrap items-center gap-x-4 gap-y-1">
+              <span>
+                <span className="font-medium text-slate-600">Proposer:</span>{' '}
+                {proposal?.party_a_email || 'Not specified'}
+                <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-slate-100 text-slate-500 font-medium">You</span>
+              </span>
+              <span className="text-slate-300" aria-hidden>·</span>
+              <span>
+                <span className="font-medium text-slate-600">Recipient:</span>{' '}
+                {[proposal?.party_b_name || comparison?.recipient_name, proposal?.party_b_email || comparison?.recipient_email].filter(Boolean).join(' · ') || 'Not specified'}
+              </span>
+            </p>
+          </div>
 
-          <div className="flex flex-wrap gap-3">
+          {/* ── Primary action row ───────────────────────────────────────── */}
+          <div className="flex flex-wrap items-center gap-2">
             <Button
-              variant="outline"
               onClick={() =>
                 navigate(
                   createPageUrl(
@@ -874,39 +855,27 @@ export default function DocumentComparisonDetail() {
               <Send className="w-4 h-4 mr-2" />
               Share
             </Button>
-          </div>
 
-          <Card className="border border-slate-200 shadow-sm">
-            <CardHeader>
-              <CardTitle>Parties</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="rounded-xl border border-slate-200 p-4 bg-slate-50">
-                  <p className="text-xs font-semibold tracking-wide uppercase text-slate-500 mb-2">
-                    Party A (Proposer)
-                  </p>
-                  <p className="font-semibold text-slate-900">{proposal?.party_a_email || 'Not specified'}</p>
-                  <Badge variant="outline" className="mt-3">
-                    You
-                  </Badge>
-                </div>
-                <div className="rounded-xl border border-slate-200 p-4 bg-slate-50">
-                  <p className="text-xs font-semibold tracking-wide uppercase text-slate-500 mb-2">
-                    Party B (Recipient)
-                  </p>
-                  {(proposal?.party_b_name || comparison?.recipient_name) && (
-                    <p className="font-semibold text-slate-900">
-                      {proposal?.party_b_name || comparison?.recipient_name}
-                    </p>
-                  )}
-                  <p className={proposal?.party_b_name || comparison?.recipient_name ? 'text-sm text-slate-600 mt-0.5' : 'font-semibold text-slate-900'}>
-                    {proposal?.party_b_email || comparison?.recipient_email || 'Not specified'}
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+            {/* Divider */}
+            <div className="h-6 w-px bg-slate-200 mx-1" aria-hidden />
+
+            <Button
+              variant="outline"
+              onClick={() => downloadProposalPdfMutation.mutate()}
+              disabled={downloadProposalPdfMutation.isPending}
+            >
+              <Download className="w-4 h-4 mr-2" />
+              Opportunity PDF
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => downloadAiMediationReviewPdfMutation.mutate()}
+              disabled={downloadAiMediationReviewPdfMutation.isPending}
+            >
+              <Download className="w-4 h-4 mr-2" />
+              AI Mediation Review PDF
+            </Button>
+          </div>
 
           <ComparisonDetailTabs
             activeTab={activeTab}
