@@ -48,6 +48,31 @@ function asLower(value) {
   return asText(value).toLowerCase();
 }
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function isValidEmail(value) {
+  return EMAIL_RE.test(asText(value));
+}
+
+function parseRecipientEmails(raw) {
+  return [...new Set(
+    String(raw || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean),
+  )];
+}
+
+function validateRecipientEmails(raw) {
+  const emails = parseRecipientEmails(raw);
+  if (emails.length === 0) return null;
+  const invalid = emails.filter((e) => !isValidEmail(e));
+  if (invalid.length > 0) {
+    return `Invalid email address${invalid.length > 1 ? 'es' : ''}: ${invalid.join(', ')}`;
+  }
+  return null;
+}
+
 function toSafeNumber(value, fallback = 0) {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
@@ -386,6 +411,7 @@ export default function DocumentComparisonDetail() {
   const [activeTab, setActiveTab] = useState(initialTab);
   const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
   const [shareRecipientEmail, setShareRecipientEmail] = useState('');
+  const [shareEmailError, setShareEmailError] = useState('');
   const [selectedShareToken, setSelectedShareToken] = useState('');
   const [isShareLinkInitializedForOpen, setIsShareLinkInitializedForOpen] = useState(false);
   const [evaluationPollDeadline, setEvaluationPollDeadline] = useState(null);
@@ -679,10 +705,13 @@ export default function DocumentComparisonDetail() {
   const sendShareEmailMutation = useMutation({
     mutationFn: async (token) => {
       let workingToken = asText(token);
+      const recipientEmails = parseRecipientEmails(shareRecipientEmail);
+      const primaryEmail = recipientEmails[0] || null;
+
       if (!workingToken) {
         const created = await sharedReportsClient.create({
           comparisonId,
-          recipientEmail: asText(shareRecipientEmail) || null,
+          recipientEmail: primaryEmail,
         });
         workingToken = asText(created?.token);
       }
@@ -691,9 +720,15 @@ export default function DocumentComparisonDetail() {
         throw new Error('Shared report link could not be created');
       }
 
-      return sharedReportsClient.send(workingToken, {
-        recipientEmail: asText(shareRecipientEmail) || null,
-      });
+      // Send to each address in sequence; use the same token for all
+      const results = [];
+      for (const email of (recipientEmails.length > 0 ? recipientEmails : [null])) {
+        const result = await sharedReportsClient.send(workingToken, {
+          recipientEmail: email,
+        });
+        results.push(result);
+      }
+      return results[results.length - 1];
     },
     onSuccess: async (payload) => {
       if (payload?.token) {
@@ -882,6 +917,7 @@ export default function DocumentComparisonDetail() {
             </div>
           </div>
 
+          <div className="mt-2">
           <ComparisonDetailTabs
             activeTab={activeTab}
             onTabChange={setActiveTab}
@@ -947,6 +983,7 @@ export default function DocumentComparisonDetail() {
                 : undefined,
             }}
           />
+          </div>
         </div>
       </div>
 
@@ -956,6 +993,7 @@ export default function DocumentComparisonDetail() {
           setIsShareDialogOpen(nextOpen);
           if (!nextOpen) {
             setShareRecipientEmail('');
+            setShareEmailError('');
             setIsShareLinkInitializedForOpen(false);
           }
         }}
@@ -970,19 +1008,33 @@ export default function DocumentComparisonDetail() {
 
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="shared-report-recipient">Recipient email (optional)</Label>
+              <Label htmlFor="shared-report-recipient">Recipient email(s) (optional)</Label>
               <Input
                 id="shared-report-recipient"
-                type="email"
-                placeholder="recipient@example.com"
+                type="text"
+                placeholder="alice@example.com, bob@example.com"
                 value={shareRecipientEmail}
-                onChange={(event) => setShareRecipientEmail(event.target.value)}
+                onChange={(event) => {
+                  setShareRecipientEmail(event.target.value);
+                  setShareEmailError('');
+                }}
               />
+              <p className="text-xs text-slate-500">Enter one or more email addresses separated by commas</p>
+              {shareEmailError ? (
+                <p className="text-xs text-red-600">{shareEmailError}</p>
+              ) : null}
             </div>
 
             <div className="flex flex-wrap gap-2">
               <Button
-                onClick={() => sendShareEmailMutation.mutate(activeSharedReport?.token || '')}
+                onClick={() => {
+                  const validationError = validateRecipientEmails(shareRecipientEmail);
+                  if (validationError) {
+                    setShareEmailError(validationError);
+                    return;
+                  }
+                  sendShareEmailMutation.mutate(activeSharedReport?.token || '');
+                }}
                 disabled={createShareLinkMutation.isPending || sendShareEmailMutation.isPending}
               >
                 {sendShareEmailMutation.isPending ? (
