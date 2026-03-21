@@ -6,11 +6,12 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   AlertTriangle,
   ArrowLeft,
-  CheckCircle2,
   FileText,
+  Info,
   Loader2,
   Lock,
   Sparkles,
+  Type,
   Users,
 } from 'lucide-react';
 import { VISIBILITY_CONFIDENTIAL, VISIBILITY_SHARED, getDocumentCounts } from '@/pages/document-comparison/documentsModel';
@@ -21,6 +22,38 @@ import { RUN_AI_MEDIATION_LABEL, RUNNING_AI_MEDIATION_LABEL } from '@/lib/aiRepo
 // ─────────────────────────────────────────────
 
 const MAX_BUNDLE_PREVIEW_CHARS = 1200;
+
+// ─────────────────────────────────────────────
+//  AI capacity estimation
+// ─────────────────────────────────────────────
+
+// Quality heuristic for AI review capacity bands.
+// The mediation model (gemini-2.5-pro) has a very large context window, so these
+// bands do NOT reflect the model's hard input limit. They are app-level quality
+// bands: larger packages can reduce depth, nuance, and consistency of the review
+// even when they are well within the model's technical capacity.
+const AI_LIMIT_WORDS = 20_000;
+
+const CAPACITY_BANDS = [
+  { label: 'Very Light', labelColor: 'text-emerald-600', filledColor: 'bg-emerald-400' },
+  { label: 'Light',      labelColor: 'text-emerald-600', filledColor: 'bg-emerald-400' },
+  { label: 'Balanced',   labelColor: 'text-blue-600',    filledColor: 'bg-blue-400'    },
+  { label: 'Heavy',      labelColor: 'text-amber-600',   filledColor: 'bg-amber-500'   },
+  { label: 'Near Limit', labelColor: 'text-red-600',     filledColor: 'bg-red-500'     },
+];
+
+function countWords(text) {
+  return text ? text.trim().split(/\s+/).filter(Boolean).length : 0;
+}
+
+function getCapacityIndex(totalWords) {
+  const pct = totalWords / AI_LIMIT_WORDS;
+  if (pct < 0.20) return 0; // Very Light
+  if (pct < 0.40) return 1; // Light
+  if (pct < 0.60) return 2; // Balanced
+  if (pct < 0.80) return 3; // Heavy
+  return 4;                  // Near Limit
+}
 
 function BundleSection({ label, icon, colorClass, borderClass, bgClass, sourceDocs, bundleText }) {
   const [expanded, setExpanded] = useState(false);
@@ -160,7 +193,10 @@ export default function Step3ReviewPackage({
       : RUN_AI_MEDIATION_LABEL;
   const resolvedRunActionLabel = isRunning ? finishLabel : runActionLabel || RUN_AI_MEDIATION_LABEL;
 
-  const totalChars = (confidentialBundle.text?.length || 0) + (sharedBundle.text?.length || 0);
+  const totalWords = countWords(confidentialBundle.text) + countWords(sharedBundle.text);
+  const capacityIndex = getCapacityIndex(totalWords);
+  const capacityBand = CAPACITY_BANDS[capacityIndex];
+  const showCapacityWarning = capacityIndex >= 3;
 
   return (
     <div className="space-y-6" data-testid="doc-comparison-step-3">
@@ -195,11 +231,59 @@ export default function Step3ReviewPackage({
               className="text-emerald-600"
             />
             <OverviewStat
-              label="Total chars"
-              value={totalChars > 0 ? totalChars.toLocaleString() : '—'}
-              Icon={CheckCircle2}
+              label="Word size"
+              value={totalWords > 0 ? totalWords.toLocaleString() : '—'}
+              Icon={Type}
               className="text-blue-600"
             />
+          </div>
+
+          {/* AI capacity meter */}
+          <div className="mt-4 pt-4 border-t border-slate-100 space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">
+                  AI review capacity
+                </span>
+                <Info
+                  className="w-3.5 h-3.5 text-slate-400 cursor-help"
+                  title="An estimate of how much content the AI must process during mediation. Larger packages may reduce the depth of analysis."
+                />
+              </div>
+              <span className={`text-xs font-bold ${capacityBand.labelColor}`}>
+                {capacityBand.label}
+              </span>
+            </div>
+            <div
+              className="flex gap-1"
+              role="meter"
+              aria-label={`AI review capacity: ${capacityBand.label}`}
+              aria-valuenow={capacityIndex + 1}
+              aria-valuemin={1}
+              aria-valuemax={5}
+            >
+              {CAPACITY_BANDS.map((band, i) => (
+                <div
+                  key={band.label}
+                  className={`h-1.5 flex-1 rounded-full transition-colors ${
+                    i <= capacityIndex ? band.filledColor : 'bg-slate-200'
+                  }`}
+                />
+              ))}
+            </div>
+            <p className="text-xs text-slate-500">
+              Higher context usage can reduce how much detail the AI can consider comfortably.
+            </p>
+            {showCapacityWarning && (
+              <>
+                <p className="text-xs text-amber-700 font-medium">
+                  This package is becoming large for highest-quality review.
+                </p>
+                <p className="text-xs text-amber-600">
+                  Larger packages may reduce depth and consistency of review.
+                </p>
+              </>
+            )}
           </div>
         </CardContent>
       </Card>
