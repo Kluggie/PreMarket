@@ -757,9 +757,9 @@ export default function DocumentComparisonDetail() {
       const sent = payload.results.filter((r) => r.status === 'sent').length;
       const failed = payload.results.filter((r) => r.status === 'failed').length;
       if (sent > 0 && failed === 0) {
-        toast.success(sent > 1 ? `Shared report sent to ${sent} recipients` : 'Shared report email sent');
+        toast.success(sent > 1 ? `Accepted by provider for ${sent} recipients` : 'Email accepted by provider');
       } else if (sent > 0 && failed > 0) {
-        toast.warning(`Sent to ${sent} recipient${sent > 1 ? 's' : ''}; ${failed} failed`);
+        toast.warning(`Accepted for ${sent} recipient${sent > 1 ? 's' : ''}; ${failed} failed`);
       } else {
         toast.error('Failed to send to all recipients');
       }
@@ -1128,7 +1128,7 @@ export default function DocumentComparisonDetail() {
                     />
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-medium text-slate-800 leading-snug">
-                        {r.status === 'sent' ? 'Sent' : 'Failed'}
+                        {r.status === 'sent' ? 'Accepted' : 'Failed'}
                         {r.name ? (
                           <span className="font-normal text-slate-500"> · {r.name}</span>
                         ) : null}
