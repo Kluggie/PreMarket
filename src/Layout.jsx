@@ -85,8 +85,8 @@ export default function Layout({ children, currentPageName }) {
 
   const publicNavLinks = [
     { label: 'Home', pageKey: 'Landing', href: createPageUrl('Landing'), icon: Home },
-    { label: 'Dashboard', pageKey: 'Dashboard', href: createPageUrl('Dashboard'), icon: LayoutDashboard },
-    { label: 'Opportunities', pageKey: 'Proposals', href: createPageUrl('Opportunities'), icon: FileText },
+    { label: 'How It Works', pageKey: 'HowItWorks', href: '/how-it-works', icon: FileText },
+    { label: 'Opportunities', pageKey: 'OpportunitiesNew', href: '/opportunities/new', icon: FileText },
     { label: 'Pricing', pageKey: 'Pricing', href: createPageUrl('Pricing'), icon: CoinSideIcon }
   ];
 
@@ -295,6 +295,7 @@ export default function Layout({ children, currentPageName }) {
                 <h4 className="font-semibold mb-4">Company</h4>
                 <ul className="space-y-2 text-sm text-slate-400">
                   <li><Link to={createPageUrl('About')} className="hover:text-white transition-colors">About Us</Link></li>
+                  <li><Link to="/how-it-works" className="hover:text-white transition-colors">How It Works</Link></li>
                   <li><Link to="/contact" className="hover:text-white transition-colors">Contact</Link></li>
                   {showDocumentationLink && <li><Link to="/documentation" className="hover:text-white transition-colors">Documentation</Link></li>}
                 </ul>
