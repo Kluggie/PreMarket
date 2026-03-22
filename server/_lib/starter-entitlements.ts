@@ -41,13 +41,14 @@ function getMonthWindow(now = new Date()) {
   return { start, end };
 }
 
-export async function getUserPlanTier(db: any, userId: string) {
+export async function getUserPlanTier(db: any, userId: string, now = new Date()) {
   // Join through users so we can also check betaSignups via userId OR
   // emailNormalized (for pre-account beta signups).
   const [row] = await db
     .select({
       plan: schema.billingReferences.plan,
       betaId: schema.betaSignups.id,
+      betaTrialEndsAt: schema.betaSignups.trialEndsAt,
     })
     .from(schema.users)
     .leftJoin(
@@ -71,9 +72,13 @@ export async function getUserPlanTier(db: any, userId: string) {
     return billingPlan;
   }
 
-  // betaSignups entry means Early Access — overrides a default 'starter' row.
+  // betaSignups entry means Early Access - but only while the trial has not
+  // expired. NULL trialEndsAt means pre-column row: treat as non-expired.
   if (row?.betaId) {
-    return 'early_access';
+    const trialEndsAt = row.betaTrialEndsAt ? new Date(row.betaTrialEndsAt) : null;
+    if (!trialEndsAt || trialEndsAt > now) {
+      return 'early_access';
+    }
   }
 
   return billingPlan || 'starter';

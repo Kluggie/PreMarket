@@ -865,3 +865,172 @@ if (!hasDatabaseUrl()) {
     assert.equal(Number(usageRows[0]?.quantity || 0), Buffer.from('retry-ok').length);
   });
 }
+
+// ---------------------------------------------------------------------------
+// Trial expiry tests
+// ---------------------------------------------------------------------------
+test('Beta signup with future trialEndsAt is treated as Early Access (not capped)', async () => {
+  if (!hasDatabaseUrl()) return;
+  await ensureMigrated();
+  await resetTables();
+
+  const userId = 'beta_future_trial';
+  const email = 'beta-future-trial@example.com';
+  const cookie = authCookie(userId, email);
+
+  const db = await getDb();
+  await db.insert(schema.users).values({ id: userId, email }).onConflictDoNothing({ target: schema.users.id });
+
+  const futureDate = new Date(Date.now() + 25 * 24 * 60 * 60 * 1000); // 25 days from now
+  await db
+    .insert(schema.betaSignups)
+    .values({
+      id: randomUUID(),
+      email,
+      emailNormalized: email.toLowerCase(),
+      userId,
+      source: 'pricing',
+      createdAt: new Date(),
+      trialEndsAt: futureDate,
+    })
+    .onConflictDoNothing({ target: schema.betaSignups.emailNormalized });
+
+  await seedProposal(userId, 'trial-future-p1');
+  await seedProposal(userId, 'trial-future-p2');
+  await seedProposal(userId, 'trial-future-p3');
+
+  const result = await createProposalViaApi(cookie, 'trial-future-p4-should-pass');
+  assert.equal(
+    result.status,
+    201,
+    `Active beta trial must not be starter-capped: ${JSON.stringify(result.body)}`,
+  );
+  assert.equal(result.body?.ok, true);
+});
+
+test('Beta signup with past trialEndsAt falls back to Starter (IS capped)', async () => {
+  if (!hasDatabaseUrl()) return;
+  await ensureMigrated();
+  await resetTables();
+
+  const userId = 'beta_expired_trial';
+  const email = 'beta-expired-trial@example.com';
+  const cookie = authCookie(userId, email);
+
+  const db = await getDb();
+  await db.insert(schema.users).values({ id: userId, email }).onConflictDoNothing({ target: schema.users.id });
+
+  const pastDate = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000); // 1 day ago
+  await db
+    .insert(schema.betaSignups)
+    .values({
+      id: randomUUID(),
+      email,
+      emailNormalized: email.toLowerCase(),
+      userId,
+      source: 'pricing',
+      createdAt: new Date(Date.now() - 32 * 24 * 60 * 60 * 1000),
+      trialEndsAt: pastDate,
+    })
+    .onConflictDoNothing({ target: schema.betaSignups.emailNormalized });
+
+  await seedProposal(userId, 'trial-expired-p1');
+  await seedProposal(userId, 'trial-expired-p2');
+  await seedProposal(userId, 'trial-expired-p3');
+
+  const result = await createProposalViaApi(cookie, 'trial-expired-p4-should-be-blocked');
+  assert.equal(
+    result.status,
+    429,
+    `Expired beta trial must fall back to starter cap: ${JSON.stringify(result.body)}`,
+  );
+});
+
+test('Beta signup with NULL trialEndsAt (legacy row) is treated as non-expired Early Access', async () => {
+  if (!hasDatabaseUrl()) return;
+  await ensureMigrated();
+  await resetTables();
+
+  const userId = 'beta_null_trial';
+  const email = 'beta-null-trial@example.com';
+  const cookie = authCookie(userId, email);
+
+  const db = await getDb();
+  await db.insert(schema.users).values({ id: userId, email }).onConflictDoNothing({ target: schema.users.id });
+
+  // Explicitly insert with trialEndsAt = null (legacy row)
+  await db
+    .insert(schema.betaSignups)
+    .values({
+      id: randomUUID(),
+      email,
+      emailNormalized: email.toLowerCase(),
+      userId,
+      source: 'pricing',
+      createdAt: new Date(),
+      trialEndsAt: null,
+    })
+    .onConflictDoNothing({ target: schema.betaSignups.emailNormalized });
+
+  await seedProposal(userId, 'trial-null-p1');
+  await seedProposal(userId, 'trial-null-p2');
+  await seedProposal(userId, 'trial-null-p3');
+
+  const result = await createProposalViaApi(cookie, 'trial-null-p4-should-pass');
+  assert.equal(
+    result.status,
+    201,
+    `Legacy beta row with NULL trialEndsAt must not be capped: ${JSON.stringify(result.body)}`,
+  );
+  assert.equal(result.body?.ok, true);
+});
+
+test('Paid subscriber with expired beta row still gets professional plan (billing wins)', async () => {
+  if (!hasDatabaseUrl()) return;
+  await ensureMigrated();
+  await resetTables();
+
+  const userId = 'paid_with_expired_beta';
+  const email = 'paid-expired-beta@example.com';
+  const cookie = authCookie(userId, email);
+
+  const db = await getDb();
+  await db.insert(schema.users).values({ id: userId, email }).onConflictDoNothing({ target: schema.users.id });
+
+  // Active professional billing row
+  await db
+    .insert(schema.billingReferences)
+    .values({ userId, plan: 'professional', status: 'active', updatedAt: new Date() })
+    .onConflictDoUpdate({
+      target: schema.billingReferences.userId,
+      set: { plan: 'professional', status: 'active', updatedAt: new Date() },
+    });
+
+  // Expired beta row — should not affect plan
+  const pastDate = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
+  await db
+    .insert(schema.betaSignups)
+    .values({
+      id: randomUUID(),
+      email,
+      emailNormalized: email.toLowerCase(),
+      userId,
+      source: 'pricing',
+      createdAt: new Date(Date.now() - 40 * 24 * 60 * 60 * 1000),
+      trialEndsAt: pastDate,
+    })
+    .onConflictDoNothing({ target: schema.betaSignups.emailNormalized });
+
+  await seedProposal(userId, 'paid-expired-beta-p1');
+  await seedProposal(userId, 'paid-expired-beta-p2');
+  await seedProposal(userId, 'paid-expired-beta-p3');
+
+  // Professional users are never capped
+  const result = await createProposalViaApi(cookie, 'paid-expired-beta-p4-must-pass');
+  assert.equal(
+    result.status,
+    201,
+    `Professional billing wins over expired beta row: ${JSON.stringify(result.body)}`,
+  );
+  assert.equal(result.body?.ok, true);
+});

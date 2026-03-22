@@ -414,6 +414,7 @@ export const betaSignups = pgTable(
     emailNormalized: text('email_normalized').notNull(),
     userId: text('user_id').references(() => users.id, { onDelete: 'set null' }),
     source: text('source'),
+    trialEndsAt: timestamp('trial_ends_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({

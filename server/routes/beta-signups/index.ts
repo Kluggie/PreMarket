@@ -9,6 +9,7 @@ import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 import { getSessionFromRequest } from '../../_lib/session.js';
 
 const BETA_SEATS_TOTAL = 50;
+const PROMO_TRIAL_DAYS = 30;
 const MAX_EMAIL_LENGTH = 320;
 const MAX_SOURCE_LENGTH = 64;
 
@@ -196,6 +197,7 @@ async function handleCreate(req: any, res: any) {
       emailNormalized,
       userId,
       source,
+      trialEndsAt: new Date(Date.now() + PROMO_TRIAL_DAYS * 24 * 60 * 60 * 1000),
       createdAt: new Date(),
     })
     .onConflictDoNothing({

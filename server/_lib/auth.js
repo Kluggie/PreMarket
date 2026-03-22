@@ -19,7 +19,16 @@ const EARLY_ACCESS_BILLING_ALIASES = new Set([
   'early access program',
 ]);
 
-function resolvePlanTier(billingRow, betaRow) {
+function isPromoActive(betaRow, now = new Date()) {
+  // If the row has no trialEndsAt it pre-dates the expiry column — treat as
+  // non-expired so existing early-access members keep access.
+  if (!betaRow?.trialEndsAt) {
+    return true;
+  }
+  return new Date(betaRow.trialEndsAt) > now;
+}
+
+function resolvePlanTier(billingRow, betaRow, now = new Date()) {
   const billingPlan = String(billingRow?.plan || '').trim().toLowerCase();
 
   // If the billing row holds an explicitly elevated plan (not the 'starter' /
@@ -28,10 +37,9 @@ function resolvePlanTier(billingRow, betaRow) {
     return billingPlan;
   }
 
-  // betaSignups membership means the user is Early Access. This overrides a
-  // default 'starter' billing row (which is just the system default, not an
-  // explicit plan assignment) as well as the no-billing-row case.
-  if (betaRow) {
+  // betaSignups membership means the user is Early Access — but only while
+  // the promo trial is still active.
+  if (betaRow && isPromoActive(betaRow, now)) {
     return 'early_access';
   }
 
