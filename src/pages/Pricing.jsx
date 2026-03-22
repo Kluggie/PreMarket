@@ -234,16 +234,17 @@ export default function Pricing() {
           <CardContent className="p-6 sm:p-7">
             <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
               <div>
-                <h2 className="text-lg font-semibold text-slate-900">Early Access Program: 3 months free for the first 50 users</h2>
+                <h2 className="text-lg font-semibold text-slate-900">Limited-time offer: 30 days of Professional free for the first 50 users</h2>
                 <p className="text-sm text-slate-600 mt-2 max-w-2xl">
-                  Early members get early access to workflow updates and a direct feedback loop with the product team.
+                  Get full Professional access for 30 days, including advanced workflow features and a direct feedback loop with the product team. Access expires automatically after 30 days.
                 </p>
+                <p className="text-xs text-slate-500 mt-2">No credit card required.</p>
               </div>
               <span className="text-xs text-slate-500 whitespace-nowrap sm:text-right shrink-0">Ends June 30, 2026</span>
             </div>
             <div className="mt-5">
               <div className="flex items-center justify-between text-sm mb-2">
-                <span className="text-slate-600">Apply for Early Access</span>
+                <span className="text-slate-600">Claim your 30 free days of Professional</span>
                 <span className="font-semibold text-slate-900">
                   {betaCountLoading ? (
                     <span className="text-slate-400">Loading…</span>
@@ -266,7 +267,7 @@ export default function Pricing() {
                 className="bg-white"
               />
               <Button type="submit" variant="outline" disabled={applyBetaMutation.isPending}>
-                {applyBetaMutation.isPending ? 'Applying...' : 'Apply for Beta'}
+                {applyBetaMutation.isPending ? 'Claiming...' : 'Claim 30 free days'}
               </Button>
             </form>
             {betaSubmitted ? (
@@ -277,7 +278,7 @@ export default function Pricing() {
             ) : null}
             {applyBetaMutation.error && applyBetaMutation.error.code !== 'already_signed_up' ? (
               <p className="text-sm text-red-600 mt-2">
-                {applyBetaMutation.error.message || 'Unable to submit your beta request right now.'}
+                {applyBetaMutation.error.message || 'Unable to submit your request right now.'}
               </p>
             ) : null}
           </CardContent>
