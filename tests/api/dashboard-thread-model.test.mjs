@@ -6,6 +6,7 @@ import proposalsHandler from '../../server/routes/proposals/index.ts';
 import proposalArchiveHandler from '../../server/routes/proposals/[id]/archive.ts';
 import dashboardSummaryHandler from '../../server/routes/dashboard/summary.ts';
 import dashboardActivityHandler from '../../server/routes/dashboard/activity.ts';
+import billingStatusHandler from '../../server/routes/billing/status.ts';
 import { getDb, schema } from '../../server/_lib/db/client.js';
 import { ensureTestEnv, makeSessionCookie } from '../helpers/auth.mjs';
 import { ensureMigrated, hasDatabaseUrl, resetTables } from '../helpers/db.mjs';
@@ -549,5 +550,161 @@ if (!hasDatabaseUrl()) {
 
     const summary = await getSummary(cookie);
     assert.equal(summary.starterUsage, null);
+  });
+
+  test('dashboard summary omits starter usage for active promo user (future trialEndsAt)', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const userId = 'dashboard_active_promo';
+    const email = 'dashboard-active-promo@example.com';
+    const cookie = authCookie(userId, email);
+
+    const db = getDb();
+    await db
+      .insert(schema.users)
+      .values({ id: userId, email })
+      .onConflictDoNothing({ target: schema.users.id });
+
+    // trialEndsAt 25 days in the future — should still be treated as early_access
+    await db
+      .insert(schema.betaSignups)
+      .values({
+        id: randomUUID(),
+        email,
+        emailNormalized: email.toLowerCase(),
+        userId,
+        source: 'pricing',
+        createdAt: new Date(),
+        trialEndsAt: new Date(Date.now() + 25 * 24 * 60 * 60 * 1000),
+      })
+      .onConflictDoNothing({ target: schema.betaSignups.emailNormalized });
+
+    const summary = await getSummary(cookie);
+    assert.equal(
+      summary.starterUsage,
+      null,
+      'Active promo user (future trialEndsAt) must not receive a starterUsage payload',
+    );
+  });
+
+  test('dashboard summary INCLUDES starter usage snapshot for expired promo user', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const userId = 'dashboard_expired_promo';
+    const email = 'dashboard-expired-promo@example.com';
+    const cookie = authCookie(userId, email);
+
+    const db = getDb();
+    await db
+      .insert(schema.users)
+      .values({ id: userId, email })
+      .onConflictDoNothing({ target: schema.users.id });
+
+    // trialEndsAt 2 days in the past — should fall back to starter
+    await db
+      .insert(schema.betaSignups)
+      .values({
+        id: randomUUID(),
+        email,
+        emailNormalized: email.toLowerCase(),
+        userId,
+        source: 'pricing',
+        createdAt: new Date(Date.now() - 32 * 24 * 60 * 60 * 1000),
+        trialEndsAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
+      })
+      .onConflictDoNothing({ target: schema.betaSignups.emailNormalized });
+
+    const summary = await getSummary(cookie);
+    assert.equal(
+      summary.starterUsage?.plan,
+      'starter',
+      'Expired promo user must fall back to Starter and receive a starterUsage payload',
+    );
+  });
+
+  test('billing status returns resolved plan_tier early_access for EA user via betaSignups (not raw starter from billing row)', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const userId = 'billing_ea_via_beta';
+    const email = 'billing-ea-via-beta@example.com';
+    const cookie = authCookie(userId, email);
+
+    const db = getDb();
+    await db
+      .insert(schema.users)
+      .values({ id: userId, email })
+      .onConflictDoNothing({ target: schema.users.id });
+
+    // No billing row — plan comes entirely from betaSignups (active promo)
+    await db
+      .insert(schema.betaSignups)
+      .values({
+        id: randomUUID(),
+        email,
+        emailNormalized: email.toLowerCase(),
+        userId,
+        source: 'pricing',
+        createdAt: new Date(),
+        trialEndsAt: new Date(Date.now() + 20 * 24 * 60 * 60 * 1000),
+      })
+      .onConflictDoNothing({ target: schema.betaSignups.emailNormalized });
+
+    const res = await callHandler(billingStatusHandler, {
+      method: 'GET',
+      url: '/api/billing/status',
+      headers: { cookie },
+    });
+    assert.equal(res.statusCode, 200);
+    const billing = res.jsonBody().billing;
+    assert.equal(
+      billing.plan_tier,
+      'early_access',
+      'Billing status must return early_access for EA user via betaSignups — not the raw billing row starter value',
+    );
+  });
+
+  test('billing status returns starter plan_tier for expired promo user', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const userId = 'billing_expired_promo';
+    const email = 'billing-expired-promo@example.com';
+    const cookie = authCookie(userId, email);
+
+    const db = getDb();
+    await db
+      .insert(schema.users)
+      .values({ id: userId, email })
+      .onConflictDoNothing({ target: schema.users.id });
+
+    // Expired promo — plan should fall back to starter
+    await db
+      .insert(schema.betaSignups)
+      .values({
+        id: randomUUID(),
+        email,
+        emailNormalized: email.toLowerCase(),
+        userId,
+        source: 'pricing',
+        createdAt: new Date(Date.now() - 35 * 24 * 60 * 60 * 1000),
+        trialEndsAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000),
+      })
+      .onConflictDoNothing({ target: schema.betaSignups.emailNormalized });
+
+    const res = await callHandler(billingStatusHandler, {
+      method: 'GET',
+      url: '/api/billing/status',
+      headers: { cookie },
+    });
+    assert.equal(res.statusCode, 200);
+    const billing = res.jsonBody().billing;
+    assert.equal(
+      billing.plan_tier,
+      'starter',
+      'Expired promo user must see starter plan_tier in billing status',
+    );
   });
 }

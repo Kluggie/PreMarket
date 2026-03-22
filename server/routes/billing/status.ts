@@ -17,8 +17,15 @@ export default async function handler(req: any, res: any) {
     const row = await ensureBillingRow(auth.user.id);
     const stripe = getStripeCheckoutConfig();
 
+    // Override plan_tier with the session-resolved value from auth.js, which
+    // correctly accounts for betaSignups (early access) and trialEndsAt expiry.
+    // mapBilling reads only billingReferences.plan and would return 'starter'
+    // for EA users whose plan is determined by betaSignups, not by a billing row.
+    const billing = mapBilling(row);
+    billing.plan_tier = auth.user.plan_tier || billing.plan_tier;
+
     ok(res, 200, {
-      billing: mapBilling(row),
+      billing,
       stripe: {
         configured: stripe.configured,
       },
