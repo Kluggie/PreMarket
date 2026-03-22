@@ -197,14 +197,14 @@ function StarterUsageCard({ starterUsage }) {
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <div>
             <p className="text-sm font-semibold text-slate-900">Starter plan usage</p>
-            <p className="text-xs text-slate-600">Limits reset monthly.</p>
+            <p className="text-xs text-slate-600">Evaluate up to 5 opportunities each month.</p>
           </div>
           <Badge variant="outline" className="border-amber-300 bg-white text-amber-800">Starter</Badge>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <StarterUsageMetric
-            label="New opportunities"
+            label="Opportunities this month"
             used={usage.opportunitiesCreatedThisMonth}
             limit={limits.opportunitiesPerMonth}
           />
@@ -214,19 +214,14 @@ function StarterUsageCard({ starterUsage }) {
             limit={limits.activeOpportunities}
           />
           <StarterUsageMetric
-            label="AI evaluations"
-            used={usage.aiEvaluationsThisMonth}
-            limit={limits.aiEvaluationsPerMonth}
-          />
-          <StarterUsageMetric
             label="Upload usage"
             used={usage.uploadBytesThisMonth}
             limit={limits.uploadBytesPerMonth}
             isBytes
           />
         </div>
-        <p className="text-xs text-slate-600">
-          Per opportunity upload cap: {formatBytes(limits.uploadBytesPerOpportunity)}.
+        <p className="text-xs text-slate-500">
+          AI analysis included for every opportunity. Per opportunity upload cap: {formatBytes(limits.uploadBytesPerOpportunity)}.
         </p>
       </CardContent>
     </Card>
