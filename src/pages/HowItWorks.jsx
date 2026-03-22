@@ -195,7 +195,7 @@ export default function HowItWorks() {
               <ul className="space-y-3">
                 {[
                   'Business context',
-                  'Proposal summary',
+                  'Opportunity summary',
                   'Terms intended for discussion',
                   'Selected documents or structured fields',
                 ].map((item) => (
@@ -338,7 +338,7 @@ export default function HowItWorks() {
               {
                 icon: Briefcase,
                 title: 'Vendor and procurement negotiations',
-                description: 'Compare vendor proposals against internal priorities with a structured, neutral framework.',
+                description: 'Compare vendor opportunities against internal priorities with a structured, neutral framework.',
               },
               {
                 icon: Handshake,
@@ -468,14 +468,9 @@ const faqItems = [
       'PreMarket is designed for any bilateral negotiation where two parties need to evaluate terms — including M&A, vendor procurement, strategic partnerships, and investment discussions.',
   },
   {
-    question: 'Is the AI biased toward one party?',
+    question: 'How does the AI negotiate fairly?',
     answer:
-      'No. The AI is designed to be neutral. It evaluates both positions against the same framework and does not optimize for either side. The analysis highlights alignment, gaps, and risks equally.',
-  },
-  {
-    question: 'Do I need to upload documents?',
-    answer:
-      'Documents are optional. You can provide structured information through form fields, or attach supporting documents for deeper analysis. The system works with whatever level of detail you provide.',
+      'The AI evaluates both positions using the same neutral framework. It does not optimize for either side or weight one party\'s inputs more heavily. The output highlights alignment, gaps, and risks equally so both sides get the same quality of analysis.',
   },
 ];
 
