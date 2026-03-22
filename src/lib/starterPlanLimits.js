@@ -48,3 +48,11 @@ export function toRemaining(limit, used) {
   const normalizedUsed = toWholeNumber(used);
   return Math.max(0, normalizedLimit - normalizedUsed);
 }
+
+export function isStarterOpportunityLimitReached(starterUsage) {
+  if (!isStarterPlanTier(starterUsage?.plan)) {
+    return false;
+  }
+  const used = toWholeNumber(starterUsage?.usage?.opportunitiesCreatedThisMonth);
+  return used >= STARTER_PLAN_LIMITS.opportunitiesPerMonth;
+}

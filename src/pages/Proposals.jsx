@@ -6,6 +6,8 @@ import { createPageUrl } from '@/utils';
 import { useAuth } from '@/lib/AuthContext';
 import { proposalsClient } from '@/api/proposalsClient';
 import { dashboardClient } from '@/api/dashboardClient';
+import { isStarterOpportunityLimitReached } from '@/lib/starterPlanLimits';
+import { StarterUpgradeModal } from '@/components/StarterUpgradeModal';
 import { buildDocumentComparisonReportHref } from '@/lib/notificationTargets';
 import { formatRecipientLabel, PRIVATE_SENDER_LABEL } from '@/lib/recipientUtils';
 import {
@@ -527,6 +529,7 @@ export default function Proposals() {
   const [searchQuery, setSearchQuery] = useState('');
   const [cursor, setCursor] = useState(null);
   const [cursorHistory, setCursorHistory] = useState([]);
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
 
   const normalizedSearch = useMemo(() => searchQuery.trim(), [searchQuery]);
   const statusOptions = useMemo(() => getStatusOptions(), []);
@@ -571,6 +574,8 @@ export default function Proposals() {
     // Retry 2x before surfacing error — prevents transient blips from wiping counts.
     retry: 2,
   });
+
+  const opportunityLimitReached = isStarterOpportunityLimitReached(summary?.starterUsage);
 
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['proposals-list', activeTab, statusFilter, originFilter, normalizedSearch, cursor],
@@ -837,12 +842,14 @@ export default function Proposals() {
             <h1 className="text-2xl font-bold text-slate-900">Opportunities</h1>
             <p className="text-slate-500 mt-1">Manage live opportunity threads across inbox, drafts, closed, and archived.</p>
           </div>
-          <Link to={createPageUrl('DocumentComparisonCreate')}>
-            <Button className="bg-blue-600 hover:bg-blue-700">
-              <Plus className="w-4 h-4 mr-2" />
-              New Opportunity
-            </Button>
-          </Link>
+          <Button
+            onClick={opportunityLimitReached ? () => setShowUpgradeModal(true) : () => navigate(createPageUrl('DocumentComparisonCreate'))}
+            className={`bg-blue-600 hover:bg-blue-700${opportunityLimitReached ? ' opacity-60 cursor-not-allowed' : ''}`}
+            title={opportunityLimitReached ? "You've reached your monthly limit. Upgrade to create more opportunities." : undefined}
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            New Opportunity
+          </Button>
         </div>
 
         <Card className="border-0 shadow-sm mb-6">
@@ -941,11 +948,13 @@ export default function Proposals() {
                     <p className="text-slate-600 font-medium">{emptyState.title}</p>
                     <p className="text-sm text-slate-500">{emptyState.description}</p>
                     {activeTab === 'drafts' && (
-                      <Link to={createPageUrl('DocumentComparisonCreate')}>
-                        <Button className="bg-blue-600 hover:bg-blue-700 mt-2">
-                          Create New Opportunity
-                        </Button>
-                      </Link>
+                      <Button
+                        onClick={opportunityLimitReached ? () => setShowUpgradeModal(true) : () => navigate(createPageUrl('DocumentComparisonCreate'))}
+                        className={`bg-blue-600 hover:bg-blue-700 mt-2${opportunityLimitReached ? ' opacity-60 cursor-not-allowed' : ''}`}
+                        title={opportunityLimitReached ? "You've reached your monthly limit. Upgrade to create more opportunities." : undefined}
+                      >
+                        Create New Opportunity
+                      </Button>
                     )}
                   </div>
                 ) : (
@@ -979,6 +988,7 @@ export default function Proposals() {
           </TabsContent>
         </Tabs>
       </div>
+      <StarterUpgradeModal open={showUpgradeModal} onClose={() => setShowUpgradeModal(false)} />
     </div>
   );
 }

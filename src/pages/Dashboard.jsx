@@ -28,7 +28,8 @@ import {
 } from 'lucide-react';
 import { proposalsClient } from '@/api/proposalsClient';
 import { dashboardClient } from '@/api/dashboardClient';
-import { formatBytes, formatCount, isStarterPlanTier } from '@/lib/starterPlanLimits';
+import { STARTER_PLAN_LIMITS, formatBytes, formatCount, isStarterPlanTier, isStarterOpportunityLimitReached } from '@/lib/starterPlanLimits';
+import { StarterUpgradeModal } from '@/components/StarterUpgradeModal';
 
 const DASHBOARD_WON_LABEL = 'Won';
 
@@ -206,7 +207,7 @@ function StarterUsageCard({ starterUsage }) {
           <StarterUsageMetric
             label="Opportunities this month"
             used={usage.opportunitiesCreatedThisMonth}
-            limit={limits.opportunitiesPerMonth}
+            limit={STARTER_PLAN_LIMITS.opportunitiesPerMonth}
           />
           <StarterUsageMetric
             label="Active opportunities"
@@ -220,6 +221,16 @@ function StarterUsageCard({ starterUsage }) {
             isBytes
           />
         </div>
+        {isStarterOpportunityLimitReached(starterUsage) && (
+          <div className="flex items-center justify-between gap-2 pt-1">
+            <p className="text-xs font-medium text-amber-700">Monthly limit reached — upgrade to continue</p>
+            <Link to={createPageUrl('Pricing')}>
+              <Button size="sm" variant="outline" className="h-7 text-xs border-amber-300 text-amber-800 hover:bg-amber-100 shrink-0">
+                Upgrade plan
+              </Button>
+            </Link>
+          </div>
+        )}
         <p className="text-xs text-slate-500">
           AI analysis included for every opportunity. Per opportunity upload cap: {formatBytes(limits.uploadBytesPerOpportunity)}.
         </p>
@@ -231,6 +242,7 @@ function StarterUsageCard({ starterUsage }) {
 export default function Dashboard() {
   const navigate = useNavigate();
   const [dashboardRange, setDashboardRange] = useState('30');
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
 
   const {
     data: summary,
@@ -255,6 +267,8 @@ export default function Dashboard() {
     queryKey: ['dashboard-proposals-agreement-requests'],
     queryFn: () => proposalsClient.list({ tab: 'all', status: 'win_confirmation_requested', limit: 10 }),
   });
+  const opportunityLimitReached = isStarterOpportunityLimitReached(summary?.starterUsage);
+
   const primaryStats = useMemo(
     () => [
       {
@@ -396,12 +410,14 @@ export default function Dashboard() {
             <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
             <p className="text-slate-500 mt-1">Here&apos;s what&apos;s happening with your opportunities.</p>
           </div>
-          <Link to={createPageUrl('DocumentComparisonCreate')}>
-            <Button className="bg-blue-600 hover:bg-blue-700">
-              <Plus className="w-4 h-4 mr-2" />
-              New Opportunity
-            </Button>
-          </Link>
+          <Button
+            onClick={opportunityLimitReached ? () => setShowUpgradeModal(true) : () => navigate(createPageUrl('DocumentComparisonCreate'))}
+            className={`bg-blue-600 hover:bg-blue-700${opportunityLimitReached ? ' opacity-60 cursor-not-allowed' : ''}`}
+            title={opportunityLimitReached ? "You've reached your monthly limit. Upgrade to create more opportunities." : undefined}
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            New Opportunity
+          </Button>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-4 mb-8">
@@ -521,6 +537,7 @@ export default function Dashboard() {
           </div>
         )}
       </div>
+      <StarterUpgradeModal open={showUpgradeModal} onClose={() => setShowUpgradeModal(false)} />
     </div>
   );
 }
