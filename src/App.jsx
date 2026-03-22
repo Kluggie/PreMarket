@@ -8,6 +8,7 @@ import { BrowserRouter as Router, Navigate, Route, Routes, useLocation } from 'r
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
+import HowItWorks from '@/pages/HowItWorks';
 import Directory from '@/pages/Directory';
 import DirectoryPersonDetail from '@/pages/DirectoryPersonDetail';
 import DirectoryOrgDetail from '@/pages/DirectoryOrgDetail';
@@ -23,6 +24,16 @@ const MainPage = mainPageKey ? Pages[mainPageKey] : <></>;
 const LayoutWrapper = ({ children, currentPageName }) => Layout ?
   <Layout currentPageName={currentPageName}>{children}</Layout>
   : <>{children}</>;
+
+const HowItWorksRoute = () => {
+  const { user } = useAuth();
+  if (user) return <Navigate to="/Dashboard" replace />;
+  return (
+    <LayoutWrapper currentPageName="HowItWorks">
+      <HowItWorks />
+    </LayoutWrapper>
+  );
+};
 
 const SharedReportAliasRedirect = () => {
   const location = useLocation();
@@ -149,6 +160,12 @@ const PublicRoutes = () => {
           <LayoutWrapper currentPageName="Terms">
             <Pages.Terms />
           </LayoutWrapper>
+        }
+      />
+      <Route
+        path="/how-it-works"
+        element={
+          <HowItWorksRoute />
         }
       />
       <Route
@@ -323,7 +340,8 @@ const AppRoutes = () => {
     location.pathname === '/share' ||
     location.pathname.startsWith('/share/') ||
     location.pathname === '/GuestOpportunity' ||
-    location.pathname === '/opportunities/new';
+    location.pathname === '/opportunities/new' ||
+    location.pathname === '/how-it-works';
   return <AuthenticatedApp isPublicDirectoryRoute={isPublicDirectoryRoute} />;
 };
 

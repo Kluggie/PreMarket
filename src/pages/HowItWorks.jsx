@@ -1,0 +1,532 @@
+import React, { useState, useEffect } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { motion } from 'framer-motion';
+import { Button } from '@/components/ui/button';
+import {
+  ArrowRight, Shield, Eye, EyeOff, CheckCircle2, ChevronDown,
+  Briefcase, Handshake, TrendingUp, Building2
+} from 'lucide-react';
+import { useAuth } from '@/lib/AuthContext';
+
+export default function HowItWorks() {
+  const navigate = useNavigate();
+  const { user } = useAuth();
+
+  useEffect(() => {
+    document.title = 'How PreMarket Works';
+    return () => { document.title = 'PreMarket'; };
+  }, []);
+
+  const handleStartFree = () => {
+    navigate(user ? '/DocumentComparisonCreate' : '/opportunities/new');
+  };
+
+  const ctaLink = user ? '/DocumentComparisonCreate' : '/opportunities/new';
+
+  return (
+    <div className="min-h-screen">
+      {/* SECTION A — Hero */}
+      <section className="relative min-h-[85vh] flex items-center justify-center overflow-hidden">
+        <div className="absolute inset-0 bg-gradient-to-br from-slate-50 via-blue-50/30 to-indigo-50/50" />
+        <div className="absolute inset-0">
+          <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-200/20 rounded-full blur-3xl" />
+          <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-indigo-200/20 rounded-full blur-3xl" />
+        </div>
+        <div className="absolute inset-0 opacity-[0.015]"
+          style={{
+            backgroundImage: 'radial-gradient(circle, #000 0.0625rem, transparent 0.0625rem)',
+            backgroundSize: '1.5rem 1.5rem',
+          }}
+        />
+
+        <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-32 pb-20">
+          <div className="text-center">
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6 }}
+            >
+              <span className="inline-flex items-center gap-2 px-4 py-2 bg-blue-50 border border-blue-100 rounded-full text-sm text-blue-700 font-medium mb-8">
+                <Shield className="w-4 h-4" />
+                Neutral AI Workflow
+              </span>
+            </motion.div>
+
+            <motion.h1
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6, delay: 0.1 }}
+              className="text-5xl sm:text-6xl lg:text-7xl font-bold text-slate-900 tracking-tight mb-6"
+            >
+              How PreMarket Works
+            </motion.h1>
+
+            <motion.p
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6, delay: 0.2 }}
+              className="text-xl text-slate-600 max-w-2xl mx-auto mb-10"
+            >
+              A neutral AI workflow for negotiating business terms without broker fees, while keeping confidential information protected.
+            </motion.p>
+
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6, delay: 0.3 }}
+              className="flex flex-col sm:flex-row items-center justify-center gap-4"
+            >
+              <Button
+                size="lg"
+                onClick={handleStartFree}
+                className="bg-slate-900 hover:bg-slate-800 text-white px-8 py-6 text-lg h-auto"
+              >
+                Start Free
+                <ArrowRight className="ml-2 w-5 h-5" />
+              </Button>
+              <Link to={ctaLink}>
+                <Button variant="outline" size="lg" className="px-8 py-6 text-lg h-auto border-slate-200">
+                  Try AI Deal Mediator
+                </Button>
+              </Link>
+            </motion.div>
+          </div>
+        </div>
+      </section>
+
+      {/* SECTION B — 3-step overview */}
+      <section className="py-24 bg-white">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="text-center mb-16">
+            <h2 className="text-3xl sm:text-4xl font-bold text-slate-900 mb-4">
+              Three steps to a structured negotiation
+            </h2>
+            <p className="text-lg text-slate-600 max-w-2xl mx-auto">
+              Each side works independently. The AI brings both positions together into a neutral analysis.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            {[
+              {
+                number: '01',
+                title: 'Each side submits their position',
+                items: [
+                  'shared information the other side can see',
+                  'confidential information hidden from the other side',
+                  'goals, priorities, constraints, and supporting documents',
+                ],
+              },
+              {
+                number: '02',
+                title: 'PreMarket evaluates both sides',
+                items: [
+                  'overlap in objectives',
+                  'conflicts in expectations',
+                  'missing information',
+                  'commercial risks',
+                  'strength of fit',
+                  'possible paths to agreement',
+                ],
+              },
+              {
+                number: '03',
+                title: 'Both sides receive a structured negotiation output',
+                items: [
+                  'neutral analysis',
+                  'areas of alignment',
+                  'key gaps to resolve',
+                  'suggested next steps',
+                  'a clearer basis for discussion',
+                ],
+              },
+            ].map((step, index) => (
+              <motion.div
+                key={step.number}
+                initial={{ opacity: 0, y: 20 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5, delay: index * 0.1 }}
+                viewport={{ once: true }}
+                className="relative bg-slate-50 rounded-2xl p-8 border border-slate-100 hover:border-blue-200 transition-colors flex flex-col"
+              >
+                <span className="text-5xl font-bold text-blue-100 mb-4 block">{step.number}</span>
+                <h3 className="text-xl font-semibold text-slate-900 mb-4">{step.title}</h3>
+                <ul className="space-y-2 flex-1">
+                  {step.items.map((item) => (
+                    <li key={item} className="flex items-start gap-2 text-slate-600 text-sm">
+                      <CheckCircle2 className="w-4 h-4 text-blue-500 mt-0.5 shrink-0" />
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              </motion.div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* SECTION C — What each side sees */}
+      <section className="py-24 bg-slate-50">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="text-center mb-16">
+            <h2 className="text-3xl sm:text-4xl font-bold text-slate-900 mb-4">
+              What each side sees
+            </h2>
+            <p className="text-lg text-slate-600 max-w-2xl mx-auto">
+              PreMarket separates shared and confidential inputs so each party controls exactly what the other side sees.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl mx-auto">
+            {/* Shared column */}
+            <motion.div
+              initial={{ opacity: 0, x: -20 }}
+              whileInView={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.5 }}
+              viewport={{ once: true }}
+              className="bg-white rounded-2xl p-8 border border-slate-100"
+            >
+              <div className="flex items-center gap-3 mb-6">
+                <div className="w-10 h-10 rounded-xl bg-emerald-50 flex items-center justify-center">
+                  <Eye className="w-5 h-5 text-emerald-600" />
+                </div>
+                <h3 className="text-lg font-semibold text-slate-900">Shared with the other party</h3>
+              </div>
+              <ul className="space-y-3">
+                {[
+                  'Business context',
+                  'Proposal summary',
+                  'Terms intended for discussion',
+                  'Selected documents or structured fields',
+                ].map((item) => (
+                  <li key={item} className="flex items-center gap-2 text-slate-600">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
+            </motion.div>
+
+            {/* Confidential column */}
+            <motion.div
+              initial={{ opacity: 0, x: 20 }}
+              whileInView={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.5 }}
+              viewport={{ once: true }}
+              className="bg-white rounded-2xl p-8 border border-slate-100"
+            >
+              <div className="flex items-center gap-3 mb-6">
+                <div className="w-10 h-10 rounded-xl bg-amber-50 flex items-center justify-center">
+                  <EyeOff className="w-5 h-5 text-amber-600" />
+                </div>
+                <h3 className="text-lg font-semibold text-slate-900">Kept confidential</h3>
+              </div>
+              <ul className="space-y-3">
+                {[
+                  'Internal constraints',
+                  'Walk-away points',
+                  'Private priorities',
+                  'Internal financial or strategic context',
+                  'Notes intended only for AI evaluation',
+                ].map((item) => (
+                  <li key={item} className="flex items-center gap-2 text-slate-600">
+                    <Shield className="w-4 h-4 text-amber-500 shrink-0" />
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
+            </motion.div>
+          </div>
+
+          <motion.p
+            initial={{ opacity: 0, y: 10 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.2 }}
+            viewport={{ once: true }}
+            className="text-center text-slate-500 mt-10 max-w-2xl mx-auto text-sm"
+          >
+            Confidential information is hidden from the counterparty and used to improve the quality of the neutral evaluation.
+          </motion.p>
+        </div>
+      </section>
+
+      {/* SECTION D — Why this is different */}
+      <section className="py-24 bg-white">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="text-center mb-16">
+            <h2 className="text-3xl sm:text-4xl font-bold text-slate-900 mb-4">
+              Why this is different
+            </h2>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl mx-auto">
+            {/* Traditional */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5 }}
+              viewport={{ once: true }}
+              className="bg-slate-50 rounded-2xl p-8 border border-slate-200"
+            >
+              <h3 className="text-lg font-semibold text-slate-900 mb-6">Traditional process</h3>
+              <ul className="space-y-3">
+                {[
+                  'Broker fees',
+                  'Slow back-and-forth',
+                  'Inconsistent advice',
+                  'Incentives may not be neutral',
+                  'Confidential context is fragmented',
+                ].map((item) => (
+                  <li key={item} className="flex items-center gap-2 text-slate-500">
+                    <span className="w-1.5 h-1.5 rounded-full bg-slate-300 shrink-0" />
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
+            </motion.div>
+
+            {/* PreMarket */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, delay: 0.1 }}
+              viewport={{ once: true }}
+              className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl p-8 border border-blue-200 ring-1 ring-blue-100"
+            >
+              <h3 className="text-lg font-semibold text-slate-900 mb-6 flex items-center gap-2">
+                PreMarket
+                <span className="text-xs font-medium bg-blue-600 text-white px-2 py-0.5 rounded-full">Better</span>
+              </h3>
+              <ul className="space-y-3">
+                {[
+                  'No success fees or commissions',
+                  'Faster structured evaluation',
+                  'One neutral framework for both sides',
+                  'Clear separation of shared vs confidential inputs',
+                  'Consistent deal analysis',
+                ].map((item) => (
+                  <li key={item} className="flex items-center gap-2 text-slate-700">
+                    <CheckCircle2 className="w-4 h-4 text-blue-600 shrink-0" />
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
+            </motion.div>
+          </div>
+        </div>
+      </section>
+
+      {/* SECTION E — Example use cases */}
+      <section className="py-24 bg-slate-50">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="text-center mb-16">
+            <h2 className="text-3xl sm:text-4xl font-bold text-slate-900 mb-4">
+              Built for real negotiations
+            </h2>
+            <p className="text-lg text-slate-600 max-w-2xl mx-auto">
+              PreMarket works wherever two parties need to evaluate terms, align expectations, and move toward agreement.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+            {[
+              {
+                icon: Building2,
+                title: 'M&A and acquisition discussions',
+                description: 'Evaluate fit, surface deal-breakers, and structure initial terms before engaging advisors.',
+              },
+              {
+                icon: Briefcase,
+                title: 'Vendor and procurement negotiations',
+                description: 'Compare vendor proposals against internal priorities with a structured, neutral framework.',
+              },
+              {
+                icon: Handshake,
+                title: 'Strategic partnerships',
+                description: 'Align on shared goals and identify gaps in expectations before committing resources.',
+              },
+              {
+                icon: TrendingUp,
+                title: 'Investment and commercial deal evaluation',
+                description: 'Get a structured assessment of alignment, risk, and readiness before term sheet discussions.',
+              },
+            ].map((useCase, index) => (
+              <motion.div
+                key={useCase.title}
+                initial={{ opacity: 0, y: 20 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5, delay: index * 0.1 }}
+                viewport={{ once: true }}
+                className="bg-white rounded-2xl p-6 border border-slate-100 hover:shadow-lg hover:border-blue-100 transition-all duration-300"
+              >
+                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center mb-5">
+                  <useCase.icon className="w-6 h-6 text-white" />
+                </div>
+                <h3 className="text-lg font-semibold text-slate-900 mb-2">{useCase.title}</h3>
+                <p className="text-slate-600 text-sm">{useCase.description}</p>
+              </motion.div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* SECTION F — What the AI evaluates */}
+      <section className="py-24 bg-white">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="text-center mb-16">
+            <h2 className="text-3xl sm:text-4xl font-bold text-slate-900 mb-4">
+              What the AI actually evaluates
+            </h2>
+            <p className="text-lg text-slate-600 max-w-2xl mx-auto">
+              Every evaluation covers the dimensions that matter for reaching agreement.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 max-w-4xl mx-auto">
+            {[
+              'Commercial alignment',
+              'Pricing and value expectations',
+              'Timeline compatibility',
+              'Implementation or integration risk',
+              'Decision readiness',
+              'Missing information',
+              'Likely blockers',
+              'Negotiation tradeoffs',
+            ].map((item, index) => (
+              <motion.div
+                key={item}
+                initial={{ opacity: 0, scale: 0.95 }}
+                whileInView={{ opacity: 1, scale: 1 }}
+                transition={{ duration: 0.3, delay: index * 0.05 }}
+                viewport={{ once: true }}
+                className="flex items-center gap-3 bg-slate-50 rounded-xl px-5 py-4 border border-slate-100"
+              >
+                <CheckCircle2 className="w-4 h-4 text-blue-600 shrink-0" />
+                <span className="text-sm font-medium text-slate-700">{item}</span>
+              </motion.div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* SECTION G — FAQ */}
+      <FAQSection />
+
+      {/* SECTION H — Final CTA */}
+      <section className="py-24 bg-slate-900">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+          <h2 className="text-3xl sm:text-4xl font-bold text-white mb-6">
+            Start negotiating with structure, not broker fees
+          </h2>
+          <p className="text-lg text-slate-400 mb-10 max-w-2xl mx-auto">
+            Create your first opportunity in minutes. No commitment required.
+          </p>
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+            <Button
+              size="lg"
+              onClick={handleStartFree}
+              className="bg-white text-slate-900 hover:bg-slate-100 px-8 py-6 text-lg h-auto"
+            >
+              Start Free
+              <ArrowRight className="ml-2 w-5 h-5" />
+            </Button>
+            <Link to={ctaLink}>
+              <Button
+                variant="outline"
+                size="lg"
+                className="px-8 py-6 text-lg h-auto border-white/30 text-white hover:bg-white/10 bg-transparent"
+              >
+                Try AI Deal Mediator
+              </Button>
+            </Link>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+const faqItems = [
+  {
+    question: 'Is PreMarket a broker or advisor?',
+    answer:
+      'No. PreMarket is an information platform that provides AI-assisted deal analysis. It does not act as a broker, advisor, or intermediary, and it does not handle transactions or provide financial advice.',
+  },
+  {
+    question: 'Can the other side see my confidential information?',
+    answer:
+      'No. Confidential inputs are never shared with the counterparty. They are used only to improve the quality and relevance of the neutral AI evaluation that both sides receive.',
+  },
+  {
+    question: 'Do both sides need to join?',
+    answer:
+      'For a full two-sided evaluation, yes. However, you can start by submitting your own position first. The evaluation improves once both sides have provided their inputs.',
+  },
+  {
+    question: 'What kinds of deals can I use this for?',
+    answer:
+      'PreMarket is designed for any bilateral negotiation where two parties need to evaluate terms — including M&A, vendor procurement, strategic partnerships, and investment discussions.',
+  },
+  {
+    question: 'Is the AI biased toward one party?',
+    answer:
+      'No. The AI is designed to be neutral. It evaluates both positions against the same framework and does not optimize for either side. The analysis highlights alignment, gaps, and risks equally.',
+  },
+  {
+    question: 'Do I need to upload documents?',
+    answer:
+      'Documents are optional. You can provide structured information through form fields, or attach supporting documents for deeper analysis. The system works with whatever level of detail you provide.',
+  },
+];
+
+function FAQSection() {
+  const [openIndex, setOpenIndex] = useState(null);
+
+  return (
+    <section className="py-24 bg-slate-50">
+      <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="text-center mb-16">
+          <h2 className="text-3xl sm:text-4xl font-bold text-slate-900 mb-4">
+            Frequently asked questions
+          </h2>
+        </div>
+
+        <div className="space-y-3">
+          {faqItems.map((item, index) => {
+            const isOpen = openIndex === index;
+            return (
+              <motion.div
+                key={item.question}
+                initial={{ opacity: 0, y: 10 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3, delay: index * 0.05 }}
+                viewport={{ once: true }}
+                className="bg-white rounded-xl border border-slate-100 overflow-hidden"
+              >
+                <button
+                  type="button"
+                  onClick={() => setOpenIndex(isOpen ? null : index)}
+                  className="w-full flex items-center justify-between px-6 py-5 text-left"
+                >
+                  <span className="text-base font-medium text-slate-900 pr-4">
+                    {item.question}
+                  </span>
+                  <ChevronDown
+                    className={`w-5 h-5 text-slate-400 shrink-0 transition-transform duration-200 ${
+                      isOpen ? 'rotate-180' : ''
+                    }`}
+                  />
+                </button>
+                {isOpen && (
+                  <div className="px-6 pb-5">
+                    <p className="text-slate-600 text-sm leading-relaxed">{item.answer}</p>
+                  </div>
+                )}
+              </motion.div>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
+}

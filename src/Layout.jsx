@@ -54,7 +54,7 @@ export default function Layout({ children, currentPageName }) {
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
-  const isLandingPage = currentPageName === 'Landing';
+  const isLandingPage = currentPageName === 'Landing' || currentPageName === 'HowItWorks';
   const isAuthPage = ['Login', 'Signup'].includes(currentPageName);
 
   const handleLogout = async () => {
@@ -85,7 +85,7 @@ export default function Layout({ children, currentPageName }) {
 
   const publicNavLinks = [
     { label: 'Home', pageKey: 'Landing', href: createPageUrl('Landing'), icon: Home },
-    { label: 'Opportunities', pageKey: 'OpportunitiesNew', href: '/opportunities/new', icon: FileText },
+    { label: 'How It Works', pageKey: 'HowItWorks', href: '/how-it-works', icon: FileText },
     { label: 'Pricing', pageKey: 'Pricing', href: createPageUrl('Pricing'), icon: CoinSideIcon }
   ];
 

@@ -63,6 +63,7 @@ import DocumentComparisonRunDetails from './pages/DocumentComparisonRunDetails';
 import Documentation from './pages/Documentation';
 import Documents from './pages/Documents';
 import GeminiTest from './pages/GeminiTest';
+import HowItWorks from './pages/HowItWorks';
 import Landing from './pages/Landing';
 import Organization from './pages/Organization';
 import Pricing from './pages/Pricing';
@@ -98,6 +99,7 @@ export const PAGES = {
     "Documentation": Documentation,
     "Documents": Documents,
     "GeminiTest": GeminiTest,
+    "HowItWorks": HowItWorks,
     "Landing": Landing,
     "Organization": Organization,
     "Pricing": Pricing,
