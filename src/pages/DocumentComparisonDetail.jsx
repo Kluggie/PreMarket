@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { createPageUrl } from '@/utils';
 import { documentComparisonsClient } from '@/api/documentComparisonsClient';
@@ -757,7 +757,7 @@ export default function DocumentComparisonDetail() {
       const sent = payload.results.filter((r) => r.status === 'sent').length;
       const failed = payload.results.filter((r) => r.status === 'failed').length;
       if (sent > 0 && failed === 0) {
-        toast.success(sent > 1 ? `Accepted by provider for ${sent} recipients` : 'Email accepted by provider');
+        toast.success(sent > 1 ? `Accepted for sending to ${sent} recipients` : 'Email accepted by provider');
       } else if (sent > 0 && failed > 0) {
         toast.warning(`Accepted for ${sent} recipient${sent > 1 ? 's' : ''}; ${failed} failed`);
       } else {
@@ -880,13 +880,19 @@ export default function DocumentComparisonDetail() {
   return (
     <div className="min-h-screen bg-slate-50 py-6">
       <div className="max-w-[1400px] mx-auto px-6 space-y-6">
-        <Link
-          to={createPageUrl('Opportunities')}
-          className="inline-flex items-center text-slate-600 hover:text-slate-900"
+        <Button
+          variant="outline"
+          onClick={() =>
+            navigate(
+              createPageUrl(
+                `DocumentComparisonCreate?draft=${encodeURIComponent(comparison.id)}&step=2`,
+              ),
+            )
+          }
         >
           <ArrowLeft className="w-4 h-4 mr-2" />
-          Back to Opportunities
-        </Link>
+          Edit Opportunity
+        </Button>
 
         <div className="space-y-4 min-w-0">
           {/* ── Header: title + right utility actions ─────────────────────── */}
@@ -949,21 +955,6 @@ export default function DocumentComparisonDetail() {
             activeTab={activeTab}
             onTabChange={setActiveTab}
             hasReportBadge={hasReport}
-            leadingElement={
-              <Button
-                variant="outline"
-                onClick={() =>
-                  navigate(
-                    createPageUrl(
-                      `DocumentComparisonCreate?draft=${encodeURIComponent(comparison.id)}&step=2`,
-                    ),
-                  )
-                }
-              >
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                Edit Opportunity
-              </Button>
-            }
             aiReportProps={{
               isEvaluationRunning,
               isPollingTimedOut,
