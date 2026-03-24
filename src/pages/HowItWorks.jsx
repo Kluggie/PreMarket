@@ -4,7 +4,7 @@ import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import {
   ArrowRight, Shield, Eye, EyeOff, CheckCircle2, ChevronDown,
-  Briefcase, Handshake, TrendingUp, Building2
+  Briefcase, Handshake, TrendingUp, Building2, Lock
 } from 'lucide-react';
 import { useAuth } from '@/lib/AuthContext';
 
@@ -94,10 +94,10 @@ export default function HowItWorks() {
         </div>
       </section>
 
-      {/* SECTION B — 3-step overview */}
+      {/* SECTION B — Step-by-step visual walkthrough */}
       <section className="py-24 bg-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-16">
+          <div className="text-center mb-20">
             <h2 className="text-3xl sm:text-4xl font-bold text-slate-900 mb-4">
               Three steps to a structured negotiation
             </h2>
@@ -106,69 +106,134 @@ export default function HowItWorks() {
             </p>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            {[
-              {
-                number: '01',
-                title: 'Each side submits their position',
-                items: [
-                  'shared information the other side can see',
-                  'confidential information hidden from the other side',
-                  'goals, priorities, constraints, and supporting documents',
-                ],
-              },
-              {
-                number: '02',
-                title: 'PreMarket evaluates both sides',
-                items: [
-                  'overlap in objectives',
-                  'conflicts in expectations',
-                  'missing information',
-                  'commercial risks',
-                  'strength of fit',
-                  'possible paths to agreement',
-                ],
-              },
-              {
-                number: '03',
-                title: 'Both sides receive a structured negotiation output',
-                items: [
-                  'neutral analysis',
-                  'areas of alignment',
-                  'key gaps to resolve',
-                  'suggested next steps',
-                  'a clearer basis for discussion',
-                ],
-              },
-            ].map((step, index) => (
-              <motion.div
-                key={step.number}
-                initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.5, delay: index * 0.1 }}
-                viewport={{ once: true }}
-                className="relative bg-slate-50 rounded-2xl p-8 border border-slate-100 hover:border-blue-200 transition-colors flex flex-col"
-              >
-                <span className="text-5xl font-bold text-blue-100 mb-4 block">{step.number}</span>
-                <h3 className="text-xl font-semibold text-slate-900 mb-4">{step.title}</h3>
-                <ul className="space-y-2 flex-1">
-                  {step.items.map((item) => (
-                    <li key={item} className="flex items-start gap-2 text-slate-600 text-sm">
-                      <CheckCircle2 className="w-4 h-4 text-blue-500 mt-0.5 shrink-0" />
-                      <span>{item}</span>
-                    </li>
-                  ))}
-                </ul>
-              </motion.div>
-            ))}
-          </div>
+          {/* Step 1 */}
+          <motion.div
+            initial={{ opacity: 0, y: 24 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6 }}
+            viewport={{ once: true }}
+            className="grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-16 items-center mb-24"
+          >
+            <div>
+              <div className="inline-flex items-center gap-3 mb-6">
+                <span className="w-10 h-10 rounded-full bg-blue-600 text-white text-sm font-bold flex items-center justify-center shrink-0">1</span>
+                <span className="text-xs font-semibold uppercase tracking-widest text-blue-600">Step one</span>
+              </div>
+              <h3 className="text-2xl sm:text-3xl font-bold text-slate-900 mb-4">Each side submits their position</h3>
+              <p className="text-slate-600 mb-6">
+                Both parties fill out the same structured form independently. Each side provides context the other party can see — and separately adds confidential information that stays private.
+              </p>
+              <ul className="space-y-3 mb-8">
+                {[
+                  'Shared information is visible to the counterparty',
+                  'Confidential information is only accessible to you and the AI',
+                  'Goals, priorities, constraints, and supporting documents can all be included',
+                ].map(item => (
+                  <li key={item} className="flex items-start gap-2.5 text-slate-600 text-sm">
+                    <CheckCircle2 className="w-4 h-4 text-blue-500 mt-0.5 shrink-0" />
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="text-sm text-slate-500 italic">
+                This is where each side outlines the opportunity, provides shared context for the other party, and adds confidential information that stays private.
+              </p>
+            </div>
+            <div>
+              <Step1Mockup />
+              <p className="text-xs text-slate-400 text-center mt-3">Shared and confidential inputs are clearly separated in the form.</p>
+            </div>
+          </motion.div>
+
+          {/* Step 2 — reversed */}
+          <motion.div
+            initial={{ opacity: 0, y: 24 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6 }}
+            viewport={{ once: true }}
+            className="grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-16 items-center mb-24"
+          >
+            <div className="order-2 lg:order-1">
+              <Step2Mockup />
+              <p className="text-xs text-slate-400 text-center mt-3">The AI surfaces alignment, risks, and missing information across both submissions.</p>
+            </div>
+            <div className="order-1 lg:order-2">
+              <div className="inline-flex items-center gap-3 mb-6">
+                <span className="w-10 h-10 rounded-full bg-blue-600 text-white text-sm font-bold flex items-center justify-center shrink-0">2</span>
+                <span className="text-xs font-semibold uppercase tracking-widest text-blue-600">Step two</span>
+              </div>
+              <h3 className="text-2xl sm:text-3xl font-bold text-slate-900 mb-4">PreMarket evaluates both sides</h3>
+              <p className="text-slate-600 mb-6">
+                The AI reads both submissions — shared and confidential — without exposing private inputs to either party. It maps alignment, identifies conflicts, flags missing information, and checks commercial fit.
+              </p>
+              <ul className="space-y-3 mb-8">
+                {[
+                  'Overlap in objectives and commercial goals',
+                  'Conflicts in expectations or pricing',
+                  'Missing information that could block progress',
+                  'Commercial risks and deal-readiness signals',
+                  'Possible paths toward agreement',
+                ].map(item => (
+                  <li key={item} className="flex items-start gap-2.5 text-slate-600 text-sm">
+                    <CheckCircle2 className="w-4 h-4 text-blue-500 mt-0.5 shrink-0" />
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="text-sm text-slate-500 italic">
+                PreMarket analyzes both sides using a neutral structure. This is not a generic AI response — it is structured deal analysis.
+              </p>
+            </div>
+          </motion.div>
+
+          {/* Step 3 */}
+          <motion.div
+            initial={{ opacity: 0, y: 24 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6 }}
+            viewport={{ once: true }}
+            className="grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-16 items-center"
+          >
+            <div>
+              <div className="inline-flex items-center gap-3 mb-6">
+                <span className="w-10 h-10 rounded-full bg-blue-600 text-white text-sm font-bold flex items-center justify-center shrink-0">3</span>
+                <span className="text-xs font-semibold uppercase tracking-widest text-blue-600">Step three</span>
+              </div>
+              <h3 className="text-2xl sm:text-3xl font-bold text-slate-900 mb-4">Both sides receive a structured output</h3>
+              <p className="text-slate-600 mb-6">
+                Rather than unstructured back-and-forth, both parties receive a clear, organized report: where you agree, where the gaps are, what information is still missing, and what to address first.
+              </p>
+              <ul className="space-y-3 mb-8">
+                {[
+                  'Neutral analysis of both positions',
+                  'Areas of alignment identified',
+                  'Key gaps to resolve before progressing',
+                  'Suggested next steps for both sides',
+                  'A clearer, more efficient basis for discussion',
+                ].map(item => (
+                  <li key={item} className="flex items-start gap-2.5 text-slate-600 text-sm">
+                    <CheckCircle2 className="w-4 h-4 text-blue-500 mt-0.5 shrink-0" />
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="text-sm text-slate-500 italic">
+                Instead of unstructured back-and-forth, both sides receive a clearer, structured basis for discussion.
+              </p>
+            </div>
+            <div>
+              <Step3Mockup />
+              <p className="text-xs text-slate-400 text-center mt-3">The report gives both sides a structured basis for discussion — areas of alignment, gaps to resolve, and suggested next steps.</p>
+            </div>
+          </motion.div>
+
         </div>
       </section>
 
       {/* SECTION C — What each side sees */}
       <section className="py-24 bg-slate-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-16">
+          <div className="text-center mb-12">
             <h2 className="text-3xl sm:text-4xl font-bold text-slate-900 mb-4">
               What each side sees
             </h2>
@@ -176,6 +241,17 @@ export default function HowItWorks() {
               PreMarket separates shared and confidential inputs so each party controls exactly what the other side sees.
             </p>
           </div>
+
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5 }}
+            viewport={{ once: true }}
+            className="max-w-3xl mx-auto mb-12"
+          >
+            <ConfidentialityMockup />
+            <p className="text-xs text-slate-400 text-center mt-3">The confidential and shared panels are clearly separated in the product — the counterparty never sees the confidential side.</p>
+          </motion.div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl mx-auto">
             {/* Shared column */}
@@ -443,6 +519,227 @@ export default function HowItWorks() {
         </div>
       </section>
     </div>
+  );
+}
+
+// ─── Product UI Mockups ─────────────────────────────────────────────
+
+function MockupWindow({ title, actions, children }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white shadow-xl overflow-hidden">
+      <div className="bg-slate-900 px-4 py-3 flex items-center gap-3">
+        <div className="flex gap-1.5">
+          <span className="w-2.5 h-2.5 rounded-full bg-slate-600" />
+          <span className="w-2.5 h-2.5 rounded-full bg-slate-600" />
+          <span className="w-2.5 h-2.5 rounded-full bg-slate-600" />
+        </div>
+        <span className="text-xs text-slate-400 font-medium flex-1 text-center">{title}</span>
+        {actions && <div className="flex gap-1.5">{actions}</div>}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function Step1Mockup() {
+  return (
+    <MockupWindow title="PreMarket — New Opportunity">
+      <div className="p-5 bg-slate-50 space-y-3.5">
+        <div>
+          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">Opportunity Title</p>
+          <div className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700">
+            SaaS platform acquisition — initial terms
+          </div>
+        </div>
+        <div>
+          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">Recipient</p>
+          <div className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-400">
+            counterparty@company.com
+          </div>
+        </div>
+        {/* Confidential panel */}
+        <div className="rounded-xl border border-amber-200 overflow-hidden">
+          <div className="px-3.5 py-2.5 bg-amber-50 border-b border-amber-200 flex items-center gap-2">
+            <Lock className="w-3.5 h-3.5 text-amber-600" />
+            <span className="text-xs font-bold text-amber-800 uppercase tracking-wide">Confidential Information</span>
+            <span className="ml-auto text-xs text-amber-500">Only you &amp; AI</span>
+          </div>
+          <div className="px-3.5 py-3 bg-amber-50/60 space-y-2">
+            {['Walk-away price: $1.8M', 'Must close before Q2 2026', 'Board approval required above $2M'].map(item => (
+              <div key={item} className="flex items-start gap-2 text-xs text-amber-900">
+                <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
+                {item}
+              </div>
+            ))}
+          </div>
+        </div>
+        {/* Shared panel */}
+        <div className="rounded-xl border border-blue-200 overflow-hidden">
+          <div className="px-3.5 py-2.5 bg-blue-50 border-b border-blue-200 flex items-center gap-2">
+            <Eye className="w-3.5 h-3.5 text-blue-600" />
+            <span className="text-xs font-bold text-blue-800 uppercase tracking-wide">Shared Information</span>
+            <span className="ml-auto text-xs text-blue-500">Visible to counterparty</span>
+          </div>
+          <div className="px-3.5 py-3 bg-blue-50/60 space-y-2">
+            {['Acquisition of B2B SaaS product', 'Target valuation: $2M – $3.5M', 'Integration timeline: 6 months post-close'].map(item => (
+              <div key={item} className="flex items-start gap-2 text-xs text-blue-900">
+                <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" />
+                {item}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </MockupWindow>
+  );
+}
+
+function Step2Mockup() {
+  return (
+    <MockupWindow title="PreMarket — AI Mediation Review">
+      <div className="p-5 bg-slate-50 space-y-3">
+        {/* Metadata row */}
+        <div className="bg-white rounded-xl border border-slate-100 px-4 py-3 flex flex-wrap gap-x-5 gap-y-2">
+          {[
+            { label: 'Recommendation', value: 'Proceed', cls: 'text-slate-700' },
+            { label: 'Confidence', value: '84%', cls: 'text-slate-700' },
+            { label: 'Status', value: 'Ready', cls: 'bg-emerald-100 text-emerald-700 border-emerald-200 border rounded px-2' },
+            { label: 'Open Items', value: '3 items', cls: 'bg-amber-100 text-amber-700 border-amber-200 border rounded px-2' },
+          ].map(({ label, value, cls }) => (
+            <div key={label} className="flex items-center gap-1.5">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</span>
+              <span className={`text-xs font-medium ${cls}`}>{value}</span>
+            </div>
+          ))}
+        </div>
+        {/* Report paper */}
+        <div className="bg-white rounded-xl border border-slate-200 px-4 py-4 space-y-3.5">
+          <div>
+            <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Commercial Alignment</h4>
+            <p className="text-xs text-slate-700 leading-relaxed">Both sides show alignment on acquisition structure. The buyer's target range overlaps with the seller's floor, suggesting a viable pricing zone.</p>
+          </div>
+          <div className="border-t border-slate-100 pt-3">
+            <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Key Gaps</h4>
+            <ul className="space-y-1.5">
+              {['Pricing expectations diverge by ~15%', 'Integration timeline not yet specified by either party'].map(item => (
+                <li key={item} className="flex items-start gap-1.5 text-xs text-slate-700">
+                  <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-slate-400 shrink-0" />
+                  {item}
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div className="border-t border-slate-100 pt-3">
+            <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Open Questions</h4>
+            <ul className="space-y-1.5">
+              {['IP ownership and transfer scope not addressed', 'Payment structure and milestone conditions unclear'].map(item => (
+                <li key={item} className="flex items-start gap-1.5 text-xs text-slate-700">
+                  <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
+                  {item}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      </div>
+    </MockupWindow>
+  );
+}
+
+function Step3Mockup() {
+  return (
+    <MockupWindow
+      title="PreMarket — Mediation Report"
+      actions={<span className="text-[10px] bg-slate-700 text-slate-300 px-2 py-0.5 rounded">Download PDF</span>}
+    >
+      <div className="p-5 bg-slate-50 space-y-3">
+        <div className="bg-white rounded-xl border border-slate-100 px-4 py-3">
+          <div className="text-sm font-bold text-slate-900 mb-0.5">SaaS platform acquisition — initial terms</div>
+          <div className="text-xs text-slate-500">Both parties submitted · AI Mediation Review ready</div>
+        </div>
+        <div className="bg-white rounded-xl border border-slate-100 px-4 py-4">
+          <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Areas of Alignment</h4>
+          <ul className="space-y-2">
+            {[
+              'Acquisition structure is acceptable to both parties',
+              'Target timeline overlaps within a 6-week window',
+              'Both sides open to a staged integration approach',
+            ].map(item => (
+              <li key={item} className="flex items-start gap-2 text-xs text-slate-700">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 mt-0.5 shrink-0" />
+                {item}
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div className="bg-white rounded-xl border border-slate-100 px-4 py-4">
+          <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Suggested Next Steps</h4>
+          <ul className="space-y-2">
+            {[
+              'Narrow pricing gap with a midpoint counteroffer',
+              'Agree on IP transfer scope before progressing',
+              'Both sides to provide integration timeline estimate',
+            ].map((item, i) => (
+              <li key={item} className="flex items-start gap-2 text-xs text-slate-700">
+                <span className="text-xs font-bold text-blue-500 shrink-0 mt-0.5">{i + 1}.</span>
+                {item}
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    </MockupWindow>
+  );
+}
+
+function ConfidentialityMockup() {
+  return (
+    <MockupWindow title="PreMarket — Opportunity Details">
+      <div className="p-5 bg-slate-50">
+        <div className="grid grid-cols-2 gap-3">
+          {/* Confidential panel */}
+          <div className="rounded-xl border border-amber-200 overflow-hidden">
+            <div className="px-3 py-2.5 bg-amber-50 border-b border-amber-200 flex items-center gap-1.5">
+              <Lock className="w-3 h-3 text-amber-700" />
+              <span className="text-[10px] font-bold text-amber-800 uppercase tracking-wide">Confidential Information</span>
+            </div>
+            <div className="px-3 py-3 bg-amber-50/50 space-y-1.5">
+              {['Walk-away price: $1.8M', 'Close deadline: Q1 2026', 'Board threshold: $2M', 'Negotiation authority: CEO'].map(item => (
+                <div key={item} className="flex items-center gap-1.5 text-[11px] text-amber-900">
+                  <span className="w-1 h-1 rounded-full bg-amber-400 shrink-0" />
+                  {item}
+                </div>
+              ))}
+              <div className="pt-2 mt-1 border-t border-amber-200">
+                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-600">
+                  <EyeOff className="w-3 h-3" /> Hidden from counterparty
+                </span>
+              </div>
+            </div>
+          </div>
+          {/* Shared panel */}
+          <div className="rounded-xl border border-blue-200 overflow-hidden">
+            <div className="px-3 py-2.5 bg-blue-50 border-b border-blue-200 flex items-center gap-1.5">
+              <Eye className="w-3 h-3 text-blue-700" />
+              <span className="text-[10px] font-bold text-blue-800 uppercase tracking-wide">Shared Information</span>
+            </div>
+            <div className="px-3 py-3 bg-blue-50/50 space-y-1.5">
+              {['Acquisition of B2B SaaS', 'Target valuation: $2M–$3.5M', 'Integration: 6 months', 'Preferred structure: cash deal'].map(item => (
+                <div key={item} className="flex items-center gap-1.5 text-[11px] text-blue-900">
+                  <span className="w-1 h-1 rounded-full bg-blue-400 shrink-0" />
+                  {item}
+                </div>
+              ))}
+              <div className="pt-2 mt-1 border-t border-blue-200">
+                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-blue-600">
+                  <Eye className="w-3 h-3" /> Visible to counterparty
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </MockupWindow>
   );
 }
 
