@@ -18,6 +18,7 @@ import proposalResponsesHandler from '../server/routes/proposals/[id]/responses.
 import proposalSendHandler from '../server/routes/proposals/[id]/send.js';
 import proposalEvaluateHandler from '../server/routes/proposals/[id]/evaluate.js';
 import proposalEvaluationsHandler from '../server/routes/proposals/[id]/evaluations.js';
+import proposalOutcomeHandler from '../server/routes/proposals/[id]/outcome.js';
 import proposalArchiveHandler from '../server/routes/proposals/[id]/archive.js';
 import proposalUnarchiveHandler from '../server/routes/proposals/[id]/unarchive.js';
 import sharedLinksHandler from '../server/routes/shared-links/index.js';
@@ -354,6 +355,12 @@ export default async function handler(req: any, res: any) {
   if (proposalEvaluationsMatch && method === 'GET') {
     const id = decodeURIComponent(proposalEvaluationsMatch[1]);
     return proposalEvaluationsHandler(req, res, id);
+  }
+
+  const proposalOutcomeMatch = pathname.match(/^\/api\/proposals\/([^/]+)\/outcome$/);
+  if (proposalOutcomeMatch && method === 'POST') {
+    const id = decodeURIComponent(proposalOutcomeMatch[1]);
+    return proposalOutcomeHandler(req, res, id);
   }
 
   const proposalArchiveMatch = pathname.match(/^\/api\/proposals\/([^/]+)\/archive$/);

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { eq } from 'drizzle-orm';
+import apiHandler from '../../api/index.ts';
 import proposalsHandler from '../../server/routes/proposals/index.ts';
 import proposalDetailHandler from '../../server/routes/proposals/[id].ts';
 import proposalOutcomeHandler from '../../server/routes/proposals/[id]/outcome.ts';
@@ -276,6 +277,35 @@ if (!hasDatabaseUrl()) {
       invalidRes.jsonBody().error?.message,
       'Use Request Agreement, Confirm Agreement, Lost, or Continue Negotiating.',
     );
+  });
+
+  test('api index routes proposal outcome mutations instead of returning route not found', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = authCookie('outcome_owner_api_index', 'owner-api-index@example.com');
+
+    const proposal = await createProposal(ownerCookie, {
+      title: 'API Index Outcome Route Proposal',
+      status: 'sent',
+      sentAt: new Date().toISOString(),
+      partyBEmail: 'recipient-api-index@example.com',
+    });
+
+    const res = await callHandler(apiHandler, {
+      method: 'POST',
+      url: `/api?path=${encodeURIComponent(`proposals/${proposal.id}/outcome`)}`,
+      headers: { cookie: ownerCookie },
+      query: {
+        path: `proposals/${proposal.id}/outcome`,
+        id: proposal.id,
+      },
+      body: { outcome: 'lost' },
+    });
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.jsonBody().proposal.status, 'lost');
+    assert.equal(res.jsonBody().proposal.outcome.state, 'lost');
   });
 
   test('unilateral lost closes immediately, updates analytics, and notifies the counterparty', async () => {
