@@ -108,8 +108,27 @@ export default async function handler(req: any, res: any) {
     return;
   }
 
+  // Phase 1: verify the Google token with the external Google API.
+  // Only this phase produces `invalid_google_token` (401).
+  let googleUser: Awaited<ReturnType<typeof verifyGoogleIdToken>>;
   try {
-    const googleUser = await verifyGoogleIdToken(idToken, config.googleClientId);
+    googleUser = await verifyGoogleIdToken(idToken, config.googleClientId);
+  } catch (googleErr) {
+    console.error(
+      JSON.stringify({
+        level: 'error',
+        route: '/api/auth/google/verify',
+        phase: 'google_token_verify',
+        message: googleErr instanceof Error ? googleErr.message : String(googleErr || 'unknown'),
+      }),
+    );
+    json(res, 401, { error: 'invalid_google_token' });
+    return;
+  }
+
+  // Phase 2: DB and session operations.
+  // Errors here are server-side failures, not invalid tokens.
+  try {
     const user = await upsertAuthUserFromSession(googleUser, { updateLastLogin: true });
     const db = getDb();
     const [userMfa] = await db
@@ -166,7 +185,16 @@ export default async function handler(req: any, res: any) {
       user,
       redirectTo,
     });
-  } catch {
-    json(res, 401, { error: 'invalid_google_token' });
+  } catch (serverErr) {
+    console.error(
+      JSON.stringify({
+        level: 'error',
+        route: '/api/auth/google/verify',
+        phase: 'db_session',
+        message: serverErr instanceof Error ? serverErr.message : String(serverErr || 'unknown'),
+        stack: serverErr instanceof Error ? serverErr.stack || null : null,
+      }),
+    );
+    json(res, 500, { error: 'server_error' });
   }
 }
