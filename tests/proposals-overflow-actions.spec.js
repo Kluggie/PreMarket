@@ -301,7 +301,7 @@ async function installProposalApiMocks(page, { user, proposals, failOutcomePropo
           return {
             ...proposal,
             primary_status_key: 'waiting_on_counterparty',
-            primary_status_label: 'Waiting on Counterparty',
+            primary_status_label: 'Requested Agreement',
             waiting_on_other_party: true,
             win_confirmation_requested: false,
             last_activity_at: now,
@@ -507,7 +507,7 @@ test.describe('Proposals overflow actions', () => {
 
     await openActionsMenu(page, enabledProposal.id);
     await page.getByRole('menuitem', { name: 'Request Agreement' }).click();
-    await expect(page.getByTestId(`proposal-row-${enabledProposal.id}`)).toContainText('Waiting on Counterparty');
+    await expect(page.getByTestId(`proposal-row-${enabledProposal.id}`)).toContainText('Requested Agreement');
 
     await openActionsMenu(page, enabledProposal.id);
     await expect(page.getByText('Waiting for the counterparty to confirm the agreement.')).toBeVisible({

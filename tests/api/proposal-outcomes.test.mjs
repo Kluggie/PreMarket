@@ -364,6 +364,7 @@ if (!hasDatabaseUrl()) {
     assert.equal(pendingWonRes.jsonBody().proposal.outcome.state, 'pending_won');
     assert.equal(pendingWonRes.jsonBody().proposal.outcome.requested_by, 'party_b');
     assert.equal(pendingWonRes.jsonBody().proposal.outcome.requested_by_current_user, true);
+    assert.equal(pendingWonRes.jsonBody().proposal.primary_status_label, 'Requested Agreement');
 
     const pendingSummary = await getSummary(ownerCookie);
     assert.equal(pendingSummary.wonCount, 0);
@@ -403,6 +404,112 @@ if (!hasDatabaseUrl()) {
     );
     assert.ok(finalNotification, 'recipient should receive an agreed notification');
     assert.equal(finalNotification.title, 'Agreed');
+  });
+
+  test('request agreement sends one recipient email, keeps the in-app notification, and persists Requested Agreement state', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = authCookie('outcome_owner_request_email', 'owner-request-email@example.com');
+    const recipientCookie = authCookie('outcome_recipient_request_email', 'recipient-request-email@example.com');
+    await touchUser(recipientCookie);
+
+    const proposal = await createProposal(ownerCookie, {
+      title: 'Requested Agreement Email Proposal',
+      status: 'received',
+      sentAt: new Date().toISOString(),
+      receivedAt: new Date().toISOString(),
+      partyBEmail: 'recipient-request-email@example.com',
+    });
+
+    const originalMode = process.env.EMAIL_MODE;
+    const originalResendKey = process.env.RESEND_API_KEY;
+    const originalResendFrom = process.env.RESEND_FROM_EMAIL;
+    const originalResendName = process.env.RESEND_FROM_NAME;
+    const originalResendReplyTo = process.env.RESEND_REPLY_TO;
+    const originalAppBaseUrl = process.env.APP_BASE_URL;
+    const originalFetch = globalThis.fetch;
+    const resendPayloads = [];
+
+    process.env.EMAIL_MODE = 'contact_only';
+    process.env.RESEND_API_KEY = 'test_resend_key';
+    process.env.RESEND_FROM_EMAIL = 'notifications@mail.getpremarket.com';
+    process.env.RESEND_FROM_NAME = 'PreMarket';
+    process.env.RESEND_REPLY_TO = 'support@getpremarket.com';
+    process.env.APP_BASE_URL = 'https://app.getpremarket.test';
+
+    globalThis.fetch = async (url, init) => {
+      if (String(url).includes('api.resend.com/emails')) {
+        resendPayloads.push(JSON.parse(String(init?.body || '{}')));
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ id: 'resend_request_agreement_email' }),
+        };
+      }
+      return originalFetch.call(globalThis, url, init);
+    };
+
+    try {
+      const requestRes = await markOutcome(ownerCookie, proposal.id, { outcome: 'won' });
+      assert.equal(requestRes.statusCode, 200);
+      assert.equal(requestRes.jsonBody().proposal.outcome.state, 'pending_won');
+      assert.equal(requestRes.jsonBody().proposal.primary_status_key, 'waiting_on_counterparty');
+      assert.equal(requestRes.jsonBody().proposal.primary_status_label, 'Requested Agreement');
+
+      assert.equal(resendPayloads.length, 1);
+      assert.deepEqual(resendPayloads[0].to, ['recipient-request-email@example.com']);
+      assert.equal(resendPayloads[0].subject, 'Agreement Requested — Requested Agreement Email Proposal');
+      assert.match(
+        String(resendPayloads[0].text || ''),
+        /requested agreement on "Requested Agreement Email Proposal" and is waiting for your confirmation\./i,
+      );
+      assert.match(
+        String(resendPayloads[0].text || ''),
+        /https:\/\/app\.getpremarket\.test\/ProposalDetail\?id=/,
+      );
+
+      const recipientNotifications = await getNotifications(recipientCookie);
+      const agreementNotification = recipientNotifications.find(
+        (entry) =>
+          entry.event_type === 'status_won' &&
+          String(entry.message || '').includes('waiting for your confirmation'),
+      );
+      assert.ok(agreementNotification, 'recipient should still receive the in-app agreement notification');
+
+      const requesterInbox = await listProposals(ownerCookie, { tab: 'inbox', limit: '20' });
+      const requesterRow = requesterInbox.find((entry) => entry.id === proposal.id);
+      assert.ok(requesterRow, 'requesting user should still see the pending thread in Inbox');
+      assert.equal(requesterRow.primary_status_label, 'Requested Agreement');
+
+      const repeatRes = await markOutcome(ownerCookie, proposal.id, { outcome: 'won' });
+      assert.equal(repeatRes.statusCode, 200);
+      assert.equal(repeatRes.jsonBody().proposal.outcome.state, 'pending_won');
+      assert.equal(repeatRes.jsonBody().proposal.primary_status_label, 'Requested Agreement');
+      assert.equal(resendPayloads.length, 1);
+
+      const recipientNotificationsAfterRepeat = await getNotifications(recipientCookie);
+      const agreementNotificationCount = recipientNotificationsAfterRepeat.filter(
+        (entry) =>
+          entry.event_type === 'status_won' &&
+          String(entry.message || '').includes('waiting for your confirmation'),
+      ).length;
+      assert.equal(agreementNotificationCount, 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalMode === undefined) delete process.env.EMAIL_MODE;
+      else process.env.EMAIL_MODE = originalMode;
+      if (originalResendKey === undefined) delete process.env.RESEND_API_KEY;
+      else process.env.RESEND_API_KEY = originalResendKey;
+      if (originalResendFrom === undefined) delete process.env.RESEND_FROM_EMAIL;
+      else process.env.RESEND_FROM_EMAIL = originalResendFrom;
+      if (originalResendName === undefined) delete process.env.RESEND_FROM_NAME;
+      else process.env.RESEND_FROM_NAME = originalResendName;
+      if (originalResendReplyTo === undefined) delete process.env.RESEND_REPLY_TO;
+      else process.env.RESEND_REPLY_TO = originalResendReplyTo;
+      if (originalAppBaseUrl === undefined) delete process.env.APP_BASE_URL;
+      else process.env.APP_BASE_URL = originalAppBaseUrl;
+    }
   });
 
   test('drafts are excluded from the dashboard activity graph', async () => {

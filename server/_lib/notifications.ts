@@ -107,6 +107,7 @@ export async function createNotificationEvent(input: {
   metadata?: Record<string, unknown> | null;
   dedupeKey?: string | null;
   emailCategory?: string | null;
+  emailPurpose?: 'general' | 'security' | 'transactional' | null;
   emailSubject?: string | null;
   emailText?: string | null;
   emailHtml?: string | null;
@@ -195,6 +196,7 @@ export async function createNotificationEvent(input: {
 
       await sendCategorizedEmail({
         category: emailCategory,
+        purpose: input.emailPurpose || undefined,
         to: recipientEmail,
         subject: asText(input.emailSubject) || asText(input.title) || 'PreMarket notification',
         dedupeKey,

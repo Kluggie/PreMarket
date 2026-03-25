@@ -5,7 +5,7 @@ import { newId } from './ids.js';
 
 export const EMAIL_MODE_VALUES = ['contact_only', 'transactional', 'disabled'] as const;
 export type EmailMode = (typeof EMAIL_MODE_VALUES)[number];
-export const EMAIL_PURPOSE_VALUES = ['general', 'security'] as const;
+export const EMAIL_PURPOSE_VALUES = ['general', 'security', 'transactional'] as const;
 export type EmailPurpose = (typeof EMAIL_PURPOSE_VALUES)[number];
 
 export const EMAIL_CATEGORIES = [
@@ -249,7 +249,7 @@ export async function sendCategorizedEmail(input: {
   const html = asText(input.html);
   const replyTo = asText(input.replyTo).toLowerCase();
   const transactionalCategory = isTransactionalCategory(input.category);
-  const bypassPolicyMode = purpose === 'security';
+  const bypassPolicyMode = purpose === 'security' || purpose === 'transactional';
   const devSink = shouldUseDevEmailSink(mode) ? resolveDevEmailSink() : '';
   const recipientsTo = devSink ? [devSink] : rawRecipientsTo;
   const recipientsCc = devSink ? [] : rawRecipientsCc;

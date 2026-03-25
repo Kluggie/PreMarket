@@ -11,6 +11,7 @@ const PRIMARY_STATUS_LABELS = {
   draft: 'Draft',
   needs_reply: 'Needs Reply',
   under_review: 'Under Review',
+  requested_agreement: 'Requested Agreement',
   waiting_on_counterparty: 'Waiting on Counterparty',
   closed_won: 'Closed: Won',
   closed_lost: 'Closed: Lost',
@@ -126,6 +127,7 @@ export function deriveProposalPrimaryStatus(input = {}) {
   const needsResponse = Boolean(input.needsResponse);
   const waitingOnOtherParty = Boolean(input.waitingOnOtherParty);
   const hasReviewStatus = Boolean(asLower(input.reviewStatus));
+  const agreementRequestedByCurrentUser = Boolean(input.agreementRequestedByCurrentUser);
 
   if (bucket === 'drafts') {
     return {
@@ -139,6 +141,13 @@ export function deriveProposalPrimaryStatus(input = {}) {
     return {
       key: closedKey,
       label: getPrimaryStatusLabel(closedKey),
+    };
+  }
+
+  if (agreementRequestedByCurrentUser) {
+    return {
+      key: 'waiting_on_counterparty',
+      label: getPrimaryStatusLabel('requested_agreement'),
     };
   }
 
@@ -256,11 +265,13 @@ export function getProposalThreadState(proposal, currentUser, options = {}) {
   const winConfirmationRequested = Boolean(
     bucket === 'inbox' && outcome.pending && outcome.requested_by_counterparty,
   );
+  const agreementRequestedByCurrentUser = Boolean(
+    bucket === 'inbox' && outcome.pending && outcome.requested_by_current_user,
+  );
   const waitingOnOtherParty = Boolean(
     bucket === 'inbox' &&
       !winConfirmationRequested &&
-      ((outcome.pending && outcome.requested_by_current_user) ||
-        (!outcome.pending && latestDirection === 'sent')),
+      (agreementRequestedByCurrentUser || (!outcome.pending && latestDirection === 'sent')),
   );
   const needsResponse = Boolean(
     bucket === 'inbox' &&
@@ -290,6 +301,7 @@ export function getProposalThreadState(proposal, currentUser, options = {}) {
     needsResponse,
     waitingOnOtherParty,
     reviewStatus,
+    agreementRequestedByCurrentUser,
   });
   const startedByRole = deriveStartedByRole(proposal, actorRole, currentUser);
   const lastUpdateByRole = deriveLastUpdateByRole({

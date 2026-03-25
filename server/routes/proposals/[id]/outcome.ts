@@ -3,6 +3,7 @@ import { ok } from '../../../_lib/api-response.js';
 import { logAuditEventBestEffort } from '../../../_lib/audit-events.js';
 import { requireUser } from '../../../_lib/auth.js';
 import { getDb, schema } from '../../../_lib/db/client.js';
+import { toCanonicalAppUrl } from '../../../_lib/env.js';
 import { sendCategorizedEmail } from '../../../_lib/email-delivery.js';
 import { ApiError } from '../../../_lib/errors.js';
 import { readJsonBody } from '../../../_lib/http.js';
@@ -45,6 +46,20 @@ function asText(value: unknown) {
 
 function asLower(value: unknown) {
   return asText(value).toLowerCase();
+}
+
+function buildCanonicalActionUrl(actionUrl: string) {
+  const normalizedActionUrl = asText(actionUrl);
+  if (!normalizedActionUrl) {
+    return '';
+  }
+
+  const appBaseUrl = asText(process.env.APP_BASE_URL);
+  if (!appBaseUrl) {
+    return normalizedActionUrl;
+  }
+
+  return toCanonicalAppUrl(appBaseUrl, normalizedActionUrl);
 }
 
 function mapProposalRow(proposal, currentUser, options: Record<string, unknown> = {}) {
@@ -194,8 +209,11 @@ async function notifyCounterparty(params: {
   message: string;
   emailSubject: string;
   emailText: string;
+  emailPurpose?: 'general' | 'transactional';
+  sendEmail?: boolean;
 }) {
   const target = await resolveCounterpartyTarget(params.db, params.proposal, params.actorRole);
+  const sendEmail = params.sendEmail !== false;
 
   if (target.userId) {
     await createNotificationEvent({
@@ -204,22 +222,25 @@ async function notifyCounterparty(params: {
       userEmail: target.userEmail,
       eventType: params.eventType,
       emailCategory: 'shared_link_activity',
+      emailPurpose: sendEmail ? params.emailPurpose || 'general' : undefined,
       dedupeKey: params.dedupeKey,
       title: params.title,
       message: params.message,
       actionUrl: params.actionUrl,
       emailSubject: params.emailSubject,
       emailText: params.emailText,
+      sendEmail,
     });
     return;
   }
 
-  if (!target.userEmail) {
+  if (!target.userEmail || !sendEmail) {
     return;
   }
 
   await sendCategorizedEmail({
     category: 'shared_link_activity',
+    purpose: params.emailPurpose || 'general',
     to: target.userEmail,
     subject: params.emailSubject,
     dedupeKey: params.dedupeKey,
@@ -386,6 +407,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
 
     const nextOutcome = getProposalOutcomeState(updated);
     const actionUrl = `/ProposalDetail?id=${encodeURIComponent(updated.id)}`;
+    const canonicalActionUrl = buildCanonicalActionUrl(actionUrl);
     const title = updated.title || 'your proposal';
     const actorLabel =
       actorRole === PROPOSAL_PARTY_A ? 'The proposer' : (auth.user.email || 'The recipient');
@@ -406,6 +428,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
           '',
           'Sign in to PreMarket to review the proposal history.',
         ].join('\n'),
+        sendEmail: false,
       });
 
       await logAuditEventBestEffort({
@@ -438,15 +461,18 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         actorRole,
         actionUrl,
         eventType: 'status_won',
-        dedupeKey: `proposal:${updated.id}:won_pending:${actorRole}:${now.getTime()}`,
+        dedupeKey: `proposal:${updated.id}:won_pending:${actorRole}:${asText(existing.updatedAt || existing.receivedAt || existing.sentAt || existing.createdAt || updated.id)}`,
         title: 'Agreement Requested',
         message: `${actorLabel} requested agreement on "${title}" and is waiting for your confirmation.`,
         emailSubject: `Agreement Requested — ${title}`,
         emailText: [
           `${actorLabel} requested agreement on "${title}" and is waiting for your confirmation.`,
           '',
-          'Sign in to PreMarket to confirm the agreement or continue negotiating.',
+          canonicalActionUrl
+            ? `Open the opportunity: ${canonicalActionUrl}`
+            : 'Sign in to PreMarket to confirm the agreement or continue negotiating.',
         ].join('\n'),
+        emailPurpose: 'transactional',
       });
 
       await logAuditEventBestEffort({

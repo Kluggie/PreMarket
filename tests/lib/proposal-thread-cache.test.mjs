@@ -105,7 +105,7 @@ test('applyUpdatedProposalToCaches keeps current-user agreement requests out of 
     status: 'sent',
     thread_bucket: 'inbox',
     primary_status_key: 'waiting_on_counterparty',
-    primary_status_label: 'Waiting on Counterparty',
+    primary_status_label: 'Requested Agreement',
     waiting_on_other_party: true,
     win_confirmation_requested: false,
     last_activity_at: '2026-03-25T11:30:00.000Z',
@@ -135,6 +135,7 @@ test('applyUpdatedProposalToCaches keeps current-user agreement requests out of 
   assert.equal(dashboardRows.some((proposal) => proposal.id === pendingWonProposal.id), true);
   assert.equal(agreementRequests.some((proposal) => proposal.id === pendingWonProposal.id), false);
   assert.equal(inboxData.proposals[0].outcome.state, 'pending_won');
+  assert.equal(inboxData.proposals[0].primary_status_label, 'Requested Agreement');
 });
 
 test('removeProposalFromCaches removes deleted rows from list and dashboard caches', () => {

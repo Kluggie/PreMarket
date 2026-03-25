@@ -101,12 +101,13 @@ test('DEV_EMAIL_SINK rewrites recipients in non-production transactional mode', 
   };
 
   try {
+    const dedupeKey = `evaluation_complete:sink_test:${Date.now()}`;
     const result = await sendCategorizedEmail({
       category: 'evaluation_complete',
       to: 'owner@example.com',
       subject: 'Sink test',
       text: 'body',
-      dedupeKey: 'evaluation_complete:sink_test:v1',
+      dedupeKey,
     });
 
     assert.equal(result.status, 'sent');
@@ -123,6 +124,62 @@ test('DEV_EMAIL_SINK rewrites recipients in non-production transactional mode', 
     else process.env.NODE_ENV = originalNodeEnv;
     if (originalDevSink === undefined) delete process.env.DEV_EMAIL_SINK;
     else process.env.DEV_EMAIL_SINK = originalDevSink;
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('transactional-purpose emails can bypass contact_only gating for user-triggered agreement requests', async () => {
+  const originalMode = process.env.EMAIL_MODE;
+  const originalResendKey = process.env.RESEND_API_KEY;
+  const originalResendFrom = process.env.RESEND_FROM_EMAIL;
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+
+  process.env.EMAIL_MODE = 'contact_only';
+  process.env.RESEND_API_KEY = 'test_resend_key';
+  process.env.RESEND_FROM_EMAIL = 'notifications@mail.getpremarket.com';
+
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com/emails')) {
+      fetchCalls += 1;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+      };
+    }
+    return originalFetch.call(globalThis, url, init);
+  };
+
+  try {
+    const blockedGeneral = await sendCategorizedEmail({
+      category: 'shared_link_activity',
+      to: 'recipient@example.com',
+      subject: 'General activity update',
+      text: 'should be blocked',
+      dedupeKey: 'shared_link_activity:general_policy_test:v1',
+    });
+
+    const allowedTransactional = await sendCategorizedEmail({
+      category: 'shared_link_activity',
+      purpose: 'transactional',
+      to: 'recipient@example.com',
+      subject: 'Agreement Requested — Policy Test',
+      text: 'Open the opportunity: https://app.getpremarket.test/ProposalDetail?id=proposal_policy_test',
+      dedupeKey: 'shared_link_activity:agreement_request_policy_test:v1',
+    });
+
+    assert.equal(blockedGeneral.status, 'blocked');
+    assert.equal(blockedGeneral.reason, 'blocked_contact_only');
+    assert.equal(allowedTransactional.status, 'sent');
+    assert.equal(fetchCalls, 1);
+  } finally {
+    if (originalMode === undefined) delete process.env.EMAIL_MODE;
+    else process.env.EMAIL_MODE = originalMode;
+    if (originalResendKey === undefined) delete process.env.RESEND_API_KEY;
+    else process.env.RESEND_API_KEY = originalResendKey;
+    if (originalResendFrom === undefined) delete process.env.RESEND_FROM_EMAIL;
+    else process.env.RESEND_FROM_EMAIL = originalResendFrom;
     globalThis.fetch = originalFetch;
   }
 });

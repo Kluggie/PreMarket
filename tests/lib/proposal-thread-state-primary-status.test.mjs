@@ -29,6 +29,16 @@ test('deriveProposalPrimaryStatus maps active thread states into the canonical m
     { key: 'waiting_on_counterparty', label: 'Waiting on Counterparty' },
   );
   assert.deepEqual(
+    deriveProposalPrimaryStatus({
+      bucket: 'inbox',
+      latestDirection: 'received',
+      waitingOnOtherParty: true,
+      reviewStatus: 'under_verification',
+      agreementRequestedByCurrentUser: true,
+    }),
+    { key: 'waiting_on_counterparty', label: 'Requested Agreement' },
+  );
+  assert.deepEqual(
     deriveProposalPrimaryStatus({ bucket: 'closed', finalStatus: 'won' }),
     { key: 'closed_won', label: 'Closed: Won' },
   );

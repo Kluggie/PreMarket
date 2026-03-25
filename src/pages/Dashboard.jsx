@@ -61,11 +61,12 @@ function getCompactStatusKey(proposal) {
 function StatusBadge({ proposal }) {
   const config = statusConfig[getCompactStatusKey(proposal)] || statusConfig.draft;
   const Icon = config.icon;
+  const label = String(proposal?.primary_status_label || '').trim() || config.label;
 
   return (
     <Badge className={`${config.color} text-[0.6875rem] px-2 py-0.5 h-5 font-medium`}>
       {Icon ? <Icon className="w-3 h-3 mr-1" /> : null}
-      {config.label}
+      {label}
     </Badge>
   );
 }
