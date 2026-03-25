@@ -1,5 +1,4 @@
 {
-  "buildCommand": "npm run db:migrate && npm run build",
   "routes": [
     { "src": "/api/(.*)", "dest": "/api/index?path=$1" },
     { "handle": "filesystem" },
