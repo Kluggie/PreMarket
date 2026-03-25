@@ -212,6 +212,78 @@ if (!hasDatabaseUrl()) {
     }
   });
 
+  test('shared report send rejects malformed recipient email before calling Resend', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = authCookie('shared_report_invalid_email', 'sender@example.com');
+    const comparison = await createComparison(ownerCookie, {
+      title: 'Invalid Recipient Email',
+      docAText: 'Confidential context.',
+      docBText: 'Shared report text for recipient consumption.',
+    });
+
+    const createdShare = await createSharedReportLink(
+      ownerCookie,
+      comparison.id,
+      'recipient@example.com',
+    );
+
+    const originalFetch = globalThis.fetch;
+    const originalApiKey = process.env.RESEND_API_KEY;
+    const originalFromEmail = process.env.RESEND_FROM_EMAIL;
+    let resendCalls = 0;
+
+    process.env.RESEND_API_KEY = 'test_resend_key';
+    process.env.RESEND_FROM_EMAIL = 'notifications@mail.getpremarket.com';
+
+    try {
+      globalThis.fetch = async (url, init) => {
+        if (String(url).includes('api.resend.com/emails')) {
+          resendCalls += 1;
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ id: 'resend_should_not_be_called' }),
+          };
+        }
+        return originalFetch.call(globalThis, url, init);
+      };
+
+      const sendReq = createMockReq({
+        method: 'POST',
+        url: `/api/sharedReports/${createdShare.token}/send`,
+        headers: { cookie: ownerCookie },
+        query: { token: createdShare.token },
+        body: {
+          recipientEmail: 'not-an-email',
+        },
+      });
+      const sendRes = createMockRes();
+      await sharedReportsSendHandler(sendReq, sendRes, createdShare.token);
+
+      assert.equal(sendRes.statusCode, 400);
+      assert.equal(sendRes.jsonBody().error.code, 'invalid_input');
+      assert.equal(
+        String(sendRes.jsonBody().error.message || ''),
+        'A valid recipientEmail is required',
+      );
+      assert.equal(resendCalls, 0, 'invalid email should be rejected before provider send');
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalApiKey !== undefined) {
+        process.env.RESEND_API_KEY = originalApiKey;
+      } else {
+        delete process.env.RESEND_API_KEY;
+      }
+      if (originalFromEmail !== undefined) {
+        process.env.RESEND_FROM_EMAIL = originalFromEmail;
+      } else {
+        delete process.env.RESEND_FROM_EMAIL;
+      }
+    }
+  });
+
   test('shared report send uses proposal-first email template with contextual subject and summary preview', async () => {
     await ensureMigrated();
     await resetTables();

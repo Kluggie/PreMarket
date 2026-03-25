@@ -41,6 +41,10 @@ function normalizeEmail(value: unknown) {
   return asText(value).toLowerCase();
 }
 
+function isLikelyEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
 function toObject(value: unknown): Record<string, any> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return {};
@@ -508,8 +512,8 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     const recipientEmail = normalizeEmail(
       body.recipientEmail || body.recipient_email || link.recipientEmail || proposal.partyBEmail,
     );
-    if (!recipientEmail) {
-      throw new ApiError(400, 'invalid_input', 'recipientEmail is required');
+    if (!recipientEmail || !isLikelyEmail(recipientEmail)) {
+      throw new ApiError(400, 'invalid_input', 'A valid recipientEmail is required');
     }
 
     const reportMetadata = toObject(link.reportMetadata);
