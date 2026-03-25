@@ -51,6 +51,33 @@ test('notification routing matches the Opportunities comparison-report destinati
   assert.equal(target.href, buildDocumentComparisonReportHref(comparisonId));
 });
 
+test('agreement-request notifications for document comparisons resolve to the canonical report route when comparison metadata is present', () => {
+  const comparisonId = 'comparison_agreement_requested';
+  const proposalId = 'proposal_agreement_requested';
+  const legacyHref = buildLegacyOpportunityNotificationHref({ proposalId });
+
+  const target = resolveNotificationTarget({
+    event_type: 'status_won',
+    action_url: buildDocumentComparisonReportHref(comparisonId),
+    metadata: buildNotificationTargetMetadata({
+      route: 'DocumentComparisonDetail',
+      tab: 'report',
+      workflowType: 'document_comparison',
+      entityType: 'document_comparison',
+      comparisonId,
+      proposalId,
+      legacyActionUrl: legacyHref,
+    }),
+  });
+
+  assert.equal(target.href, buildDocumentComparisonReportHref(comparisonId));
+  assert.equal(target.route, 'DocumentComparisonDetail');
+  assert.equal(target.tab, 'report');
+  assert.equal(target.comparison_id, comparisonId);
+  assert.equal(target.proposal_id, proposalId);
+  assert.equal(target.legacy_href, legacyHref);
+});
+
 test('true proposal-native notifications keep the existing proposal destination', () => {
   const proposalId = 'proposal_native_123';
   const legacyHref = buildLegacyOpportunityNotificationHref({ proposalId });

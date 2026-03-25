@@ -1,10 +1,11 @@
-import { and, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { ok } from '../../_lib/api-response.js';
 import { requireUser } from '../../_lib/auth.js';
 import { getDb, schema } from '../../_lib/db/client.js';
 import { ApiError } from '../../_lib/errors.js';
 import { readJsonBody } from '../../_lib/http.js';
 import { appendProposalHistory } from '../../_lib/proposal-history.js';
+import { buildProposalActivityHistory } from '../../_lib/proposal-activity.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 import { loadSharedReportHistory } from '../../_lib/shared-report-history.js';
 import {
@@ -377,28 +378,47 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     }
 
     if (req.method === 'GET') {
-      const sharedHistory = proposal
-        ? await loadSharedReportHistory({
-            db,
-            proposal,
-            comparison: existing,
-          })
-        : {
-            sharedEntries: [],
-            maxRoundNumber: 0,
-          };
-      const hasEvaluationAttempt = proposal?.id
-        ? await db
-            .select({ id: schema.proposalEvaluations.id })
-            .from(schema.proposalEvaluations)
-            .where(eq(schema.proposalEvaluations.proposalId, proposal.id))
-            .limit(1)
-            .then((rows) => rows.length > 0)
-        : false;
+      const [sharedHistory, hasEvaluationAttempt, activityEvents] = await Promise.all([
+        proposal
+          ? loadSharedReportHistory({
+              db,
+              proposal,
+              comparison: existing,
+            })
+          : Promise.resolve({
+              sharedEntries: [],
+              maxRoundNumber: 0,
+            }),
+        proposal?.id
+          ? db
+              .select({ id: schema.proposalEvaluations.id })
+              .from(schema.proposalEvaluations)
+              .where(eq(schema.proposalEvaluations.proposalId, proposal.id))
+              .limit(1)
+              .then((rows) => rows.length > 0)
+          : Promise.resolve(false),
+        proposal?.id
+          ? db
+              .select({
+                id: schema.proposalEvents.id,
+                eventType: schema.proposalEvents.eventType,
+                actorRole: schema.proposalEvents.actorRole,
+                createdAt: schema.proposalEvents.createdAt,
+              })
+              .from(schema.proposalEvents)
+              .where(eq(schema.proposalEvents.proposalId, proposal.id))
+              .orderBy(desc(schema.proposalEvents.createdAt))
+              .limit(50)
+          : Promise.resolve([]),
+      ]);
       const resumeStep = resolveComparisonResumeStep({
         comparison: existing,
         proposalDraftStep: proposal?.draftStep,
         hasEvaluationAttempt,
+      });
+      const activityHistory = buildProposalActivityHistory(activityEvents, {
+        accessMode,
+        limit: 8,
       });
       const mappedComparison = {
         ...mapComparisonRow(existing),
@@ -446,6 +466,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
           entries: sharedHistory.sharedEntries,
           max_round_number: sharedHistory.maxRoundNumber,
         },
+        activity_history: activityHistory,
         permissions: {
           access_mode: accessMode,
           editable_side: editableSide,

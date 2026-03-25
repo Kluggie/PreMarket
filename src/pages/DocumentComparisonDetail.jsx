@@ -5,6 +5,10 @@ import { createPageUrl } from '@/utils';
 import { documentComparisonsClient } from '@/api/documentComparisonsClient';
 import { proposalsClient } from '@/api/proposalsClient';
 import { sharedReportsClient } from '@/api/sharedReportsClient';
+import {
+  applyUpdatedProposalToCaches,
+  invalidateProposalThreadQueries,
+} from '@/lib/proposalThreadCache';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -29,6 +33,7 @@ import {
 } from '@/components/ui/dialog';
 import {
   ArrowLeft,
+  CheckCircle2,
   ChevronDown,
   Copy,
   Download,
@@ -36,8 +41,14 @@ import {
   Plus,
   Send,
   X,
+  XCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import {
+  AGREED_LABEL,
+  getAgreementActionLabel,
+  shouldShowPendingAgreementResponseActions,
+} from '@/lib/proposalOutcomeUi';
 
 const CONFIDENTIAL_LABEL = 'Confidential Information';
 const SHARED_LABEL = 'Shared Information';
@@ -324,6 +335,28 @@ function formatDateTime(dateValue) {
   return parsed.toLocaleString();
 }
 
+function getOpportunityStatusClass(statusKey, status) {
+  const normalizedKey = asLower(statusKey);
+  const normalizedStatus = asLower(status);
+
+  if (normalizedStatus === 'won' || normalizedKey === 'closed_won') {
+    return 'bg-emerald-100 text-emerald-700 border-emerald-200';
+  }
+  if (normalizedStatus === 'lost' || normalizedKey === 'closed_lost') {
+    return 'bg-rose-100 text-rose-700 border-rose-200';
+  }
+  if (normalizedKey === 'waiting_on_counterparty') {
+    return 'bg-amber-100 text-amber-700 border-amber-200';
+  }
+  if (normalizedKey === 'needs_response') {
+    return 'bg-blue-100 text-blue-700 border-blue-200';
+  }
+  if (normalizedStatus === 'under_verification' || normalizedStatus === 're_evaluated') {
+    return 'bg-indigo-100 text-indigo-700 border-indigo-200';
+  }
+  return 'bg-slate-100 text-slate-700 border-slate-200';
+}
+
 function toSafeInteger(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) {
@@ -455,8 +488,14 @@ export default function DocumentComparisonDetail() {
     Boolean(comparisonId) &&
     loadedComparisonId !== comparisonId;
   const permissions = comparisonQuery.data?.permissions || null;
-  const isOwnerView = asLower(permissions?.access_mode) === 'owner';
+  const viewerRole =
+    asLower(permissions?.access_mode) === 'recipient' || asLower(permissions?.access_mode) === 'token'
+      ? 'party_b'
+      : 'party_a';
   const proposal = comparisonQuery.data?.proposal || null;
+  const activityHistory = Array.isArray(comparisonQuery.data?.activityHistory)
+    ? comparisonQuery.data.activityHistory
+    : [];
   const confidentialWordCount = String(comparison?.doc_a_text || '')
     .trim()
     .split(/\s+/g)
@@ -465,6 +504,14 @@ export default function DocumentComparisonDetail() {
     .trim()
     .split(/\s+/g)
     .filter(Boolean).length;
+
+  const proposalDetailQuery = useQuery({
+    queryKey: ['document-comparison-linked-proposal-detail', proposal?.id || 'none'],
+    enabled: Boolean(proposal?.id) && asLower(permissions?.access_mode) !== 'token',
+    queryFn: () => proposalsClient.getById(proposal.id),
+    placeholderData: proposal || null,
+  });
+  const proposalThread = proposalDetailQuery.data || proposal || null;
 
   const evaluationsQuery = useQuery({
     queryKey: ['document-comparison-proposal-evaluations', comparisonId, proposal?.id || 'none'],
@@ -599,6 +646,33 @@ export default function DocumentComparisonDetail() {
     isEvaluationRunning &&
     typeof evaluationPollDeadline === 'number' &&
     Date.now() > evaluationPollDeadline;
+  const proposalOutcome = proposalThread?.outcome || {};
+  const proposalOutcomeState = asLower(proposalOutcome.state || proposalThread?.status);
+  const isWon = proposalOutcomeState === 'won';
+  const isLost = proposalOutcomeState === 'lost';
+  const isPendingWon = proposalOutcomeState === 'pending_won';
+  const isClosed = isWon || isLost;
+  const primaryStatusKey = asLower(proposalThread?.primary_status_key || proposalThread?.status);
+  const primaryStatusLabel = asText(proposalThread?.primary_status_label) || 'Active';
+  const showPendingAgreementResponseActions =
+    isPendingWon && shouldShowPendingAgreementResponseActions(proposalOutcome);
+  const baseOutcomeActionDisabled = proposalDetailQuery.isLoading;
+  const pendingOutcomeMessage = proposalOutcome.requested_by_counterparty
+    ? 'The counterparty requested agreement on this opportunity. Confirm the agreement, mark it lost, or continue negotiating.'
+    : proposalOutcome.requested_by_current_user
+      ? `You requested agreement on this opportunity. It becomes ${AGREED_LABEL.toLowerCase()} only after the counterparty confirms the agreement.`
+      : '';
+  const outcomeHelperText = proposalOutcome.requested_by_current_user
+    ? 'Waiting for the counterparty to confirm the agreement.'
+    : proposalOutcome.requested_by_counterparty
+      ? 'The counterparty requested agreement on this opportunity.'
+      : asText(
+          (!proposalOutcome?.can_mark_won
+            ? proposalOutcome?.eligibility_reason_won || proposalOutcome?.eligibility_reason
+            : !proposalOutcome?.can_mark_lost
+              ? proposalOutcome?.eligibility_reason_lost || proposalOutcome?.eligibility_reason
+              : ''),
+        );
 
   useEffect(() => {
     if (!comparisonId) {
@@ -640,6 +714,55 @@ export default function DocumentComparisonDetail() {
       toast.error(error?.message || 'AI mediation review PDF download unavailable');
     },
   });
+
+  const markOutcomeMutation = useMutation({
+    mutationFn: (nextOutcome) => proposalsClient.markOutcome(asText(proposalThread?.id), nextOutcome),
+    onSuccess: async (updatedProposal) => {
+      applyUpdatedProposalToCaches(queryClient, updatedProposal);
+      const outcomeState = asLower(updatedProposal?.outcome?.state || updatedProposal?.status);
+      if (outcomeState === 'pending_won') {
+        toast.success('Agreement Requested');
+      } else if (asLower(updatedProposal?.status) === 'won') {
+        toast.success('Marked as Agreed');
+      } else {
+        toast.success('Marked as Lost');
+      }
+      await invalidateProposalThreadQueries(queryClient, {
+        proposalId: updatedProposal?.id || proposalThread?.id || null,
+        documentComparisonId: updatedProposal?.document_comparison_id || comparisonId || null,
+      });
+      await Promise.all([
+        comparisonQuery.refetch(),
+        proposalDetailQuery.refetch(),
+      ]);
+    },
+    onError: (error) => {
+      toast.error(error?.message || 'Failed to update outcome');
+    },
+  });
+
+  const continueNegotiationMutation = useMutation({
+    mutationFn: () => proposalsClient.continueNegotiation(asText(proposalThread?.id)),
+    onSuccess: async (updatedProposal) => {
+      applyUpdatedProposalToCaches(queryClient, updatedProposal);
+      toast.success('Cleared pending agreement request');
+      await invalidateProposalThreadQueries(queryClient, {
+        proposalId: updatedProposal?.id || proposalThread?.id || null,
+        documentComparisonId: updatedProposal?.document_comparison_id || comparisonId || null,
+      });
+      await Promise.all([
+        comparisonQuery.refetch(),
+        proposalDetailQuery.refetch(),
+      ]);
+    },
+    onError: (error) => {
+      toast.error(error?.message || 'Failed to continue negotiating');
+    },
+  });
+  const outcomeActionDisabled =
+    baseOutcomeActionDisabled ||
+    markOutcomeMutation.isPending ||
+    continueNegotiationMutation.isPending;
 
   const createShareLinkMutation = useMutation({
     mutationFn: async (options = {}) => {
@@ -849,50 +972,66 @@ export default function DocumentComparisonDetail() {
         : latestEvaluationMeta.label === 'Failed'
           ? 'danger'
           : 'neutral';
-  const timelineItems = [
-    {
-      id: 'created',
-      kind: 'file',
-      tone: 'info',
-      title: 'Opportunity Created',
-      timestamp: formatDateTime(comparison.created_date),
-    },
-    {
-      id: 'updated',
-      kind: 'clock',
-      tone: 'neutral',
-      title: 'Last Updated',
-      timestamp: formatDateTime(comparison.updated_date),
-    },
-    ...(latestEvaluation
-      ? [
-          {
-            id: 'latest-evaluation',
-            kind: 'sparkles',
-            tone: timelineTone,
-            title: latestEvaluationMeta.timelineTitle,
-            timestamp: formatDateTime(latestEvaluation.created_date),
-          },
-        ]
-      : []),
-  ];
+  const timelineItems = activityHistory.length > 0
+    ? activityHistory.map((item) => ({
+        id: item.id,
+        kind: item.kind,
+        tone: item.tone,
+        title: item.title,
+        description: item.description,
+        timestamp: formatDateTime(item.created_date),
+      }))
+    : [
+        {
+          id: 'created',
+          kind: 'file',
+          tone: 'info',
+          title: 'Opportunity Created',
+          timestamp: formatDateTime(comparison.created_date),
+        },
+        {
+          id: 'updated',
+          kind: 'clock',
+          tone: 'neutral',
+          title: 'Last Updated',
+          timestamp: formatDateTime(comparison.updated_date),
+        },
+        ...(latestEvaluation
+          ? [
+              {
+                id: 'latest-evaluation',
+                kind: 'sparkles',
+                tone: timelineTone,
+                title: latestEvaluationMeta.timelineTitle,
+                timestamp: formatDateTime(latestEvaluation.created_date),
+              },
+            ]
+          : []),
+      ];
+  const proposerDisplay = proposalThread?.party_a_email || 'Not specified';
+  const recipientDisplay =
+    [proposalThread?.party_b_name || comparison?.recipient_name, proposalThread?.party_b_email || comparison?.recipient_email]
+      .filter(Boolean)
+      .join(' · ') || 'Not specified';
 
   return (
     <div className="min-h-screen bg-slate-50 py-6">
       <div className="max-w-[1400px] mx-auto px-6 space-y-6">
-        <Button
-          variant="outline"
-          onClick={() =>
-            navigate(
-              createPageUrl(
-                `DocumentComparisonCreate?draft=${encodeURIComponent(comparison.id)}&step=2`,
-              ),
-            )
-          }
-        >
-          <ArrowLeft className="w-4 h-4 mr-2" />
-          Edit Opportunity
-        </Button>
+        {viewerRole === 'party_a' ? (
+          <Button
+            variant="outline"
+            onClick={() =>
+              navigate(
+                createPageUrl(
+                  `DocumentComparisonCreate?draft=${encodeURIComponent(comparison.id)}&step=2`,
+                ),
+              )
+            }
+          >
+            <ArrowLeft className="w-4 h-4 mr-2" />
+            Edit Opportunity
+          </Button>
+        ) : null}
 
         <div className="space-y-4 min-w-0">
           {/* ── Header: title + right utility actions ─────────────────────── */}
@@ -902,23 +1041,38 @@ export default function DocumentComparisonDetail() {
               <p className="mt-1.5 text-sm text-slate-500 flex flex-wrap items-center gap-x-4 gap-y-1">
                 <span>
                   <span className="font-medium text-slate-600">From:</span>{' '}
-                  {proposal?.party_a_email || 'Not specified'}
-                  <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-slate-100 text-slate-500 font-medium">You</span>
+                  {proposerDisplay}
+                  {viewerRole === 'party_a' ? (
+                    <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-slate-100 text-slate-500 font-medium">You</span>
+                  ) : null}
                 </span>
                 <span className="text-slate-300" aria-hidden>·</span>
                 <span>
                   <span className="font-medium text-slate-600">To:</span>{' '}
-                  {[proposal?.party_b_name || comparison?.recipient_name, proposal?.party_b_email || comparison?.recipient_email].filter(Boolean).join(' · ') || 'Not specified'}
+                  {recipientDisplay}
+                  {viewerRole === 'party_b' ? (
+                    <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-slate-100 text-slate-500 font-medium">You</span>
+                  ) : null}
                 </span>
+                {proposalThread?.id ? (
+                  <>
+                    <span className="text-slate-300" aria-hidden>·</span>
+                    <Badge className={getOpportunityStatusClass(primaryStatusKey, proposalThread?.status)}>
+                      {primaryStatusLabel}
+                    </Badge>
+                  </>
+                ) : null}
               </p>
             </div>
 
             {/* Right: share + export utilities */}
             <div className="flex shrink-0 items-center gap-2">
-              <Button onClick={() => setIsShareDialogOpen(true)} disabled={!proposal?.id}>
-                <Send className="w-4 h-4 mr-2" />
-                Share
-              </Button>
+              {viewerRole === 'party_a' ? (
+                <Button onClick={() => setIsShareDialogOpen(true)} disabled={!proposal?.id}>
+                  <Send className="w-4 h-4 mr-2" />
+                  Share
+                </Button>
+              ) : null}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
@@ -949,6 +1103,65 @@ export default function DocumentComparisonDetail() {
               </DropdownMenu>
             </div>
           </div>
+
+          {pendingOutcomeMessage ? (
+            <Alert className="border-amber-200 bg-amber-50">
+              <AlertDescription className="text-amber-900">{pendingOutcomeMessage}</AlertDescription>
+            </Alert>
+          ) : null}
+
+          {proposalThread?.id && asLower(permissions?.access_mode) !== 'token' ? (
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-3">
+                {isClosed ? (
+                  <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg font-semibold text-sm border ${isWon ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-600 border-rose-200'}`}>
+                    {isWon ? <CheckCircle2 className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
+                    {isWon ? AGREED_LABEL : 'Lost'}
+                  </div>
+                ) : (
+                  <>
+                    <Button
+                      size="sm"
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                      disabled={
+                        outcomeActionDisabled ||
+                        !proposalOutcome?.can_mark_won ||
+                        Boolean(proposalOutcome?.requested_by_current_user)
+                      }
+                      onClick={() => markOutcomeMutation.mutate('won')}
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />
+                      {getAgreementActionLabel(proposalOutcome)}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-rose-600 border-rose-200 hover:bg-rose-50"
+                      disabled={outcomeActionDisabled || !proposalOutcome?.can_mark_lost}
+                      onClick={() => markOutcomeMutation.mutate('lost')}
+                    >
+                      <XCircle className="w-3.5 h-3.5 mr-1.5" />
+                      Mark as Lost
+                    </Button>
+                    {showPendingAgreementResponseActions ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={outcomeActionDisabled || !proposalOutcome?.can_continue_negotiating}
+                        onClick={() => continueNegotiationMutation.mutate()}
+                      >
+                        Continue Negotiating
+                      </Button>
+                    ) : null}
+                  </>
+                )}
+              </div>
+
+              {outcomeHelperText ? (
+                <p className="text-sm text-slate-500">{outcomeHelperText}</p>
+              ) : null}
+            </div>
+          ) : null}
 
           <div className="mt-2">
           <ComparisonDetailTabs

@@ -15,6 +15,11 @@ import {
 } from '../../../_lib/proposal-agreement-request-emails.js';
 import { buildProposalHistoryQueries } from '../../../_lib/proposal-history.js';
 import {
+  buildDocumentComparisonReportHref,
+  buildLegacyOpportunityNotificationHref,
+  buildNotificationTargetMetadata,
+} from '../../../../src/lib/notificationTargets.js';
+import {
   applyPrivateModeMask,
   shouldMaskPrivateSender,
 } from '../../../_lib/private-mode.js';
@@ -161,6 +166,7 @@ async function notifyCounterparty(params: {
   proposal: any;
   actorRole: string;
   actionUrl: string;
+  metadata?: Record<string, unknown> | null;
   eventType: 'status_won' | 'status_lost';
   dedupeKey: string;
   title: string;
@@ -189,6 +195,7 @@ async function notifyCounterparty(params: {
       title: params.title,
       message: params.message,
       actionUrl: params.actionUrl,
+      metadata: params.metadata || null,
       emailSubject: params.emailSubject,
       emailText: params.emailText,
       sendEmail,
@@ -383,7 +390,27 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
     const [updated] = updatedRows;
 
     const nextOutcome = getProposalOutcomeState(updated);
-    const actionUrl = `/ProposalDetail?id=${encodeURIComponent(updated.id)}`;
+    const comparisonId = asText(updated.documentComparisonId || existing.documentComparisonId);
+    const isComparisonNotification =
+      asLower(updated.proposalType || existing.proposalType) === 'document_comparison' &&
+      Boolean(comparisonId);
+    const legacyActionUrl = buildLegacyOpportunityNotificationHref({
+      proposalId: updated.id,
+    });
+    const actionUrl = isComparisonNotification
+      ? buildDocumentComparisonReportHref(comparisonId) || legacyActionUrl
+      : legacyActionUrl || `/ProposalDetail?id=${encodeURIComponent(updated.id)}`;
+    const notificationMetadata = isComparisonNotification
+      ? buildNotificationTargetMetadata({
+          route: 'DocumentComparisonDetail',
+          tab: 'report',
+          workflowType: 'document_comparison',
+          entityType: 'document_comparison',
+          comparisonId,
+          proposalId: updated.id,
+          legacyActionUrl,
+        })
+      : null;
     const title = updated.title || 'your proposal';
     const actorLabel =
       actorRole === PROPOSAL_PARTY_A ? 'The proposer' : (auth.user.email || 'The recipient');
@@ -409,6 +436,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         proposal: updated,
         actorRole,
         actionUrl,
+        metadata: notificationMetadata,
         eventType: 'status_lost',
         dedupeKey: buildFinalOutcomeDedupeKey(updated.id, PROPOSAL_OUTCOME_LOST),
         title: 'Proposal marked as lost',
@@ -447,6 +475,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         proposal: updated,
         actorRole,
         actionUrl,
+        metadata: notificationMetadata,
         eventType: 'status_won',
         dedupeKey: `proposal:${updated.id}:won_pending:${actorRole}:${asText(existing.updatedAt || existing.receivedAt || existing.sentAt || existing.createdAt || updated.id)}`,
         title: 'Agreement Requested',
@@ -482,6 +511,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         proposal: updated,
         actorRole,
         actionUrl,
+        metadata: notificationMetadata,
         eventType: 'status_won',
         dedupeKey: buildFinalOutcomeDedupeKey(updated.id, PROPOSAL_OUTCOME_WON),
         title: 'Agreed',

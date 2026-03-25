@@ -4,7 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { BarChart3, Clock, FileText, Loader2, Sparkles } from 'lucide-react';
+import { BarChart3, CheckCircle2, Clock, FileText, Loader2, Sparkles, XCircle } from 'lucide-react';
 import {
   hasV2Report,
   getDecisionStatusDetails,
@@ -67,6 +67,8 @@ const TIMELINE_ICON_MAP = {
   file: FileText,
   clock: Clock,
   sparkles: Sparkles,
+  check: CheckCircle2,
+  x: XCircle,
 };
 
 const TIMELINE_TONE_CLASS_MAP = {
@@ -412,6 +414,9 @@ export function ComparisonAiReportTab({
                 </div>
                 <div>
                   <p className="font-medium text-slate-900">{item?.title || 'Update'}</p>
+                  {item?.description ? (
+                    <p className="text-sm text-slate-600">{item.description}</p>
+                  ) : null}
                   <p className="text-slate-500">{item?.timestamp || '—'}</p>
                 </div>
               </div>

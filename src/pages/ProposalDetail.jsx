@@ -54,6 +54,7 @@ import {
   getRunAiMediationLabel,
   MEDIATION_REVIEW_LABEL,
 } from '@/lib/aiReportUtils';
+import { buildDocumentComparisonReportHref } from '@/lib/notificationTargets';
 import {
   AGREED_LABEL,
   getAgreementActionLabel,
@@ -332,6 +333,17 @@ export default function ProposalDetail() {
   const proposal = detailQuery.data?.proposal || null;
   const evaluations = detailQuery.data?.evaluations || [];
   const detailVersions = detailQuery.data?.versions || [];
+  const shouldRedirectToCanonicalComparison =
+    asLower(proposal?.proposal_type) === 'document_comparison' &&
+    Boolean(asText(proposal?.document_comparison_id));
+
+  useEffect(() => {
+    if (!shouldRedirectToCanonicalComparison) {
+      return;
+    }
+
+    navigate(buildDocumentComparisonReportHref(proposal.document_comparison_id), { replace: true });
+  }, [navigate, proposal?.document_comparison_id, shouldRedirectToCanonicalComparison]);
 
   const comparisonQuery = useQuery({
     queryKey: ['proposal-linked-comparison', proposal?.document_comparison_id || 'none'],
@@ -636,6 +648,20 @@ export default function ProposalDetail() {
       toast.error(error?.message || 'Failed to delete opportunity');
     },
   });
+
+  if (shouldRedirectToCanonicalComparison) {
+    return (
+      <div className="min-h-screen bg-slate-50 py-8">
+        <div className="max-w-4xl mx-auto px-6">
+          <Alert className="bg-blue-50 border-blue-200">
+            <AlertDescription className="text-blue-900">
+              Opening the canonical AI Mediation Review experience for this live opportunity.
+            </AlertDescription>
+          </Alert>
+        </div>
+      </div>
+    );
+  }
 
   if (!proposalId) {
     return (

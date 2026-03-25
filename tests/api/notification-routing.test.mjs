@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { eq } from 'drizzle-orm';
 import documentComparisonsHandler from '../../server/routes/document-comparisons/index.ts';
 import documentComparisonsEvaluateHandler from '../../server/routes/document-comparisons/[id]/evaluate.ts';
+import proposalOutcomeHandler from '../../server/routes/proposals/[id]/outcome.ts';
 import notificationsHandler from '../../server/routes/notifications/index.ts';
 import notificationByIdHandler from '../../server/routes/notifications/[id].ts';
 import { createNotificationEvent } from '../../server/_lib/notifications.ts';
+import { schema } from '../../server/_lib/db/client.js';
 import { ensureTestEnv, makeSessionCookie } from '../helpers/auth.mjs';
 import { ensureMigrated, getDb, hasDatabaseUrl, resetTables } from '../helpers/db.mjs';
 import { createMockReq, createMockRes } from '../helpers/httpMock.mjs';
@@ -82,6 +85,23 @@ async function listNotifications(cookie) {
 
   assert.equal(res.statusCode, 200);
   return res.jsonBody().notifications || [];
+}
+
+async function requestAgreement(cookie, proposalId) {
+  const res = await callHandler(
+    proposalOutcomeHandler,
+    {
+      method: 'POST',
+      url: `/api/proposals/${proposalId}/outcome`,
+      headers: { cookie },
+      query: { id: proposalId },
+      body: { outcome: 'won' },
+    },
+    proposalId,
+  );
+
+  assert.equal(res.statusCode, 200);
+  return res.jsonBody();
 }
 
 if (!hasDatabaseUrl()) {
@@ -173,6 +193,61 @@ if (!hasDatabaseUrl()) {
     assert.equal(notification.action_url, legacyHref);
     assert.equal(notification.target?.route, null);
     assert.equal(notification.target?.is_legacy_fallback, true);
+  });
+
+  test('request-agreement notifications for document comparisons resolve to the canonical comparison report route', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = authCookie('notification_route_agreement_owner', 'notification-route-agreement-owner@example.com');
+    const recipientCookie = authCookie('notification_route_agreement_recipient', 'notification-route-agreement-recipient@example.com');
+    await touchUser(ownerCookie);
+    await touchUser(recipientCookie);
+
+    const comparison = await createComparison(ownerCookie, {
+      recipientEmail: 'notification-route-agreement-recipient@example.com',
+    });
+    const proposalId = comparison.proposal_id;
+    assert.ok(proposalId, 'comparison should stay linked to a proposal');
+
+    const now = new Date();
+    await getDb()
+      .update(schema.proposals)
+      .set({
+        status: 'received',
+        sentAt: now,
+        receivedAt: now,
+        partyBEmail: 'notification-route-agreement-recipient@example.com',
+        updatedAt: now,
+      })
+      .where(eq(schema.proposals.id, proposalId));
+
+    await requestAgreement(ownerCookie, proposalId);
+
+    const notifications = await listNotifications(recipientCookie);
+    const notification = notifications.find(
+      (entry) =>
+        entry.event_type === 'status_won' &&
+        entry.title === 'Agreement Requested',
+    );
+
+    assert.ok(notification, 'expected an agreement-request notification');
+    assert.equal(
+      notification.action_url,
+      buildDocumentComparisonReportHref(comparison.id),
+    );
+    assert.equal(
+      notification.target?.href,
+      buildDocumentComparisonReportHref(comparison.id),
+    );
+    assert.equal(notification.target?.route, 'DocumentComparisonDetail');
+    assert.equal(notification.target?.tab, 'report');
+    assert.equal(notification.target?.comparison_id, comparison.id);
+    assert.equal(notification.target?.proposal_id, proposalId);
+    assert.equal(
+      notification.target?.legacy_href,
+      buildLegacyOpportunityNotificationHref({ proposalId }),
+    );
   });
 
   test('older comparison notifications without comparison routing metadata fall back safely', async () => {
