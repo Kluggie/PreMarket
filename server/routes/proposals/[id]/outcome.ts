@@ -1,13 +1,18 @@
-import { eq, desc, ilike } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { ok } from '../../../_lib/api-response.js';
 import { logAuditEventBestEffort } from '../../../_lib/audit-events.js';
 import { requireUser } from '../../../_lib/auth.js';
 import { getDb, schema } from '../../../_lib/db/client.js';
-import { toCanonicalAppUrl } from '../../../_lib/env.js';
 import { sendCategorizedEmail } from '../../../_lib/email-delivery.js';
 import { ApiError } from '../../../_lib/errors.js';
 import { readJsonBody } from '../../../_lib/http.js';
 import { createNotificationEvent } from '../../../_lib/notifications.js';
+import {
+  buildAgreementRequestActionUrl,
+  queueAgreementRequestEmail,
+  resolveAgreementCounterpartyTarget,
+  suppressAgreementRequestEmailCycle,
+} from '../../../_lib/proposal-agreement-request-emails.js';
 import { buildProposalHistoryQueries } from '../../../_lib/proposal-history.js';
 import {
   applyPrivateModeMask,
@@ -21,12 +26,10 @@ import {
   getProposalOutcomeEligibility,
   getProposalOutcomeState,
   mapProposalOutcomeForUser,
-  normalizeEmail,
   PROPOSAL_OUTCOME_LOST,
   PROPOSAL_OUTCOME_PENDING_WON,
   PROPOSAL_OUTCOME_WON,
   PROPOSAL_PARTY_A,
-  PROPOSAL_PARTY_B,
 } from '../../../_lib/proposal-outcomes.js';
 import { getProposalThreadState } from '../../../_lib/proposal-thread-state.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
@@ -46,20 +49,6 @@ function asText(value: unknown) {
 
 function asLower(value: unknown) {
   return asText(value).toLowerCase();
-}
-
-function buildCanonicalActionUrl(actionUrl: string) {
-  const normalizedActionUrl = asText(actionUrl);
-  if (!normalizedActionUrl) {
-    return '';
-  }
-
-  const appBaseUrl = asText(process.env.APP_BASE_URL);
-  if (!appBaseUrl) {
-    return normalizedActionUrl;
-  }
-
-  return toCanonicalAppUrl(appBaseUrl, normalizedActionUrl);
 }
 
 function mapProposalRow(proposal, currentUser, options: Record<string, unknown> = {}) {
@@ -133,68 +122,37 @@ function mapProposalRow(proposal, currentUser, options: Record<string, unknown> 
   return maskSender ? applyPrivateModeMask(base) : base;
 }
 
-async function resolveCounterpartyTarget(db, proposal, actorRole) {
-  if (actorRole === PROPOSAL_PARTY_B) {
-    const [ownerUser] = await db
-      .select({
-        id: schema.users.id,
-        email: schema.users.email,
-      })
-      .from(schema.users)
-      .where(eq(schema.users.id, proposal.userId))
-      .limit(1);
+function buildFinalOutcomeDedupeKey(proposalId: unknown, outcome: 'won' | 'lost') {
+  const normalizedProposalId = asText(proposalId);
+  return normalizedProposalId ? `proposal:${normalizedProposalId}:final_outcome:${outcome}` : '';
+}
 
+function buildFinalOutcomeEmailContent(proposal: any, outcome: 'won' | 'lost') {
+  const proposalTitle = asText(proposal?.title) || 'your opportunity';
+  const actionUrl = buildAgreementRequestActionUrl(proposal?.id);
+
+  if (outcome === PROPOSAL_OUTCOME_WON) {
     return {
-      userId: ownerUser?.id || null,
-      userEmail: normalizeEmail(ownerUser?.email || proposal.partyAEmail || null) || null,
+      subject: `Agreement Finalized — ${proposalTitle}`,
+      text: [
+        `The agreement for "${proposalTitle}" has been confirmed and finalized.`,
+        '',
+        actionUrl
+          ? `Open the opportunity: ${actionUrl}`
+          : 'Sign in to PreMarket to review the final proposal history.',
+      ].join('\n'),
     };
   }
 
-  const partyBEmail = normalizeEmail(proposal.partyBEmail || null) || null;
-  const [authorizedLink] = await db
-    .select({
-      authorizedUserId: schema.sharedLinks.authorizedUserId,
-      recipientEmail: schema.sharedLinks.recipientEmail,
-    })
-    .from(schema.sharedLinks)
-    .where(eq(schema.sharedLinks.proposalId, proposal.id))
-    .orderBy(desc(schema.sharedLinks.updatedAt), desc(schema.sharedLinks.createdAt))
-    .limit(1);
-
-  if (authorizedLink?.authorizedUserId) {
-    const [recipientUser] = await db
-      .select({
-        id: schema.users.id,
-        email: schema.users.email,
-      })
-      .from(schema.users)
-      .where(eq(schema.users.id, authorizedLink.authorizedUserId))
-      .limit(1);
-
-    if (recipientUser) {
-      return {
-        userId: recipientUser.id,
-        userEmail: normalizeEmail(recipientUser.email) || partyBEmail,
-      };
-    }
-  }
-
-  if (!partyBEmail) {
-    return { userId: null, userEmail: null };
-  }
-
-  const [recipientUser] = await db
-    .select({
-      id: schema.users.id,
-      email: schema.users.email,
-    })
-    .from(schema.users)
-    .where(ilike(schema.users.email, partyBEmail))
-    .limit(1);
-
   return {
-    userId: recipientUser?.id || null,
-    userEmail: normalizeEmail(recipientUser?.email || partyBEmail) || null,
+    subject: `Opportunity Closed as Lost — ${proposalTitle}`,
+    text: [
+      `The opportunity "${proposalTitle}" was closed as lost.`,
+      '',
+      actionUrl
+        ? `Open the opportunity: ${actionUrl}`
+        : 'Sign in to PreMarket to review the proposal history.',
+    ].join('\n'),
   };
 }
 
@@ -212,7 +170,11 @@ async function notifyCounterparty(params: {
   emailPurpose?: 'general' | 'transactional';
   sendEmail?: boolean;
 }) {
-  const target = await resolveCounterpartyTarget(params.db, params.proposal, params.actorRole);
+  const target = await resolveAgreementCounterpartyTarget(
+    params.db,
+    params.proposal,
+    params.actorRole,
+  );
   const sendEmail = params.sendEmail !== false;
 
   if (target.userId) {
@@ -290,6 +252,13 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
           'There is no pending agreement request to clear.',
         );
       }
+      if (asLower(currentOutcome.requestedBy) !== asLower(actorRole)) {
+        throw new ApiError(
+          403,
+          'withdraw_not_allowed',
+          'Only the user who requested agreement can withdraw it while it is still pending.',
+        );
+      }
 
       const continueValues = buildContinueNegotiationReset(existing, now);
       const nextProposal = {
@@ -323,6 +292,14 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
           proposal_id: proposalId,
           actor_role: actorRole,
         },
+      });
+      await suppressAgreementRequestEmailCycle({
+        db,
+        proposalId,
+        requestedByRole: currentOutcome.requestedBy,
+        requestedAt: currentOutcome.requestedAt,
+        reason: 'withdrawn',
+        now,
       });
 
       ok(res, 200, {
@@ -407,28 +384,38 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
 
     const nextOutcome = getProposalOutcomeState(updated);
     const actionUrl = `/ProposalDetail?id=${encodeURIComponent(updated.id)}`;
-    const canonicalActionUrl = buildCanonicalActionUrl(actionUrl);
     const title = updated.title || 'your proposal';
     const actorLabel =
       actorRole === PROPOSAL_PARTY_A ? 'The proposer' : (auth.user.email || 'The recipient');
 
+    if (
+      currentOutcome.state === PROPOSAL_OUTCOME_PENDING_WON &&
+      nextOutcome.state !== PROPOSAL_OUTCOME_PENDING_WON
+    ) {
+      await suppressAgreementRequestEmailCycle({
+        db,
+        proposalId: updated.id,
+        requestedByRole: currentOutcome.requestedBy,
+        requestedAt: currentOutcome.requestedAt,
+        reason: 'request_resolved',
+        now,
+      });
+    }
+
     if (requestedAction === PROPOSAL_OUTCOME_LOST) {
+      const emailContent = buildFinalOutcomeEmailContent(updated, PROPOSAL_OUTCOME_LOST);
       await notifyCounterparty({
         db,
         proposal: updated,
         actorRole,
         actionUrl,
         eventType: 'status_lost',
-        dedupeKey: `proposal:${updated.id}:lost:${actorRole}:${now.getTime()}`,
+        dedupeKey: buildFinalOutcomeDedupeKey(updated.id, PROPOSAL_OUTCOME_LOST),
         title: 'Proposal marked as lost',
         message: `${actorLabel} marked "${title}" as lost.`,
-        emailSubject: `Proposal marked as lost — ${title}`,
-        emailText: [
-          `${actorLabel} marked "${title}" as lost.`,
-          '',
-          'Sign in to PreMarket to review the proposal history.',
-        ].join('\n'),
-        sendEmail: false,
+        emailSubject: emailContent.subject,
+        emailText: emailContent.text,
+        emailPurpose: 'transactional',
       });
 
       await logAuditEventBestEffort({
@@ -464,15 +451,19 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         dedupeKey: `proposal:${updated.id}:won_pending:${actorRole}:${asText(existing.updatedAt || existing.receivedAt || existing.sentAt || existing.createdAt || updated.id)}`,
         title: 'Agreement Requested',
         message: `${actorLabel} requested agreement on "${title}" and is waiting for your confirmation.`,
-        emailSubject: `Agreement Requested — ${title}`,
-        emailText: [
-          `${actorLabel} requested agreement on "${title}" and is waiting for your confirmation.`,
-          '',
-          canonicalActionUrl
-            ? `Open the opportunity: ${canonicalActionUrl}`
-            : 'Sign in to PreMarket to confirm the agreement or continue negotiating.',
-        ].join('\n'),
-        emailPurpose: 'transactional',
+        emailSubject: '',
+        emailText: '',
+        sendEmail: false,
+      });
+      const target = await resolveAgreementCounterpartyTarget(db, updated, actorRole);
+      await queueAgreementRequestEmail({
+        db,
+        proposal: updated,
+        requestedByRole: actorRole,
+        requestedAt: nextOutcome.requestedAt,
+        recipientUserId: target.userId,
+        recipientEmail: target.userEmail,
+        now,
       });
 
       await logAuditEventBestEffort({
@@ -485,21 +476,19 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         },
       });
     } else if (nextOutcome.state === PROPOSAL_OUTCOME_WON) {
+      const emailContent = buildFinalOutcomeEmailContent(updated, PROPOSAL_OUTCOME_WON);
       await notifyCounterparty({
         db,
         proposal: updated,
         actorRole,
         actionUrl,
         eventType: 'status_won',
-        dedupeKey: `proposal:${updated.id}:won_confirmed:${actorRole}:${now.getTime()}`,
+        dedupeKey: buildFinalOutcomeDedupeKey(updated.id, PROPOSAL_OUTCOME_WON),
         title: 'Agreed',
         message: `The proposal "${title}" is now agreed.`,
-        emailSubject: `Agreed — ${title}`,
-        emailText: [
-          `The proposal "${title}" is now agreed.`,
-          '',
-          'Sign in to PreMarket to review the final proposal history.',
-        ].join('\n'),
+        emailSubject: emailContent.subject,
+        emailText: emailContent.text,
+        emailPurpose: 'transactional',
       });
 
       await logAuditEventBestEffort({

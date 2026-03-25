@@ -993,6 +993,47 @@ export const sharedReportDeliveries = pgTable(
   }),
 );
 
+export const proposalAgreementRequestEmails = pgTable(
+  'proposal_agreement_request_emails',
+  {
+    id: text('id').primaryKey(),
+    proposalId: text('proposal_id')
+      .notNull()
+      .references(() => proposals.id, { onDelete: 'cascade' }),
+    requestedByRole: text('requested_by_role').notNull(),
+    requestedAt: timestamp('requested_at', { withTimezone: true }).notNull(),
+    recipientUserId: text('recipient_user_id').references(() => users.id, { onDelete: 'set null' }),
+    recipientEmail: text('recipient_email'),
+    deliverAfter: timestamp('deliver_after', { withTimezone: true }).notNull(),
+    status: text('status').notNull().default('pending'),
+    dedupeKey: text('dedupe_key').notNull(),
+    suppressedReason: text('suppressed_reason'),
+    suppressedAt: timestamp('suppressed_at', { withTimezone: true }),
+    lastError: text('last_error'),
+    sentAt: timestamp('sent_at', { withTimezone: true }),
+    metadata: jsonb('metadata').notNull().default(sql`'{}'::jsonb`),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    proposalAgreementRequestEmailsDedupeUnique: uniqueIndex(
+      'proposal_agreement_request_emails_dedupe_unique',
+    ).on(table.dedupeKey),
+    proposalAgreementRequestEmailsCycleUnique: uniqueIndex(
+      'proposal_agreement_request_emails_cycle_unique',
+    ).on(table.proposalId, table.requestedByRole, table.requestedAt),
+    proposalAgreementRequestEmailsStatusIdx: index(
+      'proposal_agreement_request_emails_status_idx',
+    ).on(table.status, table.deliverAfter),
+    proposalAgreementRequestEmailsProposalIdx: index(
+      'proposal_agreement_request_emails_proposal_idx',
+    ).on(table.proposalId, table.createdAt),
+    proposalAgreementRequestEmailsRecipientIdx: index(
+      'proposal_agreement_request_emails_recipient_idx',
+    ).on(table.recipientUserId, table.createdAt),
+  }),
+);
+
 export const proposalEvaluations = pgTable(
   'proposal_evaluations',
   {

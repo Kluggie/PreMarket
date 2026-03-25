@@ -7,6 +7,7 @@ import proposalDetailHandler from '../../server/routes/proposals/[id].ts';
 import proposalOutcomeHandler from '../../server/routes/proposals/[id]/outcome.ts';
 import proposalArchiveHandler from '../../server/routes/proposals/[id]/archive.ts';
 import proposalUnarchiveHandler from '../../server/routes/proposals/[id]/unarchive.ts';
+import proposalAgreementRequestEmailDispatchHandler from '../../server/routes/internal/proposal-agreement-request-emails/dispatch.ts';
 import dashboardSummaryHandler from '../../server/routes/dashboard/summary.ts';
 import dashboardActivityHandler from '../../server/routes/dashboard/activity.ts';
 import notificationsHandler from '../../server/routes/notifications/index.ts';
@@ -133,6 +134,33 @@ async function unarchiveProposal(cookie, proposalId) {
   );
 }
 
+async function dispatchAgreementRequestEmails(query = {}) {
+  return callHandler(proposalAgreementRequestEmailDispatchHandler, {
+    method: 'POST',
+    url: '/api/internal/proposal-agreement-request-emails/dispatch',
+    query,
+  });
+}
+
+async function listAgreementRequestEmails(proposalId = null) {
+  const db = getDb();
+  const query = db.select().from(schema.proposalAgreementRequestEmails);
+  return proposalId
+    ? await query.where(eq(schema.proposalAgreementRequestEmails.proposalId, proposalId))
+    : await query;
+}
+
+async function forceAgreementRequestEmailsDue(proposalId, now = new Date()) {
+  const db = getDb();
+  await db
+    .update(schema.proposalAgreementRequestEmails)
+    .set({
+      deliverAfter: now,
+      updatedAt: now,
+    })
+    .where(eq(schema.proposalAgreementRequestEmails.proposalId, proposalId));
+}
+
 async function listProposals(cookie, query = {}) {
   const res = await callHandler(proposalsHandler, {
     method: 'GET',
@@ -187,6 +215,55 @@ function aggregateActivity(points) {
     },
     { sent: 0, received: 0, mutual: 0, won: 0, lost: 0 },
   );
+}
+
+function captureTransactionalEmails() {
+  const originalMode = process.env.EMAIL_MODE;
+  const originalResendKey = process.env.RESEND_API_KEY;
+  const originalResendFrom = process.env.RESEND_FROM_EMAIL;
+  const originalResendName = process.env.RESEND_FROM_NAME;
+  const originalResendReplyTo = process.env.RESEND_REPLY_TO;
+  const originalAppBaseUrl = process.env.APP_BASE_URL;
+  const originalFetch = globalThis.fetch;
+  const resendPayloads = [];
+
+  process.env.EMAIL_MODE = 'contact_only';
+  process.env.RESEND_API_KEY = 'test_resend_key';
+  process.env.RESEND_FROM_EMAIL = 'notifications@mail.getpremarket.com';
+  process.env.RESEND_FROM_NAME = 'PreMarket';
+  process.env.RESEND_REPLY_TO = 'support@getpremarket.com';
+  process.env.APP_BASE_URL = 'https://app.getpremarket.test';
+
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('api.resend.com/emails')) {
+      resendPayloads.push(JSON.parse(String(init?.body || '{}')));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ id: `resend_${resendPayloads.length}` }),
+      };
+    }
+    return originalFetch.call(globalThis, url, init);
+  };
+
+  return {
+    resendPayloads,
+    restore() {
+      globalThis.fetch = originalFetch;
+      if (originalMode === undefined) delete process.env.EMAIL_MODE;
+      else process.env.EMAIL_MODE = originalMode;
+      if (originalResendKey === undefined) delete process.env.RESEND_API_KEY;
+      else process.env.RESEND_API_KEY = originalResendKey;
+      if (originalResendFrom === undefined) delete process.env.RESEND_FROM_EMAIL;
+      else process.env.RESEND_FROM_EMAIL = originalResendFrom;
+      if (originalResendName === undefined) delete process.env.RESEND_FROM_NAME;
+      else process.env.RESEND_FROM_NAME = originalResendName;
+      if (originalResendReplyTo === undefined) delete process.env.RESEND_REPLY_TO;
+      else process.env.RESEND_REPLY_TO = originalResendReplyTo;
+      if (originalAppBaseUrl === undefined) delete process.env.APP_BASE_URL;
+      else process.env.APP_BASE_URL = originalAppBaseUrl;
+    },
+  };
 }
 
 if (!hasDatabaseUrl()) {
@@ -308,7 +385,7 @@ if (!hasDatabaseUrl()) {
     assert.equal(res.jsonBody().proposal.outcome.state, 'lost');
   });
 
-  test('unilateral lost closes immediately, updates analytics, and notifies the counterparty', async () => {
+  test('unilateral lost closes immediately, sends one final lost email, updates analytics, and notifies the counterparty', async () => {
     await ensureMigrated();
     await resetTables();
 
@@ -323,27 +400,50 @@ if (!hasDatabaseUrl()) {
       partyBEmail: 'recipient-lost@example.com',
     });
 
-    const lostRes = await markOutcome(recipientCookie, proposal.id, { outcome: 'lost' });
-    assert.equal(lostRes.statusCode, 200);
-    assert.equal(lostRes.jsonBody().proposal.status, 'lost');
-    assert.equal(lostRes.jsonBody().proposal.outcome.state, 'lost');
-    assert.ok(lostRes.jsonBody().proposal.closed_at, 'lost outcome should stamp closed_at');
+    const emailCapture = captureTransactionalEmails();
 
-    const summary = await getSummary(ownerCookie);
-    assert.equal(summary.lostCount, 1);
-    assert.equal(summary.wonCount, 0);
-    assert.equal(summary.closedCount, 1);
+    try {
+      const lostRes = await markOutcome(recipientCookie, proposal.id, { outcome: 'lost' });
+      assert.equal(lostRes.statusCode, 200);
+      assert.equal(lostRes.jsonBody().proposal.status, 'lost');
+      assert.equal(lostRes.jsonBody().proposal.outcome.state, 'lost');
+      assert.ok(lostRes.jsonBody().proposal.closed_at, 'lost outcome should stamp closed_at');
 
-    const closedForOwner = await listProposals(ownerCookie, { tab: 'closed', limit: '20' });
-    assert.equal(closedForOwner.some((entry) => entry.id === proposal.id && entry.status === 'lost'), true);
+      assert.equal(emailCapture.resendPayloads.length, 1);
+      assert.deepEqual(emailCapture.resendPayloads[0].to, ['owner-lost@example.com']);
+      assert.equal(emailCapture.resendPayloads[0].subject, 'Opportunity Closed as Lost — Lost Outcome Proposal');
+      assert.match(
+        String(emailCapture.resendPayloads[0].text || ''),
+        /The opportunity "Lost Outcome Proposal" was closed as lost\./,
+      );
+      assert.match(
+        String(emailCapture.resendPayloads[0].text || ''),
+        /https:\/\/app\.getpremarket\.test\/ProposalDetail\?id=/,
+      );
+      assert.doesNotMatch(String(emailCapture.resendPayloads[0].subject || ''), /Agreement Finalized/i);
 
-    const ownerNotifications = await getNotifications(ownerCookie);
-    const lostNotification = ownerNotifications.find((entry) => entry.event_type === 'status_lost');
-    assert.ok(lostNotification, 'owner should receive a lost notification');
-    assert.equal(String(lostNotification.message || '').includes('Lost Outcome Proposal'), true);
+      const repeatLostRes = await markOutcome(recipientCookie, proposal.id, { outcome: 'lost' });
+      assert.equal(repeatLostRes.statusCode, 403);
+      assert.equal(emailCapture.resendPayloads.length, 1, 'repeating lost must not resend the final lost email');
+
+      const summary = await getSummary(ownerCookie);
+      assert.equal(summary.lostCount, 1);
+      assert.equal(summary.wonCount, 0);
+      assert.equal(summary.closedCount, 1);
+
+      const closedForOwner = await listProposals(ownerCookie, { tab: 'closed', limit: '20' });
+      assert.equal(closedForOwner.some((entry) => entry.id === proposal.id && entry.status === 'lost'), true);
+
+      const ownerNotifications = await getNotifications(ownerCookie);
+      const lostNotification = ownerNotifications.find((entry) => entry.event_type === 'status_lost');
+      assert.ok(lostNotification, 'owner should receive a lost notification');
+      assert.equal(String(lostNotification.message || '').includes('Lost Outcome Proposal'), true);
+    } finally {
+      emailCapture.restore();
+    }
   });
 
-  test('single-sided won stays pending until both parties confirm, then counts as won and emits notifications', async () => {
+  test('single-sided won stays pending until both parties confirm, then sends one finalized agreement email and emits notifications', async () => {
     await ensureMigrated();
     await resetTables();
 
@@ -359,54 +459,78 @@ if (!hasDatabaseUrl()) {
       partyBEmail: 'recipient-won@example.com',
     });
 
-    const pendingWonRes = await markOutcome(recipientCookie, proposal.id, { outcome: 'won' });
-    assert.equal(pendingWonRes.statusCode, 200);
-    assert.equal(pendingWonRes.jsonBody().proposal.outcome.state, 'pending_won');
-    assert.equal(pendingWonRes.jsonBody().proposal.outcome.requested_by, 'party_b');
-    assert.equal(pendingWonRes.jsonBody().proposal.outcome.requested_by_current_user, true);
-    assert.equal(pendingWonRes.jsonBody().proposal.primary_status_label, 'Requested Agreement');
+    const emailCapture = captureTransactionalEmails();
 
-    const pendingSummary = await getSummary(ownerCookie);
-    assert.equal(pendingSummary.wonCount, 0);
-    assert.equal(pendingSummary.closedCount, 0);
+    try {
+      const pendingWonRes = await markOutcome(recipientCookie, proposal.id, { outcome: 'won' });
+      assert.equal(pendingWonRes.statusCode, 200);
+      assert.equal(pendingWonRes.jsonBody().proposal.outcome.state, 'pending_won');
+      assert.equal(pendingWonRes.jsonBody().proposal.outcome.requested_by, 'party_b');
+      assert.equal(pendingWonRes.jsonBody().proposal.outcome.requested_by_current_user, true);
+      assert.equal(pendingWonRes.jsonBody().proposal.primary_status_label, 'Requested Agreement');
+      assert.equal(emailCapture.resendPayloads.length, 0, 'pending agreement requests must not send the finalized-agreement email');
 
-    const pendingActivity = aggregateActivity(await getActivity(ownerCookie, '30'));
-    assert.equal(pendingActivity.won, 0);
+      const pendingSummary = await getSummary(ownerCookie);
+      assert.equal(pendingSummary.wonCount, 0);
+      assert.equal(pendingSummary.closedCount, 0);
 
-    const ownerNotifications = await getNotifications(ownerCookie);
-    const pendingNotification = ownerNotifications.find(
-      (entry) =>
-        entry.event_type === 'status_won' &&
-        String(entry.message || '').includes('waiting for your confirmation'),
-    );
-    assert.ok(pendingNotification, 'owner should receive an agreement requested notification');
-    assert.equal(pendingNotification.title, 'Agreement Requested');
+      const pendingActivity = aggregateActivity(await getActivity(ownerCookie, '30'));
+      assert.equal(pendingActivity.won, 0);
 
-    const confirmWonRes = await markOutcome(ownerCookie, proposal.id, { outcome: 'won' });
-    assert.equal(confirmWonRes.statusCode, 200);
-    assert.equal(confirmWonRes.jsonBody().proposal.status, 'won');
-    assert.equal(confirmWonRes.jsonBody().proposal.outcome.state, 'won');
-    assert.ok(confirmWonRes.jsonBody().proposal.closed_at, 'final win should stamp closed_at');
+      const ownerNotifications = await getNotifications(ownerCookie);
+      const pendingNotification = ownerNotifications.find(
+        (entry) =>
+          entry.event_type === 'status_won' &&
+          String(entry.message || '').includes('waiting for your confirmation'),
+      );
+      assert.ok(pendingNotification, 'owner should receive an agreement requested notification');
+      assert.equal(pendingNotification.title, 'Agreement Requested');
 
-    const finalSummary = await getSummary(ownerCookie);
-    assert.equal(finalSummary.wonCount, 1);
-    assert.equal(finalSummary.lostCount, 0);
-    assert.equal(finalSummary.closedCount, 1);
+      const confirmWonRes = await markOutcome(ownerCookie, proposal.id, { outcome: 'won' });
+      assert.equal(confirmWonRes.statusCode, 200);
+      assert.equal(confirmWonRes.jsonBody().proposal.status, 'won');
+      assert.equal(confirmWonRes.jsonBody().proposal.outcome.state, 'won');
+      assert.ok(confirmWonRes.jsonBody().proposal.closed_at, 'final win should stamp closed_at');
 
-    const finalActivity = aggregateActivity(await getActivity(ownerCookie, '30'));
-    assert.equal(finalActivity.won >= 1, true);
+      assert.equal(emailCapture.resendPayloads.length, 1);
+      assert.deepEqual(emailCapture.resendPayloads[0].to, ['recipient-won@example.com']);
+      assert.equal(emailCapture.resendPayloads[0].subject, 'Agreement Finalized — Dual Won Proposal');
+      assert.match(
+        String(emailCapture.resendPayloads[0].text || ''),
+        /The agreement for "Dual Won Proposal" has been confirmed and finalized\./,
+      );
+      assert.match(
+        String(emailCapture.resendPayloads[0].text || ''),
+        /https:\/\/app\.getpremarket\.test\/ProposalDetail\?id=/,
+      );
+      assert.doesNotMatch(String(emailCapture.resendPayloads[0].subject || ''), /Closed as Lost/i);
 
-    const recipientNotifications = await getNotifications(recipientCookie);
-    const finalNotification = recipientNotifications.find(
-      (entry) =>
-        entry.event_type === 'status_won' &&
-        String(entry.message || '').includes('is now agreed'),
-    );
-    assert.ok(finalNotification, 'recipient should receive an agreed notification');
-    assert.equal(finalNotification.title, 'Agreed');
+      const repeatConfirmRes = await markOutcome(ownerCookie, proposal.id, { outcome: 'won' });
+      assert.equal(repeatConfirmRes.statusCode, 403);
+      assert.equal(emailCapture.resendPayloads.length, 1, 'repeating a finalized agreement must not resend the final email');
+
+      const finalSummary = await getSummary(ownerCookie);
+      assert.equal(finalSummary.wonCount, 1);
+      assert.equal(finalSummary.lostCount, 0);
+      assert.equal(finalSummary.closedCount, 1);
+
+      const finalActivity = aggregateActivity(await getActivity(ownerCookie, '30'));
+      assert.equal(finalActivity.won >= 1, true);
+
+      const recipientNotifications = await getNotifications(recipientCookie);
+      const finalNotification = recipientNotifications.find(
+        (entry) =>
+          entry.event_type === 'status_won' &&
+          String(entry.message || '').includes('is now agreed'),
+      );
+      assert.ok(finalNotification, 'recipient should receive an agreed notification');
+      assert.equal(finalNotification.title, 'Agreed');
+    } finally {
+      emailCapture.restore();
+    }
   });
 
-  test('request agreement sends one recipient email, keeps the in-app notification, and persists Requested Agreement state', async () => {
+  test('request agreement queues one delayed recipient email, keeps the in-app notification, and persists Requested Agreement state', async () => {
     await ensureMigrated();
     await resetTables();
 
@@ -457,17 +581,15 @@ if (!hasDatabaseUrl()) {
       assert.equal(requestRes.jsonBody().proposal.primary_status_key, 'waiting_on_counterparty');
       assert.equal(requestRes.jsonBody().proposal.primary_status_label, 'Requested Agreement');
 
-      assert.equal(resendPayloads.length, 1);
-      assert.deepEqual(resendPayloads[0].to, ['recipient-request-email@example.com']);
-      assert.equal(resendPayloads[0].subject, 'Agreement Requested — Requested Agreement Email Proposal');
-      assert.match(
-        String(resendPayloads[0].text || ''),
-        /requested agreement on "Requested Agreement Email Proposal" and is waiting for your confirmation\./i,
-      );
-      assert.match(
-        String(resendPayloads[0].text || ''),
-        /https:\/\/app\.getpremarket\.test\/ProposalDetail\?id=/,
-      );
+      assert.equal(resendPayloads.length, 0, 'email should not send until the grace period expires');
+
+      const queuedEmails = await listAgreementRequestEmails(proposal.id);
+      assert.equal(queuedEmails.length, 1);
+      assert.equal(queuedEmails[0].status, 'pending');
+      assert.equal(queuedEmails[0].requestedByRole, 'party_a');
+      assert.equal(queuedEmails[0].recipientEmail, 'recipient-request-email@example.com');
+      assert.ok(queuedEmails[0].deliverAfter, 'queued email should store a delayed delivery time');
+      assert.ok(queuedEmails[0].dedupeKey, 'queued email should store a stable dedupe key');
 
       const recipientNotifications = await getNotifications(recipientCookie);
       const agreementNotification = recipientNotifications.find(
@@ -486,7 +608,8 @@ if (!hasDatabaseUrl()) {
       assert.equal(repeatRes.statusCode, 200);
       assert.equal(repeatRes.jsonBody().proposal.outcome.state, 'pending_won');
       assert.equal(repeatRes.jsonBody().proposal.primary_status_label, 'Requested Agreement');
-      assert.equal(resendPayloads.length, 1);
+      assert.equal(resendPayloads.length, 0);
+      assert.equal((await listAgreementRequestEmails(proposal.id)).length, 1);
 
       const recipientNotificationsAfterRepeat = await getNotifications(recipientCookie);
       const agreementNotificationCount = recipientNotificationsAfterRepeat.filter(
@@ -495,6 +618,30 @@ if (!hasDatabaseUrl()) {
           String(entry.message || '').includes('waiting for your confirmation'),
       ).length;
       assert.equal(agreementNotificationCount, 1);
+
+      await forceAgreementRequestEmailsDue(proposal.id);
+      const dispatchRes = await dispatchAgreementRequestEmails();
+      assert.equal(dispatchRes.statusCode, 200);
+      assert.equal(dispatchRes.jsonBody().processed, 1);
+      assert.equal(dispatchRes.jsonBody().sent, 1);
+      assert.equal(dispatchRes.jsonBody().suppressed, 0);
+      assert.equal(dispatchRes.jsonBody().failed, 0);
+
+      assert.equal(resendPayloads.length, 1);
+      assert.deepEqual(resendPayloads[0].to, ['recipient-request-email@example.com']);
+      assert.equal(resendPayloads[0].subject, 'Agreement Requested — Requested Agreement Email Proposal');
+      assert.match(
+        String(resendPayloads[0].text || ''),
+        /requested agreement on "Requested Agreement Email Proposal" and is waiting for your confirmation\./i,
+      );
+      assert.match(
+        String(resendPayloads[0].text || ''),
+        /https:\/\/app\.getpremarket\.test\/ProposalDetail\?id=/,
+      );
+
+      const sentQueueRows = await listAgreementRequestEmails(proposal.id);
+      assert.equal(sentQueueRows[0].status, 'sent');
+      assert.ok(sentQueueRows[0].sentAt, 'queued email should stamp sent_at after dispatch');
     } finally {
       globalThis.fetch = originalFetch;
       if (originalMode === undefined) delete process.env.EMAIL_MODE;
@@ -509,6 +656,158 @@ if (!hasDatabaseUrl()) {
       else process.env.RESEND_REPLY_TO = originalResendReplyTo;
       if (originalAppBaseUrl === undefined) delete process.env.APP_BASE_URL;
       else process.env.APP_BASE_URL = originalAppBaseUrl;
+    }
+  });
+
+  test('withdrawing a pending agreement request suppresses the delayed email and only the requester can retract it', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = authCookie('outcome_owner_withdraw_request', 'owner-withdraw-request@example.com');
+    const recipientCookie = authCookie('outcome_recipient_withdraw_request', 'recipient-withdraw-request@example.com');
+    await touchUser(recipientCookie);
+
+    const proposal = await createProposal(ownerCookie, {
+      title: 'Withdraw Requested Agreement Proposal',
+      status: 'received',
+      sentAt: new Date().toISOString(),
+      receivedAt: new Date().toISOString(),
+      partyBEmail: 'recipient-withdraw-request@example.com',
+    });
+
+    const originalMode = process.env.EMAIL_MODE;
+    const originalResendKey = process.env.RESEND_API_KEY;
+    const originalResendFrom = process.env.RESEND_FROM_EMAIL;
+    const originalFetch = globalThis.fetch;
+    const resendPayloads = [];
+
+    process.env.EMAIL_MODE = 'transactional';
+    process.env.RESEND_API_KEY = 'test_resend_key';
+    process.env.RESEND_FROM_EMAIL = 'notifications@mail.getpremarket.com';
+
+    globalThis.fetch = async (url, init) => {
+      if (String(url).includes('api.resend.com/emails')) {
+        resendPayloads.push(JSON.parse(String(init?.body || '{}')));
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ id: 'resend_withdraw_should_not_send' }),
+        };
+      }
+      return originalFetch.call(globalThis, url, init);
+    };
+
+    try {
+      const requestRes = await markOutcome(ownerCookie, proposal.id, { outcome: 'won' });
+      assert.equal(requestRes.statusCode, 200);
+      assert.equal(requestRes.jsonBody().proposal.outcome.state, 'pending_won');
+
+      const unauthorizedWithdrawRes = await markOutcome(recipientCookie, proposal.id, { action: 'continue' });
+      assert.equal(unauthorizedWithdrawRes.statusCode, 403);
+      assert.equal(unauthorizedWithdrawRes.jsonBody().error.code, 'withdraw_not_allowed');
+
+      const withdrawRes = await markOutcome(ownerCookie, proposal.id, { action: 'continue' });
+      assert.equal(withdrawRes.statusCode, 200);
+      assert.equal(withdrawRes.jsonBody().proposal.outcome.state, 'open');
+
+      const queueRows = await listAgreementRequestEmails(proposal.id);
+      assert.equal(queueRows.length, 1);
+      assert.equal(queueRows[0].status, 'suppressed');
+      assert.equal(queueRows[0].suppressedReason, 'withdrawn');
+
+      await forceAgreementRequestEmailsDue(proposal.id);
+      const dispatchRes = await dispatchAgreementRequestEmails();
+      assert.equal(dispatchRes.statusCode, 200);
+      assert.equal(dispatchRes.jsonBody().processed, 0);
+      assert.equal(resendPayloads.length, 0, 'withdrawing during the grace period must prevent email send');
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalMode === undefined) delete process.env.EMAIL_MODE;
+      else process.env.EMAIL_MODE = originalMode;
+      if (originalResendKey === undefined) delete process.env.RESEND_API_KEY;
+      else process.env.RESEND_API_KEY = originalResendKey;
+      if (originalResendFrom === undefined) delete process.env.RESEND_FROM_EMAIL;
+      else process.env.RESEND_FROM_EMAIL = originalResendFrom;
+    }
+  });
+
+  test('counterparty action during the grace period suppresses the delayed agreement-request email', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = authCookie('outcome_owner_grace_response', 'owner-grace-response@example.com');
+    const recipientCookie = authCookie('outcome_recipient_grace_response', 'recipient-grace-response@example.com');
+    await touchUser(recipientCookie);
+
+    const proposal = await createProposal(ownerCookie, {
+      title: 'Grace Period Counterparty Response Proposal',
+      status: 'received',
+      sentAt: new Date().toISOString(),
+      receivedAt: new Date().toISOString(),
+      partyBEmail: 'recipient-grace-response@example.com',
+    });
+
+    const originalMode = process.env.EMAIL_MODE;
+    const originalResendKey = process.env.RESEND_API_KEY;
+    const originalResendFrom = process.env.RESEND_FROM_EMAIL;
+    const originalFetch = globalThis.fetch;
+    const resendPayloads = [];
+
+    process.env.EMAIL_MODE = 'transactional';
+    process.env.RESEND_API_KEY = 'test_resend_key';
+    process.env.RESEND_FROM_EMAIL = 'notifications@mail.getpremarket.com';
+
+    globalThis.fetch = async (url, init) => {
+      if (String(url).includes('api.resend.com/emails')) {
+        resendPayloads.push(JSON.parse(String(init?.body || '{}')));
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ id: 'resend_grace_response_should_not_send' }),
+        };
+      }
+      return originalFetch.call(globalThis, url, init);
+    };
+
+    try {
+      const requestRes = await markOutcome(ownerCookie, proposal.id, { outcome: 'won' });
+      assert.equal(requestRes.statusCode, 200);
+      assert.equal(requestRes.jsonBody().proposal.outcome.state, 'pending_won');
+      assert.equal(resendPayloads.length, 0, 'the grace-period request email should still be delayed');
+
+      const lostRes = await markOutcome(recipientCookie, proposal.id, { outcome: 'lost' });
+      assert.equal(lostRes.statusCode, 200);
+      assert.equal(lostRes.jsonBody().proposal.outcome.state, 'lost');
+      assert.equal(lostRes.jsonBody().proposal.thread_bucket, 'closed');
+      assert.equal(resendPayloads.length, 1, 'the real final lost email should send when the counterparty resolves the thread');
+      assert.equal(
+        resendPayloads[0].subject,
+        'Opportunity Closed as Lost — Grace Period Counterparty Response Proposal',
+      );
+      assert.doesNotMatch(String(resendPayloads[0].subject || ''), /Agreement Requested/i);
+
+      const queueRows = await listAgreementRequestEmails(proposal.id);
+      assert.equal(queueRows.length, 1);
+      assert.equal(queueRows[0].status, 'suppressed');
+      assert.equal(queueRows[0].suppressedReason, 'request_resolved');
+
+      await forceAgreementRequestEmailsDue(proposal.id);
+      const dispatchRes = await dispatchAgreementRequestEmails();
+      assert.equal(dispatchRes.statusCode, 200);
+      assert.equal(dispatchRes.jsonBody().processed, 0);
+      assert.equal(
+        resendPayloads.length,
+        1,
+        'once the counterparty acts, the stale delayed request email must stay suppressed while the real final lost email remains the only send',
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalMode === undefined) delete process.env.EMAIL_MODE;
+      else process.env.EMAIL_MODE = originalMode;
+      if (originalResendKey === undefined) delete process.env.RESEND_API_KEY;
+      else process.env.RESEND_API_KEY = originalResendKey;
+      if (originalResendFrom === undefined) delete process.env.RESEND_FROM_EMAIL;
+      else process.env.RESEND_FROM_EMAIL = originalResendFrom;
     }
   });
 

@@ -269,10 +269,35 @@ async function installProposalApiMocks(page, { user, proposals, failOutcomePropo
           return;
         }
 
-        const body = request.postDataJSON() || {};
+      const body = request.postDataJSON() || {};
         const requestedOutcome = String(body.outcome || body.action || '').toLowerCase();
         const updatedProposal = updateProposal(proposals, proposalId, (proposal) => {
           const now = new Date('2026-03-25T10:30:00.000Z').toISOString();
+          if (requestedOutcome === 'continue' || requestedOutcome === 'continue_negotiating') {
+            return {
+              ...proposal,
+              primary_status_key: 'waiting_on_counterparty',
+              primary_status_label: 'Waiting on Counterparty',
+              waiting_on_other_party: true,
+              win_confirmation_requested: false,
+              closed_at: null,
+              last_activity_at: now,
+              updated_at: now,
+              updated_date: now,
+              outcome: {
+                ...proposal.outcome,
+                state: 'open',
+                final_status: null,
+                pending: false,
+                requested_by: null,
+                requested_at: null,
+                requested_by_current_user: false,
+                requested_by_counterparty: false,
+                can_continue_negotiating: false,
+              },
+            };
+          }
+
           if (requestedOutcome === 'lost') {
             return {
               ...proposal,
@@ -514,6 +539,106 @@ test.describe('Proposals overflow actions', () => {
       timeout: LOAD_TIMEOUT_MS,
     });
     expect(outcomeRequests).toBe(1);
+  });
+
+  test('Retract action in the row menu is requester-only and disappears once the request is no longer pending', async ({
+    page,
+  }) => {
+    const userId = uniqueId('overflow_retract_visibility_user');
+    const userEmail = `${userId}@example.com`;
+    const sessionCookie = makeSessionCookie({
+      sub: userId,
+      email: userEmail,
+      name: 'Overflow Retract Visibility User',
+    });
+    const requestedAt = new Date('2026-03-25T10:20:00.000Z').toISOString();
+    const requesterPendingProposal = makeProposal({
+      id: uniqueId('requester_pending_row'),
+      title: 'Requester Pending Row',
+      party_a_email: userEmail,
+      primary_status_key: 'waiting_on_counterparty',
+      primary_status_label: 'Requested Agreement',
+      outcome: {
+        state: 'pending_won',
+        pending: true,
+        requested_by: 'party_a',
+        requested_at: requestedAt,
+        requested_by_current_user: true,
+        requested_by_counterparty: false,
+        can_continue_negotiating: true,
+      },
+    });
+    const counterpartyPendingProposal = makeProposal({
+      id: uniqueId('counterparty_pending_row'),
+      title: 'Counterparty Pending Row',
+      party_a_email: 'other-owner@example.com',
+      party_b_email: userEmail,
+      list_type: 'received',
+      latest_direction: 'received',
+      waiting_on_other_party: false,
+      primary_status_key: 'needs_reply',
+      primary_status_label: 'Needs Reply',
+      outcome: {
+        actor_role: 'party_b',
+        state: 'pending_won',
+        pending: true,
+        requested_by: 'party_a',
+        requested_at: requestedAt,
+        requested_by_current_user: false,
+        requested_by_counterparty: true,
+        can_continue_negotiating: false,
+      },
+    });
+    const respondedProposal = makeProposal({
+      id: uniqueId('responded_row'),
+      title: 'Responded Row',
+      party_a_email: userEmail,
+      thread_bucket: 'inbox',
+      status: 'lost',
+      directional_status: 'lost',
+      primary_status_key: 'closed_lost',
+      primary_status_label: 'Closed: Lost',
+      waiting_on_other_party: false,
+      closed_at: new Date('2026-03-25T10:25:00.000Z').toISOString(),
+      outcome: {
+        state: 'lost',
+        final_status: 'lost',
+        pending: false,
+        requested_by: 'party_a',
+        requested_at: requestedAt,
+        requested_by_current_user: false,
+        requested_by_counterparty: false,
+        can_continue_negotiating: false,
+      },
+    });
+
+    const proposals = [requesterPendingProposal, counterpartyPendingProposal, respondedProposal];
+    await installProposalApiMocks(page, {
+      user: makeUser(userId, userEmail),
+      proposals,
+    });
+    await applySessionCookie(page.context(), sessionCookie);
+    await page.goto(`${BASE_URL}/Proposals?tab=all`, { waitUntil: 'domcontentloaded' });
+    await expect(page.getByRole('heading', { name: 'Opportunities' })).toBeVisible({
+      timeout: LOAD_TIMEOUT_MS,
+    });
+
+    await openActionsMenu(page, requesterPendingProposal.id);
+    await expect(page.getByRole('menuitem', { name: 'Continue Negotiating' })).toBeVisible();
+    await page.getByRole('menuitem', { name: 'Continue Negotiating' }).click();
+
+    await openActionsMenu(page, requesterPendingProposal.id);
+    await expect(page.getByRole('menuitem', { name: 'Continue Negotiating' })).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('menu')).toHaveCount(0);
+
+    await openActionsMenu(page, counterpartyPendingProposal.id);
+    await expect(page.getByRole('menuitem', { name: 'Continue Negotiating' })).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('menu')).toHaveCount(0);
+
+    await openActionsMenu(page, respondedProposal.id);
+    await expect(page.getByRole('menuitem', { name: 'Continue Negotiating' })).toHaveCount(0);
   });
 
   test('Archive and Delete both remove stale rows from the active list', async ({ page }) => {

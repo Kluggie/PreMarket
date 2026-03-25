@@ -260,6 +260,13 @@
       "when": 1779472800000,
       "tag": "0036_fix_beta_signups_trial_ends_at",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1779559200000,
+      "tag": "0037_proposal_agreement_request_emails",
+      "breakpoints": true
     }
   ]
 }

@@ -181,6 +181,7 @@ export async function resetTables() {
       notifications,
       email_dedupes,
       email_verification_tokens,
+      proposal_agreement_request_emails,
       shared_link_verifications,
       shared_report_deliveries,
       shared_report_recipient_revisions,

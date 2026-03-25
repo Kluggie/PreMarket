@@ -441,7 +441,7 @@ function ProposalRow({
                     <XCircle className="w-4 h-4" />
                     Mark as Lost
                   </DropdownMenuItem>
-                  {outcomeState === 'pending_won' ? (
+                  {canContinueNegotiating ? (
                     <DropdownMenuItem
                       disabled={continueActionDisabled}
                       onSelect={() => onContinueNegotiation && onContinueNegotiation(proposal)}

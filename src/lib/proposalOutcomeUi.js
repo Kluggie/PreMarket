@@ -24,5 +24,5 @@ export function getAgreementActionLabel(outcome = {}) {
 }
 
 export function shouldShowPendingAgreementResponseActions(outcome = {}) {
-  return Boolean(outcome?.pending && outcome?.requested_by_counterparty);
+  return Boolean(outcome?.pending && outcome?.requested_by_current_user);
 }

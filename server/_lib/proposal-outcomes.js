@@ -269,7 +269,7 @@ export function mapProposalOutcomeForUser(proposal, currentUser, options = {}) {
     party_b_outcome_at: proposal?.partyBOutcomeAt || null,
     can_mark_won: Boolean(eligibility.canMarkWon),
     can_mark_lost: Boolean(eligibility.canMarkLost),
-    can_continue_negotiating: Boolean(actorRole && outcome.pending),
+    can_continue_negotiating: Boolean(actorRole && outcome.pending && outcome.requestedBy === actorRole),
     eligibility_reason:
       !eligibility.canMarkWon && !eligibility.canMarkLost
         ? eligibility.reasonWon || eligibility.reasonLost || eligibility.reason
