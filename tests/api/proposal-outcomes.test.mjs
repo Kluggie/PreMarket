@@ -472,6 +472,43 @@ if (!hasDatabaseUrl()) {
     assert.equal(recipientDefaultAfterUnarchive.some((entry) => entry.id === sentProposal.id), true);
   });
 
+  test('outcome and archive responses return the thread-model fields used by cache updates', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = authCookie('outcome_owner_response_shape', 'owner-response-shape@example.com');
+    const recipientCookie = authCookie('outcome_recipient_response_shape', 'recipient-response-shape@example.com');
+    await touchUser(recipientCookie);
+
+    const proposal = await createProposal(ownerCookie, {
+      title: 'Response Shape Proposal',
+      status: 'sent',
+      sentAt: new Date().toISOString(),
+      partyBEmail: 'recipient-response-shape@example.com',
+    });
+
+    const lostRes = await markOutcome(ownerCookie, proposal.id, { outcome: 'lost' });
+    assert.equal(lostRes.statusCode, 200);
+    assert.equal(lostRes.jsonBody().proposal.thread_bucket, 'closed');
+    assert.equal(lostRes.jsonBody().proposal.primary_status_key, 'closed_lost');
+    assert.equal(lostRes.jsonBody().proposal.outcome.state, 'lost');
+    assert.ok(lostRes.jsonBody().proposal.last_activity_at);
+
+    const archivedProposal = await createProposal(ownerCookie, {
+      title: 'Archive Response Shape Proposal',
+      status: 'sent',
+      sentAt: new Date().toISOString(),
+      partyBEmail: 'recipient-response-shape@example.com',
+    });
+
+    const archiveRes = await archiveProposal(ownerCookie, archivedProposal.id);
+    assert.equal(archiveRes.statusCode, 200);
+    assert.equal(archiveRes.jsonBody().proposal.thread_bucket, 'archived');
+    assert.equal(archiveRes.jsonBody().proposal.primary_status_key, 'waiting_on_counterparty');
+    assert.equal(archiveRes.jsonBody().proposal.outcome.actor_role, 'party_a');
+    assert.ok(archiveRes.jsonBody().proposal.last_activity_at);
+  });
+
   test('delete uses hard-delete for drafts plus soft-delete for sent proposals', async () => {
     await ensureMigrated();
     await resetTables();

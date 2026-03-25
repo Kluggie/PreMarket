@@ -27,6 +27,7 @@ import {
   PROPOSAL_PARTY_A,
   PROPOSAL_PARTY_B,
 } from '../../../_lib/proposal-outcomes.js';
+import { getProposalThreadState } from '../../../_lib/proposal-thread-state.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 
 function getProposalId(req: any, proposalIdParam?: string) {
@@ -49,9 +50,13 @@ function asLower(value: unknown) {
 function mapProposalRow(proposal, currentUser, options: Record<string, unknown> = {}) {
   const outcome = mapProposalOutcomeForUser(proposal, currentUser, options);
   const effectiveStatus = outcome.final_status || proposal.status;
-  const archivedAt = getProposalArchivedAtForActor(proposal, outcome.actor_role);
   const isPrivateMode = Boolean((proposal as any).isPrivateMode);
   const actorRole = asLower(options?.actorRole || outcome?.actor_role || '');
+  const threadState = getProposalThreadState(proposal, currentUser, {
+    actorRole,
+    outcome,
+  });
+  const archivedAt = getProposalArchivedAtForActor(proposal, actorRole);
   const maskSender = shouldMaskPrivateSender(isPrivateMode, actorRole);
 
   const base = {
@@ -59,6 +64,21 @@ function mapProposalRow(proposal, currentUser, options: Record<string, unknown> 
     title: proposal.title,
     status: effectiveStatus,
     status_reason: proposal.statusReason || null,
+    directional_status: threadState.directionalStatus,
+    primary_status_key: threadState.primaryStatusKey,
+    primary_status_label: threadState.primaryStatusLabel,
+    thread_bucket: threadState.bucket,
+    latest_direction: threadState.latestDirection,
+    started_by_role: threadState.startedByRole || null,
+    last_update_by_role: threadState.lastUpdateByRole || null,
+    exchange_count: threadState.exchangeCount,
+    needs_response: threadState.needsResponse,
+    waiting_on_other_party: threadState.waitingOnOtherParty,
+    win_confirmation_requested: threadState.winConfirmationRequested,
+    review_status: threadState.reviewStatus,
+    is_mutual_interest: threadState.isMutualInterest,
+    is_latest_version: threadState.isLatestVersion,
+    last_activity_at: threadState.sortAt || proposal.createdAt,
     outcome,
     template_id: proposal.templateId,
     template_name: proposal.templateName,
@@ -68,9 +88,11 @@ function mapProposalRow(proposal, currentUser, options: Record<string, unknown> 
     document_comparison_id: proposal.documentComparisonId || null,
     party_a_email: proposal.partyAEmail || currentUser?.email || null,
     party_b_email: proposal.partyBEmail,
+    party_b_name: (proposal as any).partyBName || null,
     summary: proposal.summary,
     payload: proposal.payload || {},
     recipient_email: proposal.partyBEmail || null,
+    counterparty_email: threadState.counterpartyEmail,
     owner_user_id: proposal.userId,
     sent_at: proposal.sentAt || null,
     received_at: proposal.receivedAt || null,

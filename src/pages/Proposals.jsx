@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { createPageUrl } from '@/utils';
@@ -9,6 +9,11 @@ import { dashboardClient } from '@/api/dashboardClient';
 import { isStarterOpportunityLimitReached } from '@/lib/starterPlanLimits';
 import { StarterUpgradeModal } from '@/components/StarterUpgradeModal';
 import { buildDocumentComparisonReportHref } from '@/lib/notificationTargets';
+import {
+  applyUpdatedProposalToCaches,
+  invalidateProposalThreadQueries,
+  removeProposalFromCaches,
+} from '@/lib/proposalThreadCache';
 import { formatRecipientLabel, PRIVATE_SENDER_LABEL } from '@/lib/recipientUtils';
 import {
   getAgreementActionLabel,
@@ -363,7 +368,10 @@ function ProposalRow({
 
   return (
     <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-      <div className="w-full border-b border-slate-100 flex items-center hover:bg-slate-50 transition-colors">
+      <div
+        className="w-full border-b border-slate-100 flex items-center hover:bg-slate-50 transition-colors"
+        data-testid={`proposal-row-${proposal.id}`}
+      >
         <button
           type="button"
           onClick={() => onOpen(proposal)}
@@ -404,7 +412,13 @@ function ProposalRow({
         <div className="pr-2 flex-shrink-0" onClick={(event) => event.stopPropagation()}>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 w-8 p-0"
+                aria-label={`Actions for ${proposal.title || 'opportunity'}`}
+                data-testid={`proposal-actions-${proposal.id}`}
+              >
                 <MoreHorizontal className="w-4 h-4 text-slate-400" />
               </Button>
             </DropdownMenuTrigger>
@@ -538,13 +552,6 @@ export default function Proposals() {
     () => getEmptyStateCopy(activeTab, statusFilter, originFilter),
     [activeTab, statusFilter, originFilter],
   );
-  const refreshProposalQueries = () => {
-    queryClient.invalidateQueries(['proposals-list']);
-    queryClient.invalidateQueries(['dashboard-summary']);
-    queryClient.invalidateQueries(['dashboard-activity']);
-    queryClient.invalidateQueries(['dashboard-proposals-all']);
-    queryClient.invalidateQueries(['dashboard-proposals-agreement-requests']);
-  };
 
   useEffect(() => {
     const params = new URLSearchParams(location.search || '');
@@ -593,9 +600,14 @@ export default function Proposals() {
 
   const archiveMutation = useMutation({
     mutationFn: (proposal) => proposalsClient.archive(proposal.id),
-    onSuccess: () => {
+    onSuccess: async (updatedProposal, proposal) => {
+      applyUpdatedProposalToCaches(queryClient, updatedProposal);
       toast.success('Archived');
-      refreshProposalQueries();
+      await invalidateProposalThreadQueries(queryClient, {
+        proposalId: proposal?.id,
+        documentComparisonId:
+          updatedProposal?.document_comparison_id || proposal?.document_comparison_id || null,
+      });
     },
     onError: (err) => {
       toast.error(err?.message || 'Failed to archive');
@@ -604,9 +616,14 @@ export default function Proposals() {
 
   const unarchiveMutation = useMutation({
     mutationFn: (proposal) => proposalsClient.unarchive(proposal.id),
-    onSuccess: () => {
+    onSuccess: async (updatedProposal, proposal) => {
+      applyUpdatedProposalToCaches(queryClient, updatedProposal);
       toast.success('Restored');
-      refreshProposalQueries();
+      await invalidateProposalThreadQueries(queryClient, {
+        proposalId: proposal?.id,
+        documentComparisonId:
+          updatedProposal?.document_comparison_id || proposal?.document_comparison_id || null,
+      });
     },
     onError: (err) => {
       toast.error(err?.message || 'Failed to restore');
@@ -615,7 +632,8 @@ export default function Proposals() {
 
   const markOutcomeMutation = useMutation({
     mutationFn: ({ proposal, outcome }) => proposalsClient.markOutcome(proposal.id, outcome),
-    onSuccess: (updatedProposal) => {
+    onSuccess: async (updatedProposal, variables) => {
+      applyUpdatedProposalToCaches(queryClient, updatedProposal);
       const outcomeState = String(updatedProposal?.outcome?.state || updatedProposal?.status || '').toLowerCase();
       if (outcomeState === 'pending_won') {
         toast.success('Agreement Requested');
@@ -624,7 +642,11 @@ export default function Proposals() {
       } else {
         toast.success('Marked as Lost');
       }
-      refreshProposalQueries();
+      await invalidateProposalThreadQueries(queryClient, {
+        proposalId: variables?.proposal?.id,
+        documentComparisonId:
+          updatedProposal?.document_comparison_id || variables?.proposal?.document_comparison_id || null,
+      });
     },
     onError: (err) => {
       toast.error(err?.message || 'Failed to update outcome');
@@ -633,9 +655,14 @@ export default function Proposals() {
 
   const continueNegotiationMutation = useMutation({
     mutationFn: (proposal) => proposalsClient.continueNegotiation(proposal.id),
-    onSuccess: () => {
+    onSuccess: async (updatedProposal, proposal) => {
+      applyUpdatedProposalToCaches(queryClient, updatedProposal);
       toast.success('Cleared pending agreement request');
-      refreshProposalQueries();
+      await invalidateProposalThreadQueries(queryClient, {
+        proposalId: proposal?.id,
+        documentComparisonId:
+          updatedProposal?.document_comparison_id || proposal?.document_comparison_id || null,
+      });
     },
     onError: (err) => {
       toast.error(err?.message || 'Failed to continue negotiating');
@@ -644,13 +671,17 @@ export default function Proposals() {
 
   const deleteMutation = useMutation({
     mutationFn: (proposal) => proposalsClient.remove(proposal.id),
-    onSuccess: (result, proposal) => {
+    onSuccess: async (result, proposal) => {
+      removeProposalFromCaches(queryClient, proposal?.id);
       if (result?.mode === 'hard' || !proposal?.sent_at) {
         toast.success('Draft deleted');
       } else {
         toast.success('Deleted from your workspace');
       }
-      refreshProposalQueries();
+      await invalidateProposalThreadQueries(queryClient, {
+        proposalId: proposal?.id,
+        documentComparisonId: proposal?.document_comparison_id || null,
+      });
     },
     onError: (err) => {
       toast.error(err?.message || 'Failed to delete opportunity');

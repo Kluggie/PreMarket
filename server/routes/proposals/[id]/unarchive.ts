@@ -5,10 +5,16 @@ import { getDatabaseIdentitySnapshot, getDb, schema } from '../../../_lib/db/cli
 import { ApiError } from '../../../_lib/errors.js';
 import { buildProposalHistoryQueries } from '../../../_lib/proposal-history.js';
 import {
+  applyPrivateModeMask,
+  shouldMaskPrivateSender,
+} from '../../../_lib/private-mode.js';
+import {
   getProposalAccessContext,
   getProposalArchivedAtForActor,
+  mapProposalOutcomeForUser,
   PROPOSAL_PARTY_A,
 } from '../../../_lib/proposal-outcomes.js';
+import { getProposalThreadState } from '../../../_lib/proposal-thread-state.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 
 function getProposalId(req: any, proposalIdParam?: string) {
@@ -20,12 +26,37 @@ function getProposalId(req: any, proposalIdParam?: string) {
   return String(rawId || '').trim();
 }
 
-function mapProposalRow(row, actorRole) {
-  return {
+function mapProposalRow(row, currentUser, actorRole) {
+  const outcome = mapProposalOutcomeForUser(row, currentUser, { actorRole });
+  const threadState = getProposalThreadState(row, currentUser, {
+    actorRole,
+    outcome,
+  });
+  const effectiveStatus = outcome.final_status || row.status;
+  const isPrivateMode = Boolean((row as any).isPrivateMode);
+  const maskSender = shouldMaskPrivateSender(isPrivateMode, actorRole);
+
+  const base = {
     id: row.id,
     title: row.title,
-    status: row.status,
+    status: effectiveStatus,
     status_reason: row.statusReason || null,
+    directional_status: threadState.directionalStatus,
+    primary_status_key: threadState.primaryStatusKey,
+    primary_status_label: threadState.primaryStatusLabel,
+    thread_bucket: threadState.bucket,
+    latest_direction: threadState.latestDirection,
+    started_by_role: threadState.startedByRole || null,
+    last_update_by_role: threadState.lastUpdateByRole || null,
+    exchange_count: threadState.exchangeCount,
+    needs_response: threadState.needsResponse,
+    waiting_on_other_party: threadState.waitingOnOtherParty,
+    win_confirmation_requested: threadState.winConfirmationRequested,
+    review_status: threadState.reviewStatus,
+    is_mutual_interest: threadState.isMutualInterest,
+    is_latest_version: threadState.isLatestVersion,
+    last_activity_at: threadState.sortAt || row.createdAt,
+    outcome,
     template_id: row.templateId,
     template_name: row.templateName,
     proposal_type: row.proposalType || 'standard',
@@ -34,9 +65,11 @@ function mapProposalRow(row, actorRole) {
     document_comparison_id: row.documentComparisonId || null,
     party_a_email: row.partyAEmail,
     party_b_email: row.partyBEmail,
+    party_b_name: (row as any).partyBName || null,
     summary: row.summary,
     payload: row.payload || {},
     recipient_email: row.partyBEmail || null,
+    counterparty_email: threadState.counterpartyEmail,
     owner_user_id: row.userId,
     sent_at: row.sentAt || null,
     received_at: row.receivedAt || null,
@@ -53,6 +86,8 @@ function mapProposalRow(row, actorRole) {
     created_date: row.createdAt,
     updated_date: row.updatedAt,
   };
+
+  return maskSender ? applyPrivateModeMask(base) : base;
 }
 
 export default async function handler(req: any, res: any, proposalIdParam?: string) {
@@ -122,6 +157,6 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
       }),
     );
 
-    ok(res, 200, { proposal: mapProposalRow(updated, actorRole) });
+    ok(res, 200, { proposal: mapProposalRow(updated, auth.user, actorRole) });
   });
 }

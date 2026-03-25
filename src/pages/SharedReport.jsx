@@ -5,6 +5,10 @@ import { sharedReportsClient } from '@/api/sharedReportsClient';
 import { proposalsClient } from '@/api/proposalsClient';
 import { documentComparisonsClient } from '@/api/documentComparisonsClient';
 import { useAuth } from '@/lib/AuthContext';
+import {
+  applyUpdatedProposalToCaches,
+  invalidateProposalThreadQueries,
+} from '@/lib/proposalThreadCache';
 import DocumentComparisonEditorErrorBoundary from '@/components/document-comparison/DocumentComparisonEditorErrorBoundary';
 import ComparisonWorkflowShell from '@/components/document-comparison/ComparisonWorkflowShell';
 import SuggestionCoachPanel from '@/components/document-comparison/SuggestionCoachPanel';
@@ -1202,6 +1206,7 @@ export default function SharedReport() {
     mutationFn: (nextOutcome) =>
       proposalsClient.markOutcome(asText(parent?.proposal_id), nextOutcome),
     onSuccess: async (updatedProposal) => {
+      applyUpdatedProposalToCaches(queryClient, updatedProposal);
       const nextState = asText(updatedProposal?.outcome?.state || updatedProposal?.status).toLowerCase();
       if (nextState === 'pending_won') {
         toast.success('Agreement Requested');
@@ -1211,11 +1216,11 @@ export default function SharedReport() {
         toast.success('Marked as Lost');
       }
       await workspaceQuery.refetch();
-      queryClient.invalidateQueries(['proposals-list']);
-      queryClient.invalidateQueries(['proposal-detail', asText(parent?.proposal_id)]);
-      queryClient.invalidateQueries(['dashboard-summary']);
-      queryClient.invalidateQueries(['dashboard-proposals-all']);
-      queryClient.invalidateQueries(['dashboard-proposals-agreement-requests']);
+      await invalidateProposalThreadQueries(queryClient, {
+        proposalId: asText(parent?.proposal_id),
+        documentComparisonId:
+          updatedProposal?.document_comparison_id || asText(parent?.document_comparison_id) || null,
+      });
     },
     onError: (error) => {
       toast.error(error?.message || 'Failed to update opportunity outcome');
@@ -1224,14 +1229,15 @@ export default function SharedReport() {
 
   const continueNegotiationMutation = useMutation({
     mutationFn: () => proposalsClient.continueNegotiation(asText(parent?.proposal_id)),
-    onSuccess: async () => {
+    onSuccess: async (updatedProposal) => {
+      applyUpdatedProposalToCaches(queryClient, updatedProposal);
       toast.success('Cleared pending agreement request');
       await workspaceQuery.refetch();
-      queryClient.invalidateQueries(['proposals-list']);
-      queryClient.invalidateQueries(['proposal-detail', asText(parent?.proposal_id)]);
-      queryClient.invalidateQueries(['dashboard-summary']);
-      queryClient.invalidateQueries(['dashboard-proposals-all']);
-      queryClient.invalidateQueries(['dashboard-proposals-agreement-requests']);
+      await invalidateProposalThreadQueries(queryClient, {
+        proposalId: asText(parent?.proposal_id),
+        documentComparisonId:
+          updatedProposal?.document_comparison_id || asText(parent?.document_comparison_id) || null,
+      });
     },
     onError: (error) => {
       toast.error(error?.message || 'Failed to continue negotiating');

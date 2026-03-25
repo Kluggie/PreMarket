@@ -5,6 +5,11 @@ import { createPageUrl } from '@/utils';
 import { proposalsClient } from '@/api/proposalsClient';
 import { sharedLinksClient } from '@/api/sharedLinksClient';
 import { documentComparisonsClient } from '@/api/documentComparisonsClient';
+import {
+  applyUpdatedProposalToCaches,
+  invalidateProposalThreadQueries,
+  removeProposalFromCaches,
+} from '@/lib/proposalThreadCache';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -48,7 +53,6 @@ import { ComparisonAiReportTab } from '@/components/document-comparison/Comparis
 import {
   getRunAiMediationLabel,
   MEDIATION_REVIEW_LABEL,
-  OPEN_QUESTIONS_LABEL,
 } from '@/lib/aiReportUtils';
 import {
   AGREED_LABEL,
@@ -461,15 +465,6 @@ export default function ProposalDetail() {
     Array.isArray(latestReportData?.missing) ? latestReportData.missing.length
     : Array.isArray(latestResult?.report?.missing) ? latestResult.report.missing.length
     : 0;
-  const refreshProposalQueries = () => {
-    queryClient.invalidateQueries(['proposal-detail', proposalId]);
-    queryClient.invalidateQueries(['proposal-linked-comparison', proposal?.document_comparison_id || 'none']);
-    queryClient.invalidateQueries(['proposals-list']);
-    queryClient.invalidateQueries(['dashboard-summary']);
-    queryClient.invalidateQueries(['dashboard-activity']);
-    queryClient.invalidateQueries(['dashboard-proposals-all']);
-    queryClient.invalidateQueries(['dashboard-proposals-agreement-requests']);
-  };
 
   const runEvaluationMutation = useMutation({
     mutationFn: () => {
@@ -482,8 +477,11 @@ export default function ProposalDetail() {
       }
       return proposalsClient.evaluate(proposalId, {});
     },
-    onSuccess: () => {
-      refreshProposalQueries();
+    onSuccess: async () => {
+      await invalidateProposalThreadQueries(queryClient, {
+        proposalId,
+        documentComparisonId: proposal?.document_comparison_id || null,
+      });
       toast.success('AI mediation review ready');
     },
     onError: (error) => {
@@ -558,7 +556,8 @@ export default function ProposalDetail() {
 
   const markOutcomeMutation = useMutation({
     mutationFn: (status) => proposalsClient.markOutcome(proposalId, status),
-    onSuccess: (updatedProposal) => {
+    onSuccess: async (updatedProposal) => {
+      applyUpdatedProposalToCaches(queryClient, updatedProposal);
       const outcomeState = String(updatedProposal?.outcome?.state || updatedProposal?.status || '').toLowerCase();
       if (outcomeState === 'pending_won') {
         toast.success('Agreement Requested');
@@ -567,7 +566,10 @@ export default function ProposalDetail() {
       } else {
         toast.success('Marked as Lost');
       }
-      refreshProposalQueries();
+      await invalidateProposalThreadQueries(queryClient, {
+        proposalId,
+        documentComparisonId: updatedProposal?.document_comparison_id || proposal?.document_comparison_id || null,
+      });
     },
     onError: (error) => {
       toast.error(error?.message || 'Failed to update outcome');
@@ -576,9 +578,13 @@ export default function ProposalDetail() {
 
   const continueNegotiationMutation = useMutation({
     mutationFn: () => proposalsClient.continueNegotiation(proposalId),
-    onSuccess: () => {
+    onSuccess: async (updatedProposal) => {
+      applyUpdatedProposalToCaches(queryClient, updatedProposal);
       toast.success('Cleared pending agreement request');
-      refreshProposalQueries();
+      await invalidateProposalThreadQueries(queryClient, {
+        proposalId,
+        documentComparisonId: updatedProposal?.document_comparison_id || proposal?.document_comparison_id || null,
+      });
     },
     onError: (error) => {
       toast.error(error?.message || 'Failed to continue negotiating');
@@ -587,9 +593,13 @@ export default function ProposalDetail() {
 
   const archiveMutation = useMutation({
     mutationFn: () => proposalsClient.archive(proposalId),
-    onSuccess: () => {
+    onSuccess: async (updatedProposal) => {
+      applyUpdatedProposalToCaches(queryClient, updatedProposal);
       toast.success('Archived');
-      refreshProposalQueries();
+      await invalidateProposalThreadQueries(queryClient, {
+        proposalId,
+        documentComparisonId: updatedProposal?.document_comparison_id || proposal?.document_comparison_id || null,
+      });
     },
     onError: (error) => {
       toast.error(error?.message || 'Failed to archive opportunity');
@@ -598,9 +608,13 @@ export default function ProposalDetail() {
 
   const unarchiveMutation = useMutation({
     mutationFn: () => proposalsClient.unarchive(proposalId),
-    onSuccess: () => {
+    onSuccess: async (updatedProposal) => {
+      applyUpdatedProposalToCaches(queryClient, updatedProposal);
       toast.success('Restored');
-      refreshProposalQueries();
+      await invalidateProposalThreadQueries(queryClient, {
+        proposalId,
+        documentComparisonId: updatedProposal?.document_comparison_id || proposal?.document_comparison_id || null,
+      });
     },
     onError: (error) => {
       toast.error(error?.message || 'Failed to restore opportunity');
@@ -609,9 +623,13 @@ export default function ProposalDetail() {
 
   const deleteMutation = useMutation({
     mutationFn: () => proposalsClient.remove(proposalId),
-    onSuccess: () => {
+    onSuccess: async () => {
+      removeProposalFromCaches(queryClient, proposalId);
       toast.success(proposal?.sent_at ? 'Deleted from your workspace' : 'Draft deleted');
-      refreshProposalQueries();
+      await invalidateProposalThreadQueries(queryClient, {
+        proposalId,
+        documentComparisonId: proposal?.document_comparison_id || null,
+      });
       navigate(createPageUrl('Opportunities'));
     },
     onError: (error) => {
