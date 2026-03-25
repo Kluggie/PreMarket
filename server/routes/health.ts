@@ -5,6 +5,8 @@ import { json, methodNotAllowed } from '../_lib/http.js';
 import { getIntegrationsReadiness } from '../_lib/integrations.js';
 
 const REQUIRED_SHARED_LINK_COLUMNS = ['authorized_user_id', 'authorized_email', 'authorized_at'] as const;
+const REQUIRED_AUTH_TABLES = ['auth_sessions', 'user_mfa'] as const;
+const REQUIRED_BETA_SIGNUPS_COLUMNS = ['trial_ends_at'] as const;
 
 function asBool(value: unknown) {
   if (value === true || value === 1 || value === '1' || value === 't' || value === 'true') {
@@ -45,6 +47,38 @@ async function getRecipientAuthorizationSchemaStatus(db: any) {
   };
 }
 
+async function getAuthSchemaStatus(db: any) {
+  const missing: string[] = [];
+
+  // Check auth_sessions and user_mfa tables exist
+  const tableRows = await db.execute(sql`
+    select table_name
+    from information_schema.tables
+    where table_schema = 'public'
+      and table_name = any(array['auth_sessions', 'user_mfa'])
+  `);
+  const foundTables = new Set(
+    (tableRows?.rows || []).map((row: any) => String(row?.table_name || '').toLowerCase()),
+  );
+  for (const t of REQUIRED_AUTH_TABLES) {
+    if (!foundTables.has(t)) missing.push(t);
+  }
+
+  // Check trial_ends_at column on beta_signups
+  const colRows = await db.execute(sql`
+    select column_name
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'beta_signups'
+      and column_name = 'trial_ends_at'
+  `);
+  if (!(colRows?.rows || []).length) {
+    missing.push('beta_signups.trial_ends_at');
+  }
+
+  return { ready: missing.length === 0, missing };
+}
+
 export default async function handler(req: any, res: any) {
   if (req.method !== 'GET') {
     methodNotAllowed(res, ['GET']);
@@ -60,6 +94,7 @@ export default async function handler(req: any, res: any) {
     connected: false,
     schemaReady: false,
     missingSchema: [] as string[],
+    authSchema: { ready: false, missing: [] as string[] },
     schemaCheck: 'not_run' as 'not_run' | 'ok' | 'failed',
   };
 
@@ -68,11 +103,13 @@ export default async function handler(req: any, res: any) {
       const db = getDb();
       await db.execute(sql`select 1 as ok`);
       const schemaStatus = await getRecipientAuthorizationSchemaStatus(db);
+      const authStatus = await getAuthSchemaStatus(db);
       database = {
         configured: true,
         connected: true,
         schemaReady: schemaStatus.ready,
         missingSchema: schemaStatus.missing,
+        authSchema: authStatus,
         schemaCheck: 'ok',
       };
     } catch {
@@ -81,6 +118,7 @@ export default async function handler(req: any, res: any) {
         connected: false,
         schemaReady: false,
         missingSchema: [],
+        authSchema: { ready: false, missing: [] },
         schemaCheck: 'failed',
       };
     }
