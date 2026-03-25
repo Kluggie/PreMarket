@@ -23,7 +23,7 @@ export default defineConfig({
     ? undefined
     : [
         {
-          command: 'vercel dev --listen 3000',
+          command: 'vercel dev --local-config vercel.local.json --listen 3000',
           url: 'http://localhost:3000',
           reuseExistingServer: false,
           timeout: 180_000,
