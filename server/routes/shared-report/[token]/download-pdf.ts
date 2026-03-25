@@ -28,6 +28,8 @@ import {
 } from '../../document-comparisons/_pdf.js';
 import {
   filterLegacySectionsForDisplay,
+  getAppendixOpenQuestions,
+  getPresentationSections,
   MISSING_OR_REDACTED_INFO_LABEL,
   OPEN_QUESTIONS_LABEL,
   splitV2WhyBodyParagraphs,
@@ -80,8 +82,35 @@ function buildWebParitySections(params: {
   const sections: PdfWebParitySection[] = [];
   const { report, legacySections, missingItems, fallbackSummary } = params;
   const isV2 = Array.isArray(report.why) && report.why.length > 0;
+  const dynamicSections = getPresentationSections(report);
 
-  if (isV2) {
+  if (dynamicSections.length > 0) {
+    dynamicSections.forEach((section) => {
+      sections.push({
+        heading: section.heading,
+        paragraphs: section.paragraphs,
+        bullets: section.bullets,
+        numberedBullets: section.numberedBullets,
+      });
+    });
+
+    if (missingItems.length > 0) {
+      sections.push({
+        heading: OPEN_QUESTIONS_LABEL,
+        bullets: missingItems,
+      });
+    }
+
+    const redactions = Array.isArray(report.redactions)
+      ? (report.redactions as unknown[]).map((entry) => asText(entry)).filter(Boolean)
+      : [];
+    if (redactions.length > 0) {
+      sections.push({
+        heading: MISSING_OR_REDACTED_INFO_LABEL,
+        bullets: redactions,
+      });
+    }
+  } else if (isV2) {
     (report.why as unknown[]).forEach((entryRaw) => {
       const entry = asText(entryRaw);
       if (!entry) return;
@@ -210,6 +239,8 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     const missingItems = Array.isArray(report.missing)
       ? (report.missing as unknown[]).map((e) => asText(e)).filter(Boolean)
       : [];
+    const dynamicPresentationSections = getPresentationSections(report);
+    const appendixOpenQuestions = getAppendixOpenQuestions(report);
 
     const decisionStatus = getDecisionStatusDetails(report);
     const pdfFormat = getPdfFormat(req);
@@ -251,14 +282,14 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       const sections = buildWebParitySections({
         report,
         legacySections: legacySections as any[],
-        missingItems,
+        missingItems: appendixOpenQuestions,
         fallbackSummary:
           asText(report.summary) ||
           asText(evaluationResult.summary) ||
           'No AI mediation summary is available yet.',
       });
       const decisionExplanation = asText(decisionStatus.explanation);
-      const webParitySections = decisionExplanation
+      const webParitySections = decisionExplanation && dynamicPresentationSections.length === 0
         ? [
             ...sections,
             {
@@ -448,7 +479,38 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       });
     };
 
-    if (isV2) {
+    if (dynamicPresentationSections.length > 0) {
+      dynamicPresentationSections.forEach((section, sectionIndex) => {
+        reportSections.push({
+          heading: section.heading,
+          level: 1,
+          paragraphs: section.paragraphs,
+          bullets: section.bullets,
+          numberedBullets: section.numberedBullets,
+          callout: sectionIndex === 0 && Array.isArray(section.paragraphs) && section.paragraphs.length > 0 && (!section.bullets || section.bullets.length === 0),
+        });
+      });
+
+      if (appendixOpenQuestions.length > 0) {
+        reportSections.push({
+          heading: 'Open Questions',
+          level: 1,
+          bullets: appendixOpenQuestions,
+          numberedBullets: true,
+        });
+      }
+
+      const redactions = Array.isArray(report.redactions)
+        ? (report.redactions as unknown[]).map((entry) => asText(entry)).filter(Boolean)
+        : [];
+      if (redactions.length > 0) {
+        reportSections.push({
+          heading: 'Missing or Redacted Information',
+          level: 1,
+          bullets: redactions,
+        });
+      }
+    } else if (isV2) {
       (report.why as unknown[]).forEach((entryRaw) => {
         const entry = asText(entryRaw);
         if (!entry) return;
@@ -498,11 +560,11 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         reportSections.push(section);
       });
 
-      if (missingItems.length > 0) {
+      if (appendixOpenQuestions.length > 0) {
         reportSections.push({
           heading: 'Open Questions',
           level: 1,
-          bullets: missingItems,
+          bullets: appendixOpenQuestions,
           numberedBullets: true,
         });
       }

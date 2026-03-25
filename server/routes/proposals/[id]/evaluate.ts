@@ -14,7 +14,7 @@ import {
 import { evaluateWithVertexV2 } from '../../../_lib/vertex-evaluation-v2.js';
 import { selectRelevantDocuments } from '../../../_lib/user-documents-context.js';
 import { assertStarterAiEvaluationAllowed } from '../../../_lib/starter-entitlements.js';
-import { buildMediationReviewSections } from '../../document-comparisons/_helpers.js';
+import { buildStoredV2Evaluation } from '../../document-comparisons/_helpers.js';
 import {
   buildDocumentComparisonReportHref,
   buildLegacyOpportunityNotificationHref,
@@ -241,48 +241,7 @@ function buildProposalResultFromEvaluation(proposal: any, evaluation: any, extra
 }
 
 function convertV2ResponseToEvaluation(v2Result: any): Record<string, unknown> {
-  const data = v2Result?.data || {};
-  const confidence = Number(data?.confidence_0_1);
-  const normalizedConfidence = Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0;
-  const fitLevel = asLower(data?.fit_level);
-  const recommendation = fitLevel === 'high' ? 'High' : fitLevel === 'medium' ? 'Medium' : 'Low';
-  const why = Array.isArray(data?.why) ? data.why.map((entry: unknown) => asText(entry)).filter(Boolean) : [];
-  const missing = Array.isArray(data?.missing)
-    ? data.missing.map((entry: unknown) => asText(entry)).filter(Boolean)
-    : [];
-  const redactions = Array.isArray(data?.redactions)
-    ? data.redactions.map((entry: unknown) => asText(entry)).filter(Boolean)
-    : [];
-  const generatedAt = new Date().toISOString();
-
-  return {
-    provider: 'vertex',
-    model: asText(v2Result?.model) || process.env.VERTEX_MODEL || 'gemini-2.0-flash-001',
-    generatedAt,
-    score: Math.round(normalizedConfidence * 100),
-    confidence: normalizedConfidence,
-    recommendation,
-    summary: why[0] || 'AI mediation review complete',
-    report: {
-      fit_level: fitLevel === 'high' || fitLevel === 'medium' || fitLevel === 'low' ? fitLevel : 'unknown',
-      confidence_0_1: normalizedConfidence,
-      why,
-      missing,
-      redactions,
-      generated_at_iso: generatedAt,
-      summary: {
-        fit_level: fitLevel === 'high' || fitLevel === 'medium' || fitLevel === 'low' ? fitLevel : 'unknown',
-        top_fit_reasons: why.map((text: string) => ({ text })),
-        top_blockers: missing.map((text: string) => ({ text })),
-        next_actions: missing.length > 0 ? ['Resolve the open questions and re-run AI mediation.'] : [],
-      },
-      sections: buildMediationReviewSections({ why, missing, redactions }),
-      recommendation,
-    },
-    evaluation_provider: 'vertex',
-    evaluation_model: asText(v2Result?.model) || process.env.VERTEX_MODEL || 'gemini-2.0-flash-001',
-    evaluation_provider_reason: null,
-  };
+  return buildStoredV2Evaluation(v2Result);
 }
 
 function toV2ApiError(error: any) {

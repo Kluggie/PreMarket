@@ -182,6 +182,21 @@ if (!hasDatabaseUrl()) {
         `report.confidence_0_1 must be a number >= 0; got: ${report.confidence_0_1}`,
       );
       assert.equal(Array.isArray(report.missing), true, `report.missing must be an array`);
+      assert.equal(
+        ['balanced_trade_off', 'risk_dominant', 'strong_alignment', 'gap_analysis', 'strategic_framing'].includes(report.report_archetype),
+        true,
+        `report.report_archetype must be a known archetype; got: ${report.report_archetype}`,
+      );
+      assert.equal(
+        typeof report.primary_insight === 'string' && report.primary_insight.length > 0,
+        true,
+        'report.primary_insight must be a non-empty string',
+      );
+      assert.equal(
+        Array.isArray(report.presentation_sections) && report.presentation_sections.length > 0,
+        true,
+        'report.presentation_sections must be a non-empty array',
+      );
 
       // Score derived from confidence_0_1.
       assert.equal(
@@ -251,6 +266,11 @@ if (!hasDatabaseUrl()) {
         `Stored fit_level must be valid V2; got: ${storedReport.fit_level}`,
       );
       assert.equal(Array.isArray(storedReport.missing), true, `Stored report.missing must be an array`);
+      assert.equal(
+        Array.isArray(storedReport.presentation_sections) && storedReport.presentation_sections.length > 0,
+        true,
+        'Stored V2 report must include dynamic presentation sections',
+      );
 
       // Must not be legacy-only.
       const storedTemplateId = String(latest?.result?.template_id ?? storedReport.template_id ?? '');
@@ -340,6 +360,10 @@ if (!hasDatabaseUrl()) {
         recommendation: evalResult.recommendation,
         report_summary: report.summary,
         sections: report.sections,
+        report_archetype: report.report_archetype,
+        report_title: report.report_title,
+        primary_insight: report.primary_insight,
+        presentation_sections: report.presentation_sections,
         evaluation_inline: body.evaluation,
       });
 
@@ -353,4 +377,3 @@ if (!hasDatabaseUrl()) {
     }
   });
 }
-

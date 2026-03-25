@@ -6,7 +6,7 @@ import {
   sanitizeEditorHtml,
   sanitizeEditorText,
 } from '../../../_lib/document-editor-sanitization.js';
-import { buildMediationReviewSections } from '../../document-comparisons/_helpers.js';
+import { buildStoredV2Evaluation } from '../../document-comparisons/_helpers.js';
 import { assertDocumentComparisonWithinLimits } from '../../document-comparisons/_limits.js';
 import { evaluateWithVertexV2 } from '../../../_lib/vertex-evaluation-v2.js';
 
@@ -345,59 +345,7 @@ export function buildGuestPreviewComparison(params: {
 }
 
 export function convertV2ResponseToEvaluation(v2Result: any): Record<string, unknown> {
-  const data = v2Result?.data && typeof v2Result.data === 'object' && !Array.isArray(v2Result.data)
-    ? v2Result.data
-    : {};
-  const confidence = Number(data?.confidence_0_1);
-  const normalizedConfidence = Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0;
-  const fitLevel = asLower(data?.fit_level);
-  const recommendation = fitLevel === 'high' ? 'High' : fitLevel === 'medium' ? 'Medium' : 'Low';
-  const why = Array.isArray(data?.why) ? data.why.map((entry: unknown) => asText(entry)).filter(Boolean) : [];
-  const missing = Array.isArray(data?.missing)
-    ? data.missing.map((entry: unknown) => asText(entry)).filter(Boolean)
-    : [];
-  const redactions = Array.isArray(data?.redactions)
-    ? data.redactions.map((entry: unknown) => asText(entry)).filter(Boolean)
-    : [];
-  const generatedAt = new Date().toISOString();
-  const generationModel =
-    asText(v2Result?.generation_model) ||
-    asText(process.env.VERTEX_DOC_COMPARE_GENERATION_MODEL) ||
-    asText(process.env.VERTEX_MODEL) ||
-    'gemini-2.5-pro';
-  const providerModel = asText(v2Result?.model) || generationModel;
-  const report = {
-    report_format: 'v2' as const,
-    fit_level: fitLevel === 'high' || fitLevel === 'medium' || fitLevel === 'low' ? fitLevel : 'unknown',
-    confidence_0_1: normalizedConfidence,
-    why,
-    missing,
-    redactions,
-    generated_at_iso: generatedAt,
-    summary: {
-      fit_level: fitLevel === 'high' || fitLevel === 'medium' || fitLevel === 'low' ? fitLevel : 'unknown',
-      top_fit_reasons: why.map((text: string) => ({ text })),
-      top_blockers: missing.map((text: string) => ({ text })),
-      next_actions: missing.length > 0 ? ['Resolve the open questions and re-run AI mediation.'] : [],
-    },
-    sections: buildMediationReviewSections({ why, missing, redactions }),
-    recommendation,
-  };
-
-  return {
-    provider: 'vertex',
-    model: providerModel,
-    generatedAt,
-    score: Math.round(normalizedConfidence * 100),
-    confidence: normalizedConfidence,
-    recommendation,
-    summary: why[0] || 'AI mediation review complete',
-    report,
-    evaluation_provider: 'vertex',
-    evaluation_model: generationModel,
-    evaluation_provider_model: providerModel,
-    evaluation_provider_reason: null,
-  };
+  return buildStoredV2Evaluation(v2Result);
 }
 
 function getParseErrorKind(error: any) {

@@ -1,15 +1,34 @@
 import { ApiError } from '../../_lib/errors.js';
 import {
   getDecisionStatusDetails,
+  getPresentationSections,
   getMediationReviewSubtitle,
   getMediationReviewTitle,
   getSentenceSafePreview,
   parseV2WhyEntry,
+  splitV2WhyBodyParagraphs,
 } from '../../../src/lib/aiReportUtils.js';
 
 export const CONFIDENTIAL_LABEL = 'Confidential Information';
 export const SHARED_LABEL = 'Shared Information';
 export const MEDIATION_REVIEW_TITLE = 'AI Mediation Review';
+export const MEDIATION_REVIEW_ARCHETYPES = Object.freeze([
+  'balanced_trade_off',
+  'risk_dominant',
+  'strong_alignment',
+  'gap_analysis',
+  'strategic_framing',
+] as const);
+
+type MediationReviewArchetype = typeof MEDIATION_REVIEW_ARCHETYPES[number];
+
+type MediationPresentationSection = {
+  key: string;
+  heading: string;
+  paragraphs?: string[];
+  bullets?: string[];
+  numbered_bullets?: boolean;
+};
 
 function normalizeComparisonLabel(side: 'a' | 'b') {
   return side === 'a' ? CONFIDENTIAL_LABEL : SHARED_LABEL;
@@ -44,6 +63,630 @@ export function buildMediationReviewSections(params: {
   }
 
   return sections;
+}
+
+function asLower(value: unknown) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function normalizeText(value: unknown) {
+  return String(value || '')
+    .replace(/\r/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normalizeHeadingKey(value: unknown) {
+  return normalizeText(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function uniqueText(values: unknown[]) {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  values.forEach((value) => {
+    const text = normalizeText(value);
+    if (!text) return;
+    const key = text.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    result.push(text);
+  });
+  return result;
+}
+
+function joinNatural(parts: string[]) {
+  const values = uniqueText(parts);
+  if (values.length === 0) return '';
+  if (values.length === 1) return values[0];
+  if (values.length === 2) return `${values[0]} and ${values[1]}`;
+  return `${values.slice(0, -1).join(', ')}, and ${values[values.length - 1]}`;
+}
+
+function clampConfidence01(value: unknown) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(1, numeric));
+}
+
+function stripMissingWhyMatters(value: string) {
+  const text = normalizeText(value);
+  if (!text) return '';
+  const emDashIndex = text.indexOf('—');
+  if (emDashIndex >= 0) {
+    return text.slice(0, emDashIndex).trim();
+  }
+  const hyphenIndex = text.indexOf(' - ');
+  if (hyphenIndex >= 0) {
+    return text.slice(0, hyphenIndex).trim();
+  }
+  return text;
+}
+
+function buildWhyLookup(why: string[]) {
+  const sections = new Map<string, { heading: string; body: string; paragraphs: string[] }>();
+  const labeledParagraphs = new Map<string, string[]>();
+
+  (Array.isArray(why) ? why : []).forEach((entry, index) => {
+    const raw = normalizeText(entry);
+    if (!raw) return;
+    const { heading, body } = parseV2WhyEntry(raw);
+    const resolvedHeading = heading || (index === 0 ? 'Executive Summary' : `Section ${index + 1}`);
+    const paragraphs = splitV2WhyBodyParagraphs(body || raw);
+    sections.set(normalizeHeadingKey(resolvedHeading), {
+      heading: resolvedHeading,
+      body: normalizeText(body || raw),
+      paragraphs,
+    });
+
+    paragraphs.forEach((paragraph) => {
+      const match = normalizeText(paragraph).match(/^([A-Z][^:\n]{0,80}?):\s+(.+)$/s);
+      if (!match) return;
+      const key = normalizeHeadingKey(match[1]);
+      const next = labeledParagraphs.get(key) || [];
+      next.push(normalizeText(match[2]));
+      labeledParagraphs.set(key, next);
+    });
+  });
+
+  const getSectionParagraphs = (...keys: string[]) =>
+    uniqueText(
+      keys.flatMap((key) => {
+        const section = sections.get(normalizeHeadingKey(key));
+        return section ? section.paragraphs : [];
+      }),
+    );
+
+  const getLabeledParagraphs = (...keys: string[]) =>
+    uniqueText(
+      keys.flatMap((key) => labeledParagraphs.get(normalizeHeadingKey(key)) || []),
+    );
+
+  return {
+    sections,
+    labeledParagraphs,
+    getSectionParagraphs,
+    getLabeledParagraphs,
+  };
+}
+
+const THEME_KEYWORDS: Record<string, string[]> = {
+  scope: ['scope', 'deliverable', 'deliverables', 'phase', 'phased', 'boundary', 'workstream'],
+  timeline: ['timeline', 'milestone', 'deadline', 'schedule', 'go-live', 'rollout'],
+  acceptance: ['acceptance', 'kpi', 'success criteria', 'metric', 'sign-off', 'sign off'],
+  dependency: ['dependency', 'dependencies', 'third party', 'integration', 'approval', 'ownership', 'stakeholder'],
+  commercial: ['commercial', 'price', 'pricing', 'budget', 'cost', 'payment', 'margin', 'change-order', 'change order'],
+  technical: ['technical', 'architecture', 'security', 'data', 'migration', 'platform', 'implementation', 'system', 'compliance'],
+  governance: ['governance', 'approval path', 'approval', 'control', 'diligence', 'review', 'decision process'],
+  risk: ['risk', 'liability', 'indemnity', 'exposure', 'service level', 'sla', 'warranty'],
+};
+
+const THEME_LABELS: Record<string, string> = {
+  scope: 'scope definition',
+  timeline: 'delivery timing',
+  acceptance: 'acceptance criteria',
+  dependency: 'dependency ownership',
+  commercial: 'commercial structure',
+  technical: 'implementation detail',
+  governance: 'decision process',
+  risk: 'risk allocation',
+};
+
+function detectThemes(texts: string[]) {
+  const haystack = normalizeText(texts.join(' ')).toLowerCase();
+  return Object.entries(THEME_KEYWORDS)
+    .map(([theme, keywords]) => ({
+      theme,
+      score: keywords.reduce((count, keyword) => {
+        return haystack.includes(keyword.toLowerCase()) ? count + 1 : count;
+      }, 0),
+    }))
+    .filter((entry) => entry.score > 0)
+    .sort((left, right) => right.score - left.score)
+    .map((entry) => entry.theme);
+}
+
+function describeThemes(themeIds: string[], fallback: string) {
+  const labels = themeIds
+    .map((themeId) => THEME_LABELS[themeId])
+    .filter(Boolean)
+    .slice(0, 2);
+  return joinNatural(labels) || fallback;
+}
+
+function previewParagraphs(paragraphs: string[], maxItems = 2, maxChars = 200) {
+  const result: string[] = [];
+  uniqueText(paragraphs).forEach((paragraph) => {
+    if (result.length >= maxItems) return;
+    const preview = getSentenceSafePreview(paragraph, maxChars) || normalizeText(paragraph);
+    if (!preview) return;
+    if (result.some((existing) => existing.toLowerCase() === preview.toLowerCase())) return;
+    result.push(preview);
+  });
+  return result;
+}
+
+function createPresentationSection(section: MediationPresentationSection): MediationPresentationSection | null {
+  const paragraphs = uniqueText(Array.isArray(section.paragraphs) ? section.paragraphs : []);
+  const bullets = uniqueText(Array.isArray(section.bullets) ? section.bullets : []);
+  const heading = normalizeText(section.heading);
+  if (!heading || (paragraphs.length === 0 && bullets.length === 0)) {
+    return null;
+  }
+  const next: MediationPresentationSection = {
+    key: normalizeHeadingKey(section.key || heading).replace(/\s+/g, '_'),
+    heading,
+  };
+  if (paragraphs.length > 0) {
+    next.paragraphs = paragraphs;
+  }
+  if (bullets.length > 0) {
+    next.bullets = bullets;
+  }
+  if (section.numbered_bullets) {
+    next.numbered_bullets = true;
+  }
+  return next;
+}
+
+function serializePresentationSections(
+  sections: Array<{
+    key?: unknown;
+    heading?: unknown;
+    paragraphs?: unknown;
+    bullets?: unknown;
+    numberedBullets?: unknown;
+  }>,
+): MediationPresentationSection[] {
+  return sections
+    .map((section) =>
+      createPresentationSection({
+        key: normalizeText(section?.key),
+        heading: normalizeText(section?.heading),
+        paragraphs: Array.isArray(section?.paragraphs)
+          ? section.paragraphs.map((entry: unknown) => normalizeText(entry)).filter(Boolean)
+          : [],
+        bullets: Array.isArray(section?.bullets)
+          ? section.bullets.map((entry: unknown) => normalizeText(entry)).filter(Boolean)
+          : [],
+        numbered_bullets: Boolean(section?.numberedBullets),
+      }),
+    )
+    .filter(Boolean) as MediationPresentationSection[];
+}
+
+const ARCHETYPE_TITLES: Record<MediationReviewArchetype, string> = {
+  balanced_trade_off: 'Balanced Trade-Off',
+  risk_dominant: 'Risk-Dominant',
+  strong_alignment: 'Strong Alignment',
+  gap_analysis: 'Gap Analysis',
+  strategic_framing: 'Strategic Framing',
+};
+
+function buildRecommendationParagraphs(params: {
+  decisionStatusLabel: string;
+  decisionExplanation: string;
+  agreementParagraphs: string[];
+  recommendationParagraphs: string[];
+}) {
+  const paragraphs = uniqueText([
+    params.decisionExplanation
+      ? `Decision status: ${params.decisionStatusLabel}. ${params.decisionExplanation}`
+      : params.decisionStatusLabel
+        ? `Decision status: ${params.decisionStatusLabel}.`
+        : '',
+    ...previewParagraphs(params.agreementParagraphs, 1),
+    ...previewParagraphs(params.recommendationParagraphs, 1),
+  ]);
+
+  if (paragraphs.length > 0) {
+    return paragraphs;
+  }
+  return ['Use the current open issues as the next mediation agenda before moving to commitment.'];
+}
+
+function countTradeoffTerms(text: string) {
+  const lower = normalizeText(text).toLowerCase();
+  const patterns = [
+    /\bpriorit(?:y|ies)\b/,
+    /\bconcession(?:s)?\b/,
+    /\btension(?:s)?\b/,
+    /\btrade[- ]?off(?:s)?\b/,
+    /\bbalance\b/,
+    /\bversus\b|\bvs\b/,
+    /\bdepends on\b/,
+  ];
+  return patterns.reduce((count, pattern) => count + (pattern.test(lower) ? 1 : 0), 0);
+}
+
+export function buildMediationReviewPresentation(params: {
+  fit_level: unknown;
+  confidence_0_1: unknown;
+  why: unknown;
+  missing: unknown;
+  redactions?: unknown;
+}) {
+  const fitLevel = asLower(params.fit_level);
+  const confidence = clampConfidence01(params.confidence_0_1);
+  const why = Array.isArray(params.why) ? params.why.map((entry) => normalizeText(entry)).filter(Boolean) : [];
+  const missing = Array.isArray(params.missing) ? params.missing.map((entry) => normalizeText(entry)).filter(Boolean) : [];
+  const redactions = Array.isArray(params.redactions)
+    ? params.redactions.map((entry) => normalizeText(entry)).filter(Boolean)
+    : [];
+
+  const whyLookup = buildWhyLookup(why);
+  const executiveParagraphs = whyLookup.getSectionParagraphs('Executive Summary', 'Decision Snapshot');
+  const strengthParagraphs = whyLookup.getLabeledParagraphs('Key Strengths');
+  const riskParagraphs = whyLookup.getLabeledParagraphs('Risk Summary', 'Key Risks');
+  const prioritiesParagraphs = whyLookup.getLabeledParagraphs('Likely priorities');
+  const tensionsParagraphs = whyLookup.getLabeledParagraphs('Structural tensions');
+  const leverageParagraphs = whyLookup.getSectionParagraphs('Leverage Signals').length > 0
+    ? whyLookup.getSectionParagraphs('Leverage Signals')
+    : whyLookup.getLabeledParagraphs('Leverage signal');
+  const dealStructureParagraphs = whyLookup.getSectionParagraphs('Potential Deal Structures');
+  const decisionReadinessParagraphs = whyLookup.getSectionParagraphs('Decision Readiness');
+  const agreementParagraphs = whyLookup.getLabeledParagraphs('What must be agreed now vs later', 'What would change the verdict');
+  const recommendedPathParagraphs = whyLookup.getSectionParagraphs('Recommended Path')
+    .concat(whyLookup.getLabeledParagraphs('Recommended path'));
+
+  const concernThemeIds = detectThemes([...riskParagraphs, ...decisionReadinessParagraphs, ...missing]);
+  const strengthThemeIds = detectThemes([...strengthParagraphs, ...executiveParagraphs]);
+  const allThemeIds = detectThemes([
+    ...executiveParagraphs,
+    ...strengthParagraphs,
+    ...riskParagraphs,
+    ...prioritiesParagraphs,
+    ...tensionsParagraphs,
+    ...leverageParagraphs,
+    ...dealStructureParagraphs,
+    ...decisionReadinessParagraphs,
+    ...missing,
+  ]);
+  const concernThemes = describeThemes(concernThemeIds, 'material execution detail');
+  const strengthThemes = describeThemes(strengthThemeIds, 'the core proposal structure');
+  const complexityThemeCount = allThemeIds.length;
+  const tradeoffSignalCount = countTradeoffTerms([
+    ...prioritiesParagraphs,
+    ...tensionsParagraphs,
+    ...leverageParagraphs,
+    ...dealStructureParagraphs,
+  ].join(' '));
+  const hasStrongRiskLanguage = /\b(critical|severe|concentrated|material risk|not viable|blocker|exposure|unbounded)\b/i.test(
+    [...riskParagraphs, ...decisionReadinessParagraphs].join(' '),
+  );
+
+  const decisionStatus = getDecisionStatusDetails({
+    fit_level: fitLevel,
+    confidence_0_1: confidence,
+    why,
+    missing,
+  });
+
+  let archetype: MediationReviewArchetype;
+  if (fitLevel === 'low' || decisionStatus.label === 'Not viable' || hasStrongRiskLanguage) {
+    archetype = 'risk_dominant';
+  } else if (fitLevel === 'unknown' || missing.length >= 5 || (missing.length >= 4 && confidence < 0.58)) {
+    archetype = 'gap_analysis';
+  } else if (fitLevel === 'high' && confidence >= 0.72 && missing.length <= 2) {
+    archetype = 'strong_alignment';
+  } else if (
+    fitLevel !== 'unknown' &&
+    confidence >= 0.58 &&
+    missing.length <= 4 &&
+    complexityThemeCount >= 3 &&
+    tradeoffSignalCount >= 3
+  ) {
+    archetype = 'strategic_framing';
+  } else {
+    archetype = 'balanced_trade_off';
+  }
+
+  const shortenedMissing = uniqueText(missing.map((item) => stripMissingWhyMatters(item))).slice(0, 6);
+  const strengthPreviews = previewParagraphs(
+    strengthParagraphs.length > 0 ? strengthParagraphs : executiveParagraphs,
+    2,
+  );
+  const concernPreviews = previewParagraphs(
+    riskParagraphs.length > 0 ? riskParagraphs : decisionReadinessParagraphs.concat(missing),
+    2,
+  );
+  const tradeoffPreviews = previewParagraphs(
+    tensionsParagraphs.concat(leverageParagraphs).concat(dealStructureParagraphs),
+    2,
+  );
+  const priorityPreviews = previewParagraphs(
+    prioritiesParagraphs.length > 0 ? prioritiesParagraphs : leverageParagraphs,
+    2,
+  );
+  const recommendationParagraphs = buildRecommendationParagraphs({
+    decisionStatusLabel: decisionStatus.label,
+    decisionExplanation: normalizeText(decisionStatus.explanation),
+    agreementParagraphs,
+    recommendationParagraphs: recommendedPathParagraphs,
+  });
+
+  const primaryInsight =
+    archetype === 'risk_dominant'
+      ? `The current proposal concentrates material risk around ${concernThemes}, which blocks a confident commitment.`
+      : archetype === 'gap_analysis'
+        ? `The main constraint is incomplete detail around ${concernThemes}, rather than a clearly workable final structure.`
+        : archetype === 'strong_alignment'
+          ? missing.length > 0
+            ? `The proposal is broadly well-structured, with only limited gaps around ${concernThemes}.`
+            : `The proposal is broadly well-structured and only minor issues remain before final agreement.`
+          : archetype === 'strategic_framing'
+            ? `The proposal is workable in principle, but the outcome depends on how the parties balance ${describeThemes(allThemeIds, 'the visible deal priorities')}.`
+            : `The proposal shows credible alignment around ${strengthThemes}, but ${concernThemes} still introduces material trade-offs.`;
+
+  const fallbackTradeoffParagraph =
+    archetype === 'strategic_framing'
+      ? `The most visible tension is how ${strengthThemes} is balanced against ${concernThemes} before the parties treat the draft as final.`
+      : `The key trade-off is between preserving ${strengthThemes} and resolving ${concernThemes} before the draft is treated as final.`;
+
+  const sections = [
+    archetype === 'risk_dominant'
+      ? createPresentationSection({
+          key: 'primary_concern',
+          heading: 'Primary Concern',
+          paragraphs: [primaryInsight],
+        })
+      : archetype === 'gap_analysis'
+        ? createPresentationSection({
+            key: 'what_is_unclear',
+            heading: 'What Is Unclear',
+            paragraphs: [primaryInsight],
+          })
+        : archetype === 'strong_alignment'
+          ? createPresentationSection({
+              key: 'overall_assessment',
+              heading: 'Overall Assessment',
+              paragraphs: [primaryInsight],
+            })
+          : archetype === 'strategic_framing'
+            ? createPresentationSection({
+                key: 'core_deal_dynamic',
+                heading: 'Core Deal Dynamic',
+                paragraphs: [primaryInsight],
+              })
+            : createPresentationSection({
+                key: 'primary_insight',
+                heading: 'Primary Insight',
+                paragraphs: [primaryInsight],
+              }),
+    archetype === 'risk_dominant'
+      ? createPresentationSection({
+          key: 'critical_risks',
+          heading: 'Critical Risks',
+          paragraphs: concernPreviews.length > 0
+            ? concernPreviews.concat(previewParagraphs(leverageParagraphs, 1))
+            : [`The main risk concentration remains around ${concernThemes}.`],
+        })
+      : archetype === 'gap_analysis'
+        ? createPresentationSection({
+            key: 'blocking_questions',
+            heading: 'Blocking Questions',
+            bullets: shortenedMissing.slice(0, 4),
+            paragraphs: shortenedMissing.length === 0
+              ? [`The immediate questions cluster around ${concernThemes}.`]
+              : [],
+            numbered_bullets: true,
+          })
+        : archetype === 'strong_alignment'
+          ? createPresentationSection({
+              key: 'key_strengths',
+              heading: 'Key Strengths',
+              paragraphs: strengthPreviews.length > 0
+                ? strengthPreviews
+                : [`Visible alignment is strongest around ${strengthThemes}.`],
+            })
+          : archetype === 'strategic_framing'
+            ? createPresentationSection({
+                key: 'what_appears_to_be_prioritised',
+                heading: 'What Appears to Be Prioritised',
+                paragraphs: priorityPreviews.length > 0
+                  ? priorityPreviews
+                  : [`The visible priorities cluster around ${strengthThemes}.`],
+              })
+            : createPresentationSection({
+                key: 'areas_of_strength',
+                heading: 'Areas of Strength',
+                paragraphs: strengthPreviews.length > 0
+                  ? strengthPreviews
+                  : [`There is credible alignment around ${strengthThemes}.`],
+              }),
+    archetype === 'risk_dominant'
+      ? createPresentationSection({
+          key: 'missing_or_weak_elements',
+          heading: 'Missing or Weak Elements',
+          bullets: shortenedMissing.slice(0, 4),
+          paragraphs: shortenedMissing.length === 0
+            ? [`The weaker elements remain concentrated around ${concernThemes}.`]
+            : [],
+          numbered_bullets: true,
+        })
+      : archetype === 'gap_analysis'
+        ? createPresentationSection({
+            key: 'impact_of_missing_information',
+            heading: 'Impact of Missing Information',
+            paragraphs: concernPreviews.length > 0
+              ? concernPreviews
+              : [`Confidence remains constrained until ${concernThemes} is specified more concretely.`],
+          })
+      : archetype === 'strong_alignment'
+          ? createPresentationSection({
+              key: 'minor_gaps',
+              heading: 'Minor Gaps',
+              bullets: shortenedMissing.slice(0, 3),
+              paragraphs: shortenedMissing.length === 0
+                ? ['Remaining gaps are limited and do not currently outweigh the visible strengths.']
+                : [],
+            })
+          : archetype === 'strategic_framing'
+            ? createPresentationSection({
+                key: 'key_tensions',
+                heading: 'Key Tensions',
+                paragraphs: tradeoffPreviews.length > 0
+                  ? tradeoffPreviews
+                  : [fallbackTradeoffParagraph],
+              })
+            : createPresentationSection({
+                key: 'areas_of_concern',
+                heading: 'Areas of Concern',
+                paragraphs: concernPreviews.length > 0
+                  ? concernPreviews
+                  : [`Material uncertainty remains around ${concernThemes}.`],
+              }),
+    archetype === 'risk_dominant'
+      ? createPresentationSection({
+          key: 'what_must_be_resolved',
+          heading: 'What Must Be Resolved',
+          paragraphs: previewParagraphs(agreementParagraphs, 2).length > 0
+            ? previewParagraphs(agreementParagraphs, 2)
+            : [`The immediate condition to proceed is resolving ${concernThemes} in explicit terms.`],
+        })
+      : archetype === 'gap_analysis'
+        ? createPresentationSection({
+            key: 'what_needs_clarification',
+            heading: 'What Needs Clarification',
+            bullets: shortenedMissing.slice(4, 8),
+            numbered_bullets: true,
+            paragraphs: shortenedMissing.length <= 4
+              ? [`Clarification should focus first on ${concernThemes} so the parties can test whether the current structure is workable.`]
+              : [],
+          })
+        : archetype === 'strong_alignment'
+          ? createPresentationSection({
+              key: 'why_it_works',
+              heading: 'Why It Works',
+              paragraphs: priorityPreviews.length > 0
+                ? priorityPreviews
+                : [`The draft works best where ${strengthThemes} is already explicit enough for both parties to act on.`],
+            })
+          : archetype === 'strategic_framing'
+            ? createPresentationSection({
+                key: 'strategic_implications',
+                heading: 'Strategic Implications',
+                paragraphs: previewParagraphs(leverageParagraphs.concat(dealStructureParagraphs), 2).length > 0
+                  ? previewParagraphs(leverageParagraphs.concat(dealStructureParagraphs), 2)
+                  : [`The visible implications sit in how ${strengthThemes} and ${concernThemes} are sequenced into a bounded agreement path.`],
+              })
+            : createPresentationSection({
+                key: 'key_trade_offs',
+                heading: 'Key Trade-Offs',
+                paragraphs: tradeoffPreviews.length > 0
+                  ? tradeoffPreviews
+                  : [fallbackTradeoffParagraph],
+              }),
+    createPresentationSection({
+      key: 'recommendation',
+      heading: 'Recommendation',
+      paragraphs: recommendationParagraphs,
+    }),
+  ].filter(Boolean) as MediationPresentationSection[];
+
+  return {
+    report_archetype: archetype,
+    report_title: ARCHETYPE_TITLES[archetype],
+    primary_insight: primaryInsight,
+    presentation_sections: sections,
+    redactions_count: redactions.length,
+  };
+}
+
+export function buildStoredV2Evaluation(v2Result: any): Record<string, unknown> {
+  const data = v2Result?.data && typeof v2Result.data === 'object' && !Array.isArray(v2Result.data)
+    ? v2Result.data
+    : {};
+  const confidence = clampConfidence01(data?.confidence_0_1);
+  const fitLevel = asLower(data?.fit_level);
+  const normalizedFitLevel =
+    fitLevel === 'high' || fitLevel === 'medium' || fitLevel === 'low' ? fitLevel : 'unknown';
+  const recommendation = normalizedFitLevel === 'high'
+    ? 'High'
+    : normalizedFitLevel === 'medium'
+      ? 'Medium'
+      : 'Low';
+  const why = Array.isArray(data?.why) ? data.why.map((entry: unknown) => normalizeText(entry)).filter(Boolean) : [];
+  const missing = Array.isArray(data?.missing)
+    ? data.missing.map((entry: unknown) => normalizeText(entry)).filter(Boolean)
+    : [];
+  const redactions = Array.isArray(data?.redactions)
+    ? data.redactions.map((entry: unknown) => normalizeText(entry)).filter(Boolean)
+    : [];
+  const generatedAt = new Date().toISOString();
+  const generationModel =
+    normalizeText(v2Result?.generation_model) ||
+    normalizeText(process.env.VERTEX_DOC_COMPARE_GENERATION_MODEL) ||
+    normalizeText(process.env.VERTEX_MODEL) ||
+    'gemini-2.5-pro';
+  const providerModel = normalizeText(v2Result?.model) || generationModel;
+  const presentation = buildMediationReviewPresentation({
+    fit_level: normalizedFitLevel,
+    confidence_0_1: confidence,
+    why,
+    missing,
+    redactions,
+  });
+  const report = {
+    report_format: 'v2' as const,
+    fit_level: normalizedFitLevel,
+    confidence_0_1: confidence,
+    why,
+    missing,
+    redactions,
+    generated_at_iso: generatedAt,
+    summary: {
+      fit_level: normalizedFitLevel,
+      top_fit_reasons: why.map((text: string) => ({ text })),
+      top_blockers: missing.map((text: string) => ({ text })),
+      next_actions: missing.length > 0 ? ['Resolve the open questions and re-run AI mediation.'] : [],
+    },
+    sections: buildMediationReviewSections({ why, missing, redactions }),
+    recommendation,
+    report_archetype: presentation.report_archetype,
+    report_title: presentation.report_title,
+    primary_insight: presentation.primary_insight,
+    presentation_sections: presentation.presentation_sections,
+  };
+
+  return {
+    provider: 'vertex',
+    model: providerModel,
+    generatedAt,
+    score: Math.round(confidence * 100),
+    confidence,
+    recommendation,
+    summary: presentation.primary_insight || why[0] || 'AI mediation review complete',
+    report,
+    evaluation_provider: 'vertex',
+    evaluation_model: generationModel,
+    evaluation_provider_model: providerModel,
+    evaluation_provider_reason: null,
+  };
 }
 
 function asHtml(value: unknown) {
@@ -634,6 +1277,13 @@ function buildFallbackRecipientV2Report(params: {
   const missing = [
     'Review Shared Information details and request clarification where needed.',
   ];
+  const presentation = buildMediationReviewPresentation({
+    fit_level: fitLevel,
+    confidence_0_1: normalizedConfidence,
+    why,
+    missing,
+    redactions: [],
+  });
   return {
     report_format: 'v2' as const,
     fit_level: fitLevel,
@@ -656,6 +1306,10 @@ function buildFallbackRecipientV2Report(params: {
       redactions: [],
     }),
     recommendation: params.recommendation,
+    report_archetype: presentation.report_archetype,
+    report_title: presentation.report_title,
+    primary_insight: presentation.primary_insight,
+    presentation_sections: presentation.presentation_sections,
   };
 }
 
@@ -694,6 +1348,19 @@ function buildV2RecipientProjection(params: {
     markers,
     recommendation.toLowerCase(),
   );
+  const rebuiltPresentation = buildMediationReviewPresentation({
+    fit_level: fitLevel,
+    confidence_0_1: clampConfidence(sourceReport.confidence_0_1, confidence / 100),
+    why,
+    missing,
+    redactions,
+  });
+  const projectedPresentationSections = Array.isArray(sourceReport.presentation_sections)
+    ? (redactConfidentialStrings(sourceReport.presentation_sections, markers) as unknown[])
+    : [];
+  const normalizedProjectedPresentationSections = serializePresentationSections(
+    getPresentationSections({ presentation_sections: projectedPresentationSections }),
+  );
 
   const safeReport = {
     report_format: 'v2' as const,
@@ -726,6 +1393,19 @@ function buildV2RecipientProjection(params: {
       redactions,
     }),
     recommendation,
+    report_archetype:
+      scrubString(sourceReport.report_archetype, markers, '') ||
+      rebuiltPresentation.report_archetype,
+    report_title:
+      scrubString(sourceReport.report_title, markers, '') ||
+      rebuiltPresentation.report_title,
+    primary_insight:
+      scrubString(sourceReport.primary_insight, markers, '') ||
+      rebuiltPresentation.primary_insight,
+    presentation_sections:
+      normalizedProjectedPresentationSections.length > 0
+        ? normalizedProjectedPresentationSections
+        : rebuiltPresentation.presentation_sections,
   } as Record<string, any>;
 
   const projectedReport = redactConfidentialStrings(safeReport, markers);
@@ -739,11 +1419,10 @@ function buildV2RecipientProjection(params: {
   });
   const finalReport = projectionHasLeak ? fallbackReport : projectedReport;
   const summary =
-    scrubString(
-      evaluation.summary || (Array.isArray(finalReport.why) && finalReport.why[0]) || '',
-      markers,
-      '',
-    ) || 'Recipient-safe evaluation generated from Shared Information only.';
+    scrubString(evaluation.summary, markers, '') ||
+    scrubString(finalReport.primary_insight, markers, '') ||
+    scrubString(Array.isArray(finalReport.why) && finalReport.why[0], markers, '') ||
+    'Recipient-safe evaluation generated from Shared Information only.';
 
   const recipientEvaluation = {
     provider: scrubString(evaluation.provider, markers, 'projection'),

@@ -396,6 +396,104 @@ export function normalizeV2Heading(raw) {
   return normalized;
 }
 
+function normalizePresentationSection(section, index = 0) {
+  if (!section || typeof section !== 'object' || Array.isArray(section)) return null;
+  const heading = normalizeSpaces(section.heading || section.title || section.key || `Section ${index + 1}`);
+  const paragraphs = Array.isArray(section.paragraphs)
+    ? section.paragraphs.map((entry) => normalizeSpaces(entry)).filter(Boolean)
+    : [];
+  const bullets = Array.isArray(section.bullets)
+    ? section.bullets.map((entry) => normalizeSpaces(entry)).filter(Boolean)
+    : [];
+  if (!heading || (paragraphs.length === 0 && bullets.length === 0)) {
+    return null;
+  }
+  return {
+    key: normalizeSpaces(section.key || heading).toLowerCase().replace(/[^a-z0-9]+/g, '_'),
+    heading,
+    paragraphs,
+    bullets,
+    numberedBullets: Boolean(section.numberedBullets || section.numbered_bullets),
+  };
+}
+
+export function getPresentationSections(report) {
+  if (!Array.isArray(report?.presentation_sections)) {
+    return [];
+  }
+  return report.presentation_sections
+    .map((section, index) => normalizePresentationSection(section, index))
+    .filter(Boolean);
+}
+
+function stripOpenQuestionWhyMatters(value) {
+  const text = normalizeSpaces(value);
+  if (!text) return '';
+  const emDashIndex = text.indexOf('—');
+  if (emDashIndex >= 0) {
+    return text.slice(0, emDashIndex).trim();
+  }
+  const hyphenIndex = text.indexOf(' - ');
+  if (hyphenIndex >= 0) {
+    return text.slice(0, hyphenIndex).trim();
+  }
+  return text;
+}
+
+function normalizeOpenQuestionComparableText(value) {
+  return stripOpenQuestionWhyMatters(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export function getAppendixOpenQuestions(report) {
+  const missingItems = Array.isArray(report?.missing)
+    ? report.missing.map((entry) => normalizeSpaces(entry)).filter(Boolean)
+    : [];
+  const presentationSections = getPresentationSections(report);
+  if (missingItems.length === 0 || presentationSections.length === 0) {
+    return missingItems;
+  }
+
+  const renderedContent = presentationSections.flatMap((section) => [
+    ...(Array.isArray(section.paragraphs) ? section.paragraphs : []),
+    ...(Array.isArray(section.bullets) ? section.bullets : []),
+  ]);
+  const comparableSectionTexts = renderedContent
+    .map((entry) => normalizeOpenQuestionComparableText(entry))
+    .filter(Boolean);
+
+  return missingItems.filter((item) => {
+    const comparableItem = normalizeOpenQuestionComparableText(item);
+    if (!comparableItem) return false;
+    return !comparableSectionTexts.some(
+      (sectionText) =>
+        sectionText === comparableItem ||
+        sectionText.includes(comparableItem),
+    );
+  });
+}
+
+export function getPrimaryInsight(report) {
+  const direct = normalizeSpaces(report?.primary_insight || '');
+  if (direct) {
+    return direct;
+  }
+
+  const firstSection = getPresentationSections(report)[0];
+  if (firstSection?.paragraphs?.length > 0) {
+    return firstSection.paragraphs[0];
+  }
+
+  return '';
+}
+
+export function getPresentationReportTitle(report) {
+  return normalizeSpaces(report?.report_title || '');
+}
+
 /**
  * Filters and adjusts legacy section cards for display.
  *

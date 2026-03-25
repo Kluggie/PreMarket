@@ -8,7 +8,11 @@ import { BarChart3, Clock, FileText, Loader2, Sparkles } from 'lucide-react';
 import {
   hasV2Report,
   getDecisionStatusDetails,
+  getAppendixOpenQuestions,
   getConfidencePercent,
+  getPresentationReportTitle,
+  getPresentationSections,
+  getPrimaryInsight,
   MEDIATION_REVIEW_LABEL,
   MISSING_OR_REDACTED_INFO_LABEL,
   OPEN_QUESTIONS_LABEL,
@@ -102,7 +106,13 @@ export function ComparisonAiReportTab({
     safeReport,
     confidenceFallbackScore ?? safeReport?.similarity_score ?? null,
   );
+  const presentationSections = getPresentationSections(safeReport);
+  const presentationTitle = getPresentationReportTitle(safeReport);
+  const primaryInsight = getPrimaryInsight(safeReport);
+  const leadPresentationSection = presentationSections[0] || null;
+  const bodyPresentationSections = leadPresentationSection ? presentationSections.slice(1) : [];
   const openQuestionsCount = Array.isArray(safeReport.missing) ? safeReport.missing.length : 0;
+  const appendixOpenQuestions = getAppendixOpenQuestions(safeReport);
   const decisionExplanation = asText(decisionStatus.explanation);
   const decisionToneClass =
     decisionStatus.tone === 'success'
@@ -218,25 +228,108 @@ export function ComparisonAiReportTab({
           <div className="bg-white rounded-xl border border-slate-200 shadow-sm">
             <div className="px-6 py-7 space-y-7">
               {isV2 ? (
-                <div className="space-y-5" data-testid="v2-full-report">
-                  {safeReport.why.map((entry, index) => {
-                    const { heading, body } = parseV2WhyEntry(entry);
-                    const paragraphs = splitV2WhyBodyParagraphs(body);
-                    return (
-                      <div key={index}>
-                        {heading ? (
-                          <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">{heading}</h3>
+                presentationSections.length > 0 ? (
+                  <div className="space-y-5" data-testid="v2-dynamic-report">
+                    {leadPresentationSection ? (
+                      <div className="rounded-xl border border-slate-200 bg-slate-50/90 p-5">
+                        {presentationTitle ? (
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500 mb-2">
+                            {presentationTitle}
+                          </p>
                         ) : null}
+                        <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
+                          {leadPresentationSection.heading}
+                        </h3>
                         <div className="space-y-3">
-                          {(paragraphs.length > 0 ? paragraphs : [body]).map((paragraph, paragraphIndex) => (
-                            <p key={paragraphIndex} className="text-sm text-slate-700 leading-relaxed">{paragraph}</p>
+                          {(leadPresentationSection.paragraphs?.length > 0
+                            ? leadPresentationSection.paragraphs
+                            : primaryInsight
+                              ? [primaryInsight]
+                              : []
+                          ).map((paragraph, paragraphIndex) => (
+                            <p key={paragraphIndex} className="text-sm text-slate-700 leading-relaxed">
+                              {paragraph}
+                            </p>
                           ))}
+                          {leadPresentationSection.bullets?.length > 0 ? (
+                            leadPresentationSection.numberedBullets ? (
+                              <ol className="space-y-2.5 pl-5 list-decimal text-sm text-slate-700">
+                                {leadPresentationSection.bullets.map((item, itemIndex) => (
+                                  <li key={itemIndex}>{item}</li>
+                                ))}
+                              </ol>
+                            ) : (
+                              <ul className="space-y-2.5">
+                                {leadPresentationSection.bullets.map((item, itemIndex) => (
+                                  <li key={itemIndex} className="flex items-start gap-2.5 text-sm text-slate-700">
+                                    <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-slate-400 flex-shrink-0" />
+                                    <span>{item}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            )
+                          ) : null}
                         </div>
-                        {index < safeReport.why.length - 1 && <div className="mt-5 border-t border-slate-100" />}
                       </div>
-                    );
-                  })}
-                </div>
+                    ) : null}
+
+                    {bodyPresentationSections.map((section, index) => (
+                      <div key={`${section.key || section.heading}-${index}`}>
+                        <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
+                          {section.heading}
+                        </h3>
+                        {section.paragraphs?.length > 0 ? (
+                          <div className="space-y-3">
+                            {section.paragraphs.map((paragraph, paragraphIndex) => (
+                              <p key={paragraphIndex} className="text-sm text-slate-700 leading-relaxed">
+                                {paragraph}
+                              </p>
+                            ))}
+                          </div>
+                        ) : null}
+                        {section.bullets?.length > 0 ? (
+                          section.numberedBullets ? (
+                            <ol className="space-y-2.5 pl-5 list-decimal text-sm text-slate-700 mt-3">
+                              {section.bullets.map((item, itemIndex) => (
+                                <li key={itemIndex}>{item}</li>
+                              ))}
+                            </ol>
+                          ) : (
+                            <ul className="space-y-2.5 mt-3">
+                              {section.bullets.map((item, itemIndex) => (
+                                <li key={itemIndex} className="flex items-start gap-2.5 text-sm text-slate-700">
+                                  <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-slate-400 flex-shrink-0" />
+                                  <span>{item}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          )
+                        ) : null}
+                        {index < bodyPresentationSections.length - 1 && <div className="mt-5 border-t border-slate-100" />}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="space-y-5" data-testid="v2-full-report">
+                    {safeReport.why.map((entry, index) => {
+                      const { heading, body } = parseV2WhyEntry(entry);
+                      const paragraphs = splitV2WhyBodyParagraphs(body);
+                      return (
+                        <div key={index}>
+                          {heading ? (
+                            <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">{heading}</h3>
+                          ) : null}
+                          <div className="space-y-3">
+                            {(paragraphs.length > 0 ? paragraphs : [body]).map((paragraph, paragraphIndex) => (
+                              <p key={paragraphIndex} className="text-sm text-slate-700 leading-relaxed">{paragraph}</p>
+                            ))}
+                          </div>
+                          {index < safeReport.why.length - 1 && <div className="mt-5 border-t border-slate-100" />}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )
               ) : reportSectionsFiltered.length > 0 ? (
                 <div className="space-y-5">
                   {reportSectionsFiltered.map((section, index) => (
@@ -261,11 +354,11 @@ export function ComparisonAiReportTab({
               )}
 
               {/* Open Questions */}
-              {isV2 && Array.isArray(safeReport.missing) && safeReport.missing.length > 0 ? (
+              {isV2 && appendixOpenQuestions.length > 0 ? (
                 <div className="border-t border-slate-100 pt-6" data-testid="v2-missing-info">
                   <h2 className="text-sm font-semibold text-slate-700 mb-3">{OPEN_QUESTIONS_LABEL}</h2>
                   <ul className="space-y-2.5">
-                    {safeReport.missing.map((item, index) => (
+                    {appendixOpenQuestions.map((item, index) => (
                       <li key={index} className="flex items-start gap-2.5 text-sm text-slate-700">
                         <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" />
                         <span>{item}</span>
@@ -289,7 +382,7 @@ export function ComparisonAiReportTab({
                 </div>
               ) : null}
 
-              {decisionExplanation ? (
+              {decisionExplanation && presentationSections.length === 0 ? (
                 <div className="border-t border-slate-100 pt-6" data-testid="decision-explanation">
                   <h2 className="text-sm font-semibold text-slate-700 mb-3">Decision Explanation</h2>
                   <p className="text-sm text-slate-700 leading-relaxed">{decisionExplanation}</p>
