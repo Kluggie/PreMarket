@@ -305,6 +305,67 @@ test('buildMediationReviewPresentation: selects strategic_framing when multiple 
   assert.equal(presentation.presentation_sections[0].heading, 'Core Deal Dynamic');
 });
 
+test('buildMediationReviewPresentation: uses direct top-level V2 sections for sharper strengths, risks, and lead insight', () => {
+  const presentation = buildMediationReviewPresentation({
+    fit_level: 'medium',
+    confidence_0_1: 0.63,
+    why: [
+      'Executive Summary: The draft is commercially promising, but delivery ownership remains underdefined.',
+      'Key Strengths: Renewal economics and commercial scope are already aligned.',
+      'Key Risks: Timeline ownership and change-control mechanics remain unsettled.',
+      'Structural tensions: The main tension is launch speed versus approval control.',
+      'Decision Readiness: Decision status: Proceed with conditions. Timeline ownership still needs to be made explicit.',
+      'Recommended Path: Recommended path: resolve timeline ownership before final approval.',
+    ],
+    missing: ['Who owns the final launch timeline? — determines implementation accountability.'],
+    redactions: [],
+  });
+
+  assert.equal(
+    presentation.primary_insight,
+    'The draft is commercially promising, but delivery ownership remains underdefined.',
+  );
+  assert.deepEqual(
+    presentation.presentation_sections.find((section) => section.key === 'areas_of_strength')?.paragraphs,
+    ['Renewal economics and commercial scope are already aligned.'],
+  );
+  assert.deepEqual(
+    presentation.presentation_sections.find((section) => section.key === 'areas_of_concern')?.paragraphs,
+    ['Timeline ownership and change-control mechanics remain unsettled.'],
+  );
+  assert.deepEqual(
+    presentation.presentation_sections.find((section) => section.key === 'key_trade_offs')?.paragraphs,
+    ['The main tension is launch speed versus approval control.'],
+  );
+});
+
+test('buildMediationReviewPresentation: keeps strategic tensions distinct from strategic implications', () => {
+  const presentation = buildMediationReviewPresentation({
+    fit_level: 'medium',
+    confidence_0_1: 0.69,
+    why: [
+      'Executive Summary: The structure is workable, but the trade-off depends on sequencing governance and rollout flexibility carefully.',
+      'Negotiation Insights: Likely priorities: one side is pushing for rollout speed while the other is prioritising approval control.\n\nStructural tensions: The central tension is launch speed versus approval control.\n\nPossible concessions: optional work can move behind the first milestone.',
+      'Leverage Signals: Leverage signal: both sides want movement, but each is trying to shift more approval risk to the other side.',
+      'Potential Deal Structures: A phased structure could work if governance gates and dependency checkpoints are sequenced up front.',
+      'Decision Readiness: Decision status: Proceed with conditions. The path is credible if governance sequencing is clarified.',
+      'Recommended Path: Recommended path: align sequencing, approvals, and rollout scope in one bounded package.',
+    ],
+    missing: ['Who approves phase-two expansion? — determines governance control.'],
+    redactions: [],
+  });
+
+  const tensions = presentation.presentation_sections.find((section) => section.key === 'key_tensions')?.paragraphs || [];
+  const implications = presentation.presentation_sections.find((section) => section.key === 'strategic_implications')?.paragraphs || [];
+
+  assert.equal(tensions.some((paragraph) => /tension|approval control|rollout speed/i.test(paragraph)), true);
+  assert.equal(
+    implications.some((paragraph) => /approval risk|phased structure|dependency checkpoints/i.test(paragraph)),
+    true,
+  );
+  assert.notDeepEqual(tensions, implications);
+});
+
 test('getAppendixOpenQuestions: omits missing items already rendered in dynamic presentation sections', () => {
   const report = {
     missing: [

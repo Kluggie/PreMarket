@@ -130,6 +130,20 @@ function stripMissingWhyMatters(value: string) {
 function buildWhyLookup(why: string[]) {
   const sections = new Map<string, { heading: string; body: string; paragraphs: string[] }>();
   const labeledParagraphs = new Map<string, string[]>();
+  const uniqueSignalParagraphs = (paragraphs: string[]) => {
+    const seen = new Set<string>();
+    const result: string[] = [];
+    paragraphs.forEach((paragraph) => {
+      const normalized = normalizeText(paragraph);
+      if (!normalized) return;
+      const match = normalized.match(/^([A-Z][^:\n]{0,80}?):\s+(.+)$/s);
+      const comparable = normalizeText(match ? match[2] : normalized).toLowerCase();
+      if (!comparable || seen.has(comparable)) return;
+      seen.add(comparable);
+      result.push(normalized);
+    });
+    return result;
+  };
 
   (Array.isArray(why) ? why : []).forEach((entry, index) => {
     const raw = normalizeText(entry);
@@ -166,11 +180,24 @@ function buildWhyLookup(why: string[]) {
       keys.flatMap((key) => labeledParagraphs.get(normalizeHeadingKey(key)) || []),
     );
 
+  const getSignalParagraphs = (...keys: string[]) =>
+    uniqueSignalParagraphs(
+      keys.flatMap((key) => {
+        const normalizedKey = normalizeHeadingKey(key);
+        const section = sections.get(normalizedKey);
+        return [
+          ...(section ? section.paragraphs : []),
+          ...(labeledParagraphs.get(normalizedKey) || []),
+        ];
+      }),
+    );
+
   return {
     sections,
     labeledParagraphs,
     getSectionParagraphs,
     getLabeledParagraphs,
+    getSignalParagraphs,
   };
 }
 
@@ -222,7 +249,8 @@ function previewParagraphs(paragraphs: string[], maxItems = 2, maxChars = 200) {
   const result: string[] = [];
   uniqueText(paragraphs).forEach((paragraph) => {
     if (result.length >= maxItems) return;
-    const preview = getSentenceSafePreview(paragraph, maxChars) || normalizeText(paragraph);
+    const preview = (getSentenceSafePreview(paragraph, maxChars) || normalizeText(paragraph))
+      .replace(/^[a-z]/, (char) => char.toUpperCase());
     if (!preview) return;
     if (result.some((existing) => existing.toLowerCase() === preview.toLowerCase())) return;
     result.push(preview);
@@ -340,18 +368,15 @@ export function buildMediationReviewPresentation(params: {
 
   const whyLookup = buildWhyLookup(why);
   const executiveParagraphs = whyLookup.getSectionParagraphs('Executive Summary', 'Decision Snapshot');
-  const strengthParagraphs = whyLookup.getLabeledParagraphs('Key Strengths');
-  const riskParagraphs = whyLookup.getLabeledParagraphs('Risk Summary', 'Key Risks');
-  const prioritiesParagraphs = whyLookup.getLabeledParagraphs('Likely priorities');
-  const tensionsParagraphs = whyLookup.getLabeledParagraphs('Structural tensions');
-  const leverageParagraphs = whyLookup.getSectionParagraphs('Leverage Signals').length > 0
-    ? whyLookup.getSectionParagraphs('Leverage Signals')
-    : whyLookup.getLabeledParagraphs('Leverage signal');
+  const strengthParagraphs = whyLookup.getSignalParagraphs('Key Strengths');
+  const riskParagraphs = whyLookup.getSignalParagraphs('Risk Summary', 'Key Risks');
+  const prioritiesParagraphs = whyLookup.getSignalParagraphs('Likely priorities');
+  const tensionsParagraphs = whyLookup.getSignalParagraphs('Structural tensions');
+  const leverageParagraphs = whyLookup.getSignalParagraphs('Leverage Signals', 'Leverage signal');
   const dealStructureParagraphs = whyLookup.getSectionParagraphs('Potential Deal Structures');
   const decisionReadinessParagraphs = whyLookup.getSectionParagraphs('Decision Readiness');
-  const agreementParagraphs = whyLookup.getLabeledParagraphs('What must be agreed now vs later', 'What would change the verdict');
-  const recommendedPathParagraphs = whyLookup.getSectionParagraphs('Recommended Path')
-    .concat(whyLookup.getLabeledParagraphs('Recommended path'));
+  const agreementParagraphs = whyLookup.getSignalParagraphs('What must be agreed now vs later', 'What would change the verdict');
+  const recommendedPathParagraphs = whyLookup.getSignalParagraphs('Recommended Path', 'Recommended path');
 
   const concernThemeIds = detectThemes([...riskParagraphs, ...decisionReadinessParagraphs, ...missing]);
   const strengthThemeIds = detectThemes([...strengthParagraphs, ...executiveParagraphs]);
@@ -418,29 +443,44 @@ export function buildMediationReviewPresentation(params: {
     tensionsParagraphs.concat(leverageParagraphs).concat(dealStructureParagraphs),
     2,
   );
+  const tensionSourceParagraphs = tensionsParagraphs.length > 0
+    ? tensionsParagraphs
+    : prioritiesParagraphs.filter((paragraph) => /\b(tension|trade[- ]?off|balance|versus|vs)\b/i.test(paragraph));
+  const tensionPreviews = previewParagraphs(
+    tensionSourceParagraphs.length > 0 ? tensionSourceParagraphs : leverageParagraphs.concat(dealStructureParagraphs),
+    2,
+  );
   const priorityPreviews = previewParagraphs(
     prioritiesParagraphs.length > 0 ? prioritiesParagraphs : leverageParagraphs,
     2,
   );
+  const implicationPreviews = previewParagraphs(leverageParagraphs.concat(dealStructureParagraphs), 2);
   const recommendationParagraphs = buildRecommendationParagraphs({
     decisionStatusLabel: decisionStatus.label,
     decisionExplanation: normalizeText(decisionStatus.explanation),
     agreementParagraphs,
     recommendationParagraphs: recommendedPathParagraphs,
   });
+  const executivePreview = previewParagraphs(executiveParagraphs, 1, 180)[0] || '';
+  const riskPreview = previewParagraphs(riskParagraphs, 1, 180)[0] || '';
+  const strategicPreview = previewParagraphs(
+    tensionsParagraphs.concat(prioritiesParagraphs).concat(leverageParagraphs).concat(dealStructureParagraphs),
+    1,
+    180,
+  )[0] || '';
 
   const primaryInsight =
     archetype === 'risk_dominant'
-      ? `The current proposal concentrates material risk around ${concernThemes}, which blocks a confident commitment.`
+      ? riskPreview || `The current proposal concentrates material risk around ${concernThemes}, which blocks a confident commitment.`
       : archetype === 'gap_analysis'
-        ? `The main constraint is incomplete detail around ${concernThemes}, rather than a clearly workable final structure.`
+        ? executivePreview || `The main constraint is incomplete detail around ${concernThemes}, rather than a clearly workable final structure.`
         : archetype === 'strong_alignment'
           ? missing.length > 0
             ? `The proposal is broadly well-structured, with only limited gaps around ${concernThemes}.`
             : `The proposal is broadly well-structured and only minor issues remain before final agreement.`
           : archetype === 'strategic_framing'
-            ? `The proposal is workable in principle, but the outcome depends on how the parties balance ${describeThemes(allThemeIds, 'the visible deal priorities')}.`
-            : `The proposal shows credible alignment around ${strengthThemes}, but ${concernThemes} still introduces material trade-offs.`;
+            ? executivePreview || strategicPreview || `The proposal is workable in principle, but the outcome depends on how the parties balance ${describeThemes(allThemeIds, 'the visible deal priorities')}.`
+            : executivePreview || `The proposal shows credible alignment around ${strengthThemes}, but ${concernThemes} still introduces material trade-offs.`;
 
   const fallbackTradeoffParagraph =
     archetype === 'strategic_framing'
@@ -549,8 +589,8 @@ export function buildMediationReviewPresentation(params: {
             ? createPresentationSection({
                 key: 'key_tensions',
                 heading: 'Key Tensions',
-                paragraphs: tradeoffPreviews.length > 0
-                  ? tradeoffPreviews
+                paragraphs: tensionPreviews.length > 0
+                  ? tensionPreviews
                   : [fallbackTradeoffParagraph],
               })
             : createPresentationSection({
@@ -590,8 +630,8 @@ export function buildMediationReviewPresentation(params: {
             ? createPresentationSection({
                 key: 'strategic_implications',
                 heading: 'Strategic Implications',
-                paragraphs: previewParagraphs(leverageParagraphs.concat(dealStructureParagraphs), 2).length > 0
-                  ? previewParagraphs(leverageParagraphs.concat(dealStructureParagraphs), 2)
+                paragraphs: implicationPreviews.length > 0
+                  ? implicationPreviews
                   : [`The visible implications sit in how ${strengthThemes} and ${concernThemes} are sequenced into a bounded agreement path.`],
               })
             : createPresentationSection({
