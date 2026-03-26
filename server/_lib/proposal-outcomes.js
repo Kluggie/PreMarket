@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { getDb, schema } from './db/client.js';
 import { ApiError } from './errors.js';
+import { buildProposalThreadActivityValues } from './proposal-thread-activity.js';
 import {
   getProposalActorRoleFromVisibility,
   getRecipientSharedProposalIds,
@@ -11,6 +12,7 @@ export const PROPOSAL_OUTCOME_WON = 'won';
 export const PROPOSAL_OUTCOME_LOST = 'lost';
 export const PROPOSAL_OUTCOME_PENDING_WON = 'pending_won';
 export const PROPOSAL_OUTCOME_OPEN = 'open';
+export const PROPOSAL_OUTCOME_CONTINUE_NEGOTIATING = 'continue_negotiating';
 export const PROPOSAL_PARTY_A = 'party_a';
 export const PROPOSAL_PARTY_B = 'party_b';
 
@@ -168,9 +170,11 @@ export function getProposalOutcomeEligibility(proposal, actorRole) {
       eligible: false,
       canMarkWon: false,
       canMarkLost: false,
+      canContinueNegotiating: false,
       reason: 'Drafts cannot be marked as agreed or lost.',
       reasonWon: 'Drafts cannot be marked as agreed or lost.',
       reasonLost: 'Drafts cannot be marked as agreed or lost.',
+      reasonContinueNegotiating: 'Drafts cannot be marked as agreed or lost.',
     };
   }
 
@@ -179,9 +183,11 @@ export function getProposalOutcomeEligibility(proposal, actorRole) {
       eligible: false,
       canMarkWon: false,
       canMarkLost: false,
+      canContinueNegotiating: false,
       reason: 'Only the proposer or recipient can mark an outcome.',
       reasonWon: 'Only the proposer or recipient can mark an outcome.',
       reasonLost: 'Only the proposer or recipient can mark an outcome.',
+      reasonContinueNegotiating: 'Only the proposer or recipient can mark an outcome.',
     };
   }
 
@@ -190,9 +196,11 @@ export function getProposalOutcomeEligibility(proposal, actorRole) {
       eligible: false,
       canMarkWon: false,
       canMarkLost: false,
+      canContinueNegotiating: false,
       reason: 'This proposal has already been marked as agreed.',
       reasonWon: 'This proposal has already been marked as agreed.',
       reasonLost: 'This proposal has already been marked as agreed.',
+      reasonContinueNegotiating: 'This proposal has already been marked as agreed.',
     };
   }
 
@@ -201,9 +209,24 @@ export function getProposalOutcomeEligibility(proposal, actorRole) {
       eligible: false,
       canMarkWon: false,
       canMarkLost: false,
+      canContinueNegotiating: false,
       reason: 'This proposal has already been marked as lost.',
       reasonWon: 'This proposal has already been marked as lost.',
       reasonLost: 'This proposal has already been marked as lost.',
+      reasonContinueNegotiating: 'This proposal has already been marked as lost.',
+    };
+  }
+
+  if (outcome.pending && outcome.requestedBy && outcome.requestedBy !== actorRole) {
+    return {
+      eligible: true,
+      canMarkWon: true,
+      canMarkLost: true,
+      canContinueNegotiating: true,
+      reason: null,
+      reasonWon: null,
+      reasonLost: null,
+      reasonContinueNegotiating: null,
     };
   }
 
@@ -212,25 +235,24 @@ export function getProposalOutcomeEligibility(proposal, actorRole) {
       eligible: true,
       canMarkWon: true,
       canMarkLost: true,
+      canContinueNegotiating: false,
       reason: null,
       reasonWon: null,
       reasonLost: null,
+      reasonContinueNegotiating: null,
     };
   }
 
   if (actorRole === PROPOSAL_PARTY_A) {
-    const canMarkWon = Boolean(proposal?.receivedAt);
-    const canMarkLost = true;
-    const reasonWon = canMarkWon
-      ? null
-      : 'The proposer can only request agreement after the recipient responds at least once.';
     return {
-      eligible: canMarkWon || canMarkLost,
-      canMarkWon,
-      canMarkLost,
-      reason: reasonWon,
-      reasonWon,
+      eligible: true,
+      canMarkWon: true,
+      canMarkLost: true,
+      canContinueNegotiating: false,
+      reason: null,
+      reasonWon: null,
       reasonLost: null,
+      reasonContinueNegotiating: null,
     };
   }
 
@@ -238,9 +260,11 @@ export function getProposalOutcomeEligibility(proposal, actorRole) {
     eligible: false,
     canMarkWon: false,
     canMarkLost: false,
+    canContinueNegotiating: false,
     reason: 'Outcome not allowed.',
     reasonWon: 'Outcome not allowed.',
     reasonLost: 'Outcome not allowed.',
+    reasonContinueNegotiating: 'Outcome not allowed.',
   };
 }
 
@@ -269,12 +293,17 @@ export function mapProposalOutcomeForUser(proposal, currentUser, options = {}) {
     party_b_outcome_at: proposal?.partyBOutcomeAt || null,
     can_mark_won: Boolean(eligibility.canMarkWon),
     can_mark_lost: Boolean(eligibility.canMarkLost),
+    can_continue_negotiating: Boolean(eligibility.canContinueNegotiating),
     eligibility_reason:
-      !eligibility.canMarkWon && !eligibility.canMarkLost
-        ? eligibility.reasonWon || eligibility.reasonLost || eligibility.reason
+      !eligibility.canMarkWon && !eligibility.canMarkLost && !eligibility.canContinueNegotiating
+        ? eligibility.reasonWon ||
+          eligibility.reasonLost ||
+          eligibility.reasonContinueNegotiating ||
+          eligibility.reason
         : null,
     eligibility_reason_won: eligibility.reasonWon || null,
     eligibility_reason_lost: eligibility.reasonLost || null,
+    eligibility_reason_continue_negotiating: eligibility.reasonContinueNegotiating || null,
   };
 }
 
@@ -326,13 +355,34 @@ export function buildPendingWonReset(existing, now = new Date()) {
   };
 }
 
+export function buildContinueNegotiationReset(existing, actorRole, now = new Date()) {
+  const outcome = getProposalOutcomeState(existing);
+  if (!outcome.pending || !outcome.requestedBy || outcome.requestedBy === actorRole) {
+    return null;
+  }
+
+  const clearedPendingValues = buildPendingWonReset(existing, now);
+  if (!clearedPendingValues) {
+    return null;
+  }
+
+  return {
+    ...clearedPendingValues,
+    ...buildProposalThreadActivityValues({
+      activityAt: now,
+      actorRole,
+      activityType: 'proposal.outcome.continue_negotiation',
+    }),
+  };
+}
+
 export function buildOutcomeMutation(existing, actorRole, requestedOutcome, now = new Date()) {
   const normalizedOutcome = asLower(requestedOutcome);
   if (normalizedOutcome !== PROPOSAL_OUTCOME_WON && normalizedOutcome !== PROPOSAL_OUTCOME_LOST) {
     throw new ApiError(
       400,
       'invalid_outcome',
-      'Use Request Agreement, Confirm Agreement, or Lost when updating the proposal outcome.',
+      'Use Request Agreement, Confirm Agreement, Continue Negotiating, or Lost when updating the proposal outcome.',
     );
   }
 

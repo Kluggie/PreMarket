@@ -79,9 +79,11 @@ function makeProposal(overrides = {}) {
       party_b_outcome_at: null,
       can_mark_won: true,
       can_mark_lost: true,
+      can_continue_negotiating: false,
       eligibility_reason: null,
       eligibility_reason_won: null,
       eligibility_reason_lost: null,
+      eligibility_reason_continue_negotiating: null,
       ...(overrides.outcome || {}),
     },
     list_type: overrides.list_type || 'sent',
@@ -182,7 +184,11 @@ function updateProposal(proposals, proposalId, updater) {
   if (index < 0) {
     return null;
   }
-  proposals[index] = updater({ ...proposals[index] });
+  const nextProposal = updater({ ...proposals[index] });
+  if (!nextProposal) {
+    return null;
+  }
+  proposals[index] = nextProposal;
   return proposals[index];
 }
 
@@ -268,11 +274,70 @@ async function installProposalApiMocks(page, { user, proposals, failOutcomePropo
           return;
         }
 
-      const body = request.postDataJSON() || {};
+        const body = request.postDataJSON() || {};
         const requestedOutcome = String(body.outcome || body.action || '').toLowerCase();
         const updatedProposal = updateProposal(proposals, proposalId, (proposal) => {
           const now = new Date('2026-03-25T10:30:00.000Z').toISOString();
           if (requestedOutcome === 'continue' || requestedOutcome === 'continue_negotiating') {
+            if (!proposal.outcome?.requested_by_counterparty) {
+              return null;
+            }
+            return {
+              ...proposal,
+              primary_status_key: 'waiting_on_counterparty',
+              primary_status_label: 'Waiting on Counterparty',
+              waiting_on_other_party: true,
+              win_confirmation_requested: false,
+              last_activity_at: now,
+              updated_at: now,
+              updated_date: now,
+              outcome: {
+                ...proposal.outcome,
+                state: 'open',
+                final_status: null,
+                pending: false,
+                requested_by: null,
+                requested_at: null,
+                requested_by_current_user: false,
+                requested_by_counterparty: false,
+                can_mark_won: true,
+                can_mark_lost: true,
+                can_continue_negotiating: false,
+              },
+            };
+          }
+
+          if (requestedOutcome === 'won' && proposal.outcome?.requested_by_counterparty) {
+            return {
+              ...proposal,
+              status: 'won',
+              directional_status: 'won',
+              primary_status_key: 'closed_won',
+              primary_status_label: 'Closed: Won',
+              thread_bucket: 'closed',
+              waiting_on_other_party: false,
+              win_confirmation_requested: false,
+              closed_at: now,
+              last_activity_at: now,
+              updated_at: now,
+              updated_date: now,
+              outcome: {
+                ...proposal.outcome,
+                state: 'won',
+                final_status: 'won',
+                pending: false,
+                requested_by: null,
+                requested_at: null,
+                requested_by_current_user: false,
+                requested_by_counterparty: false,
+                can_mark_won: false,
+                can_mark_lost: false,
+                can_continue_negotiating: false,
+              },
+            };
+          }
+
+          if (requestedOutcome !== 'won' && requestedOutcome !== 'lost') {
             return null;
           }
 
@@ -297,6 +362,7 @@ async function installProposalApiMocks(page, { user, proposals, failOutcomePropo
                 pending: false,
                 requested_by_current_user: false,
                 requested_by_counterparty: false,
+                can_continue_negotiating: false,
               },
             };
           }
@@ -318,18 +384,19 @@ async function installProposalApiMocks(page, { user, proposals, failOutcomePropo
               requested_by_current_user: true,
               requested_by_counterparty: false,
               requested_at: now,
+              can_continue_negotiating: false,
             },
           };
         });
 
-        if (!updatedProposal && (requestedOutcome === 'continue' || requestedOutcome === 'continue_negotiating')) {
+        if (!updatedProposal) {
           await route.fulfill({
-            status: 400,
+            status: 403,
             contentType: 'application/json',
             body: JSON.stringify({
               error: {
-                code: 'unsupported_action',
-                message: 'Request Agreement now sends immediately and cannot be retracted.',
+                code: 'outcome_not_allowed',
+                message: 'Outcome not allowed.',
               },
             }),
           });
@@ -469,31 +536,18 @@ test.describe('Proposals overflow actions', () => {
       email: userEmail,
       name: 'Overflow Agreement User',
     });
-    const blockedProposal = makeProposal({
-      id: uniqueId('blocked_row'),
-      title: 'Blocked Agreement Row',
-      party_a_email: userEmail,
-      primary_status_key: 'waiting_on_counterparty',
-      primary_status_label: 'Waiting on Counterparty',
-      outcome: {
-        can_mark_won: false,
-        can_mark_lost: true,
-        eligibility_reason_won: 'The proposer can only request agreement after the recipient responds at least once.',
-      },
-    });
     const enabledProposal = makeProposal({
       id: uniqueId('enabled_row'),
-      title: 'Enabled Agreement Row',
+      title: 'No Edits Needed Agreement Row',
       party_a_email: userEmail,
-      status: 'received',
-      directional_status: 'received',
-      latest_direction: 'received',
+      status: 'sent',
+      directional_status: 'sent',
+      latest_direction: 'sent',
       list_type: 'sent',
-      received_at: new Date('2026-03-25T10:10:00.000Z').toISOString(),
-      primary_status_key: 'needs_reply',
-      primary_status_label: 'Needs Reply',
-      needs_response: true,
-      waiting_on_other_party: false,
+      primary_status_key: 'waiting_on_counterparty',
+      primary_status_label: 'Waiting on Counterparty',
+      needs_response: false,
+      waiting_on_other_party: true,
       outcome: {
         can_mark_won: true,
         can_mark_lost: true,
@@ -501,7 +555,7 @@ test.describe('Proposals overflow actions', () => {
     });
 
     let outcomeRequests = 0;
-    const proposals = [blockedProposal, enabledProposal];
+    const proposals = [enabledProposal];
     await installProposalApiMocks(page, {
       user: makeUser(userId, userEmail),
       proposals,
@@ -510,17 +564,7 @@ test.describe('Proposals overflow actions', () => {
       },
     });
     await openProposalsInbox(page, sessionCookie);
-    await expectRowVisible(page, blockedProposal.id);
     await expectRowVisible(page, enabledProposal.id);
-
-    await openActionsMenu(page, blockedProposal.id);
-    const blockedRequestAgreement = page.getByRole('menuitem', { name: 'Request Agreement' });
-    await expect(blockedRequestAgreement).toHaveAttribute('data-disabled', '');
-    await expect(
-      page.getByText('The proposer can only request agreement after the recipient responds at least once.'),
-    ).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
-    expect(outcomeRequests).toBe(0);
-    await page.keyboard.press('Escape');
 
     await openActionsMenu(page, enabledProposal.id);
     await page.getByRole('menuitem', { name: 'Request Agreement' }).click();
@@ -544,7 +588,7 @@ test.describe('Proposals overflow actions', () => {
     expect(outcomeRequests).toBe(1);
   });
 
-  test('row menus never expose a retract action after agreement is requested', async ({
+  test('row menus expose Continue Negotiating only for the counterparty responding to a pending agreement request', async ({
     page,
   }) => {
     const userId = uniqueId('overflow_retract_visibility_user');
@@ -588,6 +632,9 @@ test.describe('Proposals overflow actions', () => {
         requested_at: requestedAt,
         requested_by_current_user: false,
         requested_by_counterparty: true,
+        can_mark_won: true,
+        can_mark_lost: true,
+        can_continue_negotiating: true,
       },
     });
     const respondedProposal = makeProposal({
@@ -629,9 +676,17 @@ test.describe('Proposals overflow actions', () => {
     await expect(page.getByRole('menu')).toHaveCount(0);
 
     await openActionsMenu(page, counterpartyPendingProposal.id);
-    await expect(page.getByRole('menuitem', { name: 'Continue Negotiating' })).toHaveCount(0);
-    await page.keyboard.press('Escape');
-    await expect(page.getByRole('menu')).toHaveCount(0);
+    await expect(page.getByRole('menuitem', { name: 'Confirm Agreement' })).toBeVisible();
+    await expect(page.getByRole('menuitem', { name: 'Confirm Agreement' })).not.toHaveAttribute(
+      'data-disabled',
+      '',
+    );
+    await expect(page.getByRole('menuitem', { name: 'Continue Negotiating' })).toBeVisible();
+    await expect(page.getByRole('menuitem', { name: 'Mark as Lost' })).toBeVisible();
+    await page.getByRole('menuitem', { name: 'Continue Negotiating' }).click();
+    await expect(page.getByTestId(`proposal-row-${counterpartyPendingProposal.id}`)).toContainText(
+      'Waiting on Counterparty',
+    );
 
     await openActionsMenu(page, respondedProposal.id);
     await expect(page.getByRole('menuitem', { name: 'Continue Negotiating' })).toHaveCount(0);

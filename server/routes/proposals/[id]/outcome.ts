@@ -24,12 +24,14 @@ import {
   shouldMaskPrivateSender,
 } from '../../../_lib/private-mode.js';
 import {
+  buildContinueNegotiationReset,
   buildOutcomeMutation,
   getProposalAccessContext,
   getProposalArchivedAtForActor,
   getProposalOutcomeEligibility,
   getProposalOutcomeState,
   mapProposalOutcomeForUser,
+  PROPOSAL_OUTCOME_CONTINUE_NEGOTIATING,
   PROPOSAL_OUTCOME_LOST,
   PROPOSAL_OUTCOME_PENDING_WON,
   PROPOSAL_OUTCOME_WON,
@@ -53,6 +55,17 @@ function asText(value: unknown) {
 
 function asLower(value: unknown) {
   return asText(value).toLowerCase();
+}
+
+function toIsoString(value: unknown) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString();
+  }
+  const directText = asText(value);
+  if (directText) {
+    return directText;
+  }
+  return '';
 }
 
 function mapProposalRow(proposal, currentUser, options: Record<string, unknown> = {}) {
@@ -160,13 +173,30 @@ function buildFinalOutcomeEmailContent(proposal: any, outcome: 'won' | 'lost') {
   };
 }
 
+function buildContinueNegotiationEmailContent(proposal: any, actorRole: string) {
+  const proposalTitle = asText(proposal?.title) || 'your opportunity';
+  const actionUrl = buildAgreementRequestActionUrl(proposal);
+  const actorLabel = actorRole === PROPOSAL_PARTY_A ? 'The proposer' : 'The recipient';
+
+  return {
+    subject: `Continue Negotiating — ${proposalTitle}`,
+    text: [
+      `${actorLabel} wants to continue negotiating on "${proposalTitle}" and did not confirm the agreement request.`,
+      '',
+      actionUrl
+        ? `Open the opportunity: ${actionUrl}`
+        : 'Sign in to PreMarket to review the latest negotiation status.',
+    ].join('\n'),
+  };
+}
+
 async function notifyCounterparty(params: {
   db: any;
   proposal: any;
   actorRole: string;
   actionUrl: string;
   metadata?: Record<string, unknown> | null;
-  eventType: 'status_won' | 'status_lost';
+  eventType: 'status_won' | 'status_lost' | 'status_continue_negotiating';
   dedupeKey: string;
   title: string;
   message: string;
@@ -239,6 +269,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
     });
     const existing = access.proposal;
     const actorRole = access.actorRole;
+    const existingOutcome = getProposalOutcomeState(existing);
     const body = await readJsonBody(req);
     const requestedAction = asLower(
       body.outcome ||
@@ -246,63 +277,74 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         body.action ||
         body.decision,
     );
+    const requestedContinueNegotiating =
+      requestedAction === 'continue' || requestedAction === PROPOSAL_OUTCOME_CONTINUE_NEGOTIATING;
 
     const now = new Date();
 
-    if (requestedAction === 'continue' || requestedAction === 'continue_negotiating') {
-      throw new ApiError(
-        400,
-        'unsupported_action',
-        'Request Agreement now sends immediately and cannot be retracted.',
-      );
-    }
-
-    if (requestedAction !== PROPOSAL_OUTCOME_WON && requestedAction !== PROPOSAL_OUTCOME_LOST) {
+    if (
+      !requestedContinueNegotiating &&
+      requestedAction !== PROPOSAL_OUTCOME_WON &&
+      requestedAction !== PROPOSAL_OUTCOME_LOST
+    ) {
       throw new ApiError(
         400,
         'invalid_outcome',
-        'Use Request Agreement, Confirm Agreement, or Lost.',
+        'Use Request Agreement, Confirm Agreement, Continue Negotiating, or Lost.',
       );
     }
 
     const eligibility = getProposalOutcomeEligibility(existing, actorRole);
     const requestedActionAllowed =
-      requestedAction === PROPOSAL_OUTCOME_WON
+      requestedContinueNegotiating
+        ? Boolean(eligibility.canContinueNegotiating)
+        : requestedAction === PROPOSAL_OUTCOME_WON
         ? Boolean(eligibility.canMarkWon)
         : Boolean(eligibility.canMarkLost);
     if (!requestedActionAllowed) {
-      const failureReason =
-        requestedAction === PROPOSAL_OUTCOME_WON
+      const failureReason = requestedContinueNegotiating
+        ? eligibility.reasonContinueNegotiating || eligibility.reason
+        : requestedAction === PROPOSAL_OUTCOME_WON
           ? eligibility.reasonWon || eligibility.reason
           : eligibility.reasonLost || eligibility.reason;
       throw new ApiError(403, 'outcome_not_allowed', failureReason || 'Outcome not allowed');
     }
 
-    const actorExistingOutcome =
-      actorRole === PROPOSAL_PARTY_A ? asLower(existing.partyAOutcome) : asLower(existing.partyBOutcome);
-    if (actorExistingOutcome === requestedAction) {
+    const actorExistingOutcome = requestedContinueNegotiating
+      ? null
+      : actorRole === PROPOSAL_PARTY_A
+        ? asLower(existing.partyAOutcome)
+        : asLower(existing.partyBOutcome);
+    if (actorExistingOutcome && actorExistingOutcome === requestedAction) {
       ok(res, 200, {
         proposal: mapProposalRow(existing, auth.user, { actorRole }),
       });
       return;
     }
 
-    const outcomeValues = buildOutcomeMutation(existing, actorRole, requestedAction, now);
+    const outcomeValues = requestedContinueNegotiating
+      ? buildContinueNegotiationReset(existing, actorRole, now)
+      : buildOutcomeMutation(existing, actorRole, requestedAction, now);
+    if (!outcomeValues) {
+      throw new ApiError(409, 'outcome_not_allowed', 'Outcome not allowed');
+    }
     const nextProposal = {
       ...existing,
       ...outcomeValues,
     };
     const nextOutcomeState = getProposalOutcomeState(nextProposal);
-    const historyEventType =
-      requestedAction === PROPOSAL_OUTCOME_LOST
+    const historyEventType = requestedContinueNegotiating
+      ? 'proposal.outcome.continue_negotiation'
+      : requestedAction === PROPOSAL_OUTCOME_LOST
         ? 'proposal.outcome.lost'
         : nextOutcomeState.state === PROPOSAL_OUTCOME_PENDING_WON
           ? 'proposal.outcome.won_requested'
           : nextOutcomeState.state === PROPOSAL_OUTCOME_WON
             ? 'proposal.outcome.won_confirmed'
             : 'proposal.outcome.updated';
-    const historyMilestone =
-      requestedAction === PROPOSAL_OUTCOME_LOST
+    const historyMilestone = requestedContinueNegotiating
+      ? PROPOSAL_OUTCOME_CONTINUE_NEGOTIATING
+      : requestedAction === PROPOSAL_OUTCOME_LOST
         ? 'lost'
         : nextOutcomeState.state === PROPOSAL_OUTCOME_PENDING_WON
           ? 'won_requested'
@@ -423,6 +465,34 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
 
       await logAuditEventBestEffort({
         eventType: 'proposal.outcome.won_requested',
+        userId: auth.user.id,
+        req,
+        metadata: {
+          proposal_id: updated.id,
+          actor_role: actorRole,
+        },
+      });
+    } else if (requestedContinueNegotiating) {
+      const emailContent = buildContinueNegotiationEmailContent(updated, actorRole);
+      const continueDedupeKey =
+        `proposal:${updated.id}:continue_negotiating:${actorRole}:${toIsoString(existingOutcome.requestedAt || now)}`;
+      await notifyCounterparty({
+        db,
+        proposal: updated,
+        actorRole,
+        actionUrl,
+        metadata: notificationMetadata,
+        eventType: 'status_continue_negotiating',
+        dedupeKey: continueDedupeKey,
+        title: 'Continue Negotiating',
+        message: `${actorLabel} wants to continue negotiating on "${title}" and did not confirm the agreement request.`,
+        emailSubject: emailContent.subject,
+        emailText: emailContent.text,
+        emailPurpose: 'transactional',
+      });
+
+      await logAuditEventBestEffort({
+        eventType: 'proposal.outcome.continue_negotiation',
         userId: auth.user.id,
         req,
         metadata: {

@@ -141,6 +141,14 @@ async function listAgreementRequestEmails(proposalId = null) {
     : await query;
 }
 
+async function listProposalEvents(proposalId) {
+  const db = getDb();
+  return db
+    .select()
+    .from(schema.proposalEvents)
+    .where(eq(schema.proposalEvents.proposalId, proposalId));
+}
+
 async function listProposals(cookie, query = {}) {
   const res = await callHandler(proposalsHandler, {
     method: 'GET',
@@ -262,7 +270,7 @@ test('legacy agreement-request dispatch route is no longer mounted', async () =>
 if (!hasDatabaseUrl()) {
   test('proposal outcomes integration (skipped: DATABASE_URL missing)', { skip: true }, () => {});
 } else {
-  test('outcome permissions follow the round rules for proposer and recipient', async () => {
+  test('request agreement and counterparty confirmation do not require prior recipient edits', async () => {
     await ensureMigrated();
     await resetTables();
 
@@ -280,13 +288,22 @@ if (!hasDatabaseUrl()) {
     });
 
     const ownerWonRes = await markOutcome(ownerCookie, roundOne.id, { outcome: 'won' });
-    assert.equal(ownerWonRes.statusCode, 403);
-    assert.equal(ownerWonRes.jsonBody().error?.code, 'outcome_not_allowed');
+    assert.equal(ownerWonRes.statusCode, 200);
+    assert.equal(ownerWonRes.jsonBody().proposal.outcome.state, 'pending_won');
+    assert.equal(ownerWonRes.jsonBody().proposal.outcome.requested_by_current_user, true);
+    assert.notEqual(ownerWonRes.jsonBody().proposal.status, 'won');
+
+    const recipientInbox = await listProposals(recipientCookie, { tab: 'inbox', limit: '20' });
+    const pendingForRecipient = recipientInbox.find((entry) => entry.id === roundOne.id);
+    assert.ok(pendingForRecipient, 'recipient should see the pending agreement request in Inbox');
+    assert.equal(pendingForRecipient.outcome.requested_by_counterparty, true);
+    assert.equal(pendingForRecipient.outcome.can_mark_won, true);
+    assert.equal(pendingForRecipient.outcome.can_continue_negotiating, true);
 
     const recipientWonRes = await markOutcome(recipientCookie, roundOne.id, { outcome: 'won' });
     assert.equal(recipientWonRes.statusCode, 200);
-    assert.equal(recipientWonRes.jsonBody().proposal.outcome.state, 'pending_won');
-    assert.notEqual(recipientWonRes.jsonBody().proposal.status, 'won');
+    assert.equal(recipientWonRes.jsonBody().proposal.outcome.state, 'won');
+    assert.equal(recipientWonRes.jsonBody().proposal.status, 'won');
 
     const ownerDirectLost = await createProposal(ownerCookie, {
       title: 'Owner Direct Lost Proposal',
@@ -298,32 +315,6 @@ if (!hasDatabaseUrl()) {
     assert.equal(ownerLostRes.statusCode, 200);
     assert.equal(ownerLostRes.jsonBody().proposal.outcome.state, 'lost');
     assert.equal(ownerLostRes.jsonBody().proposal.status, 'lost');
-
-    const laterRound = await createProposal(ownerCookie, {
-      title: 'Later Round Proposal',
-      status: 'received',
-      sentAt: new Date().toISOString(),
-      receivedAt: new Date().toISOString(),
-      partyBEmail: 'recipient-rounds@example.com',
-    });
-
-    const ownerLaterWonRes = await markOutcome(ownerCookie, laterRound.id, { outcome: 'won' });
-    assert.equal(ownerLaterWonRes.statusCode, 200);
-    assert.equal(ownerLaterWonRes.jsonBody().proposal.outcome.state, 'pending_won');
-    assert.equal(ownerLaterWonRes.jsonBody().proposal.outcome.actor_role, 'party_a');
-
-    const laterRoundLost = await createProposal(ownerCookie, {
-      title: 'Later Round Lost Proposal',
-      status: 'received',
-      sentAt: new Date().toISOString(),
-      receivedAt: new Date().toISOString(),
-      partyBEmail: 'recipient-rounds@example.com',
-    });
-
-    const ownerLaterLostRes = await markOutcome(ownerCookie, laterRoundLost.id, { outcome: 'lost' });
-    assert.equal(ownerLaterLostRes.statusCode, 200);
-    assert.equal(ownerLaterLostRes.jsonBody().proposal.status, 'lost');
-    assert.equal(ownerLaterLostRes.jsonBody().proposal.outcome.state, 'lost');
   });
 
   test('invalid outcome errors use product-facing agreement language', async () => {
@@ -345,7 +336,7 @@ if (!hasDatabaseUrl()) {
     assert.equal(invalidRes.jsonBody().error?.code, 'invalid_outcome');
     assert.equal(
       invalidRes.jsonBody().error?.message,
-      'Use Request Agreement, Confirm Agreement, or Lost.',
+      'Use Request Agreement, Confirm Agreement, Continue Negotiating, or Lost.',
     );
   });
 
@@ -461,7 +452,9 @@ if (!hasDatabaseUrl()) {
       assert.equal(pendingWonRes.jsonBody().proposal.outcome.requested_by, 'party_b');
       assert.equal(pendingWonRes.jsonBody().proposal.outcome.requested_by_current_user, true);
       assert.equal(pendingWonRes.jsonBody().proposal.primary_status_label, 'Requested Agreement');
-      assert.equal(emailCapture.resendPayloads.length, 0, 'pending agreement requests must not send the finalized-agreement email');
+      assert.equal(emailCapture.resendPayloads.length, 1, 'pending agreement requests should send the immediate request email');
+      assert.deepEqual(emailCapture.resendPayloads[0].to, ['owner-won@example.com']);
+      assert.equal(emailCapture.resendPayloads[0].subject, 'Agreement Requested — Dual Won Proposal');
 
       const pendingSummary = await getSummary(ownerCookie);
       assert.equal(pendingSummary.wonCount, 0);
@@ -485,22 +478,22 @@ if (!hasDatabaseUrl()) {
       assert.equal(confirmWonRes.jsonBody().proposal.outcome.state, 'won');
       assert.ok(confirmWonRes.jsonBody().proposal.closed_at, 'final win should stamp closed_at');
 
-      assert.equal(emailCapture.resendPayloads.length, 1);
-      assert.deepEqual(emailCapture.resendPayloads[0].to, ['recipient-won@example.com']);
-      assert.equal(emailCapture.resendPayloads[0].subject, 'Agreement Finalized — Dual Won Proposal');
+      assert.equal(emailCapture.resendPayloads.length, 2);
+      assert.deepEqual(emailCapture.resendPayloads[1].to, ['recipient-won@example.com']);
+      assert.equal(emailCapture.resendPayloads[1].subject, 'Agreement Finalized — Dual Won Proposal');
       assert.match(
-        String(emailCapture.resendPayloads[0].text || ''),
+        String(emailCapture.resendPayloads[1].text || ''),
         /The agreement for "Dual Won Proposal" has been confirmed and finalized\./,
       );
       assert.match(
-        String(emailCapture.resendPayloads[0].text || ''),
+        String(emailCapture.resendPayloads[1].text || ''),
         /https:\/\/app\.getpremarket\.test\/ProposalDetail\?id=/,
       );
-      assert.doesNotMatch(String(emailCapture.resendPayloads[0].subject || ''), /Closed as Lost/i);
+      assert.doesNotMatch(String(emailCapture.resendPayloads[1].subject || ''), /Closed as Lost/i);
 
       const repeatConfirmRes = await markOutcome(ownerCookie, proposal.id, { outcome: 'won' });
       assert.equal(repeatConfirmRes.statusCode, 403);
-      assert.equal(emailCapture.resendPayloads.length, 1, 'repeating a finalized agreement must not resend the final email');
+      assert.equal(emailCapture.resendPayloads.length, 2, 'repeating a finalized agreement must not resend the final email');
 
       const finalSummary = await getSummary(ownerCookie);
       assert.equal(finalSummary.wonCount, 1);
@@ -598,7 +591,7 @@ if (!hasDatabaseUrl()) {
     }
   });
 
-  test('retracting a pending agreement request is no longer supported', async () => {
+  test('requester cannot use Continue Negotiating as an undo after requesting agreement', async () => {
     await ensureMigrated();
     await resetTables();
 
@@ -623,15 +616,101 @@ if (!hasDatabaseUrl()) {
       assert.equal(emailCapture.resendPayloads.length, 1);
 
       const retractRes = await markOutcome(ownerCookie, proposal.id, { action: 'continue' });
-      assert.equal(retractRes.statusCode, 400);
-      assert.equal(retractRes.jsonBody().error.code, 'unsupported_action');
-      assert.equal(
-        retractRes.jsonBody().error.message,
-        'Request Agreement now sends immediately and cannot be retracted.',
-      );
+      assert.equal(retractRes.statusCode, 403);
+      assert.equal(retractRes.jsonBody().error.code, 'outcome_not_allowed');
 
       const queueRows = await listAgreementRequestEmails(proposal.id);
       assert.equal(queueRows.length, 0);
+    } finally {
+      emailCapture.restore();
+    }
+  });
+
+  test('counterparty can continue negotiating, which clears the pending request, keeps the thread active, and notifies the requester', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = authCookie('outcome_owner_continue', 'owner-continue@example.com');
+    const recipientCookie = authCookie('outcome_recipient_continue', 'recipient-continue@example.com');
+    await touchUser(recipientCookie);
+
+    const proposal = await createProposal(ownerCookie, {
+      title: 'Continue Negotiating Proposal',
+      status: 'under_verification',
+      sentAt: new Date().toISOString(),
+      partyBEmail: 'recipient-continue@example.com',
+    });
+
+    const emailCapture = captureTransactionalEmails();
+
+    try {
+      const requestRes = await markOutcome(ownerCookie, proposal.id, { outcome: 'won' });
+      assert.equal(requestRes.statusCode, 200);
+      assert.equal(requestRes.jsonBody().proposal.outcome.state, 'pending_won');
+      assert.equal(requestRes.jsonBody().proposal.primary_status_label, 'Requested Agreement');
+      assert.equal(emailCapture.resendPayloads.length, 1);
+
+      const pendingForRecipient = (await listProposals(recipientCookie, { tab: 'inbox', limit: '20' }))
+        .find((entry) => entry.id === proposal.id);
+      assert.ok(pendingForRecipient, 'recipient should see the pending request in Inbox');
+      assert.equal(pendingForRecipient.outcome.requested_by_counterparty, true);
+      assert.equal(pendingForRecipient.outcome.can_mark_won, true);
+      assert.equal(pendingForRecipient.outcome.can_continue_negotiating, true);
+
+      const continueRes = await markOutcome(recipientCookie, proposal.id, {
+        action: 'continue_negotiating',
+      });
+      assert.equal(continueRes.statusCode, 200);
+      assert.equal(continueRes.jsonBody().proposal.outcome.state, 'open');
+      assert.equal(continueRes.jsonBody().proposal.thread_bucket, 'inbox');
+      assert.equal(continueRes.jsonBody().proposal.primary_status_label, 'Waiting on Counterparty');
+      assert.equal(continueRes.jsonBody().proposal.status, 'under_verification');
+
+      const requesterInbox = await listProposals(ownerCookie, { tab: 'inbox', limit: '20' });
+      const requesterRow = requesterInbox.find((entry) => entry.id === proposal.id);
+      assert.ok(requesterRow, 'requester should still see the reopened thread in Inbox');
+      assert.equal(requesterRow.thread_bucket, 'inbox');
+      assert.equal(requesterRow.primary_status_label, 'Under Review');
+      assert.equal(requesterRow.outcome.pending, false);
+      assert.equal(requesterRow.outcome.requested_by_current_user, false);
+      assert.equal(requesterRow.outcome.requested_by_counterparty, false);
+
+      const summary = await getSummary(ownerCookie);
+      assert.equal(summary.closedCount, 0);
+      assert.equal(summary.wonCount, 0);
+      assert.equal(summary.lostCount, 0);
+
+      const requesterNotifications = await getNotifications(ownerCookie);
+      const continueNotification = requesterNotifications.find(
+        (entry) => entry.event_type === 'status_continue_negotiating',
+      );
+      assert.ok(continueNotification, 'requester should receive a continue negotiating notification');
+      assert.equal(continueNotification.title, 'Continue Negotiating');
+      assert.match(
+        String(continueNotification.message || ''),
+        /wants to continue negotiating/i,
+      );
+
+      assert.equal(emailCapture.resendPayloads.length, 2);
+      assert.deepEqual(emailCapture.resendPayloads[1].to, ['owner-continue@example.com']);
+      assert.equal(
+        emailCapture.resendPayloads[1].subject,
+        'Continue Negotiating — Continue Negotiating Proposal',
+      );
+      assert.match(
+        String(emailCapture.resendPayloads[1].text || ''),
+        /wants to continue negotiating on "Continue Negotiating Proposal" and did not confirm the agreement request\./i,
+      );
+      assert.match(
+        String(emailCapture.resendPayloads[1].text || ''),
+        /https:\/\/app\.getpremarket\.test\/ProposalDetail\?id=/,
+      );
+
+      const proposalEvents = await listProposalEvents(proposal.id);
+      assert.equal(
+        proposalEvents.some((entry) => entry.eventType === 'proposal.outcome.continue_negotiation'),
+        true,
+      );
     } finally {
       emailCapture.restore();
     }

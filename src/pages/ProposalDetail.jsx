@@ -58,8 +58,13 @@ import {
 import { buildDocumentComparisonReportHref } from '@/lib/notificationTargets';
 import {
   AGREED_LABEL,
+  CONTINUE_NEGOTIATING_LABEL,
   getAgreementActionLabel,
+  getOutcomeHelperText,
+  getOutcomeToastMessage,
+  getPendingAgreementMessage,
   getVisibleProposalStatusLabel,
+  shouldShowContinueNegotiating,
   shouldConfirmRequestAgreement,
 } from '@/lib/proposalOutcomeUi';
 import { getStarterLimitErrorCopy } from '@/lib/starterLimitErrorCopy';
@@ -572,14 +577,7 @@ export default function ProposalDetail() {
     mutationFn: (status) => proposalsClient.markOutcome(proposalId, status),
     onSuccess: async (updatedProposal) => {
       applyUpdatedProposalToCaches(queryClient, updatedProposal);
-      const outcomeState = String(updatedProposal?.outcome?.state || updatedProposal?.status || '').toLowerCase();
-      if (outcomeState === 'pending_won') {
-        toast.success('Agreement Requested');
-      } else if (String(updatedProposal?.status || '').toLowerCase() === 'won') {
-        toast.success('Marked as Agreed');
-      } else {
-        toast.success('Marked as Lost');
-      }
+      toast.success(getOutcomeToastMessage(updatedProposal));
       await invalidateProposalThreadQueries(queryClient, {
         proposalId,
         documentComparisonId: updatedProposal?.document_comparison_id || proposal?.document_comparison_id || null,
@@ -697,11 +695,8 @@ export default function ProposalDetail() {
   const deleteDialogDescription = proposal.sent_at
     ? 'This will hide the opportunity from your workspace only. It will remain available to the counterparty and stay intact for shared history.'
     : 'This will permanently delete this unsent draft and any linked draft-only comparison data. This action cannot be undone.';
-  const pendingOutcomeMessage = outcome.requested_by_counterparty
-    ? 'The counterparty requested agreement on this proposal. Confirm the agreement or mark it lost.'
-    : outcome.requested_by_current_user
-      ? `You requested agreement on this proposal. It becomes ${AGREED_LABEL.toLowerCase()} only after the counterparty confirms the agreement.`
-      : '';
+  const pendingOutcomeMessage = getPendingAgreementMessage(outcome, 'proposal');
+  const outcomeHelperText = getOutcomeHelperText(outcome, 'proposal');
   const primaryStatusKey = asLower(proposal.primary_status_key || proposal.status);
   const primaryStatusLabel = asText(proposal.primary_status_label) || getStatusLabel(primaryStatusKey);
 
@@ -722,6 +717,9 @@ export default function ProposalDetail() {
   const handleRequestAgreementConfirm = () => {
     setRequestAgreementDialogOpen(false);
     markOutcomeMutation.mutate('won');
+  };
+  const handleContinueNegotiating = () => {
+    markOutcomeMutation.mutate('continue_negotiating');
   };
 
   return (
@@ -885,7 +883,8 @@ export default function ProposalDetail() {
                 ) : null}
 
                 <TooltipProvider>
-                  <div className="flex flex-wrap items-center gap-3">
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap items-center gap-3">
                     {isClosed ? (
                       <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg font-semibold text-sm border ${isWon ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-600 border-rose-200'}`}>
                         {isWon ? <CheckCircle2 className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
@@ -914,6 +913,21 @@ export default function ProposalDetail() {
                           <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />
                           {getAgreementActionLabel(outcome)}
                         </OutcomeActionButton>
+                        {shouldShowContinueNegotiating(outcome) ? (
+                          <OutcomeActionButton
+                            size="sm"
+                            variant="outline"
+                            className="border-slate-200 text-slate-700 hover:bg-slate-50"
+                            disabled={outcomeActionDisabled || !outcome.can_continue_negotiating}
+                            tooltip={
+                              outcome.eligibility_reason_continue_negotiating || outcome.eligibility_reason
+                            }
+                            onClick={handleContinueNegotiating}
+                          >
+                            <ArrowRight className="w-3.5 h-3.5 mr-1.5" />
+                            {CONTINUE_NEGOTIATING_LABEL}
+                          </OutcomeActionButton>
+                        ) : null}
                         <OutcomeActionButton
                           size="sm"
                           variant="outline"
@@ -926,6 +940,10 @@ export default function ProposalDetail() {
                           Mark as Lost
                         </OutcomeActionButton>
                       </>
+                    ) : null}
+                    </div>
+                    {outcomeHelperText ? (
+                      <p className="text-sm text-slate-500">{outcomeHelperText}</p>
                     ) : null}
                   </div>
                 </TooltipProvider>

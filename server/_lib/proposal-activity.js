@@ -103,8 +103,8 @@ function mapEventTypeToActivity(row, accessMode) {
       return {
         kind: 'clock',
         tone: 'warning',
-        title: 'Continue Negotiation',
-        description: buildDescription(actorLabel, 'reopened the live opportunity for another round.'),
+        title: 'Continued Negotiating',
+        description: buildDescription(actorLabel, 'chose to continue negotiating.'),
       };
     case 'proposal.outcome.won_confirmed':
       return {

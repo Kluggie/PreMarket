@@ -21,6 +21,7 @@ const EVENT_SETTING_KEY = {
   mutual_interest: 'email_reveals',
   status_won: 'email_proposals',
   status_lost: 'email_proposals',
+  status_continue_negotiating: 'email_proposals',
 } as const;
 
 const EVENT_EMAIL_CATEGORY = {
@@ -30,6 +31,7 @@ const EVENT_EMAIL_CATEGORY = {
   mutual_interest: 'mutual_interest',
   status_won: 'shared_link_activity',
   status_lost: 'shared_link_activity',
+  status_continue_negotiating: 'shared_link_activity',
 } as const;
 
 function toBoolean(value: unknown) {

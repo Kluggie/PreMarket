@@ -17,7 +17,11 @@ import {
 } from '@/lib/proposalThreadCache';
 import { formatRecipientLabel, PRIVATE_SENDER_LABEL } from '@/lib/recipientUtils';
 import {
+  CONTINUE_NEGOTIATING_LABEL,
   getAgreementActionLabel,
+  getOutcomeHelperText,
+  getOutcomeToastMessage,
+  shouldShowContinueNegotiating,
   shouldConfirmRequestAgreement,
 } from '@/lib/proposalOutcomeUi';
 import { buildCompactProposalSubtitle } from '@/lib/proposalThreadContextUi';
@@ -353,17 +357,11 @@ function ProposalRow({
   const canArchive = Boolean(outcome.actor_role);
   const wonActionDisabled =
     actionsDisabled || !outcome.can_mark_won || Boolean(outcome.requested_by_current_user);
+  const continueNegotiatingActionDisabled =
+    actionsDisabled || !outcome.can_continue_negotiating;
   const lostActionDisabled = actionsDisabled || !outcome.can_mark_lost;
   const rowSubtitle = buildCompactProposalSubtitle(proposal);
-  const helperText = outcome.requested_by_current_user
-    ? 'Waiting for the counterparty to confirm the agreement.'
-    : outcome.requested_by_counterparty
-      ? 'The counterparty requested agreement on this proposal.'
-      : (!outcome.can_mark_won
-          ? (outcome.eligibility_reason_won || outcome.eligibility_reason)
-          : !outcome.can_mark_lost
-            ? (outcome.eligibility_reason_lost || outcome.eligibility_reason)
-            : null);
+  const helperText = getOutcomeHelperText(outcome, 'proposal');
   const deleteCopy = getDeleteCopy(proposal);
   const handleAgreementAction = () => {
     if (shouldConfirmRequestAgreement(outcome)) {
@@ -379,6 +377,11 @@ function ProposalRow({
     setRequestAgreementDialogOpen(false);
     if (onMarkOutcome) {
       onMarkOutcome(proposal, 'won');
+    }
+  };
+  const handleContinueNegotiating = () => {
+    if (onMarkOutcome) {
+      onMarkOutcome(proposal, 'continue_negotiating');
     }
   };
 
@@ -456,6 +459,16 @@ function ProposalRow({
                     <CheckCircle2 className="w-4 h-4" />
                     {getAgreementActionLabel(outcome)}
                   </DropdownMenuItem>
+                  {shouldShowContinueNegotiating(outcome) ? (
+                    <DropdownMenuItem
+                      disabled={continueNegotiatingActionDisabled}
+                      onSelect={handleContinueNegotiating}
+                      className="gap-2"
+                    >
+                      <Send className="w-4 h-4" />
+                      {CONTINUE_NEGOTIATING_LABEL}
+                    </DropdownMenuItem>
+                  ) : null}
                   <DropdownMenuItem
                     disabled={lostActionDisabled}
                     onSelect={() => onMarkOutcome && onMarkOutcome(proposal, 'lost')}
@@ -648,14 +661,7 @@ export default function Proposals() {
     mutationFn: ({ proposal, outcome }) => proposalsClient.markOutcome(proposal.id, outcome),
     onSuccess: async (updatedProposal, variables) => {
       applyUpdatedProposalToCaches(queryClient, updatedProposal);
-      const outcomeState = String(updatedProposal?.outcome?.state || updatedProposal?.status || '').toLowerCase();
-      if (outcomeState === 'pending_won') {
-        toast.success('Agreement Requested');
-      } else if (String(updatedProposal?.status || '').toLowerCase() === 'won') {
-        toast.success('Marked as Agreed');
-      } else {
-        toast.success('Marked as Lost');
-      }
+      toast.success(getOutcomeToastMessage(updatedProposal));
       await invalidateProposalThreadQueries(queryClient, {
         proposalId: variables?.proposal?.id,
         documentComparisonId:

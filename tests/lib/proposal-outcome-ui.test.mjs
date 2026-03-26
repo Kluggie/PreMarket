@@ -4,10 +4,15 @@ import {
   AGREED_LABEL,
   AGREEMENT_REQUESTED_LABEL,
   CONFIRM_AGREEMENT_LABEL,
+  CONTINUE_NEGOTIATING_LABEL,
   REQUEST_AGREEMENT_LABEL,
   getAgreementActionLabel,
+  getOutcomeHelperText,
+  getOutcomeToastMessage,
+  getPendingAgreementMessage,
   getPendingAgreementBadgeLabel,
   getVisibleProposalStatusLabel,
+  shouldShowContinueNegotiating,
   shouldConfirmRequestAgreement,
 } from '../../src/lib/proposalOutcomeUi.js';
 
@@ -18,6 +23,14 @@ test('agreement wording uses agreed for final state and never shows won for pend
   assert.equal(getAgreementActionLabel({ requested_by_counterparty: false }), REQUEST_AGREEMENT_LABEL);
   assert.equal(getAgreementActionLabel({ requested_by_counterparty: true }), CONFIRM_AGREEMENT_LABEL);
   assert.equal(
+    shouldShowContinueNegotiating({ requested_by_counterparty: true }),
+    true,
+  );
+  assert.equal(
+    shouldShowContinueNegotiating({ requested_by_counterparty: false }),
+    false,
+  );
+  assert.equal(
     shouldConfirmRequestAgreement({ requested_by_counterparty: false }),
     true,
   );
@@ -25,11 +38,24 @@ test('agreement wording uses agreed for final state and never shows won for pend
     shouldConfirmRequestAgreement({ requested_by_counterparty: true }),
     false,
   );
+  assert.match(
+    getPendingAgreementMessage({ requested_by_counterparty: true }, 'opportunity'),
+    /continue negotiating/i,
+  );
+  assert.match(
+    getOutcomeHelperText({ requested_by_current_user: true }, 'proposal'),
+    /Waiting for the counterparty to confirm the agreement\./,
+  );
+  assert.equal(
+    getOutcomeToastMessage({ outcome: { state: 'open' } }),
+    'Continued Negotiating',
+  );
 
   const visibleLabels = [
     AGREED_LABEL,
     AGREEMENT_REQUESTED_LABEL,
     CONFIRM_AGREEMENT_LABEL,
+    CONTINUE_NEGOTIATING_LABEL,
     REQUEST_AGREEMENT_LABEL,
   ];
   visibleLabels.forEach((label) => {

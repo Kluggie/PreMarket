@@ -172,6 +172,10 @@ export const proposalsClient = {
     return response.proposal || null;
   },
 
+  async continueNegotiating(id) {
+    return this.markOutcome(id, 'continue_negotiating');
+  },
+
   async close(id, status) {
     return this.markOutcome(id, status);
   },

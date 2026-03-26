@@ -69,8 +69,12 @@ import {
   MEDIATION_REVIEW_LABEL,
 } from '@/lib/aiReportUtils';
 import {
+  CONTINUE_NEGOTIATING_LABEL,
   getAgreementActionLabel,
+  getOutcomeHelperText,
+  getOutcomeToastMessage,
   shouldConfirmRequestAgreement,
+  shouldShowContinueNegotiating,
 } from '@/lib/proposalOutcomeUi';
 import {
   AlertTriangle,
@@ -1205,14 +1209,7 @@ export default function SharedReport() {
       proposalsClient.markOutcome(asText(parent?.proposal_id), nextOutcome),
     onSuccess: async (updatedProposal) => {
       applyUpdatedProposalToCaches(queryClient, updatedProposal);
-      const nextState = asText(updatedProposal?.outcome?.state || updatedProposal?.status).toLowerCase();
-      if (nextState === 'pending_won') {
-        toast.success('Agreement Requested');
-      } else if (nextState === 'won') {
-        toast.success('Marked as Agreed');
-      } else {
-        toast.success('Marked as Lost');
-      }
+      toast.success(getOutcomeToastMessage(updatedProposal));
       await workspaceQuery.refetch();
       await invalidateProposalThreadQueries(queryClient, {
         proposalId: asText(parent?.proposal_id),
@@ -1274,17 +1271,7 @@ export default function SharedReport() {
   });
   const parentIsClosed = parentOutcomeState === 'won' || parentOutcomeState === 'lost';
   const outcomeActionDisabled = markOutcomeMutation.isPending;
-  const outcomeHelperText = parentOutcome?.requested_by_current_user
-    ? 'Waiting for the counterparty to confirm the agreement.'
-    : parentOutcome?.requested_by_counterparty
-      ? 'The counterparty requested agreement on this opportunity.'
-      : asText(
-          (!parentOutcome?.can_mark_won
-            ? parentOutcome?.eligibility_reason_won || parentOutcome?.eligibility_reason
-            : !parentOutcome?.can_mark_lost
-              ? parentOutcome?.eligibility_reason_lost || parentOutcome?.eligibility_reason
-              : ''),
-        );
+  const outcomeHelperText = getOutcomeHelperText(parentOutcome, 'opportunity');
 
   const step0DownloadActions = [
     {
@@ -1316,6 +1303,9 @@ export default function SharedReport() {
     setRequestAgreementDialogOpen(false);
     markOutcomeMutation.mutate('won');
   };
+  const handleContinueNegotiating = () => {
+    markOutcomeMutation.mutate('continue_negotiating');
+  };
   const step0StatusActions = canUpdateOutcomeFromStep0 && !parentIsClosed
     ? [
         {
@@ -1330,6 +1320,21 @@ export default function SharedReport() {
           variant: 'default',
           className: 'bg-emerald-600 hover:bg-emerald-700',
         },
+        ...(shouldShowContinueNegotiating(parentOutcome)
+          ? [
+              {
+                key: 'continue-negotiating',
+                label: CONTINUE_NEGOTIATING_LABEL,
+                onClick: handleContinueNegotiating,
+                disabled:
+                  outcomeActionDisabled ||
+                  !parentOutcome?.can_continue_negotiating,
+                icon: ArrowRight,
+                variant: 'outline',
+                className: 'border-slate-200 text-slate-700 hover:bg-slate-50',
+              },
+            ]
+          : []),
         {
           key: 'mark-lost',
           label: 'Mark as Lost',

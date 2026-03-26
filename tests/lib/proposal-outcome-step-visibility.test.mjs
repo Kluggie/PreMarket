@@ -24,6 +24,7 @@ test('proposal detail keeps outcome actions on the overview shell and out of the
 
   assert.match(reportTab, /Outcome row/);
   assert.match(reportTab, /getAgreementActionLabel\(outcome\)/);
+  assert.match(reportTab, /CONTINUE_NEGOTIATING_LABEL/);
   assert.match(reportTab, /Mark as Lost/);
   assert.match(proposalDetail, /RequestAgreementConfirmDialog/);
   assert.match(proposalDetail, /shouldConfirmRequestAgreement\(outcome\)/);
@@ -58,6 +59,7 @@ test('shared report step 0 keeps opportunity closure controls on the overview sh
 
   assert.match(sharedReport, /STEP 0 — Baseline overview/);
   assert.match(sharedReport, /getAgreementActionLabel\(parentOutcome\)/);
+  assert.match(sharedReport, /CONTINUE_NEGOTIATING_LABEL/);
   assert.match(sharedReport, /Mark as Lost/);
   assert.match(sharedReport, /RequestAgreementConfirmDialog/);
   assert.match(sharedReport, /shouldConfirmRequestAgreement\(parentOutcome\)/);
@@ -67,10 +69,10 @@ test('document comparison detail keeps agreement controls on the overview shell 
   const comparisonDetail = readRepoFile('src/pages/DocumentComparisonDetail.jsx');
 
   assert.match(comparisonDetail, /getAgreementActionLabel\(proposalOutcome\)/);
+  assert.match(comparisonDetail, /CONTINUE_NEGOTIATING_LABEL/);
   assert.match(comparisonDetail, /Mark as Lost/);
   assert.match(comparisonDetail, /RequestAgreementConfirmDialog/);
   assert.match(comparisonDetail, /shouldConfirmRequestAgreement\(proposalOutcome\)/);
-  assert.doesNotMatch(comparisonDetail, /Continue Negotiating/);
 });
 
 test('proposal list row menu keeps proposal-level outcome actions', () => {
@@ -78,6 +80,7 @@ test('proposal list row menu keeps proposal-level outcome actions', () => {
 
   assert.match(proposalsPage, /<DropdownMenuContent align="end" className="w-56">/);
   assert.match(proposalsPage, /getAgreementActionLabel\(outcome\)/);
+  assert.match(proposalsPage, /CONTINUE_NEGOTIATING_LABEL/);
   assert.match(proposalsPage, /Mark as Lost/);
   assert.match(proposalsPage, /RequestAgreementConfirmDialog/);
   assert.match(proposalsPage, /shouldConfirmRequestAgreement\(outcome\)/);

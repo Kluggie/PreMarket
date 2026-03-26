@@ -132,3 +132,59 @@ test('thread context uses canonical exchange count override when provided', () =
   );
   assert.equal(threadState.exchangeCount, 7);
 });
+
+test('clearing a pending agreement request returns the thread to active review state', () => {
+  const proposal = {
+    id: 'proposal_thread_continue_negotiating',
+    userId: 'owner_user',
+    status: 'under_verification',
+    sentAt: '2026-03-19T08:00:00.000Z',
+    createdAt: '2026-03-19T08:00:00.000Z',
+    updatedAt: '2026-03-19T08:20:00.000Z',
+    lastThreadActivityAt: '2026-03-19T08:20:00.000Z',
+    lastThreadActorRole: 'party_b',
+    lastThreadActivityType: 'proposal.outcome.continue_negotiation',
+    partyAEmail: 'owner@example.com',
+    partyBEmail: 'counterparty@example.com',
+  };
+
+  const ownerView = getProposalThreadState(
+    proposal,
+    { id: 'owner_user', email: 'owner@example.com' },
+    {
+      actorRole: 'party_a',
+      outcome: {
+        actor_role: 'party_a',
+        state: 'open',
+        final_status: null,
+        pending: false,
+        requested_by_current_user: false,
+        requested_by_counterparty: false,
+      },
+    },
+  );
+  assert.equal(ownerView.bucket, 'inbox');
+  assert.equal(ownerView.isClosed, false);
+  assert.equal(ownerView.primaryStatusKey, 'under_review');
+  assert.equal(ownerView.primaryStatusLabel, 'Under Review');
+
+  const counterpartyView = getProposalThreadState(
+    proposal,
+    { id: 'counterparty_user', email: 'counterparty@example.com' },
+    {
+      actorRole: 'party_b',
+      outcome: {
+        actor_role: 'party_b',
+        state: 'open',
+        final_status: null,
+        pending: false,
+        requested_by_current_user: false,
+        requested_by_counterparty: false,
+      },
+    },
+  );
+  assert.equal(counterpartyView.bucket, 'inbox');
+  assert.equal(counterpartyView.isClosed, false);
+  assert.equal(counterpartyView.primaryStatusKey, 'waiting_on_counterparty');
+  assert.equal(counterpartyView.primaryStatusLabel, 'Waiting on Counterparty');
+});

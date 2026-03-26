@@ -47,7 +47,12 @@ import {
 import { toast } from 'sonner';
 import {
   AGREED_LABEL,
+  CONTINUE_NEGOTIATING_LABEL,
   getAgreementActionLabel,
+  getOutcomeHelperText,
+  getOutcomeToastMessage,
+  getPendingAgreementMessage,
+  shouldShowContinueNegotiating,
   shouldConfirmRequestAgreement,
 } from '@/lib/proposalOutcomeUi';
 
@@ -656,22 +661,8 @@ export default function DocumentComparisonDetail() {
   const primaryStatusKey = asLower(proposalThread?.primary_status_key || proposalThread?.status);
   const primaryStatusLabel = asText(proposalThread?.primary_status_label) || 'Active';
   const baseOutcomeActionDisabled = proposalDetailQuery.isLoading;
-  const pendingOutcomeMessage = proposalOutcome.requested_by_counterparty
-    ? 'The counterparty requested agreement on this opportunity. Confirm the agreement or mark it lost.'
-    : proposalOutcome.requested_by_current_user
-      ? `You requested agreement on this opportunity. It becomes ${AGREED_LABEL.toLowerCase()} only after the counterparty confirms the agreement.`
-      : '';
-  const outcomeHelperText = proposalOutcome.requested_by_current_user
-    ? 'Waiting for the counterparty to confirm the agreement.'
-    : proposalOutcome.requested_by_counterparty
-      ? 'The counterparty requested agreement on this opportunity.'
-      : asText(
-          (!proposalOutcome?.can_mark_won
-            ? proposalOutcome?.eligibility_reason_won || proposalOutcome?.eligibility_reason
-            : !proposalOutcome?.can_mark_lost
-              ? proposalOutcome?.eligibility_reason_lost || proposalOutcome?.eligibility_reason
-              : ''),
-        );
+  const pendingOutcomeMessage = getPendingAgreementMessage(proposalOutcome, 'opportunity');
+  const outcomeHelperText = getOutcomeHelperText(proposalOutcome, 'opportunity');
 
   useEffect(() => {
     if (!comparisonId) {
@@ -718,14 +709,7 @@ export default function DocumentComparisonDetail() {
     mutationFn: (nextOutcome) => proposalsClient.markOutcome(asText(proposalThread?.id), nextOutcome),
     onSuccess: async (updatedProposal) => {
       applyUpdatedProposalToCaches(queryClient, updatedProposal);
-      const outcomeState = asLower(updatedProposal?.outcome?.state || updatedProposal?.status);
-      if (outcomeState === 'pending_won') {
-        toast.success('Agreement Requested');
-      } else if (asLower(updatedProposal?.status) === 'won') {
-        toast.success('Marked as Agreed');
-      } else {
-        toast.success('Marked as Lost');
-      }
+      toast.success(getOutcomeToastMessage(updatedProposal));
       await invalidateProposalThreadQueries(queryClient, {
         proposalId: updatedProposal?.id || proposalThread?.id || null,
         documentComparisonId: updatedProposal?.document_comparison_id || comparisonId || null,
@@ -1004,6 +988,9 @@ export default function DocumentComparisonDetail() {
     setRequestAgreementDialogOpen(false);
     markOutcomeMutation.mutate('won');
   };
+  const handleContinueNegotiating = () => {
+    markOutcomeMutation.mutate('continue_negotiating');
+  };
 
   return (
     <div className="min-h-screen bg-slate-50 py-6">
@@ -1130,6 +1117,20 @@ export default function DocumentComparisonDetail() {
                       <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />
                       {getAgreementActionLabel(proposalOutcome)}
                     </Button>
+                    {shouldShowContinueNegotiating(proposalOutcome) ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="border-slate-200 text-slate-700 hover:bg-slate-50"
+                        disabled={
+                          outcomeActionDisabled || !proposalOutcome?.can_continue_negotiating
+                        }
+                        onClick={handleContinueNegotiating}
+                      >
+                        <Send className="w-3.5 h-3.5 mr-1.5" />
+                        {CONTINUE_NEGOTIATING_LABEL}
+                      </Button>
+                    ) : null}
                     <Button
                       size="sm"
                       variant="outline"
