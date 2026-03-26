@@ -517,7 +517,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         const { heading: parsedHeading, body: parsedBody } = parseV2WhyEntry(entry);
         const rawHeading = parsedHeading || 'Analysis';
         const body = parsedBody || entry;
-        const spec = lookupSection(rawHeading) || {
+        const spec: SectionSpec = lookupSection(rawHeading) || {
           level: 2,
           displayHeading: rawHeading || 'Analysis',
           group: 'Decision Assessment',

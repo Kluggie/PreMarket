@@ -26,7 +26,7 @@ async function getRecipientAuthorizationSchemaStatus(db: any) {
   const availableColumns = new Set(
     (columnRows?.rows || []).map((row: any) => String(row?.column_name || '').trim().toLowerCase()),
   );
-  const missing = REQUIRED_SHARED_LINK_COLUMNS.filter((columnName) => !availableColumns.has(columnName));
+  const missing: string[] = REQUIRED_SHARED_LINK_COLUMNS.filter((columnName) => !availableColumns.has(columnName));
 
   const tableRows = await db.execute(sql`
     select exists(

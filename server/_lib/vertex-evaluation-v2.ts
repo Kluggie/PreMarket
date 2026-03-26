@@ -279,6 +279,8 @@ export interface VertexEvaluationV2Internal {
     /** Whether the regenerated result was used. */
     applied: boolean;
   };
+  /** Raw quality score assessed before post-processing (0–1). */
+  raw_quality_score?: number;
 }
 
 export interface VertexEvaluationV2Result {
@@ -290,6 +292,8 @@ export interface VertexEvaluationV2Result {
   generation_model?: string;
   /** Server-side only. Do not forward to clients. */
   _internal?: VertexEvaluationV2Internal;
+  /** Never set on success — exists only to allow safe union-wide access. */
+  error?: undefined;
 }
 
 export interface VertexEvaluationV2Failure {

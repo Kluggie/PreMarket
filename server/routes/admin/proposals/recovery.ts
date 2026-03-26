@@ -21,7 +21,7 @@ function requireAdmin(auth) {
   }
 }
 
-function readLookupFilters(source = {}) {
+function readLookupFilters(source: Record<string, unknown> = {}) {
   return {
     proposalId: String(source.proposalId || source.proposal_id || '').trim(),
     email: String(source.email || '').trim(),

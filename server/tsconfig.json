@@ -7,5 +7,6 @@
     "noImplicitAny": false,
     "skipLibCheck": true,
     "esModuleInterop": true
-  }
+  },
+  "exclude": ["**/*.backup.ts"]
 }

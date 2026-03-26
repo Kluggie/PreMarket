@@ -240,7 +240,20 @@ function buildEvaluationInputTrace(params: {
   confidentialText: string;
   sharedText: string;
   inputVersion: number | null;
-}) {
+}): {
+  comparison_id: string;
+  source: 'db' | 'request_body';
+  confidential_length: number;
+  shared_length: number;
+  confidential_words: number;
+  shared_words: number;
+  confidential_hash: string;
+  shared_hash: string;
+  input_version: number | null;
+  generated_at: string;
+  authored_shared_entries?: number;
+  authored_confidential_entries?: number;
+} {
   const confidentialText = String(params.confidentialText || '');
   const sharedText = String(params.sharedText || '');
   const inputVersion = Number(params.inputVersion);

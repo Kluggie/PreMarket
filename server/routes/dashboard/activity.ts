@@ -110,8 +110,8 @@ export default async function handler(req: any, res: any) {
         sharedReceivedProposalIds,
       }),
     }));
-    const threadByProposalId = new Map(
-      threadRows.map(({ row, threadState }) => [String(row.id || '').trim(), { row, threadState }]),
+    const threadByProposalId = new Map<string, (typeof threadRows)[number]>(
+      threadRows.map(({ row, threadState }): [string, (typeof threadRows)[number]] => [String(row.id || '').trim(), { row, threadState }]),
     );
     const visibleProposalIds = Array.from(threadByProposalId.keys()).filter(Boolean);
     const eventRows =

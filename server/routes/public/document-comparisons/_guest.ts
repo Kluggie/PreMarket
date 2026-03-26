@@ -201,8 +201,10 @@ export function resolveGuestComparisonPreviewInput(body: Record<string, unknown>
   const docBJson = toOptionalJsonObject(body.docBJson || body.doc_b_json);
   const docASource = asText(body.docASource || body.doc_a_source) || 'typed';
   const docBSource = asText(body.docBSource || body.doc_b_source) || 'typed';
-  const docAFiles = Array.isArray(body.docAFiles || body.doc_a_files) ? body.docAFiles || body.doc_a_files : [];
-  const docBFiles = Array.isArray(body.docBFiles || body.doc_b_files) ? body.docBFiles || body.doc_b_files : [];
+  const rawDocAFiles = body.docAFiles || body.doc_a_files;
+  const rawDocBFiles = body.docBFiles || body.doc_b_files;
+  const docAFiles: unknown[] = Array.isArray(rawDocAFiles) ? rawDocAFiles : [];
+  const docBFiles: unknown[] = Array.isArray(rawDocBFiles) ? rawDocBFiles : [];
   const guestDraftId = asText(body.guestDraftId || body.guest_draft_id);
   const guestSessionId = asText(body.guestSessionId || body.guest_session_id);
   const companyName = asText(body.companyName || body.company_name || body.companyContextName);
@@ -612,7 +614,7 @@ export async function runGuestEvaluationModel(params: {
     const failure = new ApiError(
       Number(details?.statusCode || details?.status || 502) || 502,
       asText(details?.code || error?.parse_error_kind || 'invalid_model_output') || 'invalid_model_output',
-      asText(error?.message) || 'Vertex returned an invalid response',
+      'Vertex returned an invalid response',
       {
         parseErrorKind: asText(error?.parse_error_kind) || null,
         reasonCode: asText(details?.code || error?.parse_error_kind) || null,
