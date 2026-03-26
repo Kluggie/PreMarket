@@ -6,7 +6,10 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import ProposalsChart from '@/components/dashboard/ProposalsChart';
-import { buildDocumentComparisonReportHref } from '@/lib/notificationTargets';
+import {
+  buildDocumentComparisonOpportunityHref,
+  buildSharedReportHref,
+} from '@/lib/notificationTargets';
 import { formatRecipientShort } from '@/lib/recipientUtils';
 import { buildCompactProposalSubtitle } from '@/lib/proposalThreadContextUi';
 import {
@@ -356,39 +359,20 @@ export default function Dashboard() {
       return;
     }
 
-    if (proposal.shared_report_token) {
-      navigate(createPageUrl(`shared-report/${encodeURIComponent(proposal.shared_report_token)}`));
-      return;
-    }
-
     if (
       String(proposal.proposal_type || '').toLowerCase() === 'document_comparison' &&
       proposal.document_comparison_id
     ) {
-      const resumeStep = Number(proposal.resume_step || proposal.draft_step || 1);
-      const normalizedResumeStep = Number.isFinite(resumeStep)
-        ? Math.max(1, Math.min(3, Math.floor(resumeStep)))
-        : 1;
+      const resumeHref = buildDocumentComparisonOpportunityHref(proposal);
 
-      if (normalizedResumeStep >= 3) {
-        navigate(buildDocumentComparisonReportHref(proposal.document_comparison_id));
+      if (resumeHref) {
+        navigate(resumeHref);
         return;
       }
+    }
 
-      if (proposal.thread_bucket === 'drafts' || (proposal.list_type || '').toLowerCase() === 'draft') {
-        navigate(
-          createPageUrl(
-            `DocumentComparisonCreate?draft=${encodeURIComponent(
-              proposal.document_comparison_id,
-            )}&proposalId=${encodeURIComponent(proposal.id)}&step=${encodeURIComponent(
-              normalizedResumeStep,
-            )}`,
-          ),
-        );
-        return;
-      }
-
-      navigate(createPageUrl(`DocumentComparisonDetail?id=${encodeURIComponent(proposal.document_comparison_id)}`));
+    if (proposal.shared_report_token) {
+      navigate(buildSharedReportHref(proposal.shared_report_token));
       return;
     }
 

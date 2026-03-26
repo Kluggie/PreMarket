@@ -4,6 +4,7 @@ import { eq } from 'drizzle-orm';
 import documentComparisonsHandler from '../../server/routes/document-comparisons/index.ts';
 import documentComparisonsEvaluateHandler from '../../server/routes/document-comparisons/[id]/evaluate.ts';
 import proposalOutcomeHandler from '../../server/routes/proposals/[id]/outcome.ts';
+import sharedReportsHandler from '../../server/routes/shared-reports/index.ts';
 import notificationsHandler from '../../server/routes/notifications/index.ts';
 import notificationByIdHandler from '../../server/routes/notifications/[id].ts';
 import { createNotificationEvent } from '../../server/_lib/notifications.ts';
@@ -12,7 +13,7 @@ import { ensureTestEnv, makeSessionCookie } from '../helpers/auth.mjs';
 import { ensureMigrated, getDb, hasDatabaseUrl, resetTables } from '../helpers/db.mjs';
 import { createMockReq, createMockRes } from '../helpers/httpMock.mjs';
 import {
-  buildDocumentComparisonReportHref,
+  buildDocumentComparisonNotificationHref,
   buildLegacyOpportunityNotificationHref,
 } from '../../src/lib/notificationTargets.js';
 
@@ -76,6 +77,26 @@ async function evaluateComparison(cookie, comparisonId) {
   return res.jsonBody();
 }
 
+async function createSharedReport(cookie, comparisonId, recipientEmail) {
+  const res = await callHandler(sharedReportsHandler, {
+    method: 'POST',
+    url: '/api/sharedReports',
+    headers: { cookie },
+    body: {
+      comparisonId,
+      recipientEmail,
+      canEdit: true,
+      canEditConfidential: true,
+      canReevaluate: true,
+      canSendBack: true,
+      maxUses: 25,
+    },
+  });
+
+  assert.equal(res.statusCode, 201);
+  return res.jsonBody();
+}
+
 async function listNotifications(cookie) {
   const res = await callHandler(notificationsHandler, {
     method: 'GET',
@@ -107,7 +128,7 @@ async function requestAgreement(cookie, proposalId) {
 if (!hasDatabaseUrl()) {
   test('notification routing integration (skipped: DATABASE_URL missing)', { skip: true }, () => {});
 } else {
-  test('document-comparison review notifications resolve to the canonical comparison report route and preserve read state behavior', async () => {
+  test('document-comparison review notifications resolve to the true shared-report Step 0 route and preserve read state behavior', async () => {
     await ensureMigrated();
     await resetTables();
 
@@ -117,6 +138,11 @@ if (!hasDatabaseUrl()) {
     const comparison = await createComparison(ownerCookie);
     const proposalId = comparison.proposal_id;
     assert.ok(proposalId, 'comparison should stay linked to a proposal');
+    const sharedReport = await createSharedReport(
+      ownerCookie,
+      comparison.id,
+      'notification-route-review-recipient@example.com',
+    );
 
     await evaluateComparison(ownerCookie, comparison.id);
 
@@ -128,16 +154,17 @@ if (!hasDatabaseUrl()) {
     assert.ok(notification, 'expected an AI mediation review notification');
     assert.equal(
       notification.action_url,
-      buildDocumentComparisonReportHref(comparison.id),
+      buildDocumentComparisonNotificationHref(sharedReport.token),
     );
     assert.equal(
       notification.target?.href,
-      buildDocumentComparisonReportHref(comparison.id),
+      buildDocumentComparisonNotificationHref(sharedReport.token),
     );
-    assert.equal(notification.target?.route, 'DocumentComparisonDetail');
-    assert.equal(notification.target?.tab, 'report');
+    assert.equal(notification.target?.route, 'SharedReport');
+    assert.equal(notification.target?.tab, null);
     assert.equal(notification.target?.comparison_id, comparison.id);
     assert.equal(notification.target?.proposal_id, proposalId);
+    assert.equal(notification.target?.shared_report_token, sharedReport.token);
     assert.equal(
       notification.target?.legacy_href,
       buildLegacyOpportunityNotificationHref({ proposalId }),
@@ -163,7 +190,7 @@ if (!hasDatabaseUrl()) {
     assert.equal(readNotification.read, true);
     assert.equal(
       readNotification.action_url,
-      buildDocumentComparisonReportHref(comparison.id),
+      buildDocumentComparisonNotificationHref(sharedReport.token),
     );
   });
 
@@ -195,7 +222,7 @@ if (!hasDatabaseUrl()) {
     assert.equal(notification.target?.is_legacy_fallback, true);
   });
 
-  test('request-agreement notifications for document comparisons resolve to the canonical comparison report route', async () => {
+  test('request-agreement notifications for document comparisons resolve to the true shared-report Step 0 route', async () => {
     await ensureMigrated();
     await resetTables();
 
@@ -209,6 +236,11 @@ if (!hasDatabaseUrl()) {
     });
     const proposalId = comparison.proposal_id;
     assert.ok(proposalId, 'comparison should stay linked to a proposal');
+    const sharedReport = await createSharedReport(
+      ownerCookie,
+      comparison.id,
+      'notification-route-agreement-recipient@example.com',
+    );
 
     const now = new Date();
     await getDb()
@@ -234,16 +266,17 @@ if (!hasDatabaseUrl()) {
     assert.ok(notification, 'expected an agreement-request notification');
     assert.equal(
       notification.action_url,
-      buildDocumentComparisonReportHref(comparison.id),
+      buildDocumentComparisonNotificationHref(sharedReport.token),
     );
     assert.equal(
       notification.target?.href,
-      buildDocumentComparisonReportHref(comparison.id),
+      buildDocumentComparisonNotificationHref(sharedReport.token),
     );
-    assert.equal(notification.target?.route, 'DocumentComparisonDetail');
-    assert.equal(notification.target?.tab, 'report');
+    assert.equal(notification.target?.route, 'SharedReport');
+    assert.equal(notification.target?.tab, null);
     assert.equal(notification.target?.comparison_id, comparison.id);
     assert.equal(notification.target?.proposal_id, proposalId);
+    assert.equal(notification.target?.shared_report_token, sharedReport.token);
     assert.equal(
       notification.target?.legacy_href,
       buildLegacyOpportunityNotificationHref({ proposalId }),

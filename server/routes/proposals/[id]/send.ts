@@ -16,6 +16,11 @@ import {
 } from '../../../_lib/proposal-thread-activity.js';
 import { assertProposalOpenForNegotiation, buildPendingWonReset } from '../../../_lib/proposal-outcomes.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
+import {
+  buildLegacyOpportunityNotificationHref,
+  buildNotificationTargetMetadata,
+  buildSharedReportHref,
+} from '../../../../src/lib/notificationTargets.js';
 
 function getProposalId(req: any, proposalIdParam?: string) {
   if (proposalIdParam && proposalIdParam.trim().length > 0) {
@@ -493,6 +498,12 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
           .limit(1);
 
         if (recipientUser && recipientUser.id !== auth.user.id) {
+          const isDocumentComparisonNotification =
+            asText(updatedProposal.proposalType).toLowerCase() === 'document_comparison' &&
+            Boolean(createdSharedLink?.token);
+          const legacyActionUrl = buildLegacyOpportunityNotificationHref({
+            proposalId: updatedProposal.id,
+          });
           await createNotificationEvent({
             db,
             userId: recipientUser.id,
@@ -504,7 +515,20 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
             message: isPrivateMode
               ? `You received a private opportunity on PreMarket: "${updatedProposal.title || 'an opportunity'}".`
               : `${auth.user.email} sent you "${updatedProposal.title || 'an opportunity'}".`,
-            actionUrl: `/ProposalDetail?id=${encodeURIComponent(updatedProposal.id)}`,
+            actionUrl: isDocumentComparisonNotification
+              ? buildSharedReportHref(createdSharedLink?.token) || legacyActionUrl
+              : legacyActionUrl,
+            metadata: isDocumentComparisonNotification
+              ? buildNotificationTargetMetadata({
+                  route: 'SharedReport',
+                  workflowType: 'document_comparison',
+                  entityType: 'document_comparison',
+                  comparisonId: updatedProposal.documentComparisonId || null,
+                  proposalId: updatedProposal.id,
+                  sharedReportToken: createdSharedLink?.token || null,
+                  legacyActionUrl,
+                })
+              : null,
             emailSubject: isPrivateMode
               ? 'You received a private opportunity on PreMarket'
               : 'New opportunity received on PreMarket',

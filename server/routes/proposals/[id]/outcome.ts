@@ -11,11 +11,12 @@ import {
   buildAgreementRequestActionUrl,
   buildAgreementRequestEmailContent,
   buildAgreementRequestEmailDedupeKey,
+  resolveLatestActiveSharedReportLink,
   resolveAgreementCounterpartyTarget,
 } from '../../../_lib/proposal-agreement-request-emails.js';
 import { buildProposalHistoryQueries } from '../../../_lib/proposal-history.js';
 import {
-  buildDocumentComparisonReportHref,
+  buildSharedReportHref,
   buildLegacyOpportunityNotificationHref,
   buildNotificationTargetMetadata,
 } from '../../../../src/lib/notificationTargets.js';
@@ -378,20 +379,24 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
     const isComparisonNotification =
       asLower(updated.proposalType || existing.proposalType) === 'document_comparison' &&
       Boolean(comparisonId);
+    const latestSharedReportLink = isComparisonNotification
+      ? await resolveLatestActiveSharedReportLink(db, updated.id)
+      : null;
+    const sharedReportToken = asText(latestSharedReportLink?.token);
     const legacyActionUrl = buildLegacyOpportunityNotificationHref({
       proposalId: updated.id,
     });
     const actionUrl = isComparisonNotification
-      ? buildDocumentComparisonReportHref(comparisonId) || legacyActionUrl
+      ? buildSharedReportHref(sharedReportToken) || legacyActionUrl
       : legacyActionUrl || `/ProposalDetail?id=${encodeURIComponent(updated.id)}`;
-    const notificationMetadata = isComparisonNotification
+    const notificationMetadata = isComparisonNotification && sharedReportToken
       ? buildNotificationTargetMetadata({
-          route: 'DocumentComparisonDetail',
-          tab: 'report',
+          route: 'SharedReport',
           workflowType: 'document_comparison',
           entityType: 'document_comparison',
           comparisonId,
           proposalId: updated.id,
+          sharedReportToken,
           legacyActionUrl,
         })
       : null;
@@ -440,7 +445,13 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         });
       }
     } else if (nextOutcome.state === PROPOSAL_OUTCOME_PENDING_WON) {
-      const emailContent = buildAgreementRequestEmailContent(updated, actorRole);
+      const emailContent = buildAgreementRequestEmailContent(
+        {
+          ...updated,
+          sharedReportToken,
+        },
+        actorRole,
+      );
       const agreementRequestDedupeKey =
         buildAgreementRequestEmailDedupeKey({
           proposalId: updated.id,

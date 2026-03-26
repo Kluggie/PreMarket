@@ -5,6 +5,7 @@ import { getDb, schema } from '../../../_lib/db/client.js';
 import { ApiError } from '../../../_lib/errors.js';
 import { newId } from '../../../_lib/ids.js';
 import { createNotificationEvent } from '../../../_lib/notifications.js';
+import { resolveLatestActiveSharedReportLink } from '../../../_lib/proposal-agreement-request-emails.js';
 import { buildProposalHistoryQueries } from '../../../_lib/proposal-history.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 import {
@@ -16,7 +17,7 @@ import { selectRelevantDocuments } from '../../../_lib/user-documents-context.js
 import { assertStarterAiEvaluationAllowed } from '../../../_lib/starter-entitlements.js';
 import { buildStoredV2Evaluation } from '../../document-comparisons/_helpers.js';
 import {
-  buildDocumentComparisonReportHref,
+  buildSharedReportHref,
   buildLegacyOpportunityNotificationHref,
   buildNotificationTargetMetadata,
 } from '../../../../src/lib/notificationTargets.js';
@@ -665,11 +666,15 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
       const comparisonId = asText(linkedComparison?.id || proposal.documentComparisonId);
       const isComparisonNotification =
         asLower(proposal.proposalType) === 'document_comparison' && Boolean(comparisonId);
+      const latestSharedReportLink = isComparisonNotification
+        ? await resolveLatestActiveSharedReportLink(db, proposal.id)
+        : null;
+      const sharedReportToken = asText(latestSharedReportLink?.token);
       const legacyActionUrl = buildLegacyOpportunityNotificationHref({
         proposalId: proposal.id,
       });
       const canonicalActionUrl = isComparisonNotification
-        ? buildDocumentComparisonReportHref(comparisonId)
+        ? buildSharedReportHref(sharedReportToken)
         : null;
 
       await createNotificationEvent({
@@ -682,14 +687,14 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         title: 'AI mediation review ready',
         message: `An AI mediation review is ready for "${proposal.title || 'your proposal'}".`,
         actionUrl: canonicalActionUrl || legacyActionUrl,
-        metadata: isComparisonNotification
+        metadata: isComparisonNotification && sharedReportToken
           ? buildNotificationTargetMetadata({
-              route: 'DocumentComparisonDetail',
-              tab: 'report',
+              route: 'SharedReport',
               workflowType: 'document_comparison',
               entityType: 'document_comparison',
               comparisonId,
               proposalId: proposal.id,
+              sharedReportToken,
               legacyActionUrl,
             })
           : null,

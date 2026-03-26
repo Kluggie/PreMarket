@@ -322,86 +322,187 @@ function buildDocumentComparisonDetailHref({ comparisonId, tab } = {}) {
   return `/DocumentComparisonDetail?${params.toString()}`;
 }
 
+function buildDocumentComparisonEditorHref({ comparisonId, proposalId, step } = {}) {
+  const normalizedComparisonId = String(comparisonId || '').trim();
+  if (!normalizedComparisonId) return null;
+  const params = new URLSearchParams();
+  params.set('draft', normalizedComparisonId);
+  if (proposalId) params.set('proposalId', String(proposalId));
+  params.set('step', String(step || 1));
+  return `/DocumentComparisonCreate?${params.toString()}`;
+}
+
 function buildDocumentComparisonReportHref(comparisonId) {
   return buildDocumentComparisonDetailHref({ comparisonId, tab: 'report' });
 }
 
-test('buildDocumentComparisonReportHref returns a valid absolute path', () => {
-  const href = buildDocumentComparisonReportHref('comparison_abc123');
+function buildSharedReportHref(sharedReportToken) {
+  return `/shared-report/${encodeURIComponent(String(sharedReportToken || '').trim())}`;
+}
+
+function buildDocumentComparisonNotificationHref(sharedReportToken) {
+  return buildSharedReportHref(sharedReportToken);
+}
+
+function buildDocumentComparisonResumeHref({ comparisonId, proposalId, resumeStep } = {}) {
+  const normalizedStep = Math.max(1, Math.min(3, Math.floor(Number(resumeStep || 1))));
+  if (normalizedStep >= 3) {
+    return buildDocumentComparisonReportHref(comparisonId);
+  }
+  return buildDocumentComparisonEditorHref({ comparisonId, proposalId, step: normalizedStep });
+}
+
+function buildDocumentComparisonOpportunityHref(proposal = {}) {
+  const actorRole = String(proposal?.outcome?.actor_role || '').trim().toLowerCase();
+  const listType = String(proposal?.list_type || '').trim().toLowerCase();
+  const sharedReportToken = String(proposal?.shared_report_token || '').trim();
+  if (sharedReportToken && (actorRole === 'party_b' || listType === 'received')) {
+    return buildSharedReportHref(sharedReportToken);
+  }
+  return buildDocumentComparisonResumeHref({
+    comparisonId: proposal.document_comparison_id,
+    proposalId: proposal.id,
+    resumeStep: proposal.resume_step || proposal.draft_step || 1,
+  });
+}
+
+test('buildDocumentComparisonNotificationHref returns the true Step 0 shared-report path', () => {
+  const href = buildDocumentComparisonNotificationHref('shared_report_abc123');
   assert.ok(href, 'must return a non-null value');
   assert.ok(href.startsWith('/'), 'must start with /');
-  assert.ok(href.includes('DocumentComparisonDetail'), 'must contain route name');
-  assert.ok(href.includes('id=comparison_abc123'), 'must include comparison id');
-  assert.ok(href.includes('tab=report'), 'must include tab=report');
+  assert.ok(href.includes('/shared-report/'), 'must contain shared-report route');
+  assert.ok(href.includes('shared_report_abc123'), 'must include shared report token');
   // Must NOT start with // (double slash caused by createPageUrl wrapping)
   assert.ok(!href.startsWith('//'), 'must not start with double slash');
 });
 
-test('createPageUrl wrapping buildDocumentComparisonReportHref produces a broken double-slash URL', () => {
+test('createPageUrl wrapping buildDocumentComparisonNotificationHref produces a broken double-slash URL', () => {
   // This documents the bug that was fixed: wrapping an already-absolute path
-  // in createPageUrl prepends / again, producing //DocumentComparisonDetail?...
-  const href = buildDocumentComparisonReportHref('comparison_abc123');
+  // in createPageUrl prepends / again, producing //shared-report/...
+  const href = buildDocumentComparisonNotificationHref('shared_report_abc123');
   const wrapped = createPageUrl(href);
   assert.ok(wrapped.startsWith('//'), 'wrapping confirms the double-slash bug');
   assert.ok(!href.startsWith('//'), 'the original href is correct without wrapping');
 });
 
-test('Proposals.jsx uses navigate(buildDocumentComparisonReportHref(...)) without createPageUrl wrapper', () => {
+test('buildDocumentComparisonResumeHref reopens editor steps for in-progress document comparisons', () => {
+  const href = buildDocumentComparisonResumeHref({
+    comparisonId: 'comparison_resume_step2',
+    proposalId: 'proposal_resume_step2',
+    resumeStep: 2,
+  });
+
+  assert.equal(
+    href,
+    '/DocumentComparisonCreate?draft=comparison_resume_step2&proposalId=proposal_resume_step2&step=2',
+  );
+});
+
+test('buildDocumentComparisonResumeHref returns the report resume surface for later-stage document comparisons', () => {
+  const href = buildDocumentComparisonResumeHref({
+    comparisonId: 'comparison_resume_step3',
+    proposalId: 'proposal_resume_step3',
+    resumeStep: 3,
+  });
+
+  assert.equal(href, '/DocumentComparisonDetail?id=comparison_resume_step3&tab=report');
+});
+
+test('buildDocumentComparisonOpportunityHref reopens owner-side opportunities at the saved editor step even when a shared-report token exists', () => {
+  const href = buildDocumentComparisonOpportunityHref({
+    id: 'proposal_owner_resume',
+    document_comparison_id: 'comparison_owner_resume',
+    resume_step: 2,
+    shared_report_token: 'shared_report_owner_resume',
+    outcome: { actor_role: 'party_a' },
+    list_type: 'sent',
+  });
+
+  assert.equal(
+    href,
+    '/DocumentComparisonCreate?draft=comparison_owner_resume&proposalId=proposal_owner_resume&step=2',
+  );
+});
+
+test('buildDocumentComparisonOpportunityHref reopens recipient-side opportunities in the shared-report workspace so their saved shared-report step can hydrate', () => {
+  const href = buildDocumentComparisonOpportunityHref({
+    id: 'proposal_recipient_resume',
+    document_comparison_id: 'comparison_recipient_resume',
+    resume_step: 2,
+    shared_report_token: 'shared_report_recipient_resume',
+    outcome: { actor_role: 'party_b' },
+    list_type: 'received',
+  });
+
+  assert.equal(href, '/shared-report/shared_report_recipient_resume');
+});
+
+test('Proposals.jsx uses navigate(buildDocumentComparisonOpportunityHref(...)) without createPageUrl wrapper', () => {
   const proposalsCode = readRepoFile('src/pages/Proposals.jsx');
 
   // The correct pattern: navigate directly with the already-absolute href
   assert.match(
     proposalsCode,
-    /navigate\s*\(\s*buildDocumentComparisonReportHref\s*\(/,
-    'must call navigate(buildDocumentComparisonReportHref(...)) directly',
+    /navigate\s*\(\s*resumeHref\s*\)/,
+    'must navigate directly with the shared resume href',
+  );
+  assert.match(
+    proposalsCode,
+    /buildDocumentComparisonOpportunityHref\s*\(/,
+    'must build a document-comparison opportunity href for row-open navigation',
   );
 
-  // Must NOT have createPageUrl wrapping buildDocumentComparisonReportHref
+  // Must NOT wrap the already-absolute href in createPageUrl
   assert.doesNotMatch(
     proposalsCode,
-    /createPageUrl\s*\(\s*buildDocumentComparisonReportHref/,
-    'must not wrap buildDocumentComparisonReportHref in createPageUrl',
+    /createPageUrl\s*\(\s*resumeHref/,
+    'must not wrap the resume href in createPageUrl',
   );
 });
 
-test('Dashboard.jsx uses navigate(buildDocumentComparisonReportHref(...)) without createPageUrl wrapper', () => {
+test('Dashboard.jsx uses navigate(buildDocumentComparisonOpportunityHref(...)) without createPageUrl wrapper', () => {
   const dashboardCode = readRepoFile('src/pages/Dashboard.jsx');
 
   // The correct pattern: navigate directly with the already-absolute href
   assert.match(
     dashboardCode,
-    /navigate\s*\(\s*buildDocumentComparisonReportHref\s*\(/,
-    'must call navigate(buildDocumentComparisonReportHref(...)) directly',
+    /navigate\s*\(\s*resumeHref\s*\)/,
+    'must navigate directly with the shared resume href',
+  );
+  assert.match(
+    dashboardCode,
+    /buildDocumentComparisonOpportunityHref\s*\(/,
+    'must build a document-comparison opportunity href for dashboard-open navigation',
   );
 
-  // Must NOT have createPageUrl wrapping buildDocumentComparisonReportHref
+  // Must NOT wrap the already-absolute href in createPageUrl
   assert.doesNotMatch(
     dashboardCode,
-    /createPageUrl\s*\(\s*buildDocumentComparisonReportHref/,
-    'must not wrap buildDocumentComparisonReportHref in createPageUrl',
+    /createPageUrl\s*\(\s*resumeHref/,
+    'must not wrap the resume href in createPageUrl',
   );
 });
 
-test('forked opportunity row for recipient A navigates to its own comparison detail', () => {
-  const comparisonIdA = 'comparison_alice_fork';
-  const hrefA = buildDocumentComparisonReportHref(comparisonIdA);
-  assert.equal(hrefA, `/DocumentComparisonDetail?id=${encodeURIComponent(comparisonIdA)}&tab=report`);
-  assert.ok(hrefA.startsWith('/DocumentComparisonDetail'), 'correct route for A');
+test('forked opportunity row for recipient A notification navigates to its own shared-report token', () => {
+  const tokenA = 'token_alice_fork';
+  const hrefA = buildDocumentComparisonNotificationHref(tokenA);
+  assert.equal(hrefA, `/shared-report/${encodeURIComponent(tokenA)}`);
+  assert.ok(hrefA.startsWith('/shared-report/'), 'correct route for A');
   assert.ok(!hrefA.startsWith('//'), 'no double slash for A');
 });
 
-test('forked opportunity row for recipient B navigates to its own comparison detail', () => {
-  const comparisonIdB = 'comparison_bob_fork';
-  const hrefB = buildDocumentComparisonReportHref(comparisonIdB);
-  assert.equal(hrefB, `/DocumentComparisonDetail?id=${encodeURIComponent(comparisonIdB)}&tab=report`);
-  assert.ok(hrefB.startsWith('/DocumentComparisonDetail'), 'correct route for B');
+test('forked opportunity row for recipient B notification navigates to its own shared-report token', () => {
+  const tokenB = 'token_bob_fork';
+  const hrefB = buildDocumentComparisonNotificationHref(tokenB);
+  assert.equal(hrefB, `/shared-report/${encodeURIComponent(tokenB)}`);
+  assert.ok(hrefB.startsWith('/shared-report/'), 'correct route for B');
   assert.ok(!hrefB.startsWith('//'), 'no double slash for B');
 });
 
-test('both forked recipient rows navigate to different comparison detail URLs', () => {
-  const hrefA = buildDocumentComparisonReportHref('comparison_alice_fork');
-  const hrefB = buildDocumentComparisonReportHref('comparison_bob_fork');
+test('both forked recipient notifications navigate to different shared-report URLs', () => {
+  const hrefA = buildDocumentComparisonNotificationHref('token_alice_fork');
+  const hrefB = buildDocumentComparisonNotificationHref('token_bob_fork');
   assert.notEqual(hrefA, hrefB, 'each recipient must navigate to a different URL');
-  assert.ok(hrefA.includes('comparison_alice_fork'));
-  assert.ok(hrefB.includes('comparison_bob_fork'));
+  assert.ok(hrefA.includes('token_alice_fork'));
+  assert.ok(hrefB.includes('token_bob_fork'));
 });

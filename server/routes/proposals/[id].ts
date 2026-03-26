@@ -6,6 +6,7 @@ import { getDatabaseIdentitySnapshot, getDb, schema } from '../../_lib/db/client
 import { ApiError } from '../../_lib/errors.js';
 import { readJsonBody } from '../../_lib/http.js';
 import { createNotificationEvent } from '../../_lib/notifications.js';
+import { resolveLatestActiveSharedReportLink } from '../../_lib/proposal-agreement-request-emails.js';
 import {
   buildProposalHistoryQueries,
   getDocumentComparisonSnapshotFromVersion,
@@ -28,6 +29,11 @@ import {
   shouldMaskPrivateSender,
 } from '../../_lib/private-mode.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
+import {
+  buildLegacyOpportunityNotificationHref,
+  buildNotificationTargetMetadata,
+  buildSharedReportHref,
+} from '../../../src/lib/notificationTargets.js';
 
 function getProposalId(req: any, proposalIdParam?: string) {
   if (proposalIdParam && proposalIdParam.trim().length > 0) {
@@ -684,6 +690,15 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
       const eventConfig = eventMap[nextStatus as keyof typeof eventMap];
       if (eventConfig) {
         try {
+          const isDocumentComparisonNotification =
+            asText(updated.proposalType).toLowerCase() === 'document_comparison';
+          const latestSharedReportLink = isDocumentComparisonNotification
+            ? await resolveLatestActiveSharedReportLink(db, updated.id)
+            : null;
+          const sharedReportToken = asText(latestSharedReportLink?.token);
+          const legacyActionUrl = buildLegacyOpportunityNotificationHref({
+            proposalId: updated.id,
+          });
           await createNotificationEvent({
             db,
             userId: updated.userId,
@@ -693,7 +708,20 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
             dedupeKey: `proposal:${updated.id}:event:${eventConfig.eventType}:status:${nextStatus}`,
             title: eventConfig.title,
             message: eventConfig.message,
-            actionUrl: `/ProposalDetail?id=${encodeURIComponent(updated.id)}`,
+            actionUrl: isDocumentComparisonNotification
+              ? buildSharedReportHref(sharedReportToken) || legacyActionUrl
+              : legacyActionUrl,
+            metadata: isDocumentComparisonNotification && sharedReportToken
+              ? buildNotificationTargetMetadata({
+                  route: 'SharedReport',
+                  workflowType: 'document_comparison',
+                  entityType: 'document_comparison',
+                  comparisonId: updated.documentComparisonId || null,
+                  proposalId: updated.id,
+                  sharedReportToken,
+                  legacyActionUrl,
+                })
+              : null,
             emailSubject: eventConfig.emailSubject,
             emailText: [
               eventConfig.message,

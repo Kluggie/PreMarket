@@ -1,4 +1,4 @@
-import { desc, eq, ilike } from 'drizzle-orm';
+import { and, desc, eq, ilike } from 'drizzle-orm';
 import { schema } from './db/client.js';
 import { toCanonicalAppUrl } from './env.js';
 import {
@@ -7,7 +7,10 @@ import {
   PROPOSAL_PARTY_A,
   PROPOSAL_PARTY_B,
 } from './proposal-outcomes.js';
-import { buildDocumentComparisonReportHref } from '../../src/lib/notificationTargets.js';
+import {
+  buildDocumentComparisonReportHref,
+  buildSharedReportHref,
+} from '../../src/lib/notificationTargets.js';
 
 function asText(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -55,15 +58,48 @@ export function buildAgreementRequestActionUrl(proposalOrId) {
   const comparisonId = asText(
     proposal?.documentComparisonId || proposal?.document_comparison_id || '',
   );
+  const sharedReportToken = asText(
+    proposal?.sharedReportToken || proposal?.shared_report_token || '',
+  );
   const proposalType = asLower(proposal?.proposalType || proposal?.proposal_type || '');
   const comparisonHref =
-    proposalType === 'document_comparison' && comparisonId
-      ? buildDocumentComparisonReportHref(comparisonId)
+    proposalType === 'document_comparison' && sharedReportToken
+      ? buildSharedReportHref(sharedReportToken)
+      : proposalType === 'document_comparison' && comparisonId
+        ? buildDocumentComparisonReportHref(comparisonId)
       : '';
   const returnPath =
     comparisonHref || `/ProposalDetail?id=${encodeURIComponent(normalizedProposalId)}`;
   const appBaseUrl = asText(process.env.APP_BASE_URL);
   return appBaseUrl ? toCanonicalAppUrl(appBaseUrl, returnPath) : returnPath;
+}
+
+export async function resolveLatestActiveSharedReportLink(db, proposalId) {
+  const normalizedProposalId = asText(proposalId);
+  if (!normalizedProposalId) {
+    return null;
+  }
+
+  const [latestActiveLink] = await db
+    .select({
+      id: schema.sharedLinks.id,
+      token: schema.sharedLinks.token,
+      status: schema.sharedLinks.status,
+      createdAt: schema.sharedLinks.createdAt,
+      updatedAt: schema.sharedLinks.updatedAt,
+    })
+    .from(schema.sharedLinks)
+    .where(
+      and(
+        eq(schema.sharedLinks.proposalId, normalizedProposalId),
+        eq(schema.sharedLinks.mode, 'shared_report'),
+        eq(schema.sharedLinks.status, 'active'),
+      ),
+    )
+    .orderBy(desc(schema.sharedLinks.updatedAt), desc(schema.sharedLinks.createdAt))
+    .limit(1);
+
+  return latestActiveLink || null;
 }
 
 function getAgreementRequestActorLabel(requestedByRole) {

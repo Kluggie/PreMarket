@@ -26,19 +26,21 @@ function parseCookie(rawCookie) {
   };
 }
 
+function buildSessionCookie(userId) {
+  return makeSessionCookie({
+    sub: userId,
+    email: `${userId}@example.com`,
+    name: 'Playwright User',
+  });
+}
+
 function readDraftIdFromUrl(url) {
   const parsed = new URL(url);
   return parsed.searchParams.get('draft') || '';
 }
 
 async function authenticate(page, userId) {
-  const cookie = parseCookie(
-    makeSessionCookie({
-      sub: userId,
-      email: `${userId}@example.com`,
-      name: 'Playwright User',
-    }),
-  );
+  const cookie = parseCookie(buildSessionCookie(userId));
 
   await page.context().addCookies([
     {
@@ -49,6 +51,26 @@ async function authenticate(page, userId) {
       sameSite: 'Lax',
     },
   ]);
+}
+
+async function createSharedReportLink(request, ownerCookie, comparisonId, recipientEmail) {
+  const response = await request.post(`${BASE_URL}/api/sharedReports`, {
+    headers: {
+      cookie: ownerCookie,
+    },
+    data: {
+      comparisonId,
+      recipientEmail,
+      canEdit: true,
+      canEditConfidential: true,
+      canReevaluate: true,
+      canSendBack: true,
+      maxUses: 25,
+    },
+  });
+
+  expect(response.status()).toBe(201);
+  return await response.json();
 }
 
 async function openStep2FromStep1(page, title) {
@@ -260,6 +282,101 @@ test.describe('Document Comparison Draft Persistence', () => {
       waitUntil: 'domcontentloaded',
     });
     await expect(page.locator('[data-testid="doc-a-editor"]')).toContainText(persistedText, {
+      timeout: STEP_LOAD_TIMEOUT_MS,
+    });
+  });
+
+  test('opening from Proposals resumes the saved Step 2 editor for document-comparison drafts', async ({ page }) => {
+    await authenticate(page, uniqueId('resume_step2_list'));
+    const title = `Resume Step 2 ${uniqueId('title')}`;
+    const persistedText = `STEP2_${uniqueId('persisted')}`;
+
+    await openStep2FromStep1(page, title);
+    await typeInEditor(page, '[data-testid="doc-a-editor"]', persistedText);
+
+    const saveResponsePromise = page.waitForResponse(
+      (response) =>
+        response.url().includes('/api/document-comparisons/') &&
+        response.request().method() === 'PATCH' &&
+        response.status() === 200,
+      { timeout: SAVE_RESPONSE_TIMEOUT_MS },
+    );
+    await page.getByRole('button', { name: 'Save Draft' }).click();
+    await saveResponsePromise;
+
+    const draftId = readDraftIdFromUrl(page.url());
+    expect(draftId).toBeTruthy();
+
+    await page.goto(`${BASE_URL}/Proposals?tab=drafts`, { waitUntil: 'domcontentloaded' });
+    await expect(page.getByText(title)).toBeVisible({ timeout: STEP_LOAD_TIMEOUT_MS });
+    await page.getByText(title).click();
+
+    await expect(page).toHaveURL(
+      new RegExp(`/DocumentComparisonCreate\\?draft=${encodeURIComponent(draftId)}.*step=2`),
+      { timeout: STEP_LOAD_TIMEOUT_MS },
+    );
+    await expect(page.locator('[data-testid="doc-a-editor"]')).toContainText(persistedText, {
+      timeout: STEP_LOAD_TIMEOUT_MS,
+    });
+  });
+
+  test('notification-style Step 0 shared-report entry preserves saved Step 2 work and restores it when editing resumes', async ({ page, request }) => {
+    const ownerId = uniqueId('notification_step0');
+    const ownerCookie = buildSessionCookie(ownerId);
+    await authenticate(page, ownerId);
+    const title = `Notification Step 0 ${uniqueId('title')}`;
+    const confidentialText = `CONF_${uniqueId('step0_conf')}`;
+    const sharedText = `SHARED_${uniqueId('step0_shared')}`;
+
+    await openStep2FromStep1(page, title);
+    await typeInEditor(page, '[data-testid="doc-a-editor"]', confidentialText);
+    await typeInEditor(page, '[data-testid="doc-b-editor"]', sharedText);
+
+    const saveResponsePromise = page.waitForResponse(
+      (response) =>
+        response.url().includes('/api/document-comparisons/') &&
+        response.request().method() === 'PATCH' &&
+        response.status() === 200,
+      { timeout: SAVE_RESPONSE_TIMEOUT_MS },
+    );
+    await page.getByRole('button', { name: 'Save Draft' }).click();
+    await saveResponsePromise;
+
+    const draftId = readDraftIdFromUrl(page.url());
+    expect(draftId).toBeTruthy();
+    const sharedReport = await createSharedReportLink(
+      request,
+      ownerCookie,
+      draftId,
+      `${uniqueId('notification_step0_recipient')}@example.com`,
+    );
+    expect(sharedReport.token).toBeTruthy();
+
+    await page.goto(
+      `${BASE_URL}/shared-report/${encodeURIComponent(sharedReport.token)}`,
+      { waitUntil: 'domcontentloaded' },
+    );
+    await expect(page).toHaveURL(
+      new RegExp(`/shared-report/${encodeURIComponent(sharedReport.token)}`),
+      {
+        timeout: STEP_LOAD_TIMEOUT_MS,
+      },
+    );
+    await expect(page.getByRole('button', { name: /Edit Opportunity|Verify access to continue/i })).toBeVisible({
+      timeout: STEP_LOAD_TIMEOUT_MS,
+    });
+
+    await page.goto(`${BASE_URL}/Proposals?tab=drafts`, { waitUntil: 'domcontentloaded' });
+    await expect(page.getByText(title)).toBeVisible({ timeout: STEP_LOAD_TIMEOUT_MS });
+    await page.getByText(title).click();
+    await expect(page).toHaveURL(
+      new RegExp(`/DocumentComparisonCreate\\?draft=${encodeURIComponent(draftId)}.*step=2`),
+      { timeout: STEP_LOAD_TIMEOUT_MS },
+    );
+    await expect(page.locator('[data-testid="doc-a-editor"]')).toContainText(confidentialText, {
+      timeout: STEP_LOAD_TIMEOUT_MS,
+    });
+    await expect(page.locator('[data-testid="doc-b-editor"]')).toContainText(sharedText, {
       timeout: STEP_LOAD_TIMEOUT_MS,
     });
   });
