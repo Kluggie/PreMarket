@@ -8,8 +8,8 @@ import { preflightPromptCheck, type PreflightResult } from './evaluation-context
 const VERTEX_TIMEOUT_MS = 90_000;
 const MAX_ATTEMPTS = 2;
 const RETRY_BASE_MS = 450;
-const MAX_SHARED_CHARS = 12_000;
-const MAX_CONFIDENTIAL_CHARS = 12_000;
+const MAX_SHARED_CHARS = 16_000;
+const MAX_CONFIDENTIAL_CHARS = 16_000;
 const MAX_CHUNKS_PER_SOURCE = 30;
 const MAX_CHUNK_TEXT_CHARS = 420;
 const MIN_LEAK_PHRASE_LEN = 20;
@@ -260,6 +260,24 @@ export interface VertexEvaluationV2Internal {
     verifier_used: boolean;
     /** True when verifier threw / timed out / could not reach a verdict after escalation. */
     verifier_unavailable: boolean;
+  };
+  /** Multi-pass refinement metadata (server-side only). */
+  refinement?: {
+    /** Whether the refinement pass was attempted. */
+    attempted: boolean;
+    /** Whether refinement produced a usable improved result. */
+    applied: boolean;
+    /** Reason refinement was skipped, if applicable. */
+    skip_reason?: string;
+  };
+  /** Regeneration metadata (server-side only). */
+  regeneration?: {
+    /** Whether regeneration was triggered. */
+    triggered: boolean;
+    /** Trigger reasons. */
+    reasons: string[];
+    /** Whether the regenerated result was used. */
+    applied: boolean;
   };
 }
 
@@ -572,7 +590,7 @@ function containsAny(arr: string[], keywords: string[]): boolean {
   return keywords.some((kw) => lower.some((s) => s.includes(kw)));
 }
 
-const WHY_MAX_CHARS_STANDARD = 4200;
+const WHY_MAX_CHARS_STANDARD = 5800;
 const WHY_MAX_CHARS_TIGHT = 2600;
 const MISSING_MIN_ITEMS = 6;
 const MISSING_MAX_ITEMS = 10;
@@ -1659,7 +1677,14 @@ function sanitizeNarrativeParagraph(value: string) {
   const ellipsisIndex = next.search(/(?:\.\.\.|…)/);
   if (ellipsisIndex >= 0) {
     const beforeEllipsis = next.slice(0, ellipsisIndex).trim();
-    const shortened = truncateTextAtNaturalBoundary(beforeEllipsis, beforeEllipsis.length);
+    // Ellipsis means the model truncated mid-thought. If the remaining text
+    // already ends with sentence punctuation, keep it as-is. Otherwise force
+    // truncation back to the last natural sentence/clause boundary to avoid
+    // mid-word fragments like "Conditions to proc."
+    const budget = /[.!?]$/.test(beforeEllipsis)
+      ? beforeEllipsis.length
+      : Math.max(0, beforeEllipsis.length - 1);
+    const shortened = truncateTextAtNaturalBoundary(beforeEllipsis, budget);
     if (shortened) {
       next = shortened;
     } else {
@@ -4904,6 +4929,298 @@ function buildTelemetry(params: {
   };
 }
 
+// ─── Quality assessment & refinement (multi-pass + regen) ────────────────────
+
+/**
+ * Quality gate — heuristic checks on the Pass B output to detect weak,
+ * generic, or incomplete sections.
+ *
+ * Returns an array of trigger reasons. Empty array = pass is clean.
+ * This is deterministic (no model calls) and intentionally conservative:
+ * it errs on the side of flagging rather than missing genuine quality issues.
+ */
+
+const GENERIC_FILLER_PATTERNS = [
+  /\bclarity and specificity\b/i,
+  /\bdecision-ready\b/i,
+  /\bmature approach\b/i,
+  /\bthoughtfully separates\b/i,
+  /\bbroadly workable\b/i,
+  /\blooks polished\b/i,
+  /\bpresented clearly\b/i,
+  /\boverall this (?:is|looks|appears) (?:a |)(?:solid|strong|good)\b/i,
+  /\bwell-structured proposal\b/i,
+  /\bcomprehensive coverage\b/i,
+];
+
+const MIN_WHY_TOTAL_CHARS = 1200;
+const MIN_SECTION_BODY_CHARS = 80;
+const MIN_MISSING_ITEMS_QUALITY = 4;
+const MAX_GENERIC_FILLER_HITS = 3;
+
+interface QualityAssessment {
+  /** Overall score 0-1 (below 0.5 = weak). */
+  score: number;
+  /** Trigger reasons for regeneration. */
+  triggers: string[];
+  /** Specific weak section keys (for targeted refinement context). */
+  weakSections: string[];
+}
+
+function assessReportQuality(data: VertexEvaluationV2Response): QualityAssessment {
+  const triggers: string[] = [];
+  const weakSections: string[] = [];
+  let penaltyPoints = 0;
+
+  // 1. Check total why[] substance
+  const whyText = (data.why || []).join(' ');
+  const whyTotalChars = whyText.length;
+  if (whyTotalChars < MIN_WHY_TOTAL_CHARS) {
+    triggers.push(`why_too_short:${whyTotalChars}chars`);
+    penaltyPoints += 2;
+  }
+
+  // 2. Check each required section exists and has substance
+  const sections = parseWhySections(data.why || []);
+  for (const key of REQUIRED_WHY_SECTION_KEYS) {
+    const section = sections.find((s) => s.key === key);
+    if (!section) {
+      triggers.push(`missing_section:${key}`);
+      weakSections.push(key);
+      penaltyPoints += 2;
+    } else if (section.body.length < MIN_SECTION_BODY_CHARS) {
+      triggers.push(`thin_section:${key}:${section.body.length}chars`);
+      weakSections.push(key);
+      penaltyPoints += 1;
+    }
+  }
+
+  // 3. Check for excessive generic filler
+  let fillerHits = 0;
+  for (const pattern of GENERIC_FILLER_PATTERNS) {
+    if (pattern.test(whyText)) {
+      fillerHits += 1;
+    }
+  }
+  if (fillerHits >= MAX_GENERIC_FILLER_HITS) {
+    triggers.push(`excessive_filler:${fillerHits}hits`);
+    penaltyPoints += 1;
+  }
+
+  // 4. Check missing[] quality
+  const missingItems = data.missing || [];
+  if (missingItems.length < MIN_MISSING_ITEMS_QUALITY) {
+    triggers.push(`too_few_missing:${missingItems.length}`);
+    penaltyPoints += 1;
+  }
+  // Check that missing items have em-dash why clauses
+  const itemsWithoutWhy = missingItems.filter((item) => !item.includes('—') && !item.includes(' — '));
+  if (itemsWithoutWhy.length > missingItems.length * 0.5) {
+    triggers.push('missing_items_lack_why_clauses');
+    penaltyPoints += 1;
+  }
+
+  // 5. Check for malformed or incomplete sections
+  for (const section of sections) {
+    if (section.body && !/[.!?]$/.test(section.body.trim())) {
+      triggers.push(`incomplete_ending:${section.key}`);
+      weakSections.push(section.key);
+      penaltyPoints += 1;
+    }
+  }
+
+  // Score: starts at 1.0, deducted by penalties (each ~0.1)
+  const score = Math.max(0, Math.min(1, 1 - penaltyPoints * 0.1));
+
+  return { score, triggers, weakSections: [...new Set(weakSections)] };
+}
+
+/**
+ * Build a refinement prompt that takes the initial Pass B evaluation and
+ * improves its presentation quality without changing the substantive judgment.
+ *
+ * This is Pass C — a controlled polish pass. It preserves:
+ * - The same fit_level and confidence_0_1
+ * - The same factual basis and evidence
+ * - The same confidentiality constraints
+ *
+ * It improves:
+ * - Specificity and concreteness of narrative
+ * - Section completeness and structure
+ * - Removal of generic filler
+ * - Stronger top-line insights
+ * - Better tradeoff framing
+ */
+function buildRefinementPrompt(params: {
+  initialResult: VertexEvaluationV2Response;
+  factSheet: ProposalFactSheet;
+  reportStyle: ReportStyle;
+  quality: QualityAssessment;
+  convergenceDigestText?: string;
+}) {
+  const { initialResult, factSheet, reportStyle, quality } = params;
+
+  const weakSectionsList = quality.weakSections.length > 0
+    ? `WEAK SECTIONS (prioritize improving these): ${quality.weakSections.join(', ')}`
+    : 'No specific sections flagged — improve overall polish and specificity.';
+
+  const triggersList = quality.triggers.length > 0
+    ? `Quality issues detected: ${quality.triggers.join('; ')}`
+    : '';
+
+  return [
+    'SYSTEM: You are the AI Mediator for PreMarket refining a previously generated evaluation report.',
+    'Your task: improve the presentation quality and specificity of the report below WITHOUT changing its substantive conclusions.',
+    '',
+    'PRESERVATION RULES (non-negotiable):',
+    `- fit_level MUST remain: "${initialResult.fit_level}"`,
+    `- confidence_0_1 MUST remain: ${initialResult.confidence_0_1}`,
+    '- Do NOT change the overall judgment, risk assessment direction, or recommendation direction.',
+    '- Do NOT introduce new confidential information or leak confidential details.',
+    '- Do NOT add new sections or remove required sections.',
+    '- Do NOT turn the evaluator into a strategist or coach.',
+    '- Output must remain safe to share publicly and bilaterally neutral.',
+    '',
+    'CONFIDENTIALITY RULES (strictly enforced — same as initial generation):',
+    '- Never quote confidential text verbatim.',
+    '- Never disclose confidential numbers, IDs, dates, emails, pricing, or exact identifiers.',
+    '- Use only generic, safely-derived conclusions when drawing on confidential context.',
+    '',
+    'IMPROVEMENT TARGETS:',
+    `- ${weakSectionsList}`,
+    triggersList ? `- ${triggersList}` : '',
+    '- Replace generic filler ("clarity and specificity", "broadly workable", "looks polished") with concrete evidence-backed statements.',
+    '- Strengthen top-line insights in Executive Summary and Decision Assessment.',
+    '- Ensure every section has substantive, specific content grounded in the fact_sheet.',
+    '- Ensure each missing[] item has an actionable question with an em-dash why-it-matters clause.',
+    '- Improve tradeoff framing — include at least 2 explicit if/then statements.',
+    '- Ensure natural prose flow with varied sentence lengths.',
+    '- Maintain the same report style:',
+    `  Voice: ${reportStyle.style_id}, Ordering: ${reportStyle.ordering}, Verbosity: ${reportStyle.verbosity}`,
+    '',
+    'FACT SHEET (for evidence grounding — same as used in initial generation):',
+    JSON.stringify(factSheet, null, 2),
+    '',
+    params.convergenceDigestText || '',
+    '',
+    'INITIAL REPORT TO REFINE:',
+    JSON.stringify(initialResult, null, 2),
+    '',
+    'Output MUST be valid JSON only. No markdown, no backticks, no preamble.',
+    'Return the full refined report in this exact schema:',
+    JSON.stringify(
+      {
+        fit_level: 'high|medium|low|unknown',
+        confidence_0_1: 0,
+        why: ['string'],
+        missing: ['string'],
+        redactions: ['string'],
+      },
+      null,
+      2,
+    ),
+    'Return JSON only.',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+/**
+ * Attempt a single refinement pass on a completed Pass B result.
+ *
+ * Returns the refined result if successful and better, or the original
+ * result if refinement fails or produces worse output.
+ *
+ * NEVER retries — exactly one attempt. On any failure, returns original.
+ */
+async function attemptRefinementPass(params: {
+  initialResult: VertexEvaluationV2Response;
+  factSheet: ProposalFactSheet;
+  reportStyle: ReportStyle;
+  quality: QualityAssessment;
+  convergenceDigestText?: string;
+  requestId?: string;
+  inputChars: number;
+  generationModel: string;
+  callVertex: VertexCallOverride;
+  forbiddenLeakText: string;
+  sharedText: string;
+  forbiddenChunks: Array<{ evidence_id: string; text: string }>;
+  canaryTokens: string[];
+  enforceLeakGuard: boolean;
+}): Promise<{
+  result: VertexEvaluationV2Response;
+  applied: boolean;
+  skip_reason?: string;
+}> {
+  const refinementPrompt = buildRefinementPrompt({
+    initialResult: params.initialResult,
+    factSheet: params.factSheet,
+    reportStyle: params.reportStyle,
+    quality: params.quality,
+    convergenceDigestText: params.convergenceDigestText,
+  });
+
+  let vertex: VertexCallResponse;
+  try {
+    vertex = await params.callVertex({
+      prompt: refinementPrompt,
+      requestId: params.requestId ? `${params.requestId}_refine` : undefined,
+      inputChars: params.inputChars,
+      maxOutputTokens: 6144,
+      preferredModel: params.generationModel,
+    });
+  } catch {
+    return { result: params.initialResult, applied: false, skip_reason: 'refinement_call_failed' };
+  }
+
+  const rawText = String(vertex.text || '');
+  if (!rawText.trim()) {
+    return { result: params.initialResult, applied: false, skip_reason: 'refinement_empty_output' };
+  }
+
+  if (isLikelyTruncatedOutput(rawText, vertex.finishReason)) {
+    return { result: params.initialResult, applied: false, skip_reason: 'refinement_truncated' };
+  }
+
+  const extracted = parseJsonObject(rawText);
+  if (!extracted.parsed) {
+    return { result: params.initialResult, applied: false, skip_reason: 'refinement_parse_failed' };
+  }
+
+  const coerced = coerceToSmallSchema(extracted.parsed);
+  const validation = validateResponseSchema(coerced.candidate);
+  if (!validation.ok) {
+    return { result: params.initialResult, applied: false, skip_reason: 'refinement_schema_invalid' };
+  }
+
+  // Verify the refinement preserved substantive judgment
+  if (validation.normalized.fit_level !== params.initialResult.fit_level) {
+    return { result: params.initialResult, applied: false, skip_reason: 'refinement_changed_fit_level' };
+  }
+  if (Math.abs(validation.normalized.confidence_0_1 - params.initialResult.confidence_0_1) > 0.05) {
+    return { result: params.initialResult, applied: false, skip_reason: 'refinement_changed_confidence' };
+  }
+
+  // Leak check the refined output
+  if (params.enforceLeakGuard) {
+    const leak = detectConfidentialLeak({
+      response: validation.normalized,
+      forbiddenText: params.forbiddenLeakText,
+      sharedText: params.sharedText,
+      forbiddenChunks: params.forbiddenChunks,
+      canaryTokens: params.canaryTokens,
+    });
+    if (leak) {
+      return { result: params.initialResult, applied: false, skip_reason: 'refinement_leaked_confidential' };
+    }
+  }
+
+  // Structural checks passed — return for post-processing quality comparison
+  // in the caller (which applies coverage clamps symmetrically).
+  return { result: validation.normalized, applied: true };
+}
+
 export async function evaluateWithVertexV2(
   input: VertexEvaluationV2Request,
 ): Promise<VertexEvaluationV2Outcome> {
@@ -5011,7 +5328,7 @@ export async function evaluateWithVertexV2(
         prompt,
         requestId,
         inputChars,
-        maxOutputTokens: 4096,
+        maxOutputTokens: 6144,
         preferredModel: generationModel,
       });
     } catch (error: any) {
@@ -5231,14 +5548,125 @@ export async function evaluateWithVertexV2(
       (schemaValidation as any)._llmVerify = llmVerify;
     }
 
-    // ── Apply deterministic coverage clamps (post-processing) ───────────
+    // ── Quality assessment on raw Pass B output (BEFORE post-processing) ──
+    // Post-processing (coverage clamps + consistency calibration) backfills
+    // missing sections and normalizes missing[], which would mask genuine
+    // quality issues. Assess the raw model output so refinement/regen can
+    // target the real quality problems.
+    const rawQuality = assessReportQuality(schemaValidation.normalized);
+    const QUALITY_THRESHOLD = 0.5;
+    const shouldRefine = rawQuality.score < 1.0;
+    const shouldRegenerate = rawQuality.score < QUALITY_THRESHOLD;
+
+    let bestRawResult = schemaValidation.normalized;
+    let refinementMeta: { attempted: boolean; applied: boolean; skip_reason?: string } =
+      { attempted: false, applied: false };
+    let regenMeta: { triggered: boolean; reasons: string[]; applied: boolean } =
+      { triggered: false, reasons: [], applied: false };
+
+    // ── Pass C: Multi-pass refinement (when quality < 1.0) ───────────────
+    // Refines presentation quality without changing substantive judgment.
+    // Single attempt — no retries. Operates on raw output to produce a
+    // better raw result that will then go through post-processing.
+    if (shouldRefine) {
+      const refinement = await attemptRefinementPass({
+        initialResult: schemaValidation.normalized,
+        factSheet,
+        reportStyle,
+        quality: rawQuality,
+        convergenceDigestText,
+        requestId,
+        inputChars,
+        generationModel,
+        callVertex,
+        forbiddenLeakText,
+        sharedText,
+        forbiddenChunks,
+        canaryTokens: forbiddenLeakCanaryTokens,
+        enforceLeakGuard,
+      });
+      refinementMeta = {
+        attempted: true,
+        applied: false,
+        skip_reason: refinement.skip_reason,
+      };
+      if (refinement.applied) {
+        // Compare raw quality symmetrically (both pre-post-processing)
+        const refinedRawQuality = assessReportQuality(refinement.result);
+        if (refinedRawQuality.score >= rawQuality.score) {
+          bestRawResult = refinement.result;
+          refinementMeta.applied = true;
+          refinementMeta.skip_reason = undefined;
+        } else {
+          refinementMeta.skip_reason = 'refinement_quality_worse';
+        }
+      }
+    }
+
+    // ── Targeted regeneration (exactly one pass for weak output) ─────────
+    // Only triggers when raw quality score is below threshold AND
+    // refinement did not solve the issue. At most one regen attempt.
+    if (shouldRegenerate && !refinementMeta.applied) {
+      regenMeta = { triggered: true, reasons: rawQuality.triggers, applied: false };
+
+      // Regeneration: re-run Pass B once with a strengthened prompt
+      try {
+        const regenPrompt = buildEvalPromptFromFactSheet({
+          factSheet, chunks, reportStyle, convergenceDigestText,
+        });
+        const regenVertex = await callVertex({
+          prompt: regenPrompt,
+          requestId: requestId ? `${requestId}_regen` : undefined,
+          inputChars,
+          maxOutputTokens: 6144,
+          preferredModel: generationModel,
+        });
+
+        const regenRaw = String(regenVertex.text || '');
+        if (regenRaw.trim() && !isLikelyTruncatedOutput(regenRaw, regenVertex.finishReason)) {
+          const regenExtracted = parseJsonObject(regenRaw);
+          if (regenExtracted.parsed) {
+            const regenCoerced = coerceToSmallSchema(regenExtracted.parsed);
+            const regenValidation = validateResponseSchema(regenCoerced.candidate);
+            if (regenValidation.ok) {
+              // Leak check on regenerated output
+              let regenLeakSafe = true;
+              if (enforceLeakGuard) {
+                const regenLeak = detectConfidentialLeak({
+                  response: regenValidation.normalized,
+                  forbiddenText: forbiddenLeakText,
+                  sharedText,
+                  forbiddenChunks,
+                  canaryTokens: forbiddenLeakCanaryTokens,
+                });
+                if (regenLeak) regenLeakSafe = false;
+              }
+
+              if (regenLeakSafe) {
+                // Compare raw quality (both pre-post-processing)
+                const regenRawQuality = assessReportQuality(regenValidation.normalized);
+                if (regenRawQuality.score > rawQuality.score) {
+                  bestRawResult = regenValidation.normalized;
+                  regenMeta.applied = true;
+                }
+              }
+            }
+          }
+        }
+      } catch {
+        // Regen failed — keep original. No retry.
+      }
+    }
+
+    // ── Apply deterministic coverage clamps (post-processing) on winner ──
     const clamped = applyCoverageClamps({
-      data: schemaValidation.normalized,
+      data: bestRawResult,
       factSheet,
       sharedText,
       confidentialText,
       postProcessMode: 'normal',
     });
+    const finalData = clamped.data;
 
     // ── Build safe telemetry (counts/booleans/enums only) ─────────────────
     const telemetry = buildTelemetry({
@@ -5248,7 +5676,7 @@ export async function evaluateWithVertexV2(
       sharedChunks: chunks.sharedChunks,
       confidentialChunks: chunks.confidentialChunks,
       factSheet,
-      evalResult: clamped.data,
+      evalResult: finalData,
       reportStyle,
       clampsApplied: clamped.capsApplied,
     });
@@ -5260,6 +5688,14 @@ export async function evaluateWithVertexV2(
     ) {
       // eslint-disable-next-line no-console
       console.log('[eval_v2.telemetry]', JSON.stringify(telemetry));
+      if (refinementMeta.attempted) {
+        // eslint-disable-next-line no-console
+        console.log('[eval_v2.refinement]', JSON.stringify(refinementMeta));
+      }
+      if (regenMeta.triggered) {
+        // eslint-disable-next-line no-console
+        console.log('[eval_v2.regeneration]', JSON.stringify(regenMeta));
+      }
     }
 
     const llmVerify: { verdict: string; escalated: boolean } | undefined =
@@ -5267,7 +5703,7 @@ export async function evaluateWithVertexV2(
 
     return {
       ok: true,
-      data: clamped.data,
+      data: finalData,
       attempt_count: attempt,
       model: vertex.model,
       generation_model: generationModel,
@@ -5294,6 +5730,9 @@ export async function evaluateWithVertexV2(
           verifier_escalated: Boolean(llmVerify?.escalated),
           verifier_unavailable: false,
         },
+        refinement: refinementMeta,
+        regeneration: regenMeta,
+        raw_quality_score: rawQuality.score,
       },
     };
   }
@@ -5364,4 +5803,4 @@ export async function evaluateWithVertexV2(
   };
 }
 
-export { validateResponseSchema };
+export { validateResponseSchema, assessReportQuality };

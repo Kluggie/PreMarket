@@ -84,8 +84,21 @@ function evalResponse(overrides = {}) {
     text: JSON.stringify({
       fit_level: 'medium',
       confidence_0_1: 0.6,
-      why: ['Parties have aligned objectives.'],
-      missing: ['Clarify acceptance criteria.'],
+      why: [
+        'Executive Summary: The proposal covers a six-month engagement with a four-person engineering team, representing a clear commitment to delivery timelines and resource allocation that aligns with standard industry practice for projects of this scope and complexity.',
+        'Decision Assessment: Several factors affect the readiness of this deal, including the clarity of deliverables, the timeline feasibility, and the alignment between stated objectives and proposed resource allocation. Risk areas warrant attention before commitment.',
+        'Negotiation Insights: The vendor has structured their proposal with flexibility on timeline adjustments, which provides meaningful leverage for the buyer in discussions about phased delivery milestones and payment schedules.',
+        'Leverage Signals: Budget parameters and delivery expectations create natural negotiation leverage, particularly around milestone-based payment structures and performance guarantees that protect both parties.',
+        'Potential Deal Structures: Multiple viable structures exist including fixed-price with milestone payments, time-and-materials with a cap, or a hybrid approach that balances risk between the parties while maintaining delivery accountability.',
+        'Decision Readiness: The proposal contains sufficient detail for an informed decision, though several clarifying questions should be addressed before final commitment to ensure alignment on scope boundaries.',
+        'Recommended Path: Proceed with conditions — request clarification on the identified gaps, negotiate milestone-based payments, and establish clear acceptance criteria before signing.',
+      ],
+      missing: [
+        'What acceptance criteria apply to each deliverable? — determines payment trigger and quality gate.',
+        'What is the escalation path for disputes? — needed to manage risk during execution.',
+        'Who approves budget overruns beyond the stated cap? — affects negotiation ceiling.',
+        'What is the cancellation or termination clause? — determines exit cost and optionality.',
+      ],
       redactions: [],
       ...overrides,
     }),

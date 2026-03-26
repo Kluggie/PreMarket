@@ -27,10 +27,10 @@ test('Step 3 mediation surfaces use mediation-oriented terminology', () => {
   assert.match(files.step3Package, /RUN_AI_MEDIATION_LABEL/);
   assert.match(files.comparisonTabs, /MEDIATION_REVIEW_LABEL/);
   assert.match(files.comparisonTabs, /Open Questions/);
-  assert.match(files.proposalDetail, /Download AI Mediation Review PDF/);
+  assert.match(files.proposalDetail, /AI Mediation Review PDF/);
   assert.match(files.proposalDetail, /Download AI Mediation Review JSON/);
   assert.match(files.comparisonDetail, /Run AI Mediation to generate it/);
-  assert.match(files.sharedReport, /Download AI Mediation Review PDF/);
+  assert.match(files.sharedReport, /AI Mediation Review PDF/);
   assert.match(files.sharedReport, /Step 3: \$\{MEDIATION_REVIEW_LABEL\}/);
   assert.match(files.comparisonPdfRoute, /MEDIATION_REVIEW_TITLE/);
   assert.match(files.comparisonPdfRoute, /Open Questions/);

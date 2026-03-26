@@ -36,11 +36,11 @@
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 /**
- * The V2 engine truncates shared + confidential to 12 000 chars each.
+ * The V2 engine truncates shared + confidential to 16 000 chars each.
  * We budget slightly below that to leave headroom for structural markers.
  */
-export const MAX_SHARED_BUDGET = 12_000;
-export const MAX_CONFIDENTIAL_BUDGET = 12_000;
+export const MAX_SHARED_BUDGET = 16_000;
+export const MAX_CONFIDENTIAL_BUDGET = 16_000;
 
 /**
  * When the combined evaluation payload (history preamble + current text)
@@ -86,15 +86,15 @@ export const CHARS_PER_TOKEN_ESTIMATE = 4;
  * exposed for telemetry and preflight assertions downstream.
  *
  * Based on MAX_SHARED_BUDGET + MAX_CONFIDENTIAL_BUDGET + convergence digest
- * overhead ≈ 25 500 chars ≈ 6 375 tokens. We round up to 7 000 for safety.
+ * overhead ≈ 33 500 chars ≈ 8 375 tokens. We round up to 9 000 for safety.
  */
-export const SOFT_TOKEN_CEILING = 7_000;
+export const SOFT_TOKEN_CEILING = 9_000;
 
 /**
  * Hard token ceiling for the fully assembled Pass B evaluation prompt
  * (system instructions + fact sheet JSON + convergence digest + input JSON).
  *
- * Normal prompts are ~8 000–12 000 tokens. This ceiling gives ~50% headroom
+ * Normal prompts are ~10 000–16 000 tokens. This ceiling gives ~50% headroom
  * and catches runaway payloads before they reach Vertex. Set conservatively:
  * the Gemini context window is 1 M tokens, so this is a quality/cost guard,
  * not a hard limit guard.
@@ -102,7 +102,7 @@ export const SOFT_TOKEN_CEILING = 7_000;
  * If the final assembled prompt exceeds this, `preflightPromptCheck` will
  * signal that a deterministic trim pass is needed.
  */
-export const PROMPT_TOKEN_HARD_CEILING = 15_000;
+export const PROMPT_TOKEN_HARD_CEILING = 20_000;
 
 /**
  * Minimum char budget an unresolved history round will receive under

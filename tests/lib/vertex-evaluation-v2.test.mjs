@@ -6,6 +6,7 @@ import {
   validateResponseSchema,
   computeReportStyleSeed,
   selectReportStyle,
+  assessReportQuality,
 } from '../../server/_lib/vertex-evaluation-v2.ts';
 
 const require = createRequire(import.meta.url);
@@ -524,7 +525,8 @@ test('sanity: prompt encodes anti-alignment guardrail and proposal-quality objec
         httpStatus: 200,
       };
     }
-    passBPrompt = prompt;
+    // Capture the Pass B prompt (call #2); refinement/regen calls are #3+
+    if (callCount === 2) passBPrompt = prompt;
     return {
       model: 'gemini-2.0-flash-001',
       text: JSON.stringify(validPayload({ fit_level: 'medium', confidence_0_1: 0.6 })),
@@ -540,7 +542,7 @@ test('sanity: prompt encodes anti-alignment guardrail and proposal-quality objec
       requestId: 'req-sanity-prompt-1',
     });
 
-    assert.equal(callCount, 2, 'Two Vertex calls must be made (Pass A + Pass B)');
+    assert.ok(callCount >= 2, 'At least two Vertex calls must be made (Pass A + Pass B)');
 
     // Pass A prompt: structured extraction, contains the full proposal text with section labels
     assert.equal(
@@ -713,7 +715,7 @@ test('2-pass: two Vertex calls are made (Pass A fact sheet + Pass B eval)', asyn
     });
 
     assert.equal(outcome.ok, true, 'Should succeed');
-    assert.equal(calls.length, 2, 'Exactly two Vertex calls must be made');
+    assert.ok(calls.length >= 2, 'At least two Vertex calls must be made (Pass A + Pass B, plus optional refinement/regen)');
 
     // Call 1 (Pass A) must instruct fact extraction (source_coverage key present)
     assert.equal(calls[0].includes('source_coverage'), true, 'Pass A prompt must mention source_coverage');
@@ -1779,7 +1781,8 @@ test('style: report_style appears in Pass B prompt payload and _internal', async
         httpStatus: 200,
       };
     }
-    passBPrompt = prompt;
+    // Capture the Pass B prompt (call #2); refinement/regen calls are #3+
+    if (callCount === 2) passBPrompt = prompt;
     return {
       model: 'gemini-2.0-flash-001',
       text: JSON.stringify(validPayload({ fit_level: 'medium', confidence_0_1: 0.7 })),
@@ -1796,7 +1799,7 @@ test('style: report_style appears in Pass B prompt payload and _internal', async
     });
 
     assert.equal(outcome.ok, true, 'Should succeed');
-    assert.equal(callCount, 2, 'Two Vertex calls must be made');
+    assert.ok(callCount >= 2, 'At least two Vertex calls must be made (Pass A + Pass B)');
 
     // Pass B prompt must contain report_style in the INPUT JSON payload.
     assert.equal(
@@ -1855,7 +1858,7 @@ test('style: legacy optional headings are not instructed even when timeline data
           httpStatus: 200,
         };
       }
-      passBPrompt = prompt;
+      if (callCount === 2) passBPrompt = prompt;
       return {
         model: 'gemini-2.0-flash-001',
         text: JSON.stringify(validPayload({ fit_level: 'medium', confidence_0_1: 0.7 })),
@@ -1902,7 +1905,7 @@ test('style: legacy vendor-fit heading is absent while leverage headings remain'
           httpStatus: 200,
         };
       }
-      passBPrompt = prompt;
+      if (callCount === 2) passBPrompt = prompt;
       return {
         model: 'gemini-2.0-flash-001',
         text: JSON.stringify(validPayload({ fit_level: 'medium', confidence_0_1: 0.7 })),
@@ -2203,7 +2206,8 @@ test('Pass B prompt does not include shared_chunks or confidential_chunks arrays
         httpStatus: 200,
       };
     }
-    passBPrompt = params.prompt;
+    // Capture the Pass B prompt (call #2); refinement/regen calls are #3+
+    if (callCount === 2) passBPrompt = params.prompt;
     return {
       model: 'gemini-2.0-flash-001',
       text: JSON.stringify(validPayload({ fit_level: 'medium', confidence_0_1: 0.7 })),
@@ -2411,7 +2415,7 @@ test('section-safe truncation drops lower-priority content without cutting locke
 
     const whyText = outcome.data.why.join('\n');
     const totalChars = outcome.data.why.reduce((sum, entry) => sum + entry.length + 1, 0);
-    assert.equal(totalChars <= 4200, true, 'why[] must still respect the max character budget');
+    assert.equal(totalChars <= 5800, true, 'why[] must still respect the max character budget');
     assert.equal(whyText.includes('…'), false, 'truncation must drop content instead of blind character slicing');
     assert.equal(/Decision stat(?!us)/i.test(whyText), false, 'Decision status prefix must not be cut mid-label');
     assert.equal(/Recommended pat(?!h)/i.test(whyText), false, 'Recommended path prefix must not be cut mid-label');
@@ -2576,7 +2580,8 @@ test('memo-prose: Pass B prompt contains bilateral negotiator guardrails instead
         httpStatus: 200,
       };
     }
-    passBPrompt = prompt;
+    // Capture the Pass B prompt (call #2); refinement/regen calls are #3+
+    if (callCount === 2) passBPrompt = prompt;
     return {
       model: 'gemini-2.0-flash-001',
       text: JSON.stringify(validPayload({ fit_level: 'medium', confidence_0_1: 0.72 })),
@@ -2799,7 +2804,7 @@ test('memo-prose: commercial posture included in Pass B prompt when vendor_prefe
         httpStatus: 200,
       };
     }
-    passBPrompt = prompt;
+    if (callCount === 2) passBPrompt = prompt;
     return {
       model: 'gemini-2.0-flash-001',
       text: JSON.stringify(validPayload({ fit_level: 'medium', confidence_0_1: 0.68 })),
@@ -2849,7 +2854,7 @@ test('memo-prose: investment fact sheets receive fundraising-specific prompt gui
         httpStatus: 200,
       };
     }
-    passBPrompt = prompt;
+    if (callCount === 2) passBPrompt = prompt;
     return {
       model: 'gemini-2.0-flash-001',
       text: JSON.stringify(validPayload({ fit_level: 'medium', confidence_0_1: 0.66 })),
@@ -2950,6 +2955,424 @@ test('neutralizer: one-sided coaching language is rewritten into bilateral negot
       'missing[] must be rewritten as negotiation-relevant questions',
     );
   } finally {
+    cleanup();
+  }
+});
+
+// ─── Quality upgrade: larger context & output ─────────────────────────────────
+
+test('quality upgrade: MAX_SHARED_CHARS and MAX_CONFIDENTIAL_CHARS are 16000', async () => {
+  // The V2 engine now supports moderately larger context (16K per tier).
+  // Verify the engine does not reject inputs up to the new limit.
+  const factSheet = validFactSheetPayload();
+  const cleanup = setVertexV2MockSequence([
+    { response: { model: 'gemini-2.0-flash-001', text: JSON.stringify(factSheet), finishReason: 'STOP', httpStatus: 200 } },
+    { response: { model: 'gemini-2.0-flash-001', text: JSON.stringify(validPayload()), finishReason: 'STOP', httpStatus: 200 } },
+  ]);
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'A'.repeat(15000),
+      confidentialText: 'B'.repeat(15000),
+      requestId: 'req-larger-context-1',
+    });
+    assert.equal(outcome.ok, true, 'Should succeed with large inputs within the new 16K limit');
+  } finally {
+    cleanup();
+  }
+});
+
+// ─── Quality upgrade: assessReportQuality ─────────────────────────────────────
+
+test('quality gate: assessReportQuality returns score 1.0 for well-formed report', () => {
+  const wellFormed = {
+    fit_level: 'medium',
+    confidence_0_1: 0.65,
+    why: [
+      'Executive Summary: The deal structure covers scope, timeline, and delivery mechanics across the primary engagement. The proposing side and counterparty have aligned on a phased approach with named milestones.',
+      'Decision Assessment: The current terms balance risk between timeline certainty and cost management, but acceptance criteria remain open. Gap areas include delivery ownership and sign-off governance.',
+      'Negotiation Insights: The proposing side may prioritize predictable billing tied to milestones; the counterparty may prioritize delivery flexibility and the ability to refine scope after kickoff.',
+      'Leverage Signals: Timeline pressure favors the party that can offer faster mobilization. Switching costs may be moderate given the specialized domain knowledge required.',
+      'Potential Deal Structures: Option A — fixed-scope engagement with milestone-based billing. Option B — phased discovery followed by a binding statement of work.',
+      'Decision Readiness: Decision status: Proceed with conditions. Both sides need to define acceptance criteria and name dependency owners before commitment is prudent.',
+      'Recommended Path: Use a discovery-first phase to confirm scope boundaries, then formalize a binding statement of work with milestone releases.',
+    ],
+    missing: [
+      'What acceptance criteria define completion? — determines payment triggers and dispute risk.',
+      'Who owns third-party dependencies? — controls timeline and cost overrun exposure.',
+      'What change-request process applies post-signature? — determines scope flexibility versus cost certainty.',
+      'What governance structure will handle disputes? — determines escalation speed and cost.',
+    ],
+    redactions: ['Internal budget authority'],
+  };
+  const quality = assessReportQuality(wellFormed);
+  assert.equal(quality.score, 1.0, 'Well-formed report should score 1.0');
+  assert.equal(quality.triggers.length, 0, 'No quality triggers for a well-formed report');
+  assert.equal(quality.weakSections.length, 0, 'No weak sections for a well-formed report');
+});
+
+test('quality gate: assessReportQuality penalizes short why[] content', () => {
+  const thinReport = {
+    fit_level: 'medium',
+    confidence_0_1: 0.65,
+    why: ['Executive Summary: Short.', 'Decision Assessment: Brief.'],
+    missing: [
+      'Question one? — reason.',
+      'Question two? — reason.',
+      'Question three? — reason.',
+      'Question four? — reason.',
+    ],
+    redactions: [],
+  };
+  const quality = assessReportQuality(thinReport);
+  assert.ok(quality.score < 1.0, 'Thin report should score below 1.0');
+  assert.ok(quality.triggers.some((t) => t.startsWith('why_too_short')), 'Should flag why_too_short');
+});
+
+test('quality gate: assessReportQuality penalizes missing required sections', () => {
+  const incompleteReport = {
+    fit_level: 'medium',
+    confidence_0_1: 0.65,
+    why: [
+      'Executive Summary: The deal covers scope and timeline and requires further work on acceptance criteria and governance before the parties can commit safely.',
+    ],
+    missing: [
+      'Q1? — reason.',
+      'Q2? — reason.',
+      'Q3? — reason.',
+      'Q4? — reason.',
+    ],
+    redactions: [],
+  };
+  const quality = assessReportQuality(incompleteReport);
+  assert.ok(quality.score < 0.5, 'Report missing most required sections should score below 0.5');
+  assert.ok(quality.weakSections.length > 0, 'Should identify weak sections');
+  assert.ok(quality.triggers.some((t) => t.startsWith('missing_section')), 'Should trigger missing_section');
+});
+
+test('quality gate: assessReportQuality penalizes excessive generic filler', () => {
+  const fillerReport = {
+    fit_level: 'medium',
+    confidence_0_1: 0.65,
+    why: [
+      'Executive Summary: The proposal shows clarity and specificity. It is a well-structured proposal with a mature approach. The deal looks broadly workable and the documents are presented clearly.',
+      'Decision Assessment: The decision-ready qualities show good coverage overall.',
+      'Negotiation Insights: Insight text for negotiation topics.',
+      'Leverage Signals: Leverage considerations for the parties.',
+      'Potential Deal Structures: Deal structure options.',
+      'Decision Readiness: Decision status: Proceed with conditions.',
+      'Recommended Path: Recommended next step for the parties.',
+    ],
+    missing: [
+      'Q1? — reason.', 'Q2? — reason.', 'Q3? — reason.', 'Q4? — reason.',
+    ],
+    redactions: [],
+  };
+  const quality = assessReportQuality(fillerReport);
+  assert.ok(quality.score < 1.0, 'Filler-heavy report should score below 1.0');
+  assert.ok(quality.triggers.some((t) => t.startsWith('excessive_filler')), 'Should flag excessive filler');
+});
+
+test('quality gate: assessReportQuality penalizes too few missing items', () => {
+  const quality = assessReportQuality({
+    fit_level: 'medium',
+    confidence_0_1: 0.65,
+    why: [
+      'Executive Summary: Substantive summary that is long enough to pass minimum length checks across all seven required why sections with adequate detail.',
+      'Decision Assessment: Assessment details.',
+      'Negotiation Insights: Insight details.',
+      'Leverage Signals: Leverage details.',
+      'Potential Deal Structures: Structure details.',
+      'Decision Readiness: Decision status: Proceed with conditions.',
+      'Recommended Path: Path recommendation details.',
+    ],
+    missing: ['One question? — reason.'],
+    redactions: [],
+  });
+  assert.ok(quality.triggers.some((t) => t.startsWith('too_few_missing')), 'Should flag too_few_missing');
+});
+
+// ─── Quality upgrade: multi-pass refinement ───────────────────────────────────
+
+test('quality upgrade: refinement metadata is present in _internal when quality < 1.0', async () => {
+  // A mediocre Pass B output triggers quality assessment. Since the mock
+  // sequence has no 3rd entry, refinement will fail gracefully.
+  const factSheet = validFactSheetPayload();
+  const cleanup = setVertexV2MockSequence([
+    { response: { model: 'gemini-2.0-flash-001', text: JSON.stringify(factSheet), finishReason: 'STOP', httpStatus: 200 } },
+    { response: { model: 'gemini-2.0-flash-001', text: JSON.stringify(validPayload({
+      why: ['Executive Summary: Short.'],
+      missing: ['One question.'],
+    })), finishReason: 'STOP', httpStatus: 200 } },
+  ]);
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Shared proposal covering project scope and delivery milestones.',
+      confidentialText: 'Internal budget constraints and approval timeline.',
+      requestId: 'req-refinement-meta-1',
+    });
+    assert.equal(outcome.ok, true, 'Should succeed');
+    if (!outcome.ok) return;
+    assert.ok(outcome._internal.refinement, 'Should have refinement metadata');
+    assert.equal(outcome._internal.refinement.attempted, true, 'Should have attempted refinement');
+    assert.equal(outcome._internal.refinement.applied, false, 'Refinement should fail (mock exhausted)');
+    assert.ok(outcome._internal.refinement.skip_reason, 'Should record skip reason');
+  } finally {
+    cleanup();
+  }
+});
+
+test('quality upgrade: refinement applies when 3rd mock returns valid improved data', async () => {
+  const factSheet = validFactSheetPayload();
+  const initialPassB = validPayload({
+    why: ['Executive Summary: Short initial text.'],
+    missing: ['Q1.'],
+  });
+  const refinedPassB = validPayload({
+    fit_level: initialPassB.fit_level,
+    confidence_0_1: initialPassB.confidence_0_1,
+    why: [
+      'Executive Summary: The deal covers scope, timeline, and delivery mechanics with named deliverables and milestones. However, acceptance criteria and sign-off governance remain undefined, creating payment and completion risk.',
+      'Decision Assessment: Risk areas include scope creep potential and undefined acceptance criteria. Strengths include named milestones and structured delivery phases.',
+      'Negotiation Insights: The proposing side may prioritize billing predictability; the counterparty may want scope flexibility and clear dependency ownership.',
+      'Leverage Signals: Timeline pressure may favor the side with mobilization readiness. Switching costs are moderate due to domain knowledge.',
+      'Potential Deal Structures: Option A — fixed-scope with milestone billing. Option B — phased discovery, then binding SOW.',
+      'Decision Readiness: Decision status: Proceed with conditions. Acceptance criteria and dependency owners must be named.',
+      'Recommended Path: Define commitment boundary and acceptance criteria before the current draft becomes binding.',
+    ],
+    missing: [
+      'What acceptance criteria define completion? — determines payment triggers.',
+      'Who owns third-party dependencies? — controls timeline exposure.',
+      'What change-request process applies? — determines scope flexibility.',
+      'What governance handles disputes? — determines escalation speed.',
+    ],
+  });
+
+  const cleanup = setVertexV2MockSequence([
+    { response: { model: 'gemini-2.0-flash-001', text: JSON.stringify(factSheet), finishReason: 'STOP', httpStatus: 200 } },
+    { response: { model: 'gemini-2.0-flash-001', text: JSON.stringify(initialPassB), finishReason: 'STOP', httpStatus: 200 } },
+    { response: { model: 'gemini-2.0-flash-001', text: JSON.stringify(refinedPassB), finishReason: 'STOP', httpStatus: 200 } },
+  ]);
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Shared proposal covering project scope, deliverables, and phased milestones.',
+      confidentialText: 'Internal budget cap of $500K and leadership approval required by Q2.',
+      requestId: 'req-refinement-applied-1',
+    });
+    assert.equal(outcome.ok, true);
+    if (!outcome.ok) return;
+    assert.ok(outcome._internal.refinement, 'Should have refinement metadata');
+    assert.equal(outcome._internal.refinement.attempted, true);
+    assert.equal(outcome._internal.refinement.applied, true, 'Refinement should be applied (improved quality)');
+  } finally {
+    cleanup();
+  }
+});
+
+test('quality upgrade: refinement preserves fit_level — rejects changed fit', async () => {
+  const factSheet = validFactSheetPayload();
+  const initialPassB = validPayload({
+    fit_level: 'medium',
+    confidence_0_1: 0.65,
+    why: ['Executive Summary: Short.'],
+    missing: ['Q1.'],
+  });
+  // Refined output tries to change fit_level → should be rejected
+  const badRefined = validPayload({
+    fit_level: 'high',
+    confidence_0_1: 0.65,
+    why: [
+      'Executive Summary: Substantial detailed summary meeting all quality criteria with enough text to pass length checks.',
+      'Decision Assessment: Detailed assessment.',
+      'Negotiation Insights: Detailed insights.',
+      'Leverage Signals: Detailed signals.',
+      'Potential Deal Structures: Detailed structures.',
+      'Decision Readiness: Decision status: Ready to finalize.',
+      'Recommended Path: Detailed recommendation.',
+    ],
+    missing: ['Q1? — reason.', 'Q2? — reason.', 'Q3? — reason.', 'Q4? — reason.'],
+  });
+  const cleanup = setVertexV2MockSequence([
+    { response: { model: 'gemini-2.0-flash-001', text: JSON.stringify(factSheet), finishReason: 'STOP', httpStatus: 200 } },
+    { response: { model: 'gemini-2.0-flash-001', text: JSON.stringify(initialPassB), finishReason: 'STOP', httpStatus: 200 } },
+    { response: { model: 'gemini-2.0-flash-001', text: JSON.stringify(badRefined), finishReason: 'STOP', httpStatus: 200 } },
+  ]);
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Proposal text for the engagement.',
+      confidentialText: 'Internal budget constraints.',
+      requestId: 'req-refinement-fit-guard-1',
+    });
+    assert.equal(outcome.ok, true);
+    if (!outcome.ok) return;
+    assert.equal(outcome._internal.refinement.attempted, true);
+    assert.equal(outcome._internal.refinement.applied, false, 'Refinement must not apply if fit_level changed');
+    assert.equal(outcome._internal.refinement.skip_reason, 'refinement_changed_fit_level');
+  } finally {
+    cleanup();
+  }
+});
+
+// ─── Quality upgrade: regeneration ────────────────────────────────────────────
+
+test('quality upgrade: regeneration metadata is present and structured', async () => {
+  // Post-processing rescues weak output via role defaults, so regen typically
+  // does NOT trigger. This test verifies the metadata structure exists.
+  const factSheet = validFactSheetPayload();
+  const cleanup = setVertexV2MockSequence([
+    { response: { model: 'gemini-2.0-flash-001', text: JSON.stringify(factSheet), finishReason: 'STOP', httpStatus: 200 } },
+    { response: { model: 'gemini-2.0-flash-001', text: JSON.stringify(validPayload()), finishReason: 'STOP', httpStatus: 200 } },
+  ]);
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Shared proposal text.',
+      confidentialText: 'Confidential notes.',
+      requestId: 'req-regen-metadata-1',
+    });
+    assert.equal(outcome.ok, true);
+    if (!outcome.ok) return;
+    assert.ok(outcome._internal.regeneration, 'Should have regeneration metadata');
+    assert.equal(typeof outcome._internal.regeneration.triggered, 'boolean');
+    assert.ok(Array.isArray(outcome._internal.regeneration.reasons));
+    assert.equal(typeof outcome._internal.regeneration.applied, 'boolean');
+    // If not triggered, applied must be false and reasons empty
+    if (!outcome._internal.regeneration.triggered) {
+      assert.equal(outcome._internal.regeneration.applied, false);
+      assert.equal(outcome._internal.regeneration.reasons.length, 0);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('quality upgrade: quality is assessed on raw output, not post-processed', async () => {
+  // Quality assessment runs BEFORE post-processing so that refinement/regen
+  // can detect genuine weaknesses in the model output. Minimal Pass B output
+  // with only 1 why entry & 1 missing item should score low on raw quality,
+  // triggering refinement even though post-processing would rescue it.
+  const factSheet = validFactSheetPayload();
+  const minimalPassB = validPayload({
+    why: ['Executive Summary: The deal is workable given the defined deliverables.'],
+    missing: ['What acceptance criteria apply? — determines payment trigger.'],
+  });
+  // Provide a 3rd mock for the refinement/regen attempt
+  const betterPassB = validPayload({
+    why: [
+      'Executive Summary: The deal is workable given the defined deliverables.',
+      'Decision Assessment: Several risk factors require attention.',
+      'Negotiation Insights: Key leverage exists on timeline flexibility.',
+      'Leverage Signals: Strong position on budget.',
+      'Potential Deal Structures: Multiple viable structures.',
+      'Decision Readiness: Ready pending clarification.',
+      'Recommended Path: Proceed with conditions.',
+    ],
+    missing: [
+      'What acceptance criteria apply? — determines payment trigger.',
+      'What is the escalation path? — needed to manage risk.',
+      'Who approves budget overruns? — affects negotiation ceiling.',
+      'What is the cancellation clause? — determines exit cost.',
+    ],
+  });
+  const cleanup = setVertexV2MockSequence([
+    { response: { model: 'gemini-2.0-flash-001', text: JSON.stringify(factSheet), finishReason: 'STOP', httpStatus: 200 } },
+    { response: { model: 'gemini-2.0-flash-001', text: JSON.stringify(minimalPassB), finishReason: 'STOP', httpStatus: 200 } },
+    { response: { model: 'gemini-2.0-flash-001', text: JSON.stringify(betterPassB), finishReason: 'STOP', httpStatus: 200 } },
+    { response: { model: 'gemini-2.0-flash-001', text: JSON.stringify(betterPassB), finishReason: 'STOP', httpStatus: 200 } },
+  ]);
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Shared proposal covering project delivery and milestones.',
+      confidentialText: 'Internal budget cap.',
+      requestId: 'req-raw-quality-1',
+    });
+    assert.equal(outcome.ok, true);
+    if (!outcome.ok) return;
+    // Minimal raw output should trigger refinement (raw quality < 1.0)
+    assert.equal(outcome._internal.refinement.attempted, true,
+      'Minimal raw output should trigger refinement attempt');
+  } finally {
+    cleanup();
+  }
+});
+
+// ─── Quality upgrade: no unbounded retries ────────────────────────────────────
+
+test('quality upgrade: at most one refinement + one regen — total calls bounded', async () => {
+  const factSheet = validFactSheetPayload();
+  const weakPassB = validPayload({
+    why: ['Short.'],
+    missing: ['Question.'],
+  });
+
+  let callCount = 0;
+  globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__ = async () => {
+    callCount += 1;
+    if (callCount === 1) {
+      return { model: 'gemini-2.0-flash-001', text: JSON.stringify(factSheet), finishReason: 'STOP', httpStatus: 200 };
+    }
+    // All subsequent calls return the weak output to avoid infinite loops
+    return { model: 'gemini-2.0-flash-001', text: JSON.stringify(weakPassB), finishReason: 'STOP', httpStatus: 200 };
+  };
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Shared proposal text.',
+      confidentialText: 'Confidential notes.',
+      requestId: 'req-bounded-calls-1',
+    });
+    assert.equal(outcome.ok, true, 'Should succeed');
+    // Pass A + Pass B + at most 1 refinement + at most 1 regen = 4 max
+    assert.ok(callCount <= 4, `Expected at most 4 Vertex calls, got ${callCount}`);
+    assert.ok(callCount >= 2, `Expected at least 2 Vertex calls (Pass A + Pass B), got ${callCount}`);
+  } finally {
+    delete globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__;
+  }
+});
+
+// ─── Quality upgrade: no regression in protected areas ────────────────────────
+
+test('quality upgrade: refinement does not skip confidentiality enforcement', async () => {
+  const factSheet = validFactSheetPayload();
+  const initialPassB = validPayload({
+    why: ['Executive Summary: Short.'],
+    missing: ['Q1.'],
+  });
+  // Refined output leaks confidential text verbatim
+  const leakyRefined = validPayload({
+    fit_level: initialPassB.fit_level,
+    confidence_0_1: initialPassB.confidence_0_1,
+    why: [
+      'Executive Summary: Internal budget of $500K noted privately means the project has significant funding that exceeds the visible commitment boundary.',
+      'Decision Assessment: Risk areas.', 'Negotiation Insights: Insights.', 'Leverage Signals: Signals.',
+      'Potential Deal Structures: Structures.', 'Decision Readiness: Readiness.', 'Recommended Path: Path.',
+    ],
+    missing: ['Q1? — reason.', 'Q2? — reason.', 'Q3? — reason.', 'Q4? — reason.'],
+  });
+  const cleanup = setVertexV2MockSequence([
+    { response: { model: 'gemini-2.0-flash-001', text: JSON.stringify(factSheet), finishReason: 'STOP', httpStatus: 200 } },
+    { response: { model: 'gemini-2.0-flash-001', text: JSON.stringify(initialPassB), finishReason: 'STOP', httpStatus: 200 } },
+    { response: { model: 'gemini-2.0-flash-001', text: JSON.stringify(leakyRefined), finishReason: 'STOP', httpStatus: 200 } },
+  ]);
+  // Mock the LLM verifier to return 'clean' so the flow reaches refinement
+  globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_VERIFIER_CALL__ = async () => ({
+    model: 'gemini-2.0-flash-lite', text: '{"leak":false}', finishReason: 'STOP', httpStatus: 200,
+  });
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Shared proposal text.',
+      confidentialText: 'Internal budget of $500K noted privately.',
+      enforceLeakGuard: true,
+      requestId: 'req-refine-leak-guard-1',
+    });
+    assert.equal(outcome.ok, true);
+    if (!outcome.ok) return;
+    // Refinement should have been rejected because it leaks confidential text
+    assert.equal(outcome._internal.refinement.applied, false, 'Leaky refinement must be rejected');
+    assert.equal(outcome._internal.refinement.skip_reason, 'refinement_leaked_confidential');
+    // Original output should be preserved
+    const whyText = outcome.data.why.join(' ');
+    assert.equal(whyText.includes('$500K'), false, 'Confidential budget must not appear in final output');
+  } finally {
+    delete globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_VERIFIER_CALL__;
     cleanup();
   }
 });

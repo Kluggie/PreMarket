@@ -392,11 +392,11 @@ test('buildBudgetedContext: empty history rounds produce no preamble', () => {
 // ─── Constants are reasonable ─────────────────────────────────────────────────
 
 test('budget constants: MAX_SHARED_BUDGET matches V2 engine limit', () => {
-  assert.equal(MAX_SHARED_BUDGET, 12_000);
+  assert.equal(MAX_SHARED_BUDGET, 16_000);
 });
 
 test('budget constants: MAX_CONFIDENTIAL_BUDGET matches V2 engine limit', () => {
-  assert.equal(MAX_CONFIDENTIAL_BUDGET, 12_000);
+  assert.equal(MAX_CONFIDENTIAL_BUDGET, 16_000);
 });
 
 test('budget constants: SAFE_TOTAL_CHARS is sum of budgets', () => {
