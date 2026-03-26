@@ -79,7 +79,6 @@ function makeProposal(overrides = {}) {
       party_b_outcome_at: null,
       can_mark_won: true,
       can_mark_lost: true,
-      can_continue_negotiating: false,
       eligibility_reason: null,
       eligibility_reason_won: null,
       eligibility_reason_lost: null,
@@ -274,28 +273,7 @@ async function installProposalApiMocks(page, { user, proposals, failOutcomePropo
         const updatedProposal = updateProposal(proposals, proposalId, (proposal) => {
           const now = new Date('2026-03-25T10:30:00.000Z').toISOString();
           if (requestedOutcome === 'continue' || requestedOutcome === 'continue_negotiating') {
-            return {
-              ...proposal,
-              primary_status_key: 'waiting_on_counterparty',
-              primary_status_label: 'Waiting on Counterparty',
-              waiting_on_other_party: true,
-              win_confirmation_requested: false,
-              closed_at: null,
-              last_activity_at: now,
-              updated_at: now,
-              updated_date: now,
-              outcome: {
-                ...proposal.outcome,
-                state: 'open',
-                final_status: null,
-                pending: false,
-                requested_by: null,
-                requested_at: null,
-                requested_by_current_user: false,
-                requested_by_counterparty: false,
-                can_continue_negotiating: false,
-              },
-            };
+            return null;
           }
 
           if (requestedOutcome === 'lost') {
@@ -343,6 +321,20 @@ async function installProposalApiMocks(page, { user, proposals, failOutcomePropo
             },
           };
         });
+
+        if (!updatedProposal && (requestedOutcome === 'continue' || requestedOutcome === 'continue_negotiating')) {
+          await route.fulfill({
+            status: 400,
+            contentType: 'application/json',
+            body: JSON.stringify({
+              error: {
+                code: 'unsupported_action',
+                message: 'Request Agreement now sends immediately and cannot be retracted.',
+              },
+            }),
+          });
+          return;
+        }
 
         await route.fulfill({
           status: 200,
@@ -469,7 +461,7 @@ test.describe('Proposals overflow actions', () => {
     await expect(page.getByTestId(`proposal-row-${proposal.id}`)).toContainText('Closed: Lost');
   });
 
-  test('Request Agreement shows the gating reason when disabled and updates the row when enabled', async ({ page }) => {
+  test('Request Agreement requires confirmation before it updates the row', async ({ page }) => {
     const userId = uniqueId('overflow_agreement_user');
     const userEmail = `${userId}@example.com`;
     const sessionCookie = makeSessionCookie({
@@ -532,6 +524,17 @@ test.describe('Proposals overflow actions', () => {
 
     await openActionsMenu(page, enabledProposal.id);
     await page.getByRole('menuitem', { name: 'Request Agreement' }).click();
+    await expect(page.getByRole('alertdialog')).toContainText('Request agreement?');
+    await expect(page.getByRole('alertdialog')).toContainText(
+      'This will notify the other party immediately by email and in-app notification. This action cannot be undone.',
+    );
+    expect(outcomeRequests).toBe(0);
+    await page.getByRole('button', { name: 'Cancel' }).click();
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
+
+    await openActionsMenu(page, enabledProposal.id);
+    await page.getByRole('menuitem', { name: 'Request Agreement' }).click();
+    await page.getByRole('button', { name: 'Request Agreement' }).click();
     await expect(page.getByTestId(`proposal-row-${enabledProposal.id}`)).toContainText('Requested Agreement');
 
     await openActionsMenu(page, enabledProposal.id);
@@ -541,7 +544,7 @@ test.describe('Proposals overflow actions', () => {
     expect(outcomeRequests).toBe(1);
   });
 
-  test('Retract action in the row menu is requester-only and disappears once the request is no longer pending', async ({
+  test('row menus never expose a retract action after agreement is requested', async ({
     page,
   }) => {
     const userId = uniqueId('overflow_retract_visibility_user');
@@ -565,7 +568,6 @@ test.describe('Proposals overflow actions', () => {
         requested_at: requestedAt,
         requested_by_current_user: true,
         requested_by_counterparty: false,
-        can_continue_negotiating: true,
       },
     });
     const counterpartyPendingProposal = makeProposal({
@@ -586,7 +588,6 @@ test.describe('Proposals overflow actions', () => {
         requested_at: requestedAt,
         requested_by_current_user: false,
         requested_by_counterparty: true,
-        can_continue_negotiating: false,
       },
     });
     const respondedProposal = makeProposal({
@@ -608,7 +609,6 @@ test.describe('Proposals overflow actions', () => {
         requested_at: requestedAt,
         requested_by_current_user: false,
         requested_by_counterparty: false,
-        can_continue_negotiating: false,
       },
     });
 
@@ -622,10 +622,6 @@ test.describe('Proposals overflow actions', () => {
     await expect(page.getByRole('heading', { name: 'Opportunities' })).toBeVisible({
       timeout: LOAD_TIMEOUT_MS,
     });
-
-    await openActionsMenu(page, requesterPendingProposal.id);
-    await expect(page.getByRole('menuitem', { name: 'Continue Negotiating' })).toBeVisible();
-    await page.getByRole('menuitem', { name: 'Continue Negotiating' }).click();
 
     await openActionsMenu(page, requesterPendingProposal.id);
     await expect(page.getByRole('menuitem', { name: 'Continue Negotiating' })).toHaveCount(0);

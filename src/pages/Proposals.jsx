@@ -8,6 +8,7 @@ import { proposalsClient } from '@/api/proposalsClient';
 import { dashboardClient } from '@/api/dashboardClient';
 import { isStarterOpportunityLimitReached } from '@/lib/starterPlanLimits';
 import { StarterUpgradeModal } from '@/components/StarterUpgradeModal';
+import RequestAgreementConfirmDialog from '@/components/proposal/RequestAgreementConfirmDialog';
 import { buildDocumentComparisonReportHref } from '@/lib/notificationTargets';
 import {
   applyUpdatedProposalToCaches,
@@ -17,6 +18,7 @@ import {
 import { formatRecipientLabel, PRIVATE_SENDER_LABEL } from '@/lib/recipientUtils';
 import {
   getAgreementActionLabel,
+  shouldConfirmRequestAgreement,
 } from '@/lib/proposalOutcomeUi';
 import { buildCompactProposalSubtitle } from '@/lib/proposalThreadContextUi';
 import { Button } from '@/components/ui/button';
@@ -331,11 +333,11 @@ function ProposalRow({
   onArchive,
   onUnarchive,
   onMarkOutcome,
-  onContinueNegotiation,
   onDelete,
   actionsDisabled,
 }) {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [requestAgreementDialogOpen, setRequestAgreementDialogOpen] = useState(false);
   const Icon = getRowIcon(proposal);
   const sharedReportDate =
     proposal.shared_report_last_updated_at ||
@@ -349,11 +351,9 @@ function ProposalRow({
   const outcomeState = String(outcome.state || proposal.status || '').toLowerCase();
   const isClosed = proposal.thread_bucket === 'closed' || outcomeState === 'won' || outcomeState === 'lost';
   const canArchive = Boolean(outcome.actor_role);
-  const canContinueNegotiating = Boolean(outcome.can_continue_negotiating && outcomeState === 'pending_won');
   const wonActionDisabled =
     actionsDisabled || !outcome.can_mark_won || Boolean(outcome.requested_by_current_user);
   const lostActionDisabled = actionsDisabled || !outcome.can_mark_lost;
-  const continueActionDisabled = actionsDisabled || !canContinueNegotiating;
   const rowSubtitle = buildCompactProposalSubtitle(proposal);
   const helperText = outcome.requested_by_current_user
     ? 'Waiting for the counterparty to confirm the agreement.'
@@ -365,9 +365,32 @@ function ProposalRow({
             ? (outcome.eligibility_reason_lost || outcome.eligibility_reason)
             : null);
   const deleteCopy = getDeleteCopy(proposal);
+  const handleAgreementAction = () => {
+    if (shouldConfirmRequestAgreement(outcome)) {
+      setRequestAgreementDialogOpen(true);
+      return;
+    }
+
+    if (onMarkOutcome) {
+      onMarkOutcome(proposal, 'won');
+    }
+  };
+  const handleRequestAgreementConfirm = () => {
+    setRequestAgreementDialogOpen(false);
+    if (onMarkOutcome) {
+      onMarkOutcome(proposal, 'won');
+    }
+  };
 
   return (
-    <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+    <>
+      <RequestAgreementConfirmDialog
+        open={requestAgreementDialogOpen}
+        onOpenChange={setRequestAgreementDialogOpen}
+        onConfirm={handleRequestAgreementConfirm}
+        isPending={actionsDisabled}
+      />
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
       <div
         className="w-full border-b border-slate-100 flex items-center hover:bg-slate-50 transition-colors"
         data-testid={`proposal-row-${proposal.id}`}
@@ -427,7 +450,7 @@ function ProposalRow({
                 <>
                   <DropdownMenuItem
                     disabled={wonActionDisabled}
-                    onSelect={() => onMarkOutcome && onMarkOutcome(proposal, 'won')}
+                    onSelect={handleAgreementAction}
                     className="gap-2"
                   >
                     <CheckCircle2 className="w-4 h-4" />
@@ -441,16 +464,6 @@ function ProposalRow({
                     <XCircle className="w-4 h-4" />
                     Mark as Lost
                   </DropdownMenuItem>
-                  {canContinueNegotiating ? (
-                    <DropdownMenuItem
-                      disabled={continueActionDisabled}
-                      onSelect={() => onContinueNegotiation && onContinueNegotiation(proposal)}
-                      className="gap-2"
-                    >
-                      <Clock className="w-4 h-4" />
-                      Continue Negotiating
-                    </DropdownMenuItem>
-                  ) : null}
                   {helperText ? (
                     <>
                       <DropdownMenuSeparator />
@@ -519,7 +532,8 @@ function ProposalRow({
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
-    </AlertDialog>
+      </AlertDialog>
+    </>
   );
 }
 
@@ -650,22 +664,6 @@ export default function Proposals() {
     },
     onError: (err) => {
       toast.error(err?.message || 'Failed to update outcome');
-    },
-  });
-
-  const continueNegotiationMutation = useMutation({
-    mutationFn: (proposal) => proposalsClient.continueNegotiation(proposal.id),
-    onSuccess: async (updatedProposal, proposal) => {
-      applyUpdatedProposalToCaches(queryClient, updatedProposal);
-      toast.success('Cleared pending agreement request');
-      await invalidateProposalThreadQueries(queryClient, {
-        proposalId: proposal?.id,
-        documentComparisonId:
-          updatedProposal?.document_comparison_id || proposal?.document_comparison_id || null,
-      });
-    },
-    onError: (err) => {
-      toast.error(err?.message || 'Failed to continue negotiating');
     },
   });
 
@@ -850,10 +848,6 @@ export default function Proposals() {
     markOutcomeMutation.mutate({ proposal, outcome });
   };
 
-  const handleContinueNegotiation = (proposal) => {
-    continueNegotiationMutation.mutate(proposal);
-  };
-
   const handleDelete = (proposal) => {
     deleteMutation.mutate(proposal);
   };
@@ -862,7 +856,6 @@ export default function Proposals() {
     archiveMutation.isPending ||
     unarchiveMutation.isPending ||
     markOutcomeMutation.isPending ||
-    continueNegotiationMutation.isPending ||
     deleteMutation.isPending;
 
   return (
@@ -998,7 +991,6 @@ export default function Proposals() {
                         onArchive={handleArchive}
                         onUnarchive={handleUnarchive}
                         onMarkOutcome={handleMarkOutcome}
-                        onContinueNegotiation={handleContinueNegotiation}
                         onDelete={handleDelete}
                         actionsDisabled={actionsDisabled}
                       />

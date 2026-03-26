@@ -8,7 +8,7 @@ import {
   getAgreementActionLabel,
   getPendingAgreementBadgeLabel,
   getVisibleProposalStatusLabel,
-  shouldShowPendingAgreementResponseActions,
+  shouldConfirmRequestAgreement,
 } from '../../src/lib/proposalOutcomeUi.js';
 
 test('agreement wording uses agreed for final state and never shows won for pending state labels', () => {
@@ -18,15 +18,11 @@ test('agreement wording uses agreed for final state and never shows won for pend
   assert.equal(getAgreementActionLabel({ requested_by_counterparty: false }), REQUEST_AGREEMENT_LABEL);
   assert.equal(getAgreementActionLabel({ requested_by_counterparty: true }), CONFIRM_AGREEMENT_LABEL);
   assert.equal(
-    shouldShowPendingAgreementResponseActions({ pending: true, requested_by_current_user: true }),
+    shouldConfirmRequestAgreement({ requested_by_counterparty: false }),
     true,
   );
   assert.equal(
-    shouldShowPendingAgreementResponseActions({ pending: true, requested_by_current_user: false }),
-    false,
-  );
-  assert.equal(
-    shouldShowPendingAgreementResponseActions({ pending: false, requested_by_current_user: true }),
+    shouldConfirmRequestAgreement({ requested_by_counterparty: true }),
     false,
   );
 

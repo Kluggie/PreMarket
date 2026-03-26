@@ -24,6 +24,7 @@ import { Label } from '@/components/ui/label';
 import {
   ComparisonDetailTabs,
 } from '@/components/document-comparison/ComparisonDetailTabs';
+import RequestAgreementConfirmDialog from '@/components/proposal/RequestAgreementConfirmDialog';
 import {
   Dialog,
   DialogContent,
@@ -47,7 +48,7 @@ import { toast } from 'sonner';
 import {
   AGREED_LABEL,
   getAgreementActionLabel,
-  shouldShowPendingAgreementResponseActions,
+  shouldConfirmRequestAgreement,
 } from '@/lib/proposalOutcomeUi';
 
 const CONFIDENTIAL_LABEL = 'Confidential Information';
@@ -448,6 +449,7 @@ export default function DocumentComparisonDetail() {
   const [isShareLinkInitializedForOpen, setIsShareLinkInitializedForOpen] = useState(false);
   const [sendResults, setSendResults] = useState(null);
   const [evaluationPollDeadline, setEvaluationPollDeadline] = useState(null);
+  const [requestAgreementDialogOpen, setRequestAgreementDialogOpen] = useState(false);
 
 
   useEffect(() => {
@@ -650,15 +652,12 @@ export default function DocumentComparisonDetail() {
   const proposalOutcomeState = asLower(proposalOutcome.state || proposalThread?.status);
   const isWon = proposalOutcomeState === 'won';
   const isLost = proposalOutcomeState === 'lost';
-  const isPendingWon = proposalOutcomeState === 'pending_won';
   const isClosed = isWon || isLost;
   const primaryStatusKey = asLower(proposalThread?.primary_status_key || proposalThread?.status);
   const primaryStatusLabel = asText(proposalThread?.primary_status_label) || 'Active';
-  const showPendingAgreementResponseActions =
-    isPendingWon && shouldShowPendingAgreementResponseActions(proposalOutcome);
   const baseOutcomeActionDisabled = proposalDetailQuery.isLoading;
   const pendingOutcomeMessage = proposalOutcome.requested_by_counterparty
-    ? 'The counterparty requested agreement on this opportunity. Confirm the agreement, mark it lost, or continue negotiating.'
+    ? 'The counterparty requested agreement on this opportunity. Confirm the agreement or mark it lost.'
     : proposalOutcome.requested_by_current_user
       ? `You requested agreement on this opportunity. It becomes ${AGREED_LABEL.toLowerCase()} only after the counterparty confirms the agreement.`
       : '';
@@ -740,29 +739,9 @@ export default function DocumentComparisonDetail() {
       toast.error(error?.message || 'Failed to update outcome');
     },
   });
-
-  const continueNegotiationMutation = useMutation({
-    mutationFn: () => proposalsClient.continueNegotiation(asText(proposalThread?.id)),
-    onSuccess: async (updatedProposal) => {
-      applyUpdatedProposalToCaches(queryClient, updatedProposal);
-      toast.success('Cleared pending agreement request');
-      await invalidateProposalThreadQueries(queryClient, {
-        proposalId: updatedProposal?.id || proposalThread?.id || null,
-        documentComparisonId: updatedProposal?.document_comparison_id || comparisonId || null,
-      });
-      await Promise.all([
-        comparisonQuery.refetch(),
-        proposalDetailQuery.refetch(),
-      ]);
-    },
-    onError: (error) => {
-      toast.error(error?.message || 'Failed to continue negotiating');
-    },
-  });
   const outcomeActionDisabled =
     baseOutcomeActionDisabled ||
-    markOutcomeMutation.isPending ||
-    continueNegotiationMutation.isPending;
+    markOutcomeMutation.isPending;
 
   const createShareLinkMutation = useMutation({
     mutationFn: async (options = {}) => {
@@ -1013,9 +992,27 @@ export default function DocumentComparisonDetail() {
     [proposalThread?.party_b_name || comparison?.recipient_name, proposalThread?.party_b_email || comparison?.recipient_email]
       .filter(Boolean)
       .join(' · ') || 'Not specified';
+  const handleAgreementAction = () => {
+    if (shouldConfirmRequestAgreement(proposalOutcome)) {
+      setRequestAgreementDialogOpen(true);
+      return;
+    }
+
+    markOutcomeMutation.mutate('won');
+  };
+  const handleRequestAgreementConfirm = () => {
+    setRequestAgreementDialogOpen(false);
+    markOutcomeMutation.mutate('won');
+  };
 
   return (
     <div className="min-h-screen bg-slate-50 py-6">
+      <RequestAgreementConfirmDialog
+        open={requestAgreementDialogOpen}
+        onOpenChange={setRequestAgreementDialogOpen}
+        onConfirm={handleRequestAgreementConfirm}
+        isPending={markOutcomeMutation.isPending}
+      />
       <div className="max-w-[1400px] mx-auto px-6 space-y-6">
         {viewerRole === 'party_a' ? (
           <Button
@@ -1128,7 +1125,7 @@ export default function DocumentComparisonDetail() {
                         !proposalOutcome?.can_mark_won ||
                         Boolean(proposalOutcome?.requested_by_current_user)
                       }
-                      onClick={() => markOutcomeMutation.mutate('won')}
+                      onClick={handleAgreementAction}
                     >
                       <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />
                       {getAgreementActionLabel(proposalOutcome)}
@@ -1143,16 +1140,6 @@ export default function DocumentComparisonDetail() {
                       <XCircle className="w-3.5 h-3.5 mr-1.5" />
                       Mark as Lost
                     </Button>
-                    {showPendingAgreementResponseActions ? (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={outcomeActionDisabled || !proposalOutcome?.can_continue_negotiating}
-                        onClick={() => continueNegotiationMutation.mutate()}
-                      >
-                        Continue Negotiating
-                      </Button>
-                    ) : null}
                   </>
                 )}
               </div>

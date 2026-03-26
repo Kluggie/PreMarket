@@ -9,9 +9,9 @@ import { readJsonBody } from '../../../_lib/http.js';
 import { createNotificationEvent } from '../../../_lib/notifications.js';
 import {
   buildAgreementRequestActionUrl,
-  queueAgreementRequestEmail,
+  buildAgreementRequestEmailContent,
+  buildAgreementRequestEmailDedupeKey,
   resolveAgreementCounterpartyTarget,
-  suppressAgreementRequestEmailCycle,
 } from '../../../_lib/proposal-agreement-request-emails.js';
 import { buildProposalHistoryQueries } from '../../../_lib/proposal-history.js';
 import {
@@ -24,7 +24,6 @@ import {
   shouldMaskPrivateSender,
 } from '../../../_lib/private-mode.js';
 import {
-  buildContinueNegotiationReset,
   buildOutcomeMutation,
   getProposalAccessContext,
   getProposalArchivedAtForActor,
@@ -134,7 +133,7 @@ function buildFinalOutcomeDedupeKey(proposalId: unknown, outcome: 'won' | 'lost'
 
 function buildFinalOutcomeEmailContent(proposal: any, outcome: 'won' | 'lost') {
   const proposalTitle = asText(proposal?.title) || 'your opportunity';
-  const actionUrl = buildAgreementRequestActionUrl(proposal?.id);
+  const actionUrl = buildAgreementRequestActionUrl(proposal);
 
   if (outcome === PROPOSAL_OUTCOME_WON) {
     return {
@@ -248,78 +247,21 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         body.decision,
     );
 
-    const currentOutcome = getProposalOutcomeState(existing);
     const now = new Date();
 
     if (requestedAction === 'continue' || requestedAction === 'continue_negotiating') {
-      if (currentOutcome.state !== PROPOSAL_OUTCOME_PENDING_WON) {
-        throw new ApiError(
-          400,
-          'no_pending_outcome',
-          'There is no pending agreement request to clear.',
-        );
-      }
-      if (asLower(currentOutcome.requestedBy) !== asLower(actorRole)) {
-        throw new ApiError(
-          403,
-          'withdraw_not_allowed',
-          'Only the user who requested agreement can withdraw it while it is still pending.',
-        );
-      }
-
-      const continueValues = buildContinueNegotiationReset(existing, now);
-      const nextProposal = {
-        ...existing,
-        ...continueValues,
-      };
-      const { queries: historyQueries } = buildProposalHistoryQueries(db, {
-        proposal: nextProposal,
-        actorUserId: auth.user.id,
-        actorRole,
-        milestone: 'continue_negotiation',
-        eventType: 'proposal.outcome.continue_negotiation',
-        createdAt: now,
-        requestId: context.requestId,
-      });
-      const [updatedRows] = await db.batch([
-        db
-          .update(schema.proposals)
-          .set(continueValues)
-          .where(eq(schema.proposals.id, proposalId))
-          .returning(),
-        ...historyQueries,
-      ]);
-      const [updated] = updatedRows;
-
-      await logAuditEventBestEffort({
-        eventType: 'proposal.outcome.continue_negotiation',
-        userId: auth.user.id,
-        req,
-        metadata: {
-          proposal_id: proposalId,
-          actor_role: actorRole,
-        },
-      });
-      await suppressAgreementRequestEmailCycle({
-        db,
-        proposalId,
-        requestedByRole: currentOutcome.requestedBy,
-        requestedAt: currentOutcome.requestedAt,
-        reason: 'withdrawn',
-        now,
-      });
-
-      ok(res, 200, {
-        proposal: mapProposalRow(updated, auth.user, { actorRole }),
-      });
-      return;
+      throw new ApiError(
+        400,
+        'unsupported_action',
+        'Request Agreement now sends immediately and cannot be retracted.',
+      );
     }
 
     if (requestedAction !== PROPOSAL_OUTCOME_WON && requestedAction !== PROPOSAL_OUTCOME_LOST) {
       throw new ApiError(
         400,
         'invalid_outcome',
-        'Use Request Agreement, Confirm Agreement, Lost, or Continue Negotiating.',
+        'Use Request Agreement, Confirm Agreement, or Lost.',
       );
     }
 
@@ -415,20 +357,6 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
     const actorLabel =
       actorRole === PROPOSAL_PARTY_A ? 'The proposer' : (auth.user.email || 'The recipient');
 
-    if (
-      currentOutcome.state === PROPOSAL_OUTCOME_PENDING_WON &&
-      nextOutcome.state !== PROPOSAL_OUTCOME_PENDING_WON
-    ) {
-      await suppressAgreementRequestEmailCycle({
-        db,
-        proposalId: updated.id,
-        requestedByRole: currentOutcome.requestedBy,
-        requestedAt: currentOutcome.requestedAt,
-        reason: 'request_resolved',
-        now,
-      });
-    }
-
     if (requestedAction === PROPOSAL_OUTCOME_LOST) {
       const emailContent = buildFinalOutcomeEmailContent(updated, PROPOSAL_OUTCOME_LOST);
       await notifyCounterparty({
@@ -470,6 +398,14 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         });
       }
     } else if (nextOutcome.state === PROPOSAL_OUTCOME_PENDING_WON) {
+      const emailContent = buildAgreementRequestEmailContent(updated, actorRole);
+      const agreementRequestDedupeKey =
+        buildAgreementRequestEmailDedupeKey({
+          proposalId: updated.id,
+          requestedByRole: actorRole,
+          requestedAt: nextOutcome.requestedAt,
+        }) ||
+        `proposal:${updated.id}:won_pending:${actorRole}`;
       await notifyCounterparty({
         db,
         proposal: updated,
@@ -477,22 +413,12 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         actionUrl,
         metadata: notificationMetadata,
         eventType: 'status_won',
-        dedupeKey: `proposal:${updated.id}:won_pending:${actorRole}:${asText(existing.updatedAt || existing.receivedAt || existing.sentAt || existing.createdAt || updated.id)}`,
+        dedupeKey: agreementRequestDedupeKey,
         title: 'Agreement Requested',
         message: `${actorLabel} requested agreement on "${title}" and is waiting for your confirmation.`,
-        emailSubject: '',
-        emailText: '',
-        sendEmail: false,
-      });
-      const target = await resolveAgreementCounterpartyTarget(db, updated, actorRole);
-      await queueAgreementRequestEmail({
-        db,
-        proposal: updated,
-        requestedByRole: actorRole,
-        requestedAt: nextOutcome.requestedAt,
-        recipientUserId: target.userId,
-        recipientEmail: target.userEmail,
-        now,
+        emailSubject: emailContent.subject,
+        emailText: emailContent.text,
+        emailPurpose: 'transactional',
       });
 
       await logAuditEventBestEffort({

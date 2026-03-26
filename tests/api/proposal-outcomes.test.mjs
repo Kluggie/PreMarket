@@ -7,7 +7,6 @@ import proposalDetailHandler from '../../server/routes/proposals/[id].ts';
 import proposalOutcomeHandler from '../../server/routes/proposals/[id]/outcome.ts';
 import proposalArchiveHandler from '../../server/routes/proposals/[id]/archive.ts';
 import proposalUnarchiveHandler from '../../server/routes/proposals/[id]/unarchive.ts';
-import proposalAgreementRequestEmailDispatchHandler from '../../server/routes/internal/proposal-agreement-request-emails/dispatch.ts';
 import dashboardSummaryHandler from '../../server/routes/dashboard/summary.ts';
 import dashboardActivityHandler from '../../server/routes/dashboard/activity.ts';
 import notificationsHandler from '../../server/routes/notifications/index.ts';
@@ -134,31 +133,12 @@ async function unarchiveProposal(cookie, proposalId) {
   );
 }
 
-async function dispatchAgreementRequestEmails(query = {}) {
-  return callHandler(proposalAgreementRequestEmailDispatchHandler, {
-    method: 'POST',
-    url: '/api/internal/proposal-agreement-request-emails/dispatch',
-    query,
-  });
-}
-
 async function listAgreementRequestEmails(proposalId = null) {
   const db = getDb();
   const query = db.select().from(schema.proposalAgreementRequestEmails);
   return proposalId
     ? await query.where(eq(schema.proposalAgreementRequestEmails.proposalId, proposalId))
     : await query;
-}
-
-async function forceAgreementRequestEmailsDue(proposalId, now = new Date()) {
-  const db = getDb();
-  await db
-    .update(schema.proposalAgreementRequestEmails)
-    .set({
-      deliverAfter: now,
-      updatedAt: now,
-    })
-    .where(eq(schema.proposalAgreementRequestEmails.proposalId, proposalId));
 }
 
 async function listProposals(cookie, query = {}) {
@@ -266,6 +246,19 @@ function captureTransactionalEmails() {
   };
 }
 
+test('legacy agreement-request dispatch route is no longer mounted', async () => {
+  const res = await callHandler(apiHandler, {
+    method: 'POST',
+    url: '/api?path=internal/proposal-agreement-request-emails/dispatch',
+    query: {
+      path: 'internal/proposal-agreement-request-emails/dispatch',
+    },
+  });
+
+  assert.equal(res.statusCode, 404);
+  assert.equal(res.jsonBody().error?.code, 'not_found');
+});
+
 if (!hasDatabaseUrl()) {
   test('proposal outcomes integration (skipped: DATABASE_URL missing)', { skip: true }, () => {});
 } else {
@@ -352,7 +345,7 @@ if (!hasDatabaseUrl()) {
     assert.equal(invalidRes.jsonBody().error?.code, 'invalid_outcome');
     assert.equal(
       invalidRes.jsonBody().error?.message,
-      'Use Request Agreement, Confirm Agreement, Lost, or Continue Negotiating.',
+      'Use Request Agreement, Confirm Agreement, or Lost.',
     );
   });
 
@@ -530,7 +523,7 @@ if (!hasDatabaseUrl()) {
     }
   });
 
-  test('request agreement queues one delayed recipient email, keeps the in-app notification, and persists Requested Agreement state', async () => {
+  test('request agreement sends one immediate recipient email, keeps the in-app notification, and persists Requested Agreement state', async () => {
     await ensureMigrated();
     await resetTables();
 
@@ -546,33 +539,7 @@ if (!hasDatabaseUrl()) {
       partyBEmail: 'recipient-request-email@example.com',
     });
 
-    const originalMode = process.env.EMAIL_MODE;
-    const originalResendKey = process.env.RESEND_API_KEY;
-    const originalResendFrom = process.env.RESEND_FROM_EMAIL;
-    const originalResendName = process.env.RESEND_FROM_NAME;
-    const originalResendReplyTo = process.env.RESEND_REPLY_TO;
-    const originalAppBaseUrl = process.env.APP_BASE_URL;
-    const originalFetch = globalThis.fetch;
-    const resendPayloads = [];
-
-    process.env.EMAIL_MODE = 'contact_only';
-    process.env.RESEND_API_KEY = 'test_resend_key';
-    process.env.RESEND_FROM_EMAIL = 'notifications@mail.getpremarket.com';
-    process.env.RESEND_FROM_NAME = 'PreMarket';
-    process.env.RESEND_REPLY_TO = 'support@getpremarket.com';
-    process.env.APP_BASE_URL = 'https://app.getpremarket.test';
-
-    globalThis.fetch = async (url, init) => {
-      if (String(url).includes('api.resend.com/emails')) {
-        resendPayloads.push(JSON.parse(String(init?.body || '{}')));
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({ id: 'resend_request_agreement_email' }),
-        };
-      }
-      return originalFetch.call(globalThis, url, init);
-    };
+    const emailCapture = captureTransactionalEmails();
 
     try {
       const requestRes = await markOutcome(ownerCookie, proposal.id, { outcome: 'won' });
@@ -581,15 +548,23 @@ if (!hasDatabaseUrl()) {
       assert.equal(requestRes.jsonBody().proposal.primary_status_key, 'waiting_on_counterparty');
       assert.equal(requestRes.jsonBody().proposal.primary_status_label, 'Requested Agreement');
 
-      assert.equal(resendPayloads.length, 0, 'email should not send until the grace period expires');
+      assert.equal(emailCapture.resendPayloads.length, 1);
+      assert.deepEqual(emailCapture.resendPayloads[0].to, ['recipient-request-email@example.com']);
+      assert.equal(
+        emailCapture.resendPayloads[0].subject,
+        'Agreement Requested — Requested Agreement Email Proposal',
+      );
+      assert.match(
+        String(emailCapture.resendPayloads[0].text || ''),
+        /requested agreement on "Requested Agreement Email Proposal" and is waiting for your confirmation\./i,
+      );
+      assert.match(
+        String(emailCapture.resendPayloads[0].text || ''),
+        /https:\/\/app\.getpremarket\.test\/ProposalDetail\?id=/,
+      );
 
       const queuedEmails = await listAgreementRequestEmails(proposal.id);
-      assert.equal(queuedEmails.length, 1);
-      assert.equal(queuedEmails[0].status, 'pending');
-      assert.equal(queuedEmails[0].requestedByRole, 'party_a');
-      assert.equal(queuedEmails[0].recipientEmail, 'recipient-request-email@example.com');
-      assert.ok(queuedEmails[0].deliverAfter, 'queued email should store a delayed delivery time');
-      assert.ok(queuedEmails[0].dedupeKey, 'queued email should store a stable dedupe key');
+      assert.equal(queuedEmails.length, 0, 'request agreement should no longer create delayed email rows');
 
       const recipientNotifications = await getNotifications(recipientCookie);
       const agreementNotification = recipientNotifications.find(
@@ -608,8 +583,8 @@ if (!hasDatabaseUrl()) {
       assert.equal(repeatRes.statusCode, 200);
       assert.equal(repeatRes.jsonBody().proposal.outcome.state, 'pending_won');
       assert.equal(repeatRes.jsonBody().proposal.primary_status_label, 'Requested Agreement');
-      assert.equal(resendPayloads.length, 0);
-      assert.equal((await listAgreementRequestEmails(proposal.id)).length, 1);
+      assert.equal(emailCapture.resendPayloads.length, 1, 'repeat request should not resend email');
+      assert.equal((await listAgreementRequestEmails(proposal.id)).length, 0);
 
       const recipientNotificationsAfterRepeat = await getNotifications(recipientCookie);
       const agreementNotificationCount = recipientNotificationsAfterRepeat.filter(
@@ -618,48 +593,12 @@ if (!hasDatabaseUrl()) {
           String(entry.message || '').includes('waiting for your confirmation'),
       ).length;
       assert.equal(agreementNotificationCount, 1);
-
-      await forceAgreementRequestEmailsDue(proposal.id);
-      const dispatchRes = await dispatchAgreementRequestEmails();
-      assert.equal(dispatchRes.statusCode, 200);
-      assert.equal(dispatchRes.jsonBody().processed, 1);
-      assert.equal(dispatchRes.jsonBody().sent, 1);
-      assert.equal(dispatchRes.jsonBody().suppressed, 0);
-      assert.equal(dispatchRes.jsonBody().failed, 0);
-
-      assert.equal(resendPayloads.length, 1);
-      assert.deepEqual(resendPayloads[0].to, ['recipient-request-email@example.com']);
-      assert.equal(resendPayloads[0].subject, 'Agreement Requested — Requested Agreement Email Proposal');
-      assert.match(
-        String(resendPayloads[0].text || ''),
-        /requested agreement on "Requested Agreement Email Proposal" and is waiting for your confirmation\./i,
-      );
-      assert.match(
-        String(resendPayloads[0].text || ''),
-        /https:\/\/app\.getpremarket\.test\/ProposalDetail\?id=/,
-      );
-
-      const sentQueueRows = await listAgreementRequestEmails(proposal.id);
-      assert.equal(sentQueueRows[0].status, 'sent');
-      assert.ok(sentQueueRows[0].sentAt, 'queued email should stamp sent_at after dispatch');
     } finally {
-      globalThis.fetch = originalFetch;
-      if (originalMode === undefined) delete process.env.EMAIL_MODE;
-      else process.env.EMAIL_MODE = originalMode;
-      if (originalResendKey === undefined) delete process.env.RESEND_API_KEY;
-      else process.env.RESEND_API_KEY = originalResendKey;
-      if (originalResendFrom === undefined) delete process.env.RESEND_FROM_EMAIL;
-      else process.env.RESEND_FROM_EMAIL = originalResendFrom;
-      if (originalResendName === undefined) delete process.env.RESEND_FROM_NAME;
-      else process.env.RESEND_FROM_NAME = originalResendName;
-      if (originalResendReplyTo === undefined) delete process.env.RESEND_REPLY_TO;
-      else process.env.RESEND_REPLY_TO = originalResendReplyTo;
-      if (originalAppBaseUrl === undefined) delete process.env.APP_BASE_URL;
-      else process.env.APP_BASE_URL = originalAppBaseUrl;
+      emailCapture.restore();
     }
   });
 
-  test('withdrawing a pending agreement request suppresses the delayed email and only the requester can retract it', async () => {
+  test('retracting a pending agreement request is no longer supported', async () => {
     await ensureMigrated();
     await resetTables();
 
@@ -675,63 +614,30 @@ if (!hasDatabaseUrl()) {
       partyBEmail: 'recipient-withdraw-request@example.com',
     });
 
-    const originalMode = process.env.EMAIL_MODE;
-    const originalResendKey = process.env.RESEND_API_KEY;
-    const originalResendFrom = process.env.RESEND_FROM_EMAIL;
-    const originalFetch = globalThis.fetch;
-    const resendPayloads = [];
-
-    process.env.EMAIL_MODE = 'transactional';
-    process.env.RESEND_API_KEY = 'test_resend_key';
-    process.env.RESEND_FROM_EMAIL = 'notifications@mail.getpremarket.com';
-
-    globalThis.fetch = async (url, init) => {
-      if (String(url).includes('api.resend.com/emails')) {
-        resendPayloads.push(JSON.parse(String(init?.body || '{}')));
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({ id: 'resend_withdraw_should_not_send' }),
-        };
-      }
-      return originalFetch.call(globalThis, url, init);
-    };
+    const emailCapture = captureTransactionalEmails();
 
     try {
       const requestRes = await markOutcome(ownerCookie, proposal.id, { outcome: 'won' });
       assert.equal(requestRes.statusCode, 200);
       assert.equal(requestRes.jsonBody().proposal.outcome.state, 'pending_won');
+      assert.equal(emailCapture.resendPayloads.length, 1);
 
-      const unauthorizedWithdrawRes = await markOutcome(recipientCookie, proposal.id, { action: 'continue' });
-      assert.equal(unauthorizedWithdrawRes.statusCode, 403);
-      assert.equal(unauthorizedWithdrawRes.jsonBody().error.code, 'withdraw_not_allowed');
-
-      const withdrawRes = await markOutcome(ownerCookie, proposal.id, { action: 'continue' });
-      assert.equal(withdrawRes.statusCode, 200);
-      assert.equal(withdrawRes.jsonBody().proposal.outcome.state, 'open');
+      const retractRes = await markOutcome(ownerCookie, proposal.id, { action: 'continue' });
+      assert.equal(retractRes.statusCode, 400);
+      assert.equal(retractRes.jsonBody().error.code, 'unsupported_action');
+      assert.equal(
+        retractRes.jsonBody().error.message,
+        'Request Agreement now sends immediately and cannot be retracted.',
+      );
 
       const queueRows = await listAgreementRequestEmails(proposal.id);
-      assert.equal(queueRows.length, 1);
-      assert.equal(queueRows[0].status, 'suppressed');
-      assert.equal(queueRows[0].suppressedReason, 'withdrawn');
-
-      await forceAgreementRequestEmailsDue(proposal.id);
-      const dispatchRes = await dispatchAgreementRequestEmails();
-      assert.equal(dispatchRes.statusCode, 200);
-      assert.equal(dispatchRes.jsonBody().processed, 0);
-      assert.equal(resendPayloads.length, 0, 'withdrawing during the grace period must prevent email send');
+      assert.equal(queueRows.length, 0);
     } finally {
-      globalThis.fetch = originalFetch;
-      if (originalMode === undefined) delete process.env.EMAIL_MODE;
-      else process.env.EMAIL_MODE = originalMode;
-      if (originalResendKey === undefined) delete process.env.RESEND_API_KEY;
-      else process.env.RESEND_API_KEY = originalResendKey;
-      if (originalResendFrom === undefined) delete process.env.RESEND_FROM_EMAIL;
-      else process.env.RESEND_FROM_EMAIL = originalResendFrom;
+      emailCapture.restore();
     }
   });
 
-  test('counterparty action during the grace period suppresses the delayed agreement-request email', async () => {
+  test('counterparty resolution keeps using the final outcome email without creating delayed request rows', async () => {
     await ensureMigrated();
     await resetTables();
 
@@ -747,67 +653,33 @@ if (!hasDatabaseUrl()) {
       partyBEmail: 'recipient-grace-response@example.com',
     });
 
-    const originalMode = process.env.EMAIL_MODE;
-    const originalResendKey = process.env.RESEND_API_KEY;
-    const originalResendFrom = process.env.RESEND_FROM_EMAIL;
-    const originalFetch = globalThis.fetch;
-    const resendPayloads = [];
-
-    process.env.EMAIL_MODE = 'transactional';
-    process.env.RESEND_API_KEY = 'test_resend_key';
-    process.env.RESEND_FROM_EMAIL = 'notifications@mail.getpremarket.com';
-
-    globalThis.fetch = async (url, init) => {
-      if (String(url).includes('api.resend.com/emails')) {
-        resendPayloads.push(JSON.parse(String(init?.body || '{}')));
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({ id: 'resend_grace_response_should_not_send' }),
-        };
-      }
-      return originalFetch.call(globalThis, url, init);
-    };
+    const emailCapture = captureTransactionalEmails();
 
     try {
       const requestRes = await markOutcome(ownerCookie, proposal.id, { outcome: 'won' });
       assert.equal(requestRes.statusCode, 200);
       assert.equal(requestRes.jsonBody().proposal.outcome.state, 'pending_won');
-      assert.equal(resendPayloads.length, 0, 'the grace-period request email should still be delayed');
+      assert.equal(emailCapture.resendPayloads.length, 1);
+      assert.equal(
+        emailCapture.resendPayloads[0].subject,
+        'Agreement Requested — Grace Period Counterparty Response Proposal',
+      );
 
       const lostRes = await markOutcome(recipientCookie, proposal.id, { outcome: 'lost' });
       assert.equal(lostRes.statusCode, 200);
       assert.equal(lostRes.jsonBody().proposal.outcome.state, 'lost');
       assert.equal(lostRes.jsonBody().proposal.thread_bucket, 'closed');
-      assert.equal(resendPayloads.length, 1, 'the real final lost email should send when the counterparty resolves the thread');
+      assert.equal(emailCapture.resendPayloads.length, 2);
       assert.equal(
-        resendPayloads[0].subject,
+        emailCapture.resendPayloads[1].subject,
         'Opportunity Closed as Lost — Grace Period Counterparty Response Proposal',
       );
-      assert.doesNotMatch(String(resendPayloads[0].subject || ''), /Agreement Requested/i);
+      assert.doesNotMatch(String(emailCapture.resendPayloads[1].subject || ''), /Agreement Requested/i);
 
       const queueRows = await listAgreementRequestEmails(proposal.id);
-      assert.equal(queueRows.length, 1);
-      assert.equal(queueRows[0].status, 'suppressed');
-      assert.equal(queueRows[0].suppressedReason, 'request_resolved');
-
-      await forceAgreementRequestEmailsDue(proposal.id);
-      const dispatchRes = await dispatchAgreementRequestEmails();
-      assert.equal(dispatchRes.statusCode, 200);
-      assert.equal(dispatchRes.jsonBody().processed, 0);
-      assert.equal(
-        resendPayloads.length,
-        1,
-        'once the counterparty acts, the stale delayed request email must stay suppressed while the real final lost email remains the only send',
-      );
+      assert.equal(queueRows.length, 0);
     } finally {
-      globalThis.fetch = originalFetch;
-      if (originalMode === undefined) delete process.env.EMAIL_MODE;
-      else process.env.EMAIL_MODE = originalMode;
-      if (originalResendKey === undefined) delete process.env.RESEND_API_KEY;
-      else process.env.RESEND_API_KEY = originalResendKey;
-      if (originalResendFrom === undefined) delete process.env.RESEND_FROM_EMAIL;
-      else process.env.RESEND_FROM_EMAIL = originalResendFrom;
+      emailCapture.restore();
     }
   });
 

@@ -269,7 +269,6 @@ export function mapProposalOutcomeForUser(proposal, currentUser, options = {}) {
     party_b_outcome_at: proposal?.partyBOutcomeAt || null,
     can_mark_won: Boolean(eligibility.canMarkWon),
     can_mark_lost: Boolean(eligibility.canMarkLost),
-    can_continue_negotiating: Boolean(actorRole && outcome.pending && outcome.requestedBy === actorRole),
     eligibility_reason:
       !eligibility.canMarkWon && !eligibility.canMarkLost
         ? eligibility.reasonWon || eligibility.reasonLost || eligibility.reason
@@ -381,17 +380,6 @@ export function buildOutcomeMutation(existing, actorRole, requestedOutcome, now 
     partyBOutcomeAt: nextPartyBOutcomeAt,
     status: nextStatus,
     closedAt: nextClosedAt,
-    updatedAt: now,
-  };
-}
-
-export function buildContinueNegotiationReset(existing, now = new Date()) {
-  return {
-    partyAOutcome: null,
-    partyAOutcomeAt: null,
-    partyBOutcome: null,
-    partyBOutcomeAt: null,
-    closedAt: null,
     updatedAt: now,
   };
 }

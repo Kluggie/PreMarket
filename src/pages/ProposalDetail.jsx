@@ -50,6 +50,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ComparisonAiReportTab } from '@/components/document-comparison/ComparisonDetailTabs';
+import RequestAgreementConfirmDialog from '@/components/proposal/RequestAgreementConfirmDialog';
 import {
   getRunAiMediationLabel,
   MEDIATION_REVIEW_LABEL,
@@ -59,7 +60,7 @@ import {
   AGREED_LABEL,
   getAgreementActionLabel,
   getVisibleProposalStatusLabel,
-  shouldShowPendingAgreementResponseActions,
+  shouldConfirmRequestAgreement,
 } from '@/lib/proposalOutcomeUi';
 import { getStarterLimitErrorCopy } from '@/lib/starterLimitErrorCopy';
 
@@ -323,6 +324,7 @@ export default function ProposalDetail() {
   const proposalId = useProposalId();
   const [activeTab, setActiveTab] = useState('proposal');
   const [selectedVersionId, setSelectedVersionId] = useState('');
+  const [requestAgreementDialogOpen, setRequestAgreementDialogOpen] = useState(false);
 
   const detailQuery = useQuery({
     queryKey: ['proposal-detail', proposalId],
@@ -588,21 +590,6 @@ export default function ProposalDetail() {
     },
   });
 
-  const continueNegotiationMutation = useMutation({
-    mutationFn: () => proposalsClient.continueNegotiation(proposalId),
-    onSuccess: async (updatedProposal) => {
-      applyUpdatedProposalToCaches(queryClient, updatedProposal);
-      toast.success('Cleared pending agreement request');
-      await invalidateProposalThreadQueries(queryClient, {
-        proposalId,
-        documentComparisonId: updatedProposal?.document_comparison_id || proposal?.document_comparison_id || null,
-      });
-    },
-    onError: (error) => {
-      toast.error(error?.message || 'Failed to continue negotiating');
-    },
-  });
-
   const archiveMutation = useMutation({
     mutationFn: () => proposalsClient.archive(proposalId),
     onSuccess: async (updatedProposal) => {
@@ -701,13 +688,9 @@ export default function ProposalDetail() {
   const outcomeState = asLower(outcome.state || proposal.status);
   const isWon = outcomeState === 'won';
   const isLost = outcomeState === 'lost';
-  const isPendingWon = outcomeState === 'pending_won';
   const isClosed = isWon || isLost;
-  const showPendingAgreementResponseActions =
-    isPendingWon && shouldShowPendingAgreementResponseActions(outcome);
   const canArchive = Boolean(outcome.actor_role);
-  const outcomeActionDisabled =
-    markOutcomeMutation.isPending || continueNegotiationMutation.isPending;
+  const outcomeActionDisabled = markOutcomeMutation.isPending;
   const archiveActionDisabled =
     archiveMutation.isPending || unarchiveMutation.isPending || deleteMutation.isPending;
   const deleteDialogTitle = proposal.sent_at ? 'Delete Opportunity From Your Workspace?' : 'Delete Draft Opportunity?';
@@ -715,7 +698,7 @@ export default function ProposalDetail() {
     ? 'This will hide the opportunity from your workspace only. It will remain available to the counterparty and stay intact for shared history.'
     : 'This will permanently delete this unsent draft and any linked draft-only comparison data. This action cannot be undone.';
   const pendingOutcomeMessage = outcome.requested_by_counterparty
-    ? 'The counterparty requested agreement on this proposal. Confirm the agreement, mark it lost, or continue negotiating.'
+    ? 'The counterparty requested agreement on this proposal. Confirm the agreement or mark it lost.'
     : outcome.requested_by_current_user
       ? `You requested agreement on this proposal. It becomes ${AGREED_LABEL.toLowerCase()} only after the counterparty confirms the agreement.`
       : '';
@@ -728,9 +711,27 @@ export default function ProposalDetail() {
     : asText(proposal.party_a_email) || 'Not specified';
   const recipientParts = [proposal.party_b_name, proposal.party_b_email].filter(Boolean);
   const recipientDisplay = recipientParts.length > 0 ? recipientParts.join(' · ') : 'Not specified';
+  const handleAgreementAction = () => {
+    if (shouldConfirmRequestAgreement(outcome)) {
+      setRequestAgreementDialogOpen(true);
+      return;
+    }
+
+    markOutcomeMutation.mutate('won');
+  };
+  const handleRequestAgreementConfirm = () => {
+    setRequestAgreementDialogOpen(false);
+    markOutcomeMutation.mutate('won');
+  };
 
   return (
     <div className="min-h-screen bg-slate-50 py-6">
+      <RequestAgreementConfirmDialog
+        open={requestAgreementDialogOpen}
+        onOpenChange={setRequestAgreementDialogOpen}
+        onConfirm={handleRequestAgreementConfirm}
+        isPending={markOutcomeMutation.isPending}
+      />
       <div className="max-w-[1400px] mx-auto px-6 space-y-4">
         <Link to={createPageUrl('Opportunities')} className="inline-flex items-center text-slate-600 hover:text-slate-900">
           <ArrowLeft className="w-4 h-4 mr-2" />
@@ -908,7 +909,7 @@ export default function ProposalDetail() {
                               ? 'Waiting for the counterparty to confirm the agreement.'
                               : outcome.eligibility_reason_won || outcome.eligibility_reason
                           }
-                          onClick={() => markOutcomeMutation.mutate('won')}
+                          onClick={handleAgreementAction}
                         >
                           <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />
                           {getAgreementActionLabel(outcome)}
@@ -924,16 +925,6 @@ export default function ProposalDetail() {
                           <XCircle className="w-3.5 h-3.5 mr-1.5" />
                           Mark as Lost
                         </OutcomeActionButton>
-                        {showPendingAgreementResponseActions ? (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={outcomeActionDisabled || !outcome.can_continue_negotiating}
-                            onClick={() => continueNegotiationMutation.mutate()}
-                          >
-                            Continue Negotiating
-                          </Button>
-                        ) : null}
                       </>
                     ) : null}
                   </div>

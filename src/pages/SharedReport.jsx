@@ -56,6 +56,7 @@ import {
 import {
   ComparisonDetailTabs,
 } from '@/components/document-comparison/ComparisonDetailTabs';
+import RequestAgreementConfirmDialog from '@/components/proposal/RequestAgreementConfirmDialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -69,7 +70,7 @@ import {
 } from '@/lib/aiReportUtils';
 import {
   getAgreementActionLabel,
-  shouldShowPendingAgreementResponseActions,
+  shouldConfirmRequestAgreement,
 } from '@/lib/proposalOutcomeUi';
 import {
   AlertTriangle,
@@ -439,6 +440,7 @@ export default function SharedReport() {
   const [verificationCode, setVerificationCode] = useState('');
   const [verificationRequested, setVerificationRequested] = useState(false);
   const [forcedMismatchInvitedEmail, setForcedMismatchInvitedEmail] = useState('');
+  const [requestAgreementDialogOpen, setRequestAgreementDialogOpen] = useState(false);
   const [recipientDetailTab, setRecipientDetailTab] = useState('details');
   const [recipientActiveDocId, setRecipientActiveDocId] = useState(null);
   const [customPromptText, setCustomPromptText] = useState('');
@@ -566,10 +568,6 @@ export default function SharedReport() {
     isAuthenticated &&
     asText(parent?.proposal_id) &&
     parentOutcome?.actor_role,
-  );
-  const showContinueNegotiatingButton = Boolean(
-    parentOutcomeState === 'pending_won' &&
-    shouldShowPendingAgreementResponseActions(parentOutcome),
   );
 
   const sharedHistoryDocuments = useMemo(() => {
@@ -1227,23 +1225,6 @@ export default function SharedReport() {
     },
   });
 
-  const continueNegotiationMutation = useMutation({
-    mutationFn: () => proposalsClient.continueNegotiation(asText(parent?.proposal_id)),
-    onSuccess: async (updatedProposal) => {
-      applyUpdatedProposalToCaches(queryClient, updatedProposal);
-      toast.success('Cleared pending agreement request');
-      await workspaceQuery.refetch();
-      await invalidateProposalThreadQueries(queryClient, {
-        proposalId: asText(parent?.proposal_id),
-        documentComparisonId:
-          updatedProposal?.document_comparison_id || asText(parent?.document_comparison_id) || null,
-      });
-    },
-    onError: (error) => {
-      toast.error(error?.message || 'Failed to continue negotiating');
-    },
-  });
-
   const verifyStartMutation = useMutation({
     mutationFn: () => sharedReportsClient.startRecipientVerification(token),
     onSuccess: () => {
@@ -1292,7 +1273,7 @@ export default function SharedReport() {
     },
   });
   const parentIsClosed = parentOutcomeState === 'won' || parentOutcomeState === 'lost';
-  const outcomeActionDisabled = markOutcomeMutation.isPending || continueNegotiationMutation.isPending;
+  const outcomeActionDisabled = markOutcomeMutation.isPending;
   const outcomeHelperText = parentOutcome?.requested_by_current_user
     ? 'Waiting for the counterparty to confirm the agreement.'
     : parentOutcome?.requested_by_counterparty
@@ -1323,12 +1304,24 @@ export default function SharedReport() {
       variant: 'outline',
     },
   ];
+  const handleAgreementAction = () => {
+    if (shouldConfirmRequestAgreement(parentOutcome)) {
+      setRequestAgreementDialogOpen(true);
+      return;
+    }
+
+    markOutcomeMutation.mutate('won');
+  };
+  const handleRequestAgreementConfirm = () => {
+    setRequestAgreementDialogOpen(false);
+    markOutcomeMutation.mutate('won');
+  };
   const step0StatusActions = canUpdateOutcomeFromStep0 && !parentIsClosed
     ? [
         {
           key: 'request-agreement',
           label: getAgreementActionLabel(parentOutcome),
-          onClick: () => markOutcomeMutation.mutate('won'),
+          onClick: handleAgreementAction,
           disabled:
             outcomeActionDisabled ||
             !parentOutcome?.can_mark_won ||
@@ -1346,17 +1339,6 @@ export default function SharedReport() {
           variant: 'outline',
           className: 'text-rose-600 border-rose-200 hover:bg-rose-50',
         },
-        ...(showContinueNegotiatingButton
-          ? [
-              {
-                key: 'continue-negotiating',
-                label: 'Continue Negotiating',
-                onClick: () => continueNegotiationMutation.mutate(),
-                disabled: outcomeActionDisabled || !parentOutcome?.can_continue_negotiating,
-                variant: 'outline',
-              },
-            ]
-          : []),
       ]
     : [];
 
@@ -2501,6 +2483,12 @@ export default function SharedReport() {
 
   return (
     <div className="min-h-screen bg-slate-50 py-6">
+      <RequestAgreementConfirmDialog
+        open={requestAgreementDialogOpen}
+        onOpenChange={setRequestAgreementDialogOpen}
+        onConfirm={handleRequestAgreementConfirm}
+        isPending={markOutcomeMutation.isPending}
+      />
       <ComparisonWorkflowShell
         title="Opportunity Workspace"
         subtitle="Review recipient-safe shared history and AI mediation insights."

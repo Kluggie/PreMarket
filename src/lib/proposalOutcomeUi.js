@@ -23,6 +23,6 @@ export function getAgreementActionLabel(outcome = {}) {
   return outcome?.requested_by_counterparty ? CONFIRM_AGREEMENT_LABEL : REQUEST_AGREEMENT_LABEL;
 }
 
-export function shouldShowPendingAgreementResponseActions(outcome = {}) {
-  return Boolean(outcome?.pending && outcome?.requested_by_current_user);
+export function shouldConfirmRequestAgreement(outcome = {}) {
+  return !Boolean(outcome?.requested_by_counterparty);
 }

@@ -14,6 +14,7 @@ function readRepoFile(relativePath) {
 test('proposal outcome user-facing copy stays on agreement terminology', () => {
   const files = {
     helpers: readRepoFile('src/lib/proposalOutcomeUi.js'),
+    confirmationDialog: readRepoFile('src/components/proposal/RequestAgreementConfirmDialog.jsx'),
     proposalDetail: readRepoFile('src/pages/ProposalDetail.jsx'),
     proposals: readRepoFile('src/pages/Proposals.jsx'),
     dashboard: readRepoFile('src/pages/Dashboard.jsx'),
@@ -26,13 +27,16 @@ test('proposal outcome user-facing copy stays on agreement terminology', () => {
   assert.match(files.helpers, /Request Agreement/);
   assert.match(files.helpers, /Confirm Agreement/);
   assert.match(files.helpers, /Agreed/);
+  assert.match(files.confirmationDialog, /Request agreement\?/);
+  assert.match(files.confirmationDialog, /action cannot be undone\./i);
   assert.match(files.notifications, /Agreement Requested/);
   assert.match(files.notifications, /Agreed/);
-  assert.match(files.notifications, /confirm the agreement or continue negotiating/);
+  assert.match(files.notifications, /Request Agreement now sends immediately and cannot be retracted\./);
 
   assert.doesNotMatch(combined, /Confirm Terms/);
   assert.doesNotMatch(combined, /Terms agreed/);
   assert.doesNotMatch(combined, /Mark as Won/);
   assert.doesNotMatch(combined, /Confirm Win/);
   assert.doesNotMatch(combined, /Outcome action must be "won", "lost", or "continue"\./);
+  assert.doesNotMatch(combined, /continue negotiating/i);
 });

@@ -172,14 +172,6 @@ export const proposalsClient = {
     return response.proposal || null;
   },
 
-  async continueNegotiation(id) {
-    const response = await request(`/api/proposals/${encodeURIComponent(String(id || ''))}/outcome`, {
-      method: 'POST',
-      body: JSON.stringify({ action: 'continue' }),
-    });
-    return response.proposal || null;
-  },
-
   async close(id, status) {
     return this.markOutcome(id, status);
   },
