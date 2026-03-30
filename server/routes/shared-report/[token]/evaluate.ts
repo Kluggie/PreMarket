@@ -338,7 +338,6 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       context,
       token,
       consumeView: false,
-      enforceMaxUses: false,
     });
     requireRecipientAuthorization(resolved.link, auth.user);
 

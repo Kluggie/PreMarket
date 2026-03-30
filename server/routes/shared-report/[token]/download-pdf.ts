@@ -179,7 +179,6 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       context,
       token,
       consumeView: false,
-      enforceMaxUses: true,
     });
 
     const projection = buildRecipientSafeEvaluationProjection({

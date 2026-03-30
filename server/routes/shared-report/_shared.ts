@@ -116,13 +116,11 @@ type ResolveParams = {
   context: any;
   token: string;
   consumeView?: boolean;
-  enforceMaxUses?: boolean;
 };
 
 export async function resolveSharedReportToken(params: ResolveParams) {
   const { context, token } = params;
   const consumeView = Boolean(params.consumeView);
-  const enforceMaxUses = params.enforceMaxUses !== false;
   const db = getDb();
 
   const [joined] = await db
@@ -158,9 +156,6 @@ export async function resolveSharedReportToken(params: ResolveParams) {
   }
   if (isExpired(link.expiresAt)) {
     throw new ApiError(410, 'token_expired', 'Shared report link has expired');
-  }
-  if (enforceMaxUses && Number(link.maxUses || 0) > 0 && Number(link.uses || 0) >= Number(link.maxUses || 0)) {
-    throw new ApiError(410, 'max_uses_reached', 'Shared report link reached its usage limit');
   }
 
   let effectiveLink = link;

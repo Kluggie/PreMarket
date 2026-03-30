@@ -287,15 +287,17 @@ if (!hasDatabaseUrl()) {
     assert.equal(expiredRead.statusCode, 410);
     assert.equal(expiredRead.jsonBody().error.code, 'token_expired');
 
-    // max uses reached: GET workspace intentionally consumes a view (consumeView: true).
+    // Shared-report links must remain accessible across repeated opens/refreshes
+    // even when maxUses is configured.
     const maxUsesShare = await createSharedReportLink(ownerCookie, comparison.id, 'recipient@example.com', {
       maxUses: 1,
     });
     const firstUse = await getRecipientWorkspace(maxUsesShare.token);
     assert.equal(firstUse.statusCode, 200);
     const secondUse = await getRecipientWorkspace(maxUsesShare.token);
-    assert.equal(secondUse.statusCode, 410);
-    assert.equal(secondUse.jsonBody().error.code, 'max_uses_reached');
+    assert.equal(secondUse.statusCode, 200);
+    const thirdUse = await getRecipientWorkspace(maxUsesShare.token);
+    assert.equal(thirdUse.statusCode, 200);
   });
 
   test('A4 draft save permissions matrix', async () => {

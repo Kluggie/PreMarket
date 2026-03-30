@@ -483,7 +483,9 @@ export async function validateShareLinkAccess(
     return errorResult(410, 'TOKEN_EXPIRED', 'This share link has expired', currentUserEmail, false, shareLink);
   }
 
-  if (shareLink.viewCount >= shareLink.maxViews) {
+  const isSharedReportMode = String(shareLink.mode || '').toLowerCase() === 'shared_report';
+  const enforceViewLimit = !isSharedReportMode && shareLink.maxViews > 0;
+  if (enforceViewLimit && shareLink.viewCount >= shareLink.maxViews) {
     return errorResult(410, 'MAX_VIEWS_REACHED', 'This share link has reached the maximum number of views', currentUserEmail, false, shareLink);
   }
 

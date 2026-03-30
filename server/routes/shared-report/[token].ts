@@ -58,7 +58,6 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       context,
       token,
       consumeView: true,
-      enforceMaxUses: true,
     });
 
     const currentDraft = await getCurrentRecipientDraft(resolved.db, resolved.link.id);

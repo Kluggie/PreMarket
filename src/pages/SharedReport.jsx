@@ -341,7 +341,6 @@ function toFriendlyLoadError(error) {
   const code = asText(error?.code).toLowerCase();
   if (code === 'token_expired') return 'This shared link has expired.';
   if (code === 'token_inactive') return 'This shared link has been revoked.';
-  if (code === 'max_uses_reached') return 'This shared link has reached its view limit.';
   if (code === 'token_not_found') return 'This shared link is invalid.';
   if (code === 'request_timeout') return 'Loading timed out. Please refresh and try again.';
   return error?.message || 'Unable to load this shared report.';

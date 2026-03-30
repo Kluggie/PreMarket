@@ -73,7 +73,6 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       context,
       token,
       consumeView: false,
-      enforceMaxUses: false,
     });
     const currentUserId = getCurrentUserId(auth.user);
     const authorizedUserId = getAuthorizedUserId(resolved.link);
