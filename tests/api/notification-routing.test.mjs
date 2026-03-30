@@ -5,6 +5,9 @@ import documentComparisonsHandler from '../../server/routes/document-comparisons
 import documentComparisonsEvaluateHandler from '../../server/routes/document-comparisons/[id]/evaluate.ts';
 import proposalOutcomeHandler from '../../server/routes/proposals/[id]/outcome.ts';
 import sharedReportsHandler from '../../server/routes/shared-reports/index.ts';
+import sharedReportRecipientTokenHandler from '../../server/routes/shared-report/[token].ts';
+import sharedReportRecipientDraftHandler from '../../server/routes/shared-report/[token]/draft.ts';
+import sharedReportRecipientSendBackHandler from '../../server/routes/shared-report/[token]/send-back.ts';
 import notificationsHandler from '../../server/routes/notifications/index.ts';
 import notificationByIdHandler from '../../server/routes/notifications/[id].ts';
 import { createNotificationEvent } from '../../server/_lib/notifications.ts';
@@ -97,6 +100,50 @@ async function createSharedReport(cookie, comparisonId, recipientEmail) {
   return res.jsonBody();
 }
 
+async function getSharedReportWorkspace(token, cookie = null) {
+  const res = await callHandler(
+    sharedReportRecipientTokenHandler,
+    {
+      method: 'GET',
+      url: `/api/shared-report/${token}`,
+      query: { token },
+      headers: cookie ? { cookie } : {},
+    },
+    token,
+  );
+  return res;
+}
+
+async function saveRecipientDraft(token, cookie, body = {}) {
+  const res = await callHandler(
+    sharedReportRecipientDraftHandler,
+    {
+      method: 'POST',
+      url: `/api/shared-report/${token}/draft`,
+      headers: cookie ? { cookie } : {},
+      query: { token },
+      body,
+    },
+    token,
+  );
+  return res;
+}
+
+async function sendBackRecipientDraft(token, cookie) {
+  const res = await callHandler(
+    sharedReportRecipientSendBackHandler,
+    {
+      method: 'POST',
+      url: `/api/shared-report/${token}/send-back`,
+      headers: cookie ? { cookie } : {},
+      query: { token },
+      body: {},
+    },
+    token,
+  );
+  return res;
+}
+
 async function listNotifications(cookie) {
   const res = await callHandler(notificationsHandler, {
     method: 'GET',
@@ -109,20 +156,23 @@ async function listNotifications(cookie) {
 }
 
 async function requestAgreement(cookie, proposalId) {
-  const res = await callHandler(
+  const res = await markOutcome(cookie, proposalId, { outcome: 'won' });
+  assert.equal(res.statusCode, 200);
+  return res.jsonBody();
+}
+
+async function markOutcome(cookie, proposalId, body) {
+  return callHandler(
     proposalOutcomeHandler,
     {
       method: 'POST',
       url: `/api/proposals/${proposalId}/outcome`,
       headers: { cookie },
       query: { id: proposalId },
-      body: { outcome: 'won' },
+      body,
     },
     proposalId,
   );
-
-  assert.equal(res.statusCode, 200);
-  return res.jsonBody();
 }
 
 if (!hasDatabaseUrl()) {
@@ -281,6 +331,93 @@ if (!hasDatabaseUrl()) {
       notification.target?.legacy_href,
       buildLegacyOpportunityNotificationHref({ proposalId }),
     );
+  });
+
+  test('continue-negotiating notifications keep recipient binding on the counterparty handoff token', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerEmail = 'notification-route-continue-owner@example.com';
+    const recipientEmail = 'notification-route-continue-recipient@example.com';
+    const ownerCookie = authCookie('notification_route_continue_owner', ownerEmail);
+    const recipientCookie = authCookie('notification_route_continue_recipient', recipientEmail);
+    await touchUser(ownerCookie);
+    await touchUser(recipientCookie);
+
+    const comparison = await createComparison(ownerCookie, { recipientEmail });
+    const proposalId = comparison.proposal_id;
+    assert.ok(proposalId, 'comparison should stay linked to a proposal');
+
+    const initialShare = await createSharedReport(ownerCookie, comparison.id, recipientEmail);
+    assert.ok(initialShare?.token, 'initial shared-report token should exist');
+
+    const saveDraftRes = await saveRecipientDraft(initialShare.token, recipientCookie, {
+      shared_payload: {
+        label: 'Shared Information',
+        text: 'Recipient shared update before handoff',
+      },
+      recipient_confidential_payload: {
+        label: 'Confidential Information',
+        notes: 'Recipient confidential note',
+      },
+    });
+    assert.equal(saveDraftRes.statusCode, 200);
+
+    const sendBackRes = await sendBackRecipientDraft(initialShare.token, recipientCookie);
+    assert.equal(sendBackRes.statusCode, 200);
+    const returnToken = String(sendBackRes.jsonBody().return_link?.token || '');
+    assert.ok(returnToken, 'send-back should create a return link token for the counterparty');
+
+    // Re-open the old recipient link so its updatedAt becomes newest.
+    // The regression is that continue-negotiating previously selected this stale token.
+    const reopenOldLinkRes = await getSharedReportWorkspace(initialShare.token, recipientCookie);
+    assert.equal(reopenOldLinkRes.statusCode, 200);
+
+    const now = new Date();
+    await getDb()
+      .update(schema.proposals)
+      .set({
+        status: 'received',
+        sentAt: now,
+        receivedAt: now,
+        partyBEmail: recipientEmail,
+        updatedAt: now,
+      })
+      .where(eq(schema.proposals.id, proposalId));
+
+    await requestAgreement(ownerCookie, proposalId);
+
+    const continueRes = await markOutcome(recipientCookie, proposalId, {
+      action: 'continue_negotiating',
+    });
+    assert.equal(continueRes.statusCode, 200);
+
+    const ownerNotifications = await listNotifications(ownerCookie);
+    const continueNotification = ownerNotifications.find(
+      (entry) =>
+        entry.event_type === 'status_continue_negotiating' &&
+        entry.title === 'Continue Negotiating',
+    );
+    assert.ok(continueNotification, 'owner should receive a continue-negotiating notification');
+
+    const expectedHref = buildDocumentComparisonNotificationHref(returnToken);
+    assert.equal(continueNotification.action_url, expectedHref);
+    assert.equal(continueNotification.target?.href, expectedHref);
+    assert.equal(String(continueNotification.target?.shared_report_token || ''), returnToken);
+
+    const ownerWorkspaceRes = await getSharedReportWorkspace(returnToken, ownerCookie);
+    assert.equal(ownerWorkspaceRes.statusCode, 200);
+    const ownerWorkspaceBody = ownerWorkspaceRes.jsonBody();
+    assert.equal(String(ownerWorkspaceBody.share?.invited_email || '').toLowerCase(), ownerEmail);
+    assert.equal(Boolean(ownerWorkspaceBody.share?.authorization?.authorized_for_current_user), true);
+    assert.equal(Boolean(ownerWorkspaceBody.share?.authorization?.requires_verification), false);
+
+    const wrongAccountRes = await getSharedReportWorkspace(initialShare.token, ownerCookie);
+    assert.equal(wrongAccountRes.statusCode, 200);
+    const wrongAccountBody = wrongAccountRes.jsonBody();
+    assert.equal(String(wrongAccountBody.share?.invited_email || '').toLowerCase(), recipientEmail);
+    assert.equal(Boolean(wrongAccountBody.share?.authorization?.authorized_for_current_user), false);
+    assert.equal(Boolean(wrongAccountBody.share?.authorization?.requires_verification), true);
   });
 
   test('older comparison notifications without comparison routing metadata fall back safely', async () => {

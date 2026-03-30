@@ -1,4 +1,4 @@
-import { and, desc, eq, ilike } from 'drizzle-orm';
+import { and, desc, eq, ilike, or } from 'drizzle-orm';
 import { schema } from './db/client.js';
 import { toCanonicalAppUrl } from './env.js';
 import {
@@ -74,10 +74,50 @@ export function buildAgreementRequestActionUrl(proposalOrId) {
   return appBaseUrl ? toCanonicalAppUrl(appBaseUrl, returnPath) : returnPath;
 }
 
-export async function resolveLatestActiveSharedReportLink(db, proposalId) {
+export async function resolveLatestActiveSharedReportLink(db, proposalId, options = {}) {
   const normalizedProposalId = asText(proposalId);
   if (!normalizedProposalId) {
     return null;
+  }
+
+  const targetRecipientUserId = asText(options?.recipientUserId);
+  const targetRecipientEmail = normalizeEmail(options?.recipientEmail);
+  const recipientScope =
+    targetRecipientEmail && targetRecipientUserId
+      ? or(
+          ilike(schema.sharedLinks.recipientEmail, targetRecipientEmail),
+          eq(schema.sharedLinks.authorizedUserId, targetRecipientUserId),
+        )
+      : targetRecipientEmail
+        ? ilike(schema.sharedLinks.recipientEmail, targetRecipientEmail)
+        : targetRecipientUserId
+          ? eq(schema.sharedLinks.authorizedUserId, targetRecipientUserId)
+          : null;
+
+  if (recipientScope) {
+    const [latestRecipientLink] = await db
+      .select({
+        id: schema.sharedLinks.id,
+        token: schema.sharedLinks.token,
+        status: schema.sharedLinks.status,
+        createdAt: schema.sharedLinks.createdAt,
+        updatedAt: schema.sharedLinks.updatedAt,
+      })
+      .from(schema.sharedLinks)
+      .where(
+        and(
+          eq(schema.sharedLinks.proposalId, normalizedProposalId),
+          eq(schema.sharedLinks.mode, 'shared_report'),
+          eq(schema.sharedLinks.status, 'active'),
+          recipientScope,
+        ),
+      )
+      .orderBy(desc(schema.sharedLinks.updatedAt), desc(schema.sharedLinks.createdAt))
+      .limit(1);
+
+    if (latestRecipientLink) {
+      return latestRecipientLink;
+    }
   }
 
   const [latestActiveLink] = await db
