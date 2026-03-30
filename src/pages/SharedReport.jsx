@@ -69,6 +69,10 @@ import {
   MEDIATION_REVIEW_LABEL,
 } from '@/lib/aiReportUtils';
 import {
+  buildSharedReportTurnCopy,
+  getSharedReportSendActionLabel,
+} from '@/lib/sharedReportSendDirection';
+import {
   CONTINUE_NEGOTIATING_LABEL,
   getAgreementActionLabel,
   getOutcomeHelperText,
@@ -90,6 +94,8 @@ const SHARED_LABEL = 'Shared Information';
 const TOTAL_WORKFLOW_STEPS = 3;
 const STEP2_AUTOSAVE_DEBOUNCE_MS = 30_000;
 const STEP2_AUTOSAVE_MIN_INTERVAL_MS = 30_000;
+const HISTORY_SHARED_DOC_ID_PREFIX = 'shared-history-';
+const HISTORY_CONFIDENTIAL_DOC_ID_PREFIX = 'history-confidential-';
 const COACH_INTENT_LABELS = {
   improve_shared: 'Improve shared writing',
   negotiate: 'Negotiation strategy',
@@ -209,6 +215,39 @@ function getTokenFromRoute(paramsToken, locationSearch) {
   if (pathToken) return pathToken;
   const search = new URLSearchParams(locationSearch || '');
   return asText(search.get('token'));
+}
+
+function isImmutableHistoryDocumentId(value) {
+  const id = asText(value).toLowerCase();
+  if (!id) return false;
+  return (
+    id.startsWith(HISTORY_SHARED_DOC_ID_PREFIX) ||
+    id.startsWith('shared-history-baseline') ||
+    id.startsWith(HISTORY_CONFIDENTIAL_DOC_ID_PREFIX) ||
+    id.startsWith('confidential-history-')
+  );
+}
+
+function filterEditableDraftDocuments(documents, immutableHistoryDocIdSet) {
+  const immutableIds = immutableHistoryDocIdSet instanceof Set ? immutableHistoryDocIdSet : new Set();
+  return (Array.isArray(documents) ? documents : [])
+    .filter((doc) => doc && typeof doc === 'object' && !Array.isArray(doc))
+    .filter((doc) => {
+      const id = asText(doc.id);
+      if (!id) {
+        return true;
+      }
+      if (isImmutableHistoryDocumentId(id)) {
+        return false;
+      }
+      return !immutableIds.has(id);
+    })
+    .map((doc) => ({
+      ...doc,
+      isHistoricalRound: false,
+      historySource: null,
+      readOnlyReason: '',
+    }));
 }
 
 function normalizePayload(value) {
@@ -369,10 +408,10 @@ function toFriendlyEvaluateError(error) {
   return error?.message || 'Unable to run AI mediation.';
 }
 
-function toFriendlySendBackError(error) {
+function toFriendlySendBackError(error, sendTargetNoun = 'proposer') {
   const code = asText(error?.code).toLowerCase();
   if (Number(error?.status || 0) === 401 || code === 'unauthorized') {
-    return 'Please sign in to send updates to the proposer.';
+    return `Please sign in to send updates to the ${sendTargetNoun}.`;
   }
   if (code === 'send_back_not_allowed') {
     return 'This link does not allow sending updates back.';
@@ -515,9 +554,28 @@ export default function SharedReport() {
     () => (Array.isArray(sharedHistory?.entries) ? sharedHistory.entries : []),
     [sharedHistory?.entries],
   );
+  const sharedHistoryConfidentialEntries = useMemo(
+    () => (Array.isArray(sharedHistory?.confidential_entries) ? sharedHistory.confidential_entries : []),
+    [sharedHistory?.confidential_entries],
+  );
   const draftDocumentOwner = asText(partyContext?.draft_author_role).toLowerCase() === OWNER_PROPOSER
     ? OWNER_PROPOSER
     : OWNER_RECIPIENT;
+  const sendDirectionCopy = useMemo(
+    () => buildSharedReportTurnCopy(draftDocumentOwner),
+    [draftDocumentOwner],
+  );
+  const activeRoundNumber = useMemo(() => {
+    const nextOutgoingRound = Number(partyContext?.next_outgoing_round || 0);
+    if (Number.isFinite(nextOutgoingRound) && nextOutgoingRound >= 1) {
+      return Math.floor(nextOutgoingRound);
+    }
+    const currentRound = Number(partyContext?.current_link_round || 0);
+    if (Number.isFinite(currentRound) && currentRound >= 1) {
+      return Math.floor(currentRound) + 1;
+    }
+    return 1;
+  }, [partyContext?.current_link_round, partyContext?.next_outgoing_round]);
   const baselineSharedPayload = useMemo(
     () => baseline?.shared_payload || workspaceQuery.data?.baselineShared || defaults.shared_payload || {},
     [baseline?.shared_payload, defaults.shared_payload, workspaceQuery.data?.baselineShared],
@@ -577,7 +635,7 @@ export default function SharedReport() {
     if (sharedHistoryEntries.length > 0) {
       return sharedHistoryEntries.map((entry, index) =>
         createDocument({
-          id: `shared-history-${entry.id || index}`,
+          id: `${HISTORY_SHARED_DOC_ID_PREFIX}${entry.id || index}`,
           title:
             entry.round_number
               ? `Round ${entry.round_number} - ${entry.visibility_label || `Shared by ${entry.author_label || getPartyRoleLabel(entry.author_role)}`}`
@@ -592,6 +650,10 @@ export default function SharedReport() {
           json: entry.json || null,
           files: entry.files || [],
           importStatus: Array.isArray(entry.files) && entry.files.length > 0 ? 'imported' : 'idle',
+          isHistoricalRound: true,
+          historySource: 'previous_round',
+          historyRoundNumber: Number(entry.round_number || 0) || null,
+          readOnlyReason: 'Previous round content is view-only and cannot be changed.',
         }),
       );
     }
@@ -613,14 +675,58 @@ export default function SharedReport() {
         json: baselineSharedDocument.json || null,
         files: baselineSharedDocument.files || [],
         importStatus: (baselineSharedDocument.files || []).length > 0 ? 'imported' : 'idle',
+        isHistoricalRound: true,
+        historySource: 'previous_round',
+        historyRoundNumber: 1,
+        readOnlyReason: 'Previous round content is view-only and cannot be changed.',
       }),
     ];
   }, [baselineSharedDocument, sharedHistoryEntries]);
 
-  // ── Combined documents for display (read-only shared history + editable draft docs) ──
+  const previousRoundConfidentialDocuments = useMemo(() => {
+    if (!sharedHistoryConfidentialEntries.length) {
+      return [];
+    }
+    return sharedHistoryConfidentialEntries
+      .filter((entry) => {
+        const roundNumber = Number(entry?.round_number || 0);
+        if (!Number.isFinite(roundNumber) || roundNumber < 1) {
+          return true;
+        }
+        return roundNumber < activeRoundNumber;
+      })
+      .map((entry, index) => {
+        const text = asText(entry?.text) || htmlToText(asText(entry?.html));
+        const html = sanitizeEditorHtml(asText(entry?.html) || textToHtml(text));
+        const roundNumber = Number(entry?.round_number || 0);
+        const normalizedRoundNumber = Number.isFinite(roundNumber) && roundNumber >= 1
+          ? Math.floor(roundNumber)
+          : null;
+        return createDocument({
+          id: `${HISTORY_CONFIDENTIAL_DOC_ID_PREFIX}${entry?.id || index}`,
+          title: normalizedRoundNumber
+            ? `Round ${normalizedRoundNumber} - My Confidential Notes`
+            : 'My Previous Confidential Notes',
+          visibility: VISIBILITY_CONFIDENTIAL,
+          owner: draftDocumentOwner,
+          source: asText(entry?.source) || 'typed',
+          text,
+          html,
+          json: parseDocJson(entry?.json),
+          files: Array.isArray(entry?.files) ? entry.files : [],
+          importStatus: Array.isArray(entry?.files) && entry.files.length > 0 ? 'imported' : 'idle',
+          isHistoricalRound: true,
+          historySource: 'previous_round',
+          historyRoundNumber: normalizedRoundNumber,
+          readOnlyReason: 'Previous round content is view-only and cannot be changed.',
+        });
+      });
+  }, [activeRoundNumber, draftDocumentOwner, sharedHistoryConfidentialEntries]);
+
+  // ── Combined documents for display (read-only history + editable draft docs) ──
   const allDisplayDocuments = useMemo(() => {
-    return [...sharedHistoryDocuments, ...recipientDocuments];
-  }, [sharedHistoryDocuments, recipientDocuments]);
+    return [...sharedHistoryDocuments, ...previousRoundConfidentialDocuments, ...recipientDocuments];
+  }, [sharedHistoryDocuments, previousRoundConfidentialDocuments, recipientDocuments]);
 
   // ── Compiled bundles from recipient documents (for draft persistence + coach) ──
   const compiledRecipientBundles = useMemo(
@@ -649,17 +755,24 @@ export default function SharedReport() {
   }, [recipientDocuments, sharedHistoryDocuments]);
 
   // ── Locked / read-only doc IDs ──
-  const lockedDocIds = useMemo(() => {
-    return sharedHistoryDocuments.map((doc) => doc.id);
-  }, [sharedHistoryDocuments]);
+  const immutableHistoryDocIds = useMemo(
+    () => [...sharedHistoryDocuments, ...previousRoundConfidentialDocuments].map((doc) => doc.id),
+    [sharedHistoryDocuments, previousRoundConfidentialDocuments],
+  );
+  const immutableHistoryDocIdSet = useMemo(
+    () => new Set(immutableHistoryDocIds),
+    [immutableHistoryDocIds],
+  );
+
+  const lockedDocIds = useMemo(() => immutableHistoryDocIds, [immutableHistoryDocIds]);
 
   const readOnlyDocIds = useMemo(() => {
-    const ids = [...sharedHistoryDocuments.map((doc) => doc.id)];
+    const ids = [...immutableHistoryDocIds];
     if (requiresRecipientVerification) {
       recipientDocuments.forEach((d) => ids.push(d.id));
     }
     return ids;
-  }, [sharedHistoryDocuments, recipientDocuments, requiresRecipientVerification]);
+  }, [immutableHistoryDocIds, recipientDocuments, requiresRecipientVerification]);
 
   // ── Recipient CRUD handlers ──
   const handleAddFiles = useCallback((files) => {
@@ -688,27 +801,37 @@ export default function SharedReport() {
   }, [draftDocumentOwner]);
 
   const handleRemoveDoc = useCallback((id) => {
+    if (immutableHistoryDocIdSet.has(id)) {
+      return;
+    }
     setRecipientDocuments((prev) => prev.filter((d) => d.id !== id));
     setDraftDirty(true);
-  }, []);
+  }, [immutableHistoryDocIdSet]);
 
   const handleRenameDoc = useCallback((id, newTitle) => {
+    if (immutableHistoryDocIdSet.has(id)) {
+      return;
+    }
     setRecipientDocuments((prev) =>
       prev.map((d) => (d.id === id ? { ...d, title: newTitle } : d)),
     );
     setDraftDirty(true);
-  }, []);
+  }, [immutableHistoryDocIdSet]);
 
   const handleSetVisibility = useCallback((id, visibility) => {
+    if (immutableHistoryDocIdSet.has(id)) {
+      return;
+    }
     setRecipientDocuments((prev) =>
       prev.map((d) => (d.id === id ? { ...d, visibility } : d)),
     );
     setDraftDirty(true);
-  }, []);
+  }, [immutableHistoryDocIdSet]);
 
   const handleRecipientDocumentContentChange = useCallback((id, { html, text, json }) => {
     // Don't allow editing proposer documents
     if (id === 'proposer-shared') return;
+    if (immutableHistoryDocIdSet.has(id)) return;
     if (requiresRecipientVerification) return;
     setRecipientDocuments((prev) =>
       prev.map((d) =>
@@ -716,10 +839,10 @@ export default function SharedReport() {
       ),
     );
     setDraftDirty(true);
-  }, [requiresRecipientVerification]);
+  }, [immutableHistoryDocIdSet, requiresRecipientVerification]);
 
   const hasActiveDraft = Boolean(recipientDraft && asText(recipientDraft.status).toLowerCase() === 'draft');
-  const isSentToProposer =
+  const isSentToCounterparty =
     Boolean(latestSentRevision && asText(latestSentRevision.status).toLowerCase() === 'sent') && !hasActiveDraft;
 
   useEffect(() => {
@@ -848,7 +971,13 @@ export default function SharedReport() {
 
     if (Array.isArray(savedDocs) && savedDocs.length > 0) {
       // New multi-document model: restore from editor_state.documents
-      setRecipientDocuments(deserializeDocumentsFromDraft(savedDocs));
+      const restored = filterEditableDraftDocuments(
+        deserializeDocumentsFromDraft(savedDocs),
+        immutableHistoryDocIdSet,
+      );
+      setRecipientDocuments(
+        restored.length > 0 ? restored : buildDefaultDraftDocuments(draftDocumentOwner),
+      );
     } else if (recipientDraft) {
       // Legacy model: create docs from shared_payload + recipient_confidential_payload
       const docs = [];
@@ -895,7 +1024,13 @@ export default function SharedReport() {
       const sentEditorState = latestSentRevision.editor_state || {};
       const sentDocs = sentEditorState.documents;
       if (Array.isArray(sentDocs) && sentDocs.length > 0) {
-        setRecipientDocuments(deserializeDocumentsFromDraft(sentDocs));
+        const restored = filterEditableDraftDocuments(
+          deserializeDocumentsFromDraft(sentDocs),
+          immutableHistoryDocIdSet,
+        );
+        setRecipientDocuments(
+          restored.length > 0 ? restored : buildDefaultDraftDocuments(draftDocumentOwner),
+        );
       } else {
         // Legacy sent revision: rebuild from payloads
         const sentDocs2 = [];
@@ -977,6 +1112,7 @@ export default function SharedReport() {
     baselineSharedDocument,
     step,
     stepHydrated,
+    immutableHistoryDocIdSet,
   ]);
 
   useEffect(() => {
@@ -1070,7 +1206,9 @@ export default function SharedReport() {
         baseEditorState,
         companyContextName,
         companyContextWebsite,
-        documents: serializeDocumentsForDraft(recipientDocuments),
+        documents: serializeDocumentsForDraft(
+          recipientDocuments.filter((document) => !isImmutableHistoryDocumentId(document.id)),
+        ),
         step: clampStep(stepToSave, 0),
         suggestionThreads: suggestionThreadsRef.current,
       }),
@@ -1183,7 +1321,7 @@ export default function SharedReport() {
   const sendBackMutation = useMutation({
     mutationFn: () => sharedReportsClient.sendBackRecipient(token),
     onSuccess: async () => {
-      toast.success('Sent to proposer');
+      toast.success(sendDirectionCopy.sentCtaLabel);
       setDraftDirty(false);
       setStep(3);
       await workspaceQuery.refetch();
@@ -1191,7 +1329,7 @@ export default function SharedReport() {
     onError: (error) => {
       if (Number(error?.status) === 401) {
         const returnTo = `${location.pathname}${location.search || ''}${location.hash || ''}`;
-        toast.error('Please sign in to send updates to the proposer.');
+        toast.error(sendDirectionCopy.signInToSendLabel);
         navigateToLogin(returnTo);
         return;
       }
@@ -1199,7 +1337,7 @@ export default function SharedReport() {
         handleRecipientMismatch(error);
         return;
       }
-      toast.error(toFriendlySendBackError(error));
+      toast.error(toFriendlySendBackError(error, sendDirectionCopy.counterpartyNoun));
     },
   });
 
@@ -1347,6 +1485,10 @@ export default function SharedReport() {
     : [];
 
   const importForDocument = async (docId, file) => {
+    if (immutableHistoryDocIdSet.has(docId)) {
+      toast.error('Previous round content is view-only and cannot be changed.');
+      return;
+    }
     if (!file) {
       toast.error('Select a .docx or .pdf file first.');
       return;
@@ -2155,7 +2297,7 @@ export default function SharedReport() {
     setExpandedSuggestionIds((previous) => previous.filter((id) => id !== normalizedId));
   };
 
-  const sendToProposer = async () => {
+  const sendToCounterparty = async () => {
     if (!requireSignInForEditing()) {
       return;
     }
@@ -2639,11 +2781,11 @@ export default function SharedReport() {
               </Alert>
             ) : null}
 
-            {/* ── Sent to proposer confirmation ───────────────────────── */}
-            {isSentToProposer ? (
+            {/* ── Sent to counterparty confirmation ───────────────────── */}
+            {isSentToCounterparty ? (
               <Alert className="bg-emerald-50 border-emerald-200">
                 <AlertDescription className="text-emerald-800">
-                  Sent to proposer on {formatDateTime(latestSentRevision?.updated_at)}.
+                  {sendDirectionCopy.sentCtaLabel} on {formatDateTime(latestSentRevision?.updated_at)}.
                 </AlertDescription>
               </Alert>
             ) : null}
@@ -2808,24 +2950,27 @@ export default function SharedReport() {
         {step === 3 ? (
           <ComparisonEvaluationStep
             stepTitle={`Step 3: ${MEDIATION_REVIEW_LABEL}`}
-            stepDescription="Run and review the latest recipient-side AI mediation review."
+            stepDescription={sendDirectionCopy.step3Description}
             actionSlot={
               <>
                 <Button
                   type="button"
-                  onClick={sendToProposer}
+                  onClick={sendToCounterparty}
                   disabled={
                     sendBackMutation.isPending ||
                     saveDraftMutation.isPending ||
                     !canSendBack ||
-                    isSentToProposer ||
+                    isSentToCounterparty ||
                     requiresRecipientVerification
                   }
                 >
                   {sendBackMutation.isPending
                     ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                     : <Send className="w-4 h-4 mr-2" />}
-                  {isSentToProposer ? 'Sent to proposer' : sendBackMutation.isPending ? 'Sending...' : 'Send to proposer'}
+                  {getSharedReportSendActionLabel(draftDocumentOwner, {
+                    isSent: isSentToCounterparty,
+                    isPending: sendBackMutation.isPending,
+                  })}
                 </Button>
                 <Button
                   type="button"
@@ -2853,13 +2998,13 @@ export default function SharedReport() {
               evaluationFailureBannerMessage: step3EvaluationFailureMessage,
               hasReport: hasStep3Report,
               hasEvaluations: Boolean(latestEvaluation),
-              noReportMessage: 'No recipient mediation review is available yet. Run AI Mediation to generate one.',
+              noReportMessage: sendDirectionCopy.noReportMessage,
               report: updatedRecipientReport,
               recommendation: step3Recommendation,
               timelineItems: step3TimelineItems,
             }}
             proposalDetailsProps={{
-              description: 'Read-only current opportunity state after recipient edits.',
+              description: sendDirectionCopy.proposalDetailsDescription,
               leftLabel: CONFIDENTIAL_LABEL,
               rightLabel: SHARED_LABEL,
               leftText: step3Bundles.confidential.text,

@@ -14,6 +14,7 @@ import sharedReportRecipientEvaluateHandler from '../../server/routes/shared-rep
 import sharedReportRecipientSendBackHandler from '../../server/routes/shared-report/[token]/send-back.ts';
 import sharedReportVerifyStartHandler from '../../server/routes/shared-report/[token]/verify/start.ts';
 import sharedReportVerifyConfirmHandler from '../../server/routes/shared-report/[token]/verify/confirm.ts';
+import { buildSharedReportTurnCopy } from '../../src/lib/sharedReportSendDirection.js';
 import { ensureTestEnv, makeSessionCookie } from '../helpers/auth.mjs';
 import { ensureMigrated, getDb, hasDatabaseUrl, resetTables } from '../helpers/db.mjs';
 import { createMockReq, createMockRes } from '../helpers/httpMock.mjs';
@@ -117,11 +118,12 @@ async function evaluateComparison(comparisonId, cookie, body = {}) {
   return res;
 }
 
-async function getRecipientWorkspace(token) {
+async function getRecipientWorkspace(token, cookie = null) {
   const req = createMockReq({
     method: 'GET',
     url: `/api/shared-report/${token}`,
     query: { token },
+    headers: cookie ? { cookie } : {},
   });
   const res = createMockRes();
   await sharedReportRecipientTokenHandler(req, res, token);
@@ -980,6 +982,85 @@ if (!hasDatabaseUrl()) {
     assert.equal(String(evaluationRows.rows[0].source), 'shared_report_recipient');
   });
 
+  test('send-back target aligns with computed counterparty across repeated rounds', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerSeed = 'send_direction_rounds';
+    const ownerCookie = makeOwnerCookie(ownerSeed);
+    const ownerEmail = `${ownerSeed}_owner@example.com`;
+    const recipientEmail = 'send-direction-recipient@example.com';
+    const recipientCookie = makeRecipientCookie('send_direction_recipient', recipientEmail);
+    const comparison = await createComparison(ownerCookie, {
+      title: 'Send Direction Roundtrip',
+      docAText: 'Owner confidential baseline.',
+      docBText: 'Owner shared baseline.',
+    });
+
+    const initialLink = await createSharedReportLink(ownerCookie, comparison.id, recipientEmail, {
+      canEdit: true,
+      canEditConfidential: true,
+      canReevaluate: true,
+      canSendBack: true,
+      maxUses: 30,
+    });
+
+    const initialWorkspace = await getRecipientWorkspace(initialLink.token, recipientCookie);
+    assert.equal(initialWorkspace.statusCode, 200);
+    const initialActorRole = String(initialWorkspace.jsonBody().party_context?.draft_author_role || '');
+    const initialTurnCopy = buildSharedReportTurnCopy(initialActorRole);
+    assert.equal(initialTurnCopy.actorRole, 'recipient');
+    assert.equal(initialTurnCopy.sendCtaLabel, 'Send to proposer');
+
+    const round2Save = await saveRecipientDraft(initialLink.token, {
+      shared_payload: { label: 'Shared Information', text: 'Recipient round 2 shared update.' },
+      recipient_confidential_payload: { label: 'Confidential Information', notes: 'Recipient round 2 private note.' },
+      workflow_step: 2,
+    }, recipientCookie);
+    assert.equal(round2Save.statusCode, 200);
+
+    const round2Send = await sendBackRecipientDraft(initialLink.token, {}, recipientCookie);
+    assert.equal(round2Send.statusCode, 200);
+    const round2ReturnLink = round2Send.jsonBody().return_link || {};
+    const round2Token = String(round2ReturnLink.token || '');
+    assert.notEqual(round2Token, '');
+    assert.equal(
+      String(round2ReturnLink.recipient_email || ''),
+      initialTurnCopy.counterpartyRole === 'proposer' ? ownerEmail : recipientEmail,
+    );
+
+    const round2Workspace = await getRecipientWorkspace(round2Token, ownerCookie);
+    assert.equal(round2Workspace.statusCode, 200);
+    const round2ActorRole = String(round2Workspace.jsonBody().party_context?.draft_author_role || '');
+    const round2TurnCopy = buildSharedReportTurnCopy(round2ActorRole);
+    assert.equal(round2TurnCopy.actorRole, 'proposer');
+    assert.equal(round2TurnCopy.sendCtaLabel, 'Send to recipient');
+
+    const round3Save = await saveRecipientDraft(round2Token, {
+      shared_payload: { label: 'Shared Information', text: 'Owner round 3 shared update.' },
+      recipient_confidential_payload: { label: 'Confidential Information', notes: 'Owner round 3 private note.' },
+      workflow_step: 2,
+    }, ownerCookie);
+    assert.equal(round3Save.statusCode, 200);
+
+    const round3Send = await sendBackRecipientDraft(round2Token, {}, ownerCookie);
+    assert.equal(round3Send.statusCode, 200);
+    const round3ReturnLink = round3Send.jsonBody().return_link || {};
+    const round3Token = String(round3ReturnLink.token || '');
+    assert.notEqual(round3Token, '');
+    assert.equal(
+      String(round3ReturnLink.recipient_email || ''),
+      round2TurnCopy.counterpartyRole === 'proposer' ? ownerEmail : recipientEmail,
+    );
+
+    const round3Workspace = await getRecipientWorkspace(round3Token, recipientCookie);
+    assert.equal(round3Workspace.statusCode, 200);
+    const round3ActorRole = String(round3Workspace.jsonBody().party_context?.draft_author_role || '');
+    const round3TurnCopy = buildSharedReportTurnCopy(round3ActorRole);
+    assert.equal(round3TurnCopy.actorRole, 'recipient');
+    assert.equal(round3TurnCopy.sendCtaLabel, 'Send to proposer');
+  });
+
   test('Prompt2 evaluate public report never leaks proposer/recipient confidential markers', async () => {
     await ensureMigrated();
     await resetTables();
@@ -1348,10 +1429,19 @@ if (!hasDatabaseUrl()) {
     const round3Token = String(round3LinkRows.rows[0]?.token || '');
     assert.notEqual(round3Token, '');
 
-    const recipientWorkspaceRound3 = await getRecipientWorkspace(round3Token);
+    const publicWorkspaceRound3 = await getRecipientWorkspace(round3Token);
+    assert.equal(publicWorkspaceRound3.statusCode, 200);
+    const publicWorkspaceBody = publicWorkspaceRound3.jsonBody();
+    assert.equal(
+      JSON.stringify(publicWorkspaceBody.shared_history?.confidential_entries || []).includes(recipientPrivateRound2),
+      false,
+    );
+
+    const recipientWorkspaceRound3 = await getRecipientWorkspace(round3Token, recipientCookie);
     assert.equal(recipientWorkspaceRound3.statusCode, 200);
     const recipientWorkspaceBody = recipientWorkspaceRound3.jsonBody();
     const round3History = recipientWorkspaceBody.shared_history?.entries || [];
+    const round3OwnConfidentialHistory = recipientWorkspaceBody.shared_history?.confidential_entries || [];
     assert.equal(round3History.length >= 3, true);
     assert.equal(round3History[0].round_number, 1);
     assert.equal(round3History[1].round_number, 2);
@@ -1362,9 +1452,283 @@ if (!hasDatabaseUrl()) {
     assert.equal(String(round3History[0].text || '').includes(proposerSharedRound1), true);
     assert.equal(String(round3History[1].text || '').includes(recipientSharedRound2), true);
     assert.equal(String(round3History[2].text || '').includes(proposerSharedRound3), true);
+    assert.equal(round3OwnConfidentialHistory.length >= 1, true);
+    assert.equal(
+      round3OwnConfidentialHistory.some((entry) => String(entry.text || '').includes(recipientPrivateRound2)),
+      true,
+    );
+    assert.equal(
+      round3OwnConfidentialHistory.some((entry) => String(entry.text || '').includes(proposerPrivateRound1)),
+      false,
+    );
+    assert.equal(
+      round3OwnConfidentialHistory.some((entry) => String(entry.text || '').includes(proposerPrivateRound3)),
+      false,
+    );
     assert.equal(JSON.stringify(recipientWorkspaceBody).includes(proposerPrivateRound1), false);
     assert.equal(JSON.stringify(recipientWorkspaceBody).includes(proposerPrivateRound3), false);
     assert.equal(String(recipientWorkspaceBody.party_context?.draft_author_role || ''), 'recipient');
+  });
+
+  test('draft save rejects previous-round document references while allowing current-round edits', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = makeOwnerCookie('history_guard_owner');
+    const recipientCookie = makeRecipientCookie('history_guard_recipient', 'recipient@example.com');
+    const comparison = await createComparison(ownerCookie, {
+      title: 'History Guardrails',
+      docAText: 'Owner private baseline marker',
+      docBText: 'Owner shared baseline marker',
+    });
+
+    const initialLink = await createSharedReportLink(ownerCookie, comparison.id, 'recipient@example.com', {
+      canEdit: true,
+      canEditConfidential: true,
+      canReevaluate: true,
+      canSendBack: true,
+      maxUses: 30,
+    });
+
+    const round2Save = await saveRecipientDraft(initialLink.token, {
+      shared_payload: { label: 'Shared Information', text: 'Recipient shared round 2' },
+      recipient_confidential_payload: {
+        label: 'Confidential Information',
+        notes: 'Recipient private round 2',
+      },
+      workflow_step: 2,
+    }, recipientCookie);
+    assert.equal(round2Save.statusCode, 200);
+
+    const round2Send = await sendBackRecipientDraft(initialLink.token, {}, recipientCookie);
+    assert.equal(round2Send.statusCode, 200);
+
+    const db = getDb();
+    const round2LinkRows = await db.execute(
+      sql`select token
+          from shared_links
+          where proposal_id = ${comparison.proposal_id}
+            and token <> ${initialLink.token}
+          order by created_at desc
+          limit 1`,
+    );
+    const round2Token = String(round2LinkRows.rows[0]?.token || '');
+    assert.notEqual(round2Token, '');
+
+    const ownerWorkspace = await getRecipientWorkspace(round2Token, ownerCookie);
+    assert.equal(ownerWorkspace.statusCode, 200);
+    const ownerWorkspaceBody = ownerWorkspace.jsonBody();
+
+    const mutatedHistoricalSave = await saveRecipientDraft(round2Token, {
+      shared_payload: ownerWorkspaceBody.defaults?.shared_payload || {},
+      recipient_confidential_payload: ownerWorkspaceBody.defaults?.recipient_confidential_payload || {},
+      workflow_step: 1,
+      editor_state: {
+        documents: [
+          {
+            id: 'shared-history-baseline',
+            title: 'Round 1 - Shared by Proposer',
+            visibility: 'shared',
+            owner: 'proposer',
+            source: 'typed',
+            text: 'MUTATED_HISTORY_SHOULD_BE_REJECTED',
+            html: '<p>MUTATED_HISTORY_SHOULD_BE_REJECTED</p>',
+            files: [],
+          },
+        ],
+      },
+    }, ownerCookie);
+    assert.equal(mutatedHistoricalSave.statusCode, 403);
+    assert.equal(mutatedHistoricalSave.jsonBody().error.code, 'historical_round_read_only');
+
+    const allowedCurrentRoundSave = await saveRecipientDraft(round2Token, {
+      shared_payload: {
+        label: 'Shared Information',
+        text: 'Owner current-round shared update is allowed.',
+      },
+      recipient_confidential_payload: {
+        label: 'Confidential Information',
+        notes: 'Owner current-round confidential update is allowed.',
+      },
+      workflow_step: 2,
+      editor_state: {
+        documents: [
+          {
+            id: 'owner-current-shared-doc',
+            title: 'My New Shared Contribution',
+            visibility: 'shared',
+            owner: 'proposer',
+            source: 'typed',
+            text: 'Owner current-round shared update is allowed.',
+            html: '<p>Owner current-round shared update is allowed.</p>',
+            files: [],
+          },
+          {
+            id: 'owner-current-conf-doc',
+            title: 'My Confidential Notes',
+            visibility: 'confidential',
+            owner: 'proposer',
+            source: 'typed',
+            text: 'Owner current-round confidential update is allowed.',
+            html: '<p>Owner current-round confidential update is allowed.</p>',
+            files: [],
+          },
+        ],
+      },
+    }, ownerCookie);
+    assert.equal(allowedCurrentRoundSave.statusCode, 200);
+  });
+
+  test('carrying forward prior confidential text appends a new immutable history record without mutating earlier rounds', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = makeOwnerCookie('history_clone_owner');
+    const recipientCookie = makeRecipientCookie('history_clone_recipient', 'recipient@example.com');
+    const round2PrivateMarker = 'RECIPIENT_PRIVATE_ROUND_2_CLONE_MARKER';
+    const round4PrivateAddon = 'ROUND_4_PRIVATE_APPEND_MARKER';
+
+    const comparison = await createComparison(ownerCookie, {
+      title: 'History Clone Safety',
+      docAText: 'Owner private baseline',
+      docBText: 'Owner shared baseline',
+    });
+
+    const initialLink = await createSharedReportLink(ownerCookie, comparison.id, 'recipient@example.com', {
+      canEdit: true,
+      canEditConfidential: true,
+      canReevaluate: true,
+      canSendBack: true,
+      maxUses: 30,
+    });
+
+    const round2Save = await saveRecipientDraft(initialLink.token, {
+      shared_payload: { label: 'Shared Information', text: 'Recipient shared round 2' },
+      recipient_confidential_payload: {
+        label: 'Confidential Information',
+        notes: `Recipient private round 2 ${round2PrivateMarker}`,
+      },
+      workflow_step: 2,
+    }, recipientCookie);
+    assert.equal(round2Save.statusCode, 200);
+
+    const round2Send = await sendBackRecipientDraft(initialLink.token, {}, recipientCookie);
+    assert.equal(round2Send.statusCode, 200);
+
+    const db = getDb();
+    const round2LinkRows = await db.execute(
+      sql`select token
+          from shared_links
+          where proposal_id = ${comparison.proposal_id}
+            and token <> ${initialLink.token}
+          order by created_at desc
+          limit 1`,
+    );
+    const round2Token = String(round2LinkRows.rows[0]?.token || '');
+    assert.notEqual(round2Token, '');
+
+    const ownerRound3Save = await saveRecipientDraft(round2Token, {
+      shared_payload: { label: 'Shared Information', text: 'Owner shared round 3' },
+      recipient_confidential_payload: {
+        label: 'Confidential Information',
+        notes: 'Owner private round 3',
+      },
+      workflow_step: 2,
+    }, ownerCookie);
+    assert.equal(ownerRound3Save.statusCode, 200);
+
+    const ownerRound3Send = await sendBackRecipientDraft(round2Token, {}, ownerCookie);
+    assert.equal(ownerRound3Send.statusCode, 200);
+
+    const round3LinkRows = await db.execute(
+      sql`select token
+          from shared_links
+          where proposal_id = ${comparison.proposal_id}
+            and token not in (${initialLink.token}, ${round2Token})
+          order by created_at desc
+          limit 1`,
+    );
+    const round3Token = String(round3LinkRows.rows[0]?.token || '');
+    assert.notEqual(round3Token, '');
+
+    const recipientWorkspaceRound3 = await getRecipientWorkspace(round3Token, recipientCookie);
+    assert.equal(recipientWorkspaceRound3.statusCode, 200);
+    const recipientWorkspaceBody = recipientWorkspaceRound3.jsonBody();
+    const ownHistory = recipientWorkspaceBody.shared_history?.confidential_entries || [];
+    assert.equal(
+      ownHistory.some((entry) => String(entry.text || '').includes(round2PrivateMarker)),
+      true,
+    );
+
+    const confidentialRowsBefore = await db.execute(
+      sql`select id, sequence_index, round_number, content_payload
+          from shared_report_contributions
+          where proposal_id = ${comparison.proposal_id}
+            and author_role = 'recipient'
+            and visibility = 'confidential'
+          order by sequence_index asc`,
+    );
+
+    const findPayloadText = (row) => {
+      const payloadValue = row?.content_payload ?? row?.contentPayload ?? {};
+      const payload = (payloadValue && typeof payloadValue === 'object' && !Array.isArray(payloadValue))
+        ? payloadValue
+        : {};
+      return String(payload.text || payload.notes || '');
+    };
+    const getRoundNumber = (row) => Number(row?.round_number ?? row?.roundNumber ?? 0);
+    const getSequenceIndex = (row) => Number(row?.sequence_index ?? row?.sequenceIndex ?? 0);
+
+    const priorRoundEntry = confidentialRowsBefore.rows.find((row) =>
+      findPayloadText(row).includes(round2PrivateMarker),
+    );
+    assert.ok(priorRoundEntry, 'Expected a prior-round recipient confidential history row');
+    const priorRoundEntryId = String(priorRoundEntry.id || '');
+    const priorRoundEntryText = findPayloadText(priorRoundEntry);
+    assert.notEqual(priorRoundEntryId, '');
+    assert.equal(getRoundNumber(priorRoundEntry), 2);
+
+    const round4Save = await saveRecipientDraft(round3Token, {
+      shared_payload: { label: 'Shared Information', text: 'Recipient shared round 4 update' },
+      recipient_confidential_payload: {
+        label: 'Confidential Information',
+        notes: `${priorRoundEntryText}\n${round4PrivateAddon}`,
+      },
+      workflow_step: 2,
+    }, recipientCookie);
+    assert.equal(round4Save.statusCode, 200);
+
+    const round4Send = await sendBackRecipientDraft(round3Token, {}, recipientCookie);
+    assert.equal(round4Send.statusCode, 200);
+
+    const confidentialRowsAfter = await db.execute(
+      sql`select id, sequence_index, round_number, content_payload
+          from shared_report_contributions
+          where proposal_id = ${comparison.proposal_id}
+            and author_role = 'recipient'
+            and visibility = 'confidential'
+          order by sequence_index asc`,
+    );
+
+    const priorRoundEntryAfter = confidentialRowsAfter.rows.find(
+      (row) => String(row.id || '') === priorRoundEntryId,
+    );
+    assert.ok(priorRoundEntryAfter, 'Expected original prior-round row to remain present');
+    assert.equal(findPayloadText(priorRoundEntryAfter), priorRoundEntryText);
+    assert.equal(getRoundNumber(priorRoundEntryAfter), 2);
+
+    const appendedRound4Entry = confidentialRowsAfter.rows.find((row) => {
+      if (String(row.id || '') === priorRoundEntryId) {
+        return false;
+      }
+      return findPayloadText(row).includes(round4PrivateAddon);
+    });
+    assert.ok(appendedRound4Entry, 'Expected a new round-4 confidential history row');
+    assert.equal(getRoundNumber(appendedRound4Entry), 4);
+    assert.equal(
+      getSequenceIndex(appendedRound4Entry) > getSequenceIndex(priorRoundEntryAfter),
+      true,
+    );
   });
 
   test('AI mediation inputs preserve authored proposer/recipient provenance for shared and confidential history', async () => {
