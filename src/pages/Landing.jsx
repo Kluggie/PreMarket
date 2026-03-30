@@ -178,7 +178,7 @@ export default function Landing() {
               How PreMarket Works
             </h2>
             <p className="text-lg text-slate-600 max-w-2xl mx-auto">
-              A generalized bilateral trust-matching protocol for any pre-qualification scenario.
+              A structured, neutral process for evaluating terms, aligning expectations, and reaching agreement.
             </p>
           </div>
 
@@ -243,7 +243,7 @@ export default function Landing() {
       <section className="py-24 bg-slate-900">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
           <h2 className="text-3xl sm:text-4xl font-bold text-white mb-6">
-            Ready to start pre-qualifying?
+            Ready to start your first opportunity?
           </h2>
           <p className="text-lg text-slate-400 mb-10 max-w-2xl mx-auto">
             Create your first opportunity in minutes. No commitment required.

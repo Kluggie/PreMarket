@@ -408,8 +408,8 @@ export default function HowItWorks() {
             {[
               {
                 icon: Building2,
-                title: 'M&A and acquisition discussions',
-                description: 'Evaluate fit, surface deal-breakers, and structure initial terms before engaging advisors.',
+                title: 'M&A early-stage alignment',
+                description: 'Evaluate fit, surface deal-breakers, and structure initial terms before formal diligence.',
               },
               {
                 icon: Briefcase,
@@ -451,7 +451,7 @@ export default function HowItWorks() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16">
             <h2 className="text-3xl sm:text-4xl font-bold text-slate-900 mb-4">
-              What the AI actually evaluates
+              What the AI evaluates
             </h2>
             <p className="text-lg text-slate-600 max-w-2xl mx-auto">
               Every evaluation covers the dimensions that matter for reaching agreement.
