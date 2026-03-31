@@ -56,6 +56,7 @@ import {
   shouldConfirmRequestAgreement,
 } from '@/lib/proposalOutcomeUi';
 import { getProposalThreadUiState } from '@/lib/proposalThreadStatusUi';
+import { buildActivityTimelineItems } from '@/lib/activityTimeline';
 
 const CONFIDENTIAL_LABEL = 'Confidential Information';
 const SHARED_LABEL = 'Shared Information';
@@ -940,42 +941,16 @@ export default function DocumentComparisonDetail() {
         : latestEvaluationMeta.label === 'Failed'
           ? 'danger'
           : 'neutral';
-  const timelineItems = activityHistory.length > 0
-    ? activityHistory.map((item) => ({
-        id: item.id,
-        kind: item.kind,
-        tone: item.tone,
-        title: item.title,
-        description: item.description,
-        timestamp: formatDateTime(item.created_date),
-      }))
-    : [
-        {
-          id: 'created',
-          kind: 'file',
-          tone: 'info',
-          title: 'Opportunity Created',
-          timestamp: formatDateTime(comparison.created_date),
-        },
-        {
-          id: 'updated',
-          kind: 'clock',
-          tone: 'neutral',
-          title: 'Last Updated',
-          timestamp: formatDateTime(comparison.updated_date),
-        },
-        ...(latestEvaluation
-          ? [
-              {
-                id: 'latest-evaluation',
-                kind: 'sparkles',
-                tone: timelineTone,
-                title: latestEvaluationMeta.timelineTitle,
-                timestamp: formatDateTime(latestEvaluation.created_date),
-              },
-            ]
-          : []),
-      ];
+  const timelineItems = buildActivityTimelineItems({
+    activityHistory,
+    createdAt: comparison.created_date,
+    updatedAt: comparison.updated_date,
+    hasLatestEvaluation: Boolean(latestEvaluation),
+    latestEvaluationTone: timelineTone,
+    latestEvaluationTitle: latestEvaluationMeta.timelineTitle,
+    latestEvaluationTimestamp: latestEvaluation?.created_date,
+    formatDateTime,
+  });
   const proposerDisplay = proposalThread?.party_a_email || 'Not specified';
   const recipientDisplay =
     [proposalThread?.party_b_name || comparison?.recipient_name, proposalThread?.party_b_email || comparison?.recipient_email]

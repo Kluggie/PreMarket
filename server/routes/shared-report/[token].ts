@@ -1,7 +1,10 @@
+import { desc, eq } from 'drizzle-orm';
 import { ok } from '../../_lib/api-response.js';
 import { requireUser } from '../../_lib/auth.js';
 import { logAuditEventBestEffort } from '../../_lib/audit-events.js';
+import { schema } from '../../_lib/db/client.js';
 import { ApiError } from '../../_lib/errors.js';
+import { buildProposalActivityHistory } from '../../_lib/proposal-activity.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 import {
   getLinkRecipientAuthorRole,
@@ -98,13 +101,42 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       consumeView: true,
     });
 
-    const currentDraft = await getCurrentRecipientDraft(resolved.db, resolved.link.id);
-    const latestEvaluation = await getLatestRecipientEvaluationRun(resolved.db, resolved.link.id);
-    const latestSentRevision = await getLatestRecipientSentRevision(resolved.db, resolved.link.id);
-    const sharedHistory = await loadSharedReportHistory({
-      db: resolved.db,
-      proposal: resolved.proposal,
-      comparison: resolved.comparison,
+    const [currentDraft, latestEvaluation, latestSentRevision, sharedHistory, activityEvents] = await Promise.all([
+      getCurrentRecipientDraft(resolved.db, resolved.link.id),
+      getLatestRecipientEvaluationRun(resolved.db, resolved.link.id),
+      getLatestRecipientSentRevision(resolved.db, resolved.link.id),
+      loadSharedReportHistory({
+        db: resolved.db,
+        proposal: resolved.proposal,
+        comparison: resolved.comparison,
+      }),
+      resolved.proposal?.id
+        ? resolved.db
+            .select({
+              id: schema.proposalEvents.id,
+              eventType: schema.proposalEvents.eventType,
+              actorRole: schema.proposalEvents.actorRole,
+              createdAt: schema.proposalEvents.createdAt,
+            })
+            .from(schema.proposalEvents)
+            .where(eq(schema.proposalEvents.proposalId, resolved.proposal.id))
+            .orderBy(desc(schema.proposalEvents.createdAt))
+            .limit(50)
+        : Promise.resolve([]),
+    ]);
+    const currentUserId = asText(currentUser?.id || currentUser?.sub);
+    const proposalOwnerUserId = asText(resolved.proposal?.userId);
+    const activityAccessMode =
+      currentUserId && proposalOwnerUserId
+        ? currentUserId === proposalOwnerUserId
+          ? 'owner'
+          : 'recipient'
+        : currentUser
+          ? 'recipient'
+          : 'token';
+    const activityHistory = buildProposalActivityHistory(activityEvents, {
+      accessMode: activityAccessMode,
+      limit: 8,
     });
     const currentLinkRound = resolveSharedReportLinkRound(resolved.link.reportMetadata);
     const draftAuthorRole = getLinkRecipientAuthorRole({
@@ -144,8 +176,6 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       recipient_confidential_payload: buildDefaultConfidentialPayload(),
     };
     const recipientAuthorization = getRecipientAuthorizationState(resolved.link, currentUser);
-    const currentUserId = asText(currentUser?.id || currentUser?.sub);
-    const proposalOwnerUserId = asText(resolved.proposal?.userId);
     const treatAsRecipientViewer = Boolean(
       currentUser &&
       recipientAuthorization.authorized &&
@@ -241,6 +271,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         confidential_entries: visibleConfidentialHistoryEntries,
         max_round_number: sharedHistory.maxRoundNumber,
       },
+      activity_history: activityHistory,
       party_context: {
         draft_author_role: draftAuthorRole,
         current_link_round: currentLinkRound,

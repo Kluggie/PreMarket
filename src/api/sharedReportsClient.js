@@ -145,6 +145,7 @@ export const sharedReportsClient = {
       baselineShared: response.baseline_shared || null,
       baselineAiReport: response.baseline_ai_report || null,
       sharedHistory: response.shared_history || null,
+      activityHistory: Array.isArray(response.activity_history) ? response.activity_history : [],
       partyContext: response.party_context || null,
       recipientDraft: response.recipientDraft || null,
       latestEvaluation: response.latestEvaluation || null,

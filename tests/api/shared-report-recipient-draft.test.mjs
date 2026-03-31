@@ -1189,6 +1189,102 @@ if (!hasDatabaseUrl()) {
     });
   });
 
+  test('workspace activity timeline matches legacy recipient-safe history and preserves sent/revised round events', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerSeed = 'timeline_parity_rounds';
+    const ownerCookie = makeOwnerCookie(ownerSeed);
+    const recipientEmail = 'timeline-parity-recipient@example.com';
+    const recipientCookie = makeRecipientCookie('timeline_parity_recipient', recipientEmail);
+    const comparison = await createComparison(ownerCookie, {
+      title: 'Timeline Parity Opportunity',
+      docAText: 'Owner confidential baseline for timeline parity.',
+      docBText: 'Owner shared baseline for timeline parity.',
+    });
+
+    const initialLink = await createSharedReportLink(ownerCookie, comparison.id, recipientEmail, {
+      canEdit: true,
+      canEditConfidential: true,
+      canReevaluate: true,
+      canSendBack: true,
+      maxUses: 30,
+    });
+
+    const round2Save = await saveRecipientDraft(initialLink.token, {
+      shared_payload: { label: 'Shared Information', text: 'Recipient round 2 update.' },
+      recipient_confidential_payload: { label: 'Confidential Information', notes: 'Recipient round 2 private note.' },
+      workflow_step: 2,
+    }, recipientCookie);
+    assert.equal(round2Save.statusCode, 200);
+
+    const round2Send = await sendBackRecipientDraft(initialLink.token, {}, recipientCookie);
+    assert.equal(round2Send.statusCode, 200);
+    const round2Token = String(round2Send.jsonBody().return_link?.token || '');
+    assert.notEqual(round2Token, '');
+
+    const round3Save = await saveRecipientDraft(round2Token, {
+      shared_payload: { label: 'Shared Information', text: 'Owner round 3 update.' },
+      recipient_confidential_payload: { label: 'Confidential Information', notes: 'Owner round 3 private note.' },
+      workflow_step: 2,
+    }, ownerCookie);
+    assert.equal(round3Save.statusCode, 200);
+
+    const round3Send = await sendBackRecipientDraft(round2Token, {}, ownerCookie);
+    assert.equal(round3Send.statusCode, 200);
+    const round3Token = String(round3Send.jsonBody().return_link?.token || '');
+    assert.notEqual(round3Token, '');
+
+    const db = getDb();
+    const sentEventId = `evt_sent_${Date.now()}`;
+    const internalEventId = `evt_internal_${Date.now()}`;
+    await db.execute(sql`
+      insert into proposal_events (id, proposal_id, actor_role, event_type, created_at)
+      values (${sentEventId}, ${comparison.proposal_id}, 'party_a', 'proposal.sent', now() - interval '15 minute')
+    `);
+    await db.execute(sql`
+      insert into proposal_events (id, proposal_id, actor_role, event_type, created_at)
+      values (${internalEventId}, ${comparison.proposal_id}, 'party_a', 'proposal.internal.audit', now() - interval '14 minute')
+    `);
+
+    const workspaceRes = await getRecipientWorkspace(round3Token, recipientCookie);
+    assert.equal(workspaceRes.statusCode, 200);
+    const workspaceHistory = Array.isArray(workspaceRes.jsonBody().activity_history)
+      ? workspaceRes.jsonBody().activity_history
+      : [];
+    assert.equal(workspaceHistory.length > 0, true);
+    assert.equal(workspaceHistory.some((entry) => String(entry?.title || '') === 'Opportunity Sent'), true);
+    assert.equal(
+      workspaceHistory.filter((entry) => String(entry?.title || '') === 'Revised Terms Sent').length >= 2,
+      true,
+    );
+    assert.equal(
+      workspaceHistory.some((entry) => String(entry?.event_type || '').toLowerCase() === 'proposal.internal.audit'),
+      false,
+    );
+    assert.equal(
+      workspaceHistory.some((entry) => {
+        const title = String(entry?.title || '');
+        return title !== 'Opportunity Created' && title !== 'Last Updated';
+      }),
+      true,
+    );
+
+    const legacyRes = await getComparisonDetail(comparison.id, null, round3Token);
+    assert.equal(legacyRes.statusCode, 200);
+    const legacyHistory = Array.isArray(legacyRes.jsonBody().activity_history)
+      ? legacyRes.jsonBody().activity_history
+      : [];
+
+    const simplify = (entries) =>
+      entries.map((entry) => ({
+        event_type: String(entry?.event_type || ''),
+        title: String(entry?.title || ''),
+      }));
+
+    assert.deepEqual(simplify(workspaceHistory), simplify(legacyHistory));
+  });
+
   test('Prompt2 evaluate public report never leaks proposer/recipient confidential markers', async () => {
     await ensureMigrated();
     await resetTables();

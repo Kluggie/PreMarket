@@ -84,6 +84,7 @@ import {
   shouldConfirmRequestAgreement,
   shouldShowContinueNegotiating,
 } from '@/lib/proposalOutcomeUi';
+import { buildActivityTimelineItems } from '@/lib/activityTimeline';
 import {
   AlertTriangle,
   ArrowRight,
@@ -582,6 +583,9 @@ export default function SharedReport() {
   const baseline = workspaceQuery.data?.baseline || {};
   const defaults = workspaceQuery.data?.defaults || {};
   const sharedHistory = workspaceQuery.data?.sharedHistory || null;
+  const activityHistory = Array.isArray(workspaceQuery.data?.activityHistory)
+    ? workspaceQuery.data.activityHistory
+    : [];
   const partyContext = workspaceQuery.data?.partyContext || null;
   const recipientDraft = workspaceQuery.data?.recipientDraft || workspaceQuery.data?.currentDraft || null;
   const latestEvaluation = workspaceQuery.data?.latestEvaluation || null;
@@ -2439,48 +2443,30 @@ export default function SharedReport() {
         latestEvaluation?.result_json?.error?.message ||
         latestEvaluation?.result?.error?.message,
     ) || 'AI mediation could not be completed. Please retry.';
-  const baseTimelineItems = [
-    {
-      id: 'created',
-      kind: 'file',
-      tone: 'info',
-      title: 'Opportunity Created',
-      timestamp: formatDateTime(parent?.created_at || comparison?.created_at),
-    },
-    {
-      id: 'updated',
-      kind: 'clock',
-      tone: 'neutral',
-      title: 'Last Updated',
-      timestamp: formatDateTime(comparison?.updated_at || recipientDraft?.updated_at || parent?.updated_at),
-    },
-  ];
-  const step3TimelineItems = [
-    ...baseTimelineItems,
-    ...(latestEvaluation
-      ? [
-          {
-            id: 'recipient-evaluation',
-            kind: 'sparkles',
-            tone: step3IsEvaluationFailed
-              ? 'danger'
-              : step3IsEvaluationRunning
-                ? 'info'
-                : step3IsEvaluationNotConfigured
-                  ? 'warning'
-                  : 'success',
-            title: step3IsEvaluationFailed
-              ? 'AI Mediation Failed'
-              : step3IsEvaluationRunning
-                ? 'AI Mediation Running'
-                : step3IsEvaluationNotConfigured
-                  ? 'AI Mediation Unavailable'
-                  : 'AI Mediation Ready',
-            timestamp: formatDateTime(latestEvaluation?.created_at || latestEvaluation?.updated_at),
-          },
-        ]
-      : []),
-  ];
+  const latestEvaluationTimelineTone = step3IsEvaluationFailed
+    ? 'danger'
+    : step3IsEvaluationRunning
+      ? 'info'
+      : step3IsEvaluationNotConfigured
+        ? 'warning'
+        : 'success';
+  const latestEvaluationTimelineTitle = step3IsEvaluationFailed
+    ? 'AI Mediation Failed'
+    : step3IsEvaluationRunning
+      ? 'AI Mediation Running'
+      : step3IsEvaluationNotConfigured
+        ? 'AI Mediation Unavailable'
+        : 'AI Mediation Ready';
+  const timelineItems = buildActivityTimelineItems({
+    activityHistory,
+    createdAt: parent?.created_at || comparison?.created_at,
+    updatedAt: comparison?.updated_at || recipientDraft?.updated_at || parent?.updated_at,
+    hasLatestEvaluation: Boolean(latestEvaluation),
+    latestEvaluationTone: latestEvaluationTimelineTone,
+    latestEvaluationTitle: latestEvaluationTimelineTitle,
+    latestEvaluationTimestamp: latestEvaluation?.created_at || latestEvaluation?.updated_at,
+    formatDateTime,
+  });
   const coachSuggestions = Array.isArray(coachResult?.suggestions) ? coachResult.suggestions : [];
   const activeCoachHash = coachResultHash || 'unhashed';
   const appliedSuggestionIds = appliedSuggestionIdsByHash[activeCoachHash] || [];
@@ -2874,7 +2860,7 @@ export default function SharedReport() {
                 noReportMessage: 'No baseline AI mediation review is available yet for this opportunity.',
                 report: baselineReport,
                 recommendation: step0Recommendation,
-                timelineItems: baseTimelineItems,
+                timelineItems,
               }}
               proposalDetailsProps={{
                 description: 'Read-only cumulative shared history. Each round stays labeled by author and remains immutable.',
@@ -3059,7 +3045,7 @@ export default function SharedReport() {
               noReportMessage: sendDirectionCopy.noReportMessage,
               report: updatedRecipientReport,
               recommendation: step3Recommendation,
-              timelineItems: step3TimelineItems,
+              timelineItems,
             }}
             proposalDetailsProps={{
               description: sendDirectionCopy.proposalDetailsDescription,
