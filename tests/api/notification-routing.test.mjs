@@ -4,7 +4,9 @@ import { eq } from 'drizzle-orm';
 import documentComparisonsHandler from '../../server/routes/document-comparisons/index.ts';
 import documentComparisonsEvaluateHandler from '../../server/routes/document-comparisons/[id]/evaluate.ts';
 import proposalOutcomeHandler from '../../server/routes/proposals/[id]/outcome.ts';
+import proposalsHandler from '../../server/routes/proposals/index.ts';
 import sharedReportsHandler from '../../server/routes/shared-reports/index.ts';
+import sharedReportsRevokeHandler from '../../server/routes/shared-reports/[token]/revoke.ts';
 import sharedReportRecipientTokenHandler from '../../server/routes/shared-report/[token].ts';
 import sharedReportRecipientDraftHandler from '../../server/routes/shared-report/[token]/draft.ts';
 import sharedReportRecipientSendBackHandler from '../../server/routes/shared-report/[token]/send-back.ts';
@@ -16,6 +18,7 @@ import { ensureTestEnv, makeSessionCookie } from '../helpers/auth.mjs';
 import { ensureMigrated, getDb, hasDatabaseUrl, resetTables } from '../helpers/db.mjs';
 import { createMockReq, createMockRes } from '../helpers/httpMock.mjs';
 import {
+  buildDocumentComparisonOpportunityHref,
   buildDocumentComparisonNotificationHref,
   buildLegacyOpportunityNotificationHref,
 } from '../../src/lib/notificationTargets.js';
@@ -155,6 +158,37 @@ async function listNotifications(cookie) {
   return res.jsonBody().notifications || [];
 }
 
+async function listProposals(cookie, query = {}) {
+  const res = await callHandler(proposalsHandler, {
+    method: 'GET',
+    url: '/api/proposals',
+    headers: { cookie },
+    query: {
+      tab: 'all',
+      limit: 50,
+      ...query,
+    },
+  });
+
+  assert.equal(res.statusCode, 200);
+  return res.jsonBody().proposals || [];
+}
+
+async function revokeSharedReport(token, cookie) {
+  const res = await callHandler(
+    sharedReportsRevokeHandler,
+    {
+      method: 'POST',
+      url: `/api/sharedReports/${token}/revoke`,
+      query: { token },
+      headers: { cookie },
+      body: {},
+    },
+    token,
+  );
+  return res;
+}
+
 async function requestAgreement(cookie, proposalId) {
   const res = await markOutcome(cookie, proposalId, { outcome: 'won' });
   assert.equal(res.statusCode, 200);
@@ -220,6 +254,20 @@ if (!hasDatabaseUrl()) {
       buildLegacyOpportunityNotificationHref({ proposalId }),
     );
     assert.equal(notification.read, false);
+
+    const proposalRows = await listProposals(ownerCookie, { tab: 'all' });
+    const matchingRow = proposalRows.find((row) => String(row.id || '') === String(proposalId));
+    assert.ok(matchingRow, 'expected matching proposal row in /api/proposals response');
+    assert.equal(String(matchingRow.shared_report_token || ''), String(sharedReport.token));
+    assert.equal(String(matchingRow.shared_report_status || ''), 'active');
+    assert.equal(matchingRow.shared_report_expires_at, null);
+    const opportunitiesHref = buildDocumentComparisonOpportunityHref(matchingRow);
+    assert.equal(
+      opportunitiesHref,
+      buildDocumentComparisonNotificationHref(sharedReport.token),
+      'opportunities row click target should match canonical shared-report notification target',
+    );
+    assert.equal(opportunitiesHref, notification.target?.href);
 
     const markReadRes = await callHandler(
       notificationByIdHandler,
@@ -405,6 +453,15 @@ if (!hasDatabaseUrl()) {
     assert.equal(continueNotification.target?.href, expectedHref);
     assert.equal(String(continueNotification.target?.shared_report_token || ''), returnToken);
 
+    const ownerRows = await listProposals(ownerCookie, { tab: 'all' });
+    const ownerRow = ownerRows.find((row) => String(row.id || '') === String(proposalId));
+    assert.ok(ownerRow, 'owner should see updated proposal row');
+    assert.equal(String(ownerRow.shared_report_token || ''), returnToken);
+    assert.equal(String(ownerRow.shared_report_status || ''), 'active');
+    const ownerOpportunityHref = buildDocumentComparisonOpportunityHref(ownerRow);
+    assert.equal(ownerOpportunityHref, expectedHref);
+    assert.notEqual(ownerOpportunityHref, buildDocumentComparisonNotificationHref(initialShare.token));
+
     const ownerWorkspaceRes = await getSharedReportWorkspace(returnToken, ownerCookie);
     assert.equal(ownerWorkspaceRes.statusCode, 200);
     const ownerWorkspaceBody = ownerWorkspaceRes.jsonBody();
@@ -418,6 +475,41 @@ if (!hasDatabaseUrl()) {
     assert.equal(String(wrongAccountBody.share?.invited_email || '').toLowerCase(), recipientEmail);
     assert.equal(Boolean(wrongAccountBody.share?.authorization?.authorized_for_current_user), false);
     assert.equal(Boolean(wrongAccountBody.share?.authorization?.requires_verification), true);
+  });
+
+  test('opportunities rows with no active shared-report link fall back to internal document-comparison routes', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerCookie = authCookie('notification_route_fallback_owner', 'notification-route-fallback-owner@example.com');
+    await touchUser(ownerCookie);
+
+    const comparison = await createComparison(ownerCookie, {
+      recipientEmail: 'notification-route-fallback-recipient@example.com',
+    });
+    const proposalId = comparison.proposal_id;
+    assert.ok(proposalId, 'comparison should stay linked to a proposal');
+
+    const sharedReport = await createSharedReport(
+      ownerCookie,
+      comparison.id,
+      'notification-route-fallback-recipient@example.com',
+    );
+    assert.ok(sharedReport?.token, 'shared-report token should exist before revoke');
+
+    const revokeRes = await revokeSharedReport(sharedReport.token, ownerCookie);
+    assert.equal(revokeRes.statusCode, 200);
+
+    const rows = await listProposals(ownerCookie, { tab: 'all' });
+    const row = rows.find((entry) => String(entry.id || '') === String(proposalId));
+    assert.ok(row, 'expected proposal row after revoke');
+    assert.equal(row.shared_report_token, null);
+    assert.equal(row.shared_report_status, null);
+    assert.equal(row.shared_report_expires_at, null);
+
+    const opportunitiesHref = buildDocumentComparisonOpportunityHref(row);
+    assert.ok(opportunitiesHref, 'fallback href should still resolve');
+    assert.equal(opportunitiesHref.startsWith('/shared-report/'), false);
   });
 
   test('older comparison notifications without comparison routing metadata fall back safely', async () => {

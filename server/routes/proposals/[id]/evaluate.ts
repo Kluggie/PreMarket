@@ -667,7 +667,10 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
       const isComparisonNotification =
         asLower(proposal.proposalType) === 'document_comparison' && Boolean(comparisonId);
       const latestSharedReportLink = isComparisonNotification
-        ? await resolveLatestActiveSharedReportLink(db, proposal.id)
+        ? await resolveLatestActiveSharedReportLink(db, proposal.id, {
+            recipientUserId: proposal.userId,
+            recipientEmail: proposal.partyAEmail || auth.user.email,
+          })
         : null;
       const sharedReportToken = asText(latestSharedReportLink?.token);
       const legacyActionUrl = buildLegacyOpportunityNotificationHref({

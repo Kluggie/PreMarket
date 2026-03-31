@@ -5,6 +5,7 @@ import { getDatabaseIdentitySnapshot, getDb, schema } from '../../_lib/db/client
 import { ApiError } from '../../_lib/errors.js';
 import { readJsonBody } from '../../_lib/http.js';
 import { newId } from '../../_lib/ids.js';
+import { listLatestActiveSharedReportLinksByProposalIds } from '../../_lib/proposal-agreement-request-emails.js';
 import { buildProposalHistoryQueries } from '../../_lib/proposal-history.js';
 import {
   buildLegacyOutcomeSeed,
@@ -340,14 +341,6 @@ export default async function handler(req: any, res: any) {
         }),
         { email: 0, authorized: 0 },
       );
-      const sharedReportByProposalId = new Map<string, any>();
-      recipientSharedLinks.forEach((link) => {
-        const key = String(link.proposalId || '').trim();
-        if (!key || sharedReportByProposalId.has(key)) {
-          return;
-        }
-        sharedReportByProposalId.set(key, link);
-      });
       const recipientSharedProposalIds = getRecipientSharedProposalIds(recipientSharedLinks);
       const { ownerVisibleScope, recipientVisibleScope } = buildProposalVisibilityScopes(
         auth.user,
@@ -548,7 +541,7 @@ export default async function handler(req: any, res: any) {
         ),
       );
 
-      const [documentComparisonRows, documentComparisonEvaluationRows, exchangeCountRows] = await Promise.all([
+      const [documentComparisonRows, documentComparisonEvaluationRows, exchangeCountRows, sharedReportByProposalId] = await Promise.all([
         documentComparisonIds.length > 0
           ? db
               .select({
@@ -587,6 +580,14 @@ export default async function handler(req: any, res: any) {
               )
               .groupBy(schema.proposalEvents.proposalId)
           : Promise.resolve([]),
+        listLatestActiveSharedReportLinksByProposalIds(
+          db,
+          pageProposalIds,
+          {
+            recipientUserId: auth.user.id,
+            recipientEmail: auth.user.email,
+          },
+        ),
       ]);
 
       const documentComparisonById = new Map<string, any>();

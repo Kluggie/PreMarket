@@ -1,4 +1,4 @@
-import { and, desc, eq, ilike, or } from 'drizzle-orm';
+import { and, desc, eq, ilike, inArray } from 'drizzle-orm';
 import { schema } from './db/client.js';
 import { toCanonicalAppUrl } from './env.js';
 import {
@@ -27,6 +27,120 @@ function toDateOrNull(value) {
 
   const candidate = value instanceof Date ? value : new Date(String(value));
   return Number.isNaN(candidate.getTime()) ? null : candidate;
+}
+
+function isExpired(expiresAt) {
+  const expiresAtDate = toDateOrNull(expiresAt);
+  return Boolean(expiresAtDate && expiresAtDate.getTime() <= Date.now());
+}
+
+function compareLinksByRecency(left, right) {
+  const leftUpdatedAt = toDateOrNull(left?.updatedAt);
+  const rightUpdatedAt = toDateOrNull(right?.updatedAt);
+  const leftUpdatedMs = leftUpdatedAt ? leftUpdatedAt.getTime() : 0;
+  const rightUpdatedMs = rightUpdatedAt ? rightUpdatedAt.getTime() : 0;
+  if (rightUpdatedMs !== leftUpdatedMs) {
+    return rightUpdatedMs - leftUpdatedMs;
+  }
+
+  const leftCreatedAt = toDateOrNull(left?.createdAt);
+  const rightCreatedAt = toDateOrNull(right?.createdAt);
+  const leftCreatedMs = leftCreatedAt ? leftCreatedAt.getTime() : 0;
+  const rightCreatedMs = rightCreatedAt ? rightCreatedAt.getTime() : 0;
+  return rightCreatedMs - leftCreatedMs;
+}
+
+function matchesTargetRecipient(link, options = {}) {
+  const targetRecipientUserId = asText(options?.recipientUserId);
+  const targetRecipientEmail = normalizeEmail(options?.recipientEmail);
+  if (!targetRecipientUserId && !targetRecipientEmail) {
+    return false;
+  }
+
+  const linkRecipientEmail = normalizeEmail(link?.recipientEmail);
+  const linkAuthorizedUserId = asText(link?.authorizedUserId);
+  return Boolean(
+    (targetRecipientEmail && linkRecipientEmail && targetRecipientEmail === linkRecipientEmail) ||
+      (targetRecipientUserId && linkAuthorizedUserId && targetRecipientUserId === linkAuthorizedUserId),
+  );
+}
+
+export function selectLatestActiveSharedReportLink(links, options = {}) {
+  const sortedLinks = (Array.isArray(links) ? links : [])
+    .filter((link) => asText(link?.token))
+    .filter((link) => asLower(link?.status || 'active') === 'active')
+    .filter((link) => !isExpired(link?.expiresAt))
+    .sort(compareLinksByRecency);
+
+  if (!sortedLinks.length) {
+    return null;
+  }
+
+  const recipientScopedLink = sortedLinks.find((link) => matchesTargetRecipient(link, options));
+  return recipientScopedLink || sortedLinks[0] || null;
+}
+
+export async function listLatestActiveSharedReportLinksByProposalIds(
+  db,
+  proposalIds = [],
+  options = {},
+) {
+  const normalizedProposalIds = Array.from(
+    new Set(
+      (Array.isArray(proposalIds) ? proposalIds : [])
+        .map((proposalId) => asText(proposalId))
+        .filter(Boolean),
+    ),
+  );
+  if (!normalizedProposalIds.length) {
+    return new Map();
+  }
+
+  const rows = await db
+    .select({
+      id: schema.sharedLinks.id,
+      proposalId: schema.sharedLinks.proposalId,
+      token: schema.sharedLinks.token,
+      status: schema.sharedLinks.status,
+      expiresAt: schema.sharedLinks.expiresAt,
+      recipientEmail: schema.sharedLinks.recipientEmail,
+      authorizedUserId: schema.sharedLinks.authorizedUserId,
+      createdAt: schema.sharedLinks.createdAt,
+      updatedAt: schema.sharedLinks.updatedAt,
+    })
+    .from(schema.sharedLinks)
+    .where(
+      and(
+        inArray(schema.sharedLinks.proposalId, normalizedProposalIds),
+        eq(schema.sharedLinks.mode, 'shared_report'),
+        eq(schema.sharedLinks.status, 'active'),
+      ),
+    )
+    .orderBy(desc(schema.sharedLinks.updatedAt), desc(schema.sharedLinks.createdAt));
+
+  const linksByProposalId = new Map();
+  rows.forEach((row) => {
+    const proposalId = asText(row?.proposalId);
+    if (!proposalId) {
+      return;
+    }
+    if (!linksByProposalId.has(proposalId)) {
+      linksByProposalId.set(proposalId, []);
+    }
+    linksByProposalId.get(proposalId).push(row);
+  });
+
+  const latestByProposalId = new Map();
+  normalizedProposalIds.forEach((proposalId) => {
+    const selected = selectLatestActiveSharedReportLink(
+      linksByProposalId.get(proposalId) || [],
+      options,
+    );
+    if (selected) {
+      latestByProposalId.set(proposalId, selected);
+    }
+  });
+  return latestByProposalId;
 }
 
 export function buildAgreementRequestEmailDedupeKey({
@@ -79,67 +193,12 @@ export async function resolveLatestActiveSharedReportLink(db, proposalId, option
   if (!normalizedProposalId) {
     return null;
   }
-
-  const targetRecipientUserId = asText(options?.recipientUserId);
-  const targetRecipientEmail = normalizeEmail(options?.recipientEmail);
-  const recipientScope =
-    targetRecipientEmail && targetRecipientUserId
-      ? or(
-          ilike(schema.sharedLinks.recipientEmail, targetRecipientEmail),
-          eq(schema.sharedLinks.authorizedUserId, targetRecipientUserId),
-        )
-      : targetRecipientEmail
-        ? ilike(schema.sharedLinks.recipientEmail, targetRecipientEmail)
-        : targetRecipientUserId
-          ? eq(schema.sharedLinks.authorizedUserId, targetRecipientUserId)
-          : null;
-
-  if (recipientScope) {
-    const [latestRecipientLink] = await db
-      .select({
-        id: schema.sharedLinks.id,
-        token: schema.sharedLinks.token,
-        status: schema.sharedLinks.status,
-        createdAt: schema.sharedLinks.createdAt,
-        updatedAt: schema.sharedLinks.updatedAt,
-      })
-      .from(schema.sharedLinks)
-      .where(
-        and(
-          eq(schema.sharedLinks.proposalId, normalizedProposalId),
-          eq(schema.sharedLinks.mode, 'shared_report'),
-          eq(schema.sharedLinks.status, 'active'),
-          recipientScope,
-        ),
-      )
-      .orderBy(desc(schema.sharedLinks.updatedAt), desc(schema.sharedLinks.createdAt))
-      .limit(1);
-
-    if (latestRecipientLink) {
-      return latestRecipientLink;
-    }
-  }
-
-  const [latestActiveLink] = await db
-    .select({
-      id: schema.sharedLinks.id,
-      token: schema.sharedLinks.token,
-      status: schema.sharedLinks.status,
-      createdAt: schema.sharedLinks.createdAt,
-      updatedAt: schema.sharedLinks.updatedAt,
-    })
-    .from(schema.sharedLinks)
-    .where(
-      and(
-        eq(schema.sharedLinks.proposalId, normalizedProposalId),
-        eq(schema.sharedLinks.mode, 'shared_report'),
-        eq(schema.sharedLinks.status, 'active'),
-      ),
-    )
-    .orderBy(desc(schema.sharedLinks.updatedAt), desc(schema.sharedLinks.createdAt))
-    .limit(1);
-
-  return latestActiveLink || null;
+  const byProposalId = await listLatestActiveSharedReportLinksByProposalIds(
+    db,
+    [normalizedProposalId],
+    options,
+  );
+  return byProposalId.get(normalizedProposalId) || null;
 }
 
 function getAgreementRequestActorLabel(requestedByRole) {

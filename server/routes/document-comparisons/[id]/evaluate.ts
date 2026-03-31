@@ -2003,7 +2003,10 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
           const legacyActionUrl = buildLegacyOpportunityNotificationHref({
             proposalId: proposal.id,
           });
-          const latestSharedReportLink = await resolveLatestActiveSharedReportLink(db, proposal.id);
+          const latestSharedReportLink = await resolveLatestActiveSharedReportLink(db, proposal.id, {
+            recipientUserId: proposal.userId,
+            recipientEmail: proposal.partyAEmail || user.email,
+          });
           const sharedReportToken = asText(latestSharedReportLink?.token);
 
           await createNotificationEvent({
