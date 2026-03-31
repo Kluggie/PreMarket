@@ -86,6 +86,25 @@ function clampDocumentComparisonStep(value) {
   );
 }
 
+function toDateOrNull(value) {
+  if (!value) {
+    return null;
+  }
+
+  const candidate = value instanceof Date ? value : new Date(String(value));
+  return Number.isNaN(candidate.getTime()) ? null : candidate;
+}
+
+function isActiveSharedReportStatus(value) {
+  const normalizedStatus = asText(value).toLowerCase();
+  return !normalizedStatus || normalizedStatus === 'active';
+}
+
+function isExpiredSharedReportLink(expiresAt) {
+  const expiresAtDate = toDateOrNull(expiresAt);
+  return Boolean(expiresAtDate && expiresAtDate.getTime() <= Date.now());
+}
+
 function readNotificationTargetMetadata(metadata) {
   const source = toObject(metadata);
   const target = toObject(source.target);
@@ -173,6 +192,27 @@ export function buildSharedReportHref(sharedReportToken) {
   return `/shared-report/${encodeURIComponent(normalizedSharedReportToken)}`;
 }
 
+export function buildActiveSharedReportHref({
+  sharedReportToken,
+  sharedReportStatus,
+  sharedReportExpiresAt,
+} = {}) {
+  const normalizedSharedReportToken = asText(sharedReportToken);
+  if (!normalizedSharedReportToken) {
+    return null;
+  }
+
+  if (!isActiveSharedReportStatus(sharedReportStatus)) {
+    return null;
+  }
+
+  if (isExpiredSharedReportLink(sharedReportExpiresAt)) {
+    return null;
+  }
+
+  return buildSharedReportHref(normalizedSharedReportToken);
+}
+
 export function buildDocumentComparisonReportHref(comparisonId) {
   return buildDocumentComparisonDetailHref({
     comparisonId,
@@ -201,7 +241,7 @@ export function buildDocumentComparisonResumeHref({ comparisonId, proposalId, re
 export function buildDocumentComparisonNotificationHref(sharedReportToken) {
   // Notification clicks intentionally re-anchor on the true Step 0 shared
   // workspace, not the editor resume step or the owner report view.
-  return buildSharedReportHref(sharedReportToken);
+  return buildActiveSharedReportHref({ sharedReportToken });
 }
 
 export function buildDocumentComparisonOpportunityHref(proposal = {}) {
@@ -212,18 +252,15 @@ export function buildDocumentComparisonOpportunityHref(proposal = {}) {
     return null;
   }
 
-  const actorRole = asText(
-    proposal?.outcome?.actor_role || proposal?.outcome?.actorRole,
-  ).toLowerCase();
-  const listType = asText(proposal?.list_type || proposal?.listType).toLowerCase();
-  const sharedReportToken = asText(
-    proposal?.shared_report_token || proposal?.sharedReportToken,
-  );
-  const shouldOpenSharedWorkspace =
-    Boolean(sharedReportToken) && (actorRole === 'party_b' || listType === 'received');
+  const sharedWorkspaceHref = buildActiveSharedReportHref({
+    sharedReportToken: proposal?.shared_report_token || proposal?.sharedReportToken,
+    sharedReportStatus: proposal?.shared_report_status || proposal?.sharedReportStatus,
+    sharedReportExpiresAt:
+      proposal?.shared_report_expires_at || proposal?.sharedReportExpiresAt,
+  });
 
-  if (shouldOpenSharedWorkspace) {
-    return buildSharedReportHref(sharedReportToken);
+  if (sharedWorkspaceHref) {
+    return sharedWorkspaceHref;
   }
 
   return buildDocumentComparisonResumeHref({
@@ -326,7 +363,7 @@ export function resolveNotificationTarget(notification, options = {}) {
     );
 
   if (isCanonicalSharedReportTarget) {
-    const href = buildSharedReportHref(sharedReportToken);
+    const href = buildActiveSharedReportHref({ sharedReportToken });
     const legacyHref =
       metadata.legacyActionUrl ||
       buildLegacyOpportunityNotificationHref({ actionUrl, proposalId });

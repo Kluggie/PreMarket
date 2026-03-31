@@ -352,11 +352,28 @@ function buildDocumentComparisonResumeHref({ comparisonId, proposalId, resumeSte
   return buildDocumentComparisonEditorHref({ comparisonId, proposalId, step: normalizedStep });
 }
 
+function hasActiveSharedReportLink(proposal = {}) {
+  const status = String(proposal?.shared_report_status || '').trim().toLowerCase();
+  if (status && status !== 'active') {
+    return false;
+  }
+
+  const expiresAtValue = proposal?.shared_report_expires_at;
+  if (!expiresAtValue) {
+    return true;
+  }
+
+  const expiresAt = new Date(String(expiresAtValue));
+  if (Number.isNaN(expiresAt.getTime())) {
+    return true;
+  }
+
+  return expiresAt.getTime() > Date.now();
+}
+
 function buildDocumentComparisonOpportunityHref(proposal = {}) {
-  const actorRole = String(proposal?.outcome?.actor_role || '').trim().toLowerCase();
-  const listType = String(proposal?.list_type || '').trim().toLowerCase();
   const sharedReportToken = String(proposal?.shared_report_token || '').trim();
-  if (sharedReportToken && (actorRole === 'party_b' || listType === 'received')) {
+  if (sharedReportToken && hasActiveSharedReportLink(proposal)) {
     return buildSharedReportHref(sharedReportToken);
   }
   return buildDocumentComparisonResumeHref({
@@ -408,19 +425,20 @@ test('buildDocumentComparisonResumeHref returns the report resume surface for la
   assert.equal(href, '/DocumentComparisonDetail?id=comparison_resume_step3&tab=report');
 });
 
-test('buildDocumentComparisonOpportunityHref reopens owner-side opportunities at the saved editor step even when a shared-report token exists', () => {
+test('buildDocumentComparisonOpportunityHref routes owner-side live shared-report opportunities to the canonical shared workspace token', () => {
   const href = buildDocumentComparisonOpportunityHref({
     id: 'proposal_owner_resume',
     document_comparison_id: 'comparison_owner_resume',
     resume_step: 2,
     shared_report_token: 'shared_report_owner_resume',
+    shared_report_status: 'active',
     outcome: { actor_role: 'party_a' },
     list_type: 'sent',
   });
 
   assert.equal(
     href,
-    '/DocumentComparisonCreate?draft=comparison_owner_resume&proposalId=proposal_owner_resume&step=2',
+    '/shared-report/shared_report_owner_resume',
   );
 });
 

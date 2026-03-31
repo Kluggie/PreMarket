@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  buildDocumentComparisonOpportunityHref,
   buildDocumentComparisonNotificationHref,
   buildDocumentComparisonReportHref,
   buildLegacyOpportunityNotificationHref,
@@ -126,6 +127,95 @@ test('older document-comparison action URLs pointing at DocumentComparisonDetail
 
   assert.equal(target.href, buildSharedReportHref(sharedReportToken));
   assert.equal(target.route, 'SharedReport');
+});
+
+test('live shared-report states resolve to the same canonical shared-report destination for opportunities and notifications', () => {
+  const comparisonId = 'comparison_live_shared_workspace';
+  const proposalId = 'proposal_live_shared_workspace';
+  const sharedReportToken = 'shared_report_live_workspace';
+  const expectedHref = buildSharedReportHref(sharedReportToken);
+
+  const opportunityHref = buildDocumentComparisonOpportunityHref({
+    id: proposalId,
+    document_comparison_id: comparisonId,
+    resume_step: 3,
+    // Owner-side rows used to fall back to DocumentComparisonDetail despite a live token.
+    outcome: { actor_role: 'party_a' },
+    list_type: 'sent',
+    shared_report_token: sharedReportToken,
+    shared_report_status: 'active',
+  });
+
+  const notificationTarget = resolveNotificationTarget({
+    event_type: 'evaluation_update',
+    metadata: buildNotificationTargetMetadata({
+      route: 'SharedReport',
+      workflowType: 'document_comparison',
+      entityType: 'document_comparison',
+      comparisonId,
+      proposalId,
+      sharedReportToken,
+    }),
+  });
+
+  assert.equal(opportunityHref, expectedHref);
+  assert.equal(notificationTarget.href, expectedHref);
+});
+
+test('opportunity routing does not use the legacy report tab when a valid active shared-report token exists', () => {
+  const comparisonId = 'comparison_no_legacy_report';
+  const sharedReportToken = 'shared_report_no_legacy_report';
+  const href = buildDocumentComparisonOpportunityHref({
+    id: 'proposal_no_legacy_report',
+    document_comparison_id: comparisonId,
+    resume_step: 3,
+    shared_report_token: sharedReportToken,
+    shared_report_status: 'active',
+  });
+
+  assert.equal(href, buildSharedReportHref(sharedReportToken));
+  assert.notEqual(href, buildDocumentComparisonReportHref(comparisonId));
+  assert.equal(href.includes('/DocumentComparisonDetail'), false);
+});
+
+test('owner-only draft or pre-share document-comparison rows keep internal resume routing when no active shared-report token exists', () => {
+  const resumeHref = buildDocumentComparisonOpportunityHref({
+    id: 'proposal_owner_draft_resume',
+    document_comparison_id: 'comparison_owner_draft_resume',
+    resume_step: 2,
+    shared_report_token: '',
+  });
+
+  assert.equal(
+    resumeHref,
+    '/DocumentComparisonCreate?draft=comparison_owner_draft_resume&proposalId=proposal_owner_draft_resume&step=2',
+  );
+});
+
+test('document-comparison rows with inactive or expired shared-report links fall back to internal resume/report routes', () => {
+  const comparisonId = 'comparison_edge_fallback';
+
+  const revokedHref = buildDocumentComparisonOpportunityHref({
+    id: 'proposal_edge_revoked',
+    document_comparison_id: comparisonId,
+    resume_step: 3,
+    shared_report_token: 'shared_report_revoked',
+    shared_report_status: 'revoked',
+  });
+  assert.equal(revokedHref, buildDocumentComparisonReportHref(comparisonId));
+
+  const expiredHref = buildDocumentComparisonOpportunityHref({
+    id: 'proposal_edge_expired',
+    document_comparison_id: comparisonId,
+    resume_step: 2,
+    shared_report_token: 'shared_report_expired',
+    shared_report_status: 'active',
+    shared_report_expires_at: '2000-01-01T00:00:00.000Z',
+  });
+  assert.equal(
+    expiredHref,
+    '/DocumentComparisonCreate?draft=comparison_edge_fallback&proposalId=proposal_edge_expired&step=2',
+  );
 });
 
 test('true proposal-native notifications keep the existing proposal destination', () => {
