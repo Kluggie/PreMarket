@@ -1061,6 +1061,134 @@ if (!hasDatabaseUrl()) {
     assert.equal(round3TurnCopy.sendCtaLabel, 'Send to proposer');
   });
 
+  test('workspace parent status stays consistent with proposals inbox row status across round ownership flips', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const ownerSeed = 'status_consistency_rounds';
+    const ownerCookie = makeOwnerCookie(ownerSeed);
+    const ownerEmail = `${ownerSeed}_owner@example.com`;
+    const recipientEmail = 'status-consistency-recipient@example.com';
+    const recipientCookie = makeRecipientCookie('status_consistency_recipient', recipientEmail);
+    const comparison = await createComparison(ownerCookie, {
+      title: 'Thread Status Consistency',
+      docAText: 'Owner confidential baseline',
+      docBText: 'Owner shared baseline',
+    });
+
+    const initialLink = await createSharedReportLink(ownerCookie, comparison.id, recipientEmail, {
+      canEdit: true,
+      canEditConfidential: true,
+      canReevaluate: true,
+      canSendBack: true,
+      maxUses: 30,
+    });
+
+    const assertWorkspaceAndInboxStatusMatch = async ({
+      token,
+      workspaceCookie,
+      listCookie,
+      expectedKey = '',
+      message,
+    }) => {
+      const workspaceRes = await getRecipientWorkspace(token, workspaceCookie);
+      assert.equal(workspaceRes.statusCode, 200);
+      const workspaceBody = workspaceRes.jsonBody();
+      const workspacePrimaryStatusKey = String(workspaceBody.parent?.primary_status_key || '');
+      assert.notEqual(workspacePrimaryStatusKey, '', `${message}: workspace should expose parent.primary_status_key`);
+      if (expectedKey) {
+        assert.equal(workspacePrimaryStatusKey, expectedKey, `${message}: expected workspace status key`);
+      }
+
+      const listRes = await listProposals(listCookie, { tab: 'inbox', limit: '20' });
+      assert.equal(listRes.statusCode, 200);
+      const listRows = Array.isArray(listRes.jsonBody().proposals) ? listRes.jsonBody().proposals : [];
+      const row = listRows.find((entry) => String(entry?.id || '') === comparison.proposal_id);
+      if (!row) {
+        const allRes = await listProposals(listCookie, { tab: 'all', limit: '20' });
+        assert.equal(allRes.statusCode, 200);
+        const allRows = Array.isArray(allRes.jsonBody().proposals) ? allRes.jsonBody().proposals : [];
+        const allRow = allRows.find((entry) => String(entry?.id || '') === comparison.proposal_id);
+        assert.ok(allRow, `${message}: proposal row should exist in list`);
+        assert.equal(
+          String(allRow?.primary_status_key || ''),
+          workspacePrimaryStatusKey,
+          `${message}: list row status key must match workspace parent status key`,
+        );
+        return;
+      }
+
+      assert.equal(
+        String(row?.primary_status_key || ''),
+        workspacePrimaryStatusKey,
+        `${message}: list row status key must match workspace parent status key`,
+      );
+    };
+
+    await assertWorkspaceAndInboxStatusMatch({
+      token: initialLink.token,
+      workspaceCookie: recipientCookie,
+      listCookie: recipientCookie,
+      expectedKey: 'needs_reply',
+      message: 'Round 1 recipient turn',
+    });
+
+    const round2Save = await saveRecipientDraft(initialLink.token, {
+      shared_payload: { label: 'Shared Information', text: 'Recipient round 2 shared response.' },
+      recipient_confidential_payload: { label: 'Confidential Information', notes: 'Recipient round 2 private note.' },
+      workflow_step: 2,
+    }, recipientCookie);
+    assert.equal(round2Save.statusCode, 200);
+
+    const round2Send = await sendBackRecipientDraft(initialLink.token, {}, recipientCookie);
+    assert.equal(round2Send.statusCode, 200);
+    const round2Token = String(round2Send.jsonBody().return_link?.token || '');
+    assert.notEqual(round2Token, '');
+    assert.equal(String(round2Send.jsonBody().return_link?.recipient_email || ''), ownerEmail);
+
+    await assertWorkspaceAndInboxStatusMatch({
+      token: initialLink.token,
+      workspaceCookie: recipientCookie,
+      listCookie: recipientCookie,
+      expectedKey: 'waiting_on_counterparty',
+      message: 'Round 2 recipient waiting state',
+    });
+
+    await assertWorkspaceAndInboxStatusMatch({
+      token: round2Token,
+      workspaceCookie: ownerCookie,
+      listCookie: ownerCookie,
+      message: 'Round 2 owner turn',
+    });
+
+    const round3Save = await saveRecipientDraft(round2Token, {
+      shared_payload: { label: 'Shared Information', text: 'Owner round 3 shared response.' },
+      recipient_confidential_payload: { label: 'Confidential Information', notes: 'Owner round 3 private note.' },
+      workflow_step: 2,
+    }, ownerCookie);
+    assert.equal(round3Save.statusCode, 200);
+
+    const round3Send = await sendBackRecipientDraft(round2Token, {}, ownerCookie);
+    assert.equal(round3Send.statusCode, 200);
+    const round3Token = String(round3Send.jsonBody().return_link?.token || '');
+    assert.notEqual(round3Token, '');
+
+    await assertWorkspaceAndInboxStatusMatch({
+      token: round2Token,
+      workspaceCookie: ownerCookie,
+      listCookie: ownerCookie,
+      message: 'Round 3 owner waiting state',
+    });
+
+    await assertWorkspaceAndInboxStatusMatch({
+      token: round3Token,
+      workspaceCookie: recipientCookie,
+      listCookie: recipientCookie,
+      expectedKey: 'needs_reply',
+      message: 'Round 3 recipient turn',
+    });
+  });
+
   test('Prompt2 evaluate public report never leaks proposer/recipient confidential markers', async () => {
     await ensureMigrated();
     await resetTables();

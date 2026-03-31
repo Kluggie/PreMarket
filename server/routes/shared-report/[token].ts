@@ -144,6 +144,15 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       recipient_confidential_payload: buildDefaultConfidentialPayload(),
     };
     const recipientAuthorization = getRecipientAuthorizationState(resolved.link, currentUser);
+    const currentUserId = asText(currentUser?.id || currentUser?.sub);
+    const proposalOwnerUserId = asText(resolved.proposal?.userId);
+    const treatAsRecipientViewer = Boolean(
+      currentUser &&
+      recipientAuthorization.authorized &&
+      currentUserId &&
+      proposalOwnerUserId &&
+      currentUserId !== proposalOwnerUserId,
+    );
     const canViewOwnHistoricalConfidential = Boolean(currentUser && recipientAuthorization.authorized);
     const visibleConfidentialHistoryEntries = canViewOwnHistoricalConfidential
       ? (Array.isArray(sharedHistory.confidentialEntries) ? sharedHistory.confidentialEntries : [])
@@ -160,6 +169,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     const parentOutcome = currentUser
       ? mapProposalOutcomeForUser(resolved.proposal, currentUser, {
           authorizedRecipientUserId: resolved.link.authorizedUserId,
+          sharedReceivedProposalIds: treatAsRecipientViewer ? [resolved.proposal.id] : [],
         })
       : null;
     const parentThreadState = parentOutcome

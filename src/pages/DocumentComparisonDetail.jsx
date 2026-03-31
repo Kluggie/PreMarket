@@ -55,6 +55,7 @@ import {
   shouldShowContinueNegotiating,
   shouldConfirmRequestAgreement,
 } from '@/lib/proposalOutcomeUi';
+import { getProposalThreadUiState } from '@/lib/proposalThreadStatusUi';
 
 const CONFIDENTIAL_LABEL = 'Confidential Information';
 const SHARED_LABEL = 'Shared Information';
@@ -354,8 +355,11 @@ function getOpportunityStatusClass(statusKey, status) {
   if (normalizedKey === 'waiting_on_counterparty') {
     return 'bg-amber-100 text-amber-700 border-amber-200';
   }
-  if (normalizedKey === 'needs_response') {
+  if (normalizedKey === 'needs_reply') {
     return 'bg-blue-100 text-blue-700 border-blue-200';
+  }
+  if (normalizedKey === 'under_review') {
+    return 'bg-violet-100 text-violet-700 border-violet-200';
   }
   if (normalizedStatus === 'under_verification' || normalizedStatus === 're_evaluated') {
     return 'bg-indigo-100 text-indigo-700 border-indigo-200';
@@ -658,8 +662,9 @@ export default function DocumentComparisonDetail() {
   const isWon = proposalOutcomeState === 'won';
   const isLost = proposalOutcomeState === 'lost';
   const isClosed = isWon || isLost;
-  const primaryStatusKey = asLower(proposalThread?.primary_status_key || proposalThread?.status);
-  const primaryStatusLabel = asText(proposalThread?.primary_status_label) || 'Active';
+  const proposalThreadStatus = getProposalThreadUiState(proposalThread || {});
+  const primaryStatusKey = proposalThreadStatus.primaryStatusKey;
+  const primaryStatusLabel = proposalThreadStatus.primaryStatusLabel;
   const baseOutcomeActionDisabled = proposalDetailQuery.isLoading;
   const pendingOutcomeMessage = getPendingAgreementMessage(proposalOutcome, 'opportunity');
   const outcomeHelperText = getOutcomeHelperText(proposalOutcome, 'opportunity');

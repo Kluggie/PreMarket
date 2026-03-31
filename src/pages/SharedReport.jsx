@@ -73,6 +73,10 @@ import {
   getSharedReportSendActionLabel,
 } from '@/lib/sharedReportSendDirection';
 import {
+  buildSharedReportStatusBanner,
+  getProposalThreadUiState,
+} from '@/lib/proposalThreadStatusUi';
+import {
   CONTINUE_NEGOTIATING_LABEL,
   getAgreementActionLabel,
   getOutcomeHelperText,
@@ -299,17 +303,6 @@ function getPartyRoleLabel(value) {
   return asText(value).toLowerCase() === OWNER_PROPOSER ? 'Proposer' : 'Recipient';
 }
 
-function getPrimaryStatusLabel(value) {
-  const normalized = asText(value).toLowerCase();
-  if (normalized === 'draft') return 'Draft';
-  if (normalized === 'needs_reply') return 'Needs Reply';
-  if (normalized === 'under_review') return 'Under Review';
-  if (normalized === 'waiting_on_counterparty') return 'Waiting on Counterparty';
-  if (normalized === 'closed_won') return 'Closed: Won';
-  if (normalized === 'closed_lost') return 'Closed: Lost';
-  return 'Needs Reply';
-}
-
 function getPrimaryStatusClass(value) {
   const normalized = asText(value).toLowerCase();
   if (normalized === 'closed_won') return 'bg-emerald-100 text-emerald-700 border-emerald-200';
@@ -317,7 +310,24 @@ function getPrimaryStatusClass(value) {
   if (normalized === 'draft') return 'bg-slate-100 text-slate-700 border-slate-200';
   if (normalized === 'under_review') return 'bg-violet-100 text-violet-700 border-violet-200';
   if (normalized === 'waiting_on_counterparty') return 'bg-slate-100 text-slate-700 border-slate-200';
-  return 'bg-rose-100 text-rose-700 border-rose-200';
+  if (normalized === 'needs_reply') return 'bg-rose-100 text-rose-700 border-rose-200';
+  return 'bg-slate-100 text-slate-700 border-slate-200';
+}
+
+function getStatusBannerClass(tone) {
+  if (tone === 'success') {
+    return 'bg-emerald-50 border-emerald-200 text-emerald-800';
+  }
+  if (tone === 'warning') {
+    return 'bg-amber-50 border-amber-200 text-amber-900';
+  }
+  if (tone === 'info') {
+    return 'bg-blue-50 border-blue-200 text-blue-900';
+  }
+  if (tone === 'danger') {
+    return 'bg-rose-50 border-rose-200 text-rose-800';
+  }
+  return 'bg-slate-50 border-slate-200 text-slate-700';
 }
 
 function buildDefaultDraftDocuments(owner) {
@@ -559,11 +569,15 @@ export default function SharedReport() {
 
   const share = workspaceQuery.data?.share || null;
   const parent = workspaceQuery.data?.parent || null;
+  const hasCanonicalParentStatus = Boolean(asText(parent?.primary_status_key));
+  const parentThreadState = useMemo(
+    () => (hasCanonicalParentStatus ? getProposalThreadUiState(parent) : null),
+    [hasCanonicalParentStatus, parent],
+  );
   const parentOutcome = parent?.outcome || {};
   const parentOutcomeState = asText(parentOutcome?.state || parent?.status).toLowerCase();
-  const parentPrimaryStatusKey = asText(parent?.primary_status_key).toLowerCase();
-  const parentPrimaryStatusLabel =
-    asText(parent?.primary_status_label) || getPrimaryStatusLabel(parentPrimaryStatusKey);
+  const parentPrimaryStatusKey = parentThreadState?.primaryStatusKey || '';
+  const parentPrimaryStatusLabel = parentThreadState?.primaryStatusLabel || 'Active';
   const comparison = workspaceQuery.data?.comparison || null;
   const baseline = workspaceQuery.data?.baseline || {};
   const defaults = workspaceQuery.data?.defaults || {};
@@ -864,8 +878,29 @@ export default function SharedReport() {
   }, [immutableHistoryDocIdSet, requiresRecipientVerification]);
 
   const hasActiveDraft = Boolean(recipientDraft && asText(recipientDraft.status).toLowerCase() === 'draft');
-  const isSentToCounterparty =
-    Boolean(latestSentRevision && asText(latestSentRevision.status).toLowerCase() === 'sent') && !hasActiveDraft;
+  const sharedReportStatusBanner = useMemo(
+    () =>
+      hasCanonicalParentStatus
+        ? buildSharedReportStatusBanner({
+            proposal: parent,
+            counterpartyNoun: sendDirectionCopy.counterpartyNoun,
+            sentAtText: formatDateTime(
+              latestSentRevision?.updated_at ||
+                latestSentRevision?.sent_at ||
+                parent?.last_thread_activity_at ||
+                parent?.updated_at,
+            ),
+          })
+        : null,
+    [
+      hasCanonicalParentStatus,
+      latestSentRevision?.sent_at,
+      latestSentRevision?.updated_at,
+      parent,
+      sendDirectionCopy.counterpartyNoun,
+    ],
+  );
+  const isSentToCounterparty = Boolean(parentThreadState?.waitingOnCounterparty);
 
   useEffect(() => {
     setStep(0);
@@ -2805,12 +2840,10 @@ export default function SharedReport() {
               </Alert>
             ) : null}
 
-            {/* ── Sent to counterparty confirmation ───────────────────── */}
-            {isSentToCounterparty ? (
-              <Alert className="bg-emerald-50 border-emerald-200">
-                <AlertDescription className="text-emerald-800">
-                  {sendDirectionCopy.sentCtaLabel} on {formatDateTime(latestSentRevision?.updated_at)}.
-                </AlertDescription>
+            {/* ── Canonical thread-state banner ───────────────────────── */}
+            {sharedReportStatusBanner ? (
+              <Alert className={getStatusBannerClass(sharedReportStatusBanner.tone)}>
+                <AlertDescription>{sharedReportStatusBanner.text}</AlertDescription>
               </Alert>
             ) : null}
           </>
@@ -2984,6 +3017,7 @@ export default function SharedReport() {
                     sendBackMutation.isPending ||
                     saveDraftMutation.isPending ||
                     !canSendBack ||
+                    Boolean(parentThreadState?.isClosed) ||
                     isSentToCounterparty ||
                     requiresRecipientVerification
                   }

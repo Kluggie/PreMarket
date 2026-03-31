@@ -68,6 +68,7 @@ import {
   shouldConfirmRequestAgreement,
 } from '@/lib/proposalOutcomeUi';
 import { getStarterLimitErrorCopy } from '@/lib/starterLimitErrorCopy';
+import { getProposalThreadUiState } from '@/lib/proposalThreadStatusUi';
 
 const CONFIDENTIAL_LABEL = 'Confidential Information';
 const SHARED_LABEL = 'Shared Information';
@@ -697,8 +698,9 @@ export default function ProposalDetail() {
     : 'This will permanently delete this unsent draft and any linked draft-only comparison data. This action cannot be undone.';
   const pendingOutcomeMessage = getPendingAgreementMessage(outcome, 'proposal');
   const outcomeHelperText = getOutcomeHelperText(outcome, 'proposal');
-  const primaryStatusKey = asLower(proposal.primary_status_key || proposal.status);
-  const primaryStatusLabel = asText(proposal.primary_status_label) || getStatusLabel(primaryStatusKey);
+  const proposalThreadState = getProposalThreadUiState(proposal);
+  const primaryStatusKey = proposalThreadState.primaryStatusKey;
+  const primaryStatusLabel = proposalThreadState.primaryStatusLabel;
 
   // Derive party display strings
   const proposerDisplay = proposal.is_private_mode && !proposal.party_a_email

@@ -18,7 +18,12 @@ import {
   buildProposalThreadActivityValues,
   PROPOSAL_THREAD_ACTIVITY_SEND_BACK,
 } from '../../../_lib/proposal-thread-activity.js';
-import { assertProposalOpenForNegotiation, buildPendingWonReset } from '../../../_lib/proposal-outcomes.js';
+import {
+  assertProposalOpenForNegotiation,
+  buildPendingWonReset,
+  PROPOSAL_PARTY_A,
+  PROPOSAL_PARTY_B,
+} from '../../../_lib/proposal-outcomes.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 import {
   htmlToEditorText,
@@ -107,6 +112,10 @@ function extractSharedText(sharedPayload: Record<string, unknown>): string {
 function resolveRoundNumber(reportMetadata: Record<string, unknown>): number {
   const round = Number(reportMetadata?.exchange_round || reportMetadata?.round || 0);
   return Number.isFinite(round) && round >= 1 ? Math.floor(round) : 1;
+}
+
+function mapHistoryAuthorRoleToProposalPartyRole(authorRole: string) {
+  return authorRole === HISTORY_AUTHOR_PROPOSER ? PROPOSAL_PARTY_A : PROPOSAL_PARTY_B;
 }
 
 function buildSendBackEmail(params: {
@@ -365,6 +374,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         proposal: resolved.proposal,
         link: resolved.link,
       }) || RECIPIENT_ROLE;
+    const proposalActorRole = mapHistoryAuthorRoleToProposalPartyRole(stableAuthorRole);
     const outgoingRoundNumber = resolveSharedReportLinkRound(toObject(resolved.link.reportMetadata)) + 1;
 
     // ── 3. Update comparison with latest shared text + report ──────────────
@@ -427,7 +437,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     if (resolved.proposal?.id) {
       const threadActivity = buildProposalThreadActivityValues({
         activityAt: now,
-        actorRole: RECIPIENT_ROLE,
+        actorRole: proposalActorRole,
         activityType: PROPOSAL_THREAD_ACTIVITY_SEND_BACK,
       });
       await resolved.db
@@ -480,7 +490,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
           updatedAt: now,
         },
         actorUserId: auth.user.id,
-        actorRole: RECIPIENT_ROLE,
+        actorRole: proposalActorRole,
         milestone: 'send_back',
         eventType: 'proposal.send_back',
         documentComparison: comparisonId && resolved.comparison

@@ -12,6 +12,7 @@ import {
 } from '@/lib/notificationTargets';
 import { formatRecipientShort } from '@/lib/recipientUtils';
 import { buildCompactProposalSubtitle } from '@/lib/proposalThreadContextUi';
+import { getProposalThreadUiState } from '@/lib/proposalThreadStatusUi';
 import {
   AGREEMENT_REQUESTED_LABEL,
 } from '@/lib/proposalOutcomeUi';
@@ -46,19 +47,8 @@ const statusConfig = {
 };
 
 function getCompactStatusKey(proposal) {
-  const primaryStatusKey = String(proposal?.primary_status_key || '').toLowerCase();
-  if (statusConfig[primaryStatusKey]) {
-    return primaryStatusKey;
-  }
-
-  if (proposal?.thread_bucket === 'drafts') return 'draft';
-
-  const normalizedStatus = String(proposal?.status || '').toLowerCase();
-  if (normalizedStatus === 'won') return 'closed_won';
-  if (normalizedStatus === 'lost') return 'closed_lost';
-  if (proposal?.review_status) return 'under_review';
-  if (proposal?.waiting_on_other_party) return 'waiting_on_counterparty';
-  return 'needs_reply';
+  const threadState = getProposalThreadUiState(proposal);
+  return statusConfig[threadState.primaryStatusKey] ? threadState.primaryStatusKey : 'needs_reply';
 }
 
 function StatusBadge({ proposal }) {

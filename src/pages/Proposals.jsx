@@ -28,6 +28,7 @@ import {
   shouldConfirmRequestAgreement,
 } from '@/lib/proposalOutcomeUi';
 import { buildCompactProposalSubtitle } from '@/lib/proposalThreadContextUi';
+import { getProposalThreadUiState } from '@/lib/proposalThreadStatusUi';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
@@ -161,29 +162,12 @@ function normalizeOriginFilterValue(value) {
 }
 
 function resolvePrimaryStatus(proposal) {
-  const primaryStatusKey = String(proposal?.primary_status_key || '').trim().toLowerCase();
-  if (PRIMARY_STATUS_BADGE_CONFIG[primaryStatusKey]) {
-    return PRIMARY_STATUS_BADGE_CONFIG[primaryStatusKey];
-  }
-
-  if (proposal?.thread_bucket === 'drafts') {
-    return PRIMARY_STATUS_BADGE_CONFIG.draft;
-  }
-
-  const normalizedStatus = String(proposal?.status || '').trim().toLowerCase();
-  if (normalizedStatus === 'won') {
-    return PRIMARY_STATUS_BADGE_CONFIG.closed_won;
-  }
-  if (normalizedStatus === 'lost') {
-    return PRIMARY_STATUS_BADGE_CONFIG.closed_lost;
-  }
-  if (proposal?.review_status) {
-    return PRIMARY_STATUS_BADGE_CONFIG.under_review;
-  }
-  if (proposal?.waiting_on_other_party) {
-    return PRIMARY_STATUS_BADGE_CONFIG.waiting_on_counterparty;
-  }
-  return PRIMARY_STATUS_BADGE_CONFIG.needs_reply;
+  const threadState = getProposalThreadUiState(proposal);
+  const config = PRIMARY_STATUS_BADGE_CONFIG[threadState.primaryStatusKey] || PRIMARY_STATUS_BADGE_CONFIG.needs_reply;
+  return {
+    ...config,
+    label: threadState.primaryStatusLabel || config.label,
+  };
 }
 
 function PrimaryStatusBadge({ proposal }) {
@@ -193,18 +177,20 @@ function PrimaryStatusBadge({ proposal }) {
   return (
     <Badge className={`${config.color} font-medium`}>
       {Icon ? <Icon className="w-3 h-3 mr-1" /> : null}
-      {String(proposal?.primary_status_label || config.label)}
+      {config.label}
     </Badge>
   );
 }
 
 function getRowIcon(proposal) {
-  const primaryStatusKey = String(proposal?.primary_status_key || '').trim().toLowerCase();
-  if (primaryStatusKey === 'closed_won') return CheckCircle2;
-  if (primaryStatusKey === 'closed_lost') return XCircle;
-  if (primaryStatusKey === 'needs_reply') return AlertCircle;
-  if (primaryStatusKey === 'under_review') return Eye;
-  if (proposal?.thread_bucket === 'archived') return Archive;
+  const threadState = getProposalThreadUiState(proposal);
+  if (threadState.primaryStatusKey === 'closed_won') return CheckCircle2;
+  if (threadState.primaryStatusKey === 'closed_lost') return XCircle;
+  if (threadState.primaryStatusKey === 'needs_reply') return AlertCircle;
+  if (threadState.primaryStatusKey === 'under_review') return Eye;
+  if (threadState.primaryStatusKey === 'waiting_on_counterparty') return Clock;
+  if (threadState.isArchived) return Archive;
+  if (threadState.isDraft) return FileText;
   if (String(proposal?.latest_direction || '').toLowerCase() === 'received') return Inbox;
   if (String(proposal?.latest_direction || '').toLowerCase() === 'sent') return Send;
   return FileText;
