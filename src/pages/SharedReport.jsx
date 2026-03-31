@@ -92,8 +92,9 @@ import {
 const CONFIDENTIAL_LABEL = 'Confidential Information';
 const SHARED_LABEL = 'Shared Information';
 const TOTAL_WORKFLOW_STEPS = 3;
-const STEP2_AUTOSAVE_DEBOUNCE_MS = 30_000;
-const STEP2_AUTOSAVE_MIN_INTERVAL_MS = 30_000;
+const DEFAULT_STEP2_AUTOSAVE_DEBOUNCE_MS = 30_000;
+const DEFAULT_STEP2_AUTOSAVE_MIN_INTERVAL_MS = 30_000;
+const E2E_AUTOSAVE_MIN_MS = 250;
 const HISTORY_SHARED_DOC_ID_PREFIX = 'shared-history-';
 const HISTORY_CONFIDENTIAL_DOC_ID_PREFIX = 'history-confidential-';
 const COACH_INTENT_LABELS = {
@@ -108,6 +109,19 @@ const COACH_INTENT_LABELS = {
 
 function asText(value) {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function resolveStep2AutosaveDelayMs(defaultMs) {
+  if (typeof window === 'undefined') {
+    return defaultMs;
+  }
+  // Test-only override used by Playwright to keep autosave assertions reliable
+  // without depending on large per-test timeouts.
+  const overrideMs = Number(window.__PM_E2E_AUTOSAVE_MS);
+  if (Number.isFinite(overrideMs) && overrideMs >= E2E_AUTOSAVE_MIN_MS) {
+    return Math.floor(overrideMs);
+  }
+  return defaultMs;
 }
 
 function renderActionButtons(actions) {
@@ -527,6 +541,14 @@ export default function SharedReport() {
   const suggestionThreadsRef = useRef([]);
   const activeSuggestionThreadIdRef = useRef(null);
   const lastStep2AutosaveAtRef = useRef(0);
+  const step2AutosaveDebounceMs = useMemo(
+    () => resolveStep2AutosaveDelayMs(DEFAULT_STEP2_AUTOSAVE_DEBOUNCE_MS),
+    [],
+  );
+  const step2AutosaveMinIntervalMs = useMemo(
+    () => resolveStep2AutosaveDelayMs(DEFAULT_STEP2_AUTOSAVE_MIN_INTERVAL_MS),
+    [],
+  );
 
   const workspaceQuery = useQuery({
     queryKey: ['shared-report-recipient-workspace', token],
@@ -1263,11 +1285,11 @@ export default function SharedReport() {
     const now = Date.now();
     const msSinceLastAutosave = now - lastStep2AutosaveAtRef.current;
     const delayMs =
-      msSinceLastAutosave >= STEP2_AUTOSAVE_MIN_INTERVAL_MS
-        ? STEP2_AUTOSAVE_DEBOUNCE_MS
+      msSinceLastAutosave >= step2AutosaveMinIntervalMs
+        ? step2AutosaveDebounceMs
         : Math.max(
-            STEP2_AUTOSAVE_DEBOUNCE_MS,
-            STEP2_AUTOSAVE_MIN_INTERVAL_MS - msSinceLastAutosave,
+            step2AutosaveDebounceMs,
+            step2AutosaveMinIntervalMs - msSinceLastAutosave,
           );
 
     const timer = window.setTimeout(() => {
@@ -1291,6 +1313,8 @@ export default function SharedReport() {
     recipientDocuments,
     requiresRecipientVerification,
     saveDraftMutation,
+    step2AutosaveDebounceMs,
+    step2AutosaveMinIntervalMs,
     step,
     suggestionThreads,
     title,

@@ -11,6 +11,7 @@ import {
 import { mapProposalOutcomeForUser } from '../../_lib/proposal-outcomes.js';
 import { getProposalThreadState } from '../../_lib/proposal-thread-state.js';
 import {
+  asText,
   buildDefaultConfidentialPayload,
   SHARED_REPORT_ROUTE,
   buildDefaultSharedPayload,
@@ -26,7 +27,44 @@ import {
   mapDraftView,
   getRecipientAuthorizationState,
   resolveSharedReportToken,
+  toObject,
 } from './_shared.js';
+
+function coercePositiveInt(value: unknown): number | null {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 1) {
+    return null;
+  }
+  return Math.floor(numeric);
+}
+
+function mapConfidentialHistoryEntry(entry: any) {
+  const payload = toObject(entry?.contentPayload);
+  const authorRole = asText(entry?.authorRole).toLowerCase();
+  const authorLabel = asText(entry?.authorLabel) || (authorRole === 'proposer' ? 'Proposer' : 'Recipient');
+  return {
+    id: entry?.id || null,
+    author_role: authorRole || null,
+    author_label: authorLabel,
+    visibility: 'confidential',
+    visibility_label: `Confidential to ${authorLabel}`,
+    round_number: coercePositiveInt(entry?.roundNumber),
+    sequence_index: coercePositiveInt(entry?.sequenceIndex),
+    source_kind: asText(entry?.sourceKind) || 'manual',
+    label: asText(payload.label) || `Confidential to ${authorLabel}`,
+    text: asText(payload.text || payload.notes),
+    html: asText(payload.html),
+    json:
+      payload.json && typeof payload.json === 'object' && !Array.isArray(payload.json)
+        ? payload.json
+        : null,
+    source: asText(payload.source) || 'typed',
+    files: Array.isArray(payload.files) ? payload.files : [],
+    created_at: entry?.createdAt || null,
+    updated_at: entry?.updatedAt || null,
+    synthetic: Boolean(entry?.synthetic),
+  };
+}
 
 export default async function handler(req: any, res: any, tokenParam?: string) {
   await withApiRoute(req, res, SHARED_REPORT_ROUTE, async (context) => {
@@ -73,6 +111,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       proposal: resolved.proposal,
       link: resolved.link,
     });
+    const activeRoundNumber = currentLinkRound + 1;
 
     if (process.env.NODE_ENV !== 'production') {
       console.info(
@@ -105,6 +144,19 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       recipient_confidential_payload: buildDefaultConfidentialPayload(),
     };
     const recipientAuthorization = getRecipientAuthorizationState(resolved.link, currentUser);
+    const canViewOwnHistoricalConfidential = Boolean(currentUser && recipientAuthorization.authorized);
+    const visibleConfidentialHistoryEntries = canViewOwnHistoricalConfidential
+      ? (Array.isArray(sharedHistory.confidentialEntries) ? sharedHistory.confidentialEntries : [])
+          .filter((entry) => asText(entry?.authorRole).toLowerCase() === draftAuthorRole)
+          .filter((entry) => {
+            const roundNumber = coercePositiveInt(entry?.roundNumber);
+            if (roundNumber === null) {
+              return true;
+            }
+            return roundNumber < activeRoundNumber;
+          })
+          .map((entry) => mapConfidentialHistoryEntry(entry))
+      : [];
     const parentOutcome = currentUser
       ? mapProposalOutcomeForUser(resolved.proposal, currentUser, {
           authorizedRecipientUserId: resolved.link.authorizedUserId,
@@ -176,6 +228,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       baseline_ai_report: baselineAiReport,
       shared_history: {
         entries: sharedHistory.sharedEntries,
+        confidential_entries: visibleConfidentialHistoryEntries,
         max_round_number: sharedHistory.maxRoundNumber,
       },
       party_context: {

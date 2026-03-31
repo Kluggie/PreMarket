@@ -97,6 +97,8 @@ function importStatusBadge(doc) {
 function DocumentRow({ doc, onRemove, onRename, onSetVisibility, onImportFile, locked = false, readOnly = false }) {
   const fileRef = useRef(null);
   const isImporting = doc.importStatus === 'importing';
+  const isHistoricalRound = Boolean(doc?.isHistoricalRound);
+  const readOnlyMessage = doc?.readOnlyReason || 'Previous round content is view-only and cannot be changed.';
 
   return (
     <div
@@ -131,6 +133,16 @@ function DocumentRow({ doc, onRemove, onRename, onSetVisibility, onImportFile, l
               aria-label="Document title"
             />
           )}
+          {isHistoricalRound ? (
+            <Badge variant="outline" className="text-[10px] border-slate-300 bg-slate-100 text-slate-700">
+              Previous Round
+            </Badge>
+          ) : null}
+          {readOnly ? (
+            <Badge variant="outline" className="text-[10px] border-amber-300 bg-amber-50 text-amber-700">
+              Read-only
+            </Badge>
+          ) : null}
           <div className="ml-1 flex-shrink-0">
             {importStatusBadge(doc)}
           </div>
@@ -150,7 +162,9 @@ function DocumentRow({ doc, onRemove, onRename, onSetVisibility, onImportFile, l
 
       {/* Row: import file (only for non-typed, or all to allow re-import) */}
       {doc.source === 'typed' ? (
-        <p className="text-xs text-slate-400 italic">Typed document — edit in Step 2.</p>
+        <p className={`text-xs italic ${readOnly ? 'text-amber-700' : 'text-slate-400'}`}>
+          {readOnly ? readOnlyMessage : 'Typed document — edit in Step 2.'}
+        </p>
       ) : (
         <div className="flex flex-wrap items-center gap-2">
           <input
@@ -187,7 +201,7 @@ function DocumentRow({ doc, onRemove, onRename, onSetVisibility, onImportFile, l
             {isImporting ? 'Importing…' : 'Re-import'}
           </Button>
           {readOnly && (
-            <span className="text-xs text-amber-700">Read-only</span>
+            <span className="text-xs text-amber-700">{readOnlyMessage}</span>
           )}
         </div>
       )}
@@ -215,6 +229,9 @@ function DocumentRow({ doc, onRemove, onRename, onSetVisibility, onImportFile, l
               <><Users className="w-2.5 h-2.5 mr-1" /> Shared</>
             )}
           </Badge>
+          {readOnly ? (
+            <span className="text-xs text-amber-700">{readOnlyMessage}</span>
+          ) : null}
         </div>
       ) : (
       <div className="flex flex-col sm:flex-row sm:items-center gap-2">

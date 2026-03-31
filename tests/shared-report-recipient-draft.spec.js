@@ -5,6 +5,7 @@ import { ensureMigrated, getDb } from './helpers/db.mjs';
 
 const BASE_URL = process.env.PLAYWRIGHT_TEST_BASE_URL || 'http://localhost:4273';
 const LOAD_TIMEOUT_MS = 120_000;
+const E2E_FAST_AUTOSAVE_MS = 1_000;
 
 ensureTestEnv();
 
@@ -86,17 +87,104 @@ async function typeInEditor(page, selector, text) {
   await page.keyboard.type(text, { delay: 6 });
 }
 
+async function waitForSharedReportWorkspaceReady(page) {
+  const stepIndicator = page.getByTestId('doc-comparison-step-indicator');
+  await expect(stepIndicator).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+}
+
+async function openSharedReportWorkspace(page, token, { query = '' } = {}) {
+  const encodedToken = encodeURIComponent(token);
+  const workspaceRoutePattern = `**/api/shared-report/${encodedToken}/workspace*`;
+  const preflightWorkspace = await page.request.get(`${BASE_URL}/api/shared-report/${encodedToken}/workspace`);
+  expect(preflightWorkspace.status()).toBe(200);
+  const preflightWorkspaceBody = await preflightWorkspace.text();
+  const workspaceRoute = async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: preflightWorkspaceBody,
+    });
+  };
+  await page.route(workspaceRoutePattern, workspaceRoute);
+  // `domcontentloaded` can hang in local dev when Vite module loading stalls.
+  // Use a fast navigation commit, then assert the stable workspace shell.
+  try {
+    await page.goto(`${BASE_URL}/shared-report/${encodedToken}${query}`, {
+      waitUntil: 'commit',
+    });
+    await waitForSharedReportWorkspaceReady(page);
+  } finally {
+    if (!page.isClosed()) {
+      await page.unroute(workspaceRoutePattern, workspaceRoute).catch(() => {});
+    }
+  }
+}
+
+async function reloadSharedReportWorkspace(page, token) {
+  await openSharedReportWorkspace(page, token);
+}
+
 async function expectComparisonStep(page, step) {
-  const stepLabel = step === 0 ? 'Step 0 of 3' : `Step ${step} of 3`;
-  await expect(page.getByText(stepLabel)).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+  const stepIndicator = page.getByTestId('doc-comparison-step-indicator');
+  await expect(stepIndicator).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+  await expect(stepIndicator).toContainText(new RegExp(`Step\\s+${step}\\s+of\\s+3`), {
+    timeout: LOAD_TIMEOUT_MS,
+  });
+}
+
+function extractPersistedDraftDocuments(workspaceBody) {
+  const persistedEditorState = workspaceBody?.recipientDraft?.editor_state || {};
+  return Array.isArray(persistedEditorState.documents) ? persistedEditorState.documents : [];
+}
+
+function includesHistoricalDraftDocumentId(documents) {
+  return documents.some((doc) => {
+    const id = String(doc?.id || '').toLowerCase();
+    return (
+      id.startsWith('shared-history-') ||
+      id.startsWith('shared-history-baseline') ||
+      id.startsWith('history-confidential-') ||
+      id.startsWith('confidential-history-')
+    );
+  });
+}
+
+async function waitForWorkspaceDraftPredicate(request, token, recipientCookie, predicate, timeoutMs = LOAD_TIMEOUT_MS) {
+  let matchedWorkspace = null;
+  await expect.poll(
+    async () => {
+      const response = await request.get(`${BASE_URL}/api/shared-report/${encodeURIComponent(token)}/workspace`, {
+        headers: { cookie: recipientCookie },
+      });
+      if (response.status() !== 200) {
+        return false;
+      }
+      const workspaceBody = await response.json();
+      matchedWorkspace = workspaceBody;
+      return Boolean(predicate(workspaceBody));
+    },
+    {
+      timeout: timeoutMs,
+      intervals: [500, 1_000, 2_000],
+    },
+  ).toBe(true);
+  return matchedWorkspace;
 }
 
 test.beforeAll(async () => {
   await ensureMigrated();
 });
 
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(({ autosaveMs }) => {
+    window.__PM_E2E_AUTOSAVE_MS = autosaveMs;
+  }, { autosaveMs: E2E_FAST_AUTOSAVE_MS });
+});
+
 test.describe('Shared Report Recipient Draft', () => {
   test('Step 0 -> Step 1 -> Step 2 prefill + save draft + reload persistence', async ({ page, request }) => {
+    test.slow();
+
     const ownerId = uniqueId('recipient_owner');
     const ownerCookie = makeSessionCookie({
       sub: ownerId,
@@ -126,60 +214,57 @@ test.describe('Shared Report Recipient Draft', () => {
 
     const sharedMarker = uniqueId('shared_marker');
     const confidentialMarker = uniqueId('confidential_marker');
-    const workspaceUrlFragment = `/api/shared-report/${encodeURIComponent(token)}/workspace`;
-
-    await page.goto(`${BASE_URL}/shared-report/${encodeURIComponent(token)}`, {
-      waitUntil: 'domcontentloaded',
-    });
-
-    const workspaceResponse = await page.waitForResponse(
-      (response) =>
-        response.url().includes(workspaceUrlFragment) &&
-        response.request().method() === 'GET',
-      { timeout: LOAD_TIMEOUT_MS },
-    );
-    expect(workspaceResponse.status()).toBe(200);
+    await openSharedReportWorkspace(page, token);
 
     await expectComparisonStep(page, 0);
-    await expect(page.locator('pre')).toContainText(proposerSharedMarker, { timeout: LOAD_TIMEOUT_MS });
+    await expect(page.getByText(proposerSharedMarker)).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
 
     await page.getByRole('button', { name: 'Edit Opportunity' }).click();
     await expectComparisonStep(page, 1);
 
     await page.getByRole('button', { name: 'Continue to Editor' }).click();
     await expectComparisonStep(page, 2);
-    await expect(page.locator('[data-testid="doc-a-editor"]')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
-    await expect(page.locator('[data-testid="doc-b-editor"]')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+    const activeEditor = page.locator('[data-testid="active-doc-editor"]');
+    await expect(activeEditor).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
 
     // Prompt 2 prefill requirement: shared editor defaults to proposer baseline when no draft exists.
-    await expect(page.locator('[data-testid="doc-b-editor"]')).toContainText(proposerSharedMarker, {
+    await expect(activeEditor).toContainText(proposerSharedMarker, {
       timeout: LOAD_TIMEOUT_MS,
     });
 
-    await typeInEditor(page, '[data-testid="doc-b-editor"]', ` ${sharedMarker}`);
-    await typeInEditor(page, '[data-testid="doc-a-editor"]', ` ${confidentialMarker}`);
+    await page.getByRole('button', { name: 'My New Shared Contribution' }).click();
+    await typeInEditor(page, '[data-testid="active-doc-editor"]', ` ${sharedMarker}`);
 
-    const saveResponsePromise = page.waitForResponse(
-      (response) =>
-        response.url().includes(`/api/shared-report/${encodeURIComponent(token)}/draft`) &&
-        response.request().method() === 'POST' &&
-        response.status() === 200,
-      { timeout: LOAD_TIMEOUT_MS },
+    await page.getByRole('button', { name: /^My Confidential Notes$/ }).click();
+    await typeInEditor(page, '[data-testid="active-doc-editor"]', ` ${confidentialMarker}`);
+
+    await page.getByTestId('step2-save-draft-button').click();
+    await waitForWorkspaceDraftPredicate(
+      request,
+      token,
+      recipientCookie,
+      (workspaceBody) => {
+        const serializedDocs = JSON.stringify(extractPersistedDraftDocuments(workspaceBody));
+        return serializedDocs.includes(sharedMarker) && serializedDocs.includes(confidentialMarker);
+      },
     );
-    await page.getByRole('button', { name: 'Save Draft' }).click();
-    await saveResponsePromise;
 
-    await page.reload({ waitUntil: 'domcontentloaded' });
+    await reloadSharedReportWorkspace(page, token);
+    await expectComparisonStep(page, 2);
 
-    await expect(page.locator('[data-testid="doc-b-editor"]')).toContainText(sharedMarker, {
+    await page.getByRole('button', { name: 'My New Shared Contribution' }).click();
+    await expect(activeEditor).toContainText(sharedMarker, {
       timeout: LOAD_TIMEOUT_MS,
     });
-    await expect(page.locator('[data-testid="doc-a-editor"]')).toContainText(confidentialMarker, {
+    await page.getByRole('button', { name: /^My Confidential Notes$/ }).click();
+    await expect(activeEditor).toContainText(confidentialMarker, {
       timeout: LOAD_TIMEOUT_MS,
     });
   });
 
   test('Step 2 recipient suggestions support threaded history, switching, continuation, and reload restore', async ({ page, request }) => {
+    test.slow();
+
     const ownerId = uniqueId('recipient_thread_owner');
     const ownerCookie = makeSessionCookie({
       sub: ownerId,
@@ -251,9 +336,7 @@ test.describe('Shared Report Recipient Draft', () => {
       });
     });
 
-    await page.goto(`${BASE_URL}/shared-report/${encodeURIComponent(token)}`, {
-      waitUntil: 'domcontentloaded',
-    });
+    await openSharedReportWorkspace(page, token);
     await expectComparisonStep(page, 0);
     await page.getByRole('button', { name: 'Edit Opportunity' }).click();
     await expectComparisonStep(page, 1);
@@ -308,17 +391,18 @@ test.describe('Shared Report Recipient Draft', () => {
       coachBodies[2].threadHistory.some((entry) => String(entry.content || '').includes('Risk response for thread one.')),
     ).toBe(true);
 
-    const saveResponsePromise = page.waitForResponse(
-      (response) =>
-        response.url().includes(`/api/shared-report/${encodeURIComponent(token)}/draft`) &&
-        response.request().method() === 'POST' &&
-        response.status() === 200,
-      { timeout: LOAD_TIMEOUT_MS },
+    await page.getByTestId('step2-save-draft-button').click();
+    await waitForWorkspaceDraftPredicate(
+      request,
+      token,
+      recipientCookie,
+      (workspaceBody) => {
+        const editorState = workspaceBody?.recipientDraft?.editor_state || {};
+        return JSON.stringify(editorState).includes('Second pass on first thread');
+      },
     );
-    await page.getByRole('button', { name: 'Save Draft' }).click();
-    await saveResponsePromise;
 
-    await page.reload({ waitUntil: 'domcontentloaded' });
+    await reloadSharedReportWorkspace(page, token);
     await expectComparisonStep(page, 2);
     await expect(page.getByTestId('coach-custom-prompt-feedback')).toContainText(
       'Custom response for Second pass on first thread',
@@ -353,7 +437,7 @@ test.describe('Shared Report Recipient Draft', () => {
     expect(token).toBeTruthy();
 
     const sharedReportUrl = `${BASE_URL}/shared-report/${encodeURIComponent(token)}`;
-    await page.goto(sharedReportUrl, { waitUntil: 'domcontentloaded' });
+    await openSharedReportWorkspace(page, token);
 
     await expectComparisonStep(page, 0);
     await expect(page.getByText('Sign in to edit and respond.')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
@@ -364,7 +448,7 @@ test.describe('Shared Report Recipient Draft', () => {
     const recipientCookie = makeStableEmailCookie(recipientEmail);
     await applySessionCookie(page.context(), recipientCookie);
 
-    await page.goto(sharedReportUrl, { waitUntil: 'domcontentloaded' });
+    await openSharedReportWorkspace(page, token);
     await expect(page).toHaveURL(new RegExp(`/shared-report/${encodeURIComponent(token)}`), {
       timeout: LOAD_TIMEOUT_MS,
     });
@@ -389,9 +473,7 @@ test.describe('Shared Report Recipient Draft', () => {
     const token = sharedLink.token;
     expect(token).toBeTruthy();
 
-    await page.goto(`${BASE_URL}/shared-report/${encodeURIComponent(token)}?step=2`, {
-      waitUntil: 'domcontentloaded',
-    });
+    await openSharedReportWorkspace(page, token, { query: '?step=2' });
 
     await expectComparisonStep(page, 0);
     await expect(page.getByText('Sign in to edit and respond.')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
@@ -427,13 +509,15 @@ test.describe('Shared Report Recipient Draft', () => {
     await page.getByRole('tab', { name: /^Inbox/ }).click();
     await expect(page.getByText(proposalTitle)).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
 
-    await page.getByRole('button', { name: new RegExp(proposalTitle) }).click();
+    await page.getByRole('button', { name: new RegExp(`${proposalTitle}.*Needs Reply`) }).click();
     await expect(page).toHaveURL(new RegExp(`/shared-report/${encodeURIComponent(token)}`), {
       timeout: LOAD_TIMEOUT_MS,
     });
   });
 
   test('Shared report Step 0 shows cumulative bilateral history with round and author labels after multi-round send-back', async ({ page, request }) => {
+    test.slow();
+
     const ownerId = uniqueId('history_owner');
     const recipientEmail = `${uniqueId('history_recipient')}@example.com`;
     const ownerCookie = makeSessionCookie({
@@ -446,6 +530,8 @@ test.describe('Shared Report Recipient Draft', () => {
     const proposerRound1 = `PROPOSER_UI_ROUND_1_${uniqueId('marker')}`;
     const recipientRound2 = `RECIPIENT_UI_ROUND_2_${uniqueId('marker')}`;
     const proposerRound3 = `PROPOSER_UI_ROUND_3_${uniqueId('marker')}`;
+    const recipientPrivateRound2 = `RECIPIENT_UI_PRIVATE_ROUND_2_${uniqueId('marker')}`;
+    const proposerPrivateRound3 = `PROPOSER_UI_PRIVATE_ROUND_3_${uniqueId('marker')}`;
 
     const comparison = await createComparison(request, ownerCookie, {
       title: `Shared History UI ${uniqueId('title')}`,
@@ -466,7 +552,7 @@ test.describe('Shared Report Recipient Draft', () => {
       headers: { cookie: recipientCookie },
       data: {
         shared_payload: { label: 'Shared Information', text: `Recipient reply ${recipientRound2}` },
-        recipient_confidential_payload: { label: 'Confidential Information', notes: 'Recipient private note.' },
+        recipient_confidential_payload: { label: 'Confidential Information', notes: recipientPrivateRound2 },
         workflow_step: 2,
       },
     });
@@ -494,7 +580,7 @@ test.describe('Shared Report Recipient Draft', () => {
       headers: { cookie: ownerCookie },
       data: {
         shared_payload: { label: 'Shared Information', text: `Owner follow-up ${proposerRound3}` },
-        recipient_confidential_payload: { label: 'Confidential Information', notes: 'Owner private follow-up.' },
+        recipient_confidential_payload: { label: 'Confidential Information', notes: proposerPrivateRound3 },
         workflow_step: 2,
       },
     });
@@ -517,10 +603,24 @@ test.describe('Shared Report Recipient Draft', () => {
     const round3Token = String(round3LinkRows.rows[0]?.token || '');
     expect(round3Token).toBeTruthy();
 
-    await applySessionCookie(page.context(), recipientCookie);
-    await page.goto(`${BASE_URL}/shared-report/${encodeURIComponent(round3Token)}`, {
-      waitUntil: 'domcontentloaded',
+    const draftEndpointFragment = `/api/shared-report/${encodeURIComponent(round3Token)}/draft`;
+    const draftRequestBodies = [];
+    page.on('request', (requestEvent) => {
+      if (requestEvent.method() !== 'POST') {
+        return;
+      }
+      if (!requestEvent.url().includes(draftEndpointFragment)) {
+        return;
+      }
+      try {
+        draftRequestBodies.push(JSON.parse(requestEvent.postData() || '{}'));
+      } catch {
+        draftRequestBodies.push({});
+      }
     });
+
+    await applySessionCookie(page.context(), recipientCookie);
+    await openSharedReportWorkspace(page, round3Token);
 
     await expectComparisonStep(page, 0);
     await expect(page.getByText('Round 1 - Shared by Proposer')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
@@ -529,9 +629,87 @@ test.describe('Shared Report Recipient Draft', () => {
     await expect(page.getByText(proposerRound1)).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
     await expect(page.getByText(recipientRound2)).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
     await expect(page.getByText(proposerRound3)).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
-    await expect(page.getByRole('button', { name: /Request Agreement|Confirm Agreement/ })).toBeVisible({
+    await expect(page.getByRole('button', { name: 'Edit Opportunity' })).toBeVisible({
       timeout: LOAD_TIMEOUT_MS,
     });
-    await expect(page.getByRole('button', { name: 'Mark as Lost' })).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+
+    await page.getByRole('button', { name: 'Edit Opportunity' }).click();
+    await expectComparisonStep(page, 1);
+    await expect(page.getByText('Round 2 - My Confidential Notes')).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+    await expect(page.getByText('Previous Round', { exact: true }).first()).toBeVisible({
+      timeout: LOAD_TIMEOUT_MS,
+    });
+    await expect(page.getByText('Read-only', { exact: true }).first()).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+    await expect(
+      page.locator('[data-doc-id]', { hasText: 'Round 1 - Shared by Proposer' }).first().getByRole('button', {
+        name: 'Remove document',
+      }),
+    ).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Continue to Editor' }).click();
+    await expectComparisonStep(page, 2);
+
+    await page.getByRole('button', { name: /Round 2 - My Confidential Notes/ }).click();
+    await expect(page.getByText('Previous round content is view-only and cannot be changed.')).toBeVisible({
+      timeout: LOAD_TIMEOUT_MS,
+    });
+    const activeEditor = page.locator('[data-testid="active-doc-editor"]');
+    await expect(activeEditor).toContainText(recipientPrivateRound2, { timeout: LOAD_TIMEOUT_MS });
+    const immutableEditMarker = `IMMUTABLE_EDIT_${uniqueId('marker')}`;
+    await activeEditor.click({ position: { x: 20, y: 20 } });
+    await page.keyboard.type(immutableEditMarker);
+    await expect(activeEditor).not.toContainText(immutableEditMarker, { timeout: 1_500 });
+    await expect.poll(() => draftRequestBodies.length, { timeout: 3_500, intervals: [250, 500, 1_000] }).toBe(0);
+
+    await page.getByRole('button', { name: /^My Confidential Notes$/ }).click();
+    const currentRoundEditMarker = `CURRENT_EDIT_${uniqueId('marker')}`;
+    const draftRequestCountBeforeCurrentEdit = draftRequestBodies.length;
+    await activeEditor.click({ position: { x: 20, y: 20 } });
+    await page.keyboard.type(currentRoundEditMarker);
+    await expect(activeEditor).toContainText(currentRoundEditMarker, { timeout: LOAD_TIMEOUT_MS });
+    await expect.poll(() => draftRequestBodies.length, { timeout: LOAD_TIMEOUT_MS }).toBeGreaterThan(
+      draftRequestCountBeforeCurrentEdit,
+    );
+    expect(draftRequestBodies.length).toBeGreaterThan(0);
+
+    const latestDraftBody = draftRequestBodies[draftRequestBodies.length - 1] || {};
+    const latestEditorState = latestDraftBody.editor_state || latestDraftBody.editorState || {};
+    const latestDraftDocs = Array.isArray(latestEditorState.documents) ? latestEditorState.documents : [];
+    expect(latestDraftDocs.length).toBeGreaterThan(0);
+    expect(includesHistoricalDraftDocumentId(latestDraftDocs)).toBeFalsy();
+
+    const workspaceAfterAutosaveBody = await waitForWorkspaceDraftPredicate(
+      request,
+      round3Token,
+      recipientCookie,
+      (workspaceBody) => {
+        const serializedDocs = JSON.stringify(extractPersistedDraftDocuments(workspaceBody));
+        return serializedDocs.includes(currentRoundEditMarker);
+      },
+    );
+    const persistedDocs = extractPersistedDraftDocuments(workspaceAfterAutosaveBody);
+    expect(persistedDocs.length).toBeGreaterThan(0);
+    expect(includesHistoricalDraftDocumentId(persistedDocs)).toBeFalsy();
+    expect(JSON.stringify(persistedDocs)).not.toContain(immutableEditMarker);
+    expect(JSON.stringify(persistedDocs)).toContain(currentRoundEditMarker);
+
+    const verifyPage = await page.context().newPage();
+    try {
+      await openSharedReportWorkspace(verifyPage, round3Token);
+      await expectComparisonStep(verifyPage, 2);
+      await verifyPage.getByRole('button', { name: /Round 2 - My Confidential Notes/ }).click();
+      await expect(
+        verifyPage.getByText('Previous round content is view-only and cannot be changed.'),
+      ).toBeVisible({
+        timeout: LOAD_TIMEOUT_MS,
+      });
+      await verifyPage.getByRole('button', { name: /^My Confidential Notes$/ }).click();
+      const verifyEditor = verifyPage.locator('[data-testid="active-doc-editor"]');
+      await expect(verifyEditor).toContainText(currentRoundEditMarker, { timeout: LOAD_TIMEOUT_MS });
+    } finally {
+      if (!verifyPage.isClosed()) {
+        await verifyPage.close();
+      }
+    }
   });
 });

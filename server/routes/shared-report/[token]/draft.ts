@@ -26,6 +26,15 @@ import {
 } from '../_shared.js';
 
 const SHARED_REPORT_DRAFT_ROUTE = `${SHARED_REPORT_ROUTE}/draft`;
+const IMMUTABLE_HISTORY_DOC_PREFIXES = [
+  'shared-history-',
+  'confidential-history-',
+  'history-confidential-',
+];
+
+function asText(value: unknown) {
+  return typeof value === 'string' ? value.trim() : '';
+}
 
 function pickSharedPayload(body: Record<string, unknown>) {
   return body.shared_payload ?? body.sharedPayload ?? {};
@@ -41,6 +50,34 @@ function pickWorkflowStep(body: Record<string, unknown>) {
 
 function pickEditorState(body: Record<string, unknown>) {
   return body.editor_state ?? body.editorState ?? {};
+}
+
+function assertNoHistoricalDocumentReferences(editorState: Record<string, unknown>) {
+  const documents = Array.isArray(editorState.documents) ? editorState.documents : [];
+  const hasHistoricalReference = documents.some((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      return false;
+    }
+    const doc = entry as Record<string, unknown>;
+    const id = asText(doc.id).toLowerCase();
+    if (id && IMMUTABLE_HISTORY_DOC_PREFIXES.some((prefix) => id.startsWith(prefix))) {
+      return true;
+    }
+    if (doc.isHistoricalRound === true || doc.is_historical_round === true) {
+      return true;
+    }
+    const historySource = asText(doc.historySource || doc.history_source || doc.historyOrigin || doc.history_origin)
+      .toLowerCase();
+    return historySource === 'previous_round';
+  });
+
+  if (hasHistoricalReference) {
+    throw new ApiError(
+      403,
+      'historical_round_read_only',
+      'Previous round content is view-only and cannot be changed',
+    );
+  }
 }
 
 export default async function handler(req: any, res: any, tokenParam?: string) {
@@ -75,6 +112,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     assertJsonObjectField(sharedPayload, 'shared_payload');
     assertJsonObjectField(confidentialPayload, 'recipient_confidential_payload');
     assertJsonObjectField(editorState, 'editor_state');
+    assertNoHistoricalDocumentReferences(editorState as Record<string, unknown>);
     assertPayloadSize(sharedPayload, 'shared_payload');
     assertPayloadSize(confidentialPayload, 'recipient_confidential_payload');
     assertPayloadSize(editorState, 'editor_state');

@@ -78,6 +78,11 @@ function SidebarGroup({ label, docs, activeDocId, onSelectDoc, visibilityIcon })
         >
           {visibilityIcon}
           <span className="truncate flex-1">{doc.title || 'Untitled'}</span>
+          {doc?.isHistoricalRound ? (
+            <Badge variant="outline" className="text-[10px] border-slate-300 bg-slate-100 text-slate-700">
+              Prev
+            </Badge>
+          ) : null}
           {doc.importStatus === 'importing' && (
             <Loader2 className="w-3 h-3 animate-spin text-blue-400 flex-shrink-0" />
           )}
@@ -214,6 +219,11 @@ export default function Step2EditSources({
 
   function commitTitleEdit() {
     if (!editingTitleDocId) return;
+    if (readOnlyDocIds.includes(editingTitleDocId)) {
+      editingTitleDocRef.current = null;
+      setEditingTitleDocId(null);
+      return;
+    }
     const trimmed = editingTitleValue.trim();
     if (trimmed) {
       // User provided a non-empty title — always use it.
@@ -240,6 +250,11 @@ export default function Step2EditSources({
   const activeDoc = documents.find((d) => d.id === activeDocId) || null;
   const isFullscreen = Boolean(fullscreenDocId && fullscreenDocId === activeDocId);
   const isActiveDocReadOnly = activeDocId ? readOnlyDocIds.includes(activeDocId) : false;
+  const activeDocReadOnlyMessage = activeDoc?.readOnlyReason || (
+    activeDoc?.isHistoricalRound
+      ? 'Previous round content is view-only and cannot be changed.'
+      : 'This document is read-only.'
+  );
   const totalOverLimit = exceedsAnySizeLimit;
   const limitTextClass = activeDocOverLimit
     ? 'text-red-700'
@@ -326,15 +341,39 @@ export default function Step2EditSources({
                       />
                     ) : (
                       <h3
-                        className="text-sm font-semibold text-slate-800 truncate cursor-pointer hover:text-blue-700 hover:underline"
-                        title="Click to rename"
-                        onClick={() => onRenameDoc && startEditingTitle(activeDoc)}
+                        className={`text-sm font-semibold text-slate-800 truncate ${
+                          onRenameDoc && !isActiveDocReadOnly
+                            ? 'cursor-pointer hover:text-blue-700 hover:underline'
+                            : 'cursor-default'
+                        }`}
+                        title={onRenameDoc && !isActiveDocReadOnly ? 'Click to rename' : undefined}
+                        onClick={
+                          onRenameDoc && !isActiveDocReadOnly
+                            ? () => startEditingTitle(activeDoc)
+                            : undefined
+                        }
                         data-testid="doc-title-display"
                       >
                         {activeDoc.title || 'Untitled'}
                       </h3>
                     )}
                     <VisibilityBadge visibility={activeDoc.visibility} />
+                    {activeDoc?.isHistoricalRound ? (
+                      <Badge
+                        variant="outline"
+                        className="text-xs border-slate-300 bg-slate-100 text-slate-700"
+                      >
+                        Previous Round
+                      </Badge>
+                    ) : null}
+                    {isActiveDocReadOnly ? (
+                      <Badge
+                        variant="outline"
+                        className="text-xs border-amber-300 bg-amber-50 text-amber-700"
+                      >
+                        Read-only
+                      </Badge>
+                    ) : null}
                     {activeDoc.source === 'uploaded' && (
                       <Badge variant="outline" className="text-xs">uploaded</Badge>
                     )}
@@ -343,6 +382,10 @@ export default function Step2EditSources({
                     {activeCharacters.toLocaleString()} chars · {activeWords.toLocaleString()} words
                   </span>
                 </div>
+
+                {isActiveDocReadOnly ? (
+                  <p className="text-xs text-amber-700">{activeDocReadOnlyMessage}</p>
+                ) : null}
 
                 <DocumentRichEditor
                   key={activeDocId}          /* re-mount when switching docs */
