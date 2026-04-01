@@ -274,6 +274,8 @@ function DocumentRow({ doc, onRemove, onRename, onSetVisibility, onImportFile, l
  * Core proposer props (all still supported):
  *   title           string
  *   onTitleChange   (value: string) => void
+ *   counterpartyName string
+ *   onCounterpartyNameChange (value: string) => void
  *   documents       SourceDocument[]
  *   onAddFiles      (files: FileList) => void
  *   onAddTyped      () => void
@@ -288,6 +290,8 @@ function DocumentRow({ doc, onRemove, onRename, onSetVisibility, onImportFile, l
 export default function Step1AddSources({
   title = '',
   onTitleChange,
+  counterpartyName = '',
+  onCounterpartyNameChange = () => {},
   documents = [],
   onAddFiles,
   onAddTyped,
@@ -304,6 +308,7 @@ export default function Step1AddSources({
   contentSlot = null,
   showBack = false,
   onBack,
+  showCounterpartyNameField = true,
   lockedDocIds = [],
   readOnlyDocIds = [],
 }) {
@@ -325,21 +330,30 @@ export default function Step1AddSources({
         </CardHeader>
         <CardContent className="space-y-6">
 
-          {/* Comparison title */}
-          <div className="space-y-1.5 max-w-xl">
-            <Label htmlFor="comparison-title-input">Comparison Title</Label>
-            <Input
-              id="comparison-title-input"
-              value={title}
-              onChange={(e) => onTitleChange(e.target.value)}
-              placeholder="e.g., Mutual NDA comparison"
-              data-testid="comparison-title-input"
-            />
-            {!title.trim() && (
-              <p className="text-xs text-slate-500">
-                Optional — saves as "Untitled" if left blank.
-              </p>
-            )}
+          {/* Comparison title + counterparty name */}
+          <div className={showCounterpartyNameField ? 'grid grid-cols-1 md:grid-cols-2 gap-4' : 'max-w-xl'}>
+            <div className="space-y-1.5">
+              <Label htmlFor="comparison-title-input">Comparison Title</Label>
+              <Input
+                id="comparison-title-input"
+                value={title}
+                onChange={(e) => onTitleChange(e.target.value)}
+                placeholder="e.g., Mutual NDA comparison"
+                data-testid="comparison-title-input"
+              />
+            </div>
+            {showCounterpartyNameField ? (
+              <div className="space-y-1.5">
+                <Label htmlFor="counterparty-name-input">Counterparty Name</Label>
+                <Input
+                  id="counterparty-name-input"
+                  value={counterpartyName}
+                  onChange={(e) => onCounterpartyNameChange(e.target.value)}
+                  placeholder="e.g., Harbor Retail Group"
+                  data-testid="counterparty-name-input"
+                />
+              </div>
+            ) : null}
           </div>
 
           {/* Action bar — hidden in recipient mode */}

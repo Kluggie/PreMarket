@@ -2915,6 +2915,7 @@ export default function SharedReport() {
           <Step1AddSources
             title={title}
             onTitleChange={(v) => { setTitle(v); setDraftDirty(true); }}
+            showCounterpartyNameField={false}
             documents={allDisplayDocuments}
             showAddActions={!requiresRecipientVerification}
             onAddFiles={handleAddFiles}

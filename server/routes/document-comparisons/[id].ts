@@ -416,9 +416,20 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
         proposalDraftStep: proposal?.draftStep,
         hasEvaluationAttempt,
       });
+      const activityParticipantContext = {
+        party_a: {
+          company_name: asText(existing.companyName),
+          email: asText(proposal?.partyAEmail),
+        },
+        party_b: {
+          name: asText(existing.recipientName || (proposal as any)?.partyBName),
+          email: asText(existing.recipientEmail || proposal?.partyBEmail),
+        },
+      };
       const activityHistory = buildProposalActivityHistory(activityEvents, {
         accessMode,
         limit: 8,
+        participantContext: activityParticipantContext,
       });
       const mappedComparison = {
         ...mapComparisonRow(existing),

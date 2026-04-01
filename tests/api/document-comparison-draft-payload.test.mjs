@@ -37,3 +37,18 @@ test('draft payload builder includes both editor values and required step2 keys'
   assert.equal(typeof payload.doc_a_html, 'string');
   assert.equal(typeof payload.doc_b_html, 'string');
 });
+
+test('draft payload builder persists counterparty name as recipient_name for step 1 save/resume', () => {
+  const payload = buildComparisonDraftSavePayload({
+    snapshot: {
+      title: 'Counterparty Naming',
+      docAText: '',
+      docBText: '',
+    },
+    stepToSave: 1,
+    recipientName: 'Harbor Retail Group',
+  });
+
+  assert.equal(payload.recipient_name, 'Harbor Retail Group');
+  assert.equal(payload.recipient_email, null);
+});

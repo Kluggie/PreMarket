@@ -14,8 +14,8 @@ test('buildActivityTimelineItems preserves event-level history and skips generic
         event_type: 'proposal.sent',
         kind: 'file',
         tone: 'info',
-        title: 'Opportunity Sent',
-        description: 'You shared the current live opportunity.',
+        title: 'You sent the opportunity',
+        description: '',
         created_date: '2026-03-25T10:00:00.000Z',
       },
       {
@@ -23,8 +23,8 @@ test('buildActivityTimelineItems preserves event-level history and skips generic
         event_type: 'proposal.send_back',
         kind: 'clock',
         tone: 'neutral',
-        title: 'Revised Terms Sent',
-        description: 'Counterparty sent revised terms back.',
+        title: 'Harbor Retail Group sent revised terms',
+        description: '',
         created_date: '2026-03-25T10:05:00.000Z',
       },
     ],
@@ -40,7 +40,7 @@ test('buildActivityTimelineItems preserves event-level history and skips generic
   assert.equal(timeline.length, 2);
   assert.deepEqual(
     timeline.map((entry) => entry.title),
-    ['Opportunity Sent', 'Revised Terms Sent'],
+    ['You sent the opportunity', 'Harbor Retail Group sent revised terms'],
   );
   assert.equal(timeline.some((entry) => entry.title === 'Opportunity Created'), false);
   assert.equal(timeline.some((entry) => entry.title === 'Last Updated'), false);

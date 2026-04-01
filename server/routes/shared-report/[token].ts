@@ -247,9 +247,20 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         : currentUser
           ? 'recipient'
           : 'token';
+    const activityParticipantContext = {
+      party_a: {
+        company_name: asText(resolved.comparison?.companyName),
+        email: asText(resolved.proposal?.partyAEmail),
+      },
+      party_b: {
+        name: asText(resolved.comparison?.recipientName || (resolved.proposal as any)?.partyBName),
+        email: asText(resolved.comparison?.recipientEmail || resolved.proposal?.partyBEmail),
+      },
+    };
     const activityHistory = buildSharedReportScopedActivityHistory(activityEvents, {
       accessMode: activityAccessMode,
       limit: 8,
+      participantContext: activityParticipantContext,
       scope: {
         ...lineageScope,
         comparisonId,
@@ -377,6 +388,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       comparison: {
         id: resolved.comparison?.id || resolved.proposal.documentComparisonId || null,
         title: resolved.comparison?.title || resolved.proposal.title || 'Shared Report',
+        counterparty_name: resolved.comparison?.recipientName || (resolved.proposal as any)?.partyBName || null,
         status: resolved.comparison?.status || resolved.proposal.status || null,
         company_name: resolved.comparison?.companyName || null,
         company_website: resolved.comparison?.companyWebsite || null,

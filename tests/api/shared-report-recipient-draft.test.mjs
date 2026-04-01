@@ -1296,10 +1296,33 @@ if (!hasDatabaseUrl()) {
       ? workspaceRes.jsonBody().activity_history
       : [];
     assert.equal(workspaceHistory.length > 0, true);
-    assert.equal(workspaceHistory.some((entry) => String(entry?.title || '') === 'Opportunity Sent'), true);
     assert.equal(
-      workspaceHistory.filter((entry) => String(entry?.title || '') === 'Revised Terms Sent').length >= 2,
+      workspaceHistory.some((entry) => String(entry?.event_type || '').toLowerCase() === 'proposal.sent'),
       true,
+    );
+    assert.equal(
+      workspaceHistory.filter(
+        (entry) => String(entry?.event_type || '').toLowerCase() === 'proposal.send_back',
+      ).length >= 2,
+      true,
+    );
+    assert.equal(
+      workspaceHistory
+        .filter((entry) => String(entry?.event_type || '').toLowerCase() === 'proposal.send_back')
+        .every((entry) => String(entry?.title || '').toLowerCase().includes('sent revised terms')),
+      true,
+    );
+    assert.equal(
+      workspaceHistory.some(
+        (entry) =>
+          String(entry?.event_type || '').toLowerCase() === 'proposal.send_back' &&
+          String(entry?.title || '').startsWith('You sent revised terms'),
+      ),
+      true,
+    );
+    assert.equal(
+      workspaceHistory.some((entry) => String(entry?.title || '').toLowerCase().includes('ai mediation')),
+      false,
     );
     assert.equal(
       workspaceHistory.some((entry) => String(entry?.event_type || '').toLowerCase() === 'proposal.internal.audit'),

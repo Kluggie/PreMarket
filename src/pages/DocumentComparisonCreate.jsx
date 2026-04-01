@@ -4307,6 +4307,15 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
                   setTitle(nextTitle);
                   markDraftEdited();
                 }}
+                counterpartyName={recipientName}
+                onCounterpartyNameChange={(nextCounterpartyName) => {
+                  latestDraftStateRef.current = {
+                    ...latestDraftStateRef.current,
+                    recipientName: nextCounterpartyName,
+                  };
+                  setRecipientName(nextCounterpartyName);
+                  markDraftEdited();
+                }}
                 documents={documents}
                 onAddFiles={handleAddFiles}
                 onAddTyped={handleAddTypedDocument}

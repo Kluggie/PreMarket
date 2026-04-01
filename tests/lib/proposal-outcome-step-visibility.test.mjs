@@ -54,6 +54,15 @@ test('step-editing screens do not render proposal outcome controls', () => {
   assert.doesNotMatch(combined, /getAgreementActionLabel/);
 });
 
+test('step 1 add-sources includes counterparty name input and removes legacy untitled helper copy', () => {
+  const step1AddSources = readRepoFile('src/components/document-comparison/Step1AddSources.jsx');
+
+  assert.match(step1AddSources, /Comparison Title/);
+  assert.match(step1AddSources, /Counterparty Name/);
+  assert.match(step1AddSources, /data-testid="counterparty-name-input"/);
+  assert.doesNotMatch(step1AddSources, /Optional — saves as "Untitled" if left blank\./);
+});
+
 test('shared report step 0 keeps opportunity closure controls on the overview shell', () => {
   const sharedReport = readRepoFile('src/pages/SharedReport.jsx');
 

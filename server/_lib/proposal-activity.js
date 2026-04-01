@@ -35,7 +35,42 @@ function getViewerRole(accessMode) {
   return normalized === 'recipient' || normalized === 'token' ? 'party_b' : 'party_a';
 }
 
-function getActorLabel(actorRole, accessMode) {
+function normalizeParticipant(value) {
+  const participant = toObject(value);
+  return {
+    name:
+      asText(participant.name) ||
+      asText(participant.display_name) ||
+      asText(participant.displayName),
+    company:
+      asText(participant.company) ||
+      asText(participant.company_name) ||
+      asText(participant.companyName),
+    email: normalizeEmail(participant.email),
+  };
+}
+
+function resolveParticipantContext(options = {}) {
+  const context = toObject(options.participantContext || options.participant_context);
+  return {
+    party_a: normalizeParticipant(context.partyA || context.party_a),
+    party_b: normalizeParticipant(context.partyB || context.party_b),
+  };
+}
+
+function resolveCounterpartyLabel(actorRole, options = {}) {
+  const participants = resolveParticipantContext(options);
+  const participant = asLower(actorRole) === 'party_b' ? participants.party_b : participants.party_a;
+  if (participant.name) {
+    return participant.name;
+  }
+  if (participant.company) {
+    return participant.company;
+  }
+  return 'They';
+}
+
+function getActorLabel(actorRole, accessMode, options = {}) {
   const normalizedRole = asLower(actorRole);
   if (!normalizedRole) {
     return 'System';
@@ -47,107 +82,92 @@ function getActorLabel(actorRole, accessMode) {
   }
 
   if (normalizedRole === 'party_a' || normalizedRole === 'party_b') {
-    return 'Counterparty';
+    return resolveCounterpartyLabel(normalizedRole, options);
   }
 
   return 'System';
 }
 
-function buildDescription(actorLabel, text) {
+function buildActorActionTitle(actorLabel, actionText) {
   if (actorLabel === 'System') {
-    return text;
+    return actionText;
   }
-  return actorLabel === 'You' ? `You ${text}` : `${actorLabel} ${text}`;
+  return `${actorLabel} ${actionText}`;
 }
 
-function mapEventTypeToActivity(row, accessMode) {
+function mapEventTypeToActivity(row, options = {}) {
   const eventType = asLower(row?.eventType);
-  const actorLabel = getActorLabel(row?.actorRole, accessMode);
+  const accessMode = asText(options.accessMode) || 'owner';
+  const actorLabel = getActorLabel(row?.actorRole, accessMode, options);
 
   switch (eventType) {
     case 'proposal.created':
       return {
         kind: 'file',
         tone: 'info',
-        title: 'Opportunity Created',
-        description: buildDescription(actorLabel, 'created the live opportunity.'),
+        title: buildActorActionTitle(actorLabel, 'created the opportunity'),
+        description: '',
       };
     case 'proposal.sent':
       return {
         kind: 'file',
         tone: 'info',
-        title: 'Opportunity Sent',
-        description: buildDescription(actorLabel, 'shared the current live opportunity.'),
+        title: buildActorActionTitle(actorLabel, 'sent the opportunity'),
+        description: '',
       };
     case 'proposal.received':
-      return {
-        kind: 'clock',
-        tone: 'neutral',
-        title: 'Recipient Response',
-        description: buildDescription(actorLabel, 'submitted updated terms.'),
-      };
     case 'proposal.send_back':
       return {
         kind: 'clock',
         tone: 'neutral',
-        title: 'Revised Terms Sent',
-        description: buildDescription(actorLabel, 'sent revised terms back.'),
+        title: buildActorActionTitle(actorLabel, 'sent revised terms'),
+        description: '',
       };
     case 'proposal.evaluated':
-      return {
-        kind: 'sparkles',
-        tone: 'success',
-        title: 'AI Mediation Updated',
-        description: buildDescription(actorLabel, 'ran AI mediation on the live opportunity.'),
-      };
     case 'proposal.re_evaluated':
-      return {
-        kind: 'sparkles',
-        tone: 'success',
-        title: 'AI Mediation Refreshed',
-        description: buildDescription(actorLabel, 'updated the opportunity and refreshed the mediation review.'),
-      };
+      // Exclude AI processing noise from the primary negotiation timeline.
+      return null;
     case 'proposal.outcome.won_requested':
       return {
         kind: 'clock',
         tone: 'warning',
-        title: 'Requested Agreement',
-        description: buildDescription(actorLabel, 'requested agreement.'),
+        title: buildActorActionTitle(actorLabel, 'requested agreement'),
+        description: '',
       };
     case 'proposal.outcome.continue_negotiation':
       return {
         kind: 'clock',
         tone: 'warning',
-        title: 'Continued Negotiating',
-        description: buildDescription(actorLabel, 'chose to continue negotiating.'),
+        title: buildActorActionTitle(actorLabel, 'continued negotiating'),
+        description: '',
       };
     case 'proposal.outcome.won_confirmed':
       return {
         kind: 'check',
         tone: 'success',
-        title: 'Agreement Confirmed',
-        description: buildDescription(actorLabel, 'confirmed the agreement.'),
+        title: 'Agreement finalized',
+        description: '',
       };
     case 'proposal.outcome.lost':
       return {
         kind: 'x',
         tone: 'danger',
-        title: 'Marked Lost',
-        description: buildDescription(actorLabel, 'closed the opportunity as lost.'),
+        title: buildActorActionTitle(actorLabel, 'marked the opportunity as lost'),
+        description: '',
       };
     case 'proposal.archived':
       return {
         kind: 'clock',
         tone: 'neutral',
-        title: 'Archived',
-        description: buildDescription(actorLabel, 'archived the opportunity.'),
+        title: buildActorActionTitle(actorLabel, 'archived the opportunity'),
+        description: '',
       };
     case 'proposal.unarchived':
       return {
         kind: 'clock',
         tone: 'neutral',
-        title: 'Returned to Active',
-        description: buildDescription(actorLabel, 'returned the opportunity to the active workspace.'),
+        title: buildActorActionTitle(actorLabel, 'returned the opportunity to active'),
+        description: '',
       };
     default:
       return null;
@@ -448,7 +468,10 @@ export function buildProposalActivityHistory(rows, options = {}) {
 
   return (Array.isArray(rows) ? rows : [])
     .map((row) => {
-      const activity = mapEventTypeToActivity(row, accessMode);
+      const activity = mapEventTypeToActivity(row, {
+        ...options,
+        accessMode,
+      });
       if (!activity) {
         return null;
       }
@@ -458,7 +481,7 @@ export function buildProposalActivityHistory(rows, options = {}) {
         id: asText(row?.id) || `${asLower(row?.eventType)}:${createdAt?.toISOString() || 'unknown'}`,
         event_type: asText(row?.eventType) || null,
         actor_role: asText(row?.actorRole) || null,
-        actor_label: getActorLabel(row?.actorRole, accessMode),
+        actor_label: getActorLabel(row?.actorRole, accessMode, options),
         created_date: createdAt ? createdAt.toISOString() : null,
         ...activity,
       };
@@ -523,6 +546,7 @@ export function buildSharedReportScopedActivityHistory(rows, options = {}) {
   return buildProposalActivityHistory(scopedRows, {
     accessMode: options.accessMode,
     limit: options.limit,
+    participantContext: options.participantContext,
   });
 }
 

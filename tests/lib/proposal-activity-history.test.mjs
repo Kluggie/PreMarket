@@ -33,7 +33,14 @@ test('proposal activity history hides raw update snapshots and keeps meaningful 
         createdAt: '2026-03-25T10:03:00.000Z',
       },
     ],
-    { accessMode: 'owner', limit: 10 },
+    {
+      accessMode: 'owner',
+      limit: 10,
+      participantContext: {
+        party_a: { company_name: 'Acme Ventures' },
+        party_b: { name: 'Harbor Retail Group' },
+      },
+    },
   );
 
   assert.equal(history.some((entry) => entry.event_type === 'proposal.updated'), false);
@@ -45,12 +52,65 @@ test('proposal activity history hides raw update snapshots and keeps meaningful 
       'proposal.outcome.won_requested',
     ],
   );
-  assert.equal(history[0].title, 'Agreement Confirmed');
-  assert.equal(history[0].description, 'Counterparty confirmed the agreement.');
-  assert.equal(history[1].title, 'Recipient Response');
-  assert.equal(history[1].description, 'Counterparty submitted updated terms.');
-  assert.equal(history[2].title, 'Requested Agreement');
-  assert.equal(history[2].description, 'You requested agreement.');
+  assert.equal(history[0].title, 'Agreement finalized');
+  assert.equal(history[0].description, '');
+  assert.equal(history[1].title, 'Harbor Retail Group sent revised terms');
+  assert.equal(history[1].description, '');
+  assert.equal(history[2].title, 'You requested agreement');
+  assert.equal(history[2].description, '');
+});
+
+test('proposal activity history falls back to "They" when counterparty display metadata is unavailable', () => {
+  const history = buildProposalActivityHistory(
+    [
+      {
+        id: 'evt_send_back',
+        eventType: 'proposal.send_back',
+        actorRole: 'party_b',
+        createdAt: '2026-03-25T10:02:00.000Z',
+      },
+    ],
+    {
+      accessMode: 'owner',
+      limit: 10,
+      participantContext: {
+        party_a: {},
+        party_b: {},
+      },
+    },
+  );
+
+  assert.equal(history.length, 1);
+  assert.equal(history[0].title, 'They sent revised terms');
+});
+
+test('proposal activity history excludes AI mediation system events from the primary timeline', () => {
+  const history = buildProposalActivityHistory(
+    [
+      {
+        id: 'evt_eval',
+        eventType: 'proposal.evaluated',
+        actorRole: 'party_a',
+        createdAt: '2026-03-25T10:00:00.000Z',
+      },
+      {
+        id: 'evt_re_eval',
+        eventType: 'proposal.re_evaluated',
+        actorRole: 'party_b',
+        createdAt: '2026-03-25T10:01:00.000Z',
+      },
+      {
+        id: 'evt_sent',
+        eventType: 'proposal.sent',
+        actorRole: 'party_a',
+        createdAt: '2026-03-25T10:02:00.000Z',
+      },
+    ],
+    { accessMode: 'owner', limit: 10 },
+  );
+
+  assert.equal(history.length, 1);
+  assert.equal(history[0].event_type, 'proposal.sent');
 });
 
 test('shared-report scoped activity history excludes sibling-recipient sent/send-back events from the same proposal', () => {
