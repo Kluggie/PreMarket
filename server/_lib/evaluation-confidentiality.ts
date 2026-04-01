@@ -172,6 +172,106 @@ function sanitizeSummaryObjectArray(value: unknown, guard: CounterpartyLeakGuard
   });
 }
 
+function sanitizeNegotiationDealbreakers(value: unknown, guard: CounterpartyLeakGuard) {
+  if (!Array.isArray(value)) {
+    return [] as Array<{ text: string; basis: string }>;
+  }
+  return value
+    .map((entry) => {
+      if (typeof entry === 'string') {
+        const text = asText(entry);
+        if (!text || detectCounterpartyLeak(text, guard)) {
+          return null;
+        }
+        return { text, basis: 'not_clearly_established' };
+      }
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+        return null;
+      }
+      const row = entry as Record<string, unknown>;
+      const text = asText(row.text || row.title || row.description);
+      if (!text || detectCounterpartyLeak(text, guard)) {
+        return null;
+      }
+      const basis = asText(row.basis || row.status || row.support) || 'not_clearly_established';
+      return { text, basis };
+    })
+    .filter(Boolean) as Array<{ text: string; basis: string }>;
+}
+
+function sanitizeNegotiationParty(value: unknown, guard: CounterpartyLeakGuard) {
+  const row = value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+  return {
+    demands: sanitizeSummaryTextArray(row.demands, guard, '').filter(Boolean),
+    priorities: sanitizeSummaryTextArray(row.priorities, guard, '').filter(Boolean),
+    dealbreakers: sanitizeNegotiationDealbreakers(row.dealbreakers, guard),
+    flexibility: sanitizeSummaryTextArray(row.flexibility, guard, '').filter(Boolean),
+  };
+}
+
+function sanitizeNegotiationAnalysis(value: unknown, guard: CounterpartyLeakGuard, fallback: string) {
+  const row = value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+  if (!row) {
+    return null;
+  }
+
+  const proposingParty = sanitizeNegotiationParty(
+    row.proposing_party || row.party_a || row.originating_party,
+    guard,
+  );
+  const counterparty = sanitizeNegotiationParty(
+    row.counterparty || row.party_b || row.other_party,
+    guard,
+  );
+  const compatibilityRationale = asText(row.compatibility_rationale || row.compatibility_summary);
+  const safeCompatibilityRationale =
+    compatibilityRationale && !detectCounterpartyLeak(compatibilityRationale, guard)
+      ? compatibilityRationale
+      : '';
+  const bridgeabilityNotes = sanitizeSummaryTextArray(
+    row.bridgeability_notes || row.bridgeability,
+    guard,
+    '',
+  ).filter(Boolean);
+  const criticalIncompatibilities = sanitizeSummaryTextArray(
+    row.critical_incompatibilities || row.blocking_points,
+    guard,
+    '',
+  ).filter(Boolean);
+  const compatibilityAssessment = asText(row.compatibility_assessment || row.compatibility);
+
+  const hasAnyContent =
+    proposingParty.demands.length > 0 ||
+    proposingParty.priorities.length > 0 ||
+    proposingParty.dealbreakers.length > 0 ||
+    proposingParty.flexibility.length > 0 ||
+    counterparty.demands.length > 0 ||
+    counterparty.priorities.length > 0 ||
+    counterparty.dealbreakers.length > 0 ||
+    counterparty.flexibility.length > 0 ||
+    Boolean(safeCompatibilityRationale) ||
+    bridgeabilityNotes.length > 0 ||
+    criticalIncompatibilities.length > 0 ||
+    Boolean(compatibilityAssessment);
+
+  if (!hasAnyContent) {
+    return null;
+  }
+
+  return {
+    proposing_party: proposingParty,
+    counterparty: counterparty,
+    compatibility_assessment: compatibilityAssessment || 'uncertain_due_to_missing_information',
+    compatibility_rationale: safeCompatibilityRationale || fallback,
+    bridgeability_notes: bridgeabilityNotes,
+    critical_incompatibilities: criticalIncompatibilities,
+  };
+}
+
 export function buildCounterpartyLeakGuard(params: {
   sharedText: string;
   counterpartyConfidentialText?: string;
@@ -406,6 +506,15 @@ export async function healEvaluationReportSections(params: {
       fallbackSummary,
     );
     report.summary = reportSummary;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(report, 'negotiation_analysis')) {
+    const negotiationAnalysis = sanitizeNegotiationAnalysis(report.negotiation_analysis, params.guard, fallbackSummary);
+    if (negotiationAnalysis) {
+      report.negotiation_analysis = negotiationAnalysis;
+    } else {
+      delete report.negotiation_analysis;
+    }
   }
 
   warnings.confidentiality_section_redacted = dedupe(warnings.confidentiality_section_redacted);

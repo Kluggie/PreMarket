@@ -339,6 +339,118 @@ test('buildMediationReviewPresentation: uses direct top-level V2 sections for sh
   );
 });
 
+test('buildMediationReviewPresentation: folds compatibility metadata into the primary insight without changing the report shape', () => {
+  const presentation = buildMediationReviewPresentation({
+    fit_level: 'medium',
+    confidence_0_1: 0.65,
+    why: [
+      'Executive Summary: The draft is workable if the remaining governance gap is resolved.',
+      'Decision Readiness: Decision status: Proceed with conditions. Governance ownership still needs final agreement.',
+      'Recommended Path: Recommended path: resolve governance ownership before final commitment.',
+    ],
+    missing: ['Who owns governance approvals? — determines whether the commitment path is workable.'],
+    redactions: [],
+    negotiation_analysis: {
+      proposing_party: {
+        demands: ['Predictable approval path'],
+        priorities: ['Timeline certainty'],
+        dealbreakers: [{ text: 'Undefined governance ownership', basis: 'strongly_implied' }],
+        flexibility: ['Optional reporting detail can move later'],
+      },
+      counterparty: {
+        demands: ['Budget discipline'],
+        priorities: ['Governance clarity'],
+        dealbreakers: [{ text: 'Open-ended approval exposure', basis: 'stated' }],
+        flexibility: ['Milestone sequencing may be negotiable'],
+      },
+      compatibility_assessment: 'compatible_with_adjustments',
+      compatibility_rationale:
+        'The parties appear compatible with adjustments if governance ownership and budget guardrails are clarified.',
+      bridgeability_notes: ['Clarify governance ownership before final commitment.'],
+      critical_incompatibilities: ['Governance ownership is still unresolved.'],
+    },
+  });
+
+  assert.equal(typeof presentation.primary_insight, 'string');
+  assert.match(presentation.primary_insight, /compatible with adjustments|governance ownership/i);
+  assert.equal(Array.isArray(presentation.presentation_sections), true);
+  assert.equal(presentation.presentation_sections.length > 0, true);
+});
+
+test('buildMediationReviewPresentation: keeps soft preferences from being presented as clear non-negotiables', () => {
+  const presentation = buildMediationReviewPresentation({
+    fit_level: 'high',
+    confidence_0_1: 0.77,
+    why: [
+      'Executive Summary: The draft is directionally workable and the main remaining issue is sequencing detail.',
+      'Decision Readiness: Decision status: Proceed with conditions. Sequencing still needs clarification before final commitment.',
+      'Recommended Path: Recommended path: confirm sequencing and move forward.',
+    ],
+    missing: ['How should phase-two sequencing be confirmed? — determines whether the current path can be finalised cleanly.'],
+    redactions: [],
+    negotiation_analysis: {
+      proposing_party: {
+        demands: ['Practical sequencing plan'],
+        priorities: ['Timeline certainty'],
+        dealbreakers: [{ text: 'Timeline certainty', basis: 'not_clearly_established' }],
+        flexibility: ['Reporting detail can follow after launch'],
+      },
+      counterparty: {
+        demands: ['Governance visibility'],
+        priorities: ['Approval confidence'],
+        dealbreakers: [{ text: 'Approval confidence', basis: 'not_clearly_established' }],
+        flexibility: ['Milestone packaging may be adjustable'],
+      },
+      compatibility_assessment: 'compatible_with_adjustments',
+      compatibility_rationale:
+        'The parties appear compatible with adjustments if sequencing and approval checkpoints are clarified.',
+      bridgeability_notes: ['Confirm sequencing before final commitment.'],
+      critical_incompatibilities: [],
+    },
+  });
+
+  const whyItWorks = presentation.presentation_sections.find((section) => section.key === 'why_it_works')?.paragraphs || [];
+  const rendered = whyItWorks.join(' ');
+
+  assert.match(rendered, /timeline certainty|approval confidence/i);
+  assert.doesNotMatch(rendered, /non-negotiable/i);
+});
+
+test('buildMediationReviewPresentation: treats unsupported incompatibility claims as uncertainty rather than a hard clash', () => {
+  const presentation = buildMediationReviewPresentation({
+    fit_level: 'medium',
+    confidence_0_1: 0.56,
+    why: [
+      'Executive Summary: The draft still needs governance and sequencing detail before compatibility can be judged confidently.',
+      'Decision Readiness: Decision status: Explore further. The visible issue is missing clarity rather than a confirmed deadlock.',
+      'Recommended Path: Recommended path: resolve the open governance and sequencing questions first.',
+    ],
+    missing: ['Who owns governance sequencing? — determines whether the parties can align the decision path.'],
+    redactions: [],
+    negotiation_analysis: {
+      proposing_party: {
+        demands: ['Governance sequencing clarity'],
+        priorities: ['Timeline certainty'],
+        dealbreakers: [{ text: 'Timeline certainty', basis: 'not_clearly_established' }],
+        flexibility: ['Packaging of later milestones can move'],
+      },
+      counterparty: {
+        demands: ['Approval clarity'],
+        priorities: ['Governance visibility'],
+        dealbreakers: [{ text: 'Governance visibility', basis: 'not_clearly_established' }],
+        flexibility: ['Reporting detail can move behind signature'],
+      },
+      compatibility_assessment: 'fundamentally_incompatible',
+      compatibility_rationale: 'The parties are fundamentally incompatible.',
+      bridgeability_notes: ['Clarify governance sequencing first.'],
+      critical_incompatibilities: [],
+    },
+  });
+
+  assert.match(presentation.primary_insight, /not yet clear|clarification|missing/i);
+  assert.doesNotMatch(presentation.primary_insight, /fundamental incompat/i);
+});
+
 test('buildMediationReviewPresentation: keeps strategic tensions distinct from strategic implications', () => {
   const presentation = buildMediationReviewPresentation({
     fit_level: 'medium',
@@ -405,6 +517,25 @@ test('buildStoredV2Evaluation: preserves substantive evaluation fields while add
       ],
       missing: [' Who owns the launch timeline? — determines execution accountability. '],
       redactions: [],
+      negotiation_analysis: {
+        proposing_party: {
+          demands: ['Named launch owner'],
+          priorities: ['Timeline certainty'],
+          dealbreakers: [{ text: 'Undefined launch ownership', basis: 'strongly_implied' }],
+          flexibility: ['Optional reporting can move behind go-live'],
+        },
+        counterparty: {
+          demands: ['Budget guardrails'],
+          priorities: ['Governance clarity'],
+          dealbreakers: [{ text: 'Open-ended liability', basis: 'stated' }],
+          flexibility: ['Milestone sequencing may be negotiable'],
+        },
+        compatibility_assessment: 'compatible_with_adjustments',
+        compatibility_rationale:
+          'The parties appear compatible with adjustments if launch ownership and budget guardrails are clarified.',
+        bridgeability_notes: ['Clarify launch ownership before final commitment.'],
+        critical_incompatibilities: ['Launch ownership is still unresolved.'],
+      },
     },
   };
 
@@ -420,6 +551,8 @@ test('buildStoredV2Evaluation: preserves substantive evaluation fields while add
   assert.deepEqual(stored.report.missing, [
     'Who owns the launch timeline? — determines execution accountability.',
   ]);
+  assert.equal(stored.report.negotiation_analysis.compatibility_assessment, 'compatible_with_adjustments');
+  assert.match(stored.report.primary_insight, /compatible with adjustments|launch ownership/i);
   assert.equal(typeof stored.report.primary_insight, 'string');
   assert.equal(Array.isArray(stored.report.presentation_sections), true);
   assert.equal(stored.report.presentation_sections.length > 0, true);
@@ -452,6 +585,27 @@ test('buildRecipientSafeEvaluationProjection: preserves safe presentation metada
     report_archetype: 'balanced_trade_off',
     report_title: `Balanced Trade-Off ${confidentialMarker}`,
     primary_insight: `The draft is workable, but ${confidentialMarker} should never appear.`,
+    negotiation_analysis: {
+      proposing_party: {
+        demands: ['Named launch owner'],
+        priorities: [`Timeline certainty ${confidentialMarker}`],
+        dealbreakers: [{ text: `Undefined ownership ${confidentialMarker}`, basis: 'strongly_implied' }],
+        flexibility: ['Optional enhancements can move behind launch'],
+      },
+      counterparty: {
+        demands: ['Budget guardrails'],
+        priorities: ['Governance clarity'],
+        dealbreakers: [{ text: 'Open-ended liability exposure', basis: 'stated' }],
+        flexibility: ['Staged rollout may be acceptable'],
+      },
+      compatibility_assessment: 'compatible_with_adjustments',
+      compatibility_rationale: `The parties appear compatible with adjustments if ${confidentialMarker} is resolved.`,
+      bridgeability_notes: [
+        'Clarify approval ownership before final commitment.',
+        `Clarify ${confidentialMarker} before final commitment.`,
+      ],
+      critical_incompatibilities: [`${confidentialMarker} blocks clean alignment.`],
+    },
     presentation_sections: [
       {
         heading: 'Primary Insight',
@@ -482,6 +636,12 @@ test('buildRecipientSafeEvaluationProjection: preserves safe presentation metada
   assert.equal(Array.isArray(projection.public_report.presentation_sections), true);
   assert.equal(typeof projection.public_report.primary_insight, 'string');
   assert.equal(projection.public_report.primary_insight.length > 0, true);
+  assert.equal(projection.public_report.negotiation_analysis.compatibility_assessment, 'compatible_with_adjustments');
+  assert.deepEqual(projection.public_report.negotiation_analysis.proposing_party.demands, []);
+  assert.deepEqual(projection.public_report.negotiation_analysis.counterparty.priorities, []);
+  assert.deepEqual(projection.public_report.negotiation_analysis.bridgeability_notes, [
+    'Clarify approval ownership before final commitment.',
+  ]);
 });
 
 test('buildRecipientSafeEvaluationProjection: rebuilds dynamic sections when scrubbed presentation metadata becomes empty', () => {

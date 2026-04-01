@@ -34,6 +34,33 @@ type ParseErrorKind =
   | 'confidential_leak_detected';
 
 type FitLevel = 'high' | 'medium' | 'low' | 'unknown';
+type DealbreakerBasis = 'stated' | 'strongly_implied' | 'not_clearly_established';
+type CompatibilityAssessment =
+  | 'broadly_compatible'
+  | 'compatible_with_adjustments'
+  | 'uncertain_due_to_missing_information'
+  | 'fundamentally_incompatible';
+
+interface NegotiationDealbreaker {
+  text: string;
+  basis: DealbreakerBasis;
+}
+
+interface NegotiationPartyAnalysis {
+  demands: string[];
+  priorities: string[];
+  dealbreakers: NegotiationDealbreaker[];
+  flexibility: string[];
+}
+
+interface NegotiationAnalysis {
+  proposing_party: NegotiationPartyAnalysis;
+  counterparty: NegotiationPartyAnalysis;
+  compatibility_assessment: CompatibilityAssessment | null;
+  compatibility_rationale: string;
+  bridgeability_notes: string[];
+  critical_incompatibilities: string[];
+}
 
 type VertexCallResponse = {
   model: string;
@@ -93,6 +120,7 @@ export interface VertexEvaluationV2Response {
   why: string[];
   missing: string[];
   redactions: string[];
+  negotiation_analysis?: NegotiationAnalysis;
 }
 
 export interface VertexEvaluationV2Error {
@@ -3473,11 +3501,11 @@ function applyConsistencyCalibration(params: {
   sharedText: string;
   postProcessMode?: PostProcessMode;
 }): ClampResult {
-  let { fit_level, confidence_0_1, why, missing, redactions } = params.data;
+  let { fit_level, confidence_0_1, why, missing, redactions, negotiation_analysis } = params.data;
   const capsApplied: string[] = [];
   const signals = buildCalibrationSignals({
     factSheet: params.factSheet,
-    data: { fit_level, confidence_0_1, why, missing, redactions },
+    data: { fit_level, confidence_0_1, why, missing, redactions, negotiation_analysis },
   });
 
   const normalizedMissing = normalizeMissingQuestions({
@@ -3499,7 +3527,7 @@ function applyConsistencyCalibration(params: {
 
   const rewrittenWhy = rewriteWhyForCalibration({
     factSheet: params.factSheet,
-    data: { fit_level, confidence_0_1, why, missing, redactions },
+    data: { fit_level, confidence_0_1, why, missing, redactions, negotiation_analysis },
     signals,
     postProcessMode: params.postProcessMode,
   });
@@ -3550,7 +3578,7 @@ function applyConsistencyCalibration(params: {
   if (requiresFinalSemanticAlignment) {
     const finalizedSignals = buildCalibrationSignals({
       factSheet: params.factSheet,
-      data: { fit_level, confidence_0_1, why, missing, redactions },
+      data: { fit_level, confidence_0_1, why, missing, redactions, negotiation_analysis },
     });
     const finalFit = alignFitLevelToSignals({ fit_level, signals: finalizedSignals });
     if (finalFit.fit_level !== fit_level) {
@@ -3571,6 +3599,7 @@ function applyConsistencyCalibration(params: {
       why,
       missing,
       redactions,
+      ...(negotiation_analysis ? { negotiation_analysis } : {}),
     },
     capsApplied,
   };
@@ -3768,6 +3797,7 @@ function buildEvalPromptFromFactSheet(params: {
     'SYSTEM: You are the AI Mediator for PreMarket, a neutral business negotiation advisor and intermediary evaluating a business proposal.',
     'Your task is: evaluate the overall business proposal quality and decision-readiness.',
     'Act like a bilateral middleman: show whether a deal is viable, where friction is likely, who is carrying risk, what leverage exists, and what must be agreed before proceeding.',
+    'Explicitly identify each side’s likely demands, priorities, possible dealbreakers, areas of flexibility, current compatibility, and what would need to change to make agreement plausible.',
     'This Step 3 report is a shared neutral artifact that may be viewed by both parties, emailed, or forwarded.',
     '',
     'IMPORTANT — input structure:',
@@ -3791,6 +3821,7 @@ function buildEvalPromptFromFactSheet(params: {
     '5. Decision-readiness: is this ready for a clean commitment, only for a conditional, phased, pilot, or diligence-led path, or not yet ready?',
     '   Use source_coverage flags to guide your assessment.',
     '6. Negotiation dynamics: what leverage, tradeoffs, urgency, switching costs, or dependency signals are shaping the negotiation?',
+    '7. Compatibility and bridgeability: are the parties broadly compatible, compatible with adjustments, uncertain due to missing information, or fundamentally incompatible on a critical point?',
     '',
     'DOMAIN-SENSITIVE LENS:',
     `- Classified proposal domain: ${domain.label}.`,
@@ -3819,6 +3850,10 @@ function buildEvalPromptFromFactSheet(params: {
     '- Decision Assessment must stay neutral: Risk Summary = concrete risk mechanics and who is carrying them; Key Strengths = areas of bilateral alignment or usable deal structure, NOT praise for one side’s drafting or wording.',
     '- Recommended Path = neutral mediation guidance, not one-sided tactical advice.',
     '- Missing information = deal-critical questions that either side would need answered, NOT editing notes or submission coaching.',
+    '- Explicitly distinguish between likely demands / required outcomes, priorities, flexibility, and likely non-negotiables.',
+    '- Only treat a point as a dealbreaker when it is stated or strongly implied by repeated emphasis, hard constraints, or mandatory terms. Otherwise say it is "not clearly established from the materials".',
+    '- Use cautious mediator wording such as "appears to prioritise", "seems to require", "may treat as non-negotiable", and "not clearly established from the materials" when the evidence is incomplete.',
+    '- If compatibility cannot be assessed confidently, say so plainly and explain what would need clarification before concluding incompatibility.',
     '- DO NOT coach one side. Do NOT tell one side how to improve, strengthen, rewrite, or increase the chances of the proposal.',
     '- Explicitly avoid phrases such as "Improve your position", "You should strengthen", "Your proposal would be better if", "Before sending", or "You should rewrite".',
     '- If you use phrases like "clear", "specific", "mature", or "decision-ready", you MUST immediately explain which concrete facts justify that claim.',
@@ -3826,7 +3861,7 @@ function buildEvalPromptFromFactSheet(params: {
     '- Avoid exaggerated language such as "almost entirely undefined" unless the fact_sheet truly supports that level of severity.',
     '- Do NOT repeat the same conclusion in Executive Summary, Decision Readiness, and Recommended Path unless each section adds new justification or a new negotiation implication.',
     '- Front-load the main blocker, the condition to proceed, and the negotiation implication inside Executive Summary, Decision Assessment, and Decision Readiness.',
-    '- Section roles are strict: Executive Summary = deal memo on overall workability and core tensions; Decision Assessment = Risk Summary plus Key Strengths; Negotiation Insights = likely priorities of each side, possible concessions, and structural tensions; Leverage Signals = hidden negotiation leverage described abstractly; Potential Deal Structures = 2-3 realistic unlock paths; Decision Readiness = explicit decision status and what must be agreed now versus later; Recommended Path = the clearest next negotiation step.',
+    '- Section roles are strict: Executive Summary = deal memo on overall workability, compatibility, and core tensions; Decision Assessment = Risk Summary plus Key Strengths; Negotiation Insights = each side’s likely demands, priorities, possible movement, and structural tensions, while distinguishing preferences from likely non-negotiables; Leverage Signals = hidden negotiation leverage described abstractly; Potential Deal Structures = 2-3 realistic bridgeability or unlock paths; Decision Readiness = explicit decision status, compatibility assessment, and what must be agreed now versus later; Recommended Path = the clearest next negotiation step.',
     '',
     'MANDATORY REPORT STRUCTURE (every report must include ALL of these):',
     '1. "Executive Summary" must be 2-3 paragraphs and read like a professional deal memo.',
@@ -3877,6 +3912,12 @@ function buildEvalPromptFromFactSheet(params: {
     '- redactions[] should list information that appears intentionally withheld, confidential, or unsafe to disclose publicly.',
     '- Use abstract topic labels only, such as "internal pricing flexibility", "non-public approval path", or "confidential resource constraint".',
     '',
+    'NEGOTIATION ANALYSIS RULES:',
+    '- Assess each side’s likely demands / required outcomes, priorities, possible flexibility, and likely dealbreakers using ONLY the provided materials.',
+    '- Dealbreaker basis must be one of: "stated", "strongly implied", or "not clearly established". Do NOT invent hard red lines.',
+    '- Compatibility assessment must be one of: "broadly compatible", "compatible with adjustments", "uncertain due to missing information", or "fundamentally incompatible".',
+    '- Bridgeability means the changes, clarifications, sequencing, or concessions that would likely be required to make agreement plausible.',
+    '',
     'CALIBRATION RULES:',
     '- Treat confidence as confidence in the recommendation, NOT confidence in the prose quality.',
     '- "high" / decision-ready is only appropriate when core scope is bounded, acceptance criteria are defined, major dependencies are quantified or contract-bounded, and open questions are not central blockers.',
@@ -3891,6 +3932,7 @@ function buildEvalPromptFromFactSheet(params: {
     '- why: Consultant memo narrative per heading (multi-paragraph prose). Total chars <= why_max_chars.',
     '- missing: Actionable questions with em-dash why-it-matters, ranked by criticality. Max missing_max_items items.',
     '- redactions: Array of strings — topics that must remain confidential or are intentionally withheld. Max redactions_max_items items.',
+    '- negotiation_analysis: OPTIONAL neutral metadata for demands, priorities, dealbreakers, flexibility, compatibility, bridgeability, and critical incompatibilities. If evidence is thin, use "not clearly established" and/or "uncertain due to missing information" rather than forcing certainty.',
     '',
     'HARD GUARDRAILS — follow these without exception:',
     '- "high" fit_level is RARE. Only when scope, acceptance criteria, dependencies, and risk allocation are sufficiently bounded for a clean commitment.',
@@ -3903,7 +3945,7 @@ function buildEvalPromptFromFactSheet(params: {
     '- Identical or heavily overlapping tiers: NOT a quality signal — do NOT reward this.',
     '',
     'Output MUST be valid JSON only. No markdown, no backticks, no preamble.',
-    'Required JSON schema (all keys required):',
+    'Required JSON schema (top-level evaluation keys required; negotiation_analysis optional):',
     JSON.stringify(
       {
         fit_level: 'high|medium|low|unknown',
@@ -3911,6 +3953,25 @@ function buildEvalPromptFromFactSheet(params: {
         why: ['string'],
         missing: ['string'],
         redactions: ['string'],
+        negotiation_analysis: {
+          proposing_party: {
+            demands: ['string'],
+            priorities: ['string'],
+            dealbreakers: [{ text: 'string', basis: 'stated|strongly_implied|not_clearly_established' }],
+            flexibility: ['string'],
+          },
+          counterparty: {
+            demands: ['string'],
+            priorities: ['string'],
+            dealbreakers: [{ text: 'string', basis: 'stated|strongly_implied|not_clearly_established' }],
+            flexibility: ['string'],
+          },
+          compatibility_assessment:
+            'broadly_compatible|compatible_with_adjustments|uncertain_due_to_missing_information|fundamentally_incompatible',
+          compatibility_rationale: 'string',
+          bridgeability_notes: ['string'],
+          critical_incompatibilities: ['string'],
+        },
       },
       null,
       2,
@@ -3919,6 +3980,7 @@ function buildEvalPromptFromFactSheet(params: {
     '- fit_level must be one of high|medium|low|unknown.',
     '- confidence_0_1 must be between 0 and 1.',
     '- why/missing/redactions must be arrays (can be empty).',
+    '- negotiation_analysis is optional, but if you include it the structure must match the schema above.',
     '- Keep ALL statements safe for public sharing.',
     '- Use generic derived wording for confidential-driven conclusions.',
     // ── Convergence context (injected only when prior rounds exist) ──────
@@ -3946,7 +4008,7 @@ function applyCoverageClamps(params: {
   postProcessMode?: PostProcessMode;
 }): ClampResult {
   const { factSheet, sharedText, confidentialText } = params;
-  let { fit_level, confidence_0_1, why, missing, redactions } = params.data;
+  let { fit_level, confidence_0_1, why, missing, redactions, negotiation_analysis } = params.data;
   const capsApplied: string[] = [];
   const sc = factSheet.source_coverage;
 
@@ -3992,7 +4054,7 @@ function applyCoverageClamps(params: {
   }
 
   const calibrated = applyConsistencyCalibration({
-    data: { fit_level, confidence_0_1, why, missing, redactions },
+    data: { fit_level, confidence_0_1, why, missing, redactions, negotiation_analysis },
     factSheet,
     sharedText,
     postProcessMode: params.postProcessMode,
@@ -4191,6 +4253,43 @@ function validateResponseSchema(value: unknown): SchemaValidationResult {
   const why = ensureStringArray(raw.why, 'why');
   const missing = ensureStringArray(raw.missing, 'missing');
   const redactions = ensureStringArray(raw.redactions, 'redactions');
+  const negotiationAnalysis = normalizeNegotiationAnalysis(
+    raw.negotiation_analysis !== undefined
+      ? raw.negotiation_analysis
+      : (
+          raw.party_a_demands !== undefined ||
+          raw.party_a_priorities !== undefined ||
+          raw.party_a_dealbreakers !== undefined ||
+          raw.party_a_flexibility !== undefined ||
+          raw.party_b_demands !== undefined ||
+          raw.party_b_priorities !== undefined ||
+          raw.party_b_dealbreakers !== undefined ||
+          raw.party_b_flexibility !== undefined ||
+          raw.compatibility_assessment !== undefined ||
+          raw.compatibility_rationale !== undefined ||
+          raw.bridgeability_notes !== undefined ||
+          raw.critical_incompatibilities !== undefined
+        )
+        ? {
+            proposing_party: {
+              demands: raw.party_a_demands,
+              priorities: raw.party_a_priorities,
+              dealbreakers: raw.party_a_dealbreakers,
+              flexibility: raw.party_a_flexibility,
+            },
+            counterparty: {
+              demands: raw.party_b_demands,
+              priorities: raw.party_b_priorities,
+              dealbreakers: raw.party_b_dealbreakers,
+              flexibility: raw.party_b_flexibility,
+            },
+            compatibility_assessment: raw.compatibility_assessment,
+            compatibility_rationale: raw.compatibility_rationale,
+            bridgeability_notes: raw.bridgeability_notes,
+            critical_incompatibilities: raw.critical_incompatibilities,
+          }
+        : undefined,
+  );
 
   if (missingKeys.length || invalidFields.length) {
     return {
@@ -4208,6 +4307,7 @@ function validateResponseSchema(value: unknown): SchemaValidationResult {
       why,
       missing,
       redactions,
+      ...(negotiationAnalysis ? { negotiation_analysis: negotiationAnalysis } : {}),
     },
   };
 }
@@ -4260,6 +4360,169 @@ function normalizeConfidence(value: unknown): number {
   return clamp01(numeric);
 }
 
+function normalizeNegotiationStringArray(value: unknown, maxItems = 8) {
+  if (!Array.isArray(value)) return [] as string[];
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  value.forEach((entry) => {
+    const text =
+      typeof entry === 'string'
+        ? asText(entry)
+        : entry && typeof entry === 'object' && !Array.isArray(entry)
+          ? asText((entry as any).text || (entry as any).title || (entry as any).description)
+          : '';
+    const key = text.toLowerCase();
+    if (!text || seen.has(key)) return;
+    seen.add(key);
+    normalized.push(text);
+  });
+  return normalized.slice(0, maxItems);
+}
+
+function normalizeDealbreakerBasis(value: unknown): DealbreakerBasis {
+  const normalized = normalizeKeywordText(asText(value));
+  if (normalized === 'stated') return 'stated';
+  if (normalized === 'strongly implied') return 'strongly_implied';
+  if (normalized === 'not clearly established') return 'not_clearly_established';
+  return 'not_clearly_established';
+}
+
+function normalizeNegotiationDealbreakers(value: unknown, maxItems = 6) {
+  if (!Array.isArray(value)) return [] as NegotiationDealbreaker[];
+  const seen = new Set<string>();
+  const normalized: NegotiationDealbreaker[] = [];
+  value.forEach((entry) => {
+    const text =
+      typeof entry === 'string'
+        ? asText(entry)
+        : entry && typeof entry === 'object' && !Array.isArray(entry)
+          ? asText((entry as any).text || (entry as any).title || (entry as any).description)
+          : '';
+    if (!text) return;
+    const basis =
+      entry && typeof entry === 'object' && !Array.isArray(entry)
+        ? normalizeDealbreakerBasis((entry as any).basis || (entry as any).status || (entry as any).support)
+        : 'not_clearly_established';
+    const key = `${text.toLowerCase()}::${basis}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    normalized.push({ text, basis });
+  });
+  return normalized.slice(0, maxItems);
+}
+
+function normalizeNegotiationParty(value: unknown): NegotiationPartyAnalysis {
+  const raw = value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+  return {
+    demands: normalizeNegotiationStringArray(raw.demands || raw.required_outcomes || raw.key_demands),
+    priorities: normalizeNegotiationStringArray(raw.priorities),
+    dealbreakers: normalizeNegotiationDealbreakers(raw.dealbreakers || raw.non_negotiables),
+    flexibility: normalizeNegotiationStringArray(raw.flexibility || raw.possible_movement),
+  };
+}
+
+function hasSupportedFundamentalConflict(params: {
+  proposing_party: NegotiationPartyAnalysis;
+  counterparty: NegotiationPartyAnalysis;
+  compatibility_rationale: string;
+  critical_incompatibilities: string[];
+}) {
+  const supportedDealbreakers = [
+    ...params.proposing_party.dealbreakers,
+    ...params.counterparty.dealbreakers,
+  ].filter((entry) => entry.basis !== 'not_clearly_established');
+  if (params.critical_incompatibilities.length > 0) {
+    return true;
+  }
+  if (supportedDealbreakers.length >= 2) {
+    return true;
+  }
+  const conflictText = [params.compatibility_rationale, ...params.critical_incompatibilities].join(' ');
+  return supportedDealbreakers.length >= 1 &&
+    /\b(fundamental(?:ly)? incompatible|irreconcilable|mutually exclusive|cannot both|cannot be reconciled|no realistic path|won't accept|will not accept|non-negotiable|dealbreaker|direct conflict|critical point)\b/i
+      .test(conflictText);
+}
+
+function normalizeCompatibilityAssessment(value: unknown): CompatibilityAssessment | null {
+  const normalized = normalizeKeywordText(asText(value));
+  if (normalized === 'broadly compatible') return 'broadly_compatible';
+  if (normalized === 'compatible with adjustments') return 'compatible_with_adjustments';
+  if (
+    normalized === 'uncertain due to missing information' ||
+    normalized === 'uncertain due to missing info' ||
+    normalized === 'uncertain'
+  ) {
+    return 'uncertain_due_to_missing_information';
+  }
+  if (normalized === 'fundamentally incompatible') return 'fundamentally_incompatible';
+  return null;
+}
+
+function normalizeNegotiationAnalysis(value: unknown): NegotiationAnalysis | undefined {
+  const raw = value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+  const proposing_party = normalizeNegotiationParty(
+    raw.proposing_party || raw.party_a || raw.originating_party || raw.requester_side,
+  );
+  const counterparty = normalizeNegotiationParty(
+    raw.counterparty || raw.party_b || raw.other_party || raw.recipient_side,
+  );
+  let compatibility_assessment = normalizeCompatibilityAssessment(raw.compatibility_assessment || raw.compatibility);
+  let compatibility_rationale = asText(raw.compatibility_rationale || raw.compatibility_summary);
+  const bridgeability_notes = normalizeNegotiationStringArray(
+    raw.bridgeability_notes || raw.bridgeability || raw.bridgeability_actions,
+  );
+  const critical_incompatibilities = normalizeNegotiationStringArray(
+    raw.critical_incompatibilities || raw.blocking_points,
+  );
+
+  if (
+    compatibility_assessment === 'fundamentally_incompatible' &&
+    !hasSupportedFundamentalConflict({
+      proposing_party,
+      counterparty,
+      compatibility_rationale,
+      critical_incompatibilities,
+    })
+  ) {
+    compatibility_assessment = 'uncertain_due_to_missing_information';
+    if (!/\b(missing|unclear|uncertain|clarif|cannot assess|not yet clear)\b/i.test(compatibility_rationale)) {
+      compatibility_rationale =
+        'Compatibility is not yet clear from the current materials and likely requires clarification before incompatibility can be assessed confidently.';
+    }
+  }
+
+  const hasAnyContent =
+    compatibility_assessment !== null ||
+    Boolean(compatibility_rationale) ||
+    bridgeability_notes.length > 0 ||
+    critical_incompatibilities.length > 0 ||
+    proposing_party.demands.length > 0 ||
+    proposing_party.priorities.length > 0 ||
+    proposing_party.dealbreakers.length > 0 ||
+    proposing_party.flexibility.length > 0 ||
+    counterparty.demands.length > 0 ||
+    counterparty.priorities.length > 0 ||
+    counterparty.dealbreakers.length > 0 ||
+    counterparty.flexibility.length > 0;
+
+  if (!hasAnyContent) {
+    return undefined;
+  }
+
+  return {
+    proposing_party,
+    counterparty,
+    compatibility_assessment,
+    compatibility_rationale,
+    bridgeability_notes,
+    critical_incompatibilities,
+  };
+}
+
 function coerceToSmallSchema(value: unknown): { candidate: unknown; coerced: boolean } {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return { candidate: value, coerced: false };
@@ -4307,6 +4570,42 @@ function coerceToSmallSchema(value: unknown): { candidate: unknown; coerced: boo
     : toStringArray(raw.topics_for_redaction).length
       ? toStringArray(raw.topics_for_redaction)
       : redactedFlags;
+  const syntheticNegotiationAnalysis = raw.negotiation_analysis !== undefined
+    ? raw.negotiation_analysis
+    : (
+        raw.party_a_demands !== undefined ||
+        raw.party_a_priorities !== undefined ||
+        raw.party_a_dealbreakers !== undefined ||
+        raw.party_a_flexibility !== undefined ||
+        raw.party_b_demands !== undefined ||
+        raw.party_b_priorities !== undefined ||
+        raw.party_b_dealbreakers !== undefined ||
+        raw.party_b_flexibility !== undefined ||
+        raw.compatibility_assessment !== undefined ||
+        raw.compatibility_rationale !== undefined ||
+        raw.bridgeability_notes !== undefined ||
+        raw.critical_incompatibilities !== undefined
+      )
+      ? {
+          proposing_party: {
+            demands: raw.party_a_demands,
+            priorities: raw.party_a_priorities,
+            dealbreakers: raw.party_a_dealbreakers,
+            flexibility: raw.party_a_flexibility,
+          },
+          counterparty: {
+            demands: raw.party_b_demands,
+            priorities: raw.party_b_priorities,
+            dealbreakers: raw.party_b_dealbreakers,
+            flexibility: raw.party_b_flexibility,
+          },
+          compatibility_assessment: raw.compatibility_assessment,
+          compatibility_rationale: raw.compatibility_rationale,
+          bridgeability_notes: raw.bridgeability_notes,
+          critical_incompatibilities: raw.critical_incompatibilities,
+        }
+      : undefined;
+  const negotiationAnalysis = normalizeNegotiationAnalysis(syntheticNegotiationAnalysis);
 
   const coerced: VertexEvaluationV2Response = {
     fit_level: normalizeFitLevel(raw.fit_level ?? summary.fit_level ?? raw.answer),
@@ -4314,8 +4613,27 @@ function coerceToSmallSchema(value: unknown): { candidate: unknown; coerced: boo
     why,
     missing,
     redactions,
+    ...(negotiationAnalysis ? { negotiation_analysis: negotiationAnalysis } : {}),
   };
   return { candidate: coerced, coerced: true };
+}
+
+function flattenNegotiationAnalysisText(analysis?: NegotiationAnalysis) {
+  if (!analysis) return [] as string[];
+  return [
+    ...analysis.proposing_party.demands,
+    ...analysis.proposing_party.priorities,
+    ...analysis.proposing_party.dealbreakers.map((entry) => `${entry.basis}: ${entry.text}`),
+    ...analysis.proposing_party.flexibility,
+    ...analysis.counterparty.demands,
+    ...analysis.counterparty.priorities,
+    ...analysis.counterparty.dealbreakers.map((entry) => `${entry.basis}: ${entry.text}`),
+    ...analysis.counterparty.flexibility,
+    analysis.compatibility_assessment || '',
+    analysis.compatibility_rationale,
+    ...analysis.bridgeability_notes,
+    ...analysis.critical_incompatibilities,
+  ].filter(Boolean);
 }
 
 function collectSensitiveTokens(confidentialText: string, sharedText: string) {
@@ -4368,6 +4686,7 @@ function detectConfidentialLeak(params: {
     ...params.response.why,
     ...params.response.missing,
     ...params.response.redactions,
+    ...flattenNegotiationAnalysisText(params.response.negotiation_analysis),
   ].join(' ');
   const outputLower = outputText.toLowerCase();
   const outputNormalized = tokenizeForLeakScan(outputText);
@@ -4718,6 +5037,7 @@ async function runLlmLeakVerifier(params: {
     ...params.response.why,
     ...params.response.missing,
     ...params.response.redactions,
+    ...flattenNegotiationAnalysisText(params.response.negotiation_analysis),
   ].join('\n');
 
   // Nothing to verify if there's no confidential text or no output.
@@ -5080,6 +5400,7 @@ function buildRefinementPrompt(params: {
     `- fit_level MUST remain: "${initialResult.fit_level}"`,
     `- confidence_0_1 MUST remain: ${initialResult.confidence_0_1}`,
     '- Do NOT change the overall judgment, risk assessment direction, or recommendation direction.',
+    '- Preserve negotiation_analysis exactly if it is present. Do NOT add, remove, or reclassify demands, dealbreakers, compatibility verdicts, or bridgeability notes.',
     '- Do NOT introduce new confidential information or leak confidential details.',
     '- Do NOT add new sections or remove required sections.',
     '- Do NOT turn the evaluator into a strategist or coach.',
@@ -5119,10 +5440,30 @@ function buildRefinementPrompt(params: {
         why: ['string'],
         missing: ['string'],
         redactions: ['string'],
+        negotiation_analysis: {
+          proposing_party: {
+            demands: ['string'],
+            priorities: ['string'],
+            dealbreakers: [{ text: 'string', basis: 'stated|strongly_implied|not_clearly_established' }],
+            flexibility: ['string'],
+          },
+          counterparty: {
+            demands: ['string'],
+            priorities: ['string'],
+            dealbreakers: [{ text: 'string', basis: 'stated|strongly_implied|not_clearly_established' }],
+            flexibility: ['string'],
+          },
+          compatibility_assessment:
+            'broadly_compatible|compatible_with_adjustments|uncertain_due_to_missing_information|fundamentally_incompatible',
+          compatibility_rationale: 'string',
+          bridgeability_notes: ['string'],
+          critical_incompatibilities: ['string'],
+        },
       },
       null,
       2,
     ),
+    'negotiation_analysis is optional; if it is present in the initial report, preserve it exactly.',
     'Return JSON only.',
   ]
     .filter(Boolean)
@@ -5205,6 +5546,8 @@ async function attemptRefinementPass(params: {
   if (Math.abs(validation.normalized.confidence_0_1 - params.initialResult.confidence_0_1) > 0.05) {
     return { result: params.initialResult, applied: false, skip_reason: 'refinement_changed_confidence' };
   }
+
+  validation.normalized.negotiation_analysis = params.initialResult.negotiation_analysis;
 
   // Leak check the refined output
   if (params.enforceLeakGuard) {

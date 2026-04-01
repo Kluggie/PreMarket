@@ -30,6 +30,34 @@ type MediationPresentationSection = {
   numbered_bullets?: boolean;
 };
 
+type ReportDealbreakerBasis = 'stated' | 'strongly_implied' | 'not_clearly_established';
+type ReportCompatibilityAssessment =
+  | 'broadly_compatible'
+  | 'compatible_with_adjustments'
+  | 'uncertain_due_to_missing_information'
+  | 'fundamentally_incompatible';
+
+type ReportNegotiationDealbreaker = {
+  text: string;
+  basis: ReportDealbreakerBasis;
+};
+
+type ReportNegotiationPartyAnalysis = {
+  demands: string[];
+  priorities: string[];
+  dealbreakers: ReportNegotiationDealbreaker[];
+  flexibility: string[];
+};
+
+type ReportNegotiationAnalysis = {
+  proposing_party: ReportNegotiationPartyAnalysis;
+  counterparty: ReportNegotiationPartyAnalysis;
+  compatibility_assessment: ReportCompatibilityAssessment | null;
+  compatibility_rationale: string;
+  bridgeability_notes: string[];
+  critical_incompatibilities: string[];
+};
+
 function normalizeComparisonLabel(side: 'a' | 'b') {
   return side === 'a' ? CONFIDENTIAL_LABEL : SHARED_LABEL;
 }
@@ -103,6 +131,182 @@ function joinNatural(parts: string[]) {
   if (values.length === 1) return values[0];
   if (values.length === 2) return `${values[0]} and ${values[1]}`;
   return `${values.slice(0, -1).join(', ')}, and ${values[values.length - 1]}`;
+}
+
+function normalizeDealbreakerBasis(value: unknown): ReportDealbreakerBasis {
+  const normalized = normalizeHeadingKey(value);
+  if (normalized === 'stated') return 'stated';
+  if (normalized === 'strongly implied') return 'strongly_implied';
+  if (normalized === 'not clearly established') return 'not_clearly_established';
+  return 'not_clearly_established';
+}
+
+function normalizeNegotiationDealbreakers(value: unknown) {
+  if (!Array.isArray(value)) return [] as ReportNegotiationDealbreaker[];
+  const seen = new Set<string>();
+  const result: ReportNegotiationDealbreaker[] = [];
+  value.forEach((entry) => {
+    const text =
+      typeof entry === 'string'
+        ? normalizeText(entry)
+        : entry && typeof entry === 'object' && !Array.isArray(entry)
+          ? normalizeText((entry as any).text || (entry as any).title || (entry as any).description)
+          : '';
+    if (!text) return;
+    const basis =
+      entry && typeof entry === 'object' && !Array.isArray(entry)
+        ? normalizeDealbreakerBasis((entry as any).basis || (entry as any).status || (entry as any).support)
+        : 'not_clearly_established';
+    const key = `${text.toLowerCase()}::${basis}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    result.push({ text, basis });
+  });
+  return result.slice(0, 6);
+}
+
+function normalizeNegotiationParty(value: unknown): ReportNegotiationPartyAnalysis {
+  const raw = value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+  return {
+    demands: uniqueText(Array.isArray(raw.demands || raw.required_outcomes || raw.key_demands)
+      ? (raw.demands || raw.required_outcomes || raw.key_demands) as unknown[]
+      : []).slice(0, 8),
+    priorities: uniqueText(Array.isArray(raw.priorities) ? raw.priorities as unknown[] : []).slice(0, 8),
+    dealbreakers: normalizeNegotiationDealbreakers(raw.dealbreakers || raw.non_negotiables),
+    flexibility: uniqueText(Array.isArray(raw.flexibility || raw.possible_movement)
+      ? (raw.flexibility || raw.possible_movement) as unknown[]
+      : []).slice(0, 8),
+  };
+}
+
+function hasSupportedFundamentalConflict(params: {
+  proposing_party: ReportNegotiationPartyAnalysis;
+  counterparty: ReportNegotiationPartyAnalysis;
+  compatibility_rationale: string;
+  critical_incompatibilities: string[];
+}) {
+  const supportedDealbreakers = [
+    ...params.proposing_party.dealbreakers,
+    ...params.counterparty.dealbreakers,
+  ].filter((entry) => entry.basis !== 'not_clearly_established');
+  if (params.critical_incompatibilities.length > 0) {
+    return true;
+  }
+  if (supportedDealbreakers.length >= 2) {
+    return true;
+  }
+  const conflictText = [params.compatibility_rationale, ...params.critical_incompatibilities].join(' ');
+  return supportedDealbreakers.length >= 1 &&
+    /\b(fundamental(?:ly)? incompatible|irreconcilable|mutually exclusive|cannot both|cannot be reconciled|no realistic path|won't accept|will not accept|non-negotiable|dealbreaker|direct conflict|critical point)\b/i
+      .test(conflictText);
+}
+
+function normalizeCompatibilityAssessment(value: unknown): ReportCompatibilityAssessment | null {
+  const normalized = normalizeHeadingKey(value);
+  if (normalized === 'broadly compatible') return 'broadly_compatible';
+  if (normalized === 'compatible with adjustments') return 'compatible_with_adjustments';
+  if (
+    normalized === 'uncertain due to missing information' ||
+    normalized === 'uncertain due to missing info' ||
+    normalized === 'uncertain'
+  ) {
+    return 'uncertain_due_to_missing_information';
+  }
+  if (normalized === 'fundamentally incompatible') return 'fundamentally_incompatible';
+  return null;
+}
+
+function normalizeNegotiationAnalysis(value: unknown): ReportNegotiationAnalysis | null {
+  const raw = value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+  const proposing_party = normalizeNegotiationParty(raw.proposing_party || raw.party_a || raw.originating_party);
+  const counterparty = normalizeNegotiationParty(raw.counterparty || raw.party_b || raw.other_party);
+  let compatibility_assessment = normalizeCompatibilityAssessment(raw.compatibility_assessment || raw.compatibility);
+  let compatibility_rationale = normalizeText(raw.compatibility_rationale || raw.compatibility_summary);
+  const bridgeability_notes = uniqueText(
+    Array.isArray(raw.bridgeability_notes || raw.bridgeability || raw.bridgeability_actions)
+      ? (raw.bridgeability_notes || raw.bridgeability || raw.bridgeability_actions) as unknown[]
+      : [],
+  ).slice(0, 8);
+  const critical_incompatibilities = uniqueText(
+    Array.isArray(raw.critical_incompatibilities || raw.blocking_points)
+      ? (raw.critical_incompatibilities || raw.blocking_points) as unknown[]
+      : [],
+  ).slice(0, 6);
+
+  if (
+    compatibility_assessment === 'fundamentally_incompatible' &&
+    !hasSupportedFundamentalConflict({
+      proposing_party,
+      counterparty,
+      compatibility_rationale,
+      critical_incompatibilities,
+    })
+  ) {
+    compatibility_assessment = 'uncertain_due_to_missing_information';
+    if (!/\b(missing|unclear|uncertain|clarif|cannot assess|not yet clear)\b/i.test(compatibility_rationale)) {
+      compatibility_rationale =
+        'Compatibility is not yet clear from the current materials and likely requires clarification before incompatibility can be assessed confidently.';
+    }
+  }
+
+  const analysis = {
+    proposing_party,
+    counterparty,
+    compatibility_assessment,
+    compatibility_rationale,
+    bridgeability_notes,
+    critical_incompatibilities,
+  };
+
+  const hasAnyContent =
+    analysis.compatibility_assessment !== null ||
+    Boolean(analysis.compatibility_rationale) ||
+    analysis.bridgeability_notes.length > 0 ||
+    analysis.critical_incompatibilities.length > 0 ||
+    analysis.proposing_party.demands.length > 0 ||
+    analysis.proposing_party.priorities.length > 0 ||
+    analysis.proposing_party.dealbreakers.length > 0 ||
+    analysis.proposing_party.flexibility.length > 0 ||
+    analysis.counterparty.demands.length > 0 ||
+    analysis.counterparty.priorities.length > 0 ||
+    analysis.counterparty.dealbreakers.length > 0 ||
+    analysis.counterparty.flexibility.length > 0;
+
+  return hasAnyContent ? analysis : null;
+}
+
+function toRecipientSafeNegotiationAnalysis(analysis: ReportNegotiationAnalysis | null) {
+  if (!analysis) return null;
+  const safeAnalysis: ReportNegotiationAnalysis = {
+    proposing_party: {
+      demands: [],
+      priorities: [],
+      dealbreakers: [],
+      flexibility: [],
+    },
+    counterparty: {
+      demands: [],
+      priorities: [],
+      dealbreakers: [],
+      flexibility: [],
+    },
+    compatibility_assessment: analysis.compatibility_assessment,
+    compatibility_rationale: analysis.compatibility_rationale,
+    bridgeability_notes: analysis.bridgeability_notes,
+    critical_incompatibilities: analysis.critical_incompatibilities,
+  };
+  return (
+    safeAnalysis.compatibility_assessment !== null ||
+    Boolean(safeAnalysis.compatibility_rationale) ||
+    safeAnalysis.bridgeability_notes.length > 0 ||
+    safeAnalysis.critical_incompatibilities.length > 0
+  )
+    ? safeAnalysis
+    : null;
 }
 
 function clampConfidence01(value: unknown) {
@@ -258,6 +462,77 @@ function previewParagraphs(paragraphs: string[], maxItems = 2, maxChars = 200) {
   return result;
 }
 
+function buildNegotiationPriorityParagraphs(analysis: ReportNegotiationAnalysis | null) {
+  if (!analysis) return [] as string[];
+  const proposingFocus = joinNatural(
+    analysis.proposing_party.priorities.length > 0
+      ? analysis.proposing_party.priorities.slice(0, 2)
+      : analysis.proposing_party.demands.slice(0, 2),
+  );
+  const counterpartyFocus = joinNatural(
+    analysis.counterparty.priorities.length > 0
+      ? analysis.counterparty.priorities.slice(0, 2)
+      : analysis.counterparty.demands.slice(0, 2),
+  );
+  const paragraphs: string[] = [];
+  if (proposingFocus && counterpartyFocus) {
+    paragraphs.push(
+      `One side appears to prioritise ${proposingFocus}, while the other appears to prioritise ${counterpartyFocus}.`,
+    );
+  } else if (proposingFocus || counterpartyFocus) {
+    paragraphs.push(`The visible materials suggest the main priorities cluster around ${proposingFocus || counterpartyFocus}.`);
+  }
+  const dealbreakerPreview = joinNatural(
+    [
+      ...analysis.proposing_party.dealbreakers,
+      ...analysis.counterparty.dealbreakers,
+    ]
+      .filter((entry) => entry.basis !== 'not_clearly_established')
+      .map((entry) => entry.text)
+      .slice(0, 2),
+  );
+  if (dealbreakerPreview) {
+    paragraphs.push(`Likely non-negotiables appear to cluster around ${dealbreakerPreview}.`);
+  }
+  return uniqueText(paragraphs).slice(0, 2);
+}
+
+function buildNegotiationTensionParagraphs(analysis: ReportNegotiationAnalysis | null) {
+  if (!analysis) return [] as string[];
+  return uniqueText([
+    analysis.compatibility_rationale,
+    ...analysis.critical_incompatibilities,
+  ]).slice(0, 3);
+}
+
+function buildNegotiationCompatibilityInsight(
+  analysis: ReportNegotiationAnalysis | null,
+  archetype: MediationReviewArchetype,
+) {
+  if (!analysis?.compatibility_assessment) return '';
+
+  const compatibilityText = analysis.compatibility_rationale || (
+    analysis.compatibility_assessment === 'broadly_compatible'
+      ? 'The visible materials suggest the parties are broadly compatible.'
+      : analysis.compatibility_assessment === 'compatible_with_adjustments'
+        ? 'The visible materials suggest the parties may be compatible with adjustments.'
+        : analysis.compatibility_assessment === 'uncertain_due_to_missing_information'
+          ? 'Compatibility is not yet clear from the current materials.'
+          : 'The visible materials point to a fundamental incompatibility on a critical point.'
+  );
+
+  if (analysis.compatibility_assessment === 'broadly_compatible') {
+    return archetype === 'risk_dominant' || archetype === 'gap_analysis' ? '' : compatibilityText;
+  }
+  if (analysis.compatibility_assessment === 'compatible_with_adjustments') {
+    return archetype === 'risk_dominant' ? '' : compatibilityText;
+  }
+  if (analysis.compatibility_assessment === 'uncertain_due_to_missing_information') {
+    return archetype === 'gap_analysis' || archetype === 'balanced_trade_off' ? compatibilityText : '';
+  }
+  return archetype === 'strong_alignment' ? '' : compatibilityText;
+}
+
 function createPresentationSection(section: MediationPresentationSection): MediationPresentationSection | null {
   const paragraphs = uniqueText(Array.isArray(section.paragraphs) ? section.paragraphs : []);
   const bullets = uniqueText(Array.isArray(section.bullets) ? section.bullets : []);
@@ -357,6 +632,7 @@ export function buildMediationReviewPresentation(params: {
   why: unknown;
   missing: unknown;
   redactions?: unknown;
+  negotiation_analysis?: unknown;
 }) {
   const fitLevel = asLower(params.fit_level);
   const confidence = clampConfidence01(params.confidence_0_1);
@@ -365,6 +641,7 @@ export function buildMediationReviewPresentation(params: {
   const redactions = Array.isArray(params.redactions)
     ? params.redactions.map((entry) => normalizeText(entry)).filter(Boolean)
     : [];
+  const negotiationAnalysis = normalizeNegotiationAnalysis(params.negotiation_analysis);
 
   const whyLookup = buildWhyLookup(why);
   const executiveParagraphs = whyLookup.getSectionParagraphs('Executive Summary', 'Decision Snapshot');
@@ -435,52 +712,70 @@ export function buildMediationReviewPresentation(params: {
     strengthParagraphs.length > 0 ? strengthParagraphs : executiveParagraphs,
     2,
   );
+  const negotiationTensionParagraphs = buildNegotiationTensionParagraphs(negotiationAnalysis);
+  const negotiationPriorityParagraphs = buildNegotiationPriorityParagraphs(negotiationAnalysis);
   const concernPreviews = previewParagraphs(
-    riskParagraphs.length > 0 ? riskParagraphs : decisionReadinessParagraphs.concat(missing),
+    riskParagraphs.length > 0 ? riskParagraphs : decisionReadinessParagraphs.concat(negotiationTensionParagraphs).concat(missing),
     2,
   );
   const tradeoffPreviews = previewParagraphs(
-    tensionsParagraphs.concat(leverageParagraphs).concat(dealStructureParagraphs),
+    tensionsParagraphs.concat(negotiationTensionParagraphs).concat(leverageParagraphs).concat(dealStructureParagraphs),
     2,
   );
   const tensionSourceParagraphs = tensionsParagraphs.length > 0
     ? tensionsParagraphs
-    : prioritiesParagraphs.filter((paragraph) => /\b(tension|trade[- ]?off|balance|versus|vs)\b/i.test(paragraph));
+    : prioritiesParagraphs
+        .concat(negotiationTensionParagraphs)
+        .filter((paragraph) => /\b(tension|trade[- ]?off|balance|versus|vs|incompatible)\b/i.test(paragraph));
   const tensionPreviews = previewParagraphs(
     tensionSourceParagraphs.length > 0 ? tensionSourceParagraphs : leverageParagraphs.concat(dealStructureParagraphs),
     2,
   );
+  const bridgeabilityPreviews = previewParagraphs(negotiationAnalysis?.bridgeability_notes || [], 2);
   const priorityPreviews = previewParagraphs(
-    prioritiesParagraphs.length > 0 ? prioritiesParagraphs : leverageParagraphs,
+    prioritiesParagraphs.length > 0
+      ? prioritiesParagraphs
+      : negotiationPriorityParagraphs.length > 0
+        ? negotiationPriorityParagraphs
+        : leverageParagraphs,
     2,
   );
-  const implicationPreviews = previewParagraphs(leverageParagraphs.concat(dealStructureParagraphs), 2);
+  const implicationPreviews = previewParagraphs(
+    leverageParagraphs.concat(dealStructureParagraphs).concat(bridgeabilityPreviews),
+    2,
+  );
   const recommendationParagraphs = buildRecommendationParagraphs({
     decisionStatusLabel: decisionStatus.label,
     decisionExplanation: normalizeText(decisionStatus.explanation),
-    agreementParagraphs,
-    recommendationParagraphs: recommendedPathParagraphs,
+    agreementParagraphs: agreementParagraphs.concat(bridgeabilityPreviews),
+    recommendationParagraphs: recommendedPathParagraphs.concat(bridgeabilityPreviews),
   });
   const executivePreview = previewParagraphs(executiveParagraphs, 1, 180)[0] || '';
   const riskPreview = previewParagraphs(riskParagraphs, 1, 180)[0] || '';
   const strategicPreview = previewParagraphs(
-    tensionsParagraphs.concat(prioritiesParagraphs).concat(leverageParagraphs).concat(dealStructureParagraphs),
+    tensionsParagraphs
+      .concat(negotiationTensionParagraphs)
+      .concat(prioritiesParagraphs)
+      .concat(negotiationPriorityParagraphs)
+      .concat(leverageParagraphs)
+      .concat(dealStructureParagraphs),
     1,
     180,
   )[0] || '';
+  const compatibilityInsight = buildNegotiationCompatibilityInsight(negotiationAnalysis, archetype);
 
   const primaryInsight =
     archetype === 'risk_dominant'
-      ? riskPreview || `The current proposal concentrates material risk around ${concernThemes}, which blocks a confident commitment.`
+      ? compatibilityInsight || riskPreview || `The current proposal concentrates material risk around ${concernThemes}, which blocks a confident commitment.`
       : archetype === 'gap_analysis'
-        ? executivePreview || `The main constraint is incomplete detail around ${concernThemes}, rather than a clearly workable final structure.`
+        ? compatibilityInsight || executivePreview || `The main constraint is incomplete detail around ${concernThemes}, rather than a clearly workable final structure.`
         : archetype === 'strong_alignment'
-          ? missing.length > 0
+          ? compatibilityInsight || (missing.length > 0
             ? `The proposal is broadly well-structured, with only limited gaps around ${concernThemes}.`
-            : `The proposal is broadly well-structured and only minor issues remain before final agreement.`
+            : `The proposal is broadly well-structured and only minor issues remain before final agreement.`)
           : archetype === 'strategic_framing'
-            ? executivePreview || strategicPreview || `The proposal is workable in principle, but the outcome depends on how the parties balance ${describeThemes(allThemeIds, 'the visible deal priorities')}.`
-            : executivePreview || `The proposal shows credible alignment around ${strengthThemes}, but ${concernThemes} still introduces material trade-offs.`;
+            ? compatibilityInsight || executivePreview || strategicPreview || `The proposal is workable in principle, but the outcome depends on how the parties balance ${describeThemes(allThemeIds, 'the visible deal priorities')}.`
+            : compatibilityInsight || executivePreview || `The proposal shows credible alignment around ${strengthThemes}, but ${concernThemes} still introduces material trade-offs.`;
 
   const fallbackTradeoffParagraph =
     archetype === 'strategic_framing'
@@ -677,6 +972,7 @@ export function buildStoredV2Evaluation(v2Result: any): Record<string, unknown> 
   const redactions = Array.isArray(data?.redactions)
     ? data.redactions.map((entry: unknown) => normalizeText(entry)).filter(Boolean)
     : [];
+  const negotiationAnalysis = normalizeNegotiationAnalysis(data?.negotiation_analysis);
   const generatedAt = new Date().toISOString();
   const generationModel =
     normalizeText(v2Result?.generation_model) ||
@@ -690,6 +986,7 @@ export function buildStoredV2Evaluation(v2Result: any): Record<string, unknown> 
     why,
     missing,
     redactions,
+    negotiation_analysis: negotiationAnalysis,
   });
   const report = {
     report_format: 'v2' as const,
@@ -698,6 +995,7 @@ export function buildStoredV2Evaluation(v2Result: any): Record<string, unknown> 
     why,
     missing,
     redactions,
+    ...(negotiationAnalysis ? { negotiation_analysis: negotiationAnalysis } : {}),
     generated_at_iso: generatedAt,
     summary: {
       fit_level: normalizedFitLevel,
@@ -1383,6 +1681,9 @@ function buildV2RecipientProjection(params: {
   const why = scrubStringArray(sourceReport.why, markers);
   const missing = scrubStringArray(sourceReport.missing, markers);
   const redactions = scrubStringArray(sourceReport.redactions, markers);
+  const negotiationAnalysis = toRecipientSafeNegotiationAnalysis(normalizeNegotiationAnalysis(
+    redactConfidentialStrings(sourceReport.negotiation_analysis, markers),
+  ));
   const fitLevel = scrubString(
     sourceReport.fit_level,
     markers,
@@ -1394,6 +1695,7 @@ function buildV2RecipientProjection(params: {
     why,
     missing,
     redactions,
+    negotiation_analysis: negotiationAnalysis,
   });
   const projectedPresentationSections = Array.isArray(sourceReport.presentation_sections)
     ? (redactConfidentialStrings(sourceReport.presentation_sections, markers) as unknown[])
@@ -1409,6 +1711,7 @@ function buildV2RecipientProjection(params: {
     why,
     missing,
     redactions,
+    ...(negotiationAnalysis ? { negotiation_analysis: negotiationAnalysis } : {}),
     generated_at_iso: generatedAt,
     summary: {
       fit_level: fitLevel,

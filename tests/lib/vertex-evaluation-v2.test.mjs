@@ -45,6 +45,32 @@ function validPayload(overrides = {}) {
   };
 }
 
+function validNegotiationAnalysis(overrides = {}) {
+  return {
+    proposing_party: {
+      demands: ['Defined phase-one scope', 'Predictable approval path'],
+      priorities: ['Timeline certainty', 'Clear acceptance criteria'],
+      dealbreakers: [{ text: 'Undefined delivery ownership', basis: 'strongly_implied' }],
+      flexibility: ['Optional enhancements can move to a later phase'],
+    },
+    counterparty: {
+      demands: ['Commercial discipline', 'Named sign-off owner'],
+      priorities: ['Budget control', 'Governance clarity'],
+      dealbreakers: [{ text: 'Open-ended liability exposure', basis: 'stated' }],
+      flexibility: ['Staged rollout may be acceptable if reporting stays intact'],
+    },
+    compatibility_assessment: 'compatible_with_adjustments',
+    compatibility_rationale:
+      'The parties appear compatible with adjustments if approval ownership and commercial guardrails are clarified.',
+    bridgeability_notes: [
+      'Clarify approval ownership before final commitment.',
+      'Tie any expansion to milestone-based pricing and acceptance thresholds.',
+    ],
+    critical_incompatibilities: ['Approval ownership is still contested.'],
+    ...overrides,
+  };
+}
+
 // Full-coverage fact sheet (all source_coverage flags true).
 // Pass A is expected to produce something in this shape for well-specified proposals.
 function validFactSheetPayload(overrides = {}) {
@@ -111,6 +137,20 @@ test('validateResponseSchema accepts strict small schema and rejects missing key
   const good = validateResponseSchema(validPayload());
   assert.equal(good.ok, true);
 
+  const withNegotiation = validateResponseSchema(
+    validPayload({
+      negotiation_analysis: validNegotiationAnalysis(),
+    }),
+  );
+  assert.equal(withNegotiation.ok, true);
+  if (withNegotiation.ok) {
+    assert.equal(withNegotiation.normalized.negotiation_analysis?.compatibility_assessment, 'compatible_with_adjustments');
+    assert.equal(
+      withNegotiation.normalized.negotiation_analysis?.counterparty.dealbreakers[0]?.basis,
+      'stated',
+    );
+  }
+
   const missing = validateResponseSchema({
     fit_level: 'medium',
     confidence_0_1: 0.6,
@@ -120,6 +160,63 @@ test('validateResponseSchema accepts strict small schema and rejects missing key
   assert.equal(missing.ok, false);
   assert.equal(Array.isArray(missing.missingKeys), true);
   assert.equal(missing.missingKeys.includes('redactions'), true);
+});
+
+test('validateResponseSchema preserves a clear hardline incompatibility when supported by concrete blocking evidence', () => {
+  const result = validateResponseSchema(
+    validPayload({
+      negotiation_analysis: validNegotiationAnalysis({
+        compatibility_assessment: 'fundamentally_incompatible',
+        compatibility_rationale:
+          'The parties appear fundamentally incompatible because each side is treating liability allocation as non-negotiable.',
+        critical_incompatibilities: ['Each side requires the other to absorb open-ended liability exposure.'],
+      }),
+    }),
+  );
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.normalized.negotiation_analysis?.compatibility_assessment, 'fundamentally_incompatible');
+  assert.equal(
+    result.normalized.negotiation_analysis?.critical_incompatibilities[0],
+    'Each side requires the other to absorb open-ended liability exposure.',
+  );
+});
+
+test('validateResponseSchema downgrades unsupported hard-incompatibility claims to missing-information uncertainty', () => {
+  const result = validateResponseSchema(
+    validPayload({
+      negotiation_analysis: {
+        proposing_party: {
+          demands: ['Clarify launch sequencing'],
+          priorities: ['Timeline certainty'],
+          dealbreakers: [{ text: 'Timeline certainty', basis: 'not_clearly_established' }],
+          flexibility: ['Milestone packaging may be adjustable'],
+        },
+        counterparty: {
+          demands: ['Clarify governance ownership'],
+          priorities: ['Governance clarity'],
+          dealbreakers: [{ text: 'Governance clarity', basis: 'not_clearly_established' }],
+          flexibility: ['Reporting cadence may be adjustable'],
+        },
+        compatibility_assessment: 'fundamentally_incompatible',
+        compatibility_rationale: 'The parties are fundamentally incompatible.',
+        bridgeability_notes: ['Clarify sequencing and governance ownership.'],
+        critical_incompatibilities: [],
+      },
+    }),
+  );
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(
+    result.normalized.negotiation_analysis?.compatibility_assessment,
+    'uncertain_due_to_missing_information',
+  );
+  assert.match(
+    result.normalized.negotiation_analysis?.compatibility_rationale || '',
+    /not yet clear|requires clarification/i,
+  );
 });
 
 // ─── Core evaluation flow (updated for 2-pass) ───────────────────────────────
@@ -185,6 +282,64 @@ test('v2 parses fenced JSON and preamble text', async () => {
     assert.equal(outcome.ok, true);
     if (!outcome.ok) return;
     assert.equal(outcome.data.fit_level, 'medium');
+  } finally {
+    cleanup();
+  }
+});
+
+test('v2 preserves optional negotiation analysis metadata', async () => {
+  const cleanup = setVertexV2MockSequence([
+    { response: factSheetResponse() },
+    {
+      response: {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(
+          validPayload({
+            negotiation_analysis: validNegotiationAnalysis({
+              compatibility_assessment: 'uncertain_due_to_missing_information',
+              proposing_party: {
+                demands: ['Named scope boundary'],
+                priorities: ['Timeline certainty'],
+                dealbreakers: [{ text: 'Scope drift', basis: 'strongly_implied' }],
+                flexibility: ['Payment sequencing may be adjustable'],
+              },
+            }),
+          }),
+        ),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+  ]);
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Shared proposal covers scope, timing, and phased commercial terms.',
+      confidentialText: 'Internal notes emphasise scope control and sequencing flexibility.',
+      requestId: 'req-negotiation-analysis-1',
+    });
+    assert.equal(outcome.ok, true);
+    if (!outcome.ok) return;
+    assert.equal(
+      outcome.data.negotiation_analysis?.compatibility_assessment,
+      'uncertain_due_to_missing_information',
+    );
+    assert.equal(
+      outcome.data.negotiation_analysis?.proposing_party.dealbreakers[0]?.basis,
+      'strongly_implied',
+    );
+    assert.deepEqual(
+      outcome.data.negotiation_analysis?.bridgeability_notes,
+      validNegotiationAnalysis({
+        compatibility_assessment: 'uncertain_due_to_missing_information',
+        proposing_party: {
+          demands: ['Named scope boundary'],
+          priorities: ['Timeline certainty'],
+          dealbreakers: [{ text: 'Scope drift', basis: 'strongly_implied' }],
+          flexibility: ['Payment sequencing may be adjustable'],
+        },
+      }).bridgeability_notes,
+    );
   } finally {
     cleanup();
   }
@@ -501,6 +656,47 @@ test('v2 detects planted confidential token leak: ok:true suppressed, canary abs
     assert.equal(outcome._internal?.failure_kind, 'confidential_leak_detected');
     // Canary must never appear in the output
     assert.equal(JSON.stringify(outcome.data).includes(planted), false);
+  } finally {
+    cleanup();
+  }
+});
+
+test('v2 leak guard scans negotiation analysis metadata as well as why/missing/redactions', async () => {
+  const planted = 'CONFIDENTIAL_BRIDGE_NOTE_99887';
+  const cleanup = setVertexV2MockSequence([
+    { response: factSheetResponse() },
+    {
+      response: {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(
+          validPayload({
+            negotiation_analysis: validNegotiationAnalysis({
+              compatibility_rationale: `The path to agreement depends on ${planted}.`,
+            }),
+          }),
+        ),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+  ]);
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Shared draft outlines scope, pricing posture, and milestone timing.',
+      confidentialText: `Private negotiation note ${planted} must never leak.`,
+      requestId: 'req-leak-negotiation-analysis-1',
+      enforceLeakGuard: true,
+    });
+    assert.equal(outcome.ok, true);
+    if (!outcome.ok) return;
+    assert.equal(outcome.data.fit_level, 'unknown');
+    assert.equal(outcome.data.confidence_0_1, 0);
+    assert.equal(JSON.stringify(outcome.data).includes(planted), false);
+    assert.ok(
+      (outcome._internal?.warnings || []).includes('confidential_leak_detected_output_suppressed'),
+      'new negotiation analysis fields must not bypass the leak guard',
+    );
   } finally {
     cleanup();
   }
@@ -2668,6 +2864,26 @@ test('memo-prose: Pass B prompt contains bilateral negotiator guardrails instead
     assert.ok(
       passBPrompt.includes('Possible concessions:'),
       'Pass B prompt must require a Possible concessions paragraph',
+    );
+    assert.ok(
+      passBPrompt.includes('possible dealbreakers') || passBPrompt.includes('likely non-negotiables'),
+      'Pass B prompt must explicitly address dealbreakers / non-negotiables',
+    );
+    assert.ok(
+      passBPrompt.includes('"stated", "strongly implied", or "not clearly established"'),
+      'Pass B prompt must require explicit dealbreaker support labels',
+    );
+    assert.ok(
+      passBPrompt.includes('compatible with adjustments') && passBPrompt.includes('fundamentally incompatible'),
+      'Pass B prompt must define the compatibility assessment states',
+    );
+    assert.ok(
+      passBPrompt.includes('bridgeability'),
+      'Pass B prompt must explicitly require bridgeability analysis',
+    );
+    assert.ok(
+      passBPrompt.includes('negotiation_analysis'),
+      'Pass B prompt must expose the optional structured negotiation_analysis schema',
     );
 
     // Explicit anti-coaching language
