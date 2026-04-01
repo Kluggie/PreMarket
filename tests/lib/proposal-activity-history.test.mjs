@@ -61,6 +61,9 @@ test('shared-report scoped activity history excludes sibling-recipient sent/send
         eventType: 'proposal.sent',
         actorRole: 'party_a',
         createdAt: '2026-03-25T10:00:00.000Z',
+        eventData: {
+          recipient_email: 'a@example.com',
+        },
         versionSnapshot: {
           sharedLinks: [{ id: 'share_a', token: 'token_a', recipientEmail: 'a@example.com' }],
         },
@@ -70,6 +73,9 @@ test('shared-report scoped activity history excludes sibling-recipient sent/send
         eventType: 'proposal.sent',
         actorRole: 'party_a',
         createdAt: '2026-03-25T10:01:00.000Z',
+        eventData: {
+          recipient_email: 'b@example.com',
+        },
         versionSnapshot: {
           sharedLinks: [{ id: 'share_b', token: 'token_b', recipientEmail: 'b@example.com' }],
         },
@@ -122,4 +128,234 @@ test('shared-report scoped activity history excludes sibling-recipient sent/send
     scopedHistory.some((entry) => entry.event_type === 'proposal.created'),
     true,
   );
+});
+
+test('shared-report thread scoping ignores broad snapshot sharedLinks and keys off thread-specific recipient scope', () => {
+  const sharedLinksSnapshot = [
+    { id: 'share_a', token: 'token_a', recipientEmail: 'a@example.com' },
+    { id: 'share_b', token: 'token_b', recipientEmail: 'b@example.com' },
+    { id: 'share_c', token: 'token_c', recipientEmail: 'c@example.com' },
+  ];
+
+  const scopedHistory = buildSharedReportScopedActivityHistory(
+    [
+      {
+        id: 'evt_send_a',
+        eventType: 'proposal.sent',
+        actorRole: 'party_a',
+        createdAt: '2026-03-20T23:04:06.000Z',
+        eventData: {
+          recipient_email: 'a@example.com',
+        },
+        versionSnapshot: {
+          proposal: {
+            partyBEmail: 'a@example.com',
+            documentComparisonId: 'comparison_1',
+          },
+          // Broad shared-links snapshot (contains sibling recipients too).
+          sharedLinks: sharedLinksSnapshot,
+        },
+      },
+      {
+        id: 'evt_send_b',
+        eventType: 'proposal.sent',
+        actorRole: 'party_a',
+        createdAt: '2026-03-20T23:04:23.000Z',
+        eventData: {
+          recipient_email: 'b@example.com',
+        },
+        versionSnapshot: {
+          proposal: {
+            partyBEmail: 'b@example.com',
+            documentComparisonId: 'comparison_1',
+          },
+          sharedLinks: sharedLinksSnapshot,
+        },
+      },
+      {
+        id: 'evt_send_c',
+        eventType: 'proposal.sent',
+        actorRole: 'party_a',
+        createdAt: '2026-03-21T00:02:30.000Z',
+        eventData: {
+          recipient_email: 'c@example.com',
+        },
+        versionSnapshot: {
+          proposal: {
+            partyBEmail: 'c@example.com',
+            documentComparisonId: 'comparison_1',
+          },
+          sharedLinks: sharedLinksSnapshot,
+        },
+      },
+    ],
+    {
+      accessMode: 'recipient',
+      limit: 10,
+      scope: {
+        lineageLinkIds: ['share_a'],
+        lineageLinkTokens: ['token_a'],
+        lineageRecipientEmails: ['a@example.com'],
+        lineageComparisonIds: ['comparison_1'],
+      },
+    },
+  );
+
+  const sentEvents = scopedHistory.filter((entry) => entry.event_type === 'proposal.sent');
+  assert.equal(sentEvents.length, 1);
+  assert.equal(sentEvents[0]?.created_date || null, '2026-03-20T23:04:06.000Z');
+});
+
+test('shared-report sent-event scoping ignores broad snapshot recipient revisions/evaluations for sibling isolation', () => {
+  const scopedHistory = buildSharedReportScopedActivityHistory(
+    [
+      {
+        id: 'evt_send_a',
+        eventType: 'proposal.sent',
+        actorRole: 'party_a',
+        createdAt: '2026-03-20T23:04:06.000Z',
+        eventData: {
+          recipient_email: 'a@example.com',
+        },
+        versionSnapshot: {
+          proposal: {
+            partyBEmail: 'a@example.com',
+          },
+          recipientRevisions: [
+            { id: 'rev_a', sharedLinkId: 'share_a' },
+            { id: 'rev_b', sharedLinkId: 'share_b' },
+          ],
+          evaluations: [
+            { id: 'eval_a', sharedLinkId: 'share_a', revisionId: 'rev_a' },
+            { id: 'eval_b', sharedLinkId: 'share_b', revisionId: 'rev_b' },
+          ],
+        },
+      },
+      {
+        id: 'evt_send_b',
+        eventType: 'proposal.sent',
+        actorRole: 'party_a',
+        createdAt: '2026-03-20T23:04:23.000Z',
+        eventData: {
+          recipient_email: 'b@example.com',
+        },
+        versionSnapshot: {
+          proposal: {
+            partyBEmail: 'b@example.com',
+          },
+          recipientRevisions: [
+            { id: 'rev_a', sharedLinkId: 'share_a' },
+            { id: 'rev_b', sharedLinkId: 'share_b' },
+          ],
+          evaluations: [
+            { id: 'eval_a', sharedLinkId: 'share_a', revisionId: 'rev_a' },
+            { id: 'eval_b', sharedLinkId: 'share_b', revisionId: 'rev_b' },
+          ],
+        },
+      },
+    ],
+    {
+      accessMode: 'recipient',
+      limit: 10,
+      scope: {
+        lineageLinkIds: ['share_a'],
+        lineageRecipientEmails: ['a@example.com'],
+        lineageRevisionIds: ['rev_a'],
+        lineageEvaluationRunIds: ['eval_a'],
+      },
+    },
+  );
+
+  const sentEvents = scopedHistory.filter((entry) => entry.event_type === 'proposal.sent');
+  assert.equal(sentEvents.length, 1);
+  assert.equal(sentEvents[0]?.created_date || null, '2026-03-20T23:04:06.000Z');
+});
+
+test('shared-report sent-event fallback keeps only one recipient-scoped event when multiple weak matches exist', () => {
+  const scopedHistory = buildSharedReportScopedActivityHistory(
+    [
+      {
+        id: 'evt_sent_old',
+        eventType: 'proposal.sent',
+        actorRole: 'party_a',
+        createdAt: '2026-03-20T10:00:00.000Z',
+        eventData: {
+          recipient_email: 'a@example.com',
+        },
+        versionSnapshot: {
+          proposal: {
+            partyBEmail: 'a@example.com',
+          },
+        },
+      },
+      {
+        id: 'evt_sent_new',
+        eventType: 'proposal.sent',
+        actorRole: 'party_a',
+        createdAt: '2026-03-20T10:05:00.000Z',
+        eventData: {
+          recipient_email: 'a@example.com',
+        },
+        versionSnapshot: {
+          proposal: {
+            partyBEmail: 'a@example.com',
+          },
+        },
+      },
+    ],
+    {
+      accessMode: 'recipient',
+      limit: 10,
+      scope: {
+        lineageRecipientEmails: ['a@example.com'],
+      },
+    },
+  );
+
+  const sentEvents = scopedHistory.filter((entry) => entry.event_type === 'proposal.sent');
+  assert.equal(sentEvents.length, 1);
+  assert.equal(sentEvents[0]?.id || null, 'evt_sent_new');
+});
+
+test('shared-report sent-event strong lineage match suppresses weaker recipient-only duplicates', () => {
+  const scopedHistory = buildSharedReportScopedActivityHistory(
+    [
+      {
+        id: 'evt_sent_strong',
+        eventType: 'proposal.sent',
+        actorRole: 'party_a',
+        createdAt: '2026-03-20T10:00:00.000Z',
+        eventData: {
+          shared_link_id: 'share_a',
+          recipient_email: 'a@example.com',
+        },
+      },
+      {
+        id: 'evt_sent_weak',
+        eventType: 'proposal.sent',
+        actorRole: 'party_a',
+        createdAt: '2026-03-20T10:05:00.000Z',
+        eventData: {
+          recipient_email: 'a@example.com',
+        },
+        versionSnapshot: {
+          proposal: {
+            partyBEmail: 'a@example.com',
+          },
+        },
+      },
+    ],
+    {
+      accessMode: 'recipient',
+      limit: 10,
+      scope: {
+        lineageLinkIds: ['share_a'],
+        lineageRecipientEmails: ['a@example.com'],
+      },
+    },
+  );
+
+  const sentEvents = scopedHistory.filter((entry) => entry.event_type === 'proposal.sent');
+  assert.equal(sentEvents.length, 1);
+  assert.equal(sentEvents[0]?.id || null, 'evt_sent_strong');
 });

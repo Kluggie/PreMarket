@@ -229,40 +229,49 @@ const THREAD_SCOPED_EVENT_TYPES = new Set([
   'proposal.send_back',
 ]);
 
-function extractVersionSnapshotScope(snapshotValue) {
+function extractVersionSnapshotScope(snapshotValue, options = {}) {
   const snapshot = toObject(snapshotValue);
   const scope = buildEmptyScopeSets();
+  const includeSharedLinks = options.includeSharedLinks !== false;
+  const includeRecipientRevisions = options.includeRecipientRevisions !== false;
+  const includeEvaluations = options.includeEvaluations !== false;
 
   const proposal = toObject(snapshot.proposal);
   addEmailToSet(scope.recipientEmails, proposal.partyBEmail || proposal.party_b_email);
   addTextToSet(scope.comparisonIds, proposal.documentComparisonId || proposal.document_comparison_id);
 
-  const sharedLinks = toArray(snapshot.sharedLinks || snapshot.shared_links);
-  sharedLinks.forEach((entry) => {
-    const link = toObject(entry);
-    const metadata = toObject(link.reportMetadata || link.report_metadata);
-    addTextToSet(scope.linkIds, link.id || link.linkId || link.shared_link_id);
-    addTextToSet(scope.linkTokens, link.token || link.share_token);
-    addEmailToSet(scope.recipientEmails, link.recipientEmail || link.recipient_email);
-    addTextToSet(scope.comparisonIds, metadata.comparison_id || metadata.comparisonId);
-  });
+  if (includeSharedLinks) {
+    const sharedLinks = toArray(snapshot.sharedLinks || snapshot.shared_links);
+    sharedLinks.forEach((entry) => {
+      const link = toObject(entry);
+      const metadata = toObject(link.reportMetadata || link.report_metadata);
+      addTextToSet(scope.linkIds, link.id || link.linkId || link.shared_link_id);
+      addTextToSet(scope.linkTokens, link.token || link.share_token);
+      addEmailToSet(scope.recipientEmails, link.recipientEmail || link.recipient_email);
+      addTextToSet(scope.comparisonIds, metadata.comparison_id || metadata.comparisonId);
+    });
+  }
 
-  const recipientRevisions = toArray(snapshot.recipientRevisions || snapshot.recipient_revisions);
-  recipientRevisions.forEach((entry) => {
-    const revision = toObject(entry);
-    addTextToSet(scope.linkIds, revision.sharedLinkId || revision.shared_link_id);
-    addTextToSet(scope.revisionIds, revision.id || revision.revision_id);
-    addTextToSet(scope.comparisonIds, revision.comparisonId || revision.comparison_id);
-  });
+  if (includeRecipientRevisions) {
+    const recipientRevisions = toArray(snapshot.recipientRevisions || snapshot.recipient_revisions);
+    recipientRevisions.forEach((entry) => {
+      const revision = toObject(entry);
+      addTextToSet(scope.linkIds, revision.sharedLinkId || revision.shared_link_id);
+      addTextToSet(scope.revisionIds, revision.id || revision.revision_id);
+      addTextToSet(scope.comparisonIds, revision.comparisonId || revision.comparison_id);
+    });
+  }
 
-  const evaluations = toArray(snapshot.evaluations);
-  evaluations.forEach((entry) => {
-    const evaluation = toObject(entry);
-    addTextToSet(scope.evaluationRunIds, evaluation.evaluationRunId || evaluation.evaluation_run_id);
-    addTextToSet(scope.revisionIds, evaluation.revisionId || evaluation.revision_id);
-    addTextToSet(scope.linkIds, evaluation.sharedLinkId || evaluation.shared_link_id);
-    addTextToSet(scope.comparisonIds, evaluation.comparisonId || evaluation.comparison_id);
-  });
+  if (includeEvaluations) {
+    const evaluations = toArray(snapshot.evaluations);
+    evaluations.forEach((entry) => {
+      const evaluation = toObject(entry);
+      addTextToSet(scope.evaluationRunIds, evaluation.evaluationRunId || evaluation.evaluation_run_id);
+      addTextToSet(scope.revisionIds, evaluation.revisionId || evaluation.revision_id);
+      addTextToSet(scope.linkIds, evaluation.sharedLinkId || evaluation.shared_link_id);
+      addTextToSet(scope.comparisonIds, evaluation.comparisonId || evaluation.comparison_id);
+    });
+  }
 
   const documentComparison = toObject(snapshot.documentComparison || snapshot.document_comparison);
   addTextToSet(scope.comparisonIds, documentComparison.id);
@@ -270,7 +279,7 @@ function extractVersionSnapshotScope(snapshotValue) {
   return scope;
 }
 
-function extractEventRowScope(row) {
+function extractEventRowScope(row, options = {}) {
   const eventData = toObject(row?.eventData || row?.event_data);
   const scope = buildEmptyScopeSets();
   addTextToSet(
@@ -310,6 +319,7 @@ function extractEventRowScope(row) {
 
   const versionSnapshotScope = extractVersionSnapshotScope(
     row?.versionSnapshot || row?.version_snapshot || row?.snapshotData || row?.snapshot_data,
+    options,
   );
   mergeScopeSets(scope, versionSnapshotScope);
 
@@ -337,46 +347,99 @@ function buildSharedReportScope(options = {}) {
   };
 }
 
-function isSharedReportScopedEvent(row, scope) {
-  if (!scope?.hasScope) {
-    return true;
+const STRONG_THREAD_SCOPE_REASONS = new Set([
+  'link_id',
+  'link_token',
+  'revision_id',
+  'evaluation_run_id',
+]);
+
+function buildSnapshotScopeOptions(eventType, isThreadScopedEvent) {
+  const snapshotScopeOptions = {
+    includeSharedLinks: !isThreadScopedEvent,
+    includeRecipientRevisions: true,
+    includeEvaluations: true,
+  };
+
+  if (eventType === 'proposal.sent' || eventType === 'proposal.received') {
+    // For sent/received, snapshot recipient-revision/evaluation arrays can be
+    // proposal-wide and contaminate sibling threads. Prefer eventData +
+    // recipient-level fallback only.
+    snapshotScopeOptions.includeRecipientRevisions = false;
+    snapshotScopeOptions.includeEvaluations = false;
   }
 
+  return snapshotScopeOptions;
+}
+
+function evaluateSharedReportScopedEvent(row, scope) {
   const eventType = asLower(row?.eventType || row?.event_type);
   const isThreadScopedEvent = THREAD_SCOPED_EVENT_TYPES.has(eventType);
-  const eventScope = extractEventRowScope(row);
-  if (setIntersects(eventScope.linkIds, scope.linkIds)) {
-    return true;
-  }
-  if (setIntersects(eventScope.linkTokens, scope.linkTokens)) {
-    return true;
-  }
-  if (setIntersects(eventScope.revisionIds, scope.revisionIds)) {
-    return true;
-  }
-  if (setIntersects(eventScope.evaluationRunIds, scope.evaluationRunIds)) {
-    return true;
-  }
+  const snapshotScopeOptions = buildSnapshotScopeOptions(eventType, isThreadScopedEvent);
+  const eventScope = extractEventRowScope(row, {
+    // proposal_versions.snapshot_data can carry proposal-wide collections.
+    // Thread events should primarily match via eventData and narrow fallback
+    // signals, not broad proposal-level arrays.
+    ...snapshotScopeOptions,
+  });
+  const matches = {
+    link_id: setIntersects(eventScope.linkIds, scope.linkIds),
+    link_token: setIntersects(eventScope.linkTokens, scope.linkTokens),
+    revision_id: setIntersects(eventScope.revisionIds, scope.revisionIds),
+    evaluation_run_id: setIntersects(eventScope.evaluationRunIds, scope.evaluationRunIds),
+    recipient_email: setIntersects(eventScope.recipientEmails, scope.recipientEmails),
+    comparison_id: setIntersects(eventScope.comparisonIds, scope.comparisonIds),
+  };
 
-  if (isThreadScopedEvent) {
+  let included = false;
+  let reason = 'excluded';
+
+  if (!scope?.hasScope) {
+    included = true;
+    reason = 'no_scope';
+  } else if (matches.link_id) {
+    included = true;
+    reason = 'link_id';
+  } else if (matches.link_token) {
+    included = true;
+    reason = 'link_token';
+  } else if (matches.revision_id) {
+    included = true;
+    reason = 'revision_id';
+  } else if (matches.evaluation_run_id) {
+    included = true;
+    reason = 'evaluation_run_id';
+  } else if (isThreadScopedEvent) {
     if (eventScope.recipientEmails.size > 0) {
-      return setIntersects(eventScope.recipientEmails, scope.recipientEmails);
+      included = matches.recipient_email;
+      reason = matches.recipient_email ? 'thread_recipient_email' : 'thread_recipient_miss';
+    } else {
+      included = false;
+      reason = 'thread_no_scoped_signal';
     }
-    // Reject ambiguous thread-scoped events that only carry broad
-    // proposal/comparison scope to prevent sibling-recipient contamination.
-    return false;
+  } else if (matches.comparison_id) {
+    included = true;
+    reason = 'comparison_id';
+  } else if (eventScope.hasScopedSignals) {
+    included = false;
+    reason = 'scoped_signal_miss';
+  } else {
+    included = true;
+    reason = 'global_fallback';
   }
 
-  if (setIntersects(eventScope.comparisonIds, scope.comparisonIds)) {
-    return true;
-  }
-  if (eventScope.hasScopedSignals) {
-    return false;
-  }
+  return {
+    eventType,
+    isThreadScopedEvent,
+    eventScope,
+    matches,
+    included,
+    reason,
+  };
+}
 
-  // Proposal-global milestones (for example "Opportunity Created") do not
-  // carry recipient/link scope and remain visible to preserve context.
-  return true;
+function isSharedReportScopedEvent(row, scope) {
+  return evaluateSharedReportScopedEvent(row, scope).included;
 }
 
 export function buildProposalActivityHistory(rows, options = {}) {
@@ -411,12 +474,94 @@ export function buildProposalActivityHistory(rows, options = {}) {
 
 export function buildSharedReportScopedActivityHistory(rows, options = {}) {
   const scope = buildSharedReportScope(options.scope || {});
-  const scopedRows = (Array.isArray(rows) ? rows : []).filter((row) =>
-    isSharedReportScopedEvent(row, scope),
+  const list = Array.isArray(rows) ? rows : [];
+  let scopedRowsWithMeta = list
+    .map((row) => ({
+      row,
+      scopeResult: evaluateSharedReportScopedEvent(row, scope),
+    }))
+    .filter((entry) => entry.scopeResult.included);
+
+  const fallbackSentRows = scopedRowsWithMeta.filter(
+    (entry) =>
+      entry.scopeResult.eventType === 'proposal.sent' &&
+      entry.scopeResult.reason === 'thread_recipient_email',
   );
+  if (fallbackSentRows.length > 0) {
+    const strongSentRows = scopedRowsWithMeta.filter(
+      (entry) =>
+        entry.scopeResult.eventType === 'proposal.sent' &&
+        STRONG_THREAD_SCOPE_REASONS.has(entry.scopeResult.reason),
+    );
+    if (strongSentRows.length > 0) {
+      scopedRowsWithMeta = scopedRowsWithMeta.filter(
+        (entry) =>
+          !(
+            entry.scopeResult.eventType === 'proposal.sent' &&
+            entry.scopeResult.reason === 'thread_recipient_email'
+          ),
+      );
+    } else if (fallbackSentRows.length > 1) {
+      const keptFallback = [...fallbackSentRows].sort((left, right) => {
+        const leftTime =
+          toDateValue(left.row?.createdAt || left.row?.created_at)?.getTime() || 0;
+        const rightTime =
+          toDateValue(right.row?.createdAt || right.row?.created_at)?.getTime() || 0;
+        return rightTime - leftTime;
+      })[0];
+      scopedRowsWithMeta = scopedRowsWithMeta.filter(
+        (entry) =>
+          !(
+            entry.scopeResult.eventType === 'proposal.sent' &&
+            entry.scopeResult.reason === 'thread_recipient_email'
+          ) || entry.row === keptFallback.row,
+      );
+    }
+  }
+  const scopedRows = scopedRowsWithMeta.map((entry) => entry.row);
 
   return buildProposalActivityHistory(scopedRows, {
     accessMode: options.accessMode,
     limit: options.limit,
+  });
+}
+
+export function explainSharedReportScopedRows(rows, options = {}) {
+  const scope = buildSharedReportScope(options.scope || {});
+  const list = Array.isArray(rows) ? rows : [];
+
+  return list.map((row) => {
+    const scopeResult = evaluateSharedReportScopedEvent(row, scope);
+    const eventType = scopeResult.eventType;
+    const eventScope = scopeResult.eventScope;
+    const matches = scopeResult.matches;
+    const included = scopeResult.included;
+    const reason = scopeResult.reason;
+
+    const eventData = toObject(row?.eventData || row?.event_data);
+    return {
+      id: asText(row?.id) || null,
+      event_type: eventType || null,
+      created_at: toDateValue(row?.createdAt || row?.created_at)?.toISOString() || null,
+      included,
+      reason,
+      matches,
+      event_data: {
+        comparison_id: eventData.comparison_id || eventData.comparisonId || null,
+        shared_link_id: eventData.shared_link_id || eventData.sharedLinkId || null,
+        shared_link_token: eventData.shared_link_token || eventData.sharedLinkToken || null,
+        recipient_email: eventData.recipient_email || eventData.recipientEmail || null,
+        revision_id: eventData.revision_id || eventData.revisionId || null,
+        evaluation_run_id: eventData.evaluation_run_id || eventData.evaluationRunId || null,
+      },
+      scope_values: {
+        link_ids: Array.from(eventScope.linkIds),
+        link_tokens: Array.from(eventScope.linkTokens),
+        recipient_emails: Array.from(eventScope.recipientEmails),
+        revision_ids: Array.from(eventScope.revisionIds),
+        evaluation_run_ids: Array.from(eventScope.evaluationRunIds),
+        comparison_ids: Array.from(eventScope.comparisonIds),
+      },
+    };
   });
 }
