@@ -516,6 +516,10 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         createdAt: now,
         requestId: context.requestId,
         eventData: {
+          shared_link_id: resolved.link.id,
+          shared_link_token: resolved.link.token,
+          comparison_id: comparisonId || null,
+          recipient_email: normalizeEmail(resolved.link.recipientEmail),
           revision_id: sentRevision?.id || currentDraft.id,
           evaluation_run_id: latestEvaluation?.id || null,
         },

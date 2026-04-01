@@ -14,6 +14,7 @@ import sharedReportRecipientEvaluateHandler from '../../server/routes/shared-rep
 import sharedReportRecipientSendBackHandler from '../../server/routes/shared-report/[token]/send-back.ts';
 import sharedReportVerifyStartHandler from '../../server/routes/shared-report/[token]/verify/start.ts';
 import sharedReportVerifyConfirmHandler from '../../server/routes/shared-report/[token]/verify/confirm.ts';
+import { appendProposalHistory } from '../../server/_lib/proposal-history.js';
 import { buildSharedReportTurnCopy } from '../../src/lib/sharedReportSendDirection.js';
 import { ensureTestEnv, makeSessionCookie } from '../helpers/auth.mjs';
 import { ensureMigrated, getDb, hasDatabaseUrl, resetTables } from '../helpers/db.mjs';
@@ -223,6 +224,42 @@ async function listProposals(cookie, query = {}) {
 async function setSharedLinkFields(token, patchSql) {
   const db = getDb();
   await db.execute(sql`update shared_links set ${patchSql}, updated_at = now() where token = ${token}`);
+}
+
+async function getProposalRowById(proposalId) {
+  const db = getDb();
+  const rows = await db.execute(sql`select * from proposals where id = ${proposalId} limit 1`);
+  return rows.rows[0] || null;
+}
+
+async function getSharedLinkRowByToken(token) {
+  const db = getDb();
+  const rows = await db.execute(sql`select * from shared_links where token = ${token} limit 1`);
+  return rows.rows[0] || null;
+}
+
+async function appendSentEventForSharedLink({ proposal, link, ownerUserId, createdAt }) {
+  const db = getDb();
+  const reportMetadata =
+    link?.report_metadata && typeof link.report_metadata === 'object' && !Array.isArray(link.report_metadata)
+      ? link.report_metadata
+      : {};
+  await appendProposalHistory(db, {
+    proposal,
+    actorUserId: ownerUserId,
+    actorRole: 'party_a',
+    milestone: 'send',
+    eventType: 'proposal.sent',
+    sharedLinks: [link],
+    createdAt,
+    eventData: {
+      source: 'shared_report_email',
+      recipient_email: String(link?.recipient_email || ''),
+      shared_link_id: String(link?.id || ''),
+      shared_link_token: String(link?.token || ''),
+      comparison_id: String(reportMetadata?.comparison_id || ''),
+    },
+  });
 }
 
 if (!hasDatabaseUrl()) {
@@ -1236,12 +1273,18 @@ if (!hasDatabaseUrl()) {
     assert.notEqual(round3Token, '');
 
     const db = getDb();
-    const sentEventId = `evt_sent_${Date.now()}`;
+    const round3Link = await getSharedLinkRowByToken(round3Token);
+    assert.ok(round3Link, 'round 3 shared link should exist');
+    const proposal = await getProposalRowById(comparison.proposal_id);
+    assert.ok(proposal, 'proposal row should exist');
+    await appendSentEventForSharedLink({
+      proposal,
+      link: round3Link,
+      ownerUserId: `${ownerSeed}_owner`,
+      createdAt: new Date(Date.now() - 15 * 60 * 1000),
+    });
+
     const internalEventId = `evt_internal_${Date.now()}`;
-    await db.execute(sql`
-      insert into proposal_events (id, proposal_id, actor_role, event_type, created_at)
-      values (${sentEventId}, ${comparison.proposal_id}, 'party_a', 'proposal.sent', now() - interval '15 minute')
-    `);
     await db.execute(sql`
       insert into proposal_events (id, proposal_id, actor_role, event_type, created_at)
       values (${internalEventId}, ${comparison.proposal_id}, 'party_a', 'proposal.internal.audit', now() - interval '14 minute')
@@ -1283,6 +1326,105 @@ if (!hasDatabaseUrl()) {
       }));
 
     assert.deepEqual(simplify(workspaceHistory), simplify(legacyHistory));
+  });
+
+  test('shared-report timeline scopes sent/revised events to the current token lineage and excludes sibling recipients', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const seed = 'timeline_scope_siblings';
+    const ownerCookie = makeOwnerCookie(seed);
+    const ownerUserId = `${seed}_owner`;
+    const recipientA = 'timeline-scope-a@example.com';
+    const recipientB = 'timeline-scope-b@example.com';
+    const recipientC = 'timeline-scope-c@example.com';
+    const recipientACookie = makeRecipientCookie(`${seed}_a`, recipientA);
+    const recipientBCookie = makeRecipientCookie(`${seed}_b`, recipientB);
+
+    const comparison = await createComparison(ownerCookie, {
+      title: 'Timeline sibling isolation',
+      docAText: 'Owner confidential baseline for sibling timeline isolation.',
+      docBText: 'Owner shared baseline for sibling timeline isolation.',
+    });
+
+    const linkABody = await createSharedReportLink(ownerCookie, comparison.id, recipientA, {
+      canEdit: true,
+      canEditConfidential: true,
+      canSendBack: true,
+      maxUses: 30,
+    });
+    const linkBBody = await createSharedReportLink(ownerCookie, comparison.id, recipientB, {
+      canEdit: true,
+      canEditConfidential: true,
+      canSendBack: true,
+      maxUses: 30,
+    });
+    const linkCBody = await createSharedReportLink(ownerCookie, comparison.id, recipientC, {
+      canEdit: true,
+      canEditConfidential: true,
+      canSendBack: true,
+      maxUses: 30,
+    });
+
+    const proposal = await getProposalRowById(comparison.proposal_id);
+    assert.ok(proposal, 'proposal row should exist');
+    const linkA = await getSharedLinkRowByToken(linkABody.token);
+    const linkB = await getSharedLinkRowByToken(linkBBody.token);
+    const linkC = await getSharedLinkRowByToken(linkCBody.token);
+    assert.ok(linkA, 'recipient A link should exist');
+    assert.ok(linkB, 'recipient B link should exist');
+    assert.ok(linkC, 'recipient C link should exist');
+
+    const sentAtA = new Date('2026-03-20T23:04:06.000Z');
+    const sentAtB = new Date('2026-03-20T23:04:23.000Z');
+    const sentAtC = new Date('2026-03-21T00:02:30.000Z');
+    await appendSentEventForSharedLink({ proposal, link: linkA, ownerUserId, createdAt: sentAtA });
+    await appendSentEventForSharedLink({ proposal, link: linkB, ownerUserId, createdAt: sentAtB });
+    await appendSentEventForSharedLink({ proposal, link: linkC, ownerUserId, createdAt: sentAtC });
+
+    const round2SaveA = await saveRecipientDraft(linkABody.token, {
+      shared_payload: { label: 'Shared Information', text: 'Recipient A shared update.' },
+      recipient_confidential_payload: { label: 'Confidential Information', notes: 'Recipient A private note.' },
+      workflow_step: 2,
+    }, recipientACookie);
+    assert.equal(round2SaveA.statusCode, 200);
+    const round2SendA = await sendBackRecipientDraft(linkABody.token, {}, recipientACookie);
+    assert.equal(round2SendA.statusCode, 200);
+
+    const round2SaveB = await saveRecipientDraft(linkBBody.token, {
+      shared_payload: { label: 'Shared Information', text: 'Recipient B shared update.' },
+      recipient_confidential_payload: { label: 'Confidential Information', notes: 'Recipient B private note.' },
+      workflow_step: 2,
+    }, recipientBCookie);
+    assert.equal(round2SaveB.statusCode, 200);
+    const round2SendB = await sendBackRecipientDraft(linkBBody.token, {}, recipientBCookie);
+    assert.equal(round2SendB.statusCode, 200);
+
+    const workspaceARes = await getRecipientWorkspace(linkABody.token, recipientACookie);
+    assert.equal(workspaceARes.statusCode, 200);
+    const workspaceAHistory = Array.isArray(workspaceARes.jsonBody().activity_history)
+      ? workspaceARes.jsonBody().activity_history
+      : [];
+
+    const sentEventsA = workspaceAHistory.filter(
+      (entry) => String(entry?.event_type || '').toLowerCase() === 'proposal.sent',
+    );
+    const sendBackEventsA = workspaceAHistory.filter(
+      (entry) => String(entry?.event_type || '').toLowerCase() === 'proposal.send_back',
+    );
+
+    assert.equal(sentEventsA.length, 1, 'workspace A should only show one in-scope Opportunity Sent');
+    assert.equal(sentEventsA[0]?.created_date || null, sentAtA.toISOString());
+    assert.equal(sendBackEventsA.length, 1, 'workspace A should only show one in-scope Revised Terms Sent');
+    assert.equal(
+      workspaceAHistory.some(
+        (entry) =>
+          String(entry?.event_type || '').toLowerCase() === 'proposal.sent' &&
+          String(entry?.created_date || '') !== sentAtA.toISOString(),
+      ),
+      false,
+      'workspace A should not include sibling recipient sent events',
+    );
   });
 
   test('Prompt2 evaluate public report never leaks proposer/recipient confidential markers', async () => {

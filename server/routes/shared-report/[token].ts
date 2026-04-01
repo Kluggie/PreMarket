@@ -1,10 +1,10 @@
-import { desc, eq } from 'drizzle-orm';
+import { desc, eq, inArray } from 'drizzle-orm';
 import { ok } from '../../_lib/api-response.js';
 import { requireUser } from '../../_lib/auth.js';
 import { logAuditEventBestEffort } from '../../_lib/audit-events.js';
 import { schema } from '../../_lib/db/client.js';
 import { ApiError } from '../../_lib/errors.js';
-import { buildProposalActivityHistory } from '../../_lib/proposal-activity.js';
+import { buildSharedReportScopedActivityHistory } from '../../_lib/proposal-activity.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 import {
   getLinkRecipientAuthorRole,
@@ -69,6 +69,90 @@ function mapConfidentialHistoryEntry(entry: any) {
   };
 }
 
+async function loadSharedReportLinkLineage(db: any, seedLink: any) {
+  const lineage = [];
+  const seen = new Set<string>();
+  let cursor = seedLink || null;
+
+  while (cursor) {
+    const cursorId = asText(cursor?.id);
+    if (!cursorId || seen.has(cursorId)) {
+      break;
+    }
+    lineage.push(cursor);
+    seen.add(cursorId);
+
+    const metadata = toObject(cursor?.reportMetadata);
+    const parentLinkId = asText(metadata.parent_link_id || metadata.parentLinkId);
+    const parentToken = asText(metadata.parent_token || metadata.parentToken);
+
+    let parent = null;
+    if (parentLinkId) {
+      const [row] = await db
+        .select()
+        .from(schema.sharedLinks)
+        .where(eq(schema.sharedLinks.id, parentLinkId))
+        .limit(1);
+      parent = row || null;
+    } else if (parentToken) {
+      const [row] = await db
+        .select()
+        .from(schema.sharedLinks)
+        .where(eq(schema.sharedLinks.token, parentToken))
+        .limit(1);
+      parent = row || null;
+    }
+
+    cursor = parent;
+  }
+
+  return lineage;
+}
+
+function buildLineageScopeFromLinks(links: any[], comparisonId: string) {
+  const lineageLinkIds: string[] = [];
+  const lineageLinkTokens: string[] = [];
+  const lineageRecipientEmails: string[] = [];
+  const lineageComparisonIds: string[] = [];
+  const seenComparisonIds = new Set<string>();
+
+  (Array.isArray(links) ? links : []).forEach((link) => {
+    const linkId = asText(link?.id);
+    if (linkId) {
+      lineageLinkIds.push(linkId);
+    }
+
+    const linkToken = asText(link?.token);
+    if (linkToken) {
+      lineageLinkTokens.push(linkToken);
+    }
+
+    const recipientEmail = asText(link?.recipientEmail || link?.recipient_email).toLowerCase();
+    if (recipientEmail) {
+      lineageRecipientEmails.push(recipientEmail);
+    }
+
+    const metadata = toObject(link?.reportMetadata);
+    const metadataComparisonId = asText(metadata.comparison_id || metadata.comparisonId);
+    if (metadataComparisonId && !seenComparisonIds.has(metadataComparisonId)) {
+      lineageComparisonIds.push(metadataComparisonId);
+      seenComparisonIds.add(metadataComparisonId);
+    }
+  });
+
+  const normalizedComparisonId = asText(comparisonId);
+  if (normalizedComparisonId && !seenComparisonIds.has(normalizedComparisonId)) {
+    lineageComparisonIds.push(normalizedComparisonId);
+  }
+
+  return {
+    lineageLinkIds,
+    lineageLinkTokens,
+    lineageRecipientEmails,
+    lineageComparisonIds,
+  };
+}
+
 export default async function handler(req: any, res: any, tokenParam?: string) {
   await withApiRoute(req, res, SHARED_REPORT_ROUTE, async (context) => {
     ensureMethod(req, ['GET']);
@@ -100,8 +184,19 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       token,
       consumeView: true,
     });
+    const lineageLinks = await loadSharedReportLinkLineage(resolved.db, resolved.link);
+    const comparisonId = asText(resolved.comparison?.id || resolved.proposal?.documentComparisonId);
+    const lineageScope = buildLineageScopeFromLinks(lineageLinks, comparisonId);
 
-    const [currentDraft, latestEvaluation, latestSentRevision, sharedHistory, activityEvents] = await Promise.all([
+    const [
+      currentDraft,
+      latestEvaluation,
+      latestSentRevision,
+      sharedHistory,
+      activityEvents,
+      lineageRevisionRows,
+      lineageEvaluationRows,
+    ] = await Promise.all([
       getCurrentRecipientDraft(resolved.db, resolved.link.id),
       getLatestRecipientEvaluationRun(resolved.db, resolved.link.id),
       getLatestRecipientSentRevision(resolved.db, resolved.link.id),
@@ -117,11 +212,29 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
               eventType: schema.proposalEvents.eventType,
               actorRole: schema.proposalEvents.actorRole,
               createdAt: schema.proposalEvents.createdAt,
+              eventData: schema.proposalEvents.eventData,
+              versionSnapshot: schema.proposalVersions.snapshotData,
             })
             .from(schema.proposalEvents)
+            .leftJoin(
+              schema.proposalVersions,
+              eq(schema.proposalVersions.id, schema.proposalEvents.proposalVersionId),
+            )
             .where(eq(schema.proposalEvents.proposalId, resolved.proposal.id))
             .orderBy(desc(schema.proposalEvents.createdAt))
-            .limit(50)
+            .limit(100)
+        : Promise.resolve([]),
+      lineageScope.lineageLinkIds.length > 0
+        ? resolved.db
+            .select({ id: schema.sharedReportRecipientRevisions.id })
+            .from(schema.sharedReportRecipientRevisions)
+            .where(inArray(schema.sharedReportRecipientRevisions.sharedLinkId, lineageScope.lineageLinkIds))
+        : Promise.resolve([]),
+      lineageScope.lineageLinkIds.length > 0
+        ? resolved.db
+            .select({ id: schema.sharedReportEvaluationRuns.id })
+            .from(schema.sharedReportEvaluationRuns)
+            .where(inArray(schema.sharedReportEvaluationRuns.sharedLinkId, lineageScope.lineageLinkIds))
         : Promise.resolve([]),
     ]);
     const currentUserId = asText(currentUser?.id || currentUser?.sub);
@@ -134,9 +247,19 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         : currentUser
           ? 'recipient'
           : 'token';
-    const activityHistory = buildProposalActivityHistory(activityEvents, {
+    const activityHistory = buildSharedReportScopedActivityHistory(activityEvents, {
       accessMode: activityAccessMode,
       limit: 8,
+      scope: {
+        ...lineageScope,
+        comparisonId,
+        lineageRevisionIds: (Array.isArray(lineageRevisionRows) ? lineageRevisionRows : []).map((row) =>
+          asText(row?.id),
+        ),
+        lineageEvaluationRunIds: (Array.isArray(lineageEvaluationRows) ? lineageEvaluationRows : []).map((row) =>
+          asText(row?.id),
+        ),
+      },
     });
     const currentLinkRound = resolveSharedReportLinkRound(resolved.link.reportMetadata);
     const draftAuthorRole = getLinkRecipientAuthorRole({

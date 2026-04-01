@@ -813,6 +813,9 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       createdAt: proposalSentAt,
       requestId: context.requestId,
       eventData: {
+        shared_link_id: targetLink.id,
+        shared_link_token: targetLink.token,
+        comparison_id: targetComparisonId || null,
         recipient_email: recipientEmail,
         source: 'shared_report_email',
         forked_from_proposal_id: needsFork ? proposal.id : undefined,
