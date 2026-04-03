@@ -357,9 +357,6 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       },
     });
 
-    if (!isAuthenticated) {
-      shareView.invited_email = null;
-    }
     if (!canViewAuthorizationDetails) {
       shareView.authorization = {
         ...(shareView.authorization || {}),

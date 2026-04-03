@@ -288,8 +288,11 @@ if (!hasDatabaseUrl()) {
     assert.equal(activeRead.statusCode, 200);
     const activeBody = activeRead.jsonBody();
     assert.equal(activeBody.ok, true);
+    assert.equal(String(activeBody.share.invited_email || ''), 'recipient@example.com');
     assert.equal(activeBody.share.permissions.can_edit_shared, true);
     assert.equal(activeBody.share.permissions.can_edit_confidential, true);
+    assert.equal(activeBody.share.authorization.authorized_email, null);
+    assert.equal(activeBody.share.authorization.authorized_at, null);
     assert.equal(String(activeBody.defaults.shared_payload.text || '').includes('Shared details visible'), true);
 
     const serialized = JSON.stringify(activeBody);
