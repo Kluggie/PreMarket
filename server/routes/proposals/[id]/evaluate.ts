@@ -1,4 +1,4 @@
-import { and, asc, eq, ilike, or } from 'drizzle-orm';
+import { and, asc, desc, eq, ilike, or } from 'drizzle-orm';
 import { ok } from '../../../_lib/api-response.js';
 import { requireUser } from '../../../_lib/auth.js';
 import { getDb, schema } from '../../../_lib/db/client.js';
@@ -21,6 +21,11 @@ import {
   evaluateProposalWithVertex,
 } from '../../../_lib/vertex-evaluation.js';
 import { evaluateWithVertexV2 } from '../../../_lib/vertex-evaluation-v2.js';
+import {
+  buildMediationRoundContext,
+  extractMediationReport,
+  type MediationRoundContext,
+} from '../../../_lib/mediation-progress.js';
 import { selectRelevantDocuments } from '../../../_lib/user-documents-context.js';
 import { assertStarterAiEvaluationAllowed } from '../../../_lib/starter-entitlements.js';
 import { buildStoredV2Evaluation } from '../../document-comparisons/_helpers.js';
@@ -253,8 +258,51 @@ function buildProposalResultFromEvaluation(proposal: any, evaluation: any, extra
   };
 }
 
-function convertV2ResponseToEvaluation(v2Result: any): Record<string, unknown> {
-  return buildStoredV2Evaluation(v2Result);
+function convertV2ResponseToEvaluation(
+  v2Result: any,
+  options: {
+    mediationRoundContext?: MediationRoundContext;
+  } = {},
+): Record<string, unknown> {
+  return buildStoredV2Evaluation(v2Result, options);
+}
+
+async function loadPriorBilateralRoundContext(params: {
+  db: any;
+  proposalId: string;
+  userId: string;
+}) {
+  const rows = await params.db
+    .select({
+      id: schema.proposalEvaluations.id,
+      result: schema.proposalEvaluations.result,
+    })
+    .from(schema.proposalEvaluations)
+    .where(
+      and(
+        eq(schema.proposalEvaluations.proposalId, params.proposalId),
+        eq(schema.proposalEvaluations.userId, params.userId),
+        eq(schema.proposalEvaluations.status, 'completed'),
+        or(
+          eq(schema.proposalEvaluations.source, 'document_comparison_mediation'),
+          eq(schema.proposalEvaluations.source, 'shared_report_mediation'),
+        ),
+      ),
+    )
+    .orderBy(desc(schema.proposalEvaluations.createdAt));
+
+  const priorRows = rows
+    .map((row: any) => ({
+      id: asText(row?.id),
+      report: extractMediationReport(row?.result),
+    }))
+    .filter((row) => row.id && row.report);
+
+  return buildMediationRoundContext({
+    bilateralRoundNumber: priorRows.length + 1,
+    priorBilateralRoundId: priorRows[0]?.id || null,
+    priorReport: priorRows[0]?.report || null,
+  });
 }
 
 function buildStageFallbackV2Data(analysisStage: string, reason: 'unexpected_error' | 'unavailable') {
@@ -588,6 +636,13 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         const analysisStage = hasRecipientContributions
           ? MEDIATION_REVIEW_STAGE
           : PRE_SEND_REVIEW_STAGE;
+        const mediationRoundContext = analysisStage === MEDIATION_REVIEW_STAGE
+          ? await loadPriorBilateralRoundContext({
+              db,
+              proposalId: proposal.id,
+              userId: proposal.userId,
+            })
+          : null;
         evaluationSource = getComparisonEvaluationSource(analysisStage);
         const comparisonSharedText = attributedSharedEntries.length > 0
           ? formatContributionsForAi(attributedSharedEntries)
@@ -620,6 +675,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
               analysisStage,
               requestId,
               enforceLeakGuard: false,
+              ...(mediationRoundContext ? { mediationRoundContext } : {}),
             });
           } catch {
             v2Result = {
@@ -650,7 +706,9 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
               },
             };
           }
-          comparisonEvaluation = convertV2ResponseToEvaluation(v2Result);
+          comparisonEvaluation = convertV2ResponseToEvaluation(v2Result, {
+            ...(mediationRoundContext ? { mediationRoundContext } : {}),
+          });
         } else {
           comparisonEvaluation = await evaluateDocumentComparisonWithVertex(
             {

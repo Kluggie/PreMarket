@@ -634,6 +634,201 @@ test('buildStoredV2Evaluation: preserves substantive evaluation fields while add
   assert.equal(stored.report.presentation_sections.length > 0, true);
 });
 
+test('buildStoredV2Evaluation: later bilateral rounds stay mediation_review while adding progress-aware metadata', () => {
+  const stored = buildStoredV2Evaluation(
+    {
+      generation_model: 'gemini-test',
+      model: 'gemini-provider-test',
+      data: {
+        analysis_stage: 'mediation_review',
+        fit_level: 'medium',
+        confidence_0_1: 0.66,
+        why: [
+          'Executive Summary: The negotiation is closer to agreement now that implementation sequencing is largely aligned.',
+          'Decision Assessment: Risk Summary: Commercial acceptance criteria and final approval ownership still need tightening.\n\nKey Strengths: The parties now appear aligned on sequencing and rollout structure.',
+          'Negotiation Insights: Likely priorities: both sides appear focused on commercial certainty and accountable sign-off.\n\nPossible concessions: optional reporting detail may be deferred.\n\nStructural tensions: the main tension is commercial acceptance criteria versus launch speed.',
+          'Leverage Signals: Leverage signal: both sides have reasons to keep momentum because implementation structure is no longer the main blocker.',
+          'Potential Deal Structures: Option A — lock acceptance criteria now and keep the phased rollout.\n\nOption B — use a milestone gate for final approval ownership.\n\nOption C — defer lower-priority reporting obligations until after launch.',
+          'Decision Readiness: Decision status: Proceed with conditions. Commercial acceptance criteria still need final agreement.\n\nWhat must be agreed now vs later: lock acceptance criteria and final approval ownership now.\n\nWhat would change the verdict: a bounded sign-off path would raise confidence.',
+          'Recommended Path: Recommended path: use the next round to close the remaining commercial deltas.',
+        ],
+        missing: [
+          'What commercial acceptance criteria trigger final sign-off? — determines whether execution can move without reopening price or scope.',
+        ],
+        redactions: [],
+        delta_summary:
+          'Since the prior bilateral round, implementation sequencing has narrowed materially, but commercial acceptance criteria remain open.',
+        resolved_since_last_round: ['Implementation sequencing is now substantially aligned.'],
+        new_open_issues: ['Final approval ownership is now more explicit, but still not fully agreed.'],
+        movement_direction: 'converging',
+      },
+    },
+    {
+      mediationRoundContext: {
+        current_bilateral_round_number: 2,
+        prior_bilateral_round_id: 'eval_prev_2',
+        prior_bilateral_round_number: 1,
+        prior_primary_insight:
+          'The first bilateral review found the structure workable, but implementation sequencing and commercial acceptance remained open.',
+        prior_missing: [
+          'Who owns implementation sequencing?',
+          'What commercial acceptance criteria trigger final sign-off?',
+        ],
+      },
+    },
+  );
+
+  assert.equal(stored.report.analysis_stage, 'mediation_review');
+  assert.equal(stored.report.bilateral_round_number, 2);
+  assert.equal(stored.report.prior_bilateral_round_id, 'eval_prev_2');
+  assert.equal(stored.report.movement_direction, 'converging');
+  assert.match(stored.report.delta_summary, /implementation sequencing/i);
+  assert.equal(
+    stored.report.presentation_sections.some((section) => section.heading === 'Progress Since Prior Review'),
+    true,
+  );
+  assert.equal(
+    stored.report.presentation_sections.some((section) => section.heading === 'Recommendation'),
+    true,
+  );
+});
+
+test('buildStoredV2Evaluation: later bilateral rounds infer convergence from delta summary when movement is omitted', () => {
+  const stored = buildStoredV2Evaluation(
+    {
+      ok: true,
+      generation_model: 'gemini-test',
+      model: 'gemini-provider-test',
+      data: {
+        analysis_stage: 'mediation_review',
+        fit_level: 'medium',
+        confidence_0_1: 0.64,
+        why: [
+          'Executive Summary: The negotiation is closer to agreement because sequencing is largely settled, while commercial acceptance criteria remain open.',
+          'Decision Assessment: Risk Summary: Commercial acceptance criteria still need closure.\n\nKey Strengths: The implementation path is more concrete than last round.',
+          'Negotiation Insights: Likely priorities: both sides want bounded approval mechanics.\n\nPossible concessions: reporting detail may be staged.\n\nStructural tensions: final approval ownership still carries friction.',
+          'Leverage Signals: Leverage signal: delivery momentum now favors closing the commercial delta rather than reopening sequencing.',
+          'Potential Deal Structures: Option A — keep phased rollout and close sign-off mechanics.\n\nOption B — milestone-based approval. \n\nOption C — narrow phase-one scope further.',
+          'Decision Readiness: Decision status: Proceed with conditions. Commercial acceptance criteria still need agreement.\n\nWhat must be agreed now vs later: lock acceptance criteria now.\n\nWhat would change the verdict: a bounded approval path would raise confidence.',
+          'Recommended Path: Recommended path: use the next round to close the remaining commercial deltas.',
+        ],
+        missing: [
+          'What commercial acceptance criteria trigger final sign-off? — determines whether execution can proceed without reopening scope.',
+        ],
+        redactions: [],
+        delta_summary:
+          'Since the prior bilateral round, implementation sequencing has narrowed materially, but commercial acceptance criteria remain open.',
+        resolved_since_last_round: ['Implementation sequencing is now substantially aligned.'],
+        remaining_deltas: ['Commercial acceptance criteria still need final agreement.'],
+      },
+    },
+    {
+      mediationRoundContext: {
+        current_bilateral_round_number: 2,
+        prior_bilateral_round_id: 'eval_prev_3',
+        prior_bilateral_round_number: 1,
+        prior_missing: [
+          'Who owns implementation sequencing?',
+          'What commercial acceptance criteria trigger final sign-off?',
+        ],
+      },
+    },
+  );
+
+  assert.equal(stored.report.analysis_stage, 'mediation_review');
+  assert.equal(stored.report.bilateral_round_number, 2);
+  assert.equal(stored.report.movement_direction, 'converging');
+  assert.match(stored.report.delta_summary, /narrowed materially/i);
+});
+
+test('buildStoredV2Evaluation: later bilateral rounds infer convergence from bilateral narrative when progress fields are omitted', () => {
+  const stored = buildStoredV2Evaluation(
+    {
+      ok: true,
+      generation_model: 'gemini-test',
+      model: 'gemini-provider-test',
+      data: {
+        analysis_stage: 'mediation_review',
+        fit_level: 'medium',
+        confidence_0_1: 0.62,
+        why: [
+          'Executive Summary: The negotiation is closer to agreement because implementation sequencing is now largely aligned, while commercial acceptance criteria remain the main open issue.',
+          'Decision Assessment: Risk Summary: Commercial acceptance criteria still need closure.\n\nKey Strengths: The implementation path is more concrete than last round.',
+          'Negotiation Insights: Likely priorities: both sides want bounded approval mechanics.\n\nPossible concessions: lower-priority reporting detail can be deferred.\n\nStructural tensions: final approval ownership remains the main friction.',
+          'Leverage Signals: Leverage signal: delivery momentum now favors closing the commercial delta rather than reopening sequencing.',
+          'Potential Deal Structures: Option A — keep phased rollout and close sign-off mechanics.\n\nOption B — milestone-based approval.\n\nOption C — narrow phase-one scope further.',
+          'Decision Readiness: Decision status: Proceed with conditions. Commercial acceptance criteria still need agreement.\n\nWhat must be agreed now vs later: lock acceptance criteria now.\n\nWhat would change the verdict: a bounded approval path would raise confidence.',
+          'Recommended Path: Recommended path: use the next round to close the remaining commercial deltas.',
+        ],
+        missing: [
+          'What commercial acceptance criteria trigger final sign-off? — determines whether execution can proceed without reopening scope.',
+        ],
+        redactions: [],
+      },
+    },
+    {
+      mediationRoundContext: {
+        current_bilateral_round_number: 2,
+        prior_bilateral_round_id: 'eval_prev_4',
+        prior_bilateral_round_number: 1,
+        prior_missing: [
+          'Who owns implementation sequencing?',
+          'What commercial acceptance criteria trigger final sign-off?',
+        ],
+      },
+    },
+  );
+
+  assert.equal(stored.report.analysis_stage, 'mediation_review');
+  assert.equal(stored.report.bilateral_round_number, 2);
+  assert.equal(stored.report.movement_direction, 'converging');
+  assert.match(stored.report.delta_summary, /Since the prior bilateral round/i);
+});
+
+test('buildStoredV2Evaluation: later bilateral rounds infer convergence from shared-text delta when progress fields stay generic', () => {
+  const stored = buildStoredV2Evaluation(
+    {
+      ok: true,
+      generation_model: 'gemini-test',
+      model: 'gemini-provider-test',
+      data: {
+        analysis_stage: 'mediation_review',
+        fit_level: 'low',
+        confidence_0_1: 0.45,
+        why: [
+          'Executive Summary: the deal is not yet workable on the current record because acceptance criteria are still too loose for reliable sign-off.',
+        ],
+        missing: [
+          'What commercial acceptance criteria trigger final sign-off? — determines whether execution can proceed without reopening scope.',
+        ],
+        redactions: [],
+      },
+    },
+    {
+      mediationRoundContext: {
+        current_bilateral_round_number: 2,
+        prior_bilateral_round_id: 'eval_prev_5',
+        prior_bilateral_round_number: 1,
+        prior_missing: [
+          'Who owns implementation sequencing?',
+          'What commercial acceptance criteria trigger final sign-off?',
+        ],
+      },
+      sharedProgressContext: {
+        priorSharedText:
+          'Recipient round one adds implementation sequencing, dependency ownership, and rollout checkpoints.',
+        currentSharedText:
+          'Recipient round two confirms implementation sequencing and narrows the remaining issue to commercial acceptance criteria and final approval ownership.',
+      },
+    },
+  );
+
+  assert.equal(stored.report.analysis_stage, 'mediation_review');
+  assert.equal(stored.report.bilateral_round_number, 2);
+  assert.equal(stored.report.movement_direction, 'converging');
+  assert.match(stored.report.delta_summary, /Since the prior bilateral round/i);
+});
+
 test('buildRecipientSafeEvaluationProjection: preserves safe presentation metadata and strips confidential markers', () => {
   const confidentialMarker = 'vault hush 991';
   const why = [

@@ -1,5 +1,10 @@
 import { ApiError } from '../../_lib/errors.js';
 import {
+  buildStoredMediationProgress,
+  normalizeStoredMediationProgress,
+  type MediationRoundContext,
+} from '../../_lib/mediation-progress.js';
+import {
   getDecisionStatusDetails,
   getPresentationSections,
   getMediationReviewSubtitle,
@@ -639,6 +644,14 @@ export function buildMediationReviewPresentation(params: {
   missing: unknown;
   redactions?: unknown;
   negotiation_analysis?: unknown;
+  bilateral_round_number?: unknown;
+  prior_bilateral_round_id?: unknown;
+  prior_bilateral_round_number?: unknown;
+  delta_summary?: unknown;
+  resolved_since_last_round?: unknown;
+  remaining_deltas?: unknown;
+  new_open_issues?: unknown;
+  movement_direction?: unknown;
 }) {
   const fitLevel = asLower(params.fit_level);
   const confidence = clampConfidence01(params.confidence_0_1);
@@ -648,6 +661,13 @@ export function buildMediationReviewPresentation(params: {
     ? params.redactions.map((entry) => normalizeText(entry)).filter(Boolean)
     : [];
   const negotiationAnalysis = normalizeNegotiationAnalysis(params.negotiation_analysis);
+  const progress = normalizeStoredMediationProgress(params);
+  const hasPriorBilateralRound = Number(progress?.bilateral_round_number || 0) > 1;
+  const progressSummary = normalizeText(progress?.delta_summary);
+  const resolvedSinceLastRound = uniqueText(progress?.resolved_since_last_round || []).slice(0, 3);
+  const remainingDeltas = uniqueText(progress?.remaining_deltas || []).slice(0, 4);
+  const newOpenIssues = uniqueText(progress?.new_open_issues || []).slice(0, 3);
+  const movementDirection = progress?.movement_direction || null;
 
   const whyLookup = buildWhyLookup(why);
   const executiveParagraphs = whyLookup.getSectionParagraphs('Executive Summary', 'Decision Snapshot');
@@ -770,7 +790,7 @@ export function buildMediationReviewPresentation(params: {
   )[0] || '';
   const compatibilityInsight = buildNegotiationCompatibilityInsight(negotiationAnalysis, archetype);
 
-  const primaryInsight =
+  const baselinePrimaryInsight =
     archetype === 'risk_dominant'
       ? compatibilityInsight || riskPreview || `The current proposal concentrates material risk around ${concernThemes}, which blocks a confident commitment.`
       : archetype === 'gap_analysis'
@@ -780,13 +800,33 @@ export function buildMediationReviewPresentation(params: {
             ? `The proposal is broadly well-structured, with only limited gaps around ${concernThemes}.`
             : `The proposal is broadly well-structured and only minor issues remain before final agreement.`)
           : archetype === 'strategic_framing'
-            ? compatibilityInsight || executivePreview || strategicPreview || `The proposal is workable in principle, but the outcome depends on how the parties balance ${describeThemes(allThemeIds, 'the visible deal priorities')}.`
+        ? compatibilityInsight || executivePreview || strategicPreview || `The proposal is workable in principle, but the outcome depends on how the parties balance ${describeThemes(allThemeIds, 'the visible deal priorities')}.`
             : compatibilityInsight || executivePreview || `The proposal shows credible alignment around ${strengthThemes}, but ${concernThemes} still introduces material trade-offs.`;
+  const primaryInsight = hasPriorBilateralRound && progressSummary
+    ? progressSummary
+    : baselinePrimaryInsight;
 
   const fallbackTradeoffParagraph =
     archetype === 'strategic_framing'
       ? `The most visible tension is how ${strengthThemes} is balanced against ${concernThemes} before the parties treat the draft as final.`
       : `The key trade-off is between preserving ${strengthThemes} and resolving ${concernThemes} before the draft is treated as final.`;
+
+  const progressParagraphs = uniqueText([
+    progressSummary,
+    movementDirection === 'converging'
+      ? 'Overall movement appears to be toward executable agreement, although the remaining deltas still matter.'
+      : movementDirection === 'diverging'
+        ? 'Overall movement appears to be away from executable agreement because new friction or regressions now matter more than the resolved items.'
+        : movementDirection === 'stalled'
+          ? 'Overall movement appears limited, so the next round should focus on the most decision-relevant unresolved deltas rather than reopening settled ground.'
+          : '',
+    resolvedSinceLastRound.length > 0
+      ? `Newly resolved or narrowed issues: ${joinNatural(resolvedSinceLastRound)}.`
+      : '',
+    newOpenIssues.length > 0
+      ? `Newly introduced blockers or reopened issues: ${joinNatural(newOpenIssues)}.`
+      : '',
+  ]);
 
   const sections = [
     archetype === 'risk_dominant'
@@ -818,6 +858,15 @@ export function buildMediationReviewPresentation(params: {
                 heading: 'Primary Insight',
                 paragraphs: [primaryInsight],
               }),
+    hasPriorBilateralRound
+      ? createPresentationSection({
+          key: 'progress_since_prior_review',
+          heading: 'Progress Since Prior Review',
+          paragraphs: progressParagraphs,
+          bullets: remainingDeltas,
+          numbered_bullets: remainingDeltas.length > 0,
+        })
+      : null,
     archetype === 'risk_dominant'
       ? createPresentationSection({
           key: 'critical_risks',
@@ -1094,7 +1143,16 @@ function buildPreSendReviewPresentation(params: {
   };
 }
 
-export function buildStoredV2Evaluation(v2Result: any): Record<string, unknown> {
+export function buildStoredV2Evaluation(
+  v2Result: any,
+  options: {
+    mediationRoundContext?: MediationRoundContext;
+    sharedProgressContext?: {
+      currentSharedText?: string;
+      priorSharedText?: string;
+    };
+  } = {},
+): Record<string, unknown> {
   const data = v2Result?.data && typeof v2Result.data === 'object' && !Array.isArray(v2Result.data)
     ? v2Result.data
     : {};
@@ -1211,6 +1269,23 @@ export function buildStoredV2Evaluation(v2Result: any): Record<string, unknown> 
     ? data.redactions.map((entry: unknown) => normalizeText(entry)).filter(Boolean)
     : [];
   const negotiationAnalysis = normalizeNegotiationAnalysis(data?.negotiation_analysis);
+  const progress = buildStoredMediationProgress({
+    currentMissing: data?.remaining_deltas ?? missing,
+    currentNarrative: why,
+    currentSharedText: options.sharedProgressContext?.currentSharedText,
+    priorSharedText: options.sharedProgressContext?.priorSharedText,
+    generatedProgress: {
+      bilateral_round_number: data?.bilateral_round_number,
+      prior_bilateral_round_id: data?.prior_bilateral_round_id,
+      prior_bilateral_round_number: data?.prior_bilateral_round_number,
+      delta_summary: data?.delta_summary,
+      resolved_since_last_round: data?.resolved_since_last_round,
+      remaining_deltas: data?.remaining_deltas,
+      new_open_issues: data?.new_open_issues,
+      movement_direction: data?.movement_direction,
+    },
+    mediationRoundContext: options.mediationRoundContext,
+  });
   const presentation = buildMediationReviewPresentation({
     fit_level: normalizedFitLevel,
     confidence_0_1: confidence,
@@ -1218,6 +1293,7 @@ export function buildStoredV2Evaluation(v2Result: any): Record<string, unknown> 
     missing,
     redactions,
     negotiation_analysis: negotiationAnalysis,
+    ...progress,
   });
   const report = {
     report_format: 'v2' as const,
@@ -1228,6 +1304,7 @@ export function buildStoredV2Evaluation(v2Result: any): Record<string, unknown> 
     missing,
     redactions,
     ...(negotiationAnalysis ? { negotiation_analysis: negotiationAnalysis } : {}),
+    ...progress,
     generated_at_iso: generatedAt,
     summary: {
       fit_level: normalizedFitLevel,
@@ -1903,6 +1980,7 @@ function buildFallbackRecipientV2Report(params: {
   });
   return {
     report_format: 'v2' as const,
+    analysis_stage: MEDIATION_REVIEW_STAGE,
     fit_level: fitLevel,
     confidence_0_1: normalizedConfidence,
     why,
@@ -2067,6 +2145,16 @@ function buildV2RecipientProjection(params: {
   const why = scrubStringArray(sourceReport.why, markers);
   const missing = scrubStringArray(sourceReport.missing, markers);
   const redactions = scrubStringArray(sourceReport.redactions, markers);
+  const progress = normalizeStoredMediationProgress({
+    bilateral_round_number: sourceReport.bilateral_round_number,
+    prior_bilateral_round_id: sourceReport.prior_bilateral_round_id,
+    prior_bilateral_round_number: sourceReport.prior_bilateral_round_number,
+    delta_summary: scrubString(sourceReport.delta_summary, markers, ''),
+    resolved_since_last_round: scrubStringArray(sourceReport.resolved_since_last_round, markers),
+    remaining_deltas: scrubStringArray(sourceReport.remaining_deltas, markers),
+    new_open_issues: scrubStringArray(sourceReport.new_open_issues, markers),
+    movement_direction: sourceReport.movement_direction,
+  });
   const negotiationAnalysis = toRecipientSafeNegotiationAnalysis(normalizeNegotiationAnalysis(
     redactConfidentialStrings(sourceReport.negotiation_analysis, markers),
   ));
@@ -2082,6 +2170,7 @@ function buildV2RecipientProjection(params: {
     missing,
     redactions,
     negotiation_analysis: negotiationAnalysis,
+    ...(progress || {}),
   });
   const projectedPresentationSections = Array.isArray(sourceReport.presentation_sections)
     ? (redactConfidentialStrings(sourceReport.presentation_sections, markers) as unknown[])
@@ -2092,12 +2181,14 @@ function buildV2RecipientProjection(params: {
 
   const safeReport = {
     report_format: 'v2' as const,
+    analysis_stage: MEDIATION_REVIEW_STAGE,
     fit_level: fitLevel,
     confidence_0_1: clampConfidence(sourceReport.confidence_0_1, confidence / 100),
     why,
     missing,
     redactions,
     ...(negotiationAnalysis ? { negotiation_analysis: negotiationAnalysis } : {}),
+    ...(progress || {}),
     generated_at_iso: generatedAt,
     summary: {
       fit_level: fitLevel,

@@ -15,6 +15,11 @@ import {
   hasMeaningfulRecipientContribution,
 } from '../../../_lib/meaningful-recipient-contribution.js';
 import {
+  buildMediationRoundContext,
+  extractMediationReport,
+  type MediationRoundContext,
+} from '../../../_lib/mediation-progress.js';
+import {
   buildDraftContributionEntries,
   buildSharedHistoryComposite,
   formatContributionsForAi,
@@ -100,8 +105,17 @@ function resolveDocumentComparisonEngine(req: any): 'v1' | 'v2' {
   return 'v2';
 }
 
-function convertV2ResponseToEvaluation(v2Result: any): Record<string, unknown> {
-  return buildStoredV2Evaluation(v2Result);
+function convertV2ResponseToEvaluation(
+  v2Result: any,
+  options: {
+    mediationRoundContext?: MediationRoundContext;
+    sharedProgressContext?: {
+      currentSharedText?: string;
+      priorSharedText?: string;
+    };
+  } = {},
+): Record<string, unknown> {
+  return buildStoredV2Evaluation(v2Result, options);
 }
 
 function toV2ApiError(error: any) {
@@ -203,6 +217,7 @@ interface ExchangeHistoryRound {
   confidentialLength: number;
   /** Prior missing[] questions extracted from the evaluation result. */
   missingQuestions: string[];
+  report: Record<string, unknown> | null;
   createdAt: Date | string;
 }
 
@@ -214,8 +229,19 @@ interface ExchangeHistoryRound {
  */
 async function getExchangeHistory(
   db: any,
-  linkId: string,
+  params: {
+    proposalId: string;
+    comparisonId?: string | null;
+  },
 ): Promise<ExchangeHistoryRound[]> {
+  const conditions = [
+    eq(schema.sharedReportEvaluationRuns.proposalId, params.proposalId),
+    eq(schema.sharedReportEvaluationRuns.actorRole, RECIPIENT_ROLE),
+    eq(schema.sharedReportEvaluationRuns.status, 'success'),
+  ];
+  if (params.comparisonId) {
+    conditions.push(eq(schema.sharedReportEvaluationRuns.comparisonId, params.comparisonId));
+  }
   const runs = await db
     .select({
       id: schema.sharedReportEvaluationRuns.id,
@@ -223,13 +249,7 @@ async function getExchangeHistory(
       createdAt: schema.sharedReportEvaluationRuns.createdAt,
     })
     .from(schema.sharedReportEvaluationRuns)
-    .where(
-      and(
-        eq(schema.sharedReportEvaluationRuns.sharedLinkId, linkId),
-        eq(schema.sharedReportEvaluationRuns.actorRole, RECIPIENT_ROLE),
-        eq(schema.sharedReportEvaluationRuns.status, 'success'),
-      ),
-    )
+    .where(and(...conditions))
     .orderBy(desc(schema.sharedReportEvaluationRuns.createdAt))
     .limit(MAX_HISTORY_ROUNDS + 1); // +1 to trim last after reversing
 
@@ -264,6 +284,7 @@ async function getExchangeHistory(
       sharedTextLength: Number(inputTrace?.shared_length || 0) || 0,
       confidentialLength: Number(inputTrace?.confidential_length || 0) || 0,
       missingQuestions,
+      report: extractMediationReport(evalReport),
       createdAt: run.createdAt,
     };
   });
@@ -491,7 +512,10 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     ]).html;
 
     // ── Exchange history: include previous rounds' shared text ──────────────
-    const exchangeHistory = await getExchangeHistory(resolved.db, resolved.link.id);
+    const exchangeHistory = await getExchangeHistory(resolved.db, {
+      proposalId: resolved.proposal.id,
+      comparisonId: resolved.comparison?.id || null,
+    });
     const sharedSnapshotByRound = new Map(
       sharedHistory.sharedRoundSnapshots.map((entry) => [Number(entry.round || 0), entry.sharedTextSnapshot]),
     );
@@ -500,6 +524,13 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       sharedTextSnapshot:
         asText(sharedSnapshotByRound.get(Number(entry.round || 0))) || entry.sharedTextSnapshot,
     }));
+    const priorBilateralRounds = normalizedExchangeHistory.filter((entry) => entry.report);
+    const latestPriorBilateralRound = priorBilateralRounds[priorBilateralRounds.length - 1] || null;
+    const mediationRoundContext = buildMediationRoundContext({
+      bilateralRoundNumber: priorBilateralRounds.length + 1,
+      priorBilateralRoundId: latestPriorBilateralRound?.evaluationRunId || null,
+      priorReport: latestPriorBilateralRound?.report || null,
+    });
 
     // ── Build convergence digest from prior evaluation rounds ───────────────
     const priorEvalSnapshots: ExchangeRoundSnapshot[] = normalizedExchangeHistory.map((h) => ({
@@ -576,6 +607,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
             verifierModel: asText(process.env.VERTEX_DOC_COMPARE_VERIFIER_MODEL) || undefined,
             extractModel: asText(process.env.VERTEX_DOC_COMPARE_EXTRACT_MODEL) || undefined,
             convergenceDigestText: convergenceDigest?.digestText || undefined,
+            mediationRoundContext,
           });
         } catch (unexpectedError: any) {
           v2Result = {
@@ -649,7 +681,13 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
             },
           };
         }
-        evaluated = convertV2ResponseToEvaluation(v2Result);
+        evaluated = convertV2ResponseToEvaluation(v2Result, {
+          mediationRoundContext,
+          sharedProgressContext: {
+            currentSharedText: currentRoundSharedText,
+            priorSharedText: latestPriorBilateralRound?.sharedTextSnapshot || '',
+          },
+        });
         // Extract preflight data for input_trace
         v2Preflight = (v2Result as any)?._internal?.preflight || {};
       } else {
@@ -697,6 +735,9 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
               current_round_confidential_length: currentRoundRecipientConfidentialText.length,
               exchange_round: outgoingRoundNumber,
               previous_rounds: normalizedExchangeHistory.length,
+              bilateral_round_number: mediationRoundContext.current_bilateral_round_number,
+              prior_bilateral_round_id: mediationRoundContext.prior_bilateral_round_id || null,
+              prior_bilateral_round_number: mediationRoundContext.prior_bilateral_round_number || null,
               attributed_shared_entries: sharedHistoryEntriesForAi.length,
               attributed_confidential_entries: confidentialHistoryEntriesForAi.length,
               current_round_author_role: draftAuthorRole,

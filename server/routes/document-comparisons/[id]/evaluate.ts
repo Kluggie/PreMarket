@@ -1,4 +1,4 @@
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, or } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
 import { ok } from '../../../_lib/api-response.js';
 import { requireUser } from '../../../_lib/auth.js';
@@ -23,6 +23,11 @@ import { evaluateDocumentComparisonWithVertex } from '../../../_lib/vertex-evalu
 import { evaluateWithVertexV2 } from '../../../_lib/vertex-evaluation-v2.js';
 import { getVertexConfig } from '../../../_lib/integrations.js';
 import { generateDocumentComparisonCoach } from '../../../_lib/vertex-coach.js';
+import {
+  buildMediationRoundContext,
+  extractMediationReport,
+  type MediationRoundContext,
+} from '../../../_lib/mediation-progress.js';
 import {
   buildCounterpartyLeakGuard,
   detectCounterpartyLeak,
@@ -261,6 +266,8 @@ function buildEvaluationInputTrace(params: {
   authored_confidential_entries?: number;
   has_recipient_contributions?: boolean;
   analysis_stage?: string;
+  bilateral_round_number?: number;
+  prior_bilateral_round_id?: string;
 } {
   const confidentialText = String(params.confidentialText || '');
   const sharedText = String(params.sharedText || '');
@@ -808,8 +815,55 @@ function resolveDocumentComparisonEngine(req: any): 'v1' | 'v2' {
   return 'v2';
 }
 
-function convertV2ResponseToEvaluation(v2Result: any): Record<string, unknown> {
-  return buildStoredV2Evaluation(v2Result);
+function convertV2ResponseToEvaluation(
+  v2Result: any,
+  options: {
+    mediationRoundContext?: MediationRoundContext;
+  } = {},
+): Record<string, unknown> {
+  return buildStoredV2Evaluation(v2Result, options);
+}
+
+async function loadPriorBilateralRoundContext(params: {
+  db: any;
+  proposalId: string | null;
+  userId: string;
+}) {
+  if (!params.proposalId) {
+    return null;
+  }
+
+  const rows = await params.db
+    .select({
+      id: schema.proposalEvaluations.id,
+      result: schema.proposalEvaluations.result,
+    })
+    .from(schema.proposalEvaluations)
+    .where(
+      and(
+        eq(schema.proposalEvaluations.proposalId, params.proposalId),
+        eq(schema.proposalEvaluations.userId, params.userId),
+        eq(schema.proposalEvaluations.status, 'completed'),
+        or(
+          eq(schema.proposalEvaluations.source, 'document_comparison_mediation'),
+          eq(schema.proposalEvaluations.source, 'shared_report_mediation'),
+        ),
+      ),
+    )
+    .orderBy(desc(schema.proposalEvaluations.createdAt));
+
+  const priorRows = rows
+    .map((row: any) => ({
+      id: asText(row?.id),
+      report: extractMediationReport(row?.result),
+    }))
+    .filter((row) => row.id && row.report);
+
+  return buildMediationRoundContext({
+    bilateralRoundNumber: priorRows.length + 1,
+    priorBilateralRoundId: priorRows[0]?.id || null,
+    priorReport: priorRows[0]?.report || null,
+  });
 }
 
 function buildStageFallbackV2Data(analysisStage: string, reason: 'unexpected_error' | 'unavailable') {
@@ -1414,6 +1468,13 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     const analysisStage = hasRecipientContributions
       ? MEDIATION_REVIEW_STAGE
       : PRE_SEND_REVIEW_STAGE;
+    const mediationRoundContext = analysisStage === MEDIATION_REVIEW_STAGE
+      ? await loadPriorBilateralRoundContext({
+          db,
+          proposalId: existing.proposalId,
+          userId: user.id,
+        })
+      : null;
     const evaluationSource = getComparisonEvaluationSource(analysisStage);
     const evaluationSharedText = linkedProposal
       ? formatContributionsForAi(attributedSharedEntries)
@@ -1436,6 +1497,12 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       evaluationInputTrace.has_recipient_contributions = hasRecipientContributions;
     }
     evaluationInputTrace.analysis_stage = analysisStage;
+    if (mediationRoundContext?.current_bilateral_round_number) {
+      evaluationInputTrace.bilateral_round_number = mediationRoundContext.current_bilateral_round_number;
+    }
+    if (mediationRoundContext?.prior_bilateral_round_id) {
+      evaluationInputTrace.prior_bilateral_round_id = mediationRoundContext.prior_bilateral_round_id;
+    }
     logEvaluationInputTrace({
       requestId,
       comparisonId: existing.id,
@@ -1578,6 +1645,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
               analysisStage,
               requestId,
               enforceLeakGuard: false,
+              ...(mediationRoundContext ? { mediationRoundContext } : {}),
               // Model routing — resolved inside the lib via env vars if not set here.
               // Providing them explicitly lets the route override via query/body in future.
               generationModel: asText(process.env.VERTEX_DOC_COMPARE_GENERATION_MODEL) || undefined,
@@ -1663,7 +1731,9 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
               },
             };
           }
-          evaluated = convertV2ResponseToEvaluation(v2Result);
+          evaluated = convertV2ResponseToEvaluation(v2Result, {
+            ...(mediationRoundContext ? { mediationRoundContext } : {}),
+          });
         } else {
           evaluated = await evaluateComparison!({
             title: draft.title,

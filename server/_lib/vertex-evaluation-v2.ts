@@ -1,6 +1,7 @@
 import { createSign } from 'node:crypto';
 import { ApiError } from './errors.js';
 import { getVertexConfig, getVertexNotConfiguredError, type VertexServiceAccountCredentials } from './integrations.js';
+import { type MediationMovementDirection, type MediationRoundContext } from './mediation-progress.js';
 import { sanitizeUserInput, wrapRawUserContent } from './vertex-input-sanitizer.js';
 import { truncateTextAtNaturalBoundary } from '../../src/lib/aiReportUtils.js';
 import { preflightPromptCheck, type PreflightResult } from './evaluation-context-budget.js';
@@ -126,6 +127,8 @@ export interface VertexEvaluationV2Request<Stage extends ReviewStage = ReviewSta
   extractModel?: string;
   /** Optional convergence digest text from prior evaluation rounds. Enables multi-round convergence. */
   convergenceDigestText?: string;
+  /** Optional bilateral-round context used to make later mediation rounds delta-aware. */
+  mediationRoundContext?: MediationRoundContext;
 }
 
 export interface VertexEvaluationV2MediationResponse {
@@ -136,6 +139,11 @@ export interface VertexEvaluationV2MediationResponse {
   missing: string[];
   redactions: string[];
   negotiation_analysis?: NegotiationAnalysis;
+  delta_summary?: string;
+  resolved_since_last_round?: string[];
+  remaining_deltas?: string[];
+  new_open_issues?: string[];
+  movement_direction?: MediationMovementDirection;
 }
 
 type PreSendReadinessStatus =
@@ -3566,7 +3574,19 @@ function applyConsistencyCalibration(params: {
   sharedText: string;
   postProcessMode?: PostProcessMode;
 }): ClampResult {
-  let { fit_level, confidence_0_1, why, missing, redactions, negotiation_analysis } = params.data;
+  let {
+    fit_level,
+    confidence_0_1,
+    why,
+    missing,
+    redactions,
+    negotiation_analysis,
+    delta_summary,
+    resolved_since_last_round,
+    remaining_deltas,
+    new_open_issues,
+    movement_direction,
+  } = params.data;
   const capsApplied: string[] = [];
   const signals = buildCalibrationSignals({
     factSheet: params.factSheet,
@@ -3690,6 +3710,11 @@ function applyConsistencyCalibration(params: {
       missing,
       redactions,
       ...(negotiation_analysis ? { negotiation_analysis } : {}),
+      ...(delta_summary ? { delta_summary } : {}),
+      ...(resolved_since_last_round ? { resolved_since_last_round } : {}),
+      ...(remaining_deltas ? { remaining_deltas } : {}),
+      ...(new_open_issues ? { new_open_issues } : {}),
+      ...(movement_direction ? { movement_direction } : {}),
     },
     capsApplied,
   };
@@ -4016,12 +4041,17 @@ function buildEvalPromptFromFactSheet(params: {
   tightMode?: boolean;
   /** Optional convergence digest from prior rounds — injected before INPUT JSON. */
   convergenceDigestText?: string;
+  /** Optional bilateral-round context used to make later rounds delta-aware. */
+  mediationRoundContext?: MediationRoundContext;
 }) {
   const { factSheet, chunks, reportStyle } = params;
   const tightMode = Boolean(params.tightMode);
+  const mediationRoundContext = params.mediationRoundContext;
   const sc = factSheet.source_coverage;
   const coverageCount = computeCoverageCount(sc);
   const domain = classifyProposalDomain(factSheet);
+  const bilateralRoundNumber = Number(mediationRoundContext?.current_bilateral_round_number || 1);
+  const hasPriorBilateralContext = bilateralRoundNumber > 1;
 
   const hasDataSecurity = containsAny(factSheet.scope_deliverables, [
     'data', 'api', 'system', 'database', 'integration', 'security', 'cloud', 'storage', 'pipeline',
@@ -4101,6 +4131,9 @@ function buildEvalPromptFromFactSheet(params: {
         seed: reportStyle.seed,
       },
     },
+    ...(hasPriorBilateralContext && mediationRoundContext
+      ? { prior_bilateral_context: mediationRoundContext }
+      : {}),
   };
 
   const paragraphReq = '2–4 short paragraphs per required heading';
@@ -4137,6 +4170,9 @@ function buildEvalPromptFromFactSheet(params: {
     '   Use source_coverage flags to guide your assessment.',
     '6. Negotiation dynamics: what leverage, tradeoffs, urgency, switching costs, or dependency signals are shaping the negotiation?',
     '7. Compatibility and bridgeability: are the parties broadly compatible, compatible with adjustments, uncertain due to missing information, or fundamentally incompatible on a critical point?',
+    hasPriorBilateralContext
+      ? '8. Progress across rounds: because this is not the first bilateral review, pay extra attention to what changed since the prior bilateral round, what was resolved, what narrowed, what regressed, and whether the negotiation is converging, stalled, or diverging.'
+      : '',
     '',
     'DOMAIN-SENSITIVE LENS:',
     `- Classified proposal domain: ${domain.label}.`,
@@ -4177,6 +4213,12 @@ function buildEvalPromptFromFactSheet(params: {
     '- Do NOT repeat the same conclusion in Executive Summary, Decision Readiness, and Recommended Path unless each section adds new justification or a new negotiation implication.',
     '- Front-load the main blocker, the condition to proceed, and the negotiation implication inside Executive Summary, Decision Assessment, and Decision Readiness.',
     '- Section roles are strict: Executive Summary = deal memo on overall workability, compatibility, and core tensions; Decision Assessment = Risk Summary plus Key Strengths; Negotiation Insights = each side’s likely demands, priorities, possible movement, and structural tensions, while distinguishing preferences from likely non-negotiables; Leverage Signals = hidden negotiation leverage described abstractly; Potential Deal Structures = 2-3 realistic bridgeability or unlock paths; Decision Readiness = explicit decision status, compatibility assessment, and what must be agreed now versus later; Recommended Path = the clearest next negotiation step.',
+    hasPriorBilateralContext
+      ? '- Keep the same overall bilateral report structure as the first mediation review, but make the interpretation progress-aware rather than rewriting the whole negotiation from scratch.'
+      : '',
+    hasPriorBilateralContext
+      ? '- When prior_bilateral_context is present, include concrete delta analysis for what changed, what remains open, and whether the negotiation is moving toward agreement.'
+      : '',
     '',
     'MANDATORY REPORT STRUCTURE (every report must include ALL of these):',
     '1. "Executive Summary" must be 2-3 paragraphs and read like a professional deal memo.',
@@ -4248,6 +4290,8 @@ function buildEvalPromptFromFactSheet(params: {
     '- missing: Actionable questions with em-dash why-it-matters, ranked by criticality. Max missing_max_items items.',
     '- redactions: Array of strings — topics that must remain confidential or are intentionally withheld. Max redactions_max_items items.',
     '- negotiation_analysis: OPTIONAL neutral metadata for demands, priorities, dealbreakers, flexibility, compatibility, bridgeability, and critical incompatibilities. If evidence is thin, use "not clearly established" and/or "uncertain due to missing information" rather than forcing certainty.',
+    '- delta_summary: OPTIONAL concise progress summary for later bilateral rounds.',
+    '- resolved_since_last_round / remaining_deltas / new_open_issues / movement_direction: OPTIONAL progress fields for later bilateral rounds. If prior_bilateral_context exists, populate these concretely.',
     '',
     'HARD GUARDRAILS — follow these without exception:',
     '- "high" fit_level is RARE. Only when scope, acceptance criteria, dependencies, and risk allocation are sufficiently bounded for a clean commitment.',
@@ -4260,14 +4304,20 @@ function buildEvalPromptFromFactSheet(params: {
     '- Identical or heavily overlapping tiers: NOT a quality signal — do NOT reward this.',
     '',
     'Output MUST be valid JSON only. No markdown, no backticks, no preamble.',
-    'Required JSON schema (top-level evaluation keys required; negotiation_analysis optional):',
+    'Required JSON schema (top-level evaluation keys required; negotiation_analysis optional; progress fields optional unless prior_bilateral_context is present):',
     JSON.stringify(
       {
+        analysis_stage: MEDIATION_STAGE,
         fit_level: 'high|medium|low|unknown',
         confidence_0_1: 0,
         why: ['string'],
         missing: ['string'],
         redactions: ['string'],
+        delta_summary: 'string',
+        resolved_since_last_round: ['string'],
+        remaining_deltas: ['string'],
+        new_open_issues: ['string'],
+        movement_direction: 'converging|stalled|diverging',
         negotiation_analysis: {
           proposing_party: {
             demands: ['string'],
@@ -4292,10 +4342,14 @@ function buildEvalPromptFromFactSheet(params: {
       2,
     ),
     'Rules:',
+    '- analysis_stage must be "mediation_review".',
     '- fit_level must be one of high|medium|low|unknown.',
     '- confidence_0_1 must be between 0 and 1.',
     '- why/missing/redactions must be arrays (can be empty).',
     '- negotiation_analysis is optional, but if you include it the structure must match the schema above.',
+    hasPriorBilateralContext
+      ? '- Because prior_bilateral_context exists, the progress fields should reflect concrete round-to-round movement rather than generic filler.'
+      : '- If this is the first bilateral review, you may omit the optional progress fields rather than inventing prior-round movement.',
     '- Keep ALL statements safe for public sharing.',
     '- Use generic derived wording for confidential-driven conclusions.',
     // ── Convergence context (injected only when prior rounds exist) ──────
@@ -4634,6 +4688,14 @@ function validateMediationResponseSchema(
           }
         : undefined,
   );
+  const movementDirection = normalizeMovementDirection(raw.movement_direction);
+  if (raw.movement_direction !== undefined && !movementDirection) {
+    invalidFields.push('movement_direction');
+  }
+  const deltaSummary = asText(raw.delta_summary);
+  const resolvedSinceLastRound = normalizeProgressStringArray(raw.resolved_since_last_round, 4);
+  const remainingDeltas = normalizeProgressStringArray(raw.remaining_deltas, 6);
+  const newOpenIssues = normalizeProgressStringArray(raw.new_open_issues, 4);
 
   if (missingKeys.length || invalidFields.length) {
     return {
@@ -4653,6 +4715,11 @@ function validateMediationResponseSchema(
       missing,
       redactions,
       ...(negotiationAnalysis ? { negotiation_analysis: negotiationAnalysis } : {}),
+      ...(deltaSummary ? { delta_summary: deltaSummary } : {}),
+      ...(resolvedSinceLastRound.length > 0 ? { resolved_since_last_round: resolvedSinceLastRound } : {}),
+      ...(remainingDeltas.length > 0 ? { remaining_deltas: remainingDeltas } : {}),
+      ...(newOpenIssues.length > 0 ? { new_open_issues: newOpenIssues } : {}),
+      ...(movementDirection ? { movement_direction: movementDirection } : {}),
     },
   };
 }
@@ -4821,6 +4888,18 @@ function normalizeConfidence(value: unknown): number {
     return clamp01(numeric / 100);
   }
   return clamp01(numeric);
+}
+
+function normalizeMovementDirection(value: unknown): MediationMovementDirection | undefined {
+  const normalized = asLower(value);
+  if (normalized === 'converging' || normalized === 'stalled' || normalized === 'diverging') {
+    return normalized;
+  }
+  return undefined;
+}
+
+function normalizeProgressStringArray(value: unknown, maxItems = 6) {
+  return normalizeNegotiationStringArray(value, maxItems);
 }
 
 function normalizeNegotiationStringArray(value: unknown, maxItems = 8) {
@@ -5121,6 +5200,11 @@ function coerceToSmallSchema(
         }
       : undefined;
   const negotiationAnalysis = normalizeNegotiationAnalysis(syntheticNegotiationAnalysis);
+  const deltaSummary = asText(raw.delta_summary);
+  const resolvedSinceLastRound = normalizeProgressStringArray(raw.resolved_since_last_round, 4);
+  const remainingDeltas = normalizeProgressStringArray(raw.remaining_deltas, 6);
+  const newOpenIssues = normalizeProgressStringArray(raw.new_open_issues, 4);
+  const movementDirection = normalizeMovementDirection(raw.movement_direction);
 
   const coerced: VertexEvaluationV2MediationResponse = {
     analysis_stage: MEDIATION_STAGE,
@@ -5130,6 +5214,11 @@ function coerceToSmallSchema(
     missing,
     redactions,
     ...(negotiationAnalysis ? { negotiation_analysis: negotiationAnalysis } : {}),
+    ...(deltaSummary ? { delta_summary: deltaSummary } : {}),
+    ...(resolvedSinceLastRound.length > 0 ? { resolved_since_last_round: resolvedSinceLastRound } : {}),
+    ...(remainingDeltas.length > 0 ? { remaining_deltas: remainingDeltas } : {}),
+    ...(newOpenIssues.length > 0 ? { new_open_issues: newOpenIssues } : {}),
+    ...(movementDirection ? { movement_direction: movementDirection } : {}),
   };
   return { candidate: coerced, coerced: true };
 }
@@ -5171,6 +5260,11 @@ function flattenEvaluationResponseText(response: VertexEvaluationV2Response) {
         ...response.missing,
         ...response.redactions,
         ...flattenNegotiationAnalysisText(response.negotiation_analysis),
+        response.delta_summary || '',
+        ...(response.resolved_since_last_round || []),
+        ...(response.remaining_deltas || []),
+        ...(response.new_open_issues || []),
+        response.movement_direction || '',
       ].filter(Boolean);
     default:
       return assertNever(response, 'Unsupported vertex evaluation response stage');
@@ -5962,6 +6056,7 @@ function buildRefinementPrompt(params: {
     `- confidence_0_1 MUST remain: ${initialResult.confidence_0_1}`,
     '- Do NOT change the overall judgment, risk assessment direction, or recommendation direction.',
     '- Preserve negotiation_analysis exactly if it is present. Do NOT add, remove, or reclassify demands, dealbreakers, compatibility verdicts, or bridgeability notes.',
+    '- Preserve delta_summary, resolved_since_last_round, remaining_deltas, new_open_issues, and movement_direction exactly if they are present.',
     '- Do NOT introduce new confidential information or leak confidential details.',
     '- Do NOT add new sections or remove required sections.',
     '- Do NOT turn the evaluator into a strategist or coach.',
@@ -5996,11 +6091,17 @@ function buildRefinementPrompt(params: {
     'Return the full refined report in this exact schema:',
     JSON.stringify(
       {
+        analysis_stage: MEDIATION_STAGE,
         fit_level: 'high|medium|low|unknown',
         confidence_0_1: 0,
         why: ['string'],
         missing: ['string'],
         redactions: ['string'],
+        delta_summary: 'string',
+        resolved_since_last_round: ['string'],
+        remaining_deltas: ['string'],
+        new_open_issues: ['string'],
+        movement_direction: 'converging|stalled|diverging',
         negotiation_analysis: {
           proposing_party: {
             demands: ['string'],
@@ -6025,6 +6126,7 @@ function buildRefinementPrompt(params: {
       2,
     ),
     'negotiation_analysis is optional; if it is present in the initial report, preserve it exactly.',
+    'Progress fields are optional; if they are present in the initial report, preserve them exactly.',
     'Return JSON only.',
   ]
     .filter(Boolean)
@@ -6111,6 +6213,19 @@ async function attemptRefinementPass(params: {
   const refinedResult: VertexEvaluationV2MediationResponse = {
     ...validation.normalized,
     negotiation_analysis: params.initialResult.negotiation_analysis,
+    ...(params.initialResult.delta_summary ? { delta_summary: params.initialResult.delta_summary } : {}),
+    ...(params.initialResult.resolved_since_last_round
+      ? { resolved_since_last_round: params.initialResult.resolved_since_last_round }
+      : {}),
+    ...(params.initialResult.remaining_deltas
+      ? { remaining_deltas: params.initialResult.remaining_deltas }
+      : {}),
+    ...(params.initialResult.new_open_issues
+      ? { new_open_issues: params.initialResult.new_open_issues }
+      : {}),
+    ...(params.initialResult.movement_direction
+      ? { movement_direction: params.initialResult.movement_direction }
+      : {}),
   };
 
   // Leak check the refined output
@@ -6223,6 +6338,7 @@ export async function evaluateWithVertexV2(
           reportStyle,
           tightMode: options.tightMode,
           convergenceDigestText: options.includeDigest === false ? undefined : convergenceDigestText,
+          mediationRoundContext: input.mediationRoundContext,
         });
 
   let prompt = buildPrompt();

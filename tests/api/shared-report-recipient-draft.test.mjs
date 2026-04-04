@@ -144,17 +144,29 @@ async function saveRecipientDraft(token, body, cookie = null) {
   return res;
 }
 
-async function evaluateRecipientDraft(token, body = {}, cookie = null) {
+async function evaluateRecipientDraft(token, body = {}, cookie = null, queryOverrides = {}) {
   const req = createMockReq({
     method: 'POST',
     url: `/api/shared-report/${token}/evaluate`,
-    query: { token },
+    query: { token, ...queryOverrides },
     headers: cookie ? { cookie } : {},
     body,
   });
   const res = createMockRes();
   await sharedReportRecipientEvaluateHandler(req, res, token);
   return res;
+}
+
+function mockVertexV2Call(mockFn) {
+  const previous = globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__;
+  globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__ = mockFn;
+  return () => {
+    if (previous === undefined) {
+      delete globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__;
+    } else {
+      globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__ = previous;
+    }
+  };
 }
 
 async function coachRecipientDraft(token, body = {}, cookie = null) {
@@ -2445,6 +2457,155 @@ if (!hasDatabaseUrl()) {
       } else {
         globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = previousEvaluator;
       }
+    }
+  });
+
+  test('shared-report repeated bilateral v2 evaluations stay in AI Mediation Review while later rounds add progress metadata', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const seed = 'shared_report_bilateral_progress_rounds';
+    const ownerCookie = makeOwnerCookie(seed);
+    const recipientEmail = `${seed}_recipient@example.com`;
+    const recipientCookie = makeRecipientCookie(seed, recipientEmail);
+
+    const comparison = await createComparison(ownerCookie, {
+      title: 'Bilateral Progress Rounds Test',
+      docAText: 'Internal proposer notes define fallback commercial guardrails and approval constraints.',
+      docBText: 'Shared proposer draft sets phased scope, milestones, and delivery responsibilities.',
+    });
+    const link = await createSharedReportLink(ownerCookie, comparison.id, recipientEmail, {
+      canView: true,
+      canEdit: true,
+      canReevaluate: true,
+      canSendBack: true,
+    });
+
+    const firstSaveRes = await saveRecipientDraft(link.token, {
+      shared_payload: {
+        label: 'Shared Information',
+        text: 'Recipient round one adds implementation sequencing, dependency ownership, and rollout checkpoints.',
+      },
+      recipient_confidential_payload: {
+        label: 'Confidential Information',
+        notes: 'Recipient round one internal note flags commercial approval boundaries.',
+      },
+      workflow_step: 2,
+    }, recipientCookie);
+    assert.equal(firstSaveRes.statusCode, 200);
+
+    let passBCount = 0;
+    const cleanup = mockVertexV2Call(async ({ prompt }) => {
+      const normalizedPrompt = String(prompt || '');
+      const isPassBPrompt = normalizedPrompt.includes('Required JSON schema (top-level evaluation keys required');
+      const isLaterBilateralRound = normalizedPrompt.includes('prior_bilateral_context');
+
+      if (!isPassBPrompt) {
+        return {
+          model: 'gemini-2.5-flash-lite',
+          text: JSON.stringify({
+            analysis_stage: 'mediation_review',
+            fit_level: 'medium',
+            confidence_0_1: 0.64,
+            why: ['Fact sheet fallback for tests.'],
+            missing: ['Fact sheet fallback question.'],
+            redactions: [],
+          }),
+          finishReason: 'STOP',
+          httpStatus: 200,
+        };
+      }
+
+      passBCount += 1;
+
+      return {
+        model: 'gemini-2.5-pro',
+        text: JSON.stringify({
+          analysis_stage: 'mediation_review',
+          fit_level: 'medium',
+          confidence_0_1: 0.66,
+          why: [
+            isLaterBilateralRound
+              ? 'Executive Summary: The negotiation is closer to agreement because implementation sequencing is now largely aligned, but commercial acceptance criteria still need closure.'
+              : 'Executive Summary: The first bilateral review finds the structure workable, but implementation sequencing and commercial acceptance criteria still need clarification.',
+            'Decision Assessment: Risk Summary: The main remaining risk is commercial sign-off ownership and acceptance criteria.\n\nKey Strengths: The phased scope and rollout structure are usable for both sides.',
+            'Negotiation Insights: Likely priorities: both sides appear to want implementation certainty and bounded approval mechanics.\n\nPossible concessions: optional reporting detail may move behind the first milestone.\n\nStructural tensions: the main tension is launch speed versus commercial approval control.',
+            'Leverage Signals: Leverage signal: both sides have reasons to keep momentum, but neither wants open-ended approval exposure.',
+            'Potential Deal Structures: Option A — keep the phased rollout with explicit sign-off gates.\n\nOption B — tie expansion to milestone acceptance.\n\nOption C — narrow phase one and defer lower-priority reporting detail.',
+            'Decision Readiness: Decision status: Proceed with conditions. Commercial acceptance criteria and final approval ownership still need final agreement.\n\nWhat must be agreed now vs later: lock acceptance criteria and sign-off ownership now.\n\nWhat would change the verdict: a bounded approval path would raise confidence.',
+            'Recommended Path: Recommended path: close the remaining commercial deltas in the next round.',
+          ],
+          missing: [
+            isLaterBilateralRound
+              ? 'What commercial acceptance criteria trigger final sign-off? — determines whether the narrowed structure is executable without reopening scope.'
+              : 'Who owns implementation sequencing? — determines whether launch accountability is contractable.',
+          ],
+          redactions: [],
+          ...(isLaterBilateralRound
+            ? {
+                delta_summary:
+                  'Since the prior bilateral round, implementation sequencing has narrowed materially, but commercial acceptance criteria remain open.',
+                resolved_since_last_round: [
+                  'Implementation sequencing is now substantially aligned.',
+                ],
+                remaining_deltas: [
+                  'Commercial acceptance criteria still need final agreement.',
+                  'Final approval ownership is clearer, but not yet fully locked.',
+                ],
+                new_open_issues: [
+                  'Final approval ownership is now the most decision-relevant unresolved delta.',
+                ],
+                movement_direction: 'converging',
+              }
+            : {}),
+        }),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      };
+    });
+
+    try {
+      const firstEvaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie, { engine: 'v2' });
+      assert.equal(firstEvaluateRes.statusCode, 200);
+
+      const firstReport = firstEvaluateRes.jsonBody()?.evaluation?.evaluation_result?.report || {};
+      assert.equal(firstReport.analysis_stage, 'mediation_review');
+      assert.equal(firstReport.bilateral_round_number, 1);
+      assert.equal(firstReport.delta_summary ?? null, null);
+
+      const secondSaveRes = await saveRecipientDraft(link.token, {
+        shared_payload: {
+          label: 'Shared Information',
+          text: 'Recipient round two confirms implementation sequencing and narrows the remaining issue to commercial acceptance criteria and final approval ownership.',
+        },
+        recipient_confidential_payload: {
+          label: 'Confidential Information',
+          notes: 'Recipient round two internal note confirms implementation sequencing is acceptable if sign-off stays bounded.',
+        },
+        workflow_step: 2,
+      }, recipientCookie);
+      assert.equal(secondSaveRes.statusCode, 200);
+
+      const secondEvaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie, { engine: 'v2' });
+      assert.equal(secondEvaluateRes.statusCode, 200);
+
+      const secondReport = secondEvaluateRes.jsonBody()?.evaluation?.evaluation_result?.report || {};
+      assert.equal(secondReport.analysis_stage, 'mediation_review');
+      assert.equal(secondReport.bilateral_round_number, 2);
+      assert.equal(secondReport.movement_direction, 'converging');
+      assert.match(secondReport.delta_summary, /Since the prior bilateral round/i);
+      assert.equal(Array.isArray(secondReport.presentation_sections), true);
+      assert.equal(
+        secondReport.presentation_sections.some((section) => section.heading === 'Progress Since Prior Review'),
+        true,
+      );
+      assert.equal(
+        secondReport.presentation_sections.some((section) => section.heading === 'Recommendation'),
+        true,
+      );
+      assert.equal(passBCount >= 2, true);
+    } finally {
+      cleanup();
     }
   });
 }

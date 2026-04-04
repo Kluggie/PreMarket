@@ -213,6 +213,68 @@ test('evaluateWithVertexV2 rejects omitted analysisStage instead of defaulting t
   );
 });
 
+test('evaluateWithVertexV2 adds prior bilateral context to later mediation rounds without changing the mediation schema', async () => {
+  const prompts = [];
+  const previous = globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__;
+  globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__ = async ({ prompt }) => {
+    prompts.push(String(prompt || ''));
+    return {
+      model: 'gemini-2.5-pro',
+      text: JSON.stringify(validPayload({
+        why: [
+          'Executive Summary: The structure is workable if the remaining governance and sequencing issues are resolved.',
+          'Decision Assessment: Risk Summary: The main risk is still approval ownership and launch sequencing.\n\nKey Strengths: Commercial intent and phased scope remain usable.',
+          'Negotiation Insights: Likely priorities: both sides appear to want movement, but they still differ on governance and launch ownership.\n\nPossible concessions: optional features can move behind the first milestone.\n\nStructural tensions: the main tension is launch speed versus approval control.',
+          'Leverage Signals: Leverage signal: both sides have reasons to keep momentum, but neither wants to absorb open-ended approval risk.',
+          'Potential Deal Structures: Option A — phase the launch with explicit governance gates.\n\nOption B — tie expansion to milestone sign-off.\n\nOption C — narrow scope now and reopen optional work later.',
+          'Decision Readiness: Decision status: Proceed with conditions. Governance ownership still needs final agreement.\n\nWhat must be agreed now vs later: lock governance ownership now and defer optional enhancements.\n\nWhat would change the verdict: a cleaner approval path would raise confidence.',
+          'Recommended Path: Recommended path: resolve governance ownership in the next round.',
+        ],
+        missing: [
+          'Who owns final approval sequencing? — determines whether launch accountability is contractable.',
+          'What launch dependencies must be signed off before work starts? — determines whether the current timeline is realistic.',
+        ],
+      })),
+      finishReason: 'STOP',
+      httpStatus: 200,
+    };
+  };
+
+  try {
+    const outcome = await evaluateMediationWithVertexV2({
+      sharedText: 'Shared round-two draft with phased scope, launch timing, and governance discussion.',
+      confidentialText: 'Private notes say pricing flexibility exists if governance risk is contained.',
+      requestId: 'test_later_mediation_round',
+      mediationRoundContext: {
+        current_bilateral_round_number: 2,
+        prior_bilateral_round_id: 'eval_prev_1',
+        prior_bilateral_round_number: 1,
+        prior_primary_insight: 'The first bilateral review found the structure workable but governance ownership remained open.',
+        prior_missing: [
+          'Who owns final approval sequencing?',
+          'What launch dependencies must be signed off before work starts?',
+        ],
+        prior_bridgeability_notes: ['Clarify governance ownership before final commitment.'],
+      },
+    });
+
+    assert.equal(outcome.ok, true);
+    assert.equal(outcome.data.analysis_stage, MEDIATION_REVIEW_STAGE);
+
+    const mediationPrompt = prompts.find((entry) => entry.includes('prior_bilateral_context'));
+    assert.equal(Boolean(mediationPrompt), true);
+    assert.match(mediationPrompt, /delta_summary/);
+    assert.match(mediationPrompt, /progress across rounds/i);
+    assert.match(mediationPrompt, /same overall bilateral report structure/i);
+  } finally {
+    if (previous === undefined) {
+      delete globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__;
+    } else {
+      globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__ = previous;
+    }
+  }
+});
+
 // Returns the mock vertex-response wrapper for a Pass A (fact sheet) success.
 function factSheetResponse(overrides = {}) {
   return {
