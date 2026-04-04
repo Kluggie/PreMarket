@@ -66,3 +66,52 @@ test('AI mediation web-parity PDF renders dynamic presentation sections and numb
   assert.match(rawText, /1\.\s*Who owns third-party integration approvals\?/);
   assert.match(rawText, /2\.\s*What budget guardrails apply to phase-two expansion\?/);
 });
+
+test('pre-send web-parity PDF can render unilateral readiness metrics without mediation labels', async () => {
+  const sections = [
+    {
+      heading: 'Review Scope',
+      paragraphs: [
+        'This Pre-send Review is based only on the sender’s materials. It does not assess recipient alignment or agreement likelihood.',
+      ],
+    },
+    {
+      heading: 'Readiness to Send',
+      paragraphs: [
+        'The draft is close to ready, but scope boundaries and acceptance ownership still need clarification before sharing.',
+      ],
+    },
+    {
+      heading: 'Likely Recipient Questions',
+      bullets: [
+        'Who owns data cleanup before implementation starts?',
+        'What acceptance criteria trigger final approval?',
+      ],
+      numberedBullets: true,
+    },
+  ];
+
+  const buffer = await renderWebParityPdfBuffer({
+    title: 'Pre-send Review',
+    subtitle: 'Opportunity',
+    comparisonId: 'cmp_presend_pdf',
+    metrics: [
+      { label: 'Readiness', value: 'Ready with Clarifications' },
+      { label: 'Missing Information', value: '2 items' },
+      { label: 'Likely Recipient Questions', value: '2 items' },
+      { label: 'Suggested Clarifications', value: '3 items' },
+    ],
+    timelineItems: [
+      { label: 'Opportunity Created', value: 'Apr 4, 2026' },
+      { label: 'Last Updated', value: 'Apr 4, 2026' },
+    ],
+    sections,
+  });
+
+  const rawText = await extractPdfText(buffer);
+  assert.match(rawText, /Pre-send Review/);
+  assert.match(rawText, /READINESS/);
+  assert.match(rawText, /LIKELY RECIPIENT QUESTIONS/);
+  assert.doesNotMatch(rawText, /RECOMMENDATION/);
+  assert.doesNotMatch(rawText, /CONFIDENCE/);
+});

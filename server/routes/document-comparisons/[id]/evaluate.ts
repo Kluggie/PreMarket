@@ -15,6 +15,7 @@ import {
   buildDraftContributionEntries,
   formatContributionsForAi,
   HISTORY_AUTHOR_PROPOSER,
+  HISTORY_AUTHOR_RECIPIENT,
   loadSharedReportHistory,
 } from '../../../_lib/shared-report-history.js';
 import { evaluateDocumentComparisonWithVertex } from '../../../_lib/vertex-evaluation.js';
@@ -43,6 +44,10 @@ import {
   buildLegacyOpportunityNotificationHref,
   buildNotificationTargetMetadata,
 } from '../../../../src/lib/notificationTargets.js';
+import {
+  MEDIATION_REVIEW_STAGE,
+  PRE_SEND_REVIEW_STAGE,
+} from '../../../../src/lib/opportunityReviewStage.js';
 
 const CONFIDENTIAL_LABEL = 'Confidential Information';
 const SHARED_LABEL = 'Shared Information';
@@ -804,6 +809,91 @@ function convertV2ResponseToEvaluation(v2Result: any): Record<string, unknown> {
   return buildStoredV2Evaluation(v2Result);
 }
 
+function contributionHasMeaningfulContent(entry: any) {
+  const text = asText(entry?.contentPayload?.text || entry?.contentPayload?.notes);
+  const html = asText(entry?.contentPayload?.html);
+  const json = entry?.contentPayload?.json && typeof entry.contentPayload.json === 'object';
+  const files = Array.isArray(entry?.contentPayload?.files) ? entry.contentPayload.files : [];
+  return Boolean(text || htmlToEditorText(html) || json || files.length > 0);
+}
+
+function buildStageFallbackV2Data(analysisStage: string, reason: 'unexpected_error' | 'unavailable') {
+  if (analysisStage === PRE_SEND_REVIEW_STAGE) {
+    return {
+      analysis_stage: PRE_SEND_REVIEW_STAGE,
+      readiness_status: 'not_ready_to_send',
+      send_readiness_summary:
+        reason === 'unexpected_error'
+          ? 'The Pre-send Review could not be generated due to an unexpected internal error.'
+          : 'The Pre-send Review could not be generated because the model output was unavailable or invalid.',
+      missing_information: [
+        'What is the confirmed scope and set of deliverables?',
+        'What is the confirmed timeline and decision process?',
+        'What assumptions should be explicit before sharing?',
+      ],
+      ambiguous_terms: ['Which responsibilities, dependencies, or success criteria remain implicit?'],
+      likely_recipient_questions: ['What would a reasonable recipient need clarified before responding?'],
+      likely_pushback_areas: ['Which draft terms could trigger immediate pushback if left unstated?'],
+      commercial_risks: [],
+      implementation_risks: [],
+      suggested_clarifications: ['Tighten the open items above and re-run the Pre-send Review.'],
+    };
+  }
+
+  return {
+    analysis_stage: MEDIATION_REVIEW_STAGE,
+    fit_level: 'unknown',
+    confidence_0_1: 0.2,
+    why: [
+      reason === 'unexpected_error'
+        ? 'Executive Summary: The AI mediation review could not be generated due to an unexpected internal error.'
+        : 'Executive Summary: The AI mediation review could not be generated. This review is incomplete.',
+      'Key Strengths: Unable to assess due to the current evaluation failure.',
+      'Key Risks: Core negotiation issues could not be assessed reliably.',
+      'Decision Readiness: Incomplete. Please address missing items and retry.',
+      'Recommended Path: Review the missing items below and re-run AI mediation.',
+    ],
+    missing: [
+      'What is the confirmed scope and set of deliverables?',
+      'What is the confirmed timeline and go-live date?',
+      'What are the measurable success criteria (KPIs)?',
+    ],
+    redactions: [],
+  };
+}
+
+function getComparisonEvaluationSource(analysisStage: string) {
+  return analysisStage === PRE_SEND_REVIEW_STAGE
+    ? 'document_comparison_pre_send'
+    : 'document_comparison_mediation';
+}
+
+function getReviewNotificationCopy(analysisStage: string, title: string) {
+  const safeTitle = title || 'your proposal';
+  if (analysisStage === PRE_SEND_REVIEW_STAGE) {
+    return {
+      title: 'Pre-send Review ready',
+      message: `A Pre-send Review is ready for "${safeTitle}".`,
+      emailSubject: 'Pre-send Review ready',
+      emailText: [
+        `Your proposal "${safeTitle}" has a new Pre-send Review.`,
+        '',
+        'Sign in to PreMarket to review the sender-side draft feedback.',
+      ].join('\n'),
+    };
+  }
+  return {
+    title: 'AI Mediation Review ready',
+    message: `An AI Mediation Review is ready for "${safeTitle}".`,
+    emailSubject: 'AI Mediation Review ready',
+    emailText: [
+      `Your proposal "${safeTitle}" has a new AI Mediation Review.`,
+      '',
+      'Sign in to PreMarket to review the full bilateral mediation review.',
+    ].join('\n'),
+  };
+}
+
 function getRetryDelayMs(attemptNumber: number) {
   const baseMs = 500 * Math.max(1, Math.pow(2, Math.max(0, attemptNumber - 1)));
   const jitterMs = Math.floor(Math.random() * 1001);
@@ -814,11 +904,15 @@ async function waitMs(ms: number) {
   await new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
 }
 
-function classifyEvaluationFailure(error: any): ClassifiedEvaluationFailure {
+function getReviewFailureLabel(analysisStage: string) {
+  return analysisStage === PRE_SEND_REVIEW_STAGE ? 'Pre-send Review' : 'AI Mediation Review';
+}
+
+function classifyEvaluationFailure(error: any, analysisStage: string = MEDIATION_REVIEW_STAGE): ClassifiedEvaluationFailure {
   const sourceCode = asLower(error?.code);
   const statusCode = toHttpStatus(error?.statusCode || error?.status || 0, 500);
   const upstreamStatus = toHttpStatus(error?.extra?.upstreamStatus || error?.extra?.status || 0, 0);
-  const normalizedMessage = asText(error?.message) || 'AI mediation failed';
+  const normalizedMessage = asText(error?.message) || `${getReviewFailureLabel(analysisStage)} failed`;
   const loweredMessage = normalizedMessage.toLowerCase();
   const safeConfiguredMessage = normalizedMessage.slice(0, 200);
 
@@ -1134,6 +1228,7 @@ async function persistFailedProposalEvaluationAttempt(params: {
   proposalId: string;
   userId: string;
   requestId: string;
+  source: string;
   classifiedFailure: ClassifiedEvaluationFailure;
   failedResult: Record<string, unknown>;
   completedAt: Date;
@@ -1145,7 +1240,7 @@ async function persistFailedProposalEvaluationAttempt(params: {
     id: newId('eval'),
     proposalId: params.proposalId,
     userId: params.userId,
-    source: 'document_comparison_vertex',
+    source: params.source,
     status: 'failed',
     score: null,
     summary: params.classifiedFailure.failureMessage || 'Document comparison evaluation failed',
@@ -1311,6 +1406,15 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
           ...appendedDraftEntries.filter((entry) => entry.visibility === 'confidential'),
         ]
       : [];
+    const hasRecipientContributions = historyContributions.some(
+      (entry) =>
+        entry?.authorRole === HISTORY_AUTHOR_RECIPIENT &&
+        contributionHasMeaningfulContent(entry),
+    );
+    const analysisStage = hasRecipientContributions
+      ? MEDIATION_REVIEW_STAGE
+      : PRE_SEND_REVIEW_STAGE;
+    const evaluationSource = getComparisonEvaluationSource(analysisStage);
     const evaluationSharedText = linkedProposal
       ? formatContributionsForAi(attributedSharedEntries)
       : draft.docBText;
@@ -1329,7 +1433,9 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     if (linkedProposal) {
       evaluationInputTrace.authored_shared_entries = attributedSharedEntries.length;
       evaluationInputTrace.authored_confidential_entries = attributedConfidentialEntries.length;
+      evaluationInputTrace.has_recipient_contributions = hasRecipientContributions;
     }
+    evaluationInputTrace.analysis_stage = analysisStage;
     logEvaluationInputTrace({
       requestId,
       comparisonId: existing.id,
@@ -1469,6 +1575,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
             v2Result = await evaluateWithVertexV2({
               sharedText: evaluationSharedText || '',
               confidentialText: evaluationConfidentialText || '',
+              analysisStage,
               requestId,
               enforceLeakGuard: false,
               // Model routing — resolved inside the lib via env vars if not set here.
@@ -1491,23 +1598,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
             // Build a minimal ok:true fallback so we never 502 on an unexpected throw.
             v2Result = {
               ok: true,
-              data: {
-                fit_level: 'unknown',
-                confidence_0_1: 0.2,
-                why: [
-                  'Executive Summary: The AI mediation review could not be generated due to an unexpected internal error.',
-                  'Key Strengths: Unable to assess — model call failed unexpectedly.',
-                  'Key Risks: Unable to assess — insufficient data.',
-                  'Decision Readiness: Incomplete. Please address missing items and retry.',
-                  'Recommendations: Review the missing items below and re-run AI mediation.',
-                ],
-                missing: [
-                  'What is the confirmed scope and set of deliverables?',
-                  'What is the confirmed timeline and go-live date?',
-                  'What are the measurable success criteria (KPIs)?',
-                ],
-                redactions: [],
-              },
+              data: buildStageFallbackV2Data(analysisStage, 'unexpected_error'),
               attempt_count: 1,
               model: null,
               _internal: {
@@ -1563,25 +1654,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
             );
             v2Result = {
               ok: true,
-              data: {
-                fit_level: 'unknown',
-                confidence_0_1: 0.2,
-                why: [
-                  'Executive Summary: The AI mediation review could not be generated. This review is incomplete.',
-                  'Key Strengths: Unable to assess due to model configuration or availability issue.',
-                  'Key Risks: Unable to assess — please retry or contact support if issue persists.',
-                  'Decision Readiness: Incomplete. Address missing items below.',
-                  'Recommendations: Retry AI mediation once the underlying issue is resolved.',
-                ],
-                missing: [
-                  'What is the confirmed scope and set of deliverables?',
-                  'What is the confirmed timeline and go-live date?',
-                  'What are the measurable success criteria (KPIs)?',
-                  'What budget and resource constraints apply?',
-                  'What are the key risks and their mitigations?',
-                ],
-                redactions: [],
-              },
+              data: buildStageFallbackV2Data(analysisStage, 'unavailable'),
               attempt_count: v2Result.attempt_count ?? 1,
               model: null,
               _internal: {
@@ -1639,7 +1712,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
         break;
       } catch (error: any) {
         const attemptCompletedAt = new Date();
-        const classified = classifyEvaluationFailure(error);
+        const classified = classifyEvaluationFailure(error, analysisStage);
         const retryScheduled = classified.retryable && attemptCount < MAX_EVALUATION_ATTEMPTS;
         const diagnostics = sanitizeFailureDiagnostics(error?.extra);
         console.error(
@@ -1679,6 +1752,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
                 proposalId,
                 userId: user.id,
                 requestId,
+                source: evaluationSource,
                 classifiedFailure: classified,
                 failedResult,
                 completedAt: attemptCompletedAt,
@@ -1701,7 +1775,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
         latestFailedClassification || {
           failureCode: 'unknown_error',
           failureStage: 'unknown',
-          failureMessage: 'AI mediation failed',
+          failureMessage: `${getReviewFailureLabel(analysisStage)} failed`,
           httpStatus: 500,
           retryable: false,
           sourceCode: 'unknown_error',
@@ -1939,7 +2013,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
                 id: newId('eval'),
                 proposalId: proposal.id,
                 userId: proposal.userId,
-                source: 'document_comparison_vertex',
+                source: evaluationSource,
                 status: 'completed',
                 score: evaluation.score,
                 summary: evaluation.summary,
@@ -1976,7 +2050,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
                   id: savedEvaluation.id,
                   proposalId: proposal.id,
                   userId: proposal.userId,
-                  source: 'document_comparison_vertex',
+                  source: evaluationSource,
                   status: 'completed',
                   score: evaluation.score,
                   summary: evaluation.summary,
@@ -1994,11 +2068,13 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
           createdAt: now,
           requestId: context.requestId,
           eventData: {
-            source: 'document_comparison_vertex',
+            source: evaluationSource,
             evaluation_score: evaluation.score,
+            analysis_stage: analysisStage,
           },
         });
 
+        const notificationCopy = getReviewNotificationCopy(analysisStage, proposal.title || '');
         try {
           const legacyActionUrl = buildLegacyOpportunityNotificationHref({
             proposalId: proposal.id,
@@ -2016,8 +2092,8 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
             eventType: 'evaluation_update',
             emailCategory: 'evaluation_complete',
             dedupeKey: `evaluation_update:${proposal.id}:${existing.id}:${savedEvaluation?.id || 'document_comparison'}`,
-            title: 'AI mediation review ready',
-            message: `An AI mediation review is ready for "${proposal.title || 'your proposal'}".`,
+            title: notificationCopy.title,
+            message: notificationCopy.message,
             actionUrl: buildSharedReportHref(sharedReportToken) || legacyActionUrl,
             metadata: sharedReportToken
               ? buildNotificationTargetMetadata({
@@ -2030,13 +2106,11 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
                   legacyActionUrl,
                 })
               : null,
-            emailSubject: 'AI mediation review ready',
+            emailSubject: notificationCopy.emailSubject,
             emailText: [
-              `Your proposal "${proposal.title || 'Untitled Proposal'}" has a new AI mediation review.`,
+              notificationCopy.emailText,
               '',
               `Score: ${evaluation.score ?? 'N/A'}`,
-              '',
-              'Sign in to PreMarket to review the full mediation review.',
             ].join('\n'),
           });
         } catch {

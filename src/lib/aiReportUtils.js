@@ -1,14 +1,25 @@
 /**
- * Pure utility functions for AI mediation review display.
+ * Pure utility functions for AI review display.
  *
  * These are intentionally dependency-free so they can be unit-tested
  * with node:test without needing a DOM or React.
  */
 
+import {
+  MEDIATION_REVIEW_STAGE,
+  PRE_SEND_REVIEW_STAGE,
+  isPreSendReviewStage,
+  resolveOpportunityReviewStage,
+} from './opportunityReviewStage';
+
 export const MEDIATION_REVIEW_LABEL = 'AI Mediation Review';
+export const PRE_SEND_REVIEW_LABEL = 'Pre-send Review';
 export const RUN_AI_MEDIATION_LABEL = 'Run AI Mediation';
 export const RERUN_AI_MEDIATION_LABEL = 'Re-run AI Mediation';
 export const RUNNING_AI_MEDIATION_LABEL = 'Running AI Mediation...';
+export const RUN_PRE_SEND_REVIEW_LABEL = 'Run Pre-send Review';
+export const RERUN_PRE_SEND_REVIEW_LABEL = 'Re-run Pre-send Review';
+export const RUNNING_PRE_SEND_REVIEW_LABEL = 'Running Pre-send Review...';
 export const OPEN_QUESTIONS_LABEL = 'Open Questions';
 export const MISSING_OR_REDACTED_INFO_LABEL = 'Missing or Redacted Information';
 export const DECISION_STATUS_LABELS = Object.freeze([
@@ -179,6 +190,63 @@ export function getRunAiMediationLabel({ isPending = false, hasExisting = false 
   return hasExisting ? RERUN_AI_MEDIATION_LABEL : RUN_AI_MEDIATION_LABEL;
 }
 
+export function getRunOpportunityReviewLabel({
+  stage = MEDIATION_REVIEW_STAGE,
+  isPending = false,
+  hasExisting = false,
+} = {}) {
+  if (isPreSendReviewStage(stage)) {
+    if (isPending) {
+      return RUNNING_PRE_SEND_REVIEW_LABEL;
+    }
+    return hasExisting ? RERUN_PRE_SEND_REVIEW_LABEL : RUN_PRE_SEND_REVIEW_LABEL;
+  }
+  if (isPending) {
+    return RUNNING_AI_MEDIATION_LABEL;
+  }
+  return hasExisting ? RERUN_AI_MEDIATION_LABEL : RUN_AI_MEDIATION_LABEL;
+}
+
+function normalizeReadinessStatusLabel(value) {
+  const normalized = normalizeSpaces(value).toLowerCase();
+  if (normalized === 'ready to send' || normalized === 'ready_to_send') return 'Ready to Send';
+  if (
+    normalized === 'ready with clarifications' ||
+    normalized === 'ready_with_clarifications'
+  ) {
+    return 'Ready with Clarifications';
+  }
+  return 'Not Ready to Send';
+}
+
+export function getReviewStageLabel(stageOrReport) {
+  const stage =
+    typeof stageOrReport === 'string'
+      ? stageOrReport
+      : resolveOpportunityReviewStage(stageOrReport, { fallbackStage: MEDIATION_REVIEW_STAGE });
+  return isPreSendReviewStage(stage) ? PRE_SEND_REVIEW_LABEL : MEDIATION_REVIEW_LABEL;
+}
+
+export function getReviewStatusDetails(report) {
+  const stage = resolveOpportunityReviewStage(report, {
+    fallbackStage: MEDIATION_REVIEW_STAGE,
+  });
+  if (isPreSendReviewStage(stage)) {
+    const label = normalizeReadinessStatusLabel(report?.readiness_status);
+    return {
+      label,
+      tone:
+        label === 'Ready to Send'
+          ? 'success'
+          : label === 'Ready with Clarifications'
+            ? 'warning'
+            : 'danger',
+      explanation: normalizeSpaces(report?.send_readiness_summary || ''),
+    };
+  }
+  return getDecisionStatusDetails(report);
+}
+
 export function getDecisionStatusDetails(report) {
   const whyEntries = Array.isArray(report?.why) ? report.why : [];
 
@@ -261,7 +329,22 @@ export function getSentenceSafePreview(text, maxChars = 180) {
  * @returns {boolean}
  */
 export function hasV2Report(report) {
-  return Array.isArray(report?.why) && report.why.length > 0;
+  if (!report || typeof report !== 'object' || Array.isArray(report)) {
+    return false;
+  }
+  if (Array.isArray(report?.why) && report.why.length > 0) {
+    return true;
+  }
+  if (Array.isArray(report?.presentation_sections) && report.presentation_sections.length > 0) {
+    return true;
+  }
+  const stage = resolveOpportunityReviewStage(report, {
+    fallbackStage: MEDIATION_REVIEW_STAGE,
+  });
+  return isPreSendReviewStage(stage) && (
+    normalizeSpaces(report?.send_readiness_summary) ||
+    normalizeSpaces(report?.readiness_status)
+  );
 }
 
 /**
@@ -449,6 +532,12 @@ function normalizeOpenQuestionComparableText(value) {
 }
 
 export function getAppendixOpenQuestions(report) {
+  const stage = resolveOpportunityReviewStage(report, {
+    fallbackStage: MEDIATION_REVIEW_STAGE,
+  });
+  if (isPreSendReviewStage(stage)) {
+    return [];
+  }
   const missingItems = Array.isArray(report?.missing)
     ? report.missing.map((entry) => normalizeSpaces(entry)).filter(Boolean)
     : [];

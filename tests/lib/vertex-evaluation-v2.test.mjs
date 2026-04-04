@@ -8,6 +8,9 @@ import {
   selectReportStyle,
   assessReportQuality,
 } from '../../server/_lib/vertex-evaluation-v2.ts';
+import {
+  PRE_SEND_REVIEW_STAGE,
+} from '../../src/lib/opportunityReviewStage.js';
 
 const require = createRequire(import.meta.url);
 /** @type {{ cases: Array<any> }} */
@@ -99,6 +102,22 @@ function validFactSheetPayload(overrides = {}) {
   };
 }
 
+function validPreSendPayload(overrides = {}) {
+  return {
+    analysis_stage: PRE_SEND_REVIEW_STAGE,
+    readiness_status: 'ready_with_clarifications',
+    send_readiness_summary: 'The sender draft is workable, but ownership and implementation assumptions should be tightened before sharing.',
+    missing_information: ['Who owns downstream remediation if integration work slips?'],
+    ambiguous_terms: ['Success criteria for final acceptance remain implied rather than explicit.'],
+    likely_recipient_questions: ['Which dependencies must be in place before delivery begins?'],
+    likely_pushback_areas: ['Open-ended remediation responsibility is likely to draw pushback.'],
+    commercial_risks: ['Budget boundaries are not yet tied to a defined change process.'],
+    implementation_risks: ['Unclear integration ownership could slow approval and delivery.'],
+    suggested_clarifications: ['Define acceptance criteria and assign remediation ownership before sending.'],
+    ...overrides,
+  };
+}
+
 function splitRenderedParagraphs(entries) {
   return entries
     .flatMap((entry) =>
@@ -120,6 +139,55 @@ function assertCleanRenderedEndings(entries, label) {
     assert.doesNotMatch(paragraph, /(?:\.\.\.|…)/, `${label} paragraph must not expose ellipsis fragments: "${paragraph}"`);
   }
 }
+
+test('validateResponseSchema accepts pre-send schema and rejects mediation fallback when stage is pre-send', () => {
+  const ok = validateResponseSchema(validPreSendPayload(), PRE_SEND_REVIEW_STAGE);
+  assert.equal(ok.ok, true);
+  assert.equal(ok.normalized.analysis_stage, PRE_SEND_REVIEW_STAGE);
+
+  const invalid = validateResponseSchema(validPayload(), PRE_SEND_REVIEW_STAGE);
+  assert.equal(invalid.ok, false);
+});
+
+test('evaluateWithVertexV2 returns pre-send review shape when analysisStage is pre_send_review', async () => {
+  const cleanup = setVertexV2MockSequence([
+    {
+      response: {
+        model: 'gemini-2.5-flash-lite',
+        text: JSON.stringify(validFactSheetPayload()),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+    {
+      response: {
+        model: 'gemini-2.5-pro',
+        text: JSON.stringify(validPreSendPayload()),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+  ]);
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Shared draft includes scope, milestones, and delivery notes for the counterparty.',
+      confidentialText: 'Internal sender notes highlight unresolved ownership and commercial assumptions.',
+      analysisStage: PRE_SEND_REVIEW_STAGE,
+      requestId: 'test_pre_send_review',
+    });
+
+    assert.equal(outcome.ok, true);
+    assert.equal(outcome.data.analysis_stage, PRE_SEND_REVIEW_STAGE);
+    assert.equal(outcome.data.readiness_status, 'ready_with_clarifications');
+    assert.equal(Array.isArray(outcome.data.likely_recipient_questions), true);
+    assert.equal('fit_level' in outcome.data, false);
+    assert.equal('confidence_0_1' in outcome.data, false);
+    assert.equal('why' in outcome.data, false);
+  } finally {
+    cleanup();
+  }
+});
 
 // Returns the mock vertex-response wrapper for a Pass A (fact sheet) success.
 function factSheetResponse(overrides = {}) {

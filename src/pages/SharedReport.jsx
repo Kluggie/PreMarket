@@ -65,9 +65,11 @@ import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { toast } from 'sonner';
 import {
-  getRunAiMediationLabel,
+  getRunOpportunityReviewLabel,
+  getReviewStageLabel,
   MEDIATION_REVIEW_LABEL,
 } from '@/lib/aiReportUtils';
+import { MEDIATION_REVIEW_STAGE, resolveOpportunityReviewStage } from '@/lib/opportunityReviewStage';
 import {
   buildSharedReportTurnCopy,
   getSharedReportSendActionLabel,
@@ -590,6 +592,16 @@ export default function SharedReport() {
   const recipientDraft = workspaceQuery.data?.recipientDraft || workspaceQuery.data?.currentDraft || null;
   const latestEvaluation = workspaceQuery.data?.latestEvaluation || null;
   const latestSentRevision = workspaceQuery.data?.latestSentRevision || null;
+  const baselineReviewReportForDownloads =
+    baseline?.ai_report ||
+    workspaceQuery.data?.baselineAiReport ||
+    comparison?.public_report ||
+    comparison?.evaluation_result?.report ||
+    {};
+  const baselineReviewStageForDownloads = resolveOpportunityReviewStage(baselineReviewReportForDownloads, {
+    source: comparison?.evaluation_result?.source,
+  });
+  const baselineReviewLabelForDownloads = getReviewStageLabel(baselineReviewStageForDownloads);
   const sharedHistoryEntries = useMemo(
     () => (Array.isArray(sharedHistory?.entries) ? sharedHistory.entries : []),
     [sharedHistory?.entries],
@@ -1459,14 +1471,14 @@ export default function SharedReport() {
   const downloadSharedAiMediationReviewPdfMutation = useMutation({
     mutationFn: () => sharedReportsClient.downloadRecipientAiReportPdf(token, { format: 'web-parity' }),
     onSuccess: () => {
-      toast.success('AI mediation review PDF download started');
+      toast.success(`${baselineReviewLabelForDownloads} PDF download started`);
     },
     onError: (error) => {
       if (error?.code === 'not_configured' || Number(error?.status || 0) === 501) {
-        toast.error('AI mediation review PDF is not configured in this environment yet.');
+        toast.error(`${baselineReviewLabelForDownloads} PDF is not configured in this environment yet.`);
         return;
       }
-      toast.error(error?.message || 'Unable to download AI mediation review PDF');
+      toast.error(error?.message || `Unable to download ${baselineReviewLabelForDownloads}`);
     },
   });
   const parentIsClosed = parentOutcomeState === 'won' || parentOutcomeState === 'lost';
@@ -1484,7 +1496,7 @@ export default function SharedReport() {
     },
     {
       key: 'ai-mediation-review-pdf',
-      label: 'AI Mediation Review PDF',
+      label: `${baselineReviewLabelForDownloads} PDF`,
       onClick: () => downloadSharedAiMediationReviewPdfMutation.mutate(),
       disabled: downloadSharedAiMediationReviewPdfMutation.isPending,
       loading: downloadSharedAiMediationReviewPdfMutation.isPending,
@@ -2403,6 +2415,10 @@ export default function SharedReport() {
   const hasStep3Report =
     Boolean(updatedRecipientReport && typeof updatedRecipientReport === 'object' && !Array.isArray(updatedRecipientReport)) &&
     Object.keys(updatedRecipientReport).length > 0;
+  const step0ReviewStage = resolveOpportunityReviewStage(baselineReport, {
+    source: comparison?.evaluation_result?.source,
+  });
+  const step0ReviewLabel = getReviewStageLabel(step0ReviewStage);
   const step0Recommendation =
     asText(baselineReport?.recommendation) ||
     asText(baseline?.summary) ||
@@ -2857,8 +2873,9 @@ export default function SharedReport() {
                 evaluationFailureBannerMessage: '',
                 hasReport: hasStep0Report,
                 hasEvaluations: false,
-                noReportMessage: 'No baseline AI mediation review is available yet for this opportunity.',
+                noReportMessage: `No baseline ${step0ReviewLabel} is available yet for this opportunity.`,
                 report: baselineReport,
+                reviewStage: step0ReviewStage,
                 recommendation: step0Recommendation,
                 timelineItems,
               }}
@@ -2959,7 +2976,8 @@ export default function SharedReport() {
               }}
               onBack={() => setStep(1)}
               onContinue={runEvaluationFromStep2}
-              continueLabel={getRunAiMediationLabel({
+              continueLabel={getRunOpportunityReviewLabel({
+                stage: MEDIATION_REVIEW_STAGE,
                 isPending: evaluateMutation.isPending,
                 hasExisting: Boolean(latestEvaluation),
               })}
@@ -3045,6 +3063,7 @@ export default function SharedReport() {
               hasEvaluations: Boolean(latestEvaluation),
               noReportMessage: sendDirectionCopy.noReportMessage,
               report: updatedRecipientReport,
+              reviewStage: MEDIATION_REVIEW_STAGE,
               recommendation: step3Recommendation,
               timelineItems,
             }}

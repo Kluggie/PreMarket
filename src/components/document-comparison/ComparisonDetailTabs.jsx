@@ -13,13 +13,15 @@ import {
   getPresentationReportTitle,
   getPresentationSections,
   getPrimaryInsight,
-  MEDIATION_REVIEW_LABEL,
   MISSING_OR_REDACTED_INFO_LABEL,
   OPEN_QUESTIONS_LABEL,
   parseV2WhyEntry,
   splitV2WhyBodyParagraphs,
   filterLegacySectionsForDisplay,
+  getReviewStageLabel,
+  getReviewStatusDetails,
 } from '@/lib/aiReportUtils';
+import { MEDIATION_REVIEW_STAGE, isPreSendReviewStage, resolveOpportunityReviewStage } from '@/lib/opportunityReviewStage';
 
 function asText(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -90,20 +92,32 @@ export function ComparisonAiReportTab({
   evaluationFailureBannerMessage = '',
   hasReport = false,
   hasEvaluations = false,
-  noReportMessage = 'No AI mediation review yet.',
+  noReportMessage = '',
   runDetailsHref = '',
   report = {},
   recommendation = '',
   confidenceFallbackScore = null,
   timelineItems = [],
+  reviewStage = '',
 }) {
   const safeReport = report && typeof report === 'object' && !Array.isArray(report) ? report : {};
+  const resolvedReviewStage = resolveOpportunityReviewStage(safeReport, {
+    analysisStage: reviewStage,
+    fallbackStage: MEDIATION_REVIEW_STAGE,
+  });
+  const isPreSendReview = isPreSendReviewStage(resolvedReviewStage);
+  const reviewLabel = getReviewStageLabel(resolvedReviewStage);
+  const resolvedNoReportMessage =
+    noReportMessage ||
+    (isPreSendReview ? 'No Pre-send Review yet.' : 'No AI Mediation Review yet.');
   const isV2 = hasV2Report(safeReport);
   const reportSections = Array.isArray(safeReport?.sections) ? safeReport.sections : [];
   const reportSectionsFiltered = isV2 ? [] : filterLegacySectionsForDisplay(reportSections);
   const showRunDetailsLink = Boolean(runDetailsHref) && (hasReport || hasEvaluations);
   const normalizedTimelineItems = Array.isArray(timelineItems) ? timelineItems : [];
-  const decisionStatus = getDecisionStatusDetails(safeReport);
+  const decisionStatus = isPreSendReview
+    ? getReviewStatusDetails(safeReport)
+    : getDecisionStatusDetails(safeReport);
   const confidencePercent = getConfidencePercent(
     safeReport,
     confidenceFallbackScore ?? safeReport?.similarity_score ?? null,
@@ -114,6 +128,12 @@ export function ComparisonAiReportTab({
   const leadPresentationSection = presentationSections[0] || null;
   const bodyPresentationSections = leadPresentationSection ? presentationSections.slice(1) : [];
   const openQuestionsCount = Array.isArray(safeReport.missing) ? safeReport.missing.length : 0;
+  const likelyRecipientQuestionCount = Array.isArray(safeReport.likely_recipient_questions)
+    ? safeReport.likely_recipient_questions.length
+    : 0;
+  const suggestedClarificationsCount = Array.isArray(safeReport.suggested_clarifications)
+    ? safeReport.suggested_clarifications.length
+    : 0;
   const appendixOpenQuestions = getAppendixOpenQuestions(safeReport);
   const decisionExplanation = asText(decisionStatus.explanation);
   const decisionToneClass =
@@ -134,12 +154,16 @@ export function ComparisonAiReportTab({
           <CardContent className="py-6">
             <div className="flex items-center gap-2 text-slate-700">
               <Loader2 className="w-4 h-4 animate-spin" />
-              <span className="font-medium">AI mediation in progress...</span>
+              <span className="font-medium">
+                {isPreSendReview ? 'Pre-send Review in progress...' : 'AI Mediation Review in progress...'}
+              </span>
             </div>
             <p className="text-sm text-slate-500 mt-2">
               {isPollingTimedOut
                 ? 'Still processing. Refresh to check status.'
-                : 'The mediation review updates automatically when processing finishes.'}
+                : isPreSendReview
+                  ? 'The sender-side review updates automatically when processing finishes.'
+                  : 'The mediation review updates automatically when processing finishes.'}
             </p>
           </CardContent>
         </Card>
@@ -148,7 +172,7 @@ export function ComparisonAiReportTab({
       {isEvaluationNotConfigured ? (
         <Alert className="bg-amber-50 border-amber-200">
           <AlertDescription className="text-amber-900">
-            Vertex AI integration is not configured. AI mediation review not available.
+            Vertex AI integration is not configured. {reviewLabel} is not available.
           </AlertDescription>
         </Alert>
       ) : null}
@@ -172,7 +196,7 @@ export function ComparisonAiReportTab({
 
       {!isEvaluationRunning && !isEvaluationNotConfigured && !isEvaluationFailed && !hasReport && !hasEvaluations ? (
         <Card className="border border-slate-200 shadow-sm">
-          <CardContent className="py-6 text-slate-600">{noReportMessage}</CardContent>
+          <CardContent className="py-6 text-slate-600">{resolvedNoReportMessage}</CardContent>
         </Card>
       ) : null}
 
@@ -182,37 +206,72 @@ export function ComparisonAiReportTab({
       {!isEvaluationRunning && !isEvaluationNotConfigured && !isEvaluationFailed && hasEvaluations && !hasReport ? (
         <Card className="border border-slate-200 shadow-sm">
           <CardContent className="py-6 text-slate-600">
-            The AI mediation review completed. Detailed report content is not available for this
-            evaluation — this can happen if the report was filtered for confidentiality. You may
-            re-run the review to generate a new result.
+            {reviewLabel} completed. Detailed report content is not available for this evaluation.
+            This can happen if the report was filtered for confidentiality. You may re-run the
+            review to generate a new result.
           </CardContent>
         </Card>
       ) : null}
 
       {hasReport ? (
         <>
+          {isPreSendReview ? (
+            <Alert className="border-slate-200 bg-slate-50">
+              <AlertDescription className="text-slate-700">
+                Based only on the sender&apos;s materials. This review does not assess recipient
+                alignment, compatibility, or deal feasibility.
+              </AlertDescription>
+            </Alert>
+          ) : null}
           {/* Compact metadata row — lighter alternative to heavy dark strip */}
           <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Recommendation</span>
-              <Badge variant="outline" className="capitalize">
-                {recommendation || safeReport?.fit_level || 'Pending'}
-              </Badge>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Confidence</span>
-              <Badge variant="outline">{confidencePercent}%</Badge>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Status</span>
-              <Badge className={decisionToneClass}>{decisionStatus.label}</Badge>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">{OPEN_QUESTIONS_LABEL}</span>
-              <Badge className="bg-amber-100 text-amber-700 border-amber-200">
-                {openQuestionsCount} item{openQuestionsCount !== 1 ? 's' : ''}
-              </Badge>
-            </div>
+            {isPreSendReview ? (
+              <>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Readiness</span>
+                  <Badge className={decisionToneClass}>{decisionStatus.label}</Badge>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                    Likely Recipient Questions
+                  </span>
+                  <Badge variant="outline">
+                    {likelyRecipientQuestionCount} item{likelyRecipientQuestionCount !== 1 ? 's' : ''}
+                  </Badge>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                    Suggested Clarifications
+                  </span>
+                  <Badge variant="outline">
+                    {suggestedClarificationsCount} item{suggestedClarificationsCount !== 1 ? 's' : ''}
+                  </Badge>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Recommendation</span>
+                  <Badge variant="outline" className="capitalize">
+                    {recommendation || safeReport?.fit_level || 'Pending'}
+                  </Badge>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Confidence</span>
+                  <Badge variant="outline">{confidencePercent}%</Badge>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Status</span>
+                  <Badge className={decisionToneClass}>{decisionStatus.label}</Badge>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">{OPEN_QUESTIONS_LABEL}</span>
+                  <Badge className="bg-amber-100 text-amber-700 border-amber-200">
+                    {openQuestionsCount} item{openQuestionsCount !== 1 ? 's' : ''}
+                  </Badge>
+                </div>
+              </>
+            )}
             {showRunDetailsLink ? (
               <div className="ml-auto">
                 <Link
@@ -352,11 +411,11 @@ export function ComparisonAiReportTab({
                   ))}
                 </div>
               ) : (
-                <p className="text-slate-600">AI mediation review content is not available yet.</p>
+                <p className="text-slate-600">{reviewLabel} content is not available yet.</p>
               )}
 
               {/* Open Questions */}
-              {isV2 && appendixOpenQuestions.length > 0 ? (
+              {isV2 && !isPreSendReview && appendixOpenQuestions.length > 0 ? (
                 <div className="border-t border-slate-100 pt-6" data-testid="v2-missing-info">
                   <h2 className="text-sm font-semibold text-slate-700 mb-3">{OPEN_QUESTIONS_LABEL}</h2>
                   <ul className="space-y-2.5">
@@ -370,7 +429,7 @@ export function ComparisonAiReportTab({
                 </div>
               ) : null}
 
-              {isV2 && redactionItems.length > 0 ? (
+              {isV2 && !isPreSendReview && redactionItems.length > 0 ? (
                 <div className="border-t border-slate-100 pt-6" data-testid="v2-redacted-info">
                   <h2 className="text-sm font-semibold text-slate-700 mb-3">{MISSING_OR_REDACTED_INFO_LABEL}</h2>
                   <ul className="space-y-2.5">
@@ -384,7 +443,7 @@ export function ComparisonAiReportTab({
                 </div>
               ) : null}
 
-              {decisionExplanation && presentationSections.length === 0 ? (
+              {decisionExplanation && !isPreSendReview && presentationSections.length === 0 ? (
                 <div className="border-t border-slate-100 pt-6" data-testid="decision-explanation">
                   <h2 className="text-sm font-semibold text-slate-700 mb-3">Decision Explanation</h2>
                   <p className="text-sm text-slate-700 leading-relaxed">{decisionExplanation}</p>
@@ -523,6 +582,11 @@ export function ComparisonDetailTabs({
   proposalDetailsProps = {},
   leadingElement = null,
 }) {
+  const reportStage = resolveOpportunityReviewStage(aiReportProps?.report, {
+    analysisStage: aiReportProps?.reviewStage,
+    fallbackStage: MEDIATION_REVIEW_STAGE,
+  });
+  const reportLabel = getReviewStageLabel(reportStage);
   const orderedTabs = Array.isArray(tabOrder)
     ? tabOrder.filter((tab, index, source) => ['report', 'details'].includes(tab) && source.indexOf(tab) === index)
     : ['report', 'details'];
@@ -541,7 +605,7 @@ export function ComparisonDetailTabs({
                 className="data-[state=active]:bg-slate-900 data-[state=active]:text-white"
               >
                 <BarChart3 className="w-4 h-4 mr-2" />
-                {MEDIATION_REVIEW_LABEL}
+                {reportLabel}
                 {hasReportBadge ? (
                   <Badge className="ml-2 bg-green-100 text-green-700 text-xs">Complete</Badge>
                 ) : null}
@@ -561,7 +625,7 @@ export function ComparisonDetailTabs({
           );
         })}
       </TabsList>      </div>
-      <TabsContent value="report" className="mt-6" aria-label={MEDIATION_REVIEW_LABEL}>
+      <TabsContent value="report" className="mt-6" aria-label={reportLabel}>
         <ComparisonAiReportTab {...aiReportProps} />
       </TabsContent>
 

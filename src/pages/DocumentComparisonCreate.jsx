@@ -29,6 +29,8 @@ import {
   resolveHydratedDraftStep,
   shouldHydrateComparisonDraft,
 } from '@/pages/document-comparison/hydration';
+import { getReviewStageLabel } from '@/lib/aiReportUtils';
+import { resolveOpportunityReviewStage } from '@/lib/opportunityReviewStage';
 import { buildComparisonDraftSavePayload } from '@/pages/document-comparison/draftPayload';
 import {
   applySuggestedTextChange,
@@ -2003,6 +2005,8 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
     guestEvaluationPreview?.evaluationResult?.report ||
     {};
   const hasPreviewEvaluationReport = hasObjectContent(previewEvaluationReport);
+  const previewReviewStage = resolveOpportunityReviewStage(previewEvaluationReport);
+  const previewReviewLabel = getReviewStageLabel(previewReviewStage);
   const previewEvaluationRecommendation = asText(
     guestEvaluationPreview?.evaluationResult?.recommendation ||
       previewEvaluationReport?.recommendation ||
@@ -2023,12 +2027,12 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
       kind: 'clock',
       tone: 'neutral',
       title: isGuestMode ? 'Saved in this browser' : 'Restored from guest preview',
-      timestamp: isGuestMode ? 'Local-only until sign-in' : 'Run AI Mediation to save permanently',
+      timestamp: isGuestMode ? 'Local-only until sign-in' : `Run ${previewReviewLabel} to save permanently`,
     },
   ];
   const step3PrimaryActionLabel = guestMediationLimitReached
     ? 'Sign in for more AI runs'
-    : 'Run AI Mediation';
+    : 'Run Pre-send Review';
 
   useEffect(() => {
     draftDirtyRef.current = draftDirty;
@@ -2682,7 +2686,7 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
       );
       setShowFinishConfirmDialog(false);
       updateRouteParams({ nextStep: 3, replace: true });
-      toast.success('AI mediation review ready');
+      toast.success('Pre-send Review ready');
     } catch (error) {
       const code = getApiErrorCode(error);
       const guestLimitMessage = getGuestAiLimitMessage(error);
@@ -4486,12 +4490,12 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
                     <Card>
                       <CardHeader>
                         <CardTitle>
-                          {isGuestMode ? 'Latest Preview AI Mediation Review' : 'Restored Preview AI Mediation Review'}
+                          {isGuestMode ? `Latest Preview ${previewReviewLabel}` : `Restored Preview ${previewReviewLabel}`}
                         </CardTitle>
                         <CardDescription>
                           {isGuestMode
                             ? 'This preview result is saved in this browser until you sign in or discard it.'
-                            : 'This preview result was restored after sign-in. Run AI Mediation to save an account-owned result.'}
+                            : `This preview result was restored after sign-in. Run ${previewReviewLabel} to save an account-owned result.`}
                         </CardDescription>
                       </CardHeader>
                     </Card>
@@ -4503,8 +4507,9 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
                       aiReportProps={{
                         hasReport: hasPreviewEvaluationReport,
                         hasEvaluations: true,
-                        noReportMessage: 'No preview AI mediation review yet.',
+                        noReportMessage: `No preview ${previewReviewLabel} yet.`,
                         report: previewEvaluationReport,
+                        reviewStage: previewReviewStage,
                         recommendation: previewEvaluationRecommendation,
                         timelineItems: previewEvaluationTimelineItems,
                       }}

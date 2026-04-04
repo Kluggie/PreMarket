@@ -4,6 +4,11 @@ import { getVertexConfig, getVertexNotConfiguredError, type VertexServiceAccount
 import { sanitizeUserInput, wrapRawUserContent } from './vertex-input-sanitizer.js';
 import { truncateTextAtNaturalBoundary } from '../../src/lib/aiReportUtils.js';
 import { preflightPromptCheck, type PreflightResult } from './evaluation-context-budget.js';
+import {
+  MEDIATION_REVIEW_STAGE,
+  PRE_SEND_REVIEW_STAGE,
+  normalizeOpportunityReviewStage,
+} from '../../src/lib/opportunityReviewStage.js';
 
 const VERTEX_TIMEOUT_MS = 90_000;
 const MAX_ATTEMPTS = 2;
@@ -86,6 +91,7 @@ type EvaluationChunks = {
 
 type FallbackMode = 'salvaged_memo' | 'incomplete';
 type PostProcessMode = 'normal' | 'salvaged_fallback' | 'incomplete_fallback';
+type ReviewStage = typeof PRE_SEND_REVIEW_STAGE | typeof MEDIATION_REVIEW_STAGE;
 
 type VertexCallOverride = (params: {
   prompt: string;
@@ -100,6 +106,7 @@ type VertexCallOverride = (params: {
 export interface VertexEvaluationV2Request {
   sharedText: string;
   confidentialText: string;
+  analysisStage?: ReviewStage;
   requestId?: string;
   forbiddenLeakText?: string;
   forbiddenLeakCanaryTokens?: string[];
@@ -114,7 +121,8 @@ export interface VertexEvaluationV2Request {
   convergenceDigestText?: string;
 }
 
-export interface VertexEvaluationV2Response {
+export interface VertexEvaluationV2MediationResponse {
+  analysis_stage: typeof MEDIATION_REVIEW_STAGE;
   fit_level: FitLevel;
   confidence_0_1: number;
   why: string[];
@@ -122,6 +130,28 @@ export interface VertexEvaluationV2Response {
   redactions: string[];
   negotiation_analysis?: NegotiationAnalysis;
 }
+
+type PreSendReadinessStatus =
+  | 'not_ready_to_send'
+  | 'ready_with_clarifications'
+  | 'ready_to_send';
+
+export interface VertexEvaluationV2PreSendResponse {
+  analysis_stage: typeof PRE_SEND_REVIEW_STAGE;
+  readiness_status: PreSendReadinessStatus;
+  send_readiness_summary: string;
+  missing_information: string[];
+  ambiguous_terms: string[];
+  likely_recipient_questions: string[];
+  likely_pushback_areas: string[];
+  commercial_risks: string[];
+  implementation_risks: string[];
+  suggested_clarifications: string[];
+}
+
+export type VertexEvaluationV2Response =
+  | VertexEvaluationV2MediationResponse
+  | VertexEvaluationV2PreSendResponse;
 
 export interface VertexEvaluationV2Error {
   parse_error_kind: ParseErrorKind;
@@ -2544,7 +2574,7 @@ function buildBlockerSummary(params: {
 
 function buildStrengthParagraphs(params: {
   factSheet: ProposalFactSheet;
-  data: VertexEvaluationV2Response;
+  data: VertexEvaluationV2MediationResponse;
   signals: CalibrationSignals;
   positiveEvidence: string;
   strengthsPoints: string[];
@@ -2985,7 +3015,7 @@ function buildDealStructureParagraphs(params: {
 function buildRecommendedPathParagraphs(params: {
   factSheet: ProposalFactSheet;
   signals: CalibrationSignals;
-  data: VertexEvaluationV2Response;
+  data: VertexEvaluationV2MediationResponse;
   cleanBounded: boolean;
   conditionSummary: string;
   agendaItems: string[];
@@ -3017,7 +3047,7 @@ function buildRecommendedPathParagraphs(params: {
 
 function buildSectionRoleDefaults(params: {
   factSheet: ProposalFactSheet;
-  data: VertexEvaluationV2Response;
+  data: VertexEvaluationV2MediationResponse;
   signals: CalibrationSignals;
 }) {
   const positiveEvidence = buildPositiveEvidenceSummary(params.factSheet);
@@ -3193,7 +3223,7 @@ function classifyFallbackMode(factSheet: ProposalFactSheet) {
 
 function buildCalibrationSignals(params: {
   factSheet: ProposalFactSheet;
-  data: VertexEvaluationV2Response;
+  data: VertexEvaluationV2MediationResponse;
 }) {
   const domain = classifyProposalDomain(params.factSheet);
   const whySections = parseWhySections(params.data.why);
@@ -3312,7 +3342,7 @@ function buildCalibrationSignals(params: {
 
 function rewriteWhyForCalibration(params: {
   factSheet: ProposalFactSheet;
-  data: VertexEvaluationV2Response;
+  data: VertexEvaluationV2MediationResponse;
   signals: CalibrationSignals;
   postProcessMode?: PostProcessMode;
 }) {
@@ -3496,7 +3526,7 @@ function capConfidenceToSignals(params: {
 }
 
 function applyConsistencyCalibration(params: {
-  data: VertexEvaluationV2Response;
+  data: VertexEvaluationV2MediationResponse;
   factSheet: ProposalFactSheet;
   sharedText: string;
   postProcessMode?: PostProcessMode;
@@ -3605,6 +3635,133 @@ function applyConsistencyCalibration(params: {
   };
 }
 
+function uniqueStrings(values: string[]) {
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  values.forEach((value) => {
+    const text = asText(value);
+    const key = text.toLowerCase();
+    if (!text || seen.has(key)) return;
+    seen.add(key);
+    normalized.push(text);
+  });
+  return normalized;
+}
+
+function trimStageItems(values: string[], maxItems = 6, fallback: string[] = []) {
+  const normalized = uniqueStrings(values).slice(0, maxItems);
+  if (normalized.length > 0) {
+    return normalized;
+  }
+  return uniqueStrings(fallback).slice(0, maxItems);
+}
+
+function derivePreSendReadinessStatus(factSheet: ProposalFactSheet): PreSendReadinessStatus {
+  const coverageCount = computeCoverageCount(factSheet.source_coverage);
+  const blockingGaps = factSheet.missing_info.length + factSheet.open_questions.length;
+  if (coverageCount <= 2 || blockingGaps >= 5) {
+    return 'not_ready_to_send';
+  }
+  if (coverageCount <= 4 || blockingGaps >= 2) {
+    return 'ready_with_clarifications';
+  }
+  return 'ready_to_send';
+}
+
+function safeFallbackPreSendReviewFromFactSheet(
+  factSheet: ProposalFactSheet,
+  params: { failureKind: string },
+): { data: VertexEvaluationV2PreSendResponse; warnings: string[]; fallbackMode: FallbackMode } {
+  const warningKey =
+    params.failureKind === 'truncated_output'
+      ? 'vertex_truncated_output_fallback_used'
+      : params.failureKind.startsWith('vertex_http') || params.failureKind === 'vertex_timeout'
+        ? 'vertex_request_failed_fallback_used'
+        : params.failureKind === 'not_configured'
+          ? 'vertex_not_configured_fallback_used'
+          : 'vertex_invalid_response_fallback_used';
+
+  const readiness_status = derivePreSendReadinessStatus(factSheet);
+  const fallbackMode = classifyFallbackMode(factSheet);
+  const missing_information = trimStageItems(
+    factSheet.missing_info,
+    6,
+    [
+      'Core scope details are still too thin to share confidently.',
+      'Acceptance criteria are not yet defined clearly enough for a counterparty review.',
+      'Timeline, dependencies, or constraints need more explicit framing.',
+    ],
+  );
+  const likely_recipient_questions = trimStageItems(
+    factSheet.open_questions,
+    6,
+    missing_information.map((item) => item.endsWith('?') ? item : `${item}?`),
+  );
+  const ambiguous_terms = trimStageItems(
+    [
+      ...factSheet.assumptions,
+      ...factSheet.constraints.filter((entry) => /\bflexible|support|alignment|commercial|standard|reasonable|subject to\b/i.test(entry)),
+    ],
+    5,
+    ['Several scope, ownership, or timing assumptions are still implicit rather than contractable.'],
+  );
+  const commercial_risks = trimStageItems(
+    [
+      ...factSheet.constraints.filter((entry) => /\bbudget|price|pricing|payment|liability|commercial|margin|change order|change-order\b/i.test(entry)),
+      ...factSheet.risks
+        .map((entry) => entry.risk)
+        .filter((entry) => /\bbudget|payment|liability|commercial|cost|pricing\b/i.test(entry)),
+    ],
+    5,
+    ['Commercial boundaries and risk allocation still need clearer wording before sharing.'],
+  );
+  const implementation_risks = trimStageItems(
+    [
+      ...factSheet.risks.map((entry) => entry.risk),
+      ...factSheet.constraints.filter((entry) => /\bdata|integration|approval|dependency|timeline|milestone|implementation|security|rollout\b/i.test(entry)),
+    ],
+    5,
+    ['Delivery dependencies, sequencing, or acceptance mechanics need more explicit definition.'],
+  );
+  const likely_pushback_areas = trimStageItems(
+    [...commercial_risks, ...implementation_risks, ...ambiguous_terms],
+    6,
+    ['A reasonable recipient may push back on unclear scope, ownership, or commercial boundaries.'],
+  );
+  const suggested_clarifications = trimStageItems(
+    [
+      ...missing_information.map((entry) => `Clarify: ${entry}`),
+      ...ambiguous_terms.map((entry) => `Tighten wording around: ${entry}`),
+    ],
+    6,
+    ['Clarify the highest-risk gaps before sharing this draft more broadly.'],
+  );
+
+  const summaryLead =
+    readiness_status === 'ready_to_send'
+      ? 'The sender draft appears broadly ready to share, but the remaining questions below should still be tightened.'
+      : readiness_status === 'ready_with_clarifications'
+        ? 'The sender draft has a workable foundation, but it should be tightened before sharing so the recipient is not left to infer critical assumptions.'
+        : 'The sender draft is not yet ready to share confidently because several scope, risk, or ownership gaps remain materially unclear.';
+
+  return {
+    data: {
+      analysis_stage: PRE_SEND_REVIEW_STAGE,
+      readiness_status,
+      send_readiness_summary: summaryLead,
+      missing_information,
+      ambiguous_terms,
+      likely_recipient_questions,
+      likely_pushback_areas,
+      commercial_risks,
+      implementation_risks,
+      suggested_clarifications,
+    },
+    warnings: [warningKey],
+    fallbackMode,
+  };
+}
+
 /**
  * Produces a safe, clamped fallback VertexEvaluationV2Response when all Vertex
  * attempts have failed. Never returns raw confidential text.
@@ -3618,7 +3775,7 @@ function safeFallbackEvaluationFromFactSheet(
     sharedChars: number;
     confidentialChars: number;
   },
-): { data: VertexEvaluationV2Response; warnings: string[]; fallbackMode: FallbackMode } {
+): { data: VertexEvaluationV2MediationResponse; warnings: string[]; fallbackMode: FallbackMode } {
   const warningKey =
     params.failureKind === 'truncated_output'
       ? 'vertex_truncated_output_fallback_used'
@@ -3638,6 +3795,7 @@ function safeFallbackEvaluationFromFactSheet(
   if (fallbackMode === 'incomplete') {
     return {
       data: {
+        analysis_stage: MEDIATION_REVIEW_STAGE,
         fit_level: 'unknown',
         confidence_0_1: 0.2,
         why: [
@@ -3657,7 +3815,8 @@ function safeFallbackEvaluationFromFactSheet(
     };
   }
 
-  const provisionalData: VertexEvaluationV2Response = {
+  const provisionalData: VertexEvaluationV2MediationResponse = {
+    analysis_stage: MEDIATION_REVIEW_STAGE,
     fit_level: 'medium',
     confidence_0_1: 0.48,
     why: [],
@@ -3670,7 +3829,8 @@ function safeFallbackEvaluationFromFactSheet(
   });
   const fit_level = fallbackSignals.shouldBeLow ? 'low' : 'medium';
   const confidence_0_1 = fit_level === 'medium' ? 0.48 : 0.38;
-  const fallbackData: VertexEvaluationV2Response = {
+  const fallbackData: VertexEvaluationV2MediationResponse = {
+    analysis_stage: MEDIATION_REVIEW_STAGE,
     fit_level,
     confidence_0_1,
     why: [],
@@ -3691,6 +3851,101 @@ function safeFallbackEvaluationFromFactSheet(
     warnings: [warningKey],
     fallbackMode,
   };
+}
+
+function buildPreSendPromptFromFactSheet(params: {
+  factSheet: ProposalFactSheet;
+  reportStyle: ReportStyle;
+  tightMode?: boolean;
+}) {
+  const { factSheet, reportStyle } = params;
+  const tightMode = Boolean(params.tightMode);
+  const domain = classifyProposalDomain(factSheet);
+
+  const voiceGuide =
+    reportStyle.style_id === 'direct'
+      ? 'Voice: practical and concise. State the sender-side issues plainly.'
+      : reportStyle.style_id === 'collaborative'
+        ? 'Voice: constructive and commercially useful. Focus on how the draft can be clarified before sharing.'
+        : 'Voice: structured and evidence-based. Ground every point in the fact sheet.';
+
+  return [
+    tightMode
+      ? 'STRICT COMPACT MODE: Return JSON only. No markdown. No code fences. No commentary. Keep output compact.'
+      : '',
+    'SYSTEM: You are the Pre-send Review analyst for PreMarket.',
+    'You are reviewing ONLY the sender-side materials before they are shared with the counterparty.',
+    'This is a unilateral draft-readiness review, not a bilateral mediation review.',
+    'You do NOT know the recipient’s actual position. Do NOT write as if both sides have already contributed.',
+    '',
+    'IMPORTANT BOUNDARY:',
+    '- You may identify likely recipient questions, likely pushback, missing assumptions, scope ambiguity, commercial risk, and implementation risk.',
+    '- You may evaluate whether the sender draft appears ready to share.',
+    '- You must NOT assess bilateral compatibility, feasibility between parties, agreement likelihood, confidence in a bilateral outcome, or whether the deal should proceed.',
+    '- Forbidden language includes phrases such as "the parties align", "agreement is likely", "proceed with conditions", "compatible with adjustments", or any wording that claims to know the recipient stance.',
+    '',
+    'CONFIDENTIALITY RULES (strictly enforced):',
+    '- Never quote confidential text verbatim.',
+    '- Never disclose confidential numbers, IDs, emails, pricing, or exact identifiers.',
+    '- Use only generic, safely-derived conclusions when drawing on confidential context.',
+    '',
+    `DOMAIN-SENSITIVE LENS: Classified proposal domain: ${domain.label}.`,
+    ...buildDomainPromptGuidance(domain),
+    '',
+    voiceGuide,
+    '',
+    'REVIEW OBJECTIVES:',
+    '- Readiness to Send: is the sender draft ready to share now, ready only after clarifications, or not ready yet?',
+    '- Missing Information: what decision-critical facts are still absent?',
+    '- Ambiguous Terms: what language is underspecified or could be read multiple ways?',
+    '- Likely Recipient Questions: what would a reasonable counterparty ask before engaging seriously?',
+    '- Likely Pushback Areas: what terms, assumptions, or asymmetries may draw resistance?',
+    '- Commercial Risks: where pricing, scope, payment, liability, or ownership language is weak or exposed?',
+    '- Implementation Risks: where delivery dependencies, KPIs, sequencing, resourcing, governance, or acceptance criteria are weak?',
+    '- Suggested Clarifications: what should be tightened before sharing?',
+    '',
+    'WRITING RULES:',
+    '- Ground every item in the fact_sheet evidence.',
+    '- Stay hypothetical and unilateral. Use phrasing such as "a recipient may question...", "this draft leaves unclear...", "before sharing, clarify...".',
+    '- Avoid grammar-only or formatting-only feedback unless it materially affects commercial meaning.',
+    '- Prioritise scope boundaries, KPI definitions, ownership gaps, pricing assumptions, dependencies, data handling, risk allocation, and acceptance mechanics.',
+    '',
+    'OUTPUT RULES:',
+    '- readiness_status must be one of: "not_ready_to_send", "ready_with_clarifications", "ready_to_send".',
+    '- send_readiness_summary must be a short evidence-based paragraph.',
+    '- Every list must contain concrete, commercially useful items rather than generic editing notes.',
+    '- Keep items safe for sharing; do not expose confidential specifics.',
+    '',
+    'Required JSON schema:',
+    JSON.stringify(
+      {
+        analysis_stage: PRE_SEND_REVIEW_STAGE,
+        readiness_status: 'not_ready_to_send|ready_with_clarifications|ready_to_send',
+        send_readiness_summary: 'string',
+        missing_information: ['string'],
+        ambiguous_terms: ['string'],
+        likely_recipient_questions: ['string'],
+        likely_pushback_areas: ['string'],
+        commercial_risks: ['string'],
+        implementation_risks: ['string'],
+        suggested_clarifications: ['string'],
+      },
+      null,
+      2,
+    ),
+    'INPUT JSON:',
+    JSON.stringify(
+      {
+        analysis_stage: PRE_SEND_REVIEW_STAGE,
+        fact_sheet: factSheet,
+      },
+      null,
+      2,
+    ),
+    'Return JSON only.',
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 function buildEvalPromptFromFactSheet(params: {
@@ -3996,12 +4251,12 @@ function buildEvalPromptFromFactSheet(params: {
 // ─── Post-processing coverage clamps ─────────────────────────────────────────
 
 type ClampResult = {
-  data: VertexEvaluationV2Response;
+  data: VertexEvaluationV2MediationResponse;
   capsApplied: string[];
 };
 
 function applyCoverageClamps(params: {
-  data: VertexEvaluationV2Response;
+  data: VertexEvaluationV2MediationResponse;
   factSheet: ProposalFactSheet;
   sharedText: string;
   confidentialText: string;
@@ -4212,12 +4467,41 @@ function isLikelyTruncatedOutput(text: string, finishReason: string | null) {
   return openCurly > closeCurly || openSquare > closeSquare;
 }
 
-function validateResponseSchema(value: unknown): SchemaValidationResult {
+function ensureStringArrayField(entry: unknown, field: string, invalidFields: string[]) {
+  if (!Array.isArray(entry)) {
+    invalidFields.push(field);
+    return [] as string[];
+  }
+  const normalized = entry
+    .map((item) => asText(item))
+    .filter((item) => item.length > 0);
+  if (normalized.length !== entry.length) {
+    invalidFields.push(`${field}_contains_non_string`);
+  }
+  return normalized;
+}
+
+function normalizeReadinessStatus(value: unknown): PreSendReadinessStatus {
+  const normalized = normalizeKeywordText(asText(value));
+  if (normalized === 'ready to send' || normalized === 'ready to share') {
+    return 'ready_to_send';
+  }
+  if (
+    normalized === 'ready with clarifications' ||
+    normalized === 'tighten before sending' ||
+    normalized === 'tighten before sharing'
+  ) {
+    return 'ready_with_clarifications';
+  }
+  return 'not_ready_to_send';
+}
+
+function validateMediationResponseSchema(value: unknown): SchemaValidationResult {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return {
       ok: false,
-      missingKeys: ['fit_level', 'confidence_0_1', 'why', 'missing', 'redactions'],
-      invalidFields: ['root_not_object'],
+      missingKeys: ['analysis_stage', 'fit_level', 'confidence_0_1', 'why', 'missing', 'redactions'],
+      invalidFields: ['root_not_object', 'analysis_stage'],
     };
   }
 
@@ -4225,6 +4509,10 @@ function validateResponseSchema(value: unknown): SchemaValidationResult {
   const requiredKeys = ['fit_level', 'confidence_0_1', 'why', 'missing', 'redactions'] as const;
   const missingKeys = requiredKeys.filter((key) => raw[key] === undefined);
   const invalidFields: string[] = [];
+  const analysisStage = normalizeOpportunityReviewStage(raw.analysis_stage, MEDIATION_REVIEW_STAGE);
+  if (analysisStage !== MEDIATION_REVIEW_STAGE) {
+    invalidFields.push('analysis_stage');
+  }
 
   const fit = asLower(raw.fit_level);
   if (!['high', 'medium', 'low', 'unknown'].includes(fit)) {
@@ -4236,23 +4524,9 @@ function validateResponseSchema(value: unknown): SchemaValidationResult {
     invalidFields.push('confidence_0_1');
   }
 
-  const ensureStringArray = (entry: unknown, field: string) => {
-    if (!Array.isArray(entry)) {
-      invalidFields.push(field);
-      return [] as string[];
-    }
-    const normalized = entry
-      .map((item) => asText(item))
-      .filter((item) => item.length > 0);
-    if (normalized.length !== entry.length) {
-      invalidFields.push(`${field}_contains_non_string`);
-    }
-    return normalized;
-  };
-
-  const why = ensureStringArray(raw.why, 'why');
-  const missing = ensureStringArray(raw.missing, 'missing');
-  const redactions = ensureStringArray(raw.redactions, 'redactions');
+  const why = ensureStringArrayField(raw.why, 'why', invalidFields);
+  const missing = ensureStringArrayField(raw.missing, 'missing', invalidFields);
+  const redactions = ensureStringArrayField(raw.redactions, 'redactions', invalidFields);
   const negotiationAnalysis = normalizeNegotiationAnalysis(
     raw.negotiation_analysis !== undefined
       ? raw.negotiation_analysis
@@ -4302,6 +4576,7 @@ function validateResponseSchema(value: unknown): SchemaValidationResult {
   return {
     ok: true,
     normalized: {
+      analysis_stage: MEDIATION_REVIEW_STAGE,
       fit_level: fit as FitLevel,
       confidence_0_1: clamp01(confidence),
       why,
@@ -4310,6 +4585,109 @@ function validateResponseSchema(value: unknown): SchemaValidationResult {
       ...(negotiationAnalysis ? { negotiation_analysis: negotiationAnalysis } : {}),
     },
   };
+}
+
+function validatePreSendResponseSchema(value: unknown): SchemaValidationResult {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {
+      ok: false,
+      missingKeys: [
+        'analysis_stage',
+        'readiness_status',
+        'send_readiness_summary',
+        'missing_information',
+        'ambiguous_terms',
+        'likely_recipient_questions',
+        'likely_pushback_areas',
+        'commercial_risks',
+        'implementation_risks',
+        'suggested_clarifications',
+      ],
+      invalidFields: ['root_not_object', 'analysis_stage'],
+    };
+  }
+
+  const raw = value as Record<string, unknown>;
+  const requiredKeys = [
+    'readiness_status',
+    'send_readiness_summary',
+    'missing_information',
+    'ambiguous_terms',
+    'likely_recipient_questions',
+    'likely_pushback_areas',
+    'commercial_risks',
+    'implementation_risks',
+    'suggested_clarifications',
+  ] as const;
+  const missingKeys = requiredKeys.filter((key) => raw[key] === undefined);
+  const invalidFields: string[] = [];
+  const analysisStage = normalizeOpportunityReviewStage(raw.analysis_stage, PRE_SEND_REVIEW_STAGE);
+  if (analysisStage !== PRE_SEND_REVIEW_STAGE) {
+    invalidFields.push('analysis_stage');
+  }
+
+  const sendReadinessSummary = asText(raw.send_readiness_summary || raw.summary);
+  if (!sendReadinessSummary) {
+    invalidFields.push('send_readiness_summary');
+  }
+
+  const missing_information = ensureStringArrayField(
+    raw.missing_information ?? raw.missing,
+    'missing_information',
+    invalidFields,
+  );
+  const ambiguous_terms = ensureStringArrayField(raw.ambiguous_terms, 'ambiguous_terms', invalidFields);
+  const likely_recipient_questions = ensureStringArrayField(
+    raw.likely_recipient_questions ?? raw.recipient_questions,
+    'likely_recipient_questions',
+    invalidFields,
+  );
+  const likely_pushback_areas = ensureStringArrayField(
+    raw.likely_pushback_areas ?? raw.pushback_areas,
+    'likely_pushback_areas',
+    invalidFields,
+  );
+  const commercial_risks = ensureStringArrayField(raw.commercial_risks, 'commercial_risks', invalidFields);
+  const implementation_risks = ensureStringArrayField(
+    raw.implementation_risks,
+    'implementation_risks',
+    invalidFields,
+  );
+  const suggested_clarifications = ensureStringArrayField(
+    raw.suggested_clarifications,
+    'suggested_clarifications',
+    invalidFields,
+  );
+
+  if (missingKeys.length || invalidFields.length) {
+    return {
+      ok: false,
+      missingKeys,
+      invalidFields,
+    };
+  }
+
+  return {
+    ok: true,
+    normalized: {
+      analysis_stage: PRE_SEND_REVIEW_STAGE,
+      readiness_status: normalizeReadinessStatus(raw.readiness_status),
+      send_readiness_summary: sendReadinessSummary,
+      missing_information,
+      ambiguous_terms,
+      likely_recipient_questions,
+      likely_pushback_areas,
+      commercial_risks,
+      implementation_risks,
+      suggested_clarifications,
+    },
+  };
+}
+
+function validateResponseSchema(value: unknown, stage: ReviewStage = MEDIATION_REVIEW_STAGE): SchemaValidationResult {
+  return stage === PRE_SEND_REVIEW_STAGE
+    ? validatePreSendResponseSchema(value)
+    : validateMediationResponseSchema(value);
 }
 
 function toStringArray(value: unknown) {
@@ -4523,11 +4901,49 @@ function normalizeNegotiationAnalysis(value: unknown): NegotiationAnalysis | und
   };
 }
 
-function coerceToSmallSchema(value: unknown): { candidate: unknown; coerced: boolean } {
+function coerceToSmallSchema(
+  value: unknown,
+  stage: ReviewStage = MEDIATION_REVIEW_STAGE,
+): { candidate: unknown; coerced: boolean } {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return { candidate: value, coerced: false };
   }
   const raw = value as Record<string, unknown>;
+  if (stage === PRE_SEND_REVIEW_STAGE) {
+    const hasPreSendShape =
+      raw.readiness_status !== undefined &&
+      raw.send_readiness_summary !== undefined &&
+      raw.missing_information !== undefined &&
+      raw.ambiguous_terms !== undefined &&
+      raw.likely_recipient_questions !== undefined &&
+      raw.likely_pushback_areas !== undefined &&
+      raw.commercial_risks !== undefined &&
+      raw.implementation_risks !== undefined &&
+      raw.suggested_clarifications !== undefined;
+    if (hasPreSendShape) {
+      return { candidate: value, coerced: false };
+    }
+
+    const why = toStringArray(raw.why);
+    const synthetic: VertexEvaluationV2PreSendResponse = {
+      analysis_stage: PRE_SEND_REVIEW_STAGE,
+      readiness_status: normalizeReadinessStatus(raw.readiness_status ?? raw.status ?? raw.readiness),
+      send_readiness_summary: asText(raw.send_readiness_summary || raw.summary || why[0]),
+      missing_information: toStringArray(raw.missing_information ?? raw.missing),
+      ambiguous_terms: toStringArray(raw.ambiguous_terms ?? raw.ambiguities),
+      likely_recipient_questions: toStringArray(
+        raw.likely_recipient_questions ?? raw.recipient_questions ?? raw.questions,
+      ),
+      likely_pushback_areas: toStringArray(raw.likely_pushback_areas ?? raw.pushback_areas ?? raw.pushback),
+      commercial_risks: toStringArray(raw.commercial_risks ?? raw.commercial_flags),
+      implementation_risks: toStringArray(raw.implementation_risks ?? raw.implementation_flags),
+      suggested_clarifications: toStringArray(
+        raw.suggested_clarifications ?? raw.next_actions ?? raw.clarifications,
+      ),
+    };
+    return { candidate: synthetic, coerced: true };
+  }
+
   const hasSmallShape =
     raw.fit_level !== undefined &&
     raw.confidence_0_1 !== undefined &&
@@ -4607,7 +5023,8 @@ function coerceToSmallSchema(value: unknown): { candidate: unknown; coerced: boo
       : undefined;
   const negotiationAnalysis = normalizeNegotiationAnalysis(syntheticNegotiationAnalysis);
 
-  const coerced: VertexEvaluationV2Response = {
+  const coerced: VertexEvaluationV2MediationResponse = {
+    analysis_stage: MEDIATION_REVIEW_STAGE,
     fit_level: normalizeFitLevel(raw.fit_level ?? summary.fit_level ?? raw.answer),
     confidence_0_1: normalizeConfidence(raw.confidence_0_1 ?? quality.confidence_overall ?? raw.confidence),
     why,
@@ -4633,6 +5050,28 @@ function flattenNegotiationAnalysisText(analysis?: NegotiationAnalysis) {
     analysis.compatibility_rationale,
     ...analysis.bridgeability_notes,
     ...analysis.critical_incompatibilities,
+  ].filter(Boolean);
+}
+
+function flattenEvaluationResponseText(response: VertexEvaluationV2Response) {
+  if (response.analysis_stage === PRE_SEND_REVIEW_STAGE) {
+    return [
+      response.send_readiness_summary,
+      ...response.missing_information,
+      ...response.ambiguous_terms,
+      ...response.likely_recipient_questions,
+      ...response.likely_pushback_areas,
+      ...response.commercial_risks,
+      ...response.implementation_risks,
+      ...response.suggested_clarifications,
+    ].filter(Boolean);
+  }
+
+  return [
+    ...response.why,
+    ...response.missing,
+    ...response.redactions,
+    ...flattenNegotiationAnalysisText(response.negotiation_analysis),
   ].filter(Boolean);
 }
 
@@ -4682,12 +5121,7 @@ function detectConfidentialLeak(params: {
   forbiddenChunks: Array<{ evidence_id: string; text: string }>;
   canaryTokens: string[];
 }) {
-  const outputText = [
-    ...params.response.why,
-    ...params.response.missing,
-    ...params.response.redactions,
-    ...flattenNegotiationAnalysisText(params.response.negotiation_analysis),
-  ].join(' ');
+  const outputText = flattenEvaluationResponseText(params.response).join(' ');
   const outputLower = outputText.toLowerCase();
   const outputNormalized = tokenizeForLeakScan(outputText);
   if (!outputLower.trim()) {
@@ -4970,12 +5404,30 @@ type LlmVerifierVerdict = 'clean' | 'leak' | 'unsure' | 'unavailable';
  * evaluator must suppress the real output (leak detected or verifier down).
  * Callers add a 'warnings' entry to _internal to explain which case occurred.
  */
-function buildSuppressedOutput(warningReason: 'leak_detected' | 'verifier_unavailable'): VertexEvaluationV2Response {
+function buildSuppressedOutput(
+  warningReason: 'leak_detected' | 'verifier_unavailable',
+  stage: ReviewStage = MEDIATION_REVIEW_STAGE,
+): VertexEvaluationV2Response {
   const placeholder =
     warningReason === 'leak_detected'
       ? 'Output suppressed: evaluation output contained confidential information and could not be shared.'
       : 'Output suppressed: evaluation verifier was unavailable and output safety could not be confirmed.';
+  if (stage === PRE_SEND_REVIEW_STAGE) {
+    return {
+      analysis_stage: PRE_SEND_REVIEW_STAGE,
+      readiness_status: 'not_ready_to_send',
+      send_readiness_summary: placeholder,
+      missing_information: [],
+      ambiguous_terms: [],
+      likely_recipient_questions: [],
+      likely_pushback_areas: [],
+      commercial_risks: [],
+      implementation_risks: [],
+      suggested_clarifications: [],
+    };
+  }
   return {
+    analysis_stage: MEDIATION_REVIEW_STAGE,
     fit_level: 'unknown',
     confidence_0_1: 0,
     why: [placeholder],
@@ -5033,12 +5485,7 @@ async function runLlmLeakVerifier(params: {
   callVerifier: VertexCallOverride;
   callGeneration: VertexCallOverride;
 }): Promise<{ verdict: LlmVerifierVerdict; escalated: boolean; reason: string }> {
-  const outputText = [
-    ...params.response.why,
-    ...params.response.missing,
-    ...params.response.redactions,
-    ...flattenNegotiationAnalysisText(params.response.negotiation_analysis),
-  ].join('\n');
+  const outputText = flattenEvaluationResponseText(params.response).join('\n');
 
   // Nothing to verify if there's no confidential text or no output.
   if (!params.forbiddenText.trim() || !outputText.trim()) {
@@ -5214,7 +5661,7 @@ function buildTelemetry(params: {
   sharedChunks: Array<{ evidence_id: string; text: string }>;
   confidentialChunks: Array<{ evidence_id: string; text: string }>;
   factSheet: ProposalFactSheet;
-  evalResult: VertexEvaluationV2Response;
+  evalResult: VertexEvaluationV2MediationResponse;
   reportStyle: ReportStyle;
   clampsApplied: string[];
 }): VertexEvaluationV2Telemetry {
@@ -5291,7 +5738,7 @@ interface QualityAssessment {
   weakSections: string[];
 }
 
-function assessReportQuality(data: VertexEvaluationV2Response): QualityAssessment {
+function assessReportQuality(data: VertexEvaluationV2MediationResponse): QualityAssessment {
   const triggers: string[] = [];
   const weakSections: string[] = [];
   let penaltyPoints = 0;
@@ -5376,7 +5823,7 @@ function assessReportQuality(data: VertexEvaluationV2Response): QualityAssessmen
  * - Better tradeoff framing
  */
 function buildRefinementPrompt(params: {
-  initialResult: VertexEvaluationV2Response;
+  initialResult: VertexEvaluationV2MediationResponse;
   factSheet: ProposalFactSheet;
   reportStyle: ReportStyle;
   quality: QualityAssessment;
@@ -5479,7 +5926,7 @@ function buildRefinementPrompt(params: {
  * NEVER retries — exactly one attempt. On any failure, returns original.
  */
 async function attemptRefinementPass(params: {
-  initialResult: VertexEvaluationV2Response;
+  initialResult: VertexEvaluationV2MediationResponse;
   factSheet: ProposalFactSheet;
   reportStyle: ReportStyle;
   quality: QualityAssessment;
@@ -5573,6 +6020,7 @@ export async function evaluateWithVertexV2(
 ): Promise<VertexEvaluationV2Outcome> {
   const sharedText = sanitizeUserInput(String(input.sharedText || '')).trim();
   const confidentialText = sanitizeUserInput(String(input.confidentialText || '')).trim();
+  const analysisStage = normalizeOpportunityReviewStage(input.analysisStage, MEDIATION_REVIEW_STAGE);
   const forbiddenLeakText =
     input.forbiddenLeakText === undefined
       ? confidentialText
@@ -5639,7 +6087,22 @@ export async function evaluateWithVertexV2(
   });
 
   // ── Pass B: final evaluation using Fact Sheet ────────────────────────────
-  let prompt = buildEvalPromptFromFactSheet({ factSheet, chunks, reportStyle, convergenceDigestText });
+  const buildPrompt = (options: { tightMode?: boolean; includeDigest?: boolean } = {}) =>
+    analysisStage === PRE_SEND_REVIEW_STAGE
+      ? buildPreSendPromptFromFactSheet({
+          factSheet,
+          reportStyle,
+          tightMode: options.tightMode,
+        })
+      : buildEvalPromptFromFactSheet({
+          factSheet,
+          chunks,
+          reportStyle,
+          tightMode: options.tightMode,
+          convergenceDigestText: options.includeDigest === false ? undefined : convergenceDigestText,
+        });
+
+  let prompt = buildPrompt();
 
   // ── Token preflight: check exact final prompt before Vertex call ─────────
   // This runs on the actual assembled prompt string, not just the inputs.
@@ -5650,12 +6113,12 @@ export async function evaluateWithVertexV2(
   let preflightTrimTriggered = false;
   if (preflight.overCeiling) {
     // First trim: rebuild with tight mode (reduces instruction overhead).
-    prompt = buildEvalPromptFromFactSheet({ factSheet, chunks, reportStyle, tightMode: true, convergenceDigestText });
+    prompt = buildPrompt({ tightMode: true });
     preflight = preflightPromptCheck(prompt);
     preflightTrimTriggered = true;
-    if (preflight.overCeiling && convergenceDigestText) {
+    if (preflight.overCeiling && convergenceDigestText && analysisStage !== PRE_SEND_REVIEW_STAGE) {
       // Second trim: drop convergence digest entirely.
-      prompt = buildEvalPromptFromFactSheet({ factSheet, chunks, reportStyle, tightMode: true });
+      prompt = buildPrompt({ tightMode: true, includeDigest: false });
       preflight = preflightPromptCheck(prompt);
     }
   }
@@ -5743,7 +6206,7 @@ export async function evaluateWithVertexV2(
       if (!usedTightRetry) {
         // First truncation → retry once with tight mode to reduce output size.
         usedTightRetry = true;
-        prompt = buildEvalPromptFromFactSheet({ factSheet, chunks, reportStyle, tightMode: true, convergenceDigestText });
+        prompt = buildPrompt({ tightMode: true });
         continue;
       }
       // Tight retry also truncated → use fallback.
@@ -5757,7 +6220,7 @@ export async function evaluateWithVertexV2(
         // First parse failure → retry once with tight mode.
         usedTightRetry = true;
         lastParseFailureKind = 'json_parse_error';
-        prompt = buildEvalPromptFromFactSheet({ factSheet, chunks, reportStyle, tightMode: true, convergenceDigestText });
+        prompt = buildPrompt({ tightMode: true });
         continue;
       }
       // Both attempts failed to parse → use fallback.
@@ -5765,13 +6228,13 @@ export async function evaluateWithVertexV2(
       break;
     }
 
-    const coerced = coerceToSmallSchema(extracted.parsed);
-    const schemaValidation = validateResponseSchema(coerced.candidate);
+    const coerced = coerceToSmallSchema(extracted.parsed, analysisStage);
+    const schemaValidation = validateResponseSchema(coerced.candidate, analysisStage);
     if (!schemaValidation.ok) {
       if (!usedTightRetry) {
         usedTightRetry = true;
         lastParseFailureKind = 'schema_validation_error';
-        prompt = buildEvalPromptFromFactSheet({ factSheet, chunks, reportStyle, tightMode: true, convergenceDigestText });
+        prompt = buildPrompt({ tightMode: true });
         continue;
       }
       // Schema still invalid after tight retry → fallback.
@@ -5790,7 +6253,7 @@ export async function evaluateWithVertexV2(
       if (leak) {
         // Deterministic leak detected: suppress output, return ok:true with warnings.
         // Never 5xx — the evaluation is persisted as completed_with_warnings.
-        const suppressed = buildSuppressedOutput('leak_detected');
+        const suppressed = buildSuppressedOutput('leak_detected', analysisStage);
         return {
           ok: true,
           data: suppressed,
@@ -5833,7 +6296,7 @@ export async function evaluateWithVertexV2(
       });
       if (llmVerify.verdict === 'leak') {
         // LLM verifier detected leak: suppress output, return ok:true with warnings.
-        const suppressed = buildSuppressedOutput('leak_detected');
+        const suppressed = buildSuppressedOutput('leak_detected', analysisStage);
         return {
           ok: true,
           data: suppressed,
@@ -5864,7 +6327,7 @@ export async function evaluateWithVertexV2(
         // Verifier infrastructure failure: cannot confirm output is safe.
         // Policy: suppress narrative output to prevent silent leaks.
         // Never 5xx — persisted as completed_with_warnings.
-        const suppressed = buildSuppressedOutput('verifier_unavailable');
+        const suppressed = buildSuppressedOutput('verifier_unavailable', analysisStage);
         return {
           ok: true,
           data: suppressed,
@@ -5895,17 +6358,54 @@ export async function evaluateWithVertexV2(
       (schemaValidation as any)._llmVerify = llmVerify;
     }
 
+    if (analysisStage === PRE_SEND_REVIEW_STAGE) {
+      const preSendResult = schemaValidation.normalized as VertexEvaluationV2PreSendResponse;
+      const llmVerify: { verdict: string; escalated: boolean } | undefined =
+        (schemaValidation as any)._llmVerify;
+      return {
+        ok: true,
+        data: preSendResult,
+        attempt_count: attempt,
+        model: vertex.model,
+        generation_model: generationModel,
+        _internal: {
+          fact_sheet: factSheet,
+          coverage_count: computeCoverageCount(factSheet.source_coverage),
+          caps_applied: [],
+          pass_a_parse_error: passAParseError,
+          pass_b_attempt_count: attempt,
+          report_style: reportStyle,
+          preflight: {
+            promptChars: preflight.promptChars,
+            estimatedPromptTokens: preflight.estimatedPromptTokens,
+            overCeiling: preflight.overCeiling,
+            ceiling: preflight.ceiling,
+            trimTriggered: preflightTrimTriggered,
+          },
+          models_used: {
+            generation: generationModel,
+            extract: extractModel,
+            verifier: verifierModel,
+            verifier_used: Boolean(llmVerify),
+            verifier_escalated: Boolean(llmVerify?.escalated),
+            verifier_unavailable: false,
+          },
+        },
+      };
+    }
+
     // ── Quality assessment on raw Pass B output (BEFORE post-processing) ──
     // Post-processing (coverage clamps + consistency calibration) backfills
     // missing sections and normalizes missing[], which would mask genuine
     // quality issues. Assess the raw model output so refinement/regen can
     // target the real quality problems.
-    const rawQuality = assessReportQuality(schemaValidation.normalized);
+    const mediationResult = schemaValidation.normalized as VertexEvaluationV2MediationResponse;
+    const rawQuality = assessReportQuality(mediationResult);
     const QUALITY_THRESHOLD = 0.5;
     const shouldRefine = rawQuality.score < 1.0;
     const shouldRegenerate = rawQuality.score < QUALITY_THRESHOLD;
 
-    let bestRawResult = schemaValidation.normalized;
+    let bestRawResult = mediationResult;
     let refinementMeta: { attempted: boolean; applied: boolean; skip_reason?: string } =
       { attempted: false, applied: false };
     let regenMeta: { triggered: boolean; reasons: string[]; applied: boolean } =
@@ -5917,7 +6417,7 @@ export async function evaluateWithVertexV2(
     // better raw result that will then go through post-processing.
     if (shouldRefine) {
       const refinement = await attemptRefinementPass({
-        initialResult: schemaValidation.normalized,
+        initialResult: mediationResult,
         factSheet,
         reportStyle,
         quality: rawQuality,
@@ -5958,9 +6458,7 @@ export async function evaluateWithVertexV2(
 
       // Regeneration: re-run Pass B once with a strengthened prompt
       try {
-        const regenPrompt = buildEvalPromptFromFactSheet({
-          factSheet, chunks, reportStyle, convergenceDigestText,
-        });
+        const regenPrompt = buildPrompt();
         const regenVertex = await callVertex({
           prompt: regenPrompt,
           requestId: requestId ? `${requestId}_regen` : undefined,
@@ -5973,14 +6471,15 @@ export async function evaluateWithVertexV2(
         if (regenRaw.trim() && !isLikelyTruncatedOutput(regenRaw, regenVertex.finishReason)) {
           const regenExtracted = parseJsonObject(regenRaw);
           if (regenExtracted.parsed) {
-            const regenCoerced = coerceToSmallSchema(regenExtracted.parsed);
-            const regenValidation = validateResponseSchema(regenCoerced.candidate);
+            const regenCoerced = coerceToSmallSchema(regenExtracted.parsed, analysisStage);
+            const regenValidation = validateResponseSchema(regenCoerced.candidate, analysisStage);
             if (regenValidation.ok) {
+              const regeneratedResult = regenValidation.normalized as VertexEvaluationV2MediationResponse;
               // Leak check on regenerated output
               let regenLeakSafe = true;
               if (enforceLeakGuard) {
                 const regenLeak = detectConfidentialLeak({
-                  response: regenValidation.normalized,
+                  response: regeneratedResult,
                   forbiddenText: forbiddenLeakText,
                   sharedText,
                   forbiddenChunks,
@@ -5991,9 +6490,9 @@ export async function evaluateWithVertexV2(
 
               if (regenLeakSafe) {
                 // Compare raw quality (both pre-post-processing)
-                const regenRawQuality = assessReportQuality(regenValidation.normalized);
+                const regenRawQuality = assessReportQuality(regeneratedResult);
                 if (regenRawQuality.score > rawQuality.score) {
-                  bestRawResult = regenValidation.normalized;
+                  bestRawResult = regeneratedResult;
                   regenMeta.applied = true;
                 }
               }
@@ -6086,6 +6585,50 @@ export async function evaluateWithVertexV2(
 
   // ── All Pass B attempts failed → safe fallback ───────────────────────────
   // Return ok:true with a clamped fallback evaluation so the API never fails.
+  if (analysisStage === PRE_SEND_REVIEW_STAGE) {
+    const fallback = safeFallbackPreSendReviewFromFactSheet(factSheet, {
+      failureKind: lastParseFailureKind,
+      requestId,
+      finishReason: lastFinishReason,
+      sharedChars: sharedText.length,
+      confidentialChars: confidentialText.length,
+    });
+
+    return {
+      ok: true,
+      data: fallback.data,
+      attempt_count: attempt,
+      model: null,
+      generation_model: generationModel,
+      _internal: {
+        fact_sheet: factSheet,
+        coverage_count: computeCoverageCount(factSheet.source_coverage),
+        caps_applied: [],
+        pass_a_parse_error: passAParseError,
+        pass_b_attempt_count: attempt,
+        report_style: reportStyle,
+        preflight: {
+          promptChars: preflight.promptChars,
+          estimatedPromptTokens: preflight.estimatedPromptTokens,
+          overCeiling: preflight.overCeiling,
+          ceiling: preflight.ceiling,
+          trimTriggered: preflightTrimTriggered,
+        },
+        warnings: fallback.warnings,
+        failure_kind: lastParseFailureKind,
+        fallback_mode: fallback.fallbackMode,
+        models_used: {
+          generation: generationModel,
+          extract: extractModel,
+          verifier: verifierModel,
+          verifier_used: false,
+          verifier_escalated: false,
+          verifier_unavailable: false,
+        },
+      },
+    };
+  }
+
   const fallback = safeFallbackEvaluationFromFactSheet(factSheet, {
     failureKind: lastParseFailureKind,
     requestId,

@@ -34,6 +34,11 @@ import {
   OPEN_QUESTIONS_LABEL,
   splitV2WhyBodyParagraphs,
 } from '../../../../src/lib/aiReportUtils.js';
+import {
+  MEDIATION_REVIEW_STAGE,
+  PRE_SEND_REVIEW_STAGE,
+  resolveOpportunityReviewStage,
+} from '../../../../src/lib/opportunityReviewStage.js';
 
 const SHARED_REPORT_DOWNLOAD_PDF_ROUTE = `${SHARED_REPORT_ROUTE}/download/pdf`;
 
@@ -73,16 +78,44 @@ function toTitleCase(value: string) {
   return value.replace(/\w\S*/g, (word) => word.charAt(0).toUpperCase() + word.slice(1));
 }
 
+function toStringArray(value: unknown) {
+  return Array.isArray(value)
+    ? value.map((entry) => asText(entry)).filter(Boolean)
+    : [];
+}
+
+function getPreSendScopeSection() {
+  return {
+    heading: 'Review Scope',
+    paragraphs: [
+      'This Pre-send Review is based only on the sender’s materials. It does not assess recipient alignment, bilateral feasibility, or agreement likelihood.',
+    ],
+  };
+}
+
 function buildWebParitySections(params: {
   report: Record<string, any>;
   legacySections: any[];
   missingItems: string[];
   fallbackSummary: string;
+  emptyStateHeading?: string;
+  prependScopeNote?: boolean;
 }): PdfWebParitySection[] {
   const sections: PdfWebParitySection[] = [];
-  const { report, legacySections, missingItems, fallbackSummary } = params;
+  const {
+    report,
+    legacySections,
+    missingItems,
+    fallbackSummary,
+    emptyStateHeading = 'Executive Summary',
+    prependScopeNote = false,
+  } = params;
   const isV2 = Array.isArray(report.why) && report.why.length > 0;
   const dynamicSections = getPresentationSections(report);
+
+  if (prependScopeNote) {
+    sections.push(getPreSendScopeSection());
+  }
 
   if (dynamicSections.length > 0) {
     dynamicSections.forEach((section) => {
@@ -157,8 +190,8 @@ function buildWebParitySections(params: {
 
   if (sections.length === 0) {
     sections.push({
-      heading: 'Executive Summary',
-      paragraphs: [fallbackSummary || 'No AI mediation review content is available yet.'],
+      heading: emptyStateHeading,
+      paragraphs: [fallbackSummary || 'No review content is available yet.'],
     });
   }
 
@@ -195,6 +228,18 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         ? projection.public_report
         : evaluationResult.report,
     );
+    const reviewStage = resolveOpportunityReviewStage(report, {
+      source: asText(evaluationResult?.source),
+      fallbackStage: MEDIATION_REVIEW_STAGE,
+    });
+    const isPreSendReview = reviewStage === PRE_SEND_REVIEW_STAGE;
+    const defaultFilenameBase = isPreSendReview ? 'pre-send-review' : 'ai-mediation-review';
+    const fallbackSummaryText = isPreSendReview
+      ? 'No Pre-send Review content is available yet.'
+      : 'No AI mediation summary is available yet.';
+    const recipientSafeFooterNote = isPreSendReview
+      ? 'Shared report -- based only on sender-side materials'
+      : 'Shared report -- recipient-safe content only';
 
     const isV2 = Array.isArray(report.why) && (report.why as unknown[]).length > 0;
     const legacySections = Array.isArray(report.sections)
@@ -240,23 +285,37 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       : [];
     const dynamicPresentationSections = getPresentationSections(report);
     const appendixOpenQuestions = getAppendixOpenQuestions(report);
+    const likelyRecipientQuestions = toStringArray(report.likely_recipient_questions);
+    const suggestedClarifications = toStringArray(report.suggested_clarifications);
+    const missingInformation = toStringArray(report.missing_information);
+    const readinessLabel =
+      asText(report.readiness_label) ||
+      asText(report.readiness_status).replace(/_/g, ' ').trim() ||
+      'Not Ready to Send';
 
     const decisionStatus = getDecisionStatusDetails(report);
     const pdfFormat = getPdfFormat(req);
     if (pdfFormat === 'web-parity') {
-      const title = buildMediationReviewTitle(
-        resolved.comparison?.title,
-        resolved.proposal?.title,
-        report.title,
-        evaluationResult.title,
-      );
-      const subtitle = buildMediationReviewSubtitle(
-        resolved.comparison?.title,
-        resolved.proposal?.title,
-        report.title,
-        evaluationResult.title,
-      );
+      const title = isPreSendReview
+        ? PRE_SEND_REVIEW_TITLE
+        : buildMediationReviewTitle(
+            resolved.comparison?.title,
+            resolved.proposal?.title,
+            report.title,
+            evaluationResult.title,
+          );
+      const subtitle = isPreSendReview
+        ? asText(resolved.comparison?.title) || asText(resolved.proposal?.title)
+        : buildMediationReviewSubtitle(
+            resolved.comparison?.title,
+            resolved.proposal?.title,
+            report.title,
+            evaluationResult.title,
+          );
       const resolvedWebParityTitle = (() => {
+        if (isPreSendReview) {
+          return PRE_SEND_REVIEW_TITLE;
+        }
         const preferred = asText(subtitle) || asText(title);
         if (preferred && preferred.toLowerCase() !== MEDIATION_REVIEW_TITLE.toLowerCase()) {
           return preferred;
@@ -267,11 +326,11 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         asText(resolved.comparison?.id) ||
         asText(resolved.proposal?.documentComparisonId) ||
         'shared-report';
-      const filenameBase = slugify(title) || 'ai-mediation-review';
+      const filenameBase = slugify(title) || defaultFilenameBase;
       const filename =
-        filenameBase === 'ai-mediation-review'
-          ? 'ai-mediation-review-web-parity.pdf'
-          : `${filenameBase}-ai-mediation-review-web-parity.pdf`;
+        filenameBase === defaultFilenameBase
+          ? `${defaultFilenameBase}-web-parity.pdf`
+          : `${filenameBase}-${defaultFilenameBase}-web-parity.pdf`;
       const recommendationRaw =
         asText(report.recommendation) ||
         asText(evaluationResult.recommendation) ||
@@ -285,10 +344,12 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         fallbackSummary:
           asText(report.summary) ||
           asText(evaluationResult.summary) ||
-          'No AI mediation summary is available yet.',
+          fallbackSummaryText,
+        emptyStateHeading: isPreSendReview ? 'Readiness to Send' : 'Executive Summary',
+        prependScopeNote: isPreSendReview,
       });
       const decisionExplanation = asText(decisionStatus.explanation);
-      const webParitySections = decisionExplanation && dynamicPresentationSections.length === 0
+      const webParitySections = !isPreSendReview && decisionExplanation && dynamicPresentationSections.length === 0
         ? [
             ...sections,
             {
@@ -300,22 +361,38 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
 
       const pdfBuffer = await renderWebParityPdfBuffer({
         title: resolvedWebParityTitle,
-        subtitle: '',
+        subtitle: isPreSendReview ? subtitle : '',
         comparisonId,
-        metrics: [
-          { label: 'Recommendation', value: recommendationMetric },
-          { label: 'Confidence', value: `${confidence}%` },
-          { label: 'Status', value: decisionStatus.label || 'Unknown' },
-          {
-            label: OPEN_QUESTIONS_LABEL,
-            value: `${missingItems.length} item${missingItems.length === 1 ? '' : 's'}`,
-          },
-        ],
+        metrics: isPreSendReview
+          ? [
+              { label: 'Readiness', value: readinessLabel },
+              {
+                label: 'Missing Information',
+                value: `${missingInformation.length} item${missingInformation.length === 1 ? '' : 's'}`,
+              },
+              {
+                label: 'Likely Recipient Questions',
+                value: `${likelyRecipientQuestions.length} item${likelyRecipientQuestions.length === 1 ? '' : 's'}`,
+              },
+              {
+                label: 'Suggested Clarifications',
+                value: `${suggestedClarifications.length} item${suggestedClarifications.length === 1 ? '' : 's'}`,
+              },
+            ]
+          : [
+              { label: 'Recommendation', value: recommendationMetric },
+              { label: 'Confidence', value: `${confidence}%` },
+              { label: 'Status', value: decisionStatus.label || 'Unknown' },
+              {
+                label: OPEN_QUESTIONS_LABEL,
+                value: `${missingItems.length} item${missingItems.length === 1 ? '' : 's'}`,
+              },
+            ],
         timelineItems: [
           { label: 'Opportunity Created', value: formatDateTime(resolved.comparison?.createdAt) },
           { label: 'Last Updated', value: formatDateTime(resolved.comparison?.updatedAt) },
         ],
-        footerNote: 'Shared report -- recipient-safe content only',
+        footerNote: recipientSafeFooterNote,
         sections: webParitySections,
       });
       sendPdf(res, filename, pdfBuffer);
@@ -479,6 +556,13 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     };
 
     if (dynamicPresentationSections.length > 0) {
+      if (isPreSendReview) {
+        reportSections.push({
+          heading: 'Review Scope',
+          level: 1,
+          paragraphs: getPreSendScopeSection().paragraphs,
+        });
+      }
       dynamicPresentationSections.forEach((section, sectionIndex) => {
         reportSections.push({
           heading: section.heading,
@@ -579,11 +663,34 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         });
       }
     } else {
-      reportSections.push({
-        heading: 'Executive Summary',
-        level: 1,
-        paragraphs: [asText(evaluationResult.summary) || 'No AI mediation summary is available yet.'],
-      });
+      if (isPreSendReview) {
+        reportSections.push({
+          heading: 'Review Scope',
+          level: 1,
+          paragraphs: getPreSendScopeSection().paragraphs,
+        });
+        reportSections.push({
+          heading: 'Readiness to Send',
+          level: 1,
+          paragraphs: [
+            asText(report.send_readiness_summary) || asText(evaluationResult.summary) || fallbackSummaryText,
+            `Readiness: ${readinessLabel}`,
+          ].filter(Boolean),
+        });
+        if (suggestedClarifications.length > 0) {
+          reportSections.push({
+            heading: 'Suggested Clarifications',
+            level: 1,
+            bullets: suggestedClarifications,
+          });
+        }
+      } else {
+        reportSections.push({
+          heading: 'Executive Summary',
+          level: 1,
+          paragraphs: [asText(evaluationResult.summary) || fallbackSummaryText],
+        });
+      }
 
       legacySections.forEach((section: any, index: number) => {
         const heading = asText(section?.heading || section?.key) || `Section ${index + 1}`;
@@ -601,37 +708,41 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
 
     if (reportSections.length === 0) {
       reportSections.push({
-        heading: 'Executive Summary',
+        heading: isPreSendReview ? 'Readiness to Send' : 'Executive Summary',
         level: 1,
-        paragraphs: ['No AI mediation review content is available yet.'],
+        paragraphs: [fallbackSummaryText],
       });
     }
 
-    const title = buildMediationReviewTitle(
-      resolved.comparison?.title,
-      resolved.proposal?.title,
-      report.title,
-      evaluationResult.title,
-    );
-    const subtitle = buildMediationReviewSubtitle(
-      resolved.comparison?.title,
-      resolved.proposal?.title,
-      report.title,
-      evaluationResult.title,
-    );
+    const title = isPreSendReview
+      ? PRE_SEND_REVIEW_TITLE
+      : buildMediationReviewTitle(
+          resolved.comparison?.title,
+          resolved.proposal?.title,
+          report.title,
+          evaluationResult.title,
+        );
+    const subtitle = isPreSendReview
+      ? asText(resolved.comparison?.title) || asText(resolved.proposal?.title)
+      : buildMediationReviewSubtitle(
+          resolved.comparison?.title,
+          resolved.proposal?.title,
+          report.title,
+          evaluationResult.title,
+        );
     const comparisonId = asText(resolved.comparison?.id) || asText(resolved.proposal?.documentComparisonId) || 'shared-report';
-    const filenameBase = slugify(title) || 'ai-mediation-review';
+    const filenameBase = slugify(title) || defaultFilenameBase;
     const filename =
-      filenameBase === 'ai-mediation-review'
-        ? 'ai-mediation-review.pdf'
-        : `${filenameBase}-ai-mediation-review.pdf`;
+      filenameBase === defaultFilenameBase
+        ? `${defaultFilenameBase}.pdf`
+        : `${filenameBase}-${defaultFilenameBase}.pdf`;
     const finalSections = isV2 ? deduplicateSections(reportSections) : reportSections;
     const pdfBuffer = await renderProfessionalPdfBuffer({
-      title: MEDIATION_REVIEW_TITLE,
+      title: isPreSendReview ? PRE_SEND_REVIEW_TITLE : MEDIATION_REVIEW_TITLE,
       subtitle,
       comparisonId,
-      footerNote: 'Shared report -- recipient-safe content only',
-      decisionPanel,
+      footerNote: recipientSafeFooterNote,
+      decisionPanel: isPreSendReview ? undefined : decisionPanel,
       sections: finalSections,
     });
     sendPdf(res, filename, pdfBuffer);

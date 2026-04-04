@@ -8,10 +8,16 @@ import {
   parseV2WhyEntry,
   splitV2WhyBodyParagraphs,
 } from '../../../src/lib/aiReportUtils.js';
+import {
+  MEDIATION_REVIEW_STAGE,
+  PRE_SEND_REVIEW_STAGE,
+  resolveOpportunityReviewStage,
+} from '../../../src/lib/opportunityReviewStage.js';
 
 export const CONFIDENTIAL_LABEL = 'Confidential Information';
 export const SHARED_LABEL = 'Shared Information';
 export const MEDIATION_REVIEW_TITLE = 'AI Mediation Review';
+export const PRE_SEND_REVIEW_TITLE = 'Pre-send Review';
 export const MEDIATION_REVIEW_ARCHETYPES = Object.freeze([
   'balanced_trade_off',
   'risk_dominant',
@@ -952,10 +958,242 @@ export function buildMediationReviewPresentation(params: {
   };
 }
 
+function normalizeReadinessStatus(value: unknown) {
+  const normalized = normalizeHeadingKey(value);
+  if (normalized === 'ready to send') return 'ready_to_send';
+  if (normalized === 'ready with clarifications') return 'ready_with_clarifications';
+  return 'not_ready_to_send';
+}
+
+function getReadinessLabel(value: unknown) {
+  const readinessStatus = normalizeReadinessStatus(value);
+  if (readinessStatus === 'ready_to_send') return 'Ready to Send';
+  if (readinessStatus === 'ready_with_clarifications') return 'Ready with Clarifications';
+  return 'Not Ready to Send';
+}
+
+function mapReadinessScore(value: unknown) {
+  const readinessStatus = normalizeReadinessStatus(value);
+  if (readinessStatus === 'ready_to_send') return 82;
+  if (readinessStatus === 'ready_with_clarifications') return 64;
+  return 38;
+}
+
+function buildPreSendReviewSections(params: {
+  send_readiness_summary: unknown;
+  missing_information: unknown;
+  ambiguous_terms: unknown;
+  likely_recipient_questions: unknown;
+  likely_pushback_areas: unknown;
+  commercial_risks?: unknown;
+  implementation_risks?: unknown;
+  suggested_clarifications?: unknown;
+}) {
+  const sendReadinessSummary = normalizeText(params.send_readiness_summary);
+  const missingInformation = uniqueText(
+    Array.isArray(params.missing_information) ? params.missing_information as unknown[] : [],
+  );
+  const ambiguousTerms = uniqueText(
+    Array.isArray(params.ambiguous_terms) ? params.ambiguous_terms as unknown[] : [],
+  );
+  const likelyRecipientQuestions = uniqueText(
+    Array.isArray(params.likely_recipient_questions) ? params.likely_recipient_questions as unknown[] : [],
+  );
+  const likelyPushbackAreas = uniqueText(
+    Array.isArray(params.likely_pushback_areas) ? params.likely_pushback_areas as unknown[] : [],
+  );
+  const commercialRisks = uniqueText(
+    Array.isArray(params.commercial_risks) ? params.commercial_risks as unknown[] : [],
+  );
+  const implementationRisks = uniqueText(
+    Array.isArray(params.implementation_risks) ? params.implementation_risks as unknown[] : [],
+  );
+  const suggestedClarifications = uniqueText(
+    Array.isArray(params.suggested_clarifications) ? params.suggested_clarifications as unknown[] : [],
+  );
+
+  return [
+    createPresentationSection({
+      key: 'readiness_to_send',
+      heading: 'Readiness to Send',
+      paragraphs: sendReadinessSummary ? [sendReadinessSummary] : [],
+    }),
+    createPresentationSection({
+      key: 'missing_information',
+      heading: 'Missing Information',
+      bullets: missingInformation,
+      numbered_bullets: true,
+    }),
+    createPresentationSection({
+      key: 'ambiguous_terms',
+      heading: 'Ambiguous Terms',
+      bullets: ambiguousTerms,
+      numbered_bullets: true,
+    }),
+    createPresentationSection({
+      key: 'likely_recipient_questions',
+      heading: 'Likely Recipient Questions',
+      bullets: likelyRecipientQuestions,
+      numbered_bullets: true,
+    }),
+    createPresentationSection({
+      key: 'likely_pushback_areas',
+      heading: 'Likely Pushback Areas',
+      bullets: likelyPushbackAreas,
+      numbered_bullets: true,
+    }),
+    createPresentationSection({
+      key: 'commercial_risks',
+      heading: 'Commercial Risks',
+      bullets: commercialRisks,
+      numbered_bullets: true,
+    }),
+    createPresentationSection({
+      key: 'implementation_risks',
+      heading: 'Implementation Risks',
+      bullets: implementationRisks,
+      numbered_bullets: true,
+    }),
+    createPresentationSection({
+      key: 'suggested_clarifications',
+      heading: 'Suggested Clarifications',
+      bullets: suggestedClarifications,
+      numbered_bullets: true,
+    }),
+  ].filter(Boolean) as MediationPresentationSection[];
+}
+
+function buildPreSendReviewPresentation(params: {
+  readiness_status: unknown;
+  send_readiness_summary: unknown;
+  missing_information: unknown;
+  ambiguous_terms: unknown;
+  likely_recipient_questions: unknown;
+  likely_pushback_areas: unknown;
+  commercial_risks?: unknown;
+  implementation_risks?: unknown;
+  suggested_clarifications?: unknown;
+}) {
+  const readinessStatus = normalizeReadinessStatus(params.readiness_status);
+  const sendReadinessSummary = normalizeText(params.send_readiness_summary);
+  const sections = buildPreSendReviewSections(params);
+  const primaryInsight =
+    sendReadinessSummary ||
+    (readinessStatus === 'ready_to_send'
+      ? 'The sender draft appears ready to share, but a few clarifications would still strengthen it.'
+      : readinessStatus === 'ready_with_clarifications'
+        ? 'The sender draft is workable, but the remaining gaps should be tightened before sharing.'
+        : 'The sender draft still needs clarification before it is ready to share confidently.');
+
+  return {
+    report_title: PRE_SEND_REVIEW_TITLE,
+    readiness_status: readinessStatus,
+    readiness_label: getReadinessLabel(readinessStatus),
+    primary_insight: primaryInsight,
+    presentation_sections: sections,
+  };
+}
+
 export function buildStoredV2Evaluation(v2Result: any): Record<string, unknown> {
   const data = v2Result?.data && typeof v2Result.data === 'object' && !Array.isArray(v2Result.data)
     ? v2Result.data
     : {};
+  const analysisStage = resolveOpportunityReviewStage(data, {
+    fallbackStage: MEDIATION_REVIEW_STAGE,
+  });
+  const generatedAt = new Date().toISOString();
+  const generationModel =
+    normalizeText(v2Result?.generation_model) ||
+    normalizeText(process.env.VERTEX_DOC_COMPARE_GENERATION_MODEL) ||
+    normalizeText(process.env.VERTEX_MODEL) ||
+    'gemini-2.5-pro';
+  const providerModel = normalizeText(v2Result?.model) || generationModel;
+
+  if (analysisStage === PRE_SEND_REVIEW_STAGE) {
+    const readinessStatus = normalizeReadinessStatus(data?.readiness_status);
+    const missingInformation = Array.isArray(data?.missing_information)
+      ? data.missing_information.map((entry: unknown) => normalizeText(entry)).filter(Boolean)
+      : [];
+    const ambiguousTerms = Array.isArray(data?.ambiguous_terms)
+      ? data.ambiguous_terms.map((entry: unknown) => normalizeText(entry)).filter(Boolean)
+      : [];
+    const likelyRecipientQuestions = Array.isArray(data?.likely_recipient_questions)
+      ? data.likely_recipient_questions.map((entry: unknown) => normalizeText(entry)).filter(Boolean)
+      : [];
+    const likelyPushbackAreas = Array.isArray(data?.likely_pushback_areas)
+      ? data.likely_pushback_areas.map((entry: unknown) => normalizeText(entry)).filter(Boolean)
+      : [];
+    const commercialRisks = Array.isArray(data?.commercial_risks)
+      ? data.commercial_risks.map((entry: unknown) => normalizeText(entry)).filter(Boolean)
+      : [];
+    const implementationRisks = Array.isArray(data?.implementation_risks)
+      ? data.implementation_risks.map((entry: unknown) => normalizeText(entry)).filter(Boolean)
+      : [];
+    const suggestedClarifications = Array.isArray(data?.suggested_clarifications)
+      ? data.suggested_clarifications.map((entry: unknown) => normalizeText(entry)).filter(Boolean)
+      : [];
+    const sendReadinessSummary = normalizeText(data?.send_readiness_summary);
+    const presentation = buildPreSendReviewPresentation({
+      readiness_status: readinessStatus,
+      send_readiness_summary: sendReadinessSummary,
+      missing_information: missingInformation,
+      ambiguous_terms: ambiguousTerms,
+      likely_recipient_questions: likelyRecipientQuestions,
+      likely_pushback_areas: likelyPushbackAreas,
+      commercial_risks: commercialRisks,
+      implementation_risks: implementationRisks,
+      suggested_clarifications: suggestedClarifications,
+    });
+    const score = mapReadinessScore(readinessStatus);
+    const report = {
+      report_format: 'v2' as const,
+      analysis_stage: PRE_SEND_REVIEW_STAGE,
+      readiness_status: readinessStatus,
+      readiness_label: presentation.readiness_label,
+      send_readiness_summary: sendReadinessSummary,
+      missing_information: missingInformation,
+      ambiguous_terms: ambiguousTerms,
+      likely_recipient_questions: likelyRecipientQuestions,
+      likely_pushback_areas: likelyPushbackAreas,
+      commercial_risks: commercialRisks,
+      implementation_risks: implementationRisks,
+      suggested_clarifications: suggestedClarifications,
+      generated_at_iso: generatedAt,
+      summary: {
+        readiness_status: readinessStatus,
+        next_actions: suggestedClarifications,
+      },
+      sections: buildPreSendReviewSections({
+        send_readiness_summary: sendReadinessSummary,
+        missing_information: missingInformation,
+        ambiguous_terms: ambiguousTerms,
+        likely_recipient_questions: likelyRecipientQuestions,
+        likely_pushback_areas: likelyPushbackAreas,
+        commercial_risks: commercialRisks,
+        implementation_risks: implementationRisks,
+        suggested_clarifications: suggestedClarifications,
+      }),
+      report_title: presentation.report_title,
+      primary_insight: presentation.primary_insight,
+      presentation_sections: presentation.presentation_sections,
+    };
+
+    return {
+      provider: 'vertex',
+      model: providerModel,
+      generatedAt,
+      score,
+      confidence: null,
+      recommendation: null,
+      summary: presentation.primary_insight || sendReadinessSummary || PRE_SEND_REVIEW_TITLE,
+      report,
+      evaluation_provider: 'vertex',
+      evaluation_model: generationModel,
+      evaluation_provider_model: providerModel,
+      evaluation_provider_reason: null,
+    };
+  }
+
   const confidence = clampConfidence01(data?.confidence_0_1);
   const fitLevel = asLower(data?.fit_level);
   const normalizedFitLevel =
@@ -973,13 +1211,6 @@ export function buildStoredV2Evaluation(v2Result: any): Record<string, unknown> 
     ? data.redactions.map((entry: unknown) => normalizeText(entry)).filter(Boolean)
     : [];
   const negotiationAnalysis = normalizeNegotiationAnalysis(data?.negotiation_analysis);
-  const generatedAt = new Date().toISOString();
-  const generationModel =
-    normalizeText(v2Result?.generation_model) ||
-    normalizeText(process.env.VERTEX_DOC_COMPARE_GENERATION_MODEL) ||
-    normalizeText(process.env.VERTEX_MODEL) ||
-    'gemini-2.5-pro';
-  const providerModel = normalizeText(v2Result?.model) || generationModel;
   const presentation = buildMediationReviewPresentation({
     fit_level: normalizedFitLevel,
     confidence_0_1: confidence,
@@ -990,6 +1221,7 @@ export function buildStoredV2Evaluation(v2Result: any): Record<string, unknown> 
   });
   const report = {
     report_format: 'v2' as const,
+    analysis_stage: MEDIATION_REVIEW_STAGE,
     fit_level: normalizedFitLevel,
     confidence_0_1: confidence,
     why,
@@ -1597,12 +1829,59 @@ function buildFallbackRecipientReport(params: {
 }
 
 function buildFallbackRecipientV2Report(params: {
+  stage?: string;
   title: string;
   generatedAt: string;
   score: number;
   confidence: number;
   recommendation: 'High' | 'Medium' | 'Low';
 }) {
+  if (resolveOpportunityReviewStage({ analysis_stage: params.stage }, { fallbackStage: MEDIATION_REVIEW_STAGE }) === PRE_SEND_REVIEW_STAGE) {
+    const presentation = buildPreSendReviewPresentation({
+      readiness_status: 'ready_with_clarifications',
+      send_readiness_summary:
+        'Sender-side review generated from Shared Information only. Some private draft context was excluded for confidentiality.',
+      missing_information: ['Review the shared draft for any missing scope, timeline, or ownership detail.'],
+      ambiguous_terms: [],
+      likely_recipient_questions: ['What assumptions remain unclear in the shared draft?'],
+      likely_pushback_areas: [],
+      commercial_risks: [],
+      implementation_risks: [],
+      suggested_clarifications: ['Clarify the remaining open points before treating the sender draft as final.'],
+    });
+    return {
+      report_format: 'v2' as const,
+      analysis_stage: PRE_SEND_REVIEW_STAGE,
+      readiness_status: 'ready_with_clarifications',
+      readiness_label: presentation.readiness_label,
+      send_readiness_summary: presentation.primary_insight,
+      missing_information: ['Review the shared draft for any missing scope, timeline, or ownership detail.'],
+      ambiguous_terms: [] as string[],
+      likely_recipient_questions: ['What assumptions remain unclear in the shared draft?'],
+      likely_pushback_areas: [] as string[],
+      commercial_risks: [] as string[],
+      implementation_risks: [] as string[],
+      suggested_clarifications: ['Clarify the remaining open points before treating the sender draft as final.'],
+      generated_at_iso: params.generatedAt,
+      summary: {
+        readiness_status: 'ready_with_clarifications',
+        next_actions: ['Clarify the remaining open points before treating the sender draft as final.'],
+      },
+      sections: buildPreSendReviewSections({
+        send_readiness_summary: presentation.primary_insight,
+        missing_information: ['Review the shared draft for any missing scope, timeline, or ownership detail.'],
+        ambiguous_terms: [],
+        likely_recipient_questions: ['What assumptions remain unclear in the shared draft?'],
+        likely_pushback_areas: [],
+        commercial_risks: [],
+        implementation_risks: [],
+        suggested_clarifications: ['Clarify the remaining open points before treating the sender draft as final.'],
+      }),
+      report_title: presentation.report_title,
+      primary_insight: presentation.primary_insight,
+      presentation_sections: presentation.presentation_sections,
+    };
+  }
   const fitLevel = params.recommendation.toLowerCase() as 'high' | 'medium' | 'low';
   const normalizedConfidence = clampConfidence(params.confidence, 0.35);
   const why = [
@@ -1677,6 +1956,113 @@ function buildV2RecipientProjection(params: {
     nextActions,
     title,
   } = params;
+
+  const analysisStage = resolveOpportunityReviewStage(sourceReport, {
+    source: evaluation.source,
+    fallbackStage: MEDIATION_REVIEW_STAGE,
+  });
+
+  if (analysisStage === PRE_SEND_REVIEW_STAGE) {
+    const readinessStatus = normalizeReadinessStatus(sourceReport.readiness_status);
+    const sendReadinessSummary = scrubString(sourceReport.send_readiness_summary, markers, '');
+    const missingInformation = scrubStringArray(sourceReport.missing_information, markers);
+    const ambiguousTerms = scrubStringArray(sourceReport.ambiguous_terms, markers);
+    const likelyRecipientQuestions = scrubStringArray(sourceReport.likely_recipient_questions, markers);
+    const likelyPushbackAreas = scrubStringArray(sourceReport.likely_pushback_areas, markers);
+    const commercialRisks = scrubStringArray(sourceReport.commercial_risks, markers);
+    const implementationRisks = scrubStringArray(sourceReport.implementation_risks, markers);
+    const suggestedClarifications = scrubStringArray(sourceReport.suggested_clarifications, markers);
+    const rebuiltPresentation = buildPreSendReviewPresentation({
+      readiness_status: readinessStatus,
+      send_readiness_summary: sendReadinessSummary,
+      missing_information: missingInformation,
+      ambiguous_terms: ambiguousTerms,
+      likely_recipient_questions: likelyRecipientQuestions,
+      likely_pushback_areas: likelyPushbackAreas,
+      commercial_risks: commercialRisks,
+      implementation_risks: implementationRisks,
+      suggested_clarifications: suggestedClarifications,
+    });
+    const projectedPresentationSections = Array.isArray(sourceReport.presentation_sections)
+      ? (redactConfidentialStrings(sourceReport.presentation_sections, markers) as unknown[])
+      : [];
+    const normalizedProjectedPresentationSections = serializePresentationSections(
+      getPresentationSections({ presentation_sections: projectedPresentationSections }),
+    );
+    const safeReport = {
+      report_format: 'v2' as const,
+      analysis_stage: PRE_SEND_REVIEW_STAGE,
+      readiness_status: readinessStatus,
+      readiness_label: getReadinessLabel(readinessStatus),
+      send_readiness_summary: sendReadinessSummary,
+      missing_information: missingInformation,
+      ambiguous_terms: ambiguousTerms,
+      likely_recipient_questions: likelyRecipientQuestions,
+      likely_pushback_areas: likelyPushbackAreas,
+      commercial_risks: commercialRisks,
+      implementation_risks: implementationRisks,
+      suggested_clarifications: suggestedClarifications,
+      generated_at_iso: generatedAt,
+      summary: {
+        readiness_status: readinessStatus,
+        next_actions:
+          nextActions.length > 0
+            ? nextActions
+            : suggestedClarifications,
+      },
+      sections: buildPreSendReviewSections({
+        send_readiness_summary: sendReadinessSummary,
+        missing_information: missingInformation,
+        ambiguous_terms: ambiguousTerms,
+        likely_recipient_questions: likelyRecipientQuestions,
+        likely_pushback_areas: likelyPushbackAreas,
+        commercial_risks: commercialRisks,
+        implementation_risks: implementationRisks,
+        suggested_clarifications: suggestedClarifications,
+      }),
+      report_title:
+        scrubString(sourceReport.report_title, markers, '') ||
+        rebuiltPresentation.report_title,
+      primary_insight:
+        scrubString(sourceReport.primary_insight, markers, '') ||
+        rebuiltPresentation.primary_insight,
+      presentation_sections:
+        normalizedProjectedPresentationSections.length > 0
+          ? normalizedProjectedPresentationSections
+          : rebuiltPresentation.presentation_sections,
+    } as Record<string, any>;
+
+    const projectedReport = redactConfidentialStrings(safeReport, markers);
+    const projectionHasLeak = hasLeakAfterProjection(projectedReport, markers);
+    const fallbackReport = buildFallbackRecipientV2Report({
+      stage: PRE_SEND_REVIEW_STAGE,
+      title,
+      generatedAt,
+      score,
+      confidence: confidence / 100,
+      recommendation,
+    });
+    const finalReport = projectionHasLeak ? fallbackReport : projectedReport;
+    const summary =
+      scrubString(evaluation.summary, markers, '') ||
+      scrubString(finalReport.primary_insight, markers, '') ||
+      scrubString(finalReport.send_readiness_summary, markers, '') ||
+      'Sender-side review generated from Shared Information only.';
+
+    return {
+      evaluation_result: {
+        provider: scrubString(evaluation.provider, markers, 'projection'),
+        model: scrubString(evaluation.model, markers, 'recipient-safe'),
+        generatedAt,
+        score,
+        confidence: null,
+        recommendation: null,
+        summary,
+        report: finalReport,
+      },
+      public_report: finalReport,
+    };
+  }
 
   const why = scrubStringArray(sourceReport.why, markers);
   const missing = scrubStringArray(sourceReport.missing, markers);
@@ -1754,6 +2140,7 @@ function buildV2RecipientProjection(params: {
   const projectedReport = redactConfidentialStrings(safeReport, markers);
   const projectionHasLeak = hasLeakAfterProjection(projectedReport, markers);
   const fallbackReport = buildFallbackRecipientV2Report({
+    stage: analysisStage,
     title,
     generatedAt,
     score,

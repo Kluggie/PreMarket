@@ -21,7 +21,8 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { ArrowLeft, BarChart3, Loader2 } from 'lucide-react';
-import { getConfidencePercent } from '@/lib/aiReportUtils';
+import { getConfidencePercent, getReviewStageLabel } from '@/lib/aiReportUtils';
+import { resolveOpportunityReviewStage } from '@/lib/opportunityReviewStage';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -84,7 +85,7 @@ function extractEvaluationFailureDetails(rawError) {
   const failureStage = asLower(
     rawError.failure_stage || details.failure_stage || rawError.stage || details.stage,
   );
-  const message = asText(rawError.message) || 'AI mediation failed';
+  const message = asText(rawError.message) || 'Review failed';
   const requestId = asText(
     rawError.requestId || rawError.request_id || details.requestId || details.request_id,
   );
@@ -265,6 +266,10 @@ export default function DocumentComparisonRunDetails() {
     : getEvaluationProviderMeta({ result: comparison?.evaluation_result || {} });
 
   const report = comparison?.public_report || comparison?.evaluation_result?.report || {};
+  const reviewStage = resolveOpportunityReviewStage(report, {
+    source: latestEvaluation?.source,
+  });
+  const reviewLabel = getReviewStageLabel(reviewStage);
   const comparisonStatus = asLower(comparison?.status);
   const isEvaluationSucceeded =
     comparisonStatus === 'evaluated' &&
@@ -378,7 +383,7 @@ export default function DocumentComparisonRunDetails() {
             <h1 className="text-2xl font-bold text-slate-900">Run Details</h1>
           </div>
           <p className="text-sm text-slate-500">
-            Internal AI mediation run metadata for <span className="font-medium text-slate-700">{comparison.title}</span>.
+            Internal {reviewLabel} run metadata for <span className="font-medium text-slate-700">{comparison.title}</span>.
             This page is not included in PDF exports or shared reports.
           </p>
         </div>
@@ -497,7 +502,7 @@ export default function DocumentComparisonRunDetails() {
           <Card className="border border-slate-200 shadow-sm">
             <CardContent className="py-5 flex items-center gap-2 text-slate-500 text-sm">
               <Loader2 className="w-4 h-4 animate-spin" />
-              Loading AI mediation history…
+              {`Loading ${reviewLabel} history…`}
             </CardContent>
           </Card>
         ) : null}
@@ -507,7 +512,7 @@ export default function DocumentComparisonRunDetails() {
           <Card className="border border-red-200 bg-red-50 shadow-sm">
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
-                <CardTitle className="text-base text-red-800">AI Mediation Failure Details</CardTitle>
+                <CardTitle className="text-base text-red-800">{`${reviewLabel} Failure Details`}</CardTitle>
                 <Button
                   variant="ghost"
                   size="sm"
@@ -528,7 +533,7 @@ export default function DocumentComparisonRunDetails() {
               <div>
                 <p className="text-slate-500">Failure message</p>
                 <p className="text-slate-900">
-                  {asText(selectedFailureEntry.failure?.message) || 'AI mediation failed'}
+                  {asText(selectedFailureEntry.failure?.message) || `${reviewLabel} failed`}
                 </p>
               </div>
               <div>
@@ -648,7 +653,7 @@ export default function DocumentComparisonRunDetails() {
         {!isEvaluationSucceeded && evaluationHistory.length === 0 && !evaluationsQuery.isLoading ? (
           <Card className="border border-slate-200 shadow-sm">
             <CardContent className="py-6 text-slate-600 text-sm">
-              No AI mediation data yet. Run AI Mediation from the editor first.
+              {`No ${reviewLabel} data yet. Run the review from the editor first.`}
             </CardContent>
           </Card>
         ) : null}

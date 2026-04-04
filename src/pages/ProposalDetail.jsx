@@ -52,10 +52,11 @@ import { toast } from 'sonner';
 import { ComparisonAiReportTab } from '@/components/document-comparison/ComparisonDetailTabs';
 import RequestAgreementConfirmDialog from '@/components/proposal/RequestAgreementConfirmDialog';
 import {
-  getRunAiMediationLabel,
-  MEDIATION_REVIEW_LABEL,
+  getRunOpportunityReviewLabel,
+  getReviewStageLabel,
 } from '@/lib/aiReportUtils';
 import { buildDocumentComparisonReportHref } from '@/lib/notificationTargets';
+import { resolveOpportunityReviewStage } from '@/lib/opportunityReviewStage';
 import {
   AGREED_LABEL,
   CONTINUE_NEGOTIATING_LABEL,
@@ -481,6 +482,10 @@ export default function ProposalDetail() {
       ? latestResult.report
       : null;
   const latestReportData = comparisonPublicReport || latestResultReport || latestResult;
+  const reviewStage = resolveOpportunityReviewStage(latestReportData, {
+    source: latestEvaluation?.source,
+  });
+  const reviewLabel = getReviewStageLabel(reviewStage);
   const suggestedAdditionsCount =
     Array.isArray(latestReportData?.missing) ? latestReportData.missing.length
     : Array.isArray(latestResult?.report?.missing) ? latestResult.report.missing.length
@@ -502,13 +507,13 @@ export default function ProposalDetail() {
         proposalId,
         documentComparisonId: proposal?.document_comparison_id || null,
       });
-      toast.success('AI mediation review ready');
+      toast.success(`${reviewLabel} ready`);
     },
     onError: (error) => {
       toast.error(
         getStarterLimitErrorCopy(error, 'evaluation') ||
           error?.message ||
-          'AI mediation could not be completed',
+          `${reviewLabel} could not be completed`,
       );
     },
   });
@@ -559,7 +564,7 @@ export default function ProposalDetail() {
   const downloadAiMediationReviewPdfMutation = useMutation({
     mutationFn: async () => {
       if (!proposal?.document_comparison_id) {
-        const notConfigured = new Error('AI mediation review PDF is not configured');
+        const notConfigured = new Error(`${reviewLabel} PDF is not configured`);
         notConfigured.code = 'not_configured';
         notConfigured.status = 501;
         throw notConfigured;
@@ -567,10 +572,10 @@ export default function ProposalDetail() {
       return documentComparisonsClient.downloadPdf(proposal.document_comparison_id, { format: 'web-parity' });
     },
     onSuccess: () => {
-      toast.success('AI mediation review PDF download started');
+      toast.success(`${reviewLabel} PDF download started`);
     },
     onError: (error) => {
-      toast.error(error?.message || 'AI mediation review PDF is not configured');
+      toast.error(error?.message || `${reviewLabel} PDF is not configured`);
     },
   });
 
@@ -641,7 +646,7 @@ export default function ProposalDetail() {
         <div className="max-w-4xl mx-auto px-6">
           <Alert className="bg-blue-50 border-blue-200">
             <AlertDescription className="text-blue-900">
-              Opening the canonical AI Mediation Review experience for this live opportunity.
+              Opening the canonical {reviewLabel} experience for this live opportunity.
             </AlertDescription>
           </Alert>
         </div>
@@ -799,7 +804,7 @@ export default function ProposalDetail() {
             disabled={downloadAiMediationReviewPdfMutation.isPending}
           >
             <Download className="w-4 h-4 mr-2" />
-            AI Mediation Review PDF
+            {`${reviewLabel} PDF`}
           </Button>
 
           {/* Archive / Delete — lower-emphasis, pushed right with margin */}
@@ -869,7 +874,7 @@ export default function ProposalDetail() {
               </TabsTrigger>
               <TabsTrigger value="report" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
                 <BarChart3 className="w-4 h-4 mr-2" />
-                {MEDIATION_REVIEW_LABEL}
+                {reviewLabel}
                 {evaluations.length > 0 && <Badge className="ml-2 bg-green-100 text-green-700 text-xs">Complete</Badge>}
               </TabsTrigger>
             </TabsList>
@@ -965,13 +970,14 @@ export default function ProposalDetail() {
                   evaluationFailureBannerMessage=""
                   hasReport={Boolean(comparisonPublicReport) || evaluations.length > 0}
                   hasEvaluations={evaluations.length > 0}
-                  noReportMessage="Run AI Mediation to generate the mediation review."
+                  noReportMessage={`Run ${reviewLabel} to generate the latest report.`}
                   runDetailsHref={
                     proposal.document_comparison_id
                       ? createPageUrl(`DocumentComparisonRunDetails?id=${encodeURIComponent(proposal.document_comparison_id)}`)
                       : ''
                   }
                   report={latestReportData}
+                  reviewStage={reviewStage}
                   recommendation={asText(
                     comparisonPublicReport?.recommendation ||
                     latestResult?.recommendation ||
@@ -981,7 +987,7 @@ export default function ProposalDetail() {
                     id: `eval-${ev.id || i}`,
                     kind: 'sparkles',
                     tone: 'success',
-                    title: i === 0 ? 'Latest Mediation Review' : `Mediation Review ${evaluations.length - i}`,
+                    title: i === 0 ? `Latest ${reviewLabel}` : `${reviewLabel} ${evaluations.length - i}`,
                     timestamp: formatDateTime(ev.created_date || ''),
                   }))}
                 />
@@ -991,7 +997,8 @@ export default function ProposalDetail() {
                 <div className="flex flex-wrap gap-3 pt-2">
                   <Button onClick={() => runEvaluationMutation.mutate()} disabled={runEvaluationMutation.isPending || isClosed}>
                     <Sparkles className="w-4 h-4 mr-2" />
-                    {getRunAiMediationLabel({
+                    {getRunOpportunityReviewLabel({
+                      stage: reviewStage,
                       isPending: runEvaluationMutation.isPending,
                       hasExisting: evaluations.length > 0,
                     })}
@@ -1015,14 +1022,19 @@ export default function ProposalDetail() {
                     variant="outline"
                     onClick={() => {
                       if (!latestResult || Object.keys(latestResult).length === 0) {
-                        toast.error('No AI mediation review payload is available to download yet');
+                        toast.error(`No ${reviewLabel} payload is available to download yet`);
                         return;
                       }
-                      triggerJsonDownload('proposal-ai-mediation-review.json', latestResult);
+                      triggerJsonDownload(
+                        reviewStage === 'pre_send_review'
+                          ? 'proposal-pre-send-review.json'
+                          : 'proposal-ai-mediation-review.json',
+                        latestResult,
+                      );
                     }}
                   >
                     <Download className="w-4 h-4 mr-2" />
-                    Download AI Mediation Review JSON
+                    {`Download ${reviewLabel} JSON`}
                   </Button>
                 </div>
               </TabsContent>

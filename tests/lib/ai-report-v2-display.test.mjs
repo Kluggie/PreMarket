@@ -21,6 +21,9 @@ import {
   getPresentationSections,
   getPrimaryInsight,
   getRunAiMediationLabel,
+  getRunOpportunityReviewLabel,
+  getReviewStageLabel,
+  getReviewStatusDetails,
   getSentenceSafePreview,
   parseV2WhyEntry,
   splitV2WhyBodyParagraphs,
@@ -28,6 +31,7 @@ import {
   filterLegacySectionsForDisplay,
   getConfidencePercent,
   MEDIATION_REVIEW_LABEL,
+  PRE_SEND_REVIEW_LABEL,
 } from '../../src/lib/aiReportUtils.js';
 import {
   buildMediationReviewPresentation,
@@ -59,6 +63,22 @@ test('hasV2Report: returns false when why is absent', () => {
 test('hasV2Report: returns false for null/undefined', () => {
   assert.equal(hasV2Report(null), false);
   assert.equal(hasV2Report(undefined), false);
+});
+
+test('hasV2Report: returns true for pre-send reports with presentation sections', () => {
+  assert.equal(
+    hasV2Report({
+      analysis_stage: 'pre_send_review',
+      send_readiness_summary: 'Clarify ownership before sharing.',
+      presentation_sections: [
+        {
+          heading: 'Readiness to Send',
+          paragraphs: ['Clarify ownership before sharing.'],
+        },
+      ],
+    }),
+    true,
+  );
 });
 
 // ─── parseV2WhyEntry ─────────────────────────────────────────────────────────
@@ -107,6 +127,34 @@ test('mediation review copy helpers: expose mediation-oriented labels', () => {
   assert.equal(getRunAiMediationLabel({ isPending: true }), 'Running AI Mediation...');
 });
 
+test('review copy helpers: expose pre-send labels for unilateral stage', () => {
+  assert.equal(PRE_SEND_REVIEW_LABEL, 'Pre-send Review');
+  assert.equal(getReviewStageLabel('pre_send_review'), 'Pre-send Review');
+  assert.equal(
+    getRunOpportunityReviewLabel({ stage: 'pre_send_review' }),
+    'Run Pre-send Review',
+  );
+  assert.equal(
+    getRunOpportunityReviewLabel({ stage: 'pre_send_review', hasExisting: true }),
+    'Re-run Pre-send Review',
+  );
+});
+
+test('review status helpers: expose readiness details for pre-send reports', () => {
+  assert.deepEqual(
+    getReviewStatusDetails({
+      analysis_stage: 'pre_send_review',
+      readiness_status: 'ready_with_clarifications',
+      send_readiness_summary: 'Clarify acceptance criteria before sharing.',
+    }),
+    {
+      label: 'Ready with Clarifications',
+      tone: 'warning',
+      explanation: 'Clarify acceptance criteria before sharing.',
+    },
+  );
+});
+
 test('mediation review title helpers: avoid Untitled-style placeholders', () => {
   assert.equal(getMediationReviewTitle('', 'Untitled', 'Northwind Services Renewal'), 'Northwind Services Renewal');
   assert.equal(getMediationReviewTitle('', 'Shared Report'), 'AI Mediation Review');
@@ -115,6 +163,34 @@ test('mediation review title helpers: avoid Untitled-style placeholders', () => 
   assert.equal(buildMediationReviewTitle('', 'Untitled proposal', 'Northwind Services Renewal'), 'Northwind Services Renewal');
   assert.equal(buildMediationReviewTitle('', 'Shared Report'), MEDIATION_REVIEW_TITLE);
   assert.equal(buildMediationReviewSubtitle('', 'Shared Report'), '');
+});
+
+test('buildStoredV2Evaluation: stores pre-send reviews without mediation fields', () => {
+  const stored = buildStoredV2Evaluation({
+    ok: true,
+    data: {
+      analysis_stage: 'pre_send_review',
+      readiness_status: 'ready_with_clarifications',
+      send_readiness_summary: 'Clarify ownership before sharing.',
+      missing_information: ['Name the delivery owner.'],
+      ambiguous_terms: ['Success metrics are still implied.'],
+      likely_recipient_questions: ['Who approves acceptance?'],
+      likely_pushback_areas: ['Undefined remediation responsibility.'],
+      commercial_risks: ['Pricing does not define change handling.'],
+      implementation_risks: ['Integration responsibility remains unclear.'],
+      suggested_clarifications: ['Assign ownership and acceptance criteria.'],
+    },
+    model: 'gemini-2.5-pro',
+    generation_model: 'gemini-2.5-pro',
+  });
+
+  assert.equal(stored.report.analysis_stage, 'pre_send_review');
+  assert.equal(stored.report.report_title, 'Pre-send Review');
+  assert.equal(stored.report.readiness_status, 'ready_with_clarifications');
+  assert.equal(Array.isArray(stored.report.presentation_sections), true);
+  assert.equal('why' in stored.report, false);
+  assert.equal('confidence_0_1' in stored.report, false);
+  assert.equal('recommendation' in stored.report, false);
 });
 
 test('decision status helpers: prefer canonical Decision Readiness status over fit-level fallback', () => {

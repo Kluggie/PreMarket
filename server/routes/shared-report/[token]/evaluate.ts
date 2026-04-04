@@ -16,6 +16,7 @@ import {
   formatContributionsForAi,
   getLinkRecipientAuthorRole,
   loadSharedReportHistory,
+  normalizeContributionPayload,
   resolveSharedReportLinkRound,
 } from '../../../_lib/shared-report-history.js';
 import { evaluateDocumentComparisonWithVertex } from '../../../_lib/vertex-evaluation.js';
@@ -51,6 +52,7 @@ import {
   toObject,
 } from '../_shared.js';
 import { assertStarterAiEvaluationAllowed } from '../../../_lib/starter-entitlements.js';
+import { MEDIATION_REVIEW_STAGE } from '../../../../src/lib/opportunityReviewStage.js';
 
 const SHARED_REPORT_EVALUATE_ROUTE = `${SHARED_REPORT_ROUTE}/evaluate`;
 const MIN_SHARED_EVALUATION_TEXT_LENGTH = 40;
@@ -61,6 +63,62 @@ function asText(value: unknown) {
 
 function asLower(value: unknown) {
   return asText(value).toLowerCase();
+}
+
+function normalizePayloadFiles(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .filter((entry) => entry && typeof entry === 'object' && !Array.isArray(entry))
+    .map((entry: any) => ({
+      filename: asText(entry.filename || entry.name),
+      mimeType: asText(entry.mimeType || entry.mime_type || entry.type),
+      sizeBytes: Number(entry.sizeBytes || entry.size_bytes || entry.size || 0) || 0,
+      documentId: asText(entry.documentId || entry.document_id) || null,
+    }));
+}
+
+function payloadHasMeaningfulContent(payload: unknown) {
+  const safePayload = toObject(payload);
+  const text = asText(safePayload.text || safePayload.notes);
+  const html = asText(safePayload.html);
+  const files = normalizePayloadFiles(safePayload.files);
+  return Boolean(text || htmlToEditorText(html) || safePayload.json || files.length > 0);
+}
+
+function buildPayloadSnapshot(payload: unknown, options: { defaultLabel?: string; visibility?: 'shared' | 'confidential' } = {}) {
+  const normalized = normalizeContributionPayload(payload, {
+    defaultLabel: options.defaultLabel,
+    visibility: options.visibility,
+  });
+  return {
+    text: asText(normalized.text || normalized.notes),
+    html: asText(normalized.html),
+    json: normalized.json || null,
+    source: asText(normalized.source),
+    files: normalizePayloadFiles(normalized.files),
+  };
+}
+
+function payloadDiffersFromBaseline(
+  payload: unknown,
+  baselinePayload: unknown,
+  options: { defaultLabel?: string; visibility?: 'shared' | 'confidential' } = {},
+) {
+  if (!payloadHasMeaningfulContent(payload)) {
+    return false;
+  }
+  const left = buildPayloadSnapshot(payload, options);
+  const right = buildPayloadSnapshot(baselinePayload, options);
+  return JSON.stringify(left) !== JSON.stringify(right);
+}
+
+function contributionHasMeaningfulContent(entry: any) {
+  const text = asText(entry?.contentPayload?.text || entry?.contentPayload?.notes);
+  const html = asText(entry?.contentPayload?.html);
+  const files = normalizePayloadFiles(entry?.contentPayload?.files);
+  return Boolean(text || htmlToEditorText(html) || entry?.contentPayload?.json || files.length > 0);
 }
 
 function getDocumentComparisonEvaluator() {
@@ -404,6 +462,18 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     const sharedFallbackText = String(resolved.comparison?.docBText || defaultSharedPayload.text || '');
     const currentRoundSharedText = coercePayloadText(sharedPayload, sharedFallbackText);
     const currentRoundRecipientConfidentialText = coercePayloadText(confidentialPayload, '');
+    const hasMeaningfulDraftSharedInput = payloadDiffersFromBaseline(sharedPayload, defaultSharedPayload, {
+      defaultLabel: 'Shared by Recipient',
+      visibility: 'shared',
+    });
+    const hasMeaningfulDraftConfidentialInput = payloadDiffersFromBaseline(
+      confidentialPayload,
+      defaultConfidentialPayload,
+      {
+        defaultLabel: 'Confidential to Recipient',
+        visibility: 'confidential',
+      },
+    );
     const draftEntries = buildDraftContributionEntries({
       authorRole: draftAuthorRole,
       roundNumber: outgoingRoundNumber,
@@ -413,8 +483,19 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       createdAt: currentDraft.createdAt,
       updatedAt: currentDraft.updatedAt,
     });
-    const draftSharedEntries = draftEntries.filter((entry) => entry.visibility === 'shared');
-    const draftConfidentialEntries = draftEntries.filter((entry) => entry.visibility === 'confidential');
+    const draftSharedEntries = draftEntries.filter(
+      (entry) => entry.visibility === 'shared' && hasMeaningfulDraftSharedInput,
+    );
+    const draftConfidentialEntries = draftEntries.filter(
+      (entry) => entry.visibility === 'confidential' && hasMeaningfulDraftConfidentialInput,
+    );
+    const historyHasRecipientContent = sharedHistory.contributions.some(
+      (entry) => entry.authorRole === draftAuthorRole && contributionHasMeaningfulContent(entry),
+    );
+    const hasMeaningfulRecipientContent =
+      historyHasRecipientContent ||
+      draftSharedEntries.length > 0 ||
+      draftConfidentialEntries.length > 0;
     const sharedHistoryEntriesForAi = [
       ...sharedHistory.contributions.filter((entry) => entry.visibility === 'shared'),
       ...draftSharedEntries,
@@ -468,6 +549,14 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     const evaluationSharedText = budgeted.sharedText;
     const evaluationConfidentialText = budgeted.confidentialText;
 
+    if (!hasMeaningfulRecipientContent) {
+      throw new ApiError(
+        409,
+        'recipient_input_required',
+        'Recipient input is required before AI Mediation Review can run.',
+      );
+    }
+
     if (sharedText.length < MIN_SHARED_EVALUATION_TEXT_LENGTH) {
       throw new ApiError(
         400,
@@ -510,6 +599,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
           v2Result = await evaluateWithVertexV2({
             sharedText: evaluationSharedText,
             confidentialText: evaluationConfidentialText,
+            analysisStage: MEDIATION_REVIEW_STAGE,
             requestId: context?.requestId || undefined,
             generationModel: asText(process.env.VERTEX_DOC_COMPARE_GENERATION_MODEL) || undefined,
             verifierModel: asText(process.env.VERTEX_DOC_COMPARE_VERIFIER_MODEL) || undefined,
@@ -520,6 +610,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
           v2Result = {
             ok: true,
             data: {
+              analysis_stage: MEDIATION_REVIEW_STAGE,
               fit_level: 'unknown',
               confidence_0_1: 0.2,
               why: [
@@ -560,6 +651,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
           v2Result = {
             ok: true,
             data: {
+              analysis_stage: MEDIATION_REVIEW_STAGE,
               fit_level: 'unknown',
               confidence_0_1: 0.2,
               why: [
@@ -637,6 +729,11 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
               attributed_shared_entries: sharedHistoryEntriesForAi.length,
               attributed_confidential_entries: confidentialHistoryEntriesForAi.length,
               current_round_author_role: draftAuthorRole,
+              analysis_stage: MEDIATION_REVIEW_STAGE,
+              has_meaningful_recipient_content: hasMeaningfulRecipientContent,
+              history_has_recipient_content: historyHasRecipientContent,
+              draft_shared_input_count: draftSharedEntries.length,
+              draft_confidential_input_count: draftConfidentialEntries.length,
               budget_was_trimmed: budgeted.wasTrimmed,
               estimated_input_chars: budgeted.budget.totalChars,
               estimated_input_tokens: budgeted.estimatedTokens,

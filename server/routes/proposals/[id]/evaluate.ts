@@ -9,6 +9,13 @@ import { resolveLatestActiveSharedReportLink } from '../../../_lib/proposal-agre
 import { buildProposalHistoryQueries } from '../../../_lib/proposal-history.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 import {
+  buildDraftContributionEntries,
+  formatContributionsForAi,
+  HISTORY_AUTHOR_PROPOSER,
+  HISTORY_AUTHOR_RECIPIENT,
+  loadSharedReportHistory,
+} from '../../../_lib/shared-report-history.js';
+import {
   evaluateDocumentComparisonWithVertex,
   evaluateProposalWithVertex,
 } from '../../../_lib/vertex-evaluation.js';
@@ -21,6 +28,10 @@ import {
   buildLegacyOpportunityNotificationHref,
   buildNotificationTargetMetadata,
 } from '../../../../src/lib/notificationTargets.js';
+import {
+  MEDIATION_REVIEW_STAGE,
+  PRE_SEND_REVIEW_STAGE,
+} from '../../../../src/lib/opportunityReviewStage.js';
 
 function getProposalId(req: any, proposalIdParam?: string) {
   if (proposalIdParam && proposalIdParam.trim().length > 0) {
@@ -245,6 +256,83 @@ function convertV2ResponseToEvaluation(v2Result: any): Record<string, unknown> {
   return buildStoredV2Evaluation(v2Result);
 }
 
+function contributionHasMeaningfulContent(entry: any) {
+  const text = asText(entry?.contentPayload?.text || entry?.contentPayload?.notes);
+  const html = asText(entry?.contentPayload?.html);
+  const json = entry?.contentPayload?.json && typeof entry.contentPayload.json === 'object';
+  const files = Array.isArray(entry?.contentPayload?.files) ? entry.contentPayload.files : [];
+  return Boolean(text || html || json || files.length > 0);
+}
+
+function buildStageFallbackV2Data(analysisStage: string, reason: 'unexpected_error' | 'unavailable') {
+  if (analysisStage === PRE_SEND_REVIEW_STAGE) {
+    return {
+      analysis_stage: PRE_SEND_REVIEW_STAGE,
+      readiness_status: 'not_ready_to_send',
+      send_readiness_summary:
+        reason === 'unexpected_error'
+          ? 'The Pre-send Review could not be generated due to an unexpected internal error.'
+          : 'The Pre-send Review could not be generated because the model output was unavailable or invalid.',
+      missing_information: [
+        'What is the confirmed scope and set of deliverables?',
+        'What assumptions should be explicit before sharing?',
+        'What timeline, ownership, or approval detail is still implied rather than stated?',
+      ],
+      ambiguous_terms: ['Which draft terms would a reasonable recipient still find unclear?'],
+      likely_recipient_questions: ['What would the recipient need clarified before responding?'],
+      likely_pushback_areas: ['Which current terms are most likely to trigger pushback if shared as-is?'],
+      commercial_risks: [],
+      implementation_risks: [],
+      suggested_clarifications: ['Tighten the open items above and re-run the Pre-send Review.'],
+    };
+  }
+
+  return {
+    analysis_stage: MEDIATION_REVIEW_STAGE,
+    fit_level: 'unknown',
+    confidence_0_1: 0.2,
+    why: [
+      reason === 'unexpected_error'
+        ? 'Executive Summary: The AI mediation review could not be generated due to an unexpected internal error.'
+        : 'Executive Summary: The AI mediation review could not be generated. This review is incomplete.',
+      'Key Strengths: Unable to assess due to the current evaluation failure.',
+      'Key Risks: Core negotiation issues could not be assessed reliably.',
+      'Decision Readiness: Incomplete. Please address missing items and retry.',
+      'Recommended Path: Review the missing items below and re-run AI mediation.',
+    ],
+    missing: [
+      'What is the confirmed scope and set of deliverables?',
+      'What is the confirmed timeline and go-live date?',
+      'What are the measurable success criteria (KPIs)?',
+    ],
+    redactions: [],
+  };
+}
+
+function getComparisonEvaluationSource(analysisStage: string) {
+  return analysisStage === PRE_SEND_REVIEW_STAGE
+    ? 'document_comparison_pre_send'
+    : 'document_comparison_mediation';
+}
+
+function getReviewNotificationCopy(analysisStage: string, title: string) {
+  const safeTitle = title || 'your proposal';
+  if (analysisStage === PRE_SEND_REVIEW_STAGE) {
+    return {
+      title: 'Pre-send Review ready',
+      message: `A Pre-send Review is ready for "${safeTitle}".`,
+      emailSubject: 'Pre-send Review ready',
+      emailText: `Your proposal "${safeTitle}" has a new Pre-send Review.\n\nSign in to PreMarket to review the sender-side draft feedback.`,
+    };
+  }
+  return {
+    title: 'AI Mediation Review ready',
+    message: `An AI Mediation Review is ready for "${safeTitle}".`,
+    emailSubject: 'AI Mediation Review ready',
+    emailText: `Your proposal "${safeTitle}" has a new AI Mediation Review.\n\nSign in to PreMarket to review the full bilateral mediation review.`,
+  };
+}
+
 function toV2ApiError(error: any) {
   const parseKind = asLower(error?.parse_error_kind);
   const details =
@@ -289,30 +377,37 @@ function toV2ApiError(error: any) {
   });
 }
 
-function toFailedResult(error: any) {
+function getReviewLabelForSource(source: unknown) {
+  return asText(source) === 'document_comparison_pre_send'
+    ? 'Pre-send Review'
+    : 'AI Mediation Review';
+}
+
+function toFailedResult(error: any, source?: unknown) {
   const statusCode = Number(error?.statusCode || error?.status || 500);
   const code = asText(error?.code) || 'evaluation_failed';
-  const message = asText(error?.message) || 'AI mediation failed';
+  const reviewLabel = getReviewLabelForSource(source);
+  const message = asText(error?.message) || `${reviewLabel} failed`;
   const parseErrorKind = asText(error?.extra?.parseErrorKind || error?.extra?.reasonCode) || null;
   const parseErrorMessage = error?.extra?.parseErrorMessage ? JSON.parse(String(error.extra.parseErrorMessage)) : null;
   const attemptHistory = Array.isArray(error?.extra?.attempt_history) ? error.extra.attempt_history : null;
   const attemptCount = Array.isArray(attemptHistory) ? attemptHistory.length : 0;
   
   // Build user-friendly error message
-  let userMessage = 'AI mediation could not be completed. Please try again.';
+  let userMessage = `${reviewLabel} could not be completed. Please try again.`;
   let details_safe = parseErrorKind ? `${parseErrorKind}: ` : '';
   
   if (parseErrorKind === 'truncated_output') {
-    userMessage = 'AI response was cut off due to size limits. Please retry AI mediation.';
+    userMessage = `AI response was cut off due to size limits. Please retry ${reviewLabel}.`;
     details_safe += 'The model output was truncated and incomplete.';
   } else if (parseErrorKind === 'empty_output') {
-    userMessage = 'AI returned no content. Please retry AI mediation.';
+    userMessage = `AI returned no content. Please retry ${reviewLabel}.`;
     details_safe += 'The model generated no output.';
   } else if (parseErrorKind === 'json_parse_error') {
-    userMessage = 'AI output was not valid JSON. Please retry AI mediation.';
+    userMessage = `AI output was not valid JSON. Please retry ${reviewLabel}.`;
     details_safe += 'The response could not be parsed as JSON.';
   } else if (parseErrorKind === 'schema_validation_error') {
-    userMessage = 'AI response was incomplete (missing sections). Please retry AI mediation.';
+    userMessage = `AI response was incomplete (missing sections). Please retry ${reviewLabel}.`;
     details_safe += 'The response was missing required schema fields.';
   } else if (parseErrorKind === 'confidential_leak_detected') {
     userMessage = 'A confidentiality check failed. Please review your input and retry.';
@@ -351,8 +446,8 @@ async function persistFailedEvaluation(params: {
     source: params.source,
     status: 'failed',
     score: null,
-    summary: asText(params.error?.message) || 'AI mediation failed',
-    result: toFailedResult(params.error),
+    summary: asText(params.error?.message) || `${getReviewLabelForSource(params.source)} failed`,
+    result: toFailedResult(params.error, params.source),
     createdAt: now,
     updatedAt: now,
   });
@@ -413,7 +508,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
 
     try {
       if (isDocumentComparisonProposal) {
-        evaluationSource = 'document_comparison_vertex';
+        evaluationSource = 'document_comparison_pre_send';
         const [comparison] = await db
           .select()
           .from(schema.documentComparisons)
@@ -429,6 +524,79 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         }
 
         linkedComparison = comparison;
+        const sharedHistory = await loadSharedReportHistory({
+          db,
+          proposal,
+          comparison,
+        });
+        const historyContributions = Array.isArray(sharedHistory?.contributions)
+          ? sharedHistory.contributions
+          : [];
+        const latestProposerSharedEntry = [...historyContributions]
+          .reverse()
+          .find((entry) => entry.authorRole === HISTORY_AUTHOR_PROPOSER && entry.visibility === 'shared');
+        const latestProposerConfidentialEntry = [...historyContributions]
+          .reverse()
+          .find((entry) => entry.authorRole === HISTORY_AUTHOR_PROPOSER && entry.visibility === 'confidential');
+        const currentComparisonEntries = buildDraftContributionEntries({
+          authorRole: HISTORY_AUTHOR_PROPOSER,
+          roundNumber: (Number(sharedHistory?.maxRoundNumber || 0) || 0) + 1,
+          sharedPayload: {
+            label: 'Shared by Proposer',
+            text: String(comparison.docBText || ''),
+            html: asText((comparison.inputs as any)?.doc_b_html),
+            json: (comparison.inputs as any)?.doc_b_json,
+            source: asText((comparison.inputs as any)?.doc_b_source) || 'typed',
+            files: Array.isArray((comparison.inputs as any)?.doc_b_files) ? (comparison.inputs as any).doc_b_files : [],
+          },
+          confidentialPayload: {
+            label: 'Confidential to Proposer',
+            text: String(comparison.docAText || ''),
+            notes: String(comparison.docAText || ''),
+            html: asText((comparison.inputs as any)?.doc_a_html),
+            json: (comparison.inputs as any)?.doc_a_json,
+            source: asText((comparison.inputs as any)?.doc_a_source) || 'typed',
+            files: Array.isArray((comparison.inputs as any)?.doc_a_files) ? (comparison.inputs as any).doc_a_files : [],
+          },
+          sourceKind: 'draft',
+          updatedAt: comparison.updatedAt,
+        });
+        const appendedComparisonEntries = currentComparisonEntries.filter((entry) => {
+          const candidateText = asText(entry?.contentPayload?.text || entry?.contentPayload?.notes);
+          if (!candidateText) {
+            return false;
+          }
+          if (entry.visibility === 'shared') {
+            return candidateText !== asText(latestProposerSharedEntry?.contentPayload?.text);
+          }
+          return candidateText !== asText(
+            latestProposerConfidentialEntry?.contentPayload?.text ||
+            latestProposerConfidentialEntry?.contentPayload?.notes,
+          );
+        });
+        const attributedSharedEntries = [
+          ...historyContributions.filter((entry) => entry.visibility === 'shared'),
+          ...appendedComparisonEntries.filter((entry) => entry.visibility === 'shared'),
+        ];
+        const attributedConfidentialEntries = [
+          ...historyContributions.filter((entry) => entry.visibility === 'confidential'),
+          ...appendedComparisonEntries.filter((entry) => entry.visibility === 'confidential'),
+        ];
+        const hasRecipientContributions = historyContributions.some(
+          (entry) =>
+            entry?.authorRole === HISTORY_AUTHOR_RECIPIENT &&
+            contributionHasMeaningfulContent(entry),
+        );
+        const analysisStage = hasRecipientContributions
+          ? MEDIATION_REVIEW_STAGE
+          : PRE_SEND_REVIEW_STAGE;
+        evaluationSource = getComparisonEvaluationSource(analysisStage);
+        const comparisonSharedText = attributedSharedEntries.length > 0
+          ? formatContributionsForAi(attributedSharedEntries)
+          : String(comparison.docBText || '');
+        const comparisonConfidentialText = attributedConfidentialEntries.length > 0
+          ? formatContributionsForAi(attributedConfidentialEntries)
+          : String(comparison.docAText || '');
         if (process.env.NODE_ENV !== 'production') {
           console.info(
             JSON.stringify({
@@ -438,28 +606,59 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
               requestId,
               proposalId: proposal.id,
               comparisonId: comparison.id,
-              inputChars: String(comparison.docAText || '').length + String(comparison.docBText || '').length,
+              inputChars: comparisonConfidentialText.length + comparisonSharedText.length,
+              analysisStage,
+              hasRecipientContributions,
             }),
           );
         }
         let comparisonEvaluation: any;
         if (docComparisonEngine === 'v2') {
-          const v2Result = await evaluateWithVertexV2({
-            sharedText: String(comparison.docBText || ''),
-            confidentialText: String(comparison.docAText || ''),
-            requestId,
-            enforceLeakGuard: false,
-          });
+          let v2Result: any;
+          try {
+            v2Result = await evaluateWithVertexV2({
+              sharedText: comparisonSharedText,
+              confidentialText: comparisonConfidentialText,
+              analysisStage,
+              requestId,
+              enforceLeakGuard: false,
+            });
+          } catch {
+            v2Result = {
+              ok: true,
+              data: buildStageFallbackV2Data(analysisStage, 'unexpected_error'),
+              attempt_count: 1,
+              model: null,
+              _internal: {
+                warnings: ['vertex_unexpected_error_fallback_used'],
+                failure_kind: 'unexpected_error',
+              },
+            };
+          }
           if (!v2Result.ok) {
-            throw toV2ApiError(v2Result.error);
+            const error = v2Result.error;
+            const parseKind = asLower(error?.parse_error_kind);
+            if (parseKind === 'confidential_leak_detected') {
+              throw toV2ApiError(v2Result.error);
+            }
+            v2Result = {
+              ok: true,
+              data: buildStageFallbackV2Data(analysisStage, 'unavailable'),
+              attempt_count: v2Result.attempt_count ?? 1,
+              model: null,
+              _internal: {
+                warnings: ['vertex_invalid_response_fallback_used'],
+                failure_kind: parseKind,
+              },
+            };
           }
           comparisonEvaluation = convertV2ResponseToEvaluation(v2Result);
         } else {
           comparisonEvaluation = await evaluateDocumentComparisonWithVertex(
             {
               title: comparison.title || proposal.title || 'Document Comparison',
-              docAText: comparison.docAText || '',
-              docBText: comparison.docBText || '',
+              docAText: comparisonConfidentialText,
+              docBText: comparisonSharedText,
               docASpans: [],
               docBSpans: [],
               partyALabel: 'Confidential Information',
@@ -469,7 +668,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
               correlationId: requestId,
               routeName: '/api/proposals/[id]/evaluate',
               entityId: comparison.id,
-              inputChars: String(comparison.docAText || '').length + String(comparison.docBText || '').length,
+              inputChars: comparisonConfidentialText.length + comparisonSharedText.length,
               disableConfidentialLeakGuard: true,
             },
           );
@@ -494,8 +693,8 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         result = buildProposalResultFromEvaluation(proposal, comparisonEvaluation, {
           document_comparison_id: comparison.id,
           hidden_spans: 0,
-          doc_a_length: String(comparison.docAText || '').length,
-          doc_b_length: String(comparison.docBText || '').length,
+          doc_a_length: comparisonConfidentialText.length,
+          doc_b_length: comparisonSharedText.length,
         });
 
         await db
@@ -600,7 +799,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
           .update(schema.documentComparisons)
           .set({
             status: 'failed',
-            evaluationResult: toFailedResult(error),
+            evaluationResult: toFailedResult(error, evaluationSource),
             updatedAt: new Date(),
           })
           .where(eq(schema.documentComparisons.id, linkedComparison.id));
@@ -679,6 +878,12 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
       const canonicalActionUrl = isComparisonNotification
         ? buildSharedReportHref(sharedReportToken)
         : null;
+      const notificationCopy = getReviewNotificationCopy(
+        evaluationSource === 'document_comparison_pre_send'
+          ? PRE_SEND_REVIEW_STAGE
+          : MEDIATION_REVIEW_STAGE,
+        proposal.title || '',
+      );
 
       await createNotificationEvent({
         db,
@@ -687,8 +892,8 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         eventType: 'evaluation_update',
         emailCategory: 'evaluation_complete',
         dedupeKey: `evaluation_update:${proposal.id}:${saved.id}`,
-        title: 'AI mediation review ready',
-        message: `An AI mediation review is ready for "${proposal.title || 'your proposal'}".`,
+        title: notificationCopy.title,
+        message: notificationCopy.message,
         actionUrl: canonicalActionUrl || legacyActionUrl,
         metadata: isComparisonNotification && sharedReportToken
           ? buildNotificationTargetMetadata({
@@ -701,13 +906,11 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
               legacyActionUrl,
             })
           : null,
-        emailSubject: 'AI mediation review ready',
+        emailSubject: notificationCopy.emailSubject,
         emailText: [
-          `Your proposal "${proposal.title || 'Untitled Proposal'}" has a new AI mediation review.`,
+          notificationCopy.emailText,
           '',
           `Score: ${saved.score ?? 'N/A'}`,
-          '',
-          'Sign in to PreMarket to review the full mediation review.',
         ].join('\n'),
       });
     } catch {

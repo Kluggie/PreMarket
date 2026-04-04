@@ -457,14 +457,18 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         id: newId('eval'),
         proposalId: resolved.proposal.id,
         userId: resolved.link.userId,
-        source: 'shared_report_recipient',
+        source: 'shared_report_mediation',
         status: latestEvaluation ? 'completed' : 'received',
         score: evaluationScore,
         summary: latestEvaluation
           ? 'Recipient sent an updated shared report and evaluation.'
           : 'Recipient sent an updated shared report.',
         result: {
-          source: 'shared_report_recipient',
+          source: 'shared_report_mediation',
+          analysis_stage:
+            publicReport && typeof publicReport === 'object' && !Array.isArray(publicReport)
+              ? (publicReport as any).analysis_stage || 'mediation_review'
+              : 'mediation_review',
           revision_id: sentRevision?.id || currentDraft.id,
           evaluation_run_id: latestEvaluation?.id || null,
           public_report: publicReport,

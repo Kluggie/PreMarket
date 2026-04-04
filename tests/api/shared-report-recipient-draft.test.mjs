@@ -898,6 +898,19 @@ if (!hasDatabaseUrl()) {
     });
 
     try {
+      const saveRes = await saveRecipientDraft(link.token, {
+        shared_payload: {
+          label: 'Shared Information',
+          text: 'Recipient shared update used to activate evaluation for Step 0.',
+        },
+        recipient_confidential_payload: {
+          label: 'Confidential Information',
+          notes: 'Recipient confidential update used to activate evaluation for Step 0.',
+        },
+        workflow_step: 2,
+      }, recipientCookie);
+      assert.equal(saveRes.statusCode, 200);
+
       const evaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
       assert.equal(evaluateRes.statusCode, 200);
 
@@ -957,6 +970,19 @@ if (!hasDatabaseUrl()) {
     });
 
     try {
+      const saveAllowedDraftRes = await saveRecipientDraft(allowed.token, {
+        shared_payload: {
+          label: 'Shared Information',
+          text: 'Recipient shared contribution activates the mediation evaluation path.',
+        },
+        recipient_confidential_payload: {
+          label: 'Confidential Information',
+          notes: 'Recipient confidential contribution activates the mediation evaluation path.',
+        },
+        workflow_step: 2,
+      }, allowedRecipientCookie);
+      assert.equal(saveAllowedDraftRes.statusCode, 200);
+
       const allowedRes = await evaluateRecipientDraft(allowed.token, {}, allowedRecipientCookie);
       assert.equal(allowedRes.statusCode, 200);
       const body = allowedRes.jsonBody();
@@ -1019,7 +1045,7 @@ if (!hasDatabaseUrl()) {
       sql`select source, status from proposal_evaluations where proposal_id = ${comparison.proposal_id} order by created_at desc limit 1`,
     );
     assert.equal(evaluationRows.rows.length >= 1, true);
-    assert.equal(String(evaluationRows.rows[0].source), 'shared_report_recipient');
+    assert.equal(String(evaluationRows.rows[0].source), 'shared_report_mediation');
   });
 
   test('send-back target aligns with computed counterparty across repeated rounds', async () => {
@@ -1590,7 +1616,7 @@ if (!hasDatabaseUrl()) {
           order by created_at desc`,
     );
     assert.equal(artifacts.rows.length >= 2, true);
-    assert.equal(String(artifacts.rows[0].source || ''), 'shared_report_recipient');
+    assert.equal(String(artifacts.rows[0].source || ''), 'shared_report_mediation');
     assert.equal(String(artifacts.rows[0].proposal_id || ''), String(comparison.proposal_id));
     assert.equal(String((artifacts.rows[0].result || {}).revision_id || ''), secondRevisionId);
   });
@@ -2219,6 +2245,104 @@ if (!hasDatabaseUrl()) {
       const ownerInputTrace = ownerEvaluateRes.jsonBody().evaluation_input_trace || {};
       assert.equal(Number(ownerInputTrace.authored_shared_entries || 0) >= 2, true);
       assert.equal(Number(ownerInputTrace.authored_confidential_entries || 0) >= 2, true);
+    } finally {
+      if (previousEvaluator === undefined) {
+        delete globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
+      } else {
+        globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = previousEvaluator;
+      }
+    }
+  });
+
+  test('shared-report evaluate rejects untouched drafts until recipient adds meaningful content', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const seed = 'shared_report_meaningful_input_guard';
+    const ownerCookie = makeOwnerCookie(seed);
+    const recipientEmail = `${seed}_recipient@example.com`;
+    const recipientCookie = makeRecipientCookie(seed, recipientEmail);
+
+    const comparison = await createComparison(ownerCookie, {
+      title: 'Trigger Guard Test',
+      docAText: 'Internal proposer notes and fallback constraints for the draft.',
+      docBText: 'Shared proposer draft with scope, milestones, and responsibilities.',
+    });
+    const link = await createSharedReportLink(ownerCookie, comparison.id, recipientEmail, {
+      canView: true,
+      canEdit: true,
+      canReevaluate: true,
+      canSendBack: true,
+    });
+
+    const workspaceRes = await getRecipientWorkspace(link.token, recipientCookie);
+    assert.equal(workspaceRes.statusCode, 200);
+
+    const evaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
+    assert.equal(evaluateRes.statusCode, 409);
+    assert.equal(evaluateRes.jsonBody()?.error?.code || evaluateRes.jsonBody()?.code, 'recipient_input_required');
+  });
+
+  test('shared-report evaluate succeeds once recipient saves meaningful content', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const seed = 'shared_report_meaningful_input_success';
+    const ownerCookie = makeOwnerCookie(seed);
+    const recipientEmail = `${seed}_recipient@example.com`;
+    const recipientCookie = makeRecipientCookie(seed, recipientEmail);
+
+    const comparison = await createComparison(ownerCookie, {
+      title: 'Trigger Success Test',
+      docAText: 'Internal proposer notes and fallback constraints for the draft.',
+      docBText: 'Shared proposer draft with scope, milestones, and responsibilities.',
+    });
+    const link = await createSharedReportLink(ownerCookie, comparison.id, recipientEmail, {
+      canView: true,
+      canEdit: true,
+      canReevaluate: true,
+      canSendBack: true,
+    });
+
+    const saveRes = await saveRecipientDraft(link.token, {
+      shared_payload: {
+        label: 'Shared Information',
+        text: 'Recipient response adds delivery sequencing, dependency limits, and acceptance constraints.',
+      },
+      recipient_confidential_payload: {
+        label: 'Confidential Information',
+        notes: 'Recipient confidential notes add commercial boundaries for internal review.',
+      },
+      workflow_step: 2,
+    }, recipientCookie);
+    assert.equal(saveRes.statusCode, 200);
+
+    const previousEvaluator = globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
+    globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = async () => ({
+      report: {
+        recommendation: 'review',
+        executive_summary: 'Recipient contribution received.',
+        sections: [{ heading: 'Summary', bullets: ['Recipient contribution received.'] }],
+      },
+      evaluation_provider: 'test',
+      similarity_score: 67,
+    });
+
+    try {
+      const evaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
+      assert.equal(evaluateRes.statusCode, 200);
+
+      const db = getDb();
+      const evalRunRows = await db.execute(
+        sql`select result_json
+            from shared_report_evaluation_runs
+            where proposal_id = ${comparison.proposal_id}
+            order by created_at desc
+            limit 1`,
+      );
+      const inputTrace = evalRunRows.rows[0]?.result_json?.input_trace || {};
+      assert.equal(inputTrace.analysis_stage ?? 'mediation_review', 'mediation_review');
+      assert.equal(Boolean(inputTrace.has_meaningful_recipient_content), true);
     } finally {
       if (previousEvaluator === undefined) {
         delete globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;

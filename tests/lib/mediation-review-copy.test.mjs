@@ -11,7 +11,7 @@ function readRepoFile(relativePath) {
   return readFileSync(path.join(repoRoot, relativePath), 'utf8');
 }
 
-test('Step 3 mediation surfaces use mediation-oriented terminology', () => {
+test('Review surfaces stay stage-aware across proposer-only and bilateral flows', () => {
   const files = {
     copyHelpers: readRepoFile('src/lib/aiReportUtils.js'),
     step3Package: readRepoFile('src/components/document-comparison/Step3ReviewPackage.jsx'),
@@ -24,17 +24,25 @@ test('Step 3 mediation surfaces use mediation-oriented terminology', () => {
   };
 
   assert.match(files.copyHelpers, /Run AI Mediation/);
+  assert.match(files.copyHelpers, /Run Pre-send Review/);
   assert.match(files.step3Package, /RUN_AI_MEDIATION_LABEL/);
-  assert.match(files.comparisonTabs, /MEDIATION_REVIEW_LABEL/);
+  assert.match(files.comparisonTabs, /AI Mediation Review in progress/);
+  assert.match(files.comparisonTabs, /Pre-send Review in progress/);
   assert.match(files.comparisonTabs, /Open Questions/);
-  assert.match(files.proposalDetail, /AI Mediation Review PDF/);
-  assert.match(files.proposalDetail, /Download AI Mediation Review JSON/);
-  assert.match(files.comparisonDetail, /Run AI Mediation to generate it/);
-  assert.match(files.sharedReport, /AI Mediation Review PDF/);
+  assert.match(files.proposalDetail, /Download \$\{reviewLabel\} JSON/);
+  assert.match(files.comparisonDetail, /No \$\{reviewLabel\} yet/);
+  assert.match(files.sharedReport, /baselineReviewLabelForDownloads/);
+  assert.match(files.sharedReport, /label: `\$\{baselineReviewLabelForDownloads\} PDF`/);
   assert.match(files.sharedReport, /Step 3: \$\{MEDIATION_REVIEW_LABEL\}/);
   assert.match(files.comparisonPdfRoute, /MEDIATION_REVIEW_TITLE/);
+  assert.match(files.comparisonPdfRoute, /PRE_SEND_REVIEW_TITLE/);
+  assert.match(files.comparisonPdfRoute, /Likely Recipient Questions/);
+  assert.match(files.comparisonPdfRoute, /Suggested Clarifications/);
   assert.match(files.comparisonPdfRoute, /Open Questions/);
   assert.match(files.comparisonPdfRoute, /Missing or Redacted Information/);
+  assert.match(files.sharedPdfRoute, /PRE_SEND_REVIEW_TITLE/);
+  assert.match(files.sharedPdfRoute, /Likely Recipient Questions/);
+  assert.match(files.sharedPdfRoute, /Suggested Clarifications/);
   assert.match(files.sharedPdfRoute, /Open Questions/);
   assert.match(files.sharedPdfRoute, /Missing or Redacted Information/);
 

@@ -25,6 +25,8 @@ import {
   ComparisonDetailTabs,
 } from '@/components/document-comparison/ComparisonDetailTabs';
 import RequestAgreementConfirmDialog from '@/components/proposal/RequestAgreementConfirmDialog';
+import { getReviewStageLabel } from '@/lib/aiReportUtils';
+import { resolveOpportunityReviewStage } from '@/lib/opportunityReviewStage';
 import {
   Dialog,
   DialogContent,
@@ -125,7 +127,7 @@ function extractEvaluationFailureDetails(rawError) {
   const failureStage = asLower(
     rawError.failure_stage || details.failure_stage || rawError.stage || details.stage,
   );
-  const message = asText(rawError.message) || 'AI mediation failed';
+  const message = asText(rawError.message) || 'Review failed';
   const requestId = asText(
     rawError.requestId ||
       rawError.request_id ||
@@ -273,12 +275,12 @@ function toFailureBannerMessage(failure) {
     return 'Vertex returned a generic report. Please retry with richer shared content.';
   }
   if (code === 'db_write_failed') {
-    return 'AI mediation could not be saved. Please retry.';
+    return 'This review could not be saved. Please retry.';
   }
   if (code === 'not_configured') {
     return 'Vertex AI integration is not configured.';
   }
-  return 'AI mediation could not be completed. Please retry from the editor.';
+  return 'This review could not be completed. Please retry from the editor.';
 }
 
 function getEvaluationRowMeta(evaluation) {
@@ -292,7 +294,7 @@ function getEvaluationRowMeta(evaluation) {
       badgeClassName: 'bg-amber-100 text-amber-800',
       rowClassName: 'rounded-xl border border-amber-200 bg-amber-50 p-3',
       scoreLabel: '—',
-      timelineTitle: 'AI Mediation Unavailable',
+      timelineTitle: 'Review Unavailable',
     };
   }
 
@@ -583,6 +585,10 @@ export default function DocumentComparisonDetail() {
   }, [selectedShareToken, sharedReports]);
 
   const report = comparison?.public_report || comparison?.evaluation_result?.report || {};
+  const reviewStage = resolveOpportunityReviewStage(report, {
+    source: evaluationsQuery.data?.[0]?.source,
+  });
+  const reviewLabel = getReviewStageLabel(reviewStage);
   const evaluationHistory = Array.isArray(evaluationsQuery.data) ? evaluationsQuery.data : [];
   const latestEvaluation = evaluationHistory[0] || null;
   const comparisonWarningMeta = extractConfidentialityWarnings(comparison?.evaluation_result);
@@ -622,7 +628,7 @@ export default function DocumentComparisonDetail() {
     ? `${toFailureBannerMessage(latestFailureDetails)}${
         latestFailureDetails.requestId ? ` (requestId: ${latestFailureDetails.requestId})` : ''
       }`
-    : `AI mediation could not be completed. ${evaluationFailureMessage || 'Please retry from the editor.'}`;
+    : `${reviewLabel} could not be completed. ${evaluationFailureMessage || 'Please retry from the editor.'}`;
   const hasReportData = hasObjectContent(report);
   const isEvaluationSucceeded =
     !isEvaluationRunning &&
@@ -700,14 +706,14 @@ export default function DocumentComparisonDetail() {
   const downloadAiMediationReviewPdfMutation = useMutation({
     mutationFn: () => documentComparisonsClient.downloadPdf(comparisonId, { format: 'web-parity' }),
     onSuccess: () => {
-      toast.success('AI mediation review PDF download started');
+      toast.success(`${reviewLabel} PDF download started`);
     },
     onError: (error) => {
       if (error?.code === 'not_configured' || Number(error?.status || 0) === 501) {
-        toast.error('AI mediation review PDF is not configured in this environment yet.');
+        toast.error(`${reviewLabel} PDF is not configured in this environment yet.`);
         return;
       }
-      toast.error(error?.message || 'AI mediation review PDF download unavailable');
+      toast.error(error?.message || `${reviewLabel} PDF download unavailable`);
     },
   });
 
@@ -1061,7 +1067,7 @@ export default function DocumentComparisonDetail() {
                     disabled={downloadAiMediationReviewPdfMutation.isPending}
                   >
                     <Download className="w-4 h-4 mr-2" />
-                    AI Mediation Review PDF
+                    {`${reviewLabel} PDF`}
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -1147,9 +1153,10 @@ export default function DocumentComparisonDetail() {
               evaluationFailureBannerMessage,
               hasReport,
               hasEvaluations: evaluationHistory.length > 0,
-              noReportMessage: 'No mediation review yet. Go to the editor and use Run AI Mediation to generate it.',
+              noReportMessage: `No ${reviewLabel} yet. Go to the editor and run the latest review to generate it.`,
               runDetailsHref: createPageUrl(`DocumentComparisonRunDetails?id=${encodeURIComponent(comparisonId)}`),
               report,
+              reviewStage,
               recommendation,
               timelineItems,
             }}

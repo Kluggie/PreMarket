@@ -3,6 +3,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { ArrowLeft } from 'lucide-react';
 import { ComparisonDetailTabs } from '@/components/document-comparison/ComparisonDetailTabs';
+import { getReviewStageLabel } from '@/lib/aiReportUtils';
+import { resolveOpportunityReviewStage } from '@/lib/opportunityReviewStage';
 
 /**
  * ComparisonEvaluationStep
@@ -32,8 +34,8 @@ import { ComparisonDetailTabs } from '@/components/document-comparison/Compariso
  *   backLabel           string       – default "Back to Editor"
  */
 export default function ComparisonEvaluationStep({
-  stepTitle = 'Step 3: AI Mediation Review',
-  stepDescription = 'Run and review the latest AI mediation review.',
+  stepTitle = '',
+  stepDescription = '',
   actionSlot,
   activeTab,
   onTabChange,
@@ -45,14 +47,21 @@ export default function ComparisonEvaluationStep({
   onBack,
   backLabel = 'Back to Editor',
 }) {
+  const reviewStage = resolveOpportunityReviewStage(aiReportProps?.report, {
+    analysisStage: aiReportProps?.reviewStage,
+  });
+  const reviewLabel = getReviewStageLabel(reviewStage);
+  const resolvedStepTitle = stepTitle || `Step 3: ${reviewLabel}`;
+  const resolvedStepDescription =
+    stepDescription || `Run and review the latest ${reviewLabel.toLowerCase()}.`;
   return (
     <div className="space-y-6" data-testid="doc-comparison-step-3">
       {/* ── Actions card ──────────────────────────────────────── */}
       <Card>
         <CardHeader>
-          <CardTitle>{stepTitle}</CardTitle>
-          {stepDescription && (
-            <CardDescription>{stepDescription}</CardDescription>
+          <CardTitle>{resolvedStepTitle}</CardTitle>
+          {resolvedStepDescription && (
+            <CardDescription>{resolvedStepDescription}</CardDescription>
           )}
         </CardHeader>
         {actionSlot && (
