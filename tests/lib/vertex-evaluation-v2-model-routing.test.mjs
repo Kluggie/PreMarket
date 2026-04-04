@@ -16,6 +16,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { evaluateWithVertexV2 } from '../../server/_lib/vertex-evaluation-v2.ts';
+import { MEDIATION_REVIEW_STAGE } from '../../src/lib/opportunityReviewStage.js';
 
 // ─── Input fixtures ───────────────────────────────────────────────────────────
 
@@ -115,6 +116,13 @@ function setEnv(key, value) {
   };
 }
 
+function evaluateMediationWithVertexV2(input) {
+  return evaluateWithVertexV2({
+    analysisStage: MEDIATION_REVIEW_STAGE,
+    ...input,
+  });
+}
+
 // ─── Test 1: Generation call uses VERTEX_DOC_COMPARE_GENERATION_MODEL ─────────
 
 await test('T1 — generation call uses VERTEX_DOC_COMPARE_GENERATION_MODEL', async () => {
@@ -136,7 +144,7 @@ await test('T1 — generation call uses VERTEX_DOC_COMPARE_GENERATION_MODEL', as
   const restoreEnvExt = setEnv('VERTEX_DOC_COMPARE_EXTRACT_MODEL', 'gemini-2.5-flash-lite');
 
   try {
-    const result = await evaluateWithVertexV2({
+    const result = await evaluateMediationWithVertexV2({
       sharedText: SHARED_TEXT,
       confidentialText: CONFIDENTIAL_TEXT,
       enforceLeakGuard: false,
@@ -204,7 +212,7 @@ await test('T2 — verifier step uses VERTEX_DOC_COMPARE_VERIFIER_MODEL', async 
   const restoreEnvGen = setEnv('VERTEX_DOC_COMPARE_GENERATION_MODEL', 'gemini-2.5-pro');
 
   try {
-    const result = await evaluateWithVertexV2({
+    const result = await evaluateMediationWithVertexV2({
       sharedText: SHARED_TEXT,
       confidentialText: CONFIDENTIAL_TEXT,
       enforceLeakGuard: true, // enforceLeakGuard=true triggers the verifier
@@ -267,7 +275,7 @@ await test('T3 — verifier escalation fires when verifier returns unsure/invali
   const restoreEnvGen = setEnv('VERTEX_DOC_COMPARE_GENERATION_MODEL', 'gemini-2.5-pro');
 
   try {
-    const result = await evaluateWithVertexV2({
+    const result = await evaluateMediationWithVertexV2({
       sharedText: SHARED_TEXT,
       confidentialText: CONFIDENTIAL_TEXT,
       enforceLeakGuard: true,
@@ -337,7 +345,7 @@ await test('T4 — no 502: Vertex throw + verifier throw both produce ok:true fa
     // Must not throw — "never fail" guarantee
     let result;
     try {
-      result = await evaluateWithVertexV2({
+      result = await evaluateMediationWithVertexV2({
         sharedText: SHARED_TEXT,
         confidentialText: CONFIDENTIAL_TEXT,
         enforceLeakGuard: true,
@@ -402,7 +410,7 @@ await test('D1 — verifier unavailable: output suppressed, ok:true, verifier_un
   try {
     let result;
     try {
-      result = await evaluateWithVertexV2({
+      result = await evaluateMediationWithVertexV2({
         sharedText: SHARED_TEXT,
         confidentialText: CONFIDENTIAL_TEXT,
         enforceLeakGuard: true,
@@ -482,7 +490,7 @@ await test('D2 — leak detected by LLM verifier: ok:true suppressed result, no 
   try {
     let result;
     try {
-      result = await evaluateWithVertexV2({
+      result = await evaluateMediationWithVertexV2({
         sharedText: SHARED_TEXT,
         confidentialText: CONFIDENTIAL_TEXT,
         enforceLeakGuard: true,

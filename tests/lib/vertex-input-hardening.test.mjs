@@ -20,6 +20,7 @@ import {
 import {
   evaluateWithVertexV2,
 } from '../../server/_lib/vertex-evaluation-v2.ts';
+import { MEDIATION_REVIEW_STAGE } from '../../src/lib/opportunityReviewStage.js';
 import {
   buildCoachPrompt,
 } from '../../server/_lib/vertex-coach.ts';
@@ -105,6 +106,13 @@ function evalResponse(overrides = {}) {
     finishReason: 'STOP',
     httpStatus: 200,
   };
+}
+
+function evaluateMediationWithVertexV2(input) {
+  return evaluateWithVertexV2({
+    analysisStage: MEDIATION_REVIEW_STAGE,
+    ...input,
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -364,7 +372,7 @@ test('pipeline: bullet points in user text do not cause failure or corrupt promp
   ]);
 
   try {
-    const result = await evaluateWithVertexV2({
+    const result = await evaluateMediationWithVertexV2({
       sharedText: [
         '# Proposal: Analytics Dashboard',
         '',
@@ -411,7 +419,7 @@ test('pipeline: markdown headings in user text do not cause failure', async () =
   ]);
 
   try {
-    const result = await evaluateWithVertexV2({
+    const result = await evaluateMediationWithVertexV2({
       sharedText: '# Section One\n## Sub-section\nBody text.\n### Deep section\nMore text.',
       confidentialText: '# Internal\n## Budget\nDetails here.',
       requestId: 'test-markdown-headings',
@@ -432,7 +440,7 @@ test('pipeline: braces and JSON-like text in user input do not cause failure', a
   ]);
 
   try {
-    const result = await evaluateWithVertexV2({
+    const result = await evaluateMediationWithVertexV2({
       sharedText: [
         'Config requirements: {"timeout": 30, "retries": 3}',
         'The scope covers {all deliverables} as defined in Exhibit A.',
@@ -455,7 +463,7 @@ test('pipeline: null bytes in user input are stripped — no hard failure', asyn
   ]);
 
   try {
-    const result = await evaluateWithVertexV2({
+    const result = await evaluateMediationWithVertexV2({
       sharedText: 'Shared proposal\x00 with null\x00 bytes.',
       confidentialText: 'Confidential\x00 content.',
       requestId: 'test-null-bytes',
@@ -479,7 +487,7 @@ test('pipeline: control characters in user input are stripped', async () => {
 
   try {
     // \x07 = BEL, \x0B = VT, \x1F = US — all should be stripped
-    const result = await evaluateWithVertexV2({
+    const result = await evaluateMediationWithVertexV2({
       sharedText: 'Proposal\x07start\x0Bvertical\x1Funit\x7Fdel text.',
       confidentialText: 'Budget\x07bell\x0Bvtab details.',
       requestId: 'test-control-chars',
@@ -502,7 +510,7 @@ test('pipeline: quoted text and apostrophes in user input do not cause failure',
   ]);
 
   try {
-    const result = await evaluateWithVertexV2({
+    const result = await evaluateMediationWithVertexV2({
       sharedText: [
         "The vendor's proposal states: \"We guarantee 99.9% uptime.\"",
         "Party A's representative confirmed: 'Delivery by Q3 is firm.'",
@@ -544,7 +552,7 @@ test('pipeline: pasted multi-line email in user input does not cause failure', a
   ]);
 
   try {
-    const result = await evaluateWithVertexV2({
+    const result = await evaluateMediationWithVertexV2({
       sharedText: pastedEmail,
       confidentialText: 'Internal: walk-away price is $200k.',
       requestId: 'test-pasted-email',
@@ -567,7 +575,7 @@ test('pipeline: Pass A prompt wraps user content in randomized sentinel delimite
   };
 
   try {
-    await evaluateWithVertexV2({
+    await evaluateMediationWithVertexV2({
       sharedText: 'Shared text for delimiter test.',
       confidentialText: 'Confidential text for delimiter test.',
       requestId: 'test-delimiter-structure',
@@ -618,7 +626,7 @@ test('output: model response wrapped in ```json fences is parsed correctly', asy
   ]);
 
   try {
-    const result = await evaluateWithVertexV2({
+    const result = await evaluateMediationWithVertexV2({
       sharedText: 'Shared proposal text for fence test.',
       confidentialText: 'Confidential: budget $80k.',
       requestId: 'test-json-fence',
@@ -652,7 +660,7 @@ test('output: model response wrapped in plain ``` fences is parsed correctly', a
   ]);
 
   try {
-    const result = await evaluateWithVertexV2({
+    const result = await evaluateMediationWithVertexV2({
       sharedText: 'Proposal for plain fence test.',
       confidentialText: 'Internal notes.',
       requestId: 'test-plain-fence',
@@ -682,7 +690,7 @@ test('output: malformed Pass B output triggers retry — second attempt succeeds
   ]);
 
   try {
-    const result = await evaluateWithVertexV2({
+    const result = await evaluateMediationWithVertexV2({
       sharedText: 'Shared text — repair retry test.',
       confidentialText: 'Confidential — repair retry test.',
       requestId: 'test-repair-retry',
@@ -730,7 +738,7 @@ test('output: all Pass B attempts fail — returns ok:true fallback without thro
   ]);
 
   try {
-    const result = await evaluateWithVertexV2({
+    const result = await evaluateMediationWithVertexV2({
       sharedText: 'Shared text — total failure test.',
       confidentialText: 'Confidential — total failure test.',
       requestId: 'test-total-failure',
@@ -770,7 +778,7 @@ test('output: Pass A parse failure falls back gracefully — continues to Pass B
   ]);
 
   try {
-    const result = await evaluateWithVertexV2({
+    const result = await evaluateMediationWithVertexV2({
       sharedText: 'Shared text — Pass A failure test.',
       confidentialText: 'Confidential — Pass A failure test.',
       requestId: 'test-pass-a-failure',
@@ -885,7 +893,7 @@ test('regression: standard two-pass eval workflow still produces ok:true result'
   ]);
 
   try {
-    const result = await evaluateWithVertexV2({
+    const result = await evaluateMediationWithVertexV2({
       sharedText: 'The vendor proposes a 6-month delivery with a team of 4 engineers.',
       confidentialText: 'Internal: budget cap is $180k. Walk-away at $220k.',
       requestId: 'test-regression-standard',
@@ -907,7 +915,7 @@ test('regression: empty sharedText returns ok:false without throwing', async () 
   };
 
   try {
-    const result = await evaluateWithVertexV2({
+    const result = await evaluateMediationWithVertexV2({
       sharedText: '',
       confidentialText: 'Some confidential text.',
       requestId: 'test-empty-shared',
@@ -931,7 +939,7 @@ test('regression: empty confidentialText returns ok:false without throwing', asy
   };
 
   try {
-    const result = await evaluateWithVertexV2({
+    const result = await evaluateMediationWithVertexV2({
       sharedText: 'Some shared text.',
       confidentialText: '',
       requestId: 'test-empty-confidential',
@@ -957,7 +965,7 @@ test('regression: Pass B prompt still contains fact_sheet from Pass A', async ()
   };
 
   try {
-    await evaluateWithVertexV2({
+    await evaluateMediationWithVertexV2({
       sharedText: 'Standard shared text for Pass B regression.',
       confidentialText: 'Standard confidential text for Pass B regression.',
       requestId: 'test-pass-b-regression',
@@ -998,7 +1006,7 @@ test('regression: confidential canary token handling is unaffected by sanitizati
   };
 
   try {
-    const result = await evaluateWithVertexV2({
+    const result = await evaluateMediationWithVertexV2({
       sharedText: 'Shared proposal text.',
       confidentialText: `Confidential internal budget. Reference: ${canaryToken}`,
       forbiddenLeakCanaryTokens: [canaryToken],

@@ -6,6 +6,7 @@ import { getDb, schema } from '../../../_lib/db/client.js';
 import { ApiError } from '../../../_lib/errors.js';
 import { readJsonBody } from '../../../_lib/http.js';
 import { newId } from '../../../_lib/ids.js';
+import { hasMeaningfulRecipientContribution } from '../../../_lib/meaningful-recipient-contribution.js';
 import { createNotificationEvent } from '../../../_lib/notifications.js';
 import { resolveLatestActiveSharedReportLink } from '../../../_lib/proposal-agreement-request-emails.js';
 import { appendProposalHistory } from '../../../_lib/proposal-history.js';
@@ -258,6 +259,8 @@ function buildEvaluationInputTrace(params: {
   generated_at: string;
   authored_shared_entries?: number;
   authored_confidential_entries?: number;
+  has_recipient_contributions?: boolean;
+  analysis_stage?: string;
 } {
   const confidentialText = String(params.confidentialText || '');
   const sharedText = String(params.sharedText || '');
@@ -809,14 +812,6 @@ function convertV2ResponseToEvaluation(v2Result: any): Record<string, unknown> {
   return buildStoredV2Evaluation(v2Result);
 }
 
-function contributionHasMeaningfulContent(entry: any) {
-  const text = asText(entry?.contentPayload?.text || entry?.contentPayload?.notes);
-  const html = asText(entry?.contentPayload?.html);
-  const json = entry?.contentPayload?.json && typeof entry.contentPayload.json === 'object';
-  const files = Array.isArray(entry?.contentPayload?.files) ? entry.contentPayload.files : [];
-  return Boolean(text || htmlToEditorText(html) || json || files.length > 0);
-}
-
 function buildStageFallbackV2Data(analysisStage: string, reason: 'unexpected_error' | 'unavailable') {
   if (analysisStage === PRE_SEND_REVIEW_STAGE) {
     return {
@@ -908,7 +903,7 @@ function getReviewFailureLabel(analysisStage: string) {
   return analysisStage === PRE_SEND_REVIEW_STAGE ? 'Pre-send Review' : 'AI Mediation Review';
 }
 
-function classifyEvaluationFailure(error: any, analysisStage: string = MEDIATION_REVIEW_STAGE): ClassifiedEvaluationFailure {
+function classifyEvaluationFailure(error: any, analysisStage: string): ClassifiedEvaluationFailure {
   const sourceCode = asLower(error?.code);
   const statusCode = toHttpStatus(error?.statusCode || error?.status || 0, 500);
   const upstreamStatus = toHttpStatus(error?.extra?.upstreamStatus || error?.extra?.status || 0, 0);
@@ -1358,26 +1353,28 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     const latestProposerConfidentialEntry = [...historyContributions]
       .reverse()
       .find((entry) => entry.authorRole === HISTORY_AUTHOR_PROPOSER && entry.visibility === 'confidential');
+    const currentSharedPayload = {
+      label: 'Shared by Proposer',
+      text: draft.docBText,
+      html: asText(draft.inputs?.doc_b_html),
+      json: draft.inputs?.doc_b_json,
+      source: asText(draft.inputs?.doc_b_source) || 'typed',
+      files: Array.isArray(draft.inputs?.doc_b_files) ? draft.inputs.doc_b_files : [],
+    };
+    const currentConfidentialPayload = {
+      label: 'Confidential to Proposer',
+      text: draft.docAText,
+      notes: draft.docAText,
+      html: asText(draft.inputs?.doc_a_html),
+      json: draft.inputs?.doc_a_json,
+      source: asText(draft.inputs?.doc_a_source) || 'typed',
+      files: Array.isArray(draft.inputs?.doc_a_files) ? draft.inputs.doc_a_files : [],
+    };
     const currentDraftEntries = buildDraftContributionEntries({
       authorRole: HISTORY_AUTHOR_PROPOSER,
       roundNumber: (Number(sharedHistory?.maxRoundNumber || 0) || 0) + 1,
-      sharedPayload: {
-        label: 'Shared by Proposer',
-        text: draft.docBText,
-        html: asText(draft.inputs?.doc_b_html),
-        json: draft.inputs?.doc_b_json,
-        source: asText(draft.inputs?.doc_b_source) || 'typed',
-        files: Array.isArray(draft.inputs?.doc_b_files) ? draft.inputs.doc_b_files : [],
-      },
-      confidentialPayload: {
-        label: 'Confidential to Proposer',
-        text: draft.docAText,
-        notes: draft.docAText,
-        html: asText(draft.inputs?.doc_a_html),
-        json: draft.inputs?.doc_a_json,
-        source: asText(draft.inputs?.doc_a_source) || 'typed',
-        files: Array.isArray(draft.inputs?.doc_a_files) ? draft.inputs.doc_a_files : [],
-      },
+      sharedPayload: currentSharedPayload,
+      confidentialPayload: currentConfidentialPayload,
       sourceKind: 'draft',
       updatedAt: existing.updatedAt,
     });
@@ -1406,11 +1403,14 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
           ...appendedDraftEntries.filter((entry) => entry.visibility === 'confidential'),
         ]
       : [];
-    const hasRecipientContributions = historyContributions.some(
-      (entry) =>
-        entry?.authorRole === HISTORY_AUTHOR_RECIPIENT &&
-        contributionHasMeaningfulContent(entry),
-    );
+    const hasRecipientContributions = hasMeaningfulRecipientContribution({
+      recipientAuthorRole: HISTORY_AUTHOR_RECIPIENT,
+      historyContributions,
+      historyBaselinePayloads: {
+        shared: currentSharedPayload,
+        confidential: currentConfidentialPayload,
+      },
+    }).hasMeaningfulContribution;
     const analysisStage = hasRecipientContributions
       ? MEDIATION_REVIEW_STAGE
       : PRE_SEND_REVIEW_STAGE;

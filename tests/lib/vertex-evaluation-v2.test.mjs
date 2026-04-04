@@ -10,6 +10,7 @@ import {
 } from '../../server/_lib/vertex-evaluation-v2.ts';
 import {
   PRE_SEND_REVIEW_STAGE,
+  MEDIATION_REVIEW_STAGE,
 } from '../../src/lib/opportunityReviewStage.js';
 
 const require = createRequire(import.meta.url);
@@ -39,6 +40,7 @@ function setVertexV2MockSequence(sequence) {
 // Final-eval response shape (Pass B result).
 function validPayload(overrides = {}) {
   return {
+    analysis_stage: MEDIATION_REVIEW_STAGE,
     fit_level: 'medium',
     confidence_0_1: 0.73,
     why: ['Shared obligations align with internal constraints.'],
@@ -140,6 +142,17 @@ function assertCleanRenderedEndings(entries, label) {
   }
 }
 
+function evaluateMediationWithVertexV2(input) {
+  return evaluateWithVertexV2({
+    analysisStage: MEDIATION_REVIEW_STAGE,
+    ...input,
+  });
+}
+
+function validateMediationResponse(value) {
+  return validateResponseSchema(value, MEDIATION_REVIEW_STAGE);
+}
+
 test('validateResponseSchema accepts pre-send schema and rejects mediation fallback when stage is pre-send', () => {
   const ok = validateResponseSchema(validPreSendPayload(), PRE_SEND_REVIEW_STAGE);
   assert.equal(ok.ok, true);
@@ -189,6 +202,17 @@ test('evaluateWithVertexV2 returns pre-send review shape when analysisStage is p
   }
 });
 
+test('evaluateWithVertexV2 rejects omitted analysisStage instead of defaulting to mediation', async () => {
+  await assert.rejects(
+    () =>
+      evaluateWithVertexV2({
+        sharedText: 'Shared draft content for omission test.',
+        confidentialText: 'Confidential draft content for omission test.',
+      }),
+    /analysisStage/i,
+  );
+});
+
 // Returns the mock vertex-response wrapper for a Pass A (fact sheet) success.
 function factSheetResponse(overrides = {}) {
   return {
@@ -202,10 +226,10 @@ function factSheetResponse(overrides = {}) {
 // ─── Schema validation (no Vertex calls) ─────────────────────────────────────
 
 test('validateResponseSchema accepts strict small schema and rejects missing keys', () => {
-  const good = validateResponseSchema(validPayload());
+  const good = validateMediationResponse(validPayload());
   assert.equal(good.ok, true);
 
-  const withNegotiation = validateResponseSchema(
+  const withNegotiation = validateMediationResponse(
     validPayload({
       negotiation_analysis: validNegotiationAnalysis(),
     }),
@@ -219,7 +243,8 @@ test('validateResponseSchema accepts strict small schema and rejects missing key
     );
   }
 
-  const missing = validateResponseSchema({
+  const missing = validateMediationResponse({
+    analysis_stage: MEDIATION_REVIEW_STAGE,
     fit_level: 'medium',
     confidence_0_1: 0.6,
     why: ['ok'],
@@ -230,8 +255,37 @@ test('validateResponseSchema accepts strict small schema and rejects missing key
   assert.equal(missing.missingKeys.includes('redactions'), true);
 });
 
+test('validateResponseSchema requires analysis_stage for both stages', () => {
+  const mediationMissingStage = validateMediationResponse({
+    fit_level: 'medium',
+    confidence_0_1: 0.6,
+    why: ['ok'],
+    missing: ['Clarify pricing guardrails.'],
+    redactions: [],
+  });
+  assert.equal(mediationMissingStage.ok, false);
+  assert.equal(mediationMissingStage.missingKeys.includes('analysis_stage'), true);
+
+  const preSendMissingStage = validateResponseSchema(
+    {
+      readiness_status: 'ready_with_clarifications',
+      send_readiness_summary: 'Needs a clearer scope definition before sharing.',
+      missing_information: ['Define the final acceptance gate.'],
+      ambiguous_terms: [],
+      likely_recipient_questions: [],
+      likely_pushback_areas: [],
+      commercial_risks: [],
+      implementation_risks: [],
+      suggested_clarifications: [],
+    },
+    PRE_SEND_REVIEW_STAGE,
+  );
+  assert.equal(preSendMissingStage.ok, false);
+  assert.equal(preSendMissingStage.missingKeys.includes('analysis_stage'), true);
+});
+
 test('validateResponseSchema preserves a clear hardline incompatibility when supported by concrete blocking evidence', () => {
-  const result = validateResponseSchema(
+  const result = validateMediationResponse(
     validPayload({
       negotiation_analysis: validNegotiationAnalysis({
         compatibility_assessment: 'fundamentally_incompatible',
@@ -252,7 +306,7 @@ test('validateResponseSchema preserves a clear hardline incompatibility when sup
 });
 
 test('validateResponseSchema downgrades unsupported hard-incompatibility claims to missing-information uncertainty', () => {
-  const result = validateResponseSchema(
+  const result = validateMediationResponse(
     validPayload({
       negotiation_analysis: {
         proposing_party: {
@@ -309,7 +363,7 @@ test('v2 accepts valid JSON response', async () => {
   ]);
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Shared commitments include milestones and support obligations.',
       confidentialText: 'Internal constraints include delivery limits and governance controls.',
       requestId: 'req-valid-1',
@@ -342,7 +396,7 @@ test('v2 parses fenced JSON and preamble text', async () => {
   ]);
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Shared draft references support scope and acceptance criteria.',
       confidentialText: 'Internal constraints include legal and operational requirements.',
       requestId: 'req-fence-1',
@@ -381,7 +435,7 @@ test('v2 preserves optional negotiation analysis metadata', async () => {
   ]);
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Shared proposal covers scope, timing, and phased commercial terms.',
       confidentialText: 'Internal notes emphasise scope control and sequencing flexibility.',
       requestId: 'req-negotiation-analysis-1',
@@ -445,7 +499,7 @@ test('v2 coerces legacy structured schema into small schema', async () => {
   ]);
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Shared terms include scope, milestones, and support.',
       confidentialText: 'Internal terms include budget constraints and legal caveats.',
       requestId: 'req-legacy-1',
@@ -480,7 +534,7 @@ test('v2 retries once (tight mode) then falls back with truncated_output', async
   ]);
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Shared text has enough content for evaluation reliability checks.',
       confidentialText: 'Confidential text has enough content for internal alignment checks.',
       requestId: 'req-trunc-1',
@@ -541,7 +595,7 @@ test('v2 retries transient vertex_http_error once and then succeeds', async () =
   ]);
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Shared text contains enough detail for retry resilience validation.',
       confidentialText: 'Confidential text contains enough detail for retry resilience validation.',
       requestId: 'req-http-retry-success-1',
@@ -575,7 +629,7 @@ test('v2 falls back after persistent vertex_http_error (retries exhausted)', asy
   ]);
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Shared text contains enough detail for persistent upstream failure checks.',
       confidentialText: 'Confidential text contains enough detail for persistent upstream failure checks.',
       requestId: 'req-http-retry-fail-1',
@@ -619,7 +673,7 @@ test('v2 falls back on persistent json_parse_error (tight retry also fails)', as
   ]);
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Shared content for parse test.',
       confidentialText: 'Confidential content for parse test.',
       requestId: 'req-json-err-1',
@@ -662,7 +716,7 @@ test('v2 true incomplete fallback stays minimal and explicitly incomplete when e
   ]);
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Short shared text.',
       confidentialText: 'Short confidential text.',
       requestId: 'req-incomplete-fallback-1',
@@ -705,7 +759,7 @@ test('v2 detects planted confidential token leak: ok:true suppressed, canary abs
   ]);
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Shared draft discusses commercial structure in general terms.',
       confidentialText: `Internal planning includes token ${planted} that must never leak.`,
       requestId: 'req-leak-1',
@@ -750,7 +804,7 @@ test('v2 leak guard scans negotiation analysis metadata as well as why/missing/r
   ]);
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Shared draft outlines scope, pricing posture, and milestone timing.',
       confidentialText: `Private negotiation note ${planted} must never leak.`,
       requestId: 'req-leak-negotiation-analysis-1',
@@ -800,7 +854,7 @@ test('sanity: prompt encodes anti-alignment guardrail and proposal-quality objec
   };
 
   try {
-    await evaluateWithVertexV2({
+    await evaluateMediationWithVertexV2({
       sharedText: 'Shared proposal text: deliver analytics dashboard by Q3.',
       confidentialText: 'Confidential: budget is $200k, team of 5 engineers.',
       requestId: 'req-sanity-prompt-1',
@@ -920,7 +974,7 @@ test('sanity: identical shared+confidential triggers identical-tier warning and 
   };
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: identicalText,
       confidentialText: identicalText, // intentionally identical
       requestId: 'req-sanity-identical-1',
@@ -972,7 +1026,7 @@ test('2-pass: two Vertex calls are made (Pass A fact sheet + Pass B eval)', asyn
   };
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Shared: deliver analytics module with SLA definitions.',
       confidentialText: 'Confidential: budget is fixed, approved vendor list applies.',
       requestId: 'req-2pass-calls-1',
@@ -1042,7 +1096,7 @@ test('2-pass clamps: vague input → coverageCount < 3 plus material blockers �
   ]);
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'We will build a scalable system ASAP.',
       confidentialText: 'Confidential: some internal notes.',
       requestId: 'req-clamp-low-coverage-1',
@@ -1123,7 +1177,7 @@ test('2-pass clamps: missing KPIs/timeline/constraints/risks triggers 0.75 cap',
   ]);
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Analytics dashboard with 6-month timeline and clear constraints.',
       confidentialText: 'Confidential: budget and vendor details.',
       requestId: 'req-clamp-kpi-1',
@@ -1164,7 +1218,7 @@ test('2-pass clamps: full coverage + detailed proposal → high/medium preserved
   ]);
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Analytics dashboard with 6-month timeline, defined KPIs, constraints, and risk register.',
       confidentialText: 'Confidential: budget is $300k, approved vendors list provided.',
       requestId: 'req-no-clamp-1',
@@ -1240,7 +1294,7 @@ test('consistency calibration: unresolved data cleanup, acceptance, and change-o
   ]);
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Shared proposal defines MVP modules, milestones, and headline success metrics.',
       confidentialText: 'Confidential notes mention legacy data cleanup and customer-side remediation ownership.',
       requestId: 'req-conditional-calibration-1',
@@ -1347,7 +1401,7 @@ test('conditional viable calibration: workable structure with unresolved conditi
   ]);
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Shared proposal defines phased delivery, named MVP modules, and measurable performance targets.',
       confidentialText: 'Confidential notes mention data remediation uncertainty and dependency assumptions.',
       requestId: 'req-conditional-viable-upgrade-1',
@@ -1452,7 +1506,7 @@ test('generalization: service outsourcing proposal with workable structure but o
   ]);
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Shared proposal covers preventive maintenance visits, emergency callout coverage, and monthly reporting for two sites.',
       confidentialText: 'Confidential notes mention access approvals and change-order assumptions.',
       requestId: 'req-generalization-service-medium-1',
@@ -1530,7 +1584,7 @@ test('generalization: genuinely weak non-software proposal remains low', async (
   ]);
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Shared proposal requests immediate exclusivity under a future commercial partnership.',
       confidentialText: 'Confidential notes show no defined volume, territory, or revenue model.',
       requestId: 'req-generalization-weak-low-1',
@@ -1602,7 +1656,7 @@ test('visibility-aware normalization removes already visible categories from mis
   ]);
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Shared proposal names North Plant and South Depot and includes weekly inspection reports.',
       confidentialText: 'Confidential notes include internal margin assumptions.',
       requestId: 'req-visibility-normalization-1',
@@ -1687,7 +1741,7 @@ test('presentation hygiene: visible fragment artifacts are removed from why, mis
   ]);
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Shared proposal covers site mobilization, service scheduling, and reporting across three facilities.',
       confidentialText: 'Confidential notes mention pricing floor and approval dependencies.',
       requestId: 'req-presentation-fragments-1',
@@ -1749,7 +1803,7 @@ test('presentation hygiene: awkward stock blocker wording is rewritten into natu
   ]);
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Shared proposal defines phases, milestones, and a headline delivery target.',
       confidentialText: 'Confidential notes mention unresolved scope and sign-off assumptions.',
       requestId: 'req-presentation-phrase-cleanup-1',
@@ -1823,7 +1877,7 @@ test('presentation hygiene: key strengths becomes more substantive when multiple
   ]);
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Shared proposal covers preventive maintenance, emergency callouts, monthly reporting, milestones, and response targets.',
       confidentialText: 'Confidential notes mention access approvals and rework caveats.',
       requestId: 'req-presentation-strengths-1',
@@ -1886,7 +1940,7 @@ test('presentation hygiene: empty redactions collapse to an empty array so no vi
   ]);
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Shared proposal includes phases, milestones, and sign-off references.',
       confidentialText: 'Confidential notes contain no extra protected topics.',
       requestId: 'req-presentation-empty-redactions-1',
@@ -1964,7 +2018,7 @@ test('presentation hygiene: open questions are deduped when two items resolve th
   ]);
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Shared proposal covers inbound receiving, dispatch handling, service reporting, and a mobilization timeline.',
       confidentialText: 'Confidential notes mention sign-off and variation assumptions.',
       requestId: 'req-presentation-open-question-dedupe-1',
@@ -2056,7 +2110,7 @@ test('style: report_style appears in Pass B prompt payload and _internal', async
   };
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Deliver analytics module with 6-month timeline, KPIs, risks, and constraints documented.',
       confidentialText: 'Confidential: budget is fixed at approved level, vendor review has occurred.',
       requestId: 'req-style-prompt-1',
@@ -2130,7 +2184,7 @@ test('style: legacy optional headings are not instructed even when timeline data
         httpStatus: 200,
       };
     };
-    await evaluateWithVertexV2({
+    await evaluateMediationWithVertexV2({
       sharedText: 'Deliver analytics module with specified KPIs, risks, and constraints.',
       confidentialText: 'Confidential: budget and governance details provided.',
       requestId: 'req-style-modules-1',
@@ -2177,7 +2231,7 @@ test('style: legacy vendor-fit heading is absent while leverage headings remain'
         httpStatus: 200,
       };
     };
-    await evaluateWithVertexV2({
+    await evaluateMediationWithVertexV2({
       sharedText: 'Deliver analytics module with KPIs, timeline, risks, and constraints defined.',
       confidentialText: 'Confidential: budget and governance details provided.',
       requestId: 'req-style-vendor-1',
@@ -2232,7 +2286,7 @@ for (const fixture of goldenFixtures.cases) {
     };
 
     try {
-      const outcome = await evaluateWithVertexV2({
+      const outcome = await evaluateMediationWithVertexV2({
         sharedText: fixture.sharedText,
         confidentialText: fixture.confidentialText,
         requestId: fixture.proposalId ?? undefined,
@@ -2415,7 +2469,7 @@ test('anti-leak: telemetry and outputs do not contain raw confidential canary st
   };
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText,
       confidentialText,
       requestId: 'req-antileak-canary-1',
@@ -2481,7 +2535,7 @@ test('Pass B prompt does not include shared_chunks or confidential_chunks arrays
   };
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Shared text describing deliverables, timeline, and KPIs for the project.',
       confidentialText: 'Confidential: internal budget is 500k; team of 3 engineers.',
       requestId: 'req-prompt-no-chunks-1',
@@ -2555,7 +2609,7 @@ test('Tight retry fires on truncation and succeeds on second attempt', async () 
   };
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Shared text for tight retry scenario with enough meaningful content.',
       confidentialText: 'Confidential text for tight retry scenario with enough meaningful content.',
       requestId: 'req-tight-retry-1',
@@ -2595,7 +2649,7 @@ test('anti-leak: fallback path output does not contain confidential canary', asy
   ]);
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Shared proposal text for anti-leak fallback check.',
       confidentialText: `Confidential details contain the canary ${canary} and budget info.`,
       requestId: 'req-fallback-antileak-1',
@@ -2668,7 +2722,7 @@ test('section-safe truncation drops lower-priority content without cutting locke
   ]);
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Shared proposal with phased deliverables, timeline, and KPI references.',
       confidentialText: 'Confidential notes mention data remediation and commercial caveats.',
       requestId: 'req-truncation-guard-1',
@@ -2717,7 +2771,7 @@ test('fallback memo stays domain-aware for software deals and keeps deal structu
   ]);
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Shared software proposal covers integrations, migration, support, and staged rollout.',
       confidentialText: 'Internal notes mention pricing flexibility and implementation staffing constraints.',
       requestId: 'req-domain-software-fallback-1',
@@ -2763,7 +2817,7 @@ test('fallback memo stays domain-aware for investment deals without reverting to
   ]);
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Shared fundraising materials reference valuation, board rights, diligence, and milestone financing.',
       confidentialText: 'Internal notes mention runway sensitivity and governance priorities.',
       requestId: 'req-domain-investment-fallback-1',
@@ -2809,7 +2863,7 @@ test('fallback memo stays domain-aware for supply deals and surfaces MOQ or excl
   ]);
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Shared supply proposal references lead times, MOQ discussion, warranty treatment, and regional rollout.',
       confidentialText: 'Internal notes mention capacity utilization and forecast sensitivity.',
       requestId: 'req-domain-supply-fallback-1',
@@ -2855,7 +2909,7 @@ test('memo-prose: Pass B prompt contains bilateral negotiator guardrails instead
   };
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Shared: deliver analytics module with SLA definitions and monthly milestones.',
       confidentialText: 'Confidential: budget fixed, governance approval secured.',
     });
@@ -3041,7 +3095,7 @@ test('memo-prose: missing strictness — thin coverage produces missing[] >= 6 i
   };
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Deliver a scalable analytics platform for internal teams.',
       confidentialText: 'Internal: timeline and budget are TBD pending board approval.',
     });
@@ -3098,7 +3152,7 @@ test('memo-prose: commercial posture included in Pass B prompt when vendor_prefe
   };
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Deliver analytics platform under a fixed-price engagement model.',
       confidentialText: 'Internal: fixed-price structure preferred; budget ceiling applies.',
     });
@@ -3148,7 +3202,7 @@ test('memo-prose: investment fact sheets receive fundraising-specific prompt gui
   };
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Shared investment materials reference valuation, governance, runway, and milestones.',
       confidentialText: 'Internal notes mention board control and diligence sensitivities.',
     });
@@ -3211,7 +3265,7 @@ test('neutralizer: one-sided coaching language is rewritten into bilateral negot
   ]);
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Shared proposal defines timeline, pricing structure, and deliverables.',
       confidentialText: 'Confidential notes mention remediation assumptions and commercial caveats.',
       requestId: 'req-neutralizer-1',
@@ -3254,7 +3308,7 @@ test('quality upgrade: MAX_SHARED_CHARS and MAX_CONFIDENTIAL_CHARS are 16000', a
     { response: { model: 'gemini-2.0-flash-001', text: JSON.stringify(validPayload()), finishReason: 'STOP', httpStatus: 200 } },
   ]);
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'A'.repeat(15000),
       confidentialText: 'B'.repeat(15000),
       requestId: 'req-larger-context-1',
@@ -3389,7 +3443,7 @@ test('quality upgrade: refinement metadata is present in _internal when quality 
     })), finishReason: 'STOP', httpStatus: 200 } },
   ]);
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Shared proposal covering project scope and delivery milestones.',
       confidentialText: 'Internal budget constraints and approval timeline.',
       requestId: 'req-refinement-meta-1',
@@ -3437,7 +3491,7 @@ test('quality upgrade: refinement applies when 3rd mock returns valid improved d
     { response: { model: 'gemini-2.0-flash-001', text: JSON.stringify(refinedPassB), finishReason: 'STOP', httpStatus: 200 } },
   ]);
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Shared proposal covering project scope, deliverables, and phased milestones.',
       confidentialText: 'Internal budget cap of $500K and leadership approval required by Q2.',
       requestId: 'req-refinement-applied-1',
@@ -3481,7 +3535,7 @@ test('quality upgrade: refinement preserves fit_level — rejects changed fit', 
     { response: { model: 'gemini-2.0-flash-001', text: JSON.stringify(badRefined), finishReason: 'STOP', httpStatus: 200 } },
   ]);
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Proposal text for the engagement.',
       confidentialText: 'Internal budget constraints.',
       requestId: 'req-refinement-fit-guard-1',
@@ -3507,7 +3561,7 @@ test('quality upgrade: regeneration metadata is present and structured', async (
     { response: { model: 'gemini-2.0-flash-001', text: JSON.stringify(validPayload()), finishReason: 'STOP', httpStatus: 200 } },
   ]);
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Shared proposal text.',
       confidentialText: 'Confidential notes.',
       requestId: 'req-regen-metadata-1',
@@ -3563,7 +3617,7 @@ test('quality upgrade: quality is assessed on raw output, not post-processed', a
     { response: { model: 'gemini-2.0-flash-001', text: JSON.stringify(betterPassB), finishReason: 'STOP', httpStatus: 200 } },
   ]);
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Shared proposal covering project delivery and milestones.',
       confidentialText: 'Internal budget cap.',
       requestId: 'req-raw-quality-1',
@@ -3598,7 +3652,7 @@ test('quality upgrade: at most one refinement + one regen — total calls bounde
   };
 
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Shared proposal text.',
       confidentialText: 'Confidential notes.',
       requestId: 'req-bounded-calls-1',
@@ -3641,7 +3695,7 @@ test('quality upgrade: refinement does not skip confidentiality enforcement', as
     model: 'gemini-2.0-flash-lite', text: '{"leak":false}', finishReason: 'STOP', httpStatus: 200,
   });
   try {
-    const outcome = await evaluateWithVertexV2({
+    const outcome = await evaluateMediationWithVertexV2({
       sharedText: 'Shared proposal text.',
       confidentialText: 'Internal budget of $500K noted privately.',
       enforceLeakGuard: true,

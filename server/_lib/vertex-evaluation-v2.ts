@@ -4,11 +4,7 @@ import { getVertexConfig, getVertexNotConfiguredError, type VertexServiceAccount
 import { sanitizeUserInput, wrapRawUserContent } from './vertex-input-sanitizer.js';
 import { truncateTextAtNaturalBoundary } from '../../src/lib/aiReportUtils.js';
 import { preflightPromptCheck, type PreflightResult } from './evaluation-context-budget.js';
-import {
-  MEDIATION_REVIEW_STAGE,
-  PRE_SEND_REVIEW_STAGE,
-  normalizeOpportunityReviewStage,
-} from '../../src/lib/opportunityReviewStage.js';
+import { normalizeOpportunityReviewStage } from '../../src/lib/opportunityReviewStage.js';
 
 const VERTEX_TIMEOUT_MS = 90_000;
 const MAX_ATTEMPTS = 2;
@@ -74,10 +70,6 @@ type VertexCallResponse = {
   httpStatus: number;
 };
 
-type SchemaValidationResult =
-  | { ok: true; normalized: VertexEvaluationV2Response }
-  | { ok: false; missingKeys: string[]; invalidFields: string[] };
-
 type ExtractJsonResult = {
   parsed: unknown | null;
   hadJsonFence: boolean;
@@ -91,7 +83,22 @@ type EvaluationChunks = {
 
 type FallbackMode = 'salvaged_memo' | 'incomplete';
 type PostProcessMode = 'normal' | 'salvaged_fallback' | 'incomplete_fallback';
-type ReviewStage = typeof PRE_SEND_REVIEW_STAGE | typeof MEDIATION_REVIEW_STAGE;
+type PreSendReviewStage = 'pre_send_review';
+type MediationReviewStage = 'mediation_review';
+type ReviewStage = PreSendReviewStage | MediationReviewStage;
+const PRE_SEND_STAGE: PreSendReviewStage = 'pre_send_review';
+const MEDIATION_STAGE: MediationReviewStage = 'mediation_review';
+type VertexEvaluationV2ResponseForStage<Stage extends ReviewStage> =
+  Stage extends PreSendReviewStage
+    ? VertexEvaluationV2PreSendResponse
+    : VertexEvaluationV2MediationResponse;
+type SchemaValidationResult<Stage extends ReviewStage = ReviewStage> =
+  | { ok: true; normalized: VertexEvaluationV2ResponseForStage<Stage> }
+  | { ok: false; missingKeys: string[]; invalidFields: string[] };
+type CoercedSchemaCandidate<Stage extends ReviewStage = ReviewStage> = {
+  candidate: unknown | VertexEvaluationV2ResponseForStage<Stage>;
+  coerced: boolean;
+};
 
 type VertexCallOverride = (params: {
   prompt: string;
@@ -103,10 +110,10 @@ type VertexCallOverride = (params: {
   preferredModel?: string;
 }) => Promise<VertexCallResponse>;
 
-export interface VertexEvaluationV2Request {
+export interface VertexEvaluationV2Request<Stage extends ReviewStage = ReviewStage> {
   sharedText: string;
   confidentialText: string;
-  analysisStage?: ReviewStage;
+  analysisStage: Stage;
   requestId?: string;
   forbiddenLeakText?: string;
   forbiddenLeakCanaryTokens?: string[];
@@ -122,7 +129,7 @@ export interface VertexEvaluationV2Request {
 }
 
 export interface VertexEvaluationV2MediationResponse {
-  analysis_stage: typeof MEDIATION_REVIEW_STAGE;
+  analysis_stage: MediationReviewStage;
   fit_level: FitLevel;
   confidence_0_1: number;
   why: string[];
@@ -137,7 +144,7 @@ type PreSendReadinessStatus =
   | 'ready_to_send';
 
 export interface VertexEvaluationV2PreSendResponse {
-  analysis_stage: typeof PRE_SEND_REVIEW_STAGE;
+  analysis_stage: PreSendReviewStage;
   readiness_status: PreSendReadinessStatus;
   send_readiness_summary: string;
   missing_information: string[];
@@ -341,9 +348,9 @@ export interface VertexEvaluationV2Internal {
   raw_quality_score?: number;
 }
 
-export interface VertexEvaluationV2Result {
+export interface VertexEvaluationV2Result<Stage extends ReviewStage = ReviewStage> {
   ok: true;
-  data: VertexEvaluationV2Response;
+  data: VertexEvaluationV2ResponseForStage<Stage>;
   attempt_count: number;
   model: string;
   /** Configured generation model (may differ from model when fallback candidates are used). */
@@ -360,7 +367,9 @@ export interface VertexEvaluationV2Failure {
   attempt_count: number;
 }
 
-export type VertexEvaluationV2Outcome = VertexEvaluationV2Result | VertexEvaluationV2Failure;
+export type VertexEvaluationV2Outcome<Stage extends ReviewStage = ReviewStage> =
+  | VertexEvaluationV2Result<Stage>
+  | VertexEvaluationV2Failure;
 
 function asText(value: unknown) {
   if (typeof value === 'string') return value.trim();
@@ -375,6 +384,32 @@ function asLower(value: unknown) {
 function clamp01(value: number) {
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.min(1, value));
+}
+
+function assertNever(value: never, message: string): never {
+  throw new TypeError(`${message}: ${String(value)}`);
+}
+
+function requireAnalysisStage(value: unknown): ReviewStage {
+  const normalized = normalizeOpportunityReviewStage(value);
+  if (normalized === PRE_SEND_STAGE || normalized === MEDIATION_STAGE) {
+    return normalized;
+  }
+  throw new TypeError(
+    'evaluateWithVertexV2 requires an explicit analysisStage of "pre_send_review" or "mediation_review".',
+  );
+}
+
+export function isPreSendReviewResponse(
+  response: VertexEvaluationV2Response,
+): response is VertexEvaluationV2PreSendResponse {
+  return response.analysis_stage === PRE_SEND_STAGE;
+}
+
+export function isMediationReviewResponse(
+  response: VertexEvaluationV2Response,
+): response is VertexEvaluationV2MediationResponse {
+  return response.analysis_stage === MEDIATION_STAGE;
 }
 
 function normalizeSpaces(value: string) {
@@ -3535,7 +3570,15 @@ function applyConsistencyCalibration(params: {
   const capsApplied: string[] = [];
   const signals = buildCalibrationSignals({
     factSheet: params.factSheet,
-    data: { fit_level, confidence_0_1, why, missing, redactions, negotiation_analysis },
+    data: {
+      analysis_stage: MEDIATION_STAGE,
+      fit_level,
+      confidence_0_1,
+      why,
+      missing,
+      redactions,
+      negotiation_analysis,
+    },
   });
 
   const normalizedMissing = normalizeMissingQuestions({
@@ -3557,7 +3600,15 @@ function applyConsistencyCalibration(params: {
 
   const rewrittenWhy = rewriteWhyForCalibration({
     factSheet: params.factSheet,
-    data: { fit_level, confidence_0_1, why, missing, redactions, negotiation_analysis },
+    data: {
+      analysis_stage: MEDIATION_STAGE,
+      fit_level,
+      confidence_0_1,
+      why,
+      missing,
+      redactions,
+      negotiation_analysis,
+    },
     signals,
     postProcessMode: params.postProcessMode,
   });
@@ -3608,7 +3659,15 @@ function applyConsistencyCalibration(params: {
   if (requiresFinalSemanticAlignment) {
     const finalizedSignals = buildCalibrationSignals({
       factSheet: params.factSheet,
-      data: { fit_level, confidence_0_1, why, missing, redactions, negotiation_analysis },
+      data: {
+        analysis_stage: MEDIATION_STAGE,
+        fit_level,
+        confidence_0_1,
+        why,
+        missing,
+        redactions,
+        negotiation_analysis,
+      },
     });
     const finalFit = alignFitLevelToSignals({ fit_level, signals: finalizedSignals });
     if (finalFit.fit_level !== fit_level) {
@@ -3624,6 +3683,7 @@ function applyConsistencyCalibration(params: {
 
   return {
     data: {
+      analysis_stage: MEDIATION_STAGE,
       fit_level,
       confidence_0_1: clamp01(confidence_0_1),
       why,
@@ -3746,7 +3806,7 @@ function safeFallbackPreSendReviewFromFactSheet(
 
   return {
     data: {
-      analysis_stage: PRE_SEND_REVIEW_STAGE,
+      analysis_stage: PRE_SEND_STAGE,
       readiness_status,
       send_readiness_summary: summaryLead,
       missing_information,
@@ -3795,7 +3855,7 @@ function safeFallbackEvaluationFromFactSheet(
   if (fallbackMode === 'incomplete') {
     return {
       data: {
-        analysis_stage: MEDIATION_REVIEW_STAGE,
+        analysis_stage: MEDIATION_STAGE,
         fit_level: 'unknown',
         confidence_0_1: 0.2,
         why: [
@@ -3816,7 +3876,7 @@ function safeFallbackEvaluationFromFactSheet(
   }
 
   const provisionalData: VertexEvaluationV2MediationResponse = {
-    analysis_stage: MEDIATION_REVIEW_STAGE,
+    analysis_stage: MEDIATION_STAGE,
     fit_level: 'medium',
     confidence_0_1: 0.48,
     why: [],
@@ -3830,7 +3890,7 @@ function safeFallbackEvaluationFromFactSheet(
   const fit_level = fallbackSignals.shouldBeLow ? 'low' : 'medium';
   const confidence_0_1 = fit_level === 'medium' ? 0.48 : 0.38;
   const fallbackData: VertexEvaluationV2MediationResponse = {
-    analysis_stage: MEDIATION_REVIEW_STAGE,
+    analysis_stage: MEDIATION_STAGE,
     fit_level,
     confidence_0_1,
     why: [],
@@ -3919,7 +3979,7 @@ function buildPreSendPromptFromFactSheet(params: {
     'Required JSON schema:',
     JSON.stringify(
       {
-        analysis_stage: PRE_SEND_REVIEW_STAGE,
+        analysis_stage: PRE_SEND_STAGE,
         readiness_status: 'not_ready_to_send|ready_with_clarifications|ready_to_send',
         send_readiness_summary: 'string',
         missing_information: ['string'],
@@ -3936,7 +3996,7 @@ function buildPreSendPromptFromFactSheet(params: {
     'INPUT JSON:',
     JSON.stringify(
       {
-        analysis_stage: PRE_SEND_REVIEW_STAGE,
+        analysis_stage: PRE_SEND_STAGE,
         fact_sheet: factSheet,
       },
       null,
@@ -4309,7 +4369,15 @@ function applyCoverageClamps(params: {
   }
 
   const calibrated = applyConsistencyCalibration({
-    data: { fit_level, confidence_0_1, why, missing, redactions, negotiation_analysis },
+    data: {
+      analysis_stage: MEDIATION_STAGE,
+      fit_level,
+      confidence_0_1,
+      why,
+      missing,
+      redactions,
+      negotiation_analysis,
+    },
     factSheet,
     sharedText,
     postProcessMode: params.postProcessMode,
@@ -4496,7 +4564,9 @@ function normalizeReadinessStatus(value: unknown): PreSendReadinessStatus {
   return 'not_ready_to_send';
 }
 
-function validateMediationResponseSchema(value: unknown): SchemaValidationResult {
+function validateMediationResponseSchema(
+  value: unknown,
+): SchemaValidationResult<MediationReviewStage> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return {
       ok: false,
@@ -4506,11 +4576,11 @@ function validateMediationResponseSchema(value: unknown): SchemaValidationResult
   }
 
   const raw = value as Record<string, unknown>;
-  const requiredKeys = ['fit_level', 'confidence_0_1', 'why', 'missing', 'redactions'] as const;
+  const requiredKeys = ['analysis_stage', 'fit_level', 'confidence_0_1', 'why', 'missing', 'redactions'] as const;
   const missingKeys = requiredKeys.filter((key) => raw[key] === undefined);
   const invalidFields: string[] = [];
-  const analysisStage = normalizeOpportunityReviewStage(raw.analysis_stage, MEDIATION_REVIEW_STAGE);
-  if (analysisStage !== MEDIATION_REVIEW_STAGE) {
+  const analysisStage = normalizeOpportunityReviewStage(raw.analysis_stage);
+  if (analysisStage !== MEDIATION_STAGE) {
     invalidFields.push('analysis_stage');
   }
 
@@ -4576,7 +4646,7 @@ function validateMediationResponseSchema(value: unknown): SchemaValidationResult
   return {
     ok: true,
     normalized: {
-      analysis_stage: MEDIATION_REVIEW_STAGE,
+      analysis_stage: MEDIATION_STAGE,
       fit_level: fit as FitLevel,
       confidence_0_1: clamp01(confidence),
       why,
@@ -4587,7 +4657,9 @@ function validateMediationResponseSchema(value: unknown): SchemaValidationResult
   };
 }
 
-function validatePreSendResponseSchema(value: unknown): SchemaValidationResult {
+function validatePreSendResponseSchema(
+  value: unknown,
+): SchemaValidationResult<PreSendReviewStage> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return {
       ok: false,
@@ -4609,6 +4681,7 @@ function validatePreSendResponseSchema(value: unknown): SchemaValidationResult {
 
   const raw = value as Record<string, unknown>;
   const requiredKeys = [
+    'analysis_stage',
     'readiness_status',
     'send_readiness_summary',
     'missing_information',
@@ -4621,8 +4694,8 @@ function validatePreSendResponseSchema(value: unknown): SchemaValidationResult {
   ] as const;
   const missingKeys = requiredKeys.filter((key) => raw[key] === undefined);
   const invalidFields: string[] = [];
-  const analysisStage = normalizeOpportunityReviewStage(raw.analysis_stage, PRE_SEND_REVIEW_STAGE);
-  if (analysisStage !== PRE_SEND_REVIEW_STAGE) {
+  const analysisStage = normalizeOpportunityReviewStage(raw.analysis_stage);
+  if (analysisStage !== PRE_SEND_STAGE) {
     invalidFields.push('analysis_stage');
   }
 
@@ -4670,7 +4743,7 @@ function validatePreSendResponseSchema(value: unknown): SchemaValidationResult {
   return {
     ok: true,
     normalized: {
-      analysis_stage: PRE_SEND_REVIEW_STAGE,
+      analysis_stage: PRE_SEND_STAGE,
       readiness_status: normalizeReadinessStatus(raw.readiness_status),
       send_readiness_summary: sendReadinessSummary,
       missing_information,
@@ -4684,8 +4757,20 @@ function validatePreSendResponseSchema(value: unknown): SchemaValidationResult {
   };
 }
 
-function validateResponseSchema(value: unknown, stage: ReviewStage = MEDIATION_REVIEW_STAGE): SchemaValidationResult {
-  return stage === PRE_SEND_REVIEW_STAGE
+function validateResponseSchema(
+  value: unknown,
+  stage: PreSendReviewStage,
+): SchemaValidationResult<PreSendReviewStage>;
+function validateResponseSchema(
+  value: unknown,
+  stage: MediationReviewStage,
+): SchemaValidationResult<MediationReviewStage>;
+function validateResponseSchema(
+  value: unknown,
+  stage: ReviewStage,
+): SchemaValidationResult;
+function validateResponseSchema(value: unknown, stage: ReviewStage): SchemaValidationResult {
+  return stage === PRE_SEND_STAGE
     ? validatePreSendResponseSchema(value)
     : validateMediationResponseSchema(value);
 }
@@ -4903,14 +4988,27 @@ function normalizeNegotiationAnalysis(value: unknown): NegotiationAnalysis | und
 
 function coerceToSmallSchema(
   value: unknown,
-  stage: ReviewStage = MEDIATION_REVIEW_STAGE,
-): { candidate: unknown; coerced: boolean } {
+  stage: PreSendReviewStage,
+): CoercedSchemaCandidate<PreSendReviewStage>;
+function coerceToSmallSchema(
+  value: unknown,
+  stage: MediationReviewStage,
+): CoercedSchemaCandidate<MediationReviewStage>;
+function coerceToSmallSchema(
+  value: unknown,
+  stage: ReviewStage,
+): CoercedSchemaCandidate;
+function coerceToSmallSchema(
+  value: unknown,
+  stage: ReviewStage,
+): CoercedSchemaCandidate {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return { candidate: value, coerced: false };
   }
   const raw = value as Record<string, unknown>;
-  if (stage === PRE_SEND_REVIEW_STAGE) {
-    const hasPreSendShape =
+  if (stage === PRE_SEND_STAGE) {
+    const hasCanonicalPreSendShape =
+      raw.analysis_stage === PRE_SEND_STAGE &&
       raw.readiness_status !== undefined &&
       raw.send_readiness_summary !== undefined &&
       raw.missing_information !== undefined &&
@@ -4920,13 +5018,13 @@ function coerceToSmallSchema(
       raw.commercial_risks !== undefined &&
       raw.implementation_risks !== undefined &&
       raw.suggested_clarifications !== undefined;
-    if (hasPreSendShape) {
+    if (hasCanonicalPreSendShape) {
       return { candidate: value, coerced: false };
     }
 
     const why = toStringArray(raw.why);
     const synthetic: VertexEvaluationV2PreSendResponse = {
-      analysis_stage: PRE_SEND_REVIEW_STAGE,
+      analysis_stage: PRE_SEND_STAGE,
       readiness_status: normalizeReadinessStatus(raw.readiness_status ?? raw.status ?? raw.readiness),
       send_readiness_summary: asText(raw.send_readiness_summary || raw.summary || why[0]),
       missing_information: toStringArray(raw.missing_information ?? raw.missing),
@@ -4944,13 +5042,14 @@ function coerceToSmallSchema(
     return { candidate: synthetic, coerced: true };
   }
 
-  const hasSmallShape =
+  const hasCanonicalMediationShape =
+    raw.analysis_stage === MEDIATION_STAGE &&
     raw.fit_level !== undefined &&
     raw.confidence_0_1 !== undefined &&
     raw.why !== undefined &&
     raw.missing !== undefined &&
     raw.redactions !== undefined;
-  if (hasSmallShape) {
+  if (hasCanonicalMediationShape) {
     return { candidate: value, coerced: false };
   }
 
@@ -5024,7 +5123,7 @@ function coerceToSmallSchema(
   const negotiationAnalysis = normalizeNegotiationAnalysis(syntheticNegotiationAnalysis);
 
   const coerced: VertexEvaluationV2MediationResponse = {
-    analysis_stage: MEDIATION_REVIEW_STAGE,
+    analysis_stage: MEDIATION_STAGE,
     fit_level: normalizeFitLevel(raw.fit_level ?? summary.fit_level ?? raw.answer),
     confidence_0_1: normalizeConfidence(raw.confidence_0_1 ?? quality.confidence_overall ?? raw.confidence),
     why,
@@ -5054,25 +5153,28 @@ function flattenNegotiationAnalysisText(analysis?: NegotiationAnalysis) {
 }
 
 function flattenEvaluationResponseText(response: VertexEvaluationV2Response) {
-  if (response.analysis_stage === PRE_SEND_REVIEW_STAGE) {
-    return [
-      response.send_readiness_summary,
-      ...response.missing_information,
-      ...response.ambiguous_terms,
-      ...response.likely_recipient_questions,
-      ...response.likely_pushback_areas,
-      ...response.commercial_risks,
-      ...response.implementation_risks,
-      ...response.suggested_clarifications,
-    ].filter(Boolean);
+  switch (response.analysis_stage) {
+    case PRE_SEND_STAGE:
+      return [
+        response.send_readiness_summary,
+        ...response.missing_information,
+        ...response.ambiguous_terms,
+        ...response.likely_recipient_questions,
+        ...response.likely_pushback_areas,
+        ...response.commercial_risks,
+        ...response.implementation_risks,
+        ...response.suggested_clarifications,
+      ].filter(Boolean);
+    case MEDIATION_STAGE:
+      return [
+        ...response.why,
+        ...response.missing,
+        ...response.redactions,
+        ...flattenNegotiationAnalysisText(response.negotiation_analysis),
+      ].filter(Boolean);
+    default:
+      return assertNever(response, 'Unsupported vertex evaluation response stage');
   }
-
-  return [
-    ...response.why,
-    ...response.missing,
-    ...response.redactions,
-    ...flattenNegotiationAnalysisText(response.negotiation_analysis),
-  ].filter(Boolean);
 }
 
 function collectSensitiveTokens(confidentialText: string, sharedText: string) {
@@ -5406,15 +5508,27 @@ type LlmVerifierVerdict = 'clean' | 'leak' | 'unsure' | 'unavailable';
  */
 function buildSuppressedOutput(
   warningReason: 'leak_detected' | 'verifier_unavailable',
-  stage: ReviewStage = MEDIATION_REVIEW_STAGE,
+  stage: PreSendReviewStage,
+): VertexEvaluationV2PreSendResponse;
+function buildSuppressedOutput(
+  warningReason: 'leak_detected' | 'verifier_unavailable',
+  stage: MediationReviewStage,
+): VertexEvaluationV2MediationResponse;
+function buildSuppressedOutput(
+  warningReason: 'leak_detected' | 'verifier_unavailable',
+  stage: ReviewStage,
+): VertexEvaluationV2Response;
+function buildSuppressedOutput(
+  warningReason: 'leak_detected' | 'verifier_unavailable',
+  stage: ReviewStage,
 ): VertexEvaluationV2Response {
   const placeholder =
     warningReason === 'leak_detected'
       ? 'Output suppressed: evaluation output contained confidential information and could not be shared.'
       : 'Output suppressed: evaluation verifier was unavailable and output safety could not be confirmed.';
-  if (stage === PRE_SEND_REVIEW_STAGE) {
+  if (stage === PRE_SEND_STAGE) {
     return {
-      analysis_stage: PRE_SEND_REVIEW_STAGE,
+      analysis_stage: PRE_SEND_STAGE,
       readiness_status: 'not_ready_to_send',
       send_readiness_summary: placeholder,
       missing_information: [],
@@ -5427,7 +5541,7 @@ function buildSuppressedOutput(
     };
   }
   return {
-    analysis_stage: MEDIATION_REVIEW_STAGE,
+    analysis_stage: MEDIATION_STAGE,
     fit_level: 'unknown',
     confidence_0_1: 0,
     why: [placeholder],
@@ -5941,7 +6055,7 @@ async function attemptRefinementPass(params: {
   canaryTokens: string[];
   enforceLeakGuard: boolean;
 }): Promise<{
-  result: VertexEvaluationV2Response;
+  result: VertexEvaluationV2MediationResponse;
   applied: boolean;
   skip_reason?: string;
 }> {
@@ -5980,8 +6094,8 @@ async function attemptRefinementPass(params: {
     return { result: params.initialResult, applied: false, skip_reason: 'refinement_parse_failed' };
   }
 
-  const coerced = coerceToSmallSchema(extracted.parsed);
-  const validation = validateResponseSchema(coerced.candidate);
+  const coerced = coerceToSmallSchema(extracted.parsed, MEDIATION_STAGE);
+  const validation = validateResponseSchema(coerced.candidate, MEDIATION_STAGE);
   if (!validation.ok) {
     return { result: params.initialResult, applied: false, skip_reason: 'refinement_schema_invalid' };
   }
@@ -5994,12 +6108,15 @@ async function attemptRefinementPass(params: {
     return { result: params.initialResult, applied: false, skip_reason: 'refinement_changed_confidence' };
   }
 
-  validation.normalized.negotiation_analysis = params.initialResult.negotiation_analysis;
+  const refinedResult: VertexEvaluationV2MediationResponse = {
+    ...validation.normalized,
+    negotiation_analysis: params.initialResult.negotiation_analysis,
+  };
 
   // Leak check the refined output
   if (params.enforceLeakGuard) {
     const leak = detectConfidentialLeak({
-      response: validation.normalized,
+      response: refinedResult,
       forbiddenText: params.forbiddenLeakText,
       sharedText: params.sharedText,
       forbiddenChunks: params.forbiddenChunks,
@@ -6012,15 +6129,21 @@ async function attemptRefinementPass(params: {
 
   // Structural checks passed — return for post-processing quality comparison
   // in the caller (which applies coverage clamps symmetrically).
-  return { result: validation.normalized, applied: true };
+  return { result: refinedResult, applied: true };
 }
 
+export async function evaluateWithVertexV2(
+  input: VertexEvaluationV2Request<PreSendReviewStage>,
+): Promise<VertexEvaluationV2Outcome<PreSendReviewStage>>;
+export async function evaluateWithVertexV2(
+  input: VertexEvaluationV2Request<MediationReviewStage>,
+): Promise<VertexEvaluationV2Outcome<MediationReviewStage>>;
 export async function evaluateWithVertexV2(
   input: VertexEvaluationV2Request,
 ): Promise<VertexEvaluationV2Outcome> {
   const sharedText = sanitizeUserInput(String(input.sharedText || '')).trim();
   const confidentialText = sanitizeUserInput(String(input.confidentialText || '')).trim();
-  const analysisStage = normalizeOpportunityReviewStage(input.analysisStage, MEDIATION_REVIEW_STAGE);
+  const analysisStage = requireAnalysisStage(input.analysisStage);
   const forbiddenLeakText =
     input.forbiddenLeakText === undefined
       ? confidentialText
@@ -6088,7 +6211,7 @@ export async function evaluateWithVertexV2(
 
   // ── Pass B: final evaluation using Fact Sheet ────────────────────────────
   const buildPrompt = (options: { tightMode?: boolean; includeDigest?: boolean } = {}) =>
-    analysisStage === PRE_SEND_REVIEW_STAGE
+    analysisStage === PRE_SEND_STAGE
       ? buildPreSendPromptFromFactSheet({
           factSheet,
           reportStyle,
@@ -6116,7 +6239,7 @@ export async function evaluateWithVertexV2(
     prompt = buildPrompt({ tightMode: true });
     preflight = preflightPromptCheck(prompt);
     preflightTrimTriggered = true;
-    if (preflight.overCeiling && convergenceDigestText && analysisStage !== PRE_SEND_REVIEW_STAGE) {
+    if (preflight.overCeiling && convergenceDigestText && analysisStage !== PRE_SEND_STAGE) {
       // Second trim: drop convergence digest entirely.
       prompt = buildPrompt({ tightMode: true, includeDigest: false });
       preflight = preflightPromptCheck(prompt);
@@ -6132,6 +6255,9 @@ export async function evaluateWithVertexV2(
   while (attempt < MAX_ATTEMPTS) {
     attempt += 1;
     let vertex: VertexCallResponse;
+    let llmVerifyMeta:
+      | { verdict: LlmVerifierVerdict; escalated: boolean }
+      | undefined;
 
     try {
       vertex = await callVertex({
@@ -6284,7 +6410,7 @@ export async function evaluateWithVertexV2(
       // ── LLM verifier (second-layer leak check using cheap/fast model) ────
       // Only runs when deterministic check passes. Escalates to the generation
       // model when the verifier returns invalid JSON or an "unsure" verdict.
-      const llmVerify = await runLlmLeakVerifier({
+      const llmVerifyResult = await runLlmLeakVerifier({
         response: schemaValidation.normalized,
         forbiddenText: forbiddenLeakText,
         sharedText,
@@ -6294,7 +6420,7 @@ export async function evaluateWithVertexV2(
         callVerifier,
         callGeneration: callVertex,
       });
-      if (llmVerify.verdict === 'leak') {
+      if (llmVerifyResult.verdict === 'leak') {
         // LLM verifier detected leak: suppress output, return ok:true with warnings.
         const suppressed = buildSuppressedOutput('leak_detected', analysisStage);
         return {
@@ -6317,13 +6443,13 @@ export async function evaluateWithVertexV2(
               extract: extractModel,
               verifier: verifierModel,
               verifier_used: true,
-              verifier_escalated: llmVerify.escalated,
+              verifier_escalated: llmVerifyResult.escalated,
               verifier_unavailable: false,
             },
           },
         };
       }
-      if (llmVerify.verdict === 'unavailable') {
+      if (llmVerifyResult.verdict === 'unavailable') {
         // Verifier infrastructure failure: cannot confirm output is safe.
         // Policy: suppress narrative output to prevent silent leaks.
         // Never 5xx — persisted as completed_with_warnings.
@@ -6348,20 +6474,24 @@ export async function evaluateWithVertexV2(
               extract: extractModel,
               verifier: verifierModel,
               verifier_used: true,
-              verifier_escalated: llmVerify.escalated,
+              verifier_escalated: llmVerifyResult.escalated,
               verifier_unavailable: true,
             },
           },
         };
       }
       // Store verifier metadata for _internal so we can track it.
-      (schemaValidation as any)._llmVerify = llmVerify;
+      llmVerifyMeta = {
+        verdict: llmVerifyResult.verdict,
+        escalated: llmVerifyResult.escalated,
+      };
     }
 
-    if (analysisStage === PRE_SEND_REVIEW_STAGE) {
-      const preSendResult = schemaValidation.normalized as VertexEvaluationV2PreSendResponse;
-      const llmVerify: { verdict: string; escalated: boolean } | undefined =
-        (schemaValidation as any)._llmVerify;
+    if (analysisStage === PRE_SEND_STAGE) {
+      if (!isPreSendReviewResponse(schemaValidation.normalized)) {
+        throw new TypeError('Pre-send validation returned a non pre-send response.');
+      }
+      const preSendResult = schemaValidation.normalized;
       return {
         ok: true,
         data: preSendResult,
@@ -6386,8 +6516,8 @@ export async function evaluateWithVertexV2(
             generation: generationModel,
             extract: extractModel,
             verifier: verifierModel,
-            verifier_used: Boolean(llmVerify),
-            verifier_escalated: Boolean(llmVerify?.escalated),
+            verifier_used: Boolean(llmVerifyMeta),
+            verifier_escalated: Boolean(llmVerifyMeta?.escalated),
             verifier_unavailable: false,
           },
         },
@@ -6399,7 +6529,10 @@ export async function evaluateWithVertexV2(
     // missing sections and normalizes missing[], which would mask genuine
     // quality issues. Assess the raw model output so refinement/regen can
     // target the real quality problems.
-    const mediationResult = schemaValidation.normalized as VertexEvaluationV2MediationResponse;
+    if (!isMediationReviewResponse(schemaValidation.normalized)) {
+      throw new TypeError('Mediation validation returned a non mediation response.');
+    }
+    const mediationResult = schemaValidation.normalized;
     const rawQuality = assessReportQuality(mediationResult);
     const QUALITY_THRESHOLD = 0.5;
     const shouldRefine = rawQuality.score < 1.0;
@@ -6474,7 +6607,10 @@ export async function evaluateWithVertexV2(
             const regenCoerced = coerceToSmallSchema(regenExtracted.parsed, analysisStage);
             const regenValidation = validateResponseSchema(regenCoerced.candidate, analysisStage);
             if (regenValidation.ok) {
-              const regeneratedResult = regenValidation.normalized as VertexEvaluationV2MediationResponse;
+              if (!isMediationReviewResponse(regenValidation.normalized)) {
+                throw new TypeError('Regenerated mediation response failed stage narrowing.');
+              }
+              const regeneratedResult = regenValidation.normalized;
               // Leak check on regenerated output
               let regenLeakSafe = true;
               if (enforceLeakGuard) {
@@ -6544,9 +6680,6 @@ export async function evaluateWithVertexV2(
       }
     }
 
-    const llmVerify: { verdict: string; escalated: boolean } | undefined =
-      (schemaValidation as any)._llmVerify;
-
     return {
       ok: true,
       data: finalData,
@@ -6572,8 +6705,8 @@ export async function evaluateWithVertexV2(
           generation: generationModel,
           extract: extractModel,
           verifier: verifierModel,
-          verifier_used: Boolean(llmVerify),
-          verifier_escalated: Boolean(llmVerify?.escalated),
+          verifier_used: Boolean(llmVerifyMeta),
+          verifier_escalated: Boolean(llmVerifyMeta?.escalated),
           verifier_unavailable: false,
         },
         refinement: refinementMeta,
@@ -6585,13 +6718,9 @@ export async function evaluateWithVertexV2(
 
   // ── All Pass B attempts failed → safe fallback ───────────────────────────
   // Return ok:true with a clamped fallback evaluation so the API never fails.
-  if (analysisStage === PRE_SEND_REVIEW_STAGE) {
+  if (analysisStage === PRE_SEND_STAGE) {
     const fallback = safeFallbackPreSendReviewFromFactSheet(factSheet, {
       failureKind: lastParseFailureKind,
-      requestId,
-      finishReason: lastFinishReason,
-      sharedChars: sharedText.length,
-      confidentialChars: confidentialText.length,
     });
 
     return {

@@ -4,6 +4,7 @@ import { requireUser } from '../../../_lib/auth.js';
 import { getDb, schema } from '../../../_lib/db/client.js';
 import { ApiError } from '../../../_lib/errors.js';
 import { newId } from '../../../_lib/ids.js';
+import { hasMeaningfulRecipientContribution } from '../../../_lib/meaningful-recipient-contribution.js';
 import { createNotificationEvent } from '../../../_lib/notifications.js';
 import { resolveLatestActiveSharedReportLink } from '../../../_lib/proposal-agreement-request-emails.js';
 import { buildProposalHistoryQueries } from '../../../_lib/proposal-history.js';
@@ -254,14 +255,6 @@ function buildProposalResultFromEvaluation(proposal: any, evaluation: any, extra
 
 function convertV2ResponseToEvaluation(v2Result: any): Record<string, unknown> {
   return buildStoredV2Evaluation(v2Result);
-}
-
-function contributionHasMeaningfulContent(entry: any) {
-  const text = asText(entry?.contentPayload?.text || entry?.contentPayload?.notes);
-  const html = asText(entry?.contentPayload?.html);
-  const json = entry?.contentPayload?.json && typeof entry.contentPayload.json === 'object';
-  const files = Array.isArray(entry?.contentPayload?.files) ? entry.contentPayload.files : [];
-  return Boolean(text || html || json || files.length > 0);
 }
 
 function buildStageFallbackV2Data(analysisStage: string, reason: 'unexpected_error' | 'unavailable') {
@@ -538,26 +531,28 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         const latestProposerConfidentialEntry = [...historyContributions]
           .reverse()
           .find((entry) => entry.authorRole === HISTORY_AUTHOR_PROPOSER && entry.visibility === 'confidential');
+        const currentSharedPayload = {
+          label: 'Shared by Proposer',
+          text: String(comparison.docBText || ''),
+          html: asText((comparison.inputs as any)?.doc_b_html),
+          json: (comparison.inputs as any)?.doc_b_json,
+          source: asText((comparison.inputs as any)?.doc_b_source) || 'typed',
+          files: Array.isArray((comparison.inputs as any)?.doc_b_files) ? (comparison.inputs as any).doc_b_files : [],
+        };
+        const currentConfidentialPayload = {
+          label: 'Confidential to Proposer',
+          text: String(comparison.docAText || ''),
+          notes: String(comparison.docAText || ''),
+          html: asText((comparison.inputs as any)?.doc_a_html),
+          json: (comparison.inputs as any)?.doc_a_json,
+          source: asText((comparison.inputs as any)?.doc_a_source) || 'typed',
+          files: Array.isArray((comparison.inputs as any)?.doc_a_files) ? (comparison.inputs as any).doc_a_files : [],
+        };
         const currentComparisonEntries = buildDraftContributionEntries({
           authorRole: HISTORY_AUTHOR_PROPOSER,
           roundNumber: (Number(sharedHistory?.maxRoundNumber || 0) || 0) + 1,
-          sharedPayload: {
-            label: 'Shared by Proposer',
-            text: String(comparison.docBText || ''),
-            html: asText((comparison.inputs as any)?.doc_b_html),
-            json: (comparison.inputs as any)?.doc_b_json,
-            source: asText((comparison.inputs as any)?.doc_b_source) || 'typed',
-            files: Array.isArray((comparison.inputs as any)?.doc_b_files) ? (comparison.inputs as any).doc_b_files : [],
-          },
-          confidentialPayload: {
-            label: 'Confidential to Proposer',
-            text: String(comparison.docAText || ''),
-            notes: String(comparison.docAText || ''),
-            html: asText((comparison.inputs as any)?.doc_a_html),
-            json: (comparison.inputs as any)?.doc_a_json,
-            source: asText((comparison.inputs as any)?.doc_a_source) || 'typed',
-            files: Array.isArray((comparison.inputs as any)?.doc_a_files) ? (comparison.inputs as any).doc_a_files : [],
-          },
+          sharedPayload: currentSharedPayload,
+          confidentialPayload: currentConfidentialPayload,
           sourceKind: 'draft',
           updatedAt: comparison.updatedAt,
         });
@@ -582,11 +577,14 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
           ...historyContributions.filter((entry) => entry.visibility === 'confidential'),
           ...appendedComparisonEntries.filter((entry) => entry.visibility === 'confidential'),
         ];
-        const hasRecipientContributions = historyContributions.some(
-          (entry) =>
-            entry?.authorRole === HISTORY_AUTHOR_RECIPIENT &&
-            contributionHasMeaningfulContent(entry),
-        );
+        const hasRecipientContributions = hasMeaningfulRecipientContribution({
+          recipientAuthorRole: HISTORY_AUTHOR_RECIPIENT,
+          historyContributions,
+          historyBaselinePayloads: {
+            shared: currentSharedPayload,
+            confidential: currentConfidentialPayload,
+          },
+        }).hasMeaningfulContribution;
         const analysisStage = hasRecipientContributions
           ? MEDIATION_REVIEW_STAGE
           : PRE_SEND_REVIEW_STAGE;

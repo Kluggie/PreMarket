@@ -11,12 +11,15 @@ import { ApiError } from '../../../_lib/errors.js';
 import { newId } from '../../../_lib/ids.js';
 import { ensureMethod, withApiRoute } from '../../../_lib/route.js';
 import {
+  evaluateMeaningfulPayloadContribution,
+  hasMeaningfulRecipientContribution,
+} from '../../../_lib/meaningful-recipient-contribution.js';
+import {
   buildDraftContributionEntries,
   buildSharedHistoryComposite,
   formatContributionsForAi,
   getLinkRecipientAuthorRole,
   loadSharedReportHistory,
-  normalizeContributionPayload,
   resolveSharedReportLinkRound,
 } from '../../../_lib/shared-report-history.js';
 import { evaluateDocumentComparisonWithVertex } from '../../../_lib/vertex-evaluation.js';
@@ -63,62 +66,6 @@ function asText(value: unknown) {
 
 function asLower(value: unknown) {
   return asText(value).toLowerCase();
-}
-
-function normalizePayloadFiles(value: unknown) {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  return value
-    .filter((entry) => entry && typeof entry === 'object' && !Array.isArray(entry))
-    .map((entry: any) => ({
-      filename: asText(entry.filename || entry.name),
-      mimeType: asText(entry.mimeType || entry.mime_type || entry.type),
-      sizeBytes: Number(entry.sizeBytes || entry.size_bytes || entry.size || 0) || 0,
-      documentId: asText(entry.documentId || entry.document_id) || null,
-    }));
-}
-
-function payloadHasMeaningfulContent(payload: unknown) {
-  const safePayload = toObject(payload);
-  const text = asText(safePayload.text || safePayload.notes);
-  const html = asText(safePayload.html);
-  const files = normalizePayloadFiles(safePayload.files);
-  return Boolean(text || htmlToEditorText(html) || safePayload.json || files.length > 0);
-}
-
-function buildPayloadSnapshot(payload: unknown, options: { defaultLabel?: string; visibility?: 'shared' | 'confidential' } = {}) {
-  const normalized = normalizeContributionPayload(payload, {
-    defaultLabel: options.defaultLabel,
-    visibility: options.visibility,
-  });
-  return {
-    text: asText(normalized.text || normalized.notes),
-    html: asText(normalized.html),
-    json: normalized.json || null,
-    source: asText(normalized.source),
-    files: normalizePayloadFiles(normalized.files),
-  };
-}
-
-function payloadDiffersFromBaseline(
-  payload: unknown,
-  baselinePayload: unknown,
-  options: { defaultLabel?: string; visibility?: 'shared' | 'confidential' } = {},
-) {
-  if (!payloadHasMeaningfulContent(payload)) {
-    return false;
-  }
-  const left = buildPayloadSnapshot(payload, options);
-  const right = buildPayloadSnapshot(baselinePayload, options);
-  return JSON.stringify(left) !== JSON.stringify(right);
-}
-
-function contributionHasMeaningfulContent(entry: any) {
-  const text = asText(entry?.contentPayload?.text || entry?.contentPayload?.notes);
-  const html = asText(entry?.contentPayload?.html);
-  const files = normalizePayloadFiles(entry?.contentPayload?.files);
-  return Boolean(text || htmlToEditorText(html) || entry?.contentPayload?.json || files.length > 0);
 }
 
 function getDocumentComparisonEvaluator() {
@@ -462,18 +409,21 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     const sharedFallbackText = String(resolved.comparison?.docBText || defaultSharedPayload.text || '');
     const currentRoundSharedText = coercePayloadText(sharedPayload, sharedFallbackText);
     const currentRoundRecipientConfidentialText = coercePayloadText(confidentialPayload, '');
-    const hasMeaningfulDraftSharedInput = payloadDiffersFromBaseline(sharedPayload, defaultSharedPayload, {
+    const sharedDraftContribution = evaluateMeaningfulPayloadContribution({
+      payload: sharedPayload,
+      baselinePayload: defaultSharedPayload,
       defaultLabel: 'Shared by Recipient',
       visibility: 'shared',
     });
-    const hasMeaningfulDraftConfidentialInput = payloadDiffersFromBaseline(
-      confidentialPayload,
-      defaultConfidentialPayload,
-      {
-        defaultLabel: 'Confidential to Recipient',
-        visibility: 'confidential',
-      },
-    );
+    const confidentialDraftContribution = evaluateMeaningfulPayloadContribution({
+      payload: confidentialPayload,
+      baselinePayload: defaultConfidentialPayload,
+      defaultLabel: 'Confidential to Recipient',
+      visibility: 'confidential',
+    });
+    const hasMeaningfulDraftSharedInput = sharedDraftContribution.hasMeaningfulContribution;
+    const hasMeaningfulDraftConfidentialInput =
+      confidentialDraftContribution.hasMeaningfulContribution;
     const draftEntries = buildDraftContributionEntries({
       authorRole: draftAuthorRole,
       roundNumber: outgoingRoundNumber,
@@ -489,13 +439,34 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     const draftConfidentialEntries = draftEntries.filter(
       (entry) => entry.visibility === 'confidential' && hasMeaningfulDraftConfidentialInput,
     );
-    const historyHasRecipientContent = sharedHistory.contributions.some(
-      (entry) => entry.authorRole === draftAuthorRole && contributionHasMeaningfulContent(entry),
-    );
+    const meaningfulRecipientContribution = hasMeaningfulRecipientContribution({
+      recipientAuthorRole: draftAuthorRole,
+      historyContributions: sharedHistory.contributions,
+      historyBaselinePayloads: {
+        shared: defaultSharedPayload,
+        confidential: defaultConfidentialPayload,
+      },
+      draftPayloads: [
+        {
+          key: 'shared',
+          payload: sharedPayload,
+          baselinePayload: defaultSharedPayload,
+          defaultLabel: 'Shared by Recipient',
+          visibility: 'shared',
+        },
+        {
+          key: 'confidential',
+          payload: confidentialPayload,
+          baselinePayload: defaultConfidentialPayload,
+          defaultLabel: 'Confidential to Recipient',
+          visibility: 'confidential',
+        },
+      ],
+    });
+    const historyHasRecipientContent =
+      meaningfulRecipientContribution.historyContributionIds.length > 0;
     const hasMeaningfulRecipientContent =
-      historyHasRecipientContent ||
-      draftSharedEntries.length > 0 ||
-      draftConfidentialEntries.length > 0;
+      meaningfulRecipientContribution.hasMeaningfulContribution;
     const sharedHistoryEntriesForAi = [
       ...sharedHistory.contributions.filter((entry) => entry.visibility === 'shared'),
       ...draftSharedEntries,

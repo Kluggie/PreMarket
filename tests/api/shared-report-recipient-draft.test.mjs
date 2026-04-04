@@ -2283,6 +2283,41 @@ if (!hasDatabaseUrl()) {
     assert.equal(evaluateRes.jsonBody()?.error?.code || evaluateRes.jsonBody()?.code, 'recipient_input_required');
   });
 
+  test('shared-report evaluate keeps blocking cosmetic html-only recipient edits', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const seed = 'shared_report_cosmetic_html_guard';
+    const ownerCookie = makeOwnerCookie(seed);
+    const recipientEmail = `${seed}_recipient@example.com`;
+    const recipientCookie = makeRecipientCookie(seed, recipientEmail);
+
+    const comparison = await createComparison(ownerCookie, {
+      title: 'Cosmetic HTML Guard Test',
+      docAText: 'Internal proposer notes and fallback constraints for the draft.',
+      docBText: 'Shared proposer draft with scope, milestones, and responsibilities.',
+    });
+    const link = await createSharedReportLink(ownerCookie, comparison.id, recipientEmail, {
+      canView: true,
+      canEdit: true,
+      canReevaluate: true,
+      canSendBack: true,
+    });
+
+    const saveRes = await saveRecipientDraft(link.token, {
+      shared_payload: {
+        label: 'Shared Information',
+        html: '<p><strong>Shared proposer draft with scope, milestones, and responsibilities.</strong></p>',
+      },
+      workflow_step: 2,
+    }, recipientCookie);
+    assert.equal(saveRes.statusCode, 200);
+
+    const evaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
+    assert.equal(evaluateRes.statusCode, 409);
+    assert.equal(evaluateRes.jsonBody()?.error?.code || evaluateRes.jsonBody()?.code, 'recipient_input_required');
+  });
+
   test('shared-report evaluate succeeds once recipient saves meaningful content', async () => {
     await ensureMigrated();
     await resetTables();
@@ -2343,6 +2378,67 @@ if (!hasDatabaseUrl()) {
       const inputTrace = evalRunRows.rows[0]?.result_json?.input_trace || {};
       assert.equal(inputTrace.analysis_stage ?? 'mediation_review', 'mediation_review');
       assert.equal(Boolean(inputTrace.has_meaningful_recipient_content), true);
+    } finally {
+      if (previousEvaluator === undefined) {
+        delete globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
+      } else {
+        globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = previousEvaluator;
+      }
+    }
+  });
+
+  test('shared-report evaluate succeeds when recipient adds a materially new file', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const seed = 'shared_report_meaningful_file_success';
+    const ownerCookie = makeOwnerCookie(seed);
+    const recipientEmail = `${seed}_recipient@example.com`;
+    const recipientCookie = makeRecipientCookie(seed, recipientEmail);
+
+    const comparison = await createComparison(ownerCookie, {
+      title: 'Trigger File Success Test',
+      docAText: 'Internal proposer notes and fallback constraints for the draft.',
+      docBText: 'Shared proposer draft with scope, milestones, and responsibilities.',
+    });
+    const link = await createSharedReportLink(ownerCookie, comparison.id, recipientEmail, {
+      canView: true,
+      canEdit: true,
+      canReevaluate: true,
+      canSendBack: true,
+    });
+
+    const saveRes = await saveRecipientDraft(link.token, {
+      shared_payload: {
+        label: 'Shared Information',
+        files: [
+          {
+            documentId: 'doc_recipient_terms',
+            filename: 'recipient-terms.pdf',
+            mimeType: 'application/pdf',
+            sizeBytes: 2048,
+          },
+        ],
+      },
+      workflow_step: 2,
+    }, recipientCookie);
+    assert.equal(saveRes.statusCode, 200);
+
+    const previousEvaluator = globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
+    globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__ = async () => ({
+      report: {
+        recommendation: 'review',
+        executive_summary: 'Recipient file contribution received.',
+        sections: [{ heading: 'Summary', bullets: ['Recipient file contribution received.'] }],
+      },
+      evaluation_provider: 'test',
+      similarity_score: 67,
+    });
+
+    try {
+      const evaluateRes = await evaluateRecipientDraft(link.token, {}, recipientCookie);
+      assert.equal(evaluateRes.statusCode, 200);
+      assert.equal(evaluateRes.jsonBody()?.evaluation_provider || 'test', 'test');
     } finally {
       if (previousEvaluator === undefined) {
         delete globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;
