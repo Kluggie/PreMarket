@@ -1108,37 +1108,42 @@ function buildPreSendReadinessSummary(params: {
   pilotSignal: boolean;
 }) {
   const reasonClauses = buildPreSendReasonClauses(params.summaryThemes);
-  const reasonInline = reasonClauses.length > 0 ? ` because ${joinNatural(reasonClauses)}` : '';
+  const themeSummary = describeThemes(
+    params.summaryThemes,
+    'scope, commercial framing, and delivery detail',
+  );
   const fallbackSummary = normalizeText(params.summaryText);
   const fixedPriceCommitmentLabel = params.pilotSignal
-    ? 'a reliable fixed-price pilot commitment'
-    : 'a reliable fixed-price commitment';
+    ? 'reliable fixed-price pilot pricing'
+    : 'reliable fixed-price pricing';
+  const fixedPriceLockLabel = params.pilotSignal
+    ? 'fixed-price pilot pricing'
+    : 'fixed-price pricing';
 
   if (params.readinessStatus === 'ready_to_send') {
-    if (reasonClauses.length > 0) {
+    if (params.summaryThemes.length > 0) {
       return [
-        `This draft is ready to share as a sender-side brief and already reads as a commercially credible starting point, with only limited remaining watchpoints around ${joinNatural(reasonClauses)}.`,
+        `This is a strong early-stage commercial brief and appears ready to share now. Any remaining points sit mainly in ${themeSummary} and read as minor clarifications rather than structural blockers.`,
       ];
     }
     return fallbackSummary
       ? [fallbackSummary]
-      : ['This draft is ready to share as a sender-side brief and already reads as a commercially credible starting point.'];
+      : ['This is a strong early-stage commercial brief and appears ready to share now.'];
   }
 
   if (params.readinessStatus === 'ready_with_clarifications') {
-    const limitation = params.fixedPriceSignal
-      ? `but it is not yet strong enough for ${fixedPriceCommitmentLabel}`
-      : 'but it is not yet strong enough to ask a vendor to lock scope or commercial terms';
     return [
-      `This draft is suitable for early vendor discussion, ${limitation}${reasonInline}.`,
+      params.fixedPriceSignal
+        ? `This draft is already a credible sender-side brief for vendor discussion. The main remaining points sit in ${themeSummary} and read more like limited clarifications than structural blockers; tighten them before asking a vendor to lock ${fixedPriceLockLabel}.`
+        : `This draft is already a credible sender-side brief for vendor discussion. The main remaining points sit in ${themeSummary} and read more like limited clarifications than structural blockers, but tightening them should make the brief easier to review and paper cleanly.`,
     ];
   }
 
   const notReadyLead = params.fixedPriceSignal
-    ? `This draft may still help an early scoping discussion, but it is not yet ready to share as ${fixedPriceCommitmentLabel}`
-    : 'This draft may still help frame an early scoping discussion, but it is not yet ready to share as a dependable commercial brief';
+    ? `This draft may still help an early scoping discussion, but it is not yet ready to circulate as a dependable brief for ${fixedPriceCommitmentLabel}`
+    : 'This draft may still help frame an early scoping discussion, but it is not yet ready to circulate as a dependable commercial brief';
   if (reasonClauses.length > 0) {
-    return [`${notReadyLead}${reasonInline}.`];
+    return [`${notReadyLead} because ${joinNatural(reasonClauses)}.`];
   }
   return fallbackSummary
     ? [fallbackSummary]
@@ -1242,8 +1247,9 @@ function buildPreSendReviewSections(params: {
     fixedPriceSignal,
     pilotSignal,
   });
+  const readinessStatus = normalizeReadinessStatus(params.readiness_status);
   const readinessParagraphs = buildPreSendReadinessSummary({
-    readinessStatus: normalizeReadinessStatus(params.readiness_status),
+    readinessStatus,
     summaryThemes,
     summaryText: sendReadinessSummary,
     fixedPriceSignal,
@@ -1273,9 +1279,15 @@ function buildPreSendReviewSections(params: {
       key: 'main_gaps_before_sharing',
       heading: 'Main Gaps Before Sharing',
       paragraphs: [
-        fixedPriceSignal
-          ? `The main gaps before sharing are concentrated around ${gapsThemeSummary}. Those points matter because the current draft asks for fixed-price or tightly bounded commitment language before the underlying assumptions are fully pinned down.`
-          : `The main gaps before sharing are concentrated around ${gapsThemeSummary}. Those are the points most likely to interrupt a serious vendor review if they remain implicit.`,
+        readinessStatus === 'ready_to_send'
+          ? `The remaining gaps before sharing are limited and mostly sit in ${gapsThemeSummary}. They read as minor papering or implementation-detail clarifications rather than structural blockers.`
+          : readinessStatus === 'ready_with_clarifications'
+            ? fixedPriceSignal
+              ? `The main gaps before sharing are concentrated around ${gapsThemeSummary}. Tightening those points should make the draft easier to price and negotiate cleanly, especially if the sender wants reliable fixed-price or pilot pricing.`
+              : `The main gaps before sharing are concentrated around ${gapsThemeSummary}. They look more like limited clarifications than signs that the brief is fundamentally weak, but tightening them should reduce friction in a serious vendor review.`
+            : fixedPriceSignal
+              ? `The main gaps before sharing are concentrated around ${gapsThemeSummary}. Those points matter because the current draft asks for fixed-price or tightly bounded commitment language before the underlying assumptions are fully pinned down.`
+              : `The main gaps before sharing are concentrated around ${gapsThemeSummary}. Those are the points most likely to interrupt a serious vendor review if they remain implicit.`,
       ],
       bullets: mainGapBullets,
     }),
@@ -1283,9 +1295,15 @@ function buildPreSendReviewSections(params: {
       key: 'likely_vendor_pushback',
       heading: 'Likely Vendor Pushback',
       paragraphs: [
-        fixedPriceSignal
-          ? `A reasonable vendor is most likely to push back where the draft appears to ask for fixed-price certainty before ${pushbackThemeSummary} is fully bounded.`
-          : `A reasonable vendor is most likely to push back where the draft still leaves ${pushbackThemeSummary} open to interpretation.`,
+        readinessStatus === 'ready_to_send'
+          ? `Any likely vendor pushback is more likely to show up as ordinary negotiation questions around ${pushbackThemeSummary} than as resistance to the overall brief.`
+          : readinessStatus === 'ready_with_clarifications'
+            ? fixedPriceSignal
+              ? `A reasonable vendor is most likely to test ${pushbackThemeSummary} as part of ordinary pricing and risk-allocation negotiation, especially if fixed-price certainty is being requested early.`
+              : `A reasonable vendor is most likely to push on ${pushbackThemeSummary}, but more as ordinary negotiation points than as reasons to dismiss the brief outright.`
+            : fixedPriceSignal
+              ? `A reasonable vendor is most likely to push back where the draft appears to ask for fixed-price certainty before ${pushbackThemeSummary} is fully bounded.`
+              : `A reasonable vendor is most likely to push back where the draft still leaves ${pushbackThemeSummary} open to interpretation.`,
       ],
       bullets: pushbackBullets,
     }),
@@ -1293,7 +1311,11 @@ function buildPreSendReviewSections(params: {
       key: 'commercial_and_delivery_risks',
       heading: 'Commercial and Delivery Risks',
       paragraphs: [
-        `The main commercial and delivery risks sit in ${riskThemeSummary}. As drafted, those issues could still shift cost, timing, remediation, or sign-off exposure later in the process.`,
+        readinessStatus === 'ready_to_send'
+          ? `The residual commercial and delivery risks sit in ${riskThemeSummary}. At this stage they look closer to normal negotiation and implementation-detail points than structural weaknesses, but they are still worth tightening if the sender wants cleaner pricing or sign-off.`
+          : readinessStatus === 'ready_with_clarifications'
+            ? `The main commercial and delivery risks sit in ${riskThemeSummary}. As drafted, they read more as clarifications to tighten than structural blockers, but they could still create avoidable friction around pricing, timing, or sign-off if left implicit.`
+            : `The main commercial and delivery risks sit in ${riskThemeSummary}. As drafted, those issues could still shift cost, timing, remediation, or sign-off exposure later in the process.`,
       ],
       bullets: riskBullets,
     }),
@@ -1301,10 +1323,19 @@ function buildPreSendReviewSections(params: {
       key: 'suggested_clarifications_before_sending',
       heading: 'Suggested Clarifications Before Sending',
       paragraphs: [
-        `${getPreSendCommitmentThreshold({
-          fixedPriceSignal,
-          pilotSignal,
-        })}, tighten the few items that most affect ${clarificationThemeSummary} so the draft reads as an intentional commercial brief rather than an opening outline.`,
+        readinessStatus === 'ready_to_send'
+          ? fixedPriceSignal
+            ? `The brief is already strong enough to share. If the sender wants especially reliable fixed-price or pilot pricing, tighten the few items that most affect ${clarificationThemeSummary}.`
+            : `The brief is already strong enough to share. Tighten the few items that most affect ${clarificationThemeSummary} if the sender wants the cleanest possible vendor response and smoother papering.`
+          : readinessStatus === 'ready_with_clarifications'
+            ? `The draft is already usable for vendor discussion. ${getPreSendCommitmentThreshold({
+              fixedPriceSignal,
+              pilotSignal,
+            })}, tighten the few items that most affect ${clarificationThemeSummary}.`
+            : `${getPreSendCommitmentThreshold({
+              fixedPriceSignal,
+              pilotSignal,
+            })}, tighten the few items that most affect ${clarificationThemeSummary} so the draft reads as an intentional commercial brief rather than an opening outline.`,
       ],
       bullets: clarificationBullets,
       numbered_bullets: true,
@@ -1330,9 +1361,9 @@ function buildPreSendReviewPresentation(params: {
     sections[0]?.paragraphs?.[0] ||
     sendReadinessSummary ||
     (readinessStatus === 'ready_to_send'
-      ? 'This draft is ready to share as a sender-side brief.'
+      ? 'This draft is a strong sender-side brief and is ready to share.'
       : readinessStatus === 'ready_with_clarifications'
-        ? 'This draft is suitable for early vendor discussion, but key assumptions still need tightening.'
+        ? 'This draft is already a credible sender-side brief for vendor discussion, with limited clarifications still worth tightening.'
         : 'This draft is not yet ready to send confidently.');
 
   return {

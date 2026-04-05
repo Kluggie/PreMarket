@@ -49,6 +49,10 @@ test('pre-send prompt stays explicitly unilateral and blocks bilateral claims', 
   assert.match(prompt, /unilateral draft-readiness review/i);
   assert.match(prompt, /do NOT know the recipient’s actual position/i);
   assert.match(prompt, /must NOT assess bilateral compatibility/i);
+  assert.match(prompt, /truthful positive assessment is allowed/i);
+  assert.match(prompt, /do NOT manufacture medium-severity concerns/i);
+  assert.match(prompt, /Prefer "ready_to_send" when the brief is genuinely strong/i);
+  assert.match(prompt, /Do NOT default to "not yet strong enough"/i);
   assert.match(prompt, /analysis_stage\": \"pre_send_review\"/i);
 });
 

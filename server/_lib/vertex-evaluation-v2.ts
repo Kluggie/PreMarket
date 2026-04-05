@@ -3256,16 +3256,58 @@ function trimStageItems(values: string[], maxItems = 6, fallback: string[] = [])
   return uniqueStrings(fallback).slice(0, maxItems);
 }
 
-function derivePreSendReadinessStatus(factSheet: ProposalFactSheet): PreSendReadinessStatus {
+function getPreSendReadinessSignals(factSheet: ProposalFactSheet) {
   const coverageCount = computeCoverageCount(factSheet.source_coverage);
-  const blockingGaps = factSheet.missing_info.length + factSheet.open_questions.length;
-  if (coverageCount <= 1 || (coverageCount <= 2 && blockingGaps >= 5)) {
+  const openItems = uniqueStrings([
+    ...factSheet.missing_info,
+    ...factSheet.open_questions,
+  ]);
+  const rules = collectCalibrationRules({
+    factSheet,
+    texts: openItems,
+  });
+  return {
+    coverageCount,
+    openItemCount: openItems.length,
+    severeRuleCount: rules.filter((rule) => rule.severity === 'severe').length,
+    materialRuleCount: rules.filter((rule) => rule.severity === 'material').length,
+    hasCoreCommercialStructure:
+      factSheet.source_coverage.has_scope &&
+      factSheet.source_coverage.has_timeline &&
+      factSheet.source_coverage.has_constraints,
+  };
+}
+
+function derivePreSendReadinessStatus(factSheet: ProposalFactSheet): PreSendReadinessStatus {
+  const {
+    coverageCount,
+    openItemCount,
+    severeRuleCount,
+    materialRuleCount,
+    hasCoreCommercialStructure,
+  } = getPreSendReadinessSignals(factSheet);
+
+  if (
+    coverageCount <= 1 ||
+    (coverageCount <= 2 && openItemCount >= 4) ||
+    severeRuleCount >= 3 ||
+    (!hasCoreCommercialStructure && coverageCount <= 3 && openItemCount >= 3)
+  ) {
     return 'not_ready_to_send';
   }
-  if (coverageCount <= 4 || blockingGaps >= 2) {
-    return 'ready_with_clarifications';
+
+  const shareReady =
+    hasCoreCommercialStructure &&
+    coverageCount >= 4 &&
+    severeRuleCount === 0 &&
+    materialRuleCount <= 1 &&
+    openItemCount <= 1;
+
+  if (shareReady) {
+    return 'ready_to_send';
   }
-  return 'ready_to_send';
+
+  return 'ready_with_clarifications';
 }
 
 function safeFallbackPreSendReviewFromFactSheet(
@@ -3283,19 +3325,36 @@ function safeFallbackPreSendReviewFromFactSheet(
 
   const readiness_status = derivePreSendReadinessStatus(factSheet);
   const fallbackMode = classifyFallbackMode(factSheet);
+  const useNegativeFallbackDefaults = readiness_status !== 'ready_to_send';
+  const fixedPriceSignal = isFixedPriceSignal(factSheet);
+  const pilotSignal = containsAny(
+    [
+      factSheet.project_goal || '',
+      ...factSheet.scope_deliverables,
+      ...factSheet.constraints,
+      ...factSheet.vendor_preferences,
+      ...factSheet.open_questions,
+      ...factSheet.missing_info,
+    ],
+    ['pilot'],
+  );
   const missing_information = trimStageItems(
     factSheet.missing_info,
     6,
-    [
-      'Core scope details are still too thin to share confidently.',
-      'Acceptance criteria are not yet defined clearly enough for a counterparty review.',
-      'Timeline, dependencies, or constraints need more explicit framing.',
-    ],
+    useNegativeFallbackDefaults
+      ? [
+          'Core scope details are still too thin to share confidently.',
+          'Acceptance criteria are not yet defined clearly enough for a counterparty review.',
+          'Timeline, dependencies, or constraints need more explicit framing.',
+        ]
+      : [],
   );
   const likely_recipient_questions = trimStageItems(
     factSheet.open_questions,
     6,
-    missing_information.map((item) => item.endsWith('?') ? item : `${item}?`),
+    useNegativeFallbackDefaults
+      ? missing_information.map((item) => item.endsWith('?') ? item : `${item}?`)
+      : [],
   );
   const ambiguous_terms = trimStageItems(
     [
@@ -3303,7 +3362,9 @@ function safeFallbackPreSendReviewFromFactSheet(
       ...factSheet.constraints.filter((entry) => /\bflexible|support|alignment|commercial|standard|reasonable|subject to\b/i.test(entry)),
     ],
     5,
-    ['Several scope, ownership, or timing assumptions are still implicit rather than contractable.'],
+    useNegativeFallbackDefaults
+      ? ['Several scope, ownership, or timing assumptions are still implicit rather than contractable.']
+      : [],
   );
   const commercial_risks = trimStageItems(
     [
@@ -3313,7 +3374,9 @@ function safeFallbackPreSendReviewFromFactSheet(
         .filter((entry) => /\bbudget|payment|liability|commercial|cost|pricing\b/i.test(entry)),
     ],
     5,
-    ['Commercial boundaries and risk allocation still need clearer wording before sharing.'],
+    useNegativeFallbackDefaults
+      ? ['Commercial boundaries and risk allocation still need clearer wording before sharing.']
+      : [],
   );
   const implementation_risks = trimStageItems(
     [
@@ -3321,12 +3384,16 @@ function safeFallbackPreSendReviewFromFactSheet(
       ...factSheet.constraints.filter((entry) => /\bdata|integration|approval|dependency|timeline|milestone|implementation|security|rollout\b/i.test(entry)),
     ],
     5,
-    ['Delivery dependencies, sequencing, or acceptance mechanics need more explicit definition.'],
+    useNegativeFallbackDefaults
+      ? ['Delivery dependencies, sequencing, or acceptance mechanics need more explicit definition.']
+      : [],
   );
   const likely_pushback_areas = trimStageItems(
     [...commercial_risks, ...implementation_risks, ...ambiguous_terms],
     6,
-    ['A reasonable recipient may push back on unclear scope, ownership, or commercial boundaries.'],
+    useNegativeFallbackDefaults
+      ? ['A reasonable recipient may push back on unclear scope, ownership, or commercial boundaries.']
+      : [],
   );
   const suggested_clarifications = trimStageItems(
     [
@@ -3334,15 +3401,19 @@ function safeFallbackPreSendReviewFromFactSheet(
       ...ambiguous_terms.map((entry) => `Tighten wording around: ${entry}`),
     ],
     6,
-    ['Clarify the highest-risk gaps before sharing this draft more broadly.'],
+    useNegativeFallbackDefaults
+      ? ['Clarify the highest-risk gaps before sharing this draft more broadly.']
+      : [],
   );
 
   const summaryLead =
     readiness_status === 'ready_to_send'
-      ? 'This sender draft appears ready to share as a commercially credible starting point, although the remaining items below would still strengthen it.'
+      ? 'This sender draft is a strong early-stage commercial brief and appears ready to share now. The remaining items below read more like minor clarifications than structural blockers.'
       : readiness_status === 'ready_with_clarifications'
-        ? 'This sender draft is suitable for early vendor discussion, but it is not yet strong enough for a reliable fixed-price or tightly bounded commitment until the gaps below are clarified.'
-        : 'This sender draft is not yet ready to share as a dependable commercial brief because several core scope, ownership, or risk-allocation terms remain too open.';
+        ? fixedPriceSignal
+          ? `This sender draft is already a credible brief for vendor discussion. The remaining points below read more like limited clarifications than structural blockers, but tightening them would support ${pilotSignal ? 'reliable fixed-price pilot pricing' : 'reliable fixed-price pricing'}.`
+          : 'This sender draft is already a credible brief for vendor discussion. The remaining points below read more like limited clarifications than structural blockers, but tightening them would make the brief easier to price and paper cleanly.'
+        : 'This sender draft can still help frame an early scoping conversation, but it is not yet ready to circulate as a dependable commercial brief because several core scope, ownership, or risk-allocation terms remain too open.';
 
   return {
     data: {

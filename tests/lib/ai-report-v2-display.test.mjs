@@ -237,7 +237,7 @@ test('buildStoredV2Evaluation: synthesizes proposer-only sections into a memo-st
     'Commercial and Delivery Risks',
     'Suggested Clarifications Before Sending',
   ]);
-  assert.match(stored.report.primary_insight, /suitable for early vendor discussion/i);
+  assert.match(stored.report.primary_insight, /credible sender-side brief/i);
   assert.match(stored.report.primary_insight, /fixed-price/i);
   assert.doesNotMatch(headings.join(' | '), /Missing Information|Ambiguous Terms|Likely Recipient Questions|Likely Pushback Areas|Commercial Risks|Implementation Risks/);
   assert.equal(
@@ -259,7 +259,7 @@ test('buildStoredV2Evaluation: keeps pre-send readiness summary concise and avoi
       analysis_stage: 'pre_send_review',
       readiness_status: 'ready_with_clarifications',
       send_readiness_summary:
-        'This draft is suitable for early vendor discussion, but it is not yet strong enough for a reliable fixed-price pilot proposal because scope, pricing, and acceptance mechanics still need tightening.',
+        'This draft is already a credible sender-side brief for vendor discussion, with only limited clarifications left before the sender asks for fixed-price pilot pricing.',
       missing_information: [
         'What is included in the initial fixed-price pilot scope?',
         'What measurable acceptance criteria define completion?',
@@ -292,14 +292,49 @@ test('buildStoredV2Evaluation: keeps pre-send readiness summary concise and avoi
   const clarificationSection = stored.report.presentation_sections.find((section) => section.heading === 'Suggested Clarifications Before Sending');
 
   assert.equal(readinessSection?.paragraphs?.length, 1);
-  assert.match(readinessSection?.paragraphs?.[0] || '', /suitable for early vendor discussion/i);
-  assert.match(readinessSection?.paragraphs?.[0] || '', /reliable fixed-price pilot commitment/i);
+  assert.match(readinessSection?.paragraphs?.[0] || '', /credible sender-side brief/i);
+  assert.match(readinessSection?.paragraphs?.[0] || '', /limited clarifications/i);
+  assert.doesNotMatch(readinessSection?.paragraphs?.[0] || '', /not yet strong enough/i);
   assert.match(clarificationSection?.paragraphs?.[0] || '', /Before requesting a reliable fixed-price pilot proposal/i);
   assert.doesNotMatch(clarificationSection?.paragraphs?.[0] || '', /\bBefore sending\b/i);
   assert.equal(
     (clarificationSection?.bullets || []).every((bullet) => !/\bBefore sending\b/i.test(bullet)),
     true,
   );
+});
+
+test('buildStoredV2Evaluation: strong proposer-only results lead with strengths and keep residual issues secondary', () => {
+  const stored = buildStoredV2Evaluation({
+    ok: true,
+    data: {
+      analysis_stage: 'pre_send_review',
+      readiness_status: 'ready_to_send',
+      send_readiness_summary:
+        'This is a strong early-stage commercial brief. Scope, milestones, ownership, and acceptance criteria are already well bounded for vendor discussion.',
+      missing_information: [],
+      ambiguous_terms: [],
+      likely_recipient_questions: ['Confirm the preferred weekly steering-call slot.'],
+      likely_pushback_areas: ['A vendor may still test support handover timing as part of normal implementation planning.'],
+      commercial_risks: [],
+      implementation_risks: ['Support handover timing should stay aligned with pilot sign-off.'],
+      suggested_clarifications: ['Keep the support handover timing aligned with pilot sign-off when sharing the draft.'],
+    },
+    model: 'gemini-2.5-pro',
+    generation_model: 'gemini-2.5-pro',
+  });
+
+  const readinessSection = stored.report.presentation_sections.find((section) => section.heading === 'Readiness Summary');
+  const gapsSection = stored.report.presentation_sections.find((section) => section.heading === 'Main Gaps Before Sharing');
+  const pushbackSection = stored.report.presentation_sections.find((section) => section.heading === 'Likely Vendor Pushback');
+
+  assert.match(stored.report.primary_insight, /strong early-stage commercial brief/i);
+  assert.match(readinessSection?.paragraphs?.[0] || '', /ready to share now/i);
+  assert.match(readinessSection?.paragraphs?.[0] || '', /minor clarifications/i);
+  assert.match(gapsSection?.paragraphs?.[0] || '', /limited/i);
+  assert.match(gapsSection?.paragraphs?.[0] || '', /rather than structural blockers/i);
+  assert.match(pushbackSection?.paragraphs?.[0] || '', /ordinary negotiation questions/i);
+  assert.doesNotMatch(stored.report.presentation_sections.map((section) => section.heading).join(' | '), /Recommendation|Confidence/i);
+  assert.doesNotMatch((readinessSection?.paragraphs || []).join(' '), /not yet strong enough|fundamentally weak/i);
 });
 
 test('decision status helpers: prefer canonical Decision Readiness status over fit-level fallback', () => {

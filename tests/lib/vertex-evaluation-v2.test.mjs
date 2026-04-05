@@ -257,8 +257,161 @@ test('evaluateWithVertexV2 fallback keeps plausible pre-send drafts at ready_wit
     assert.equal(outcome.ok, true);
     assert.equal(outcome.data.analysis_stage, PRE_SEND_REVIEW_STAGE);
     assert.equal(outcome.data.readiness_status, 'ready_with_clarifications');
-    assert.match(outcome.data.send_readiness_summary, /suitable for early vendor discussion/i);
+    assert.match(outcome.data.send_readiness_summary, /credible brief for vendor discussion/i);
+    assert.match(outcome.data.send_readiness_summary, /limited clarifications/i);
     assert.match(outcome.data.send_readiness_summary, /fixed-price/i);
+  } finally {
+    cleanup();
+  }
+});
+
+test('evaluateWithVertexV2 fallback can treat a strong proposer-only draft as ready_to_send without inventing medium-severity problems', async () => {
+  const cleanup = setVertexV2MockSequence([
+    {
+      response: {
+        model: 'gemini-2.5-flash-lite',
+        text: JSON.stringify(validFactSheetPayload({
+          project_goal: 'Launch a six-week customer-support automation pilot with named integrations, measurable acceptance criteria, and a documented handover.',
+          scope_deliverables: [
+            'Zendesk integration',
+            'Intent library for the agreed support flows',
+            'Acceptance test pack and handover notes',
+          ],
+          timeline: {
+            start: '2026-07-07',
+            duration: '6 weeks',
+            milestones: ['Kickoff in week 1', 'Pilot review in week 4', 'Acceptance sign-off in week 6'],
+          },
+          constraints: ['Use existing Zendesk and HubSpot environments', 'Weekly steering review with the sender team'],
+          success_criteria_kpis: [
+            'Automation handles at least 40% of agreed ticket categories',
+            'Intent accuracy stays at or above 85% during the pilot',
+            'Acceptance sign-off occurs within 5 business days of the final test pack',
+          ],
+          risks: [
+            { risk: 'Support handover timing needs to stay aligned with pilot sign-off', impact: 'med', likelihood: 'low' },
+          ],
+          open_questions: ['Confirm the preferred weekly steering-call slot.'],
+          missing_info: [],
+          source_coverage: {
+            has_scope: true,
+            has_timeline: true,
+            has_kpis: true,
+            has_constraints: true,
+            has_risks: true,
+          },
+        })),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+    {
+      response: {
+        model: 'gemini-2.5-pro',
+        text: 'not valid json',
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+    {
+      response: {
+        model: 'gemini-2.5-pro',
+        text: 'still not valid json',
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+  ]);
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Shared draft defines the pilot scope, delivery milestones, acceptance metrics, and handover expectations.',
+      confidentialText: 'Internal notes confirm only minor scheduling coordination remains before sharing.',
+      analysisStage: PRE_SEND_REVIEW_STAGE,
+      requestId: 'test_pre_send_fallback_ready_to_send',
+    });
+
+    assert.equal(outcome.ok, true);
+    assert.equal(outcome.data.analysis_stage, PRE_SEND_REVIEW_STAGE);
+    assert.equal(outcome.data.readiness_status, 'ready_to_send');
+    assert.match(outcome.data.send_readiness_summary, /strong early-stage commercial brief/i);
+    assert.match(outcome.data.send_readiness_summary, /ready to share/i);
+    assert.match(outcome.data.send_readiness_summary, /minor clarifications/i);
+    assert.doesNotMatch(outcome.data.send_readiness_summary, /not yet strong enough/i);
+    assert.deepEqual(outcome.data.missing_information, []);
+    assert.equal(outcome.data.likely_recipient_questions.includes('Confirm the preferred weekly steering-call slot.'), true);
+  } finally {
+    cleanup();
+  }
+});
+
+test('evaluateWithVertexV2 fallback still keeps genuinely weak proposer-only drafts at not_ready_to_send', async () => {
+  const cleanup = setVertexV2MockSequence([
+    {
+      response: {
+        model: 'gemini-2.5-flash-lite',
+        text: JSON.stringify(validFactSheetPayload({
+          project_goal: 'Explore an AI uplift initiative.',
+          scope_deliverables: [],
+          timeline: { start: null, duration: null, milestones: [] },
+          constraints: ['Budget TBD'],
+          success_criteria_kpis: [],
+          risks: [],
+          assumptions: [],
+          open_questions: [
+            'Who would own implementation?',
+            'Which systems are in scope?',
+            'What budget is available?',
+          ],
+          missing_info: [
+            'What is the actual pilot scope?',
+            'What measurable success criteria define completion?',
+            'What timeline or milestone structure applies?',
+            'Who owns integrations, approvals, and dependencies?',
+          ],
+          source_coverage: {
+            has_scope: false,
+            has_timeline: false,
+            has_kpis: false,
+            has_constraints: false,
+            has_risks: false,
+          },
+        })),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+    {
+      response: {
+        model: 'gemini-2.5-pro',
+        text: 'not valid json',
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+    {
+      response: {
+        model: 'gemini-2.5-pro',
+        text: 'still not valid json',
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+  ]);
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Shared draft says the team wants to explore an AI initiative but leaves scope, budget, and timeline open.',
+      confidentialText: 'Internal notes say ownership and system coverage are still undecided.',
+      analysisStage: PRE_SEND_REVIEW_STAGE,
+      requestId: 'test_pre_send_fallback_not_ready',
+    });
+
+    assert.equal(outcome.ok, true);
+    assert.equal(outcome.data.analysis_stage, PRE_SEND_REVIEW_STAGE);
+    assert.equal(outcome.data.readiness_status, 'not_ready_to_send');
+    assert.match(outcome.data.send_readiness_summary, /not yet ready/i);
+    assert.equal(outcome.data.missing_information.length >= 3, true);
   } finally {
     cleanup();
   }
