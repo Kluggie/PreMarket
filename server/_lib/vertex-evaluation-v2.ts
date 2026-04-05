@@ -3259,7 +3259,7 @@ function trimStageItems(values: string[], maxItems = 6, fallback: string[] = [])
 function derivePreSendReadinessStatus(factSheet: ProposalFactSheet): PreSendReadinessStatus {
   const coverageCount = computeCoverageCount(factSheet.source_coverage);
   const blockingGaps = factSheet.missing_info.length + factSheet.open_questions.length;
-  if (coverageCount <= 2 || blockingGaps >= 5) {
+  if (coverageCount <= 1 || (coverageCount <= 2 && blockingGaps >= 5)) {
     return 'not_ready_to_send';
   }
   if (coverageCount <= 4 || blockingGaps >= 2) {
@@ -3339,10 +3339,10 @@ function safeFallbackPreSendReviewFromFactSheet(
 
   const summaryLead =
     readiness_status === 'ready_to_send'
-      ? 'The sender draft appears broadly ready to share, but the remaining questions below should still be tightened.'
+      ? 'This sender draft appears ready to share as a commercially credible starting point, although the remaining items below would still strengthen it.'
       : readiness_status === 'ready_with_clarifications'
-        ? 'The sender draft has a workable foundation, but it should be tightened before sharing so the recipient is not left to infer critical assumptions.'
-        : 'The sender draft is not yet ready to share confidently because several scope, risk, or ownership gaps remain materially unclear.';
+        ? 'This sender draft is suitable for early vendor discussion, but it is not yet strong enough for a reliable fixed-price or tightly bounded commitment until the gaps below are clarified.'
+        : 'This sender draft is not yet ready to share as a dependable commercial brief because several core scope, ownership, or risk-allocation terms remain too open.';
 
   return {
     data: {

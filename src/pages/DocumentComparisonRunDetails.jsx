@@ -21,8 +21,8 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { ArrowLeft, BarChart3, Loader2 } from 'lucide-react';
-import { getConfidencePercent, getReviewStageLabel } from '@/lib/aiReportUtils';
-import { resolveOpportunityReviewStage } from '@/lib/opportunityReviewStage';
+import { getConfidencePercent, getReviewStageLabel, getReviewStatusDetails } from '@/lib/aiReportUtils';
+import { isPreSendReviewStage, resolveOpportunityReviewStage } from '@/lib/opportunityReviewStage';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -110,7 +110,7 @@ function extractEvaluationFailureDetails(rawError) {
   };
 }
 
-function getEvaluationRowMeta(evaluation) {
+function getEvaluationRowMeta(evaluation, reviewStage) {
   const status = asLower(evaluation?.status);
   const failure = extractEvaluationFailureDetails(evaluation?.result?.error);
   const errorCode = asLower(failure?.failureCode || evaluation?.result?.error?.code);
@@ -148,7 +148,9 @@ function getEvaluationRowMeta(evaluation) {
       label: 'Succeeded',
       badgeClassName: 'bg-green-100 text-green-700',
       rowClassName: 'rounded-xl border border-green-200 bg-green-50 p-3',
-      scoreLabel: Number.isFinite(numericScore)
+      scoreLabel: isPreSendReviewStage(reviewStage)
+        ? 'sender-side review'
+        : Number.isFinite(numericScore)
         ? `${Math.max(0, Math.round(numericScore))}% confidence`
         : '—',
     };
@@ -269,7 +271,9 @@ export default function DocumentComparisonRunDetails() {
   const reviewStage = resolveOpportunityReviewStage(report, {
     source: latestEvaluation?.source,
   });
+  const isPreSendReview = isPreSendReviewStage(reviewStage);
   const reviewLabel = getReviewStageLabel(reviewStage);
+  const reviewStatus = getReviewStatusDetails(report);
   const comparisonStatus = asLower(comparison?.status);
   const isEvaluationSucceeded =
     comparisonStatus === 'evaluated' &&
@@ -372,7 +376,7 @@ export default function DocumentComparisonRunDetails() {
             className="inline-flex items-center text-slate-600 hover:text-slate-900"
           >
             <ArrowLeft className="w-4 h-4 mr-2" />
-            Back to Mediation Review
+            {`Back to ${reviewLabel}`}
           </Link>
         </div>
 
@@ -408,12 +412,12 @@ export default function DocumentComparisonRunDetails() {
         {evaluationHistory.length > 0 ? (
           <Card className="border border-slate-200 shadow-sm">
             <CardHeader>
-              <CardTitle>AI Mediation History ({evaluationHistory.length})</CardTitle>
+              <CardTitle>{`${reviewLabel} History (${evaluationHistory.length})`}</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="space-y-3">
                 {evaluationHistory.map((evaluation, index) => {
-                  const rowMeta = getEvaluationRowMeta(evaluation);
+                  const rowMeta = getEvaluationRowMeta(evaluation, reviewStage);
                   const rowFailure = extractEvaluationFailureDetails(evaluation?.result?.error);
                   const rowInputMeta = getEvaluationInputMeta(evaluation);
                   const rowProviderMeta = getEvaluationProviderMeta(evaluation);
@@ -636,15 +640,28 @@ export default function DocumentComparisonRunDetails() {
                   <p className="text-4xl font-bold text-slate-900">{sharedWordCount}</p>
                 </div>
               </div>
-              <div>
-                <p className="text-slate-500 mb-2">Overall Confidence</p>
-                <div className="h-3 bg-slate-200 rounded-full overflow-hidden">
-                  <div
-                    className="h-3 bg-slate-500 rounded-full"
-                    style={{ width: `${getConfidencePercent(report, similarityScore)}%` }}
-                  />
+              {isPreSendReview ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div>
+                    <p className="text-slate-500">Review Type</p>
+                    <p className="text-xl font-semibold text-slate-900">{reviewLabel}</p>
+                  </div>
+                  <div>
+                    <p className="text-slate-500">Readiness to Send</p>
+                    <p className="text-xl font-semibold text-slate-900">{reviewStatus.label}</p>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div>
+                  <p className="text-slate-500 mb-2">Overall Confidence</p>
+                  <div className="h-3 bg-slate-200 rounded-full overflow-hidden">
+                    <div
+                      className="h-3 bg-slate-500 rounded-full"
+                      style={{ width: `${getConfidencePercent(report, similarityScore)}%` }}
+                    />
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         ) : null}

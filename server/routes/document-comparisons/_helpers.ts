@@ -438,6 +438,17 @@ const THEME_LABELS: Record<string, string> = {
   risk: 'risk allocation',
 };
 
+const PRE_SEND_THEME_REASON_CLAUSES: Record<string, string> = {
+  scope: 'the current scope boundary is still too broad',
+  timeline: 'timeline and milestone assumptions are still not firm enough',
+  acceptance: 'success criteria and sign-off standards are still too loose',
+  dependency: 'dependency ownership and approval responsibilities are still unclear',
+  commercial: 'commercial terms are not yet tied cleanly to the current assumptions',
+  technical: 'implementation or remediation assumptions still need validation',
+  governance: 'decision and approval mechanics still need clearer definition',
+  risk: 'risk ownership and mitigation treatment are still too open',
+};
+
 function detectThemes(texts: string[]) {
   const haystack = normalizeText(texts.join(' ')).toLowerCase();
   return Object.entries(THEME_KEYWORDS)
@@ -1028,7 +1039,89 @@ function mapReadinessScore(value: unknown) {
   return 38;
 }
 
+function hasFixedPriceSignal(texts: string[]) {
+  const haystack = normalizeText(texts.join(' ')).toLowerCase();
+  return /\b(fixed[- ]price|fixed fee|firm price|lump sum|firm fixed)\b/.test(haystack);
+}
+
+function compactPreSendBullets(values: string[], maxItems = 4) {
+  return uniqueText(values.map((value) => stripMissingWhyMatters(normalizeText(value))).filter(Boolean)).slice(0, maxItems);
+}
+
+function buildPreSendReasonClauses(themeIds: string[]) {
+  return uniqueText(
+    themeIds
+      .map((themeId) => PRE_SEND_THEME_REASON_CLAUSES[themeId])
+      .filter(Boolean),
+  ).slice(0, 3);
+}
+
+function buildPreSendReadinessSummary(params: {
+  readinessStatus: string;
+  summaryThemes: string[];
+  summaryText: string;
+  fixedPriceSignal: boolean;
+}) {
+  const reasonClauses = buildPreSendReasonClauses(params.summaryThemes);
+  const reasonSentence = reasonClauses.length > 0
+    ? `The main issues are ${joinNatural(reasonClauses)}.`
+    : '';
+
+  if (params.readinessStatus === 'ready_to_send') {
+    return uniqueText([
+      'This draft is ready to share as a sender-side brief and already reads as a commercially credible starting point for vendor review.',
+      reasonSentence
+        ? `The remaining watchpoints are limited. ${reasonSentence}`
+        : '',
+      params.summaryText,
+    ]).slice(0, 2);
+  }
+
+  if (params.readinessStatus === 'ready_with_clarifications') {
+    const limitation = params.fixedPriceSignal
+      ? 'but it is not yet strong enough for a reliable fixed-price commitment'
+      : 'but key assumptions still need tightening before it reads as a dependable commercial brief';
+    return uniqueText([
+      `This draft is suitable for early vendor discussion, ${limitation}. ${reasonSentence}`.trim(),
+      params.summaryText,
+    ]).slice(0, 2);
+  }
+
+  const notReadyLead = params.fixedPriceSignal
+    ? 'This draft is not yet ready to send as a reliable fixed-price brief.'
+    : 'This draft is not yet ready to send confidently as a dependable commercial brief.';
+  const normalizedSummary = normalizeText(params.summaryText);
+  const softenedStoredSummary =
+    normalizedSummary && !/\bnot ready to send\b/i.test(normalizedSummary)
+      ? normalizedSummary
+      : '';
+
+  return uniqueText([
+    `${notReadyLead} ${reasonSentence}`.trim(),
+    softenedStoredSummary,
+  ]).slice(0, 2);
+}
+
+function buildPreSendActionBullets(params: {
+  suggestedClarifications: string[];
+  mainGapBullets: string[];
+}) {
+  const suggested = uniqueText(params.suggestedClarifications).slice(0, 4);
+  if (suggested.length > 0) {
+    return suggested;
+  }
+
+  return compactPreSendBullets(
+    params.mainGapBullets.map((item) => {
+      const normalized = stripMissingWhyMatters(item).replace(/[.?!]+$/g, '').trim();
+      return normalized ? `Clarify ${normalized}.` : '';
+    }),
+    4,
+  );
+}
+
 function buildPreSendReviewSections(params: {
+  readiness_status?: unknown;
   send_readiness_summary: unknown;
   missing_information: unknown;
   ambiguous_terms: unknown;
@@ -1060,53 +1153,100 @@ function buildPreSendReviewSections(params: {
   const suggestedClarifications = uniqueText(
     Array.isArray(params.suggested_clarifications) ? params.suggested_clarifications as unknown[] : [],
   );
+  const summaryThemes = detectThemes([
+    sendReadinessSummary,
+    ...missingInformation,
+    ...ambiguousTerms,
+    ...likelyRecipientQuestions,
+    ...likelyPushbackAreas,
+    ...commercialRisks,
+    ...implementationRisks,
+    ...suggestedClarifications,
+  ]);
+  const gapThemes = detectThemes([...missingInformation, ...ambiguousTerms]);
+  const pushbackThemes = detectThemes([...likelyPushbackAreas, ...likelyRecipientQuestions]);
+  const riskThemes = detectThemes([...commercialRisks, ...implementationRisks]);
+  const clarificationThemes = detectThemes(
+    suggestedClarifications.length > 0
+      ? suggestedClarifications
+      : [...missingInformation, ...ambiguousTerms],
+  );
+  const fixedPriceSignal = hasFixedPriceSignal([
+    sendReadinessSummary,
+    ...commercialRisks,
+    ...likelyPushbackAreas,
+    ...suggestedClarifications,
+    ...ambiguousTerms,
+    ...missingInformation,
+  ]);
+  const mainGapBullets = compactPreSendBullets([...missingInformation, ...ambiguousTerms], 4);
+  const pushbackBullets = compactPreSendBullets([...likelyPushbackAreas, ...likelyRecipientQuestions], 4);
+  const riskBullets = compactPreSendBullets([...commercialRisks, ...implementationRisks], 4);
+  const clarificationBullets = buildPreSendActionBullets({
+    suggestedClarifications,
+    mainGapBullets,
+  });
+  const readinessParagraphs = buildPreSendReadinessSummary({
+    readinessStatus: normalizeReadinessStatus(params.readiness_status),
+    summaryThemes,
+    summaryText: sendReadinessSummary,
+    fixedPriceSignal,
+  });
+  const gapsThemeSummary = describeThemes(gapThemes.length > 0 ? gapThemes : summaryThemes, 'scope, delivery, and commercial detail');
+  const pushbackThemeSummary = describeThemes(
+    pushbackThemes.length > 0 ? pushbackThemes : summaryThemes,
+    'scope boundaries, ownership, and commercial assumptions',
+  );
+  const riskThemeSummary = describeThemes(
+    riskThemes.length > 0 ? riskThemes : summaryThemes,
+    'scope, delivery, and commercial risk allocation',
+  );
+  const clarificationThemeSummary = describeThemes(
+    clarificationThemes.length > 0 ? clarificationThemes : summaryThemes,
+    'scope, sign-off, and risk allocation',
+  );
 
   return [
     createPresentationSection({
-      key: 'readiness_to_send',
-      heading: 'Readiness to Send',
-      paragraphs: sendReadinessSummary ? [sendReadinessSummary] : [],
+      key: 'readiness_summary',
+      heading: 'Readiness Summary',
+      paragraphs: readinessParagraphs,
     }),
     createPresentationSection({
-      key: 'missing_information',
-      heading: 'Missing Information',
-      bullets: missingInformation,
-      numbered_bullets: true,
+      key: 'main_gaps_before_sharing',
+      heading: 'Main Gaps Before Sharing',
+      paragraphs: [
+        fixedPriceSignal
+          ? `The main gaps before sharing are concentrated around ${gapsThemeSummary}. Those points matter because the current draft asks for fixed-price or tightly bounded commitment language before the underlying assumptions are fully pinned down.`
+          : `The main gaps before sharing are concentrated around ${gapsThemeSummary}. Those are the points most likely to interrupt a serious vendor review if they remain implicit.`,
+      ],
+      bullets: mainGapBullets,
     }),
     createPresentationSection({
-      key: 'ambiguous_terms',
-      heading: 'Ambiguous Terms',
-      bullets: ambiguousTerms,
-      numbered_bullets: true,
+      key: 'likely_vendor_pushback',
+      heading: 'Likely Vendor Pushback',
+      paragraphs: [
+        fixedPriceSignal
+          ? `A reasonable vendor is most likely to push back where the draft appears to ask for fixed-price certainty before ${pushbackThemeSummary} is fully bounded.`
+          : `A reasonable vendor is most likely to push back where the draft still leaves ${pushbackThemeSummary} open to interpretation.`,
+      ],
+      bullets: pushbackBullets,
     }),
     createPresentationSection({
-      key: 'likely_recipient_questions',
-      heading: 'Likely Recipient Questions',
-      bullets: likelyRecipientQuestions,
-      numbered_bullets: true,
+      key: 'commercial_and_delivery_risks',
+      heading: 'Commercial and Delivery Risks',
+      paragraphs: [
+        `The main commercial and delivery risks sit in ${riskThemeSummary}. As drafted, those issues could still shift cost, timing, remediation, or sign-off exposure later in the process.`,
+      ],
+      bullets: riskBullets,
     }),
     createPresentationSection({
-      key: 'likely_pushback_areas',
-      heading: 'Likely Pushback Areas',
-      bullets: likelyPushbackAreas,
-      numbered_bullets: true,
-    }),
-    createPresentationSection({
-      key: 'commercial_risks',
-      heading: 'Commercial Risks',
-      bullets: commercialRisks,
-      numbered_bullets: true,
-    }),
-    createPresentationSection({
-      key: 'implementation_risks',
-      heading: 'Implementation Risks',
-      bullets: implementationRisks,
-      numbered_bullets: true,
-    }),
-    createPresentationSection({
-      key: 'suggested_clarifications',
-      heading: 'Suggested Clarifications',
-      bullets: suggestedClarifications,
+      key: 'suggested_clarifications_before_sending',
+      heading: 'Suggested Clarifications Before Sending',
+      paragraphs: [
+        `Before sending, tighten the few items that most affect ${clarificationThemeSummary} so the draft reads as an intentional commercial brief rather than an opening outline.`,
+      ],
+      bullets: clarificationBullets,
       numbered_bullets: true,
     }),
   ].filter(Boolean) as MediationPresentationSection[];
@@ -1127,12 +1267,13 @@ function buildPreSendReviewPresentation(params: {
   const sendReadinessSummary = normalizeText(params.send_readiness_summary);
   const sections = buildPreSendReviewSections(params);
   const primaryInsight =
+    sections[0]?.paragraphs?.[0] ||
     sendReadinessSummary ||
     (readinessStatus === 'ready_to_send'
-      ? 'The sender draft appears ready to share, but a few clarifications would still strengthen it.'
+      ? 'This draft is ready to share as a sender-side brief.'
       : readinessStatus === 'ready_with_clarifications'
-        ? 'The sender draft is workable, but the remaining gaps should be tightened before sharing.'
-        : 'The sender draft still needs clarification before it is ready to share confidently.');
+        ? 'This draft is suitable for early vendor discussion, but key assumptions still need tightening.'
+        : 'This draft is not yet ready to send confidently.');
 
   return {
     report_title: PRE_SEND_REVIEW_TITLE,
@@ -1222,6 +1363,7 @@ export function buildStoredV2Evaluation(
         next_actions: suggestedClarifications,
       },
       sections: buildPreSendReviewSections({
+        readiness_status: readinessStatus,
         send_readiness_summary: sendReadinessSummary,
         missing_information: missingInformation,
         ambiguous_terms: ambiguousTerms,

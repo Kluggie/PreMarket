@@ -286,9 +286,16 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       : [];
     const dynamicPresentationSections = getPresentationSections(report);
     const appendixOpenQuestions = getAppendixOpenQuestions(report);
-    const likelyRecipientQuestions = toStringArray(report.likely_recipient_questions);
+    const ambiguousTerms = toStringArray(report.ambiguous_terms);
     const suggestedClarifications = toStringArray(report.suggested_clarifications);
     const missingInformation = toStringArray(report.missing_information);
+    const preSendTightenCount = Array.from(
+      new Set(
+        [...missingInformation, ...ambiguousTerms, ...suggestedClarifications]
+          .map((entry) => asText(entry))
+          .filter(Boolean),
+      ),
+    ).length;
     const readinessLabel =
       asText(report.readiness_label) ||
       asText(report.readiness_status).replace(/_/g, ' ').trim() ||
@@ -366,18 +373,12 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         comparisonId,
         metrics: isPreSendReview
           ? [
-              { label: 'Readiness', value: readinessLabel },
+              { label: 'Readiness to Send', value: readinessLabel },
+              { label: 'Review Type', value: PRE_SEND_REVIEW_TITLE },
+              { label: 'Scope', value: 'Sender-side only' },
               {
-                label: 'Missing Information',
-                value: `${missingInformation.length} item${missingInformation.length === 1 ? '' : 's'}`,
-              },
-              {
-                label: 'Likely Recipient Questions',
-                value: `${likelyRecipientQuestions.length} item${likelyRecipientQuestions.length === 1 ? '' : 's'}`,
-              },
-              {
-                label: 'Suggested Clarifications',
-                value: `${suggestedClarifications.length} item${suggestedClarifications.length === 1 ? '' : 's'}`,
+                label: 'Points to Tighten',
+                value: `${preSendTightenCount} item${preSendTightenCount === 1 ? '' : 's'}`,
               },
             ]
           : [
@@ -671,16 +672,16 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
           paragraphs: getPreSendScopeSection().paragraphs,
         });
         reportSections.push({
-          heading: 'Readiness to Send',
+          heading: 'Readiness Summary',
           level: 1,
           paragraphs: [
             asText(report.send_readiness_summary) || asText(evaluationResult.summary) || fallbackSummaryText,
-            `Readiness: ${readinessLabel}`,
+            `Review type: ${PRE_SEND_REVIEW_TITLE}. Scope: sender-side only. Readiness to Send: ${readinessLabel}.`,
           ].filter(Boolean),
         });
         if (suggestedClarifications.length > 0) {
           reportSections.push({
-            heading: 'Suggested Clarifications',
+            heading: 'Suggested Clarifications Before Sending',
             level: 1,
             bullets: suggestedClarifications,
           });

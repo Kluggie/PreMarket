@@ -202,6 +202,68 @@ test('evaluateWithVertexV2 returns pre-send review shape when analysisStage is p
   }
 });
 
+test('evaluateWithVertexV2 fallback keeps plausible pre-send drafts at ready_with_clarifications when the record is incomplete but still usable', async () => {
+  const cleanup = setVertexV2MockSequence([
+    {
+      response: {
+        model: 'gemini-2.5-flash-lite',
+        text: JSON.stringify(validFactSheetPayload({
+          constraints: ['Fixed-price pilot requested', 'Must use existing cloud infra'],
+          success_criteria_kpis: [],
+          risks: [],
+          open_questions: ['Who owns documentation remediation before implementation starts?'],
+          missing_info: [
+            'What measurable acceptance criteria define completion?',
+            'What pricing model applies after the pilot?',
+          ],
+          source_coverage: {
+            has_scope: true,
+            has_timeline: true,
+            has_kpis: false,
+            has_constraints: true,
+            has_risks: false,
+          },
+        })),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+    {
+      response: {
+        model: 'gemini-2.5-pro',
+        text: 'not valid json',
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+    {
+      response: {
+        model: 'gemini-2.5-pro',
+        text: 'still not valid json',
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+  ]);
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Shared pilot draft includes a proposed rollout window, existing platform notes, and a request for a fixed-price pilot.',
+      confidentialText: 'Internal notes say documentation quality is uneven and remediation ownership is still unresolved.',
+      analysisStage: PRE_SEND_REVIEW_STAGE,
+      requestId: 'test_pre_send_fallback_ready_with_clarifications',
+    });
+
+    assert.equal(outcome.ok, true);
+    assert.equal(outcome.data.analysis_stage, PRE_SEND_REVIEW_STAGE);
+    assert.equal(outcome.data.readiness_status, 'ready_with_clarifications');
+    assert.match(outcome.data.send_readiness_summary, /suitable for early vendor discussion/i);
+    assert.match(outcome.data.send_readiness_summary, /fixed-price/i);
+  } finally {
+    cleanup();
+  }
+});
+
 test('evaluateWithVertexV2 rejects omitted analysisStage instead of defaulting to mediation', async () => {
   await assert.rejects(
     () =>

@@ -36,13 +36,17 @@ test('Review surfaces stay stage-aware across proposer-only and bilateral flows'
   assert.match(files.sharedReport, /Step 3: \$\{MEDIATION_REVIEW_LABEL\}/);
   assert.match(files.comparisonPdfRoute, /MEDIATION_REVIEW_TITLE/);
   assert.match(files.comparisonPdfRoute, /PRE_SEND_REVIEW_TITLE/);
-  assert.match(files.comparisonPdfRoute, /Likely Recipient Questions/);
-  assert.match(files.comparisonPdfRoute, /Suggested Clarifications/);
+  assert.match(files.comparisonPdfRoute, /Readiness Summary/);
+  assert.match(files.comparisonPdfRoute, /Suggested Clarifications Before Sending/);
+  assert.match(files.comparisonPdfRoute, /Review Type/);
+  assert.match(files.comparisonPdfRoute, /Sender-side only/);
   assert.match(files.comparisonPdfRoute, /Open Questions/);
   assert.match(files.comparisonPdfRoute, /Missing or Redacted Information/);
   assert.match(files.sharedPdfRoute, /PRE_SEND_REVIEW_TITLE/);
-  assert.match(files.sharedPdfRoute, /Likely Recipient Questions/);
-  assert.match(files.sharedPdfRoute, /Suggested Clarifications/);
+  assert.match(files.sharedPdfRoute, /Readiness Summary/);
+  assert.match(files.sharedPdfRoute, /Suggested Clarifications Before Sending/);
+  assert.match(files.sharedPdfRoute, /Review Type/);
+  assert.match(files.sharedPdfRoute, /Sender-side only/);
   assert.match(files.sharedPdfRoute, /Open Questions/);
   assert.match(files.sharedPdfRoute, /Missing or Redacted Information/);
 

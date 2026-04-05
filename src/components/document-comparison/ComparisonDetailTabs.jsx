@@ -128,12 +128,17 @@ export function ComparisonAiReportTab({
   const leadPresentationSection = presentationSections[0] || null;
   const bodyPresentationSections = leadPresentationSection ? presentationSections.slice(1) : [];
   const openQuestionsCount = Array.isArray(safeReport.missing) ? safeReport.missing.length : 0;
-  const likelyRecipientQuestionCount = Array.isArray(safeReport.likely_recipient_questions)
-    ? safeReport.likely_recipient_questions.length
-    : 0;
-  const suggestedClarificationsCount = Array.isArray(safeReport.suggested_clarifications)
-    ? safeReport.suggested_clarifications.length
-    : 0;
+  const preSendTightenCount = Array.from(
+    new Set(
+      [
+        ...(Array.isArray(safeReport.missing_information) ? safeReport.missing_information : []),
+        ...(Array.isArray(safeReport.ambiguous_terms) ? safeReport.ambiguous_terms : []),
+        ...(Array.isArray(safeReport.suggested_clarifications) ? safeReport.suggested_clarifications : []),
+      ]
+        .map((entry) => asText(entry))
+        .filter(Boolean),
+    ),
+  ).length;
   const appendixOpenQuestions = getAppendixOpenQuestions(safeReport);
   const decisionExplanation = asText(decisionStatus.explanation);
   const decisionToneClass =
@@ -228,23 +233,21 @@ export function ComparisonAiReportTab({
             {isPreSendReview ? (
               <>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Readiness</span>
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Readiness to Send</span>
                   <Badge className={decisionToneClass}>{decisionStatus.label}</Badge>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                    Likely Recipient Questions
-                  </span>
-                  <Badge variant="outline">
-                    {likelyRecipientQuestionCount} item{likelyRecipientQuestionCount !== 1 ? 's' : ''}
-                  </Badge>
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Review Type</span>
+                  <Badge variant="outline">Pre-send Review</Badge>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                    Suggested Clarifications
-                  </span>
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Scope</span>
+                  <Badge variant="outline">Sender-side only</Badge>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Points to Tighten</span>
                   <Badge variant="outline">
-                    {suggestedClarificationsCount} item{suggestedClarificationsCount !== 1 ? 's' : ''}
+                    {preSendTightenCount} item{preSendTightenCount !== 1 ? 's' : ''}
                   </Badge>
                 </div>
               </>

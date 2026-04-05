@@ -193,6 +193,59 @@ test('buildStoredV2Evaluation: stores pre-send reviews without mediation fields'
   assert.equal('recommendation' in stored.report, false);
 });
 
+test('buildStoredV2Evaluation: synthesizes proposer-only sections into a memo-style pre-send report', () => {
+  const stored = buildStoredV2Evaluation({
+    ok: true,
+    data: {
+      analysis_stage: 'pre_send_review',
+      readiness_status: 'ready_with_clarifications',
+      send_readiness_summary:
+        'The sender draft is workable, but a vendor would still need clearer scope, sign-off, and pricing assumptions before treating it as a dependable brief.',
+      missing_information: [
+        'What is included in the initial fixed-price pilot scope?',
+        'What measurable acceptance criteria define completion?',
+      ],
+      ambiguous_terms: [
+        'Phase-two pricing remains implied rather than stated.',
+        'Documentation remediation responsibility is still described loosely.',
+      ],
+      likely_recipient_questions: [
+        'Who owns data or documentation cleanup before implementation starts?',
+      ],
+      likely_pushback_areas: [
+        'A vendor may resist fixed-price responsibility while scope and remediation remain open.',
+      ],
+      commercial_risks: [
+        'Pricing posture assumes fixed-price certainty before the change process is defined.',
+      ],
+      implementation_risks: [
+        'Documentation quality and remediation ownership remain unclear.',
+      ],
+      suggested_clarifications: [
+        'Define the initial pilot scope, measurable acceptance criteria, and the change process before sending.',
+      ],
+    },
+    model: 'gemini-2.5-pro',
+    generation_model: 'gemini-2.5-pro',
+  });
+
+  const headings = stored.report.presentation_sections.map((section) => section.heading);
+  assert.deepEqual(headings, [
+    'Readiness Summary',
+    'Main Gaps Before Sharing',
+    'Likely Vendor Pushback',
+    'Commercial and Delivery Risks',
+    'Suggested Clarifications Before Sending',
+  ]);
+  assert.match(stored.report.primary_insight, /suitable for early vendor discussion/i);
+  assert.match(stored.report.primary_insight, /fixed-price/i);
+  assert.doesNotMatch(headings.join(' | '), /Missing Information|Ambiguous Terms|Likely Recipient Questions|Likely Pushback Areas|Commercial Risks|Implementation Risks/);
+  assert.equal(
+    stored.report.presentation_sections.every((section) => Array.isArray(section.paragraphs) && section.paragraphs.length > 0),
+    true,
+  );
+});
+
 test('decision status helpers: prefer canonical Decision Readiness status over fit-level fallback', () => {
   const report = {
     fit_level: 'high',
@@ -312,6 +365,26 @@ test('buildMediationReviewPresentation: selects strong_alignment deterministical
   assert.equal(Array.isArray(first.presentation_sections), true);
   assert.equal(first.presentation_sections[0].heading, 'Overall Assessment');
   assert.deepEqual(first, second);
+});
+
+test('buildMediationReviewPresentation: keeps bilateral recommendation framing and does not reuse pre-send memo headings', () => {
+  const presentation = buildMediationReviewPresentation({
+    fit_level: 'medium',
+    confidence_0_1: 0.64,
+    why: [
+      'Executive Summary: The proposal is workable if the remaining commercial guardrails are clarified.',
+      'Decision Assessment: Risk Summary: The main issues remain around change control and acceptance ownership.\n\nKey Strengths: The phased structure and rollout intent are already visible.',
+      'Decision Readiness: Decision status: Proceed with conditions. A viable path exists if scope and approval mechanics are tightened.',
+      'Recommended Path: Recommended path: resolve the remaining approval and change-control issues before final commitment.',
+    ],
+    missing: ['Who owns change approval and final sign-off? — determines whether the commitment path is governable.'],
+    redactions: [],
+  });
+
+  const headings = presentation.presentation_sections.map((section) => section.heading);
+  assert.equal(headings.includes('Recommendation'), true);
+  assert.equal(headings.includes('Readiness Summary'), false);
+  assert.equal(headings.includes('Suggested Clarifications Before Sending'), false);
 });
 
 test('buildMediationReviewPresentation: routes low-fit and missing-heavy cases to different archetypes', () => {
