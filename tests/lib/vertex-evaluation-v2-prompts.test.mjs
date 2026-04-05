@@ -1,0 +1,91 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  buildEvalPromptFromFactSheet,
+  buildPreSendPromptFromFactSheet,
+  selectReportStyle,
+} from '../../server/_lib/vertex-evaluation-v2-prompts.ts';
+
+function factSheet(overrides = {}) {
+  return {
+    project_goal: 'Deliver a phased implementation with milestone-based acceptance.',
+    scope_deliverables: ['Implementation plan', 'Milestone rollout', 'Acceptance checklist'],
+    timeline: {
+      start: '2026-Q3',
+      duration: '12 weeks',
+      milestones: ['Kickoff', 'Pilot sign-off', 'Full rollout'],
+    },
+    constraints: ['Budget approval required', 'Hard launch window applies'],
+    success_criteria_kpis: ['Pilot approved by both teams', 'Launch checklist completed'],
+    vendor_preferences: ['Fixed price preferred'],
+    assumptions: ['Access to stakeholder approvals remains available'],
+    risks: [{ risk: 'Approval bottleneck', impact: 'med', likelihood: 'med' }],
+    open_questions: [],
+    missing_info: [],
+    source_coverage: {
+      has_scope: true,
+      has_timeline: true,
+      has_kpis: true,
+      has_constraints: true,
+      has_risks: true,
+    },
+    ...overrides,
+  };
+}
+
+function chunks() {
+  return {
+    sharedChunks: [{ evidence_id: 'shared:line_001', text: 'Shared delivery terms.' }],
+    confidentialChunks: [{ evidence_id: 'conf:line_001', text: 'Internal pricing flexibility.' }],
+  };
+}
+
+test('pre-send prompt stays explicitly unilateral and blocks bilateral claims', () => {
+  const prompt = buildPreSendPromptFromFactSheet({
+    factSheet: factSheet(),
+    reportStyle: selectReportStyle(42),
+  });
+
+  assert.match(prompt, /unilateral draft-readiness review/i);
+  assert.match(prompt, /do NOT know the recipient’s actual position/i);
+  assert.match(prompt, /must NOT assess bilateral compatibility/i);
+  assert.match(prompt, /analysis_stage\": \"pre_send_review\"/i);
+});
+
+test('mediation prompt keeps the stable bilateral structure and required headings', () => {
+  const prompt = buildEvalPromptFromFactSheet({
+    factSheet: factSheet(),
+    chunks: chunks(),
+    reportStyle: selectReportStyle(91),
+  });
+
+  assert.match(prompt, /shared neutral artifact/i);
+  assert.match(prompt, /Decision Assessment/i);
+  assert.match(prompt, /Negotiation Insights/i);
+  assert.match(prompt, /Leverage Signals/i);
+  assert.match(prompt, /Potential Deal Structures/i);
+  assert.match(prompt, /Decision Readiness/i);
+  assert.match(prompt, /Recommended Path/i);
+  assert.match(prompt, /analysis_stage must be "mediation_review"/i);
+});
+
+test('later bilateral mediation prompt becomes progress-aware without changing report family', () => {
+  const prompt = buildEvalPromptFromFactSheet({
+    factSheet: factSheet(),
+    chunks: chunks(),
+    reportStyle: selectReportStyle(123),
+    mediationRoundContext: {
+      current_bilateral_round_number: 3,
+      prior_bilateral_round_id: 'eval_prev_2',
+      prior_bilateral_round_number: 2,
+      prior_primary_insight: 'Liability and launch ownership remained open last round.',
+      prior_missing: ['Who owns launch approval?'],
+      prior_bridgeability_notes: ['Tie launch authority to milestone sign-off.'],
+    },
+  });
+
+  assert.match(prompt, /progress across rounds/i);
+  assert.match(prompt, /same overall bilateral report structure/i);
+  assert.match(prompt, /prior_bilateral_context/i);
+  assert.match(prompt, /movement_direction/i);
+});
