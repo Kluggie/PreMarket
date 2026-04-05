@@ -54,3 +54,10 @@ test('proposals page uses one canonical primary status chip and simplified filte
   assert.doesNotMatch(threadContextUi, /Started by/);
   assert.doesNotMatch(threadContextUi, /Last update from/);
 });
+
+test('document comparison draft saves route title refreshes through the shared proposal-thread invalidation helper', () => {
+  const comparisonCreatePage = readRepoFile('src/pages/DocumentComparisonCreate.jsx');
+
+  assert.match(comparisonCreatePage, /invalidateProposalThreadQueries/);
+  assert.doesNotMatch(comparisonCreatePage, /queryClient\.invalidateQueries\(\{ queryKey: \['proposals'\] \}\)/);
+});

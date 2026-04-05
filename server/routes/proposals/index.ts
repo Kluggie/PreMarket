@@ -37,6 +37,12 @@ import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 100;
 const EXCHANGE_EVENT_TYPES = ['proposal.sent', 'proposal.received', 'proposal.send_back'];
+const PROPOSAL_TITLE_PLACEHOLDERS = new Set([
+  '',
+  'untitled',
+  'untitled proposal',
+  'untitled opportunity',
+]);
 
 function normalizeEmail(value: unknown) {
   return typeof value === 'string' ? value.trim().toLowerCase() : '';
@@ -48,6 +54,23 @@ function asText(value: unknown) {
 
 function asLower(value: unknown) {
   return asText(value).toLowerCase();
+}
+
+function isPlaceholderProposalTitle(value: unknown) {
+  return PROPOSAL_TITLE_PLACEHOLDERS.has(asLower(value));
+}
+
+function resolveProposalRowTitle(proposalTitle: unknown, comparisonTitle: unknown) {
+  const normalizedProposalTitle = asText(proposalTitle);
+  const normalizedComparisonTitle = asText(comparisonTitle);
+
+  if (!isPlaceholderProposalTitle(normalizedProposalTitle)) {
+    return normalizedProposalTitle;
+  }
+  if (!isPlaceholderProposalTitle(normalizedComparisonTitle)) {
+    return normalizedComparisonTitle;
+  }
+  return normalizedProposalTitle || normalizedComparisonTitle;
 }
 
 function clampResumeStep(value: unknown, fallback = 1) {
@@ -165,6 +188,7 @@ function mapProposalRow(
   sharedReportLink = null,
   resumeStepOverride: unknown = null,
   exchangeCountOverride: unknown = null,
+  comparisonTitleOverride: unknown = null,
 ) {
   const effectiveStatus = threadState.outcome.final_status || proposal.status;
   const sharedReportToken = String(sharedReportLink?.token || '').trim();
@@ -183,7 +207,7 @@ function mapProposalRow(
 
   const base = {
     id: proposal.id,
-    title: proposal.title,
+    title: resolveProposalRowTitle(proposal.title, comparisonTitleOverride),
     status: effectiveStatus,
     status_reason: proposal.statusReason || null,
     directional_status: threadState.directionalStatus,
@@ -546,6 +570,7 @@ export default async function handler(req: any, res: any) {
           ? db
               .select({
                 id: schema.documentComparisons.id,
+                title: schema.documentComparisons.title,
                 status: schema.documentComparisons.status,
                 draftStep: schema.documentComparisons.draftStep,
                 docAText: schema.documentComparisons.docAText,
@@ -662,6 +687,7 @@ export default async function handler(req: any, res: any) {
             sharedReportByProposalId.get(String(row.id || '')) || null,
             resumeStepByProposalId.get(String(row.id || '')) || null,
             exchangeCountByProposalId.get(String(row.id || '')) ?? null,
+            documentComparisonById.get(asText(row.documentComparisonId))?.title || null,
           ),
         ),
         page: {

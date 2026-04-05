@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { eq } from 'drizzle-orm';
 import apiHandler from '../../api/index.ts';
+import { getDb, schema } from '../../server/_lib/db/client.js';
 import { ensureTestEnv, makeSessionCookie } from '../helpers/auth.mjs';
 import { ensureMigrated, hasDatabaseUrl, resetTables } from '../helpers/db.mjs';
 import { createMockReq, createMockRes } from '../helpers/httpMock.mjs';
@@ -238,6 +240,113 @@ if (!hasDatabaseUrl()) {
     assert.equal(refreshRes.statusCode, 200);
     assert.equal(refreshRes.jsonBody().comparison.doc_a_text, 'Latest confidential clause text.');
     assert.equal(refreshRes.jsonBody().comparison.doc_b_text, 'Latest shared clause text.');
+  });
+
+  test('Opportunities list prefers the saved comparison title over a stale Untitled placeholder and keeps row metadata', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const cookie = authCookie('doc_title_sync_owner', 'title-sync-owner@example.com');
+
+    const createReq = createApiRequest({
+      method: 'POST',
+      path: 'document-comparisons',
+      cookie,
+      body: {
+        title: '',
+        createProposal: true,
+        draft_step: 1,
+        recipient_email: 'vendor@example.com',
+      },
+    });
+    const createRes = createMockRes();
+    await apiHandler(createReq, createRes);
+
+    assert.equal(createRes.statusCode, 201);
+    const comparison = createRes.jsonBody().comparison;
+    const comparisonId = String(comparison?.id || '');
+    const proposalId = String(comparison?.proposal_id || '');
+    assert.equal(Boolean(comparisonId), true);
+    assert.equal(Boolean(proposalId), true);
+    assert.equal(comparison.title, 'Untitled');
+
+    const patchReq = createApiRequest({
+      method: 'PATCH',
+      path: `document-comparisons/${comparisonId}`,
+      cookie,
+      query: { id: comparisonId },
+      body: {
+        title: 'AI Customer Support Automation Proposal',
+        draft_step: 2,
+        recipient_email: 'vendor@example.com',
+      },
+    });
+    const patchRes = createMockRes();
+    await apiHandler(patchReq, patchRes);
+    assert.equal(patchRes.statusCode, 200);
+    assert.equal(patchRes.jsonBody().comparison.title, 'AI Customer Support Automation Proposal');
+
+    const db = getDb();
+    await db
+      .update(schema.proposals)
+      .set({ title: 'Untitled' })
+      .where(eq(schema.proposals.id, proposalId));
+
+    const listReq = createApiRequest({
+      method: 'GET',
+      path: 'proposals',
+      cookie,
+    });
+    const listRes = createMockRes();
+    await apiHandler(listReq, listRes);
+
+    assert.equal(listRes.statusCode, 200);
+    const listRow = listRes.jsonBody().proposals.find((entry) => entry.id === proposalId);
+    assert.ok(listRow, 'expected linked proposal row in /api/proposals');
+    assert.equal(listRow.title, 'AI Customer Support Automation Proposal');
+    assert.notEqual(listRow.title, 'Untitled');
+    assert.equal(listRow.document_comparison_id, comparisonId);
+    assert.equal(listRow.draft_step, 2);
+    assert.equal(listRow.recipient_email, 'vendor@example.com');
+  });
+
+  test('Opportunities list keeps Untitled fallback when the saved title is still blank', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const cookie = authCookie('doc_title_blank_owner', 'title-blank-owner@example.com');
+
+    const createReq = createApiRequest({
+      method: 'POST',
+      path: 'document-comparisons',
+      cookie,
+      body: {
+        title: '',
+        createProposal: true,
+      },
+    });
+    const createRes = createMockRes();
+    await apiHandler(createReq, createRes);
+
+    assert.equal(createRes.statusCode, 201);
+    const comparison = createRes.jsonBody().comparison;
+    const proposalId = String(comparison?.proposal_id || '');
+    assert.equal(Boolean(proposalId), true);
+    assert.equal(comparison.title, 'Untitled');
+
+    const listReq = createApiRequest({
+      method: 'GET',
+      path: 'proposals',
+      cookie,
+    });
+    const listRes = createMockRes();
+    await apiHandler(listReq, listRes);
+
+    assert.equal(listRes.statusCode, 200);
+    const listRow = listRes.jsonBody().proposals.find((entry) => entry.id === proposalId);
+    assert.ok(listRow, 'expected linked proposal row in /api/proposals');
+    assert.equal(listRow.title, 'Untitled');
+    assert.equal(listRow.document_comparison_id, comparison.id);
   });
 
   test('Template list/use routes return auth errors and success states without 500s', async () => {

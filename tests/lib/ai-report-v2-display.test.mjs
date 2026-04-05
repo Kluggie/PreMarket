@@ -244,6 +244,62 @@ test('buildStoredV2Evaluation: synthesizes proposer-only sections into a memo-st
     stored.report.presentation_sections.every((section) => Array.isArray(section.paragraphs) && section.paragraphs.length > 0),
     true,
   );
+  assert.equal(
+    stored.report.presentation_sections
+      .filter((section) => Array.isArray(section.bullets))
+      .every((section) => section.bullets.length <= 3),
+    true,
+  );
+});
+
+test('buildStoredV2Evaluation: keeps pre-send readiness summary concise and avoids raw "before sending" action copy', () => {
+  const stored = buildStoredV2Evaluation({
+    ok: true,
+    data: {
+      analysis_stage: 'pre_send_review',
+      readiness_status: 'ready_with_clarifications',
+      send_readiness_summary:
+        'This draft is suitable for early vendor discussion, but it is not yet strong enough for a reliable fixed-price pilot proposal because scope, pricing, and acceptance mechanics still need tightening.',
+      missing_information: [
+        'What is included in the initial fixed-price pilot scope?',
+        'What measurable acceptance criteria define completion?',
+      ],
+      ambiguous_terms: [
+        'Phase-two pricing remains implied rather than stated.',
+        'Documentation remediation responsibility is still described loosely.',
+      ],
+      likely_recipient_questions: [
+        'Who owns data or documentation cleanup before implementation starts?',
+      ],
+      likely_pushback_areas: [
+        'A vendor may resist fixed-price responsibility while scope and remediation remain open.',
+      ],
+      commercial_risks: [
+        'Pricing posture assumes fixed-price certainty before the change process is defined.',
+      ],
+      implementation_risks: [
+        'Documentation quality and remediation ownership remain unclear.',
+      ],
+      suggested_clarifications: [
+        'Define the initial pilot scope, measurable acceptance criteria, and the change process before sending.',
+      ],
+    },
+    model: 'gemini-2.5-pro',
+    generation_model: 'gemini-2.5-pro',
+  });
+
+  const readinessSection = stored.report.presentation_sections.find((section) => section.heading === 'Readiness Summary');
+  const clarificationSection = stored.report.presentation_sections.find((section) => section.heading === 'Suggested Clarifications Before Sending');
+
+  assert.equal(readinessSection?.paragraphs?.length, 1);
+  assert.match(readinessSection?.paragraphs?.[0] || '', /suitable for early vendor discussion/i);
+  assert.match(readinessSection?.paragraphs?.[0] || '', /reliable fixed-price pilot commitment/i);
+  assert.match(clarificationSection?.paragraphs?.[0] || '', /Before requesting a reliable fixed-price pilot proposal/i);
+  assert.doesNotMatch(clarificationSection?.paragraphs?.[0] || '', /\bBefore sending\b/i);
+  assert.equal(
+    (clarificationSection?.bullets || []).every((bullet) => !/\bBefore sending\b/i.test(bullet)),
+    true,
+  );
 });
 
 test('decision status helpers: prefer canonical Decision Readiness status over fit-level fallback', () => {

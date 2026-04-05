@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { createPageUrl } from '@/utils';
 import { documentComparisonsClient } from '@/api/documentComparisonsClient';
 import { proposalsClient } from '@/api/proposalsClient';
+import { invalidateProposalThreadQueries } from '@/lib/proposalThreadCache';
 import { useAuth } from '@/lib/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -1716,7 +1717,10 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
         queryClient.setQueryData(['document-comparison-detail', persistedComparisonId], cachedDraftPayload);
       }
 
-      queryClient.invalidateQueries({ queryKey: ['proposals'] });
+      await invalidateProposalThreadQueries(queryClient, {
+        proposalId: persistedProposalId || null,
+        documentComparisonId: persistedComparisonId,
+      });
       // Mark the draft query stale so the NEXT time a subscriber mounts it refreshes,
       // but do NOT immediately refetch while the user is actively editing. An
       // immediate refetch would re-run the hydration effect which can stomp in-progress

@@ -1044,7 +1044,51 @@ function hasFixedPriceSignal(texts: string[]) {
   return /\b(fixed[- ]price|fixed fee|firm price|lump sum|firm fixed)\b/.test(haystack);
 }
 
-function compactPreSendBullets(values: string[], maxItems = 4) {
+function hasPilotSignal(texts: string[]) {
+  const haystack = normalizeText(texts.join(' ')).toLowerCase();
+  return /\bpilot\b/.test(haystack);
+}
+
+function capitalizeFirstLetter(value: string) {
+  const text = normalizeText(value);
+  if (!text) return '';
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function getPreSendCommitmentThreshold(params: {
+  fixedPriceSignal: boolean;
+  pilotSignal: boolean;
+  forInlineClause?: boolean;
+}) {
+  const prefix = params.forInlineClause ? '' : 'Before ';
+  if (params.fixedPriceSignal && params.pilotSignal) {
+    return `${prefix}requesting a reliable fixed-price pilot proposal`;
+  }
+  if (params.fixedPriceSignal) {
+    return `${prefix}asking a vendor to lock scope or commercial terms`;
+  }
+  return `${prefix}treating the brief as commitment-ready`;
+}
+
+function refinePreSendActionText(value: string, params: {
+  fixedPriceSignal: boolean;
+  pilotSignal: boolean;
+}) {
+  const text = normalizeText(value);
+  if (!text) return '';
+  const replacement = getPreSendCommitmentThreshold({
+    fixedPriceSignal: params.fixedPriceSignal,
+    pilotSignal: params.pilotSignal,
+    forInlineClause: true,
+  });
+  return text.replace(/\bbefore sending\b/gi, (match) =>
+    match.charAt(0) === match.charAt(0).toUpperCase()
+      ? capitalizeFirstLetter(replacement)
+      : replacement,
+  );
+}
+
+function compactPreSendBullets(values: string[], maxItems = 3) {
   return uniqueText(values.map((value) => stripMissingWhyMatters(normalizeText(value))).filter(Boolean)).slice(0, maxItems);
 }
 
@@ -1061,52 +1105,55 @@ function buildPreSendReadinessSummary(params: {
   summaryThemes: string[];
   summaryText: string;
   fixedPriceSignal: boolean;
+  pilotSignal: boolean;
 }) {
   const reasonClauses = buildPreSendReasonClauses(params.summaryThemes);
-  const reasonSentence = reasonClauses.length > 0
-    ? `The main issues are ${joinNatural(reasonClauses)}.`
-    : '';
+  const reasonInline = reasonClauses.length > 0 ? ` because ${joinNatural(reasonClauses)}` : '';
+  const fallbackSummary = normalizeText(params.summaryText);
+  const fixedPriceCommitmentLabel = params.pilotSignal
+    ? 'a reliable fixed-price pilot commitment'
+    : 'a reliable fixed-price commitment';
 
   if (params.readinessStatus === 'ready_to_send') {
-    return uniqueText([
-      'This draft is ready to share as a sender-side brief and already reads as a commercially credible starting point for vendor review.',
-      reasonSentence
-        ? `The remaining watchpoints are limited. ${reasonSentence}`
-        : '',
-      params.summaryText,
-    ]).slice(0, 2);
+    if (reasonClauses.length > 0) {
+      return [
+        `This draft is ready to share as a sender-side brief and already reads as a commercially credible starting point, with only limited remaining watchpoints around ${joinNatural(reasonClauses)}.`,
+      ];
+    }
+    return fallbackSummary
+      ? [fallbackSummary]
+      : ['This draft is ready to share as a sender-side brief and already reads as a commercially credible starting point.'];
   }
 
   if (params.readinessStatus === 'ready_with_clarifications') {
     const limitation = params.fixedPriceSignal
-      ? 'but it is not yet strong enough for a reliable fixed-price commitment'
-      : 'but key assumptions still need tightening before it reads as a dependable commercial brief';
-    return uniqueText([
-      `This draft is suitable for early vendor discussion, ${limitation}. ${reasonSentence}`.trim(),
-      params.summaryText,
-    ]).slice(0, 2);
+      ? `but it is not yet strong enough for ${fixedPriceCommitmentLabel}`
+      : 'but it is not yet strong enough to ask a vendor to lock scope or commercial terms';
+    return [
+      `This draft is suitable for early vendor discussion, ${limitation}${reasonInline}.`,
+    ];
   }
 
   const notReadyLead = params.fixedPriceSignal
-    ? 'This draft is not yet ready to send as a reliable fixed-price brief.'
-    : 'This draft is not yet ready to send confidently as a dependable commercial brief.';
-  const normalizedSummary = normalizeText(params.summaryText);
-  const softenedStoredSummary =
-    normalizedSummary && !/\bnot ready to send\b/i.test(normalizedSummary)
-      ? normalizedSummary
-      : '';
-
-  return uniqueText([
-    `${notReadyLead} ${reasonSentence}`.trim(),
-    softenedStoredSummary,
-  ]).slice(0, 2);
+    ? `This draft may still help an early scoping discussion, but it is not yet ready to share as ${fixedPriceCommitmentLabel}`
+    : 'This draft may still help frame an early scoping discussion, but it is not yet ready to share as a dependable commercial brief';
+  if (reasonClauses.length > 0) {
+    return [`${notReadyLead}${reasonInline}.`];
+  }
+  return fallbackSummary
+    ? [fallbackSummary]
+    : [`${notReadyLead}.`];
 }
 
 function buildPreSendActionBullets(params: {
   suggestedClarifications: string[];
   mainGapBullets: string[];
+  fixedPriceSignal: boolean;
+  pilotSignal: boolean;
 }) {
-  const suggested = uniqueText(params.suggestedClarifications).slice(0, 4);
+  const suggested = uniqueText(
+    params.suggestedClarifications.map((item) => refinePreSendActionText(item, params)),
+  ).slice(0, 3);
   if (suggested.length > 0) {
     return suggested;
   }
@@ -1114,9 +1161,9 @@ function buildPreSendActionBullets(params: {
   return compactPreSendBullets(
     params.mainGapBullets.map((item) => {
       const normalized = stripMissingWhyMatters(item).replace(/[.?!]+$/g, '').trim();
-      return normalized ? `Clarify ${normalized}.` : '';
+      return normalized ? refinePreSendActionText(`Clarify ${normalized}.`, params) : '';
     }),
-    4,
+    3,
   );
 }
 
@@ -1179,18 +1226,28 @@ function buildPreSendReviewSections(params: {
     ...ambiguousTerms,
     ...missingInformation,
   ]);
-  const mainGapBullets = compactPreSendBullets([...missingInformation, ...ambiguousTerms], 4);
-  const pushbackBullets = compactPreSendBullets([...likelyPushbackAreas, ...likelyRecipientQuestions], 4);
-  const riskBullets = compactPreSendBullets([...commercialRisks, ...implementationRisks], 4);
+  const pilotSignal = hasPilotSignal([
+    sendReadinessSummary,
+    ...missingInformation,
+    ...likelyPushbackAreas,
+    ...commercialRisks,
+    ...suggestedClarifications,
+  ]);
+  const mainGapBullets = compactPreSendBullets([...missingInformation, ...ambiguousTerms], 3);
+  const pushbackBullets = compactPreSendBullets([...likelyPushbackAreas, ...likelyRecipientQuestions], 3);
+  const riskBullets = compactPreSendBullets([...commercialRisks, ...implementationRisks], 3);
   const clarificationBullets = buildPreSendActionBullets({
     suggestedClarifications,
     mainGapBullets,
+    fixedPriceSignal,
+    pilotSignal,
   });
   const readinessParagraphs = buildPreSendReadinessSummary({
     readinessStatus: normalizeReadinessStatus(params.readiness_status),
     summaryThemes,
     summaryText: sendReadinessSummary,
     fixedPriceSignal,
+    pilotSignal,
   });
   const gapsThemeSummary = describeThemes(gapThemes.length > 0 ? gapThemes : summaryThemes, 'scope, delivery, and commercial detail');
   const pushbackThemeSummary = describeThemes(
@@ -1244,7 +1301,10 @@ function buildPreSendReviewSections(params: {
       key: 'suggested_clarifications_before_sending',
       heading: 'Suggested Clarifications Before Sending',
       paragraphs: [
-        `Before sending, tighten the few items that most affect ${clarificationThemeSummary} so the draft reads as an intentional commercial brief rather than an opening outline.`,
+        `${getPreSendCommitmentThreshold({
+          fixedPriceSignal,
+          pilotSignal,
+        })}, tighten the few items that most affect ${clarificationThemeSummary} so the draft reads as an intentional commercial brief rather than an opening outline.`,
       ],
       bullets: clarificationBullets,
       numbered_bullets: true,

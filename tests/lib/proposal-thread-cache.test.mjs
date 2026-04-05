@@ -3,6 +3,7 @@ import test from 'node:test';
 import { QueryClient } from '@tanstack/react-query';
 import {
   applyUpdatedProposalToCaches,
+  invalidateProposalThreadQueries,
   removeProposalFromCaches,
 } from '../../src/lib/proposalThreadCache.js';
 
@@ -158,4 +159,28 @@ test('removeProposalFromCaches removes deleted rows from list and dashboard cach
   assert.equal(inboxData.proposals.some((row) => row.id === proposal.id), false);
   assert.equal(dashboardRows.some((row) => row.id === proposal.id), false);
   assert.equal(agreementRequests.some((row) => row.id === proposal.id), false);
+});
+
+test('invalidateProposalThreadQueries targets proposal lists, dashboards, and linked detail caches', async () => {
+  const calls = [];
+  const queryClient = {
+    invalidateQueries: async (filters) => {
+      calls.push(filters);
+    },
+  };
+
+  await invalidateProposalThreadQueries(queryClient, {
+    proposalId: 'proposal_cache_test',
+    documentComparisonId: 'comparison_cache_test',
+  });
+
+  assert.deepEqual(calls, [
+    { queryKey: ['proposal-linked-comparison', 'comparison_cache_test'] },
+    { queryKey: ['proposal-detail', 'proposal_cache_test'] },
+    { queryKey: ['proposals-list'] },
+    { queryKey: ['dashboard-summary'] },
+    { queryKey: ['dashboard-activity'] },
+    { queryKey: ['dashboard-proposals-all'] },
+    { queryKey: ['dashboard-proposals-agreement-requests'] },
+  ]);
 });
