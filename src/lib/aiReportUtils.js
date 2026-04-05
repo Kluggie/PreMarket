@@ -10,7 +10,7 @@ import {
   PRE_SEND_REVIEW_STAGE,
   isPreSendReviewStage,
   resolveOpportunityReviewStage,
-} from './opportunityReviewStage';
+} from './opportunityReviewStage.js';
 
 export const MEDIATION_REVIEW_LABEL = 'AI Mediation Review';
 export const PRE_SEND_REVIEW_LABEL = 'Pre-send Review';
