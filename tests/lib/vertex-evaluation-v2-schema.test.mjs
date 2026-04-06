@@ -17,11 +17,11 @@ test('stage1 shared intake schema validation accepts the intended shape and reje
       submission_summary: 'The submitting party appears to be proposing a phased implementation with milestone-based acceptance.',
       scope_snapshot: ['Initial implementation phase', 'Milestone-based acceptance', 'Budget approval dependency'],
       unanswered_questions: ['Who owns final acceptance?', 'Which approvals are required before kickoff?'],
-      other_side_needed: ['The responding side should confirm approval ownership and any non-negotiable delivery constraints.'],
+      other_side_needed: ['Clarification on approval ownership and any non-negotiable delivery constraints.'],
       discussion_starting_points: ['Confirm the initial scope boundary and the approval path for kickoff.'],
       intake_status: 'awaiting_other_side_input',
       basis_note:
-        'Based only on the currently submitted materials. A fuller bilateral mediation analysis becomes possible once the other side responds.',
+        'This summary is based solely on the materials submitted by one party. It is a preliminary summary intended to help structure the next exchange. A more complete understanding will be possible once the other side has had an opportunity to review and respond.',
     },
     STAGE1_SHARED_INTAKE_STAGE,
   );
@@ -133,10 +133,10 @@ test('stage1 shared intake coercion maps legacy aliases into the neutral intake 
       summary: 'The current submission outlines a phased rollout with milestone approvals.',
       scope: ['Phased rollout', 'Milestone approvals'],
       still_unanswered: ['Who approves final go-live?'],
-      clarifications_needed: ['The responding side should confirm any launch-window constraints.'],
+      clarifications_needed: ['Clarification on any launch-window constraints.'],
       discussion_points: ['Confirm the first-phase scope and approval sequence.'],
       disclaimer:
-        'Based only on the currently submitted materials. A fuller bilateral mediation analysis becomes possible once the other side responds.',
+        'This summary is based solely on the materials submitted by one party. It is a preliminary summary intended to help structure the next exchange. A more complete understanding will be possible once the other side has had an opportunity to review and respond.',
     },
     STAGE1_SHARED_INTAKE_STAGE,
   );
@@ -149,7 +149,7 @@ test('stage1 shared intake coercion maps legacy aliases into the neutral intake 
   assert.deepEqual(result.candidate.unanswered_questions, ['Who approves final go-live?']);
   assert.deepEqual(
     result.candidate.other_side_needed,
-    ['The responding side should confirm any launch-window constraints.'],
+    ['Clarification on any launch-window constraints.'],
   );
   assert.deepEqual(
     result.candidate.discussion_starting_points,

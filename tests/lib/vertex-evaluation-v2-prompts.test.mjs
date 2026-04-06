@@ -47,12 +47,14 @@ test('stage1 shared intake prompt stays explicitly one-sided, neutral, and non-e
     reportStyle: selectReportStyle(42),
   });
 
-  assert.match(prompt, /Stage 1 Shared Intake Summary analyst/i);
+  assert.match(prompt, /Stage 1 Shared Intake Summary writer/i);
   assert.match(prompt, /based only on materials currently submitted by one side/i);
-  assert.match(prompt, /NOT mediation, NOT an evaluation, NOT a recommendation, and NOT a compatibility judgment/i);
-  assert.match(prompt, /Do NOT make readiness, confidence, compatibility, bridgeability, or final risk judgments/i);
+  assert.match(prompt, /preliminary summary intended to help structure the next exchange/i);
+  assert.match(prompt, /NOT bilateral mediation, NOT a verdict, and NOT a compatibility judgment/i);
+  assert.match(prompt, /Do NOT make confidence, compatibility, bridgeability, or final risk judgments/i);
   assert.match(prompt, /Do NOT predict likely pushback or likely response from the other side/i);
-  assert.match(prompt, /basis_note must explicitly say this summary is based only on the currently submitted materials/i);
+  assert.match(prompt, /basis_note must say exactly:/i);
+  assert.match(prompt, /preliminary summary intended to help structure the next exchange/i);
   assert.match(prompt, /analysis_stage must be "stage1_shared_intake"/i);
   assert.match(prompt, /intake_status must be "awaiting_other_side_input"/i);
   assert.doesNotMatch(prompt, /confidence_0_1/i);

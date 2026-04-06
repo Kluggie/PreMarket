@@ -147,13 +147,13 @@ test('review status helpers: expose neutral intake details for Stage 1 reports',
       analysis_stage: 'stage1_shared_intake',
       intake_status: 'awaiting_other_side_input',
       basis_note:
-        'Based only on the currently submitted materials. A fuller bilateral mediation analysis becomes possible once the other side responds.',
+        'This summary is based solely on the materials submitted by one party. It is a preliminary summary intended to help structure the next exchange. A more complete understanding will be possible once the other side has had an opportunity to review and respond.',
     }),
     {
       label: 'Awaiting other side input',
       tone: 'neutral',
       explanation:
-        'Based only on the currently submitted materials. A fuller bilateral mediation analysis becomes possible once the other side responds.',
+        'This summary is based solely on the materials submitted by one party. It is a preliminary summary intended to help structure the next exchange. A more complete understanding will be possible once the other side has had an opportunity to review and respond.',
     },
   );
 });
@@ -177,11 +177,11 @@ test('buildStoredV2Evaluation: stores Stage 1 shared intake reports without medi
         'The submitting party appears to be proposing a milestone-based delivery engagement with defined responsibilities and approval gates.',
       scope_snapshot: ['Initial delivery scope is outlined.', 'Approval gates are referenced.'],
       unanswered_questions: ['Name the delivery owner.', 'Who approves acceptance?'],
-      other_side_needed: ['The responding side should confirm ownership, approval sequencing, and any scope corrections.'],
+      other_side_needed: ['Clarification on ownership, approval sequencing, and any scope corrections.'],
       discussion_starting_points: ['Confirm the initial scope boundary and who owns acceptance approval.'],
       intake_status: 'awaiting_other_side_input',
       basis_note:
-        'Based only on the currently submitted materials. A fuller bilateral mediation analysis becomes possible once the other side responds.',
+        'This summary is based solely on the materials submitted by one party. It is a preliminary summary intended to help structure the next exchange. A more complete understanding will be possible once the other side has had an opportunity to review and respond.',
     },
     model: 'gemini-2.5-pro',
     generation_model: 'gemini-2.5-pro',
@@ -215,7 +215,7 @@ test('buildStoredV2Evaluation: synthesizes Stage 1 shared intake into neutral in
         'What measurable acceptance criteria define completion?',
       ],
       other_side_needed: [
-        'The responding side should confirm ownership of data cleanup and identify any scope corrections or constraints.',
+        'Clarification on ownership of data cleanup and any scope corrections or constraints.',
       ],
       discussion_starting_points: [
         'Confirm the pilot scope boundary and measurable acceptance gates.',
@@ -223,7 +223,7 @@ test('buildStoredV2Evaluation: synthesizes Stage 1 shared intake into neutral in
       ],
       intake_status: 'awaiting_other_side_input',
       basis_note:
-        'Based only on the currently submitted materials. A fuller bilateral mediation analysis becomes possible once the other side responds.',
+        'This summary is based solely on the materials submitted by one party. It is a preliminary summary intended to help structure the next exchange. A more complete understanding will be possible once the other side has had an opportunity to review and respond.',
     },
     model: 'gemini-2.5-pro',
     generation_model: 'gemini-2.5-pro',
@@ -261,8 +261,9 @@ test('buildStoredV2Evaluation: synthesizes Stage 1 shared intake into neutral in
   );
   assert.match(
     stored.report.presentation_sections.find((section) => section.heading === 'Intake Status')?.paragraphs?.[0] || '',
-    /Based only on the currently submitted materials/i,
+    /^Awaiting other side input\.$/i,
   );
+  assert.match(stored.report.basis_note || '', /preliminary summary/i);
   assert.doesNotMatch(
     JSON.stringify(stored.report),
     /\bPre-send Review\b|\bsender-side\b|\bbefore sending\b|\bReadiness to Send\b|\bconfidence\b|\brecommendation\b/i,
@@ -285,14 +286,14 @@ test('buildStoredV2Evaluation: keeps Stage 1 intake copy explicitly one-sided an
         'Who owns data or documentation cleanup before implementation starts?',
       ],
       other_side_needed: [
-        'The responding side should confirm any scope corrections, approval requirements, and constraints that affect the pilot boundary.',
+        'Clarification on any scope corrections, approval requirements, and constraints that affect the pilot boundary.',
       ],
       discussion_starting_points: [
         'Confirm the pilot boundary, measurable outcomes, and ownership of cleanup work.',
       ],
       intake_status: 'awaiting_other_side_input',
       basis_note:
-        'Based only on the currently submitted materials. A fuller bilateral mediation analysis becomes possible once the other side responds.',
+        'This summary is based solely on the materials submitted by one party. It is a preliminary summary intended to help structure the next exchange. A more complete understanding will be possible once the other side has had an opportunity to review and respond.',
     },
     model: 'gemini-2.5-pro',
     generation_model: 'gemini-2.5-pro',
@@ -304,9 +305,9 @@ test('buildStoredV2Evaluation: keeps Stage 1 intake copy explicitly one-sided an
 
   assert.equal(submissionSection?.paragraphs?.length, 1);
   assert.match(submissionSection?.paragraphs?.[0] || '', /current submission describes a phased pilot proposal/i);
-  assert.match((otherSideSection?.bullets || []).join(' '), /responding side should confirm/i);
+  assert.match((otherSideSection?.bullets || []).join(' '), /Clarification on/i);
   assert.match((statusSection?.paragraphs || []).join(' '), /Awaiting other side input/i);
-  assert.match((statusSection?.paragraphs || []).join(' '), /Based only on the currently submitted materials/i);
+  assert.doesNotMatch((statusSection?.paragraphs || []).join(' '), /preliminary summary|materials submitted by one party/i);
   assert.doesNotMatch(JSON.stringify(stored.report), /\bready_to_send\b|\bready with clarifications\b|\bconfidence\b|\brecommendation\b/i);
   assert.equal(
     (otherSideSection?.bullets || []).every((bullet) => !/\bBefore sending\b/i.test(bullet)),

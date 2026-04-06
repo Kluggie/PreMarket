@@ -135,14 +135,14 @@ function validStage1Payload(overrides = {}) {
       'Who owns final approval at the end of the first milestone?',
     ],
     other_side_needed: [
-      'The responding side should confirm any scope corrections, approval requirements, or dependencies that materially affect the first phase.',
+      'Clarification on any scope corrections, approval requirements, or dependencies that may affect the first phase.',
     ],
     discussion_starting_points: [
       'Confirm the first-phase scope, milestone approvals, and the success measures that should guide the next exchange.',
     ],
     intake_status: 'awaiting_other_side_input',
     basis_note:
-      'Based only on the currently submitted materials. A fuller bilateral mediation analysis becomes possible once the other side responds.',
+      'This summary is based solely on the materials submitted by one party. It is a preliminary summary intended to help structure the next exchange. A more complete understanding will be possible once the other side has had an opportunity to review and respond.',
     ...overrides,
   };
 }
@@ -238,7 +238,7 @@ test('evaluateWithVertexV2 returns Stage 1 shared intake shape when analysisStag
     assert.equal(Array.isArray(outcome.data.other_side_needed), true);
     assert.equal(Array.isArray(outcome.data.discussion_starting_points), true);
     assert.equal(outcome.data.intake_status, 'awaiting_other_side_input');
-    assert.match(outcome.data.basis_note, /currently submitted materials/i);
+    assert.match(outcome.data.basis_note, /preliminary summary/i);
     assert.equal('fit_level' in outcome.data, false);
     assert.equal('confidence_0_1' in outcome.data, false);
     assert.equal('readiness_status' in outcome.data, false);
@@ -339,7 +339,7 @@ test('evaluateWithVertexV2 Stage 1 fallback stays neutral when model output is i
     assert.equal(outcome.ok, true);
     assert.equal(outcome.data.analysis_stage, STAGE1_SHARED_INTAKE_STAGE);
     assert.equal(outcome.data.intake_status, 'awaiting_other_side_input');
-    assert.match(outcome.data.basis_note, /currently submitted materials/i);
+    assert.match(outcome.data.basis_note, /preliminary summary/i);
     assert.equal(outcome.data.unanswered_questions.length >= 1, true);
     assert.equal(outcome.data.other_side_needed.length >= 1, true);
     assert.equal('confidence_0_1' in outcome.data, false);
@@ -696,11 +696,11 @@ test('validateResponseSchema requires analysis_stage for all supported stages', 
       submission_summary: 'The current submission outlines a phased rollout.',
       scope_snapshot: ['Phased rollout'],
       unanswered_questions: ['Who owns final approval?'],
-      other_side_needed: ['The responding side should confirm any approval constraints.'],
+      other_side_needed: ['Clarification on any approval constraints.'],
       discussion_starting_points: ['Confirm the approval path.'],
       intake_status: 'awaiting_other_side_input',
       basis_note:
-        'Based only on the currently submitted materials. A fuller bilateral mediation analysis becomes possible once the other side responds.',
+        'This summary is based solely on the materials submitted by one party. It is a preliminary summary intended to help structure the next exchange. A more complete understanding will be possible once the other side has had an opportunity to review and respond.',
     },
     STAGE1_SHARED_INTAKE_STAGE,
   );

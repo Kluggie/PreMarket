@@ -83,11 +83,11 @@ test('shared intake web-parity PDF uses neutral Stage 1 framing without readines
         'What is included in the initial fixed-scope pilot scope?',
         'What acceptance criteria trigger final approval?',
       ],
-      other_side_needed: ['The responding side should confirm ownership of cleanup and any scope corrections that affect the pilot boundary.'],
+      other_side_needed: ['Clarification on ownership of cleanup and any scope corrections that affect the pilot boundary.'],
       discussion_starting_points: ['Confirm the pilot scope boundary, measurable outcomes, and ownership of cleanup work.'],
       intake_status: 'awaiting_other_side_input',
       basis_note:
-        'Based only on the currently submitted materials. A fuller bilateral mediation analysis becomes possible once the other side responds.',
+        'This summary is based solely on the materials submitted by one party. It is a preliminary summary intended to help structure the next exchange. A more complete understanding will be possible once the other side has had an opportunity to review and respond.',
     },
     model: 'gemini-2.5-pro',
     generation_model: 'gemini-2.5-pro',
@@ -96,7 +96,7 @@ test('shared intake web-parity PDF uses neutral Stage 1 framing without readines
     {
       heading: 'Shared Intake Scope',
       paragraphs: [
-        'Based only on the currently submitted materials. A fuller bilateral mediation analysis becomes possible once the other side responds.',
+        'This summary is based solely on the materials submitted by one party. It is a preliminary summary intended to help structure the next exchange. A more complete understanding will be possible once the other side has had an opportunity to review and respond.',
       ],
     },
     ...getPresentationSections(stored.report).map((section) => ({
@@ -136,7 +136,7 @@ test('shared intake web-parity PDF uses neutral Stage 1 framing without readines
   assert.match(rawText, /DISCUSSION STARTING POINTS/);
   assert.match(rawText, /INTAKE STATUS/);
   assert.match(rawText, /Awaiting other side input/);
-  assert.match(rawText, /Based only on the currently submitted materials/);
+  assert.match(rawText, /preliminary summary/i);
   assert.doesNotMatch(rawText, /READINESS/);
   assert.doesNotMatch(rawText, /RECOMMENDATION/);
   assert.doesNotMatch(rawText, /CONFIDENCE/);

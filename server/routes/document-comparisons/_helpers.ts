@@ -10,8 +10,10 @@ import {
   getMediationReviewSubtitle,
   getMediationReviewTitle,
   getSentenceSafePreview,
+  normalizeStage1ClarificationBullet,
   parseV2WhyEntry,
   splitV2WhyBodyParagraphs,
+  STAGE1_PRELIMINARY_SUMMARY_NOTE,
 } from '../../../src/lib/aiReportUtils.js';
 import {
   MEDIATION_REVIEW_STAGE,
@@ -1211,12 +1213,11 @@ function buildPreSendActionBullets(params: {
   );
 }
 
-const DEFAULT_STAGE1_BASIS_NOTE =
-  'Based only on the currently submitted materials. A fuller bilateral mediation analysis becomes possible once the other side responds.';
+const DEFAULT_STAGE1_BASIS_NOTE = STAGE1_PRELIMINARY_SUMMARY_NOTE;
 
 function normalizeIntakeStatusLabel(value: unknown) {
   const normalized = normalizeText(value).toLowerCase().replace(/_/g, ' ');
-  if (normalized === 'awaiting other side input' || normalized === 'awaiting other side') {
+  if (normalized.includes('awaiting other side input') || normalized.includes('awaiting other side')) {
     return 'Awaiting other side input';
   }
   return 'Awaiting other side input';
@@ -1239,7 +1240,8 @@ function buildStage1SharedIntakeSections(params: {
     Array.isArray(params.unanswered_questions) ? params.unanswered_questions as unknown[] : [],
   );
   const otherSideNeeded = uniqueText(
-    Array.isArray(params.other_side_needed) ? params.other_side_needed as unknown[] : [],
+    (Array.isArray(params.other_side_needed) ? params.other_side_needed as unknown[] : [])
+      .map((entry) => normalizeStage1ClarificationBullet(entry)),
   );
   const discussionStartingPoints = uniqueText(
     Array.isArray(params.discussion_starting_points) ? params.discussion_starting_points as unknown[] : [],
@@ -1272,11 +1274,12 @@ function buildStage1SharedIntakeSections(params: {
       key: 'discussion_starting_points',
       heading: 'Discussion Starting Points',
       bullets: discussionStartingPoints,
+      numbered_bullets: true,
     }),
     createPresentationSection({
       key: 'shared_intake_status',
       heading: 'Intake Status',
-      paragraphs: [`${intakeStatusLabel}. ${basisNote}`],
+      paragraphs: [`${intakeStatusLabel}.`],
     }),
   ].filter(Boolean) as MediationPresentationSection[];
 }
@@ -2341,11 +2344,11 @@ function buildFallbackRecipientV2Report(params: {
   if (resolveOpportunityReviewStage({ analysis_stage: params.stage }, { fallbackStage: MEDIATION_REVIEW_STAGE }) === STAGE1_SHARED_INTAKE_STAGE) {
     const presentation = buildStage1SharedIntakePresentation({
       submission_summary:
-        'A shared intake summary was generated from the currently submitted materials. Some private draft context was excluded for confidentiality.',
+        'A shared intake summary was generated from the submitted materials. Some private draft context was excluded for confidentiality.',
       scope_snapshot: ['The current record includes only the materials available so far for recipient-safe reporting.'],
       unanswered_questions: ['What still needs to be clarified before both sides can be reviewed together?'],
-      other_side_needed: ['The responding side’s own priorities, constraints, and clarifications on the current submission.'],
-      discussion_starting_points: ['Confirm what has been submitted so far and what still needs to be added before bilateral mediation.'],
+      other_side_needed: ['Any priorities, constraints, or clarifications that may shape the next exchange.'],
+      discussion_starting_points: ['Confirm what has been submitted so far and what would help structure the next exchange.'],
       intake_status: 'awaiting_other_side_input',
       basis_note: DEFAULT_STAGE1_BASIS_NOTE,
     });
@@ -2355,8 +2358,8 @@ function buildFallbackRecipientV2Report(params: {
       submission_summary: presentation.primary_insight,
       scope_snapshot: ['The current record includes only the materials available so far for recipient-safe reporting.'],
       unanswered_questions: ['What still needs to be clarified before both sides can be reviewed together?'],
-      other_side_needed: ['The responding side’s own priorities, constraints, and clarifications on the current submission.'],
-      discussion_starting_points: ['Confirm what has been submitted so far and what still needs to be added before bilateral mediation.'],
+      other_side_needed: ['Any priorities, constraints, or clarifications that may shape the next exchange.'],
+      discussion_starting_points: ['Confirm what has been submitted so far and what would help structure the next exchange.'],
       intake_status: 'awaiting_other_side_input',
       intake_status_label: presentation.intake_status_label,
       basis_note: DEFAULT_STAGE1_BASIS_NOTE,

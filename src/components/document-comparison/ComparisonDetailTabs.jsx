@@ -17,6 +17,7 @@ import {
   OPEN_QUESTIONS_LABEL,
   parseV2WhyEntry,
   splitV2WhyBodyParagraphs,
+  STAGE1_PRELIMINARY_SUMMARY_NOTE,
   filterLegacySectionsForDisplay,
   getReviewStageLabel,
   getReviewStatusDetails,
@@ -235,7 +236,7 @@ export function ComparisonAiReportTab({
             <Alert className="border-slate-200 bg-slate-50">
               <AlertDescription className="text-slate-700">
                 {asText(safeReport?.basis_note) ||
-                  'Based only on the currently submitted materials. A fuller bilateral mediation analysis becomes possible once the other side responds.'}
+                  STAGE1_PRELIMINARY_SUMMARY_NOTE}
               </AlertDescription>
             </Alert>
           ) : null}

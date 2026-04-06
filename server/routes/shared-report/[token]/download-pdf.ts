@@ -34,6 +34,7 @@ import {
   MISSING_OR_REDACTED_INFO_LABEL,
   OPEN_QUESTIONS_LABEL,
   splitV2WhyBodyParagraphs,
+  STAGE1_PRELIMINARY_SUMMARY_NOTE,
 } from '../../../../src/lib/aiReportUtils.js';
 import {
   MEDIATION_REVIEW_STAGE,
@@ -89,9 +90,7 @@ function toStringArray(value: unknown) {
 function getPreSendScopeSection() {
   return {
     heading: 'Shared Intake Scope',
-    paragraphs: [
-      'Based only on the currently submitted materials. A fuller bilateral mediation analysis becomes possible once the other side responds.',
-    ],
+    paragraphs: [STAGE1_PRELIMINARY_SUMMARY_NOTE],
   };
 }
 
@@ -693,7 +692,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
           level: 1,
           paragraphs: [
             asText(report.submission_summary) || asText(evaluationResult.summary) || fallbackSummaryText,
-            `Review type: ${PRE_SEND_REVIEW_TITLE}. Based only on the currently submitted materials. Status: ${intakeStatusLabel}.`,
+            `Review type: ${PRE_SEND_REVIEW_TITLE}. Status: ${intakeStatusLabel}.`,
           ].filter(Boolean),
         });
         if (unansweredQuestions.length > 0) {

@@ -2,7 +2,10 @@ import { createSign } from 'node:crypto';
 import { ApiError } from './errors.js';
 import { getVertexConfig, getVertexNotConfiguredError, type VertexServiceAccountCredentials } from './integrations.js';
 import { sanitizeUserInput } from './vertex-input-sanitizer.js';
-import { truncateTextAtNaturalBoundary } from '../../src/lib/aiReportUtils.js';
+import {
+  STAGE1_PRELIMINARY_SUMMARY_NOTE,
+  truncateTextAtNaturalBoundary,
+} from '../../src/lib/aiReportUtils.js';
 import { preflightPromptCheck, type PreflightResult } from './evaluation-context-budget.js';
 import { normalizeOpportunityReviewStage } from '../../src/lib/opportunityReviewStage.js';
 import {
@@ -3272,8 +3275,7 @@ function trimStageItems(values: string[], maxItems = 6, fallback: string[] = [])
   return uniqueStrings(fallback).slice(0, maxItems);
 }
 
-const DEFAULT_STAGE1_BASIS_NOTE =
-  'Based only on the currently submitted materials. A fuller bilateral mediation analysis becomes possible once the other side responds.';
+const DEFAULT_STAGE1_BASIS_NOTE = STAGE1_PRELIMINARY_SUMMARY_NOTE;
 
 function toStage1Question(value: string) {
   const text = asText(value);
@@ -3294,6 +3296,16 @@ function normalizeStage1Questions(values: string[], fallback: string[] = [], max
     maxItems,
     fallback.map((item) => toStage1Question(item)).filter(Boolean),
   );
+}
+
+function toStage1ClarificationTopic(value: string) {
+  const text = stripTrailingPunctuation(asText(value).replace(/\?$/g, ''));
+  if (!text) return '';
+  return text
+    .replace(/^(what|which|who|where|when|why|how)\s+/i, '')
+    .replace(/^(is|are|do|does|did|can|could|will|would|should)\s+/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function buildStage1SubmissionSummary(factSheet: ProposalFactSheet) {
@@ -3385,23 +3397,24 @@ function buildStage1OtherSideNeeded(
 
   if (unansweredQuestions.length > 0) {
     unansweredQuestions.slice(0, 2).forEach((question) => {
-      addItem(`A clear response on ${stripTrailingPunctuation(question).replace(/\?$/g, '').replace(/^(what|which|who|where|when|why|how)\s+/i, '').toLowerCase()}.`);
+      const topic = toStage1ClarificationTopic(question);
+      addItem(topic ? `Clarification on ${lowerFirst(topic)}.` : 'Clarification on the current open questions.');
     });
   }
   if (factSheet.constraints.length > 0 || factSheet.vendor_preferences.length > 0) {
-    addItem('Its own constraints, preferences, or boundary conditions for the current opportunity.');
+    addItem('Any constraints, preferences, or boundary conditions that may shape the opportunity.');
   }
-  addItem('Any corrections, additions, or counter-assumptions that materially change the current scope, timing, ownership, or commercial framing.');
-  addItem('Enough detail on its priorities and dependencies for a bilateral mediation review to compare both sides on the same record.');
+  addItem('Any corrections, additions, or counter-assumptions that may change the current scope, timing, ownership, or commercial framing.');
+  addItem('Further context on priorities or dependencies that would help structure the next exchange.');
 
   return trimStageItems(items, 4);
 }
 
 function buildStage1DiscussionStartingPoints(factSheet: ProposalFactSheet) {
   const items: string[] = [
-    'Confirm what has been submitted so far and what each side believes is in scope for the next exchange.',
-    'Surface the open questions that need answers before a fuller bilateral mediation review would be meaningful.',
-    'Clarify which issues are factual inputs, commercial preferences, timing constraints, or dependencies so the next round is easier to compare.',
+    'Confirm what has been submitted so far and what each side sees as the scope of the next exchange.',
+    'Surface the open questions that would help make the next exchange more concrete.',
+    'Clarify which points are factual inputs, commercial preferences, timing constraints, or dependencies.',
   ];
   if (factSheet.timeline.duration || factSheet.timeline.start || factSheet.timeline.milestones.length > 0) {
     items.push('Confirm whether the currently mentioned timeline is a target, a requirement, or still open for discussion.');
@@ -4365,8 +4378,7 @@ function buildSuppressedOutput(
       other_side_needed: [],
       discussion_starting_points: [],
       intake_status: 'awaiting_other_side_input',
-      basis_note:
-        'Based only on the currently submitted materials. A fuller bilateral mediation analysis becomes possible once the other side responds.',
+      basis_note: DEFAULT_STAGE1_BASIS_NOTE,
     };
   }
   if (stage === PRE_SEND_STAGE) {

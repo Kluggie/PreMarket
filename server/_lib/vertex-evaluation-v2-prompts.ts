@@ -1,5 +1,6 @@
 import type { MediationRoundContext } from './mediation-progress.js';
 import { wrapRawUserContent } from './vertex-input-sanitizer.js';
+import { STAGE1_PRELIMINARY_SUMMARY_NOTE } from '../../src/lib/aiReportUtils.js';
 import {
   MEDIATION_STAGE,
   PRE_SEND_STAGE,
@@ -447,14 +448,14 @@ export function buildStage1SharedIntakePromptFromFactSheet(params: {
     tightMode
       ? 'STRICT COMPACT MODE: Return JSON only. No markdown. No code fences. No commentary. Keep output compact.'
       : '',
-    'SYSTEM: You are the Stage 1 Shared Intake Summary analyst for PreMarket.',
+    'SYSTEM: You are the Stage 1 Shared Intake Summary writer for PreMarket.',
     'You are preparing a shared, neutral intake artifact based only on materials currently submitted by one side.',
-    'This is Stage 1 shared intake analysis.',
-    'It is NOT mediation, NOT an evaluation, NOT a recommendation, and NOT a compatibility judgment.',
+    'It is a preliminary summary intended to help structure the next exchange.',
+    'It is NOT bilateral mediation, NOT a verdict, and NOT a compatibility judgment.',
     'You do NOT know the other side’s position yet.',
     '',
     'IMPORTANT BOUNDARY:',
-    '- Do NOT make readiness, confidence, compatibility, bridgeability, or final risk judgments.',
+    '- Do NOT make confidence, compatibility, bridgeability, or final risk judgments.',
     '- Do NOT predict likely pushback or likely response from the other side.',
     '- Do NOT write as if bilateral neutrality has already been achieved.',
     '- Do NOT sound like a consultant memo, negotiation verdict, or adjudication.',
@@ -473,8 +474,8 @@ export function buildStage1SharedIntakePromptFromFactSheet(params: {
     '- Submission Summary: explain in plain English what the submitting party appears to be proposing.',
     '- Scope Snapshot: capture the key scope, exclusions if explicitly stated, and notable commercial / operational / technical elements already visible.',
     '- Open Questions: surface what is still unresolved from the submitted materials.',
-    '- Suggested Clarifications: state neutrally what would help clarify the record before bilateral mediation would be meaningful.',
-    '- Discussion Starting Points: offer practical prompts that could help structure the next exchange without making recommendations.',
+    '- Suggested Clarifications: list short, neutral clarification topics that would help complete the picture for the next exchange.',
+    '- Discussion Starting Points: offer brief, discussion-oriented prompts that could help structure the next exchange.',
     '- Intake Status: a short neutral status only. No scoring or verdict.',
     '',
     'WRITING RULES:',
@@ -484,14 +485,14 @@ export function buildStage1SharedIntakePromptFromFactSheet(params: {
     '- submission_summary must be a concise paragraph, not a verdict.',
     '- scope_snapshot should be concise bullet-style items describing what is currently visible in the materials.',
     '- unanswered_questions must focus on missing definitions, dependencies, timing, pricing structure, ownership, assumptions, success metrics, or scope boundaries.',
-    '- other_side_needed must stay neutral. Frame it as what the responding side would need to provide or clarify for bilateral mediation to become meaningful.',
-    '- discussion_starting_points must be practical prompts for the next exchange, not recommendations or conclusions.',
-    '- basis_note must explicitly say this summary is based only on the currently submitted materials and that fuller bilateral mediation becomes possible only after the other side responds.',
+    '- other_side_needed must stay neutral. Prefer concise collaborative fragments, not directive requests or a deliverables checklist.',
+    '- discussion_starting_points must be practical prompts for the next exchange, not conclusions or decisions.',
+    `- basis_note must say exactly: "${STAGE1_PRELIMINARY_SUMMARY_NOTE}"`,
     '',
     'OUTPUT RULES:',
     '- analysis_stage must be "stage1_shared_intake".',
     '- intake_status must be "awaiting_other_side_input".',
-    '- Do NOT add recommendation, confidence, likely_other_side_response, compatibility, bridgeability, or feasibility fields.',
+    '- Do NOT add outcome, confidence, likely_other_side_response, compatibility, bridgeability, or feasibility fields.',
     '',
     'Required JSON schema:',
     JSON.stringify(

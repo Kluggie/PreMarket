@@ -1,3 +1,4 @@
+import { STAGE1_PRELIMINARY_SUMMARY_NOTE } from '../../src/lib/aiReportUtils.js';
 import { normalizeOpportunityReviewStage } from '../../src/lib/opportunityReviewStage.js';
 import type { MediationMovementDirection } from './mediation-progress.js';
 import {
@@ -699,7 +700,7 @@ export function coerceToSmallSchema(
         raw.basis_note ||
           raw.disclaimer ||
           raw.scope_note ||
-          'Based only on the currently submitted materials. A fuller bilateral mediation analysis becomes possible once the other side responds.',
+          STAGE1_PRELIMINARY_SUMMARY_NOTE,
       ),
     };
     return { candidate: synthetic, coerced: true };

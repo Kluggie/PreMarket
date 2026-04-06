@@ -26,6 +26,8 @@ export const RERUN_PRE_SEND_REVIEW_LABEL = 'Re-run Shared Intake Summary';
 export const RUNNING_PRE_SEND_REVIEW_LABEL = 'Running Shared Intake Summary...';
 export const OPEN_QUESTIONS_LABEL = 'Open Questions';
 export const MISSING_OR_REDACTED_INFO_LABEL = 'Missing or Redacted Information';
+export const STAGE1_PRELIMINARY_SUMMARY_NOTE =
+  'This summary is based solely on the materials submitted by one party. It is a preliminary summary intended to help structure the next exchange. A more complete understanding will be possible once the other side has had an opportunity to review and respond.';
 export const DECISION_STATUS_LABELS = Object.freeze([
   'Not viable',
   'Explore further',
@@ -225,10 +227,41 @@ function normalizeReadinessStatusLabel(value) {
 
 function normalizeIntakeStatusLabel(value) {
   const normalized = normalizeSpaces(value).toLowerCase().replace(/_/g, ' ');
-  if (normalized === 'awaiting other side input' || normalized === 'awaiting other side') {
+  if (normalized.includes('awaiting other side input') || normalized.includes('awaiting other side')) {
     return 'Awaiting other side input';
   }
   return 'Awaiting other side input';
+}
+
+function stripTrailingTerminalPunctuation(value) {
+  return normalizeSpaces(value).replace(/[.?!]+$/g, '').trim();
+}
+
+export function normalizeStage1ClarificationBullet(value) {
+  const raw = stripTrailingTerminalPunctuation(value);
+  if (!raw) return '';
+
+  let next = raw
+    .replace(/^The responding side should confirm\s+/i, 'Clarification on ')
+    .replace(/^The responding side should provide\s+/i, 'Initial detail on ')
+    .replace(/^The responding side should share\s+/i, 'Initial detail on ')
+    .replace(/^The responding side should outline\s+/i, 'Initial detail on ')
+    .replace(/^The responding side(?:'s|’s)?\s+/i, '')
+    .replace(/^A clear response on\s+/i, 'Clarification on ')
+    .replace(/^Enough detail on\s+/i, 'Further context on ')
+    .replace(/^Its own\s+/i, 'Any ')
+    .replace(/\bmaterially affect\b/gi, 'may affect')
+    .replace(/\bmaterially change\b/gi, 'may change');
+
+  if (/^[a-z]/.test(next)) {
+    next = `Further context on ${next}`;
+  }
+
+  return normalizeSpaces(next)
+    .replace(/^Clarification on (the )/i, 'Clarification on ')
+    .replace(/^Initial detail on (the )/i, 'Initial detail on ')
+    .replace(/^Further context on (the )/i, 'Further context on ')
+    .trim();
 }
 
 export function getReviewStageLabel(stageOrReport) {
@@ -247,7 +280,7 @@ export function getReviewStatusDetails(report) {
     return {
       label: normalizeIntakeStatusLabel(report?.intake_status),
       tone: 'neutral',
-      explanation: normalizeSpaces(report?.basis_note || ''),
+      explanation: normalizeSpaces(report?.basis_note || STAGE1_PRELIMINARY_SUMMARY_NOTE),
     };
   }
   if (isLegacyPreSendReviewStage(stage)) {
@@ -530,9 +563,40 @@ export function getPresentationSections(report) {
   if (!Array.isArray(report?.presentation_sections)) {
     return [];
   }
-  return report.presentation_sections
+  const sections = report.presentation_sections
     .map((section, index) => normalizePresentationSection(section, index))
     .filter(Boolean);
+  const stage = resolveOpportunityReviewStage(report, {
+    fallbackStage: MEDIATION_REVIEW_STAGE,
+  });
+  if (!isSharedIntakeReviewStage(stage)) {
+    return sections;
+  }
+  return sections.map((section) => {
+    const heading = normalizeSpaces(section.heading).toLowerCase();
+    if (heading === 'suggested clarifications') {
+      return {
+        ...section,
+        bullets: (Array.isArray(section.bullets) ? section.bullets : [])
+          .map((entry) => normalizeStage1ClarificationBullet(entry))
+          .filter(Boolean),
+      };
+    }
+    if (heading === 'discussion starting points') {
+      return {
+        ...section,
+        numberedBullets: true,
+      };
+    }
+    if (heading === 'intake status') {
+      return {
+        key: section.key,
+        heading: section.heading,
+        paragraphs: [`${normalizeIntakeStatusLabel(report?.intake_status || (section.paragraphs || []).join(' '))}.`],
+      };
+    }
+    return section;
+  });
 }
 
 function stripOpenQuestionWhyMatters(value) {

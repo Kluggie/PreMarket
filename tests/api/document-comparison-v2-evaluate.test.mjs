@@ -94,11 +94,11 @@ function vertexStage1Response(overrides = {}) {
         'What is the confirmed go-live date?',
         'What are the measurable KPIs for success?',
       ],
-      other_side_needed: ['The responding side should confirm approval ownership and any delivery constraints that materially affect scope.'],
+      other_side_needed: ['Clarification on approval ownership and any delivery constraints that may affect scope.'],
       discussion_starting_points: ['Confirm the initial scope boundary, milestone approvals, and success measures for the next exchange.'],
       intake_status: 'awaiting_other_side_input',
       basis_note:
-        'Based only on the currently submitted materials. A fuller bilateral mediation analysis becomes possible once the other side responds.',
+        'This summary is based solely on the materials submitted by one party. It is a preliminary summary intended to help structure the next exchange. A more complete understanding will be possible once the other side has had an opportunity to review and respond.',
       ...overrides,
     }),
     finishReason: 'STOP',
@@ -200,7 +200,7 @@ if (!hasDatabaseUrl()) {
       assert.equal(report.analysis_stage, 'stage1_shared_intake');
       assert.equal(typeof report.submission_summary, 'string');
       assert.equal(report.intake_status, 'awaiting_other_side_input');
-      assert.match(report.basis_note || '', /currently submitted materials/i);
+      assert.match(report.basis_note || '', /preliminary summary/i);
       assert.equal('why' in report, false);
       assert.equal('readiness_status' in report, false);
     } finally {
@@ -224,7 +224,7 @@ if (!hasDatabaseUrl()) {
         submission_summary:
           'The submitting party appears to be proposing a milestone-based engagement, but the timeline and delivery ownership still need clarification.',
         unanswered_questions: ['What is the confirmed go-live date?'],
-        other_side_needed: ['The responding side should confirm who owns the final delivery milestone.'],
+        other_side_needed: ['Clarification on who owns the final delivery milestone.'],
         discussion_starting_points: ['Confirm the delivery milestone owner and add the go-live date to the next exchange.'],
       }),
     );

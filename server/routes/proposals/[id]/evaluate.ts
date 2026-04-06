@@ -39,6 +39,7 @@ import {
   PRE_SEND_REVIEW_STAGE,
   STAGE1_SHARED_INTAKE_STAGE,
 } from '../../../../src/lib/opportunityReviewStage.js';
+import { STAGE1_PRELIMINARY_SUMMARY_NOTE } from '../../../../src/lib/aiReportUtils.js';
 
 function getProposalId(req: any, proposalIdParam?: string) {
   if (proposalIdParam && proposalIdParam.trim().length > 0) {
@@ -323,14 +324,13 @@ function buildStageFallbackV2Data(analysisStage: string, reason: 'unexpected_err
         'What timeline, ownership, or approval detail still needs clarification?',
       ],
       other_side_needed: [
-        'The responding side’s priorities, constraints, and any corrections or additions to the current submission.',
+        'Any priorities, constraints, or corrections that may shape the current submission.',
       ],
       discussion_starting_points: [
-        'Confirm what has been submitted so far and what still needs to be added before bilateral mediation.',
+        'Confirm what has been submitted so far and what would help structure the next exchange.',
       ],
       intake_status: 'awaiting_other_side_input',
-      basis_note:
-        'Based only on the currently submitted materials. A fuller bilateral mediation analysis becomes possible once the other side responds.',
+      basis_note: STAGE1_PRELIMINARY_SUMMARY_NOTE,
     };
   }
 
