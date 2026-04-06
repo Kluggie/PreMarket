@@ -476,7 +476,7 @@ export function buildStage1SharedIntakePromptFromFactSheet(params: {
     '- Open Questions: surface what is still unresolved from the submitted materials.',
     '- Suggested Clarifications: write a single flowing prose paragraph listing the neutral clarification topics that would help complete the picture for the next exchange. Do not use bullet fragments or a checklist; instead join the topics naturally using commas and conjunctions so the result reads like a polished human-written sentence.',
     '- Discussion Starting Points: write concise, polished, neutral prompts that name specific topics for the next exchange. Each item should read like a heading in a neutral review artifact (e.g. "Review of the proposed triage logic", "Agreement on baseline metrics methodology"). Do NOT use conversational meeting language such as "Let\'s review...", "Can we discuss...", or "Shall we...".',
-    '- Initial Review: provide a short neutral status only. It will be displayed under the heading "Initial Review". No scoring or verdict.',
+    '- Status: provide a short neutral status only. It will be displayed under the heading "Status". No scoring or verdict.',
     '',
     'WRITING RULES:',
     '- Summarize only what is reasonably supported by the fact_sheet.',

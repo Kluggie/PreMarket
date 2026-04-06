@@ -655,10 +655,6 @@ export default function DocumentComparisonRunDetails() {
               {isSharedIntake ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div>
-                    <p className="text-slate-500">Review Type</p>
-                    <p className="text-xl font-semibold text-slate-900">{reviewLabel}</p>
-                  </div>
-                  <div>
                     <p className="text-slate-500">{STAGE1_INITIAL_REVIEW_LABEL}</p>
                     <p className="text-xl font-semibold text-slate-900">{reviewStatus.label}</p>
                   </div>

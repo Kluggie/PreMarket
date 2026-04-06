@@ -28,7 +28,7 @@ export const OPEN_QUESTIONS_LABEL = 'Open Questions';
 export const MISSING_OR_REDACTED_INFO_LABEL = 'Missing or Redacted Information';
 export const STAGE1_PRELIMINARY_SUMMARY_NOTE =
   'This summary is based solely on the materials submitted by one party. It is a preliminary summary intended to help structure the next exchange. A more complete understanding will be possible once the other side has had an opportunity to review and respond.';
-export const STAGE1_INITIAL_REVIEW_LABEL = 'Initial Review';
+export const STAGE1_INITIAL_REVIEW_LABEL = 'Status';
 export const DECISION_STATUS_LABELS = Object.freeze([
   'Not viable',
   'Explore further',
@@ -229,9 +229,9 @@ function normalizeReadinessStatusLabel(value) {
 function normalizeIntakeStatusLabel(value) {
   const normalized = normalizeSpaces(value).toLowerCase().replace(/_/g, ' ');
   if (normalized.includes('awaiting other side input') || normalized.includes('awaiting other side')) {
-    return 'Awaiting other side input';
+    return 'Awaiting response';
   }
-  return 'Awaiting other side input';
+  return 'Awaiting response';
 }
 
 function stripTrailingTerminalPunctuation(value) {
@@ -321,7 +321,7 @@ function buildStage1PresentationSectionsFromReport(report) {
     {
       key: 'still_unanswered',
       heading: OPEN_QUESTIONS_LABEL,
-      paragraphs: buildStage1CompactParagraphs(unansweredQuestions),
+      paragraphs: buildStage1CompactParagraphs(unansweredQuestions, 1),
       bullets: [],
       numberedBullets: false,
     },
@@ -663,13 +663,24 @@ export function getPresentationSections(report) {
   }
   return sections.map((section) => {
     const heading = normalizeSpaces(section.heading).toLowerCase();
-    if (heading === 'scope snapshot' || heading === 'open questions' || heading === 'discussion starting points') {
+    if (heading === 'scope snapshot' || heading === 'discussion starting points') {
       if (section.paragraphs.length > 0 && section.bullets.length === 0) {
         return section;
       }
       return {
         ...section,
         paragraphs: buildStage1CompactParagraphs(section.bullets),
+        bullets: [],
+        numberedBullets: false,
+      };
+    }
+    if (heading === 'open questions') {
+      if (section.paragraphs.length > 0 && section.bullets.length === 0) {
+        return section;
+      }
+      return {
+        ...section,
+        paragraphs: buildStage1CompactParagraphs(section.bullets, 1),
         bullets: [],
         numberedBullets: false,
       };
@@ -689,7 +700,7 @@ export function getPresentationSections(report) {
         numberedBullets: false,
       };
     }
-    if (heading === 'intake status' || heading === 'initial review') {
+    if (heading === 'intake status' || heading === 'initial review' || heading === 'status') {
       return {
         key: section.key,
         heading: STAGE1_INITIAL_REVIEW_LABEL,

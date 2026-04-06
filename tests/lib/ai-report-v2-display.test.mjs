@@ -150,7 +150,7 @@ test('review status helpers: expose neutral intake details for Stage 1 reports',
         'This summary is based solely on the materials submitted by one party. It is a preliminary summary intended to help structure the next exchange. A more complete understanding will be possible once the other side has had an opportunity to review and respond.',
     }),
     {
-      label: 'Awaiting other side input',
+      label: 'Awaiting response',
       tone: 'neutral',
       explanation:
         'This summary is based solely on the materials submitted by one party. It is a preliminary summary intended to help structure the next exchange. A more complete understanding will be possible once the other side has had an opportunity to review and respond.',
@@ -236,7 +236,7 @@ test('buildStoredV2Evaluation: synthesizes Stage 1 shared intake into neutral in
     'Open Questions',
     'Suggested Clarifications',
     'Discussion Starting Points',
-    'Initial Review',
+    'Status',
   ]);
   assert.match(stored.report.primary_insight, /fixed-scope pilot/i);
   assert.doesNotMatch(
@@ -260,8 +260,8 @@ test('buildStoredV2Evaluation: synthesizes Stage 1 shared intake into neutral in
     true,
   );
   assert.match(
-    stored.report.presentation_sections.find((section) => section.heading === 'Initial Review')?.paragraphs?.[0] || '',
-    /^Awaiting other side input\.$/i,
+    stored.report.presentation_sections.find((section) => section.heading === 'Status')?.paragraphs?.[0] || '',
+    /^Awaiting response\.$/i,
   );
   assert.match(stored.report.basis_note || '', /preliminary summary/i);
   assert.doesNotMatch(
@@ -301,12 +301,12 @@ test('buildStoredV2Evaluation: keeps Stage 1 intake copy explicitly one-sided an
 
   const submissionSection = stored.report.presentation_sections.find((section) => section.heading === 'Submission Summary');
   const otherSideSection = stored.report.presentation_sections.find((section) => section.heading === 'Suggested Clarifications');
-  const statusSection = stored.report.presentation_sections.find((section) => section.heading === 'Initial Review');
+  const statusSection = stored.report.presentation_sections.find((section) => section.heading === 'Status');
 
   assert.equal(submissionSection?.paragraphs?.length, 1);
   assert.match(submissionSection?.paragraphs?.[0] || '', /current submission describes a phased pilot proposal/i);
   assert.match((otherSideSection?.paragraphs || []).join(' '), /Clarification on/i);
-  assert.match((statusSection?.paragraphs || []).join(' '), /Awaiting other side input/i);
+  assert.match((statusSection?.paragraphs || []).join(' '), /Awaiting response/i);
   assert.doesNotMatch((statusSection?.paragraphs || []).join(' '), /preliminary summary|materials submitted by one party/i);
   assert.doesNotMatch(JSON.stringify(stored.report), /\bready_to_send\b|\bready with clarifications\b|\bconfidence\b|\brecommendation\b/i);
   assert.equal(
@@ -315,7 +315,7 @@ test('buildStoredV2Evaluation: keeps Stage 1 intake copy explicitly one-sided an
   );
 });
 
-test('getPresentationSections: normalizes legacy Stage 1 bullet sections into compact paragraphs and renames Initial Review', () => {
+test('getPresentationSections: normalizes legacy Stage 1 bullet sections into compact paragraphs and renames Status', () => {
   const sections = getPresentationSections({
     analysis_stage: 'stage1_shared_intake',
     intake_status: 'awaiting_other_side_input',
@@ -349,7 +349,7 @@ test('getPresentationSections: normalizes legacy Stage 1 bullet sections into co
 
   assert.deepEqual(
     sections.map((section) => section.heading),
-    ['Scope Snapshot', 'Open Questions', 'Suggested Clarifications', 'Initial Review'],
+    ['Scope Snapshot', 'Open Questions', 'Suggested Clarifications', 'Status'],
   );
   assert.equal(sections[0]?.bullets?.length || 0, 0);
   assert.match((sections[0]?.paragraphs || []).join(' '), /fixed-scope pilot is being proposed/i);
@@ -357,7 +357,7 @@ test('getPresentationSections: normalizes legacy Stage 1 bullet sections into co
   assert.match((sections[1]?.paragraphs || []).join(' '), /What is included in the initial fixed-scope pilot scope\?/i);
   assert.equal(sections[2]?.bullets?.length || 0, 0);
   assert.match((sections[2]?.paragraphs || []).join(' '), /Clarification on .*scope corrections and ownership assumptions/i);
-  assert.match((sections[3]?.paragraphs || []).join(' '), /Awaiting other side input\./i);
+  assert.match((sections[3]?.paragraphs || []).join(' '), /Awaiting response\./i);
 });
 
 test('buildStoredV2Evaluation: legacy pre-send reports remain renderable for historical compatibility', () => {

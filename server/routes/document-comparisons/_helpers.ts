@@ -1217,9 +1217,9 @@ const DEFAULT_STAGE1_BASIS_NOTE = STAGE1_PRELIMINARY_SUMMARY_NOTE;
 function normalizeIntakeStatusLabel(value: unknown) {
   const normalized = normalizeText(value).toLowerCase().replace(/_/g, ' ');
   if (normalized.includes('awaiting other side input') || normalized.includes('awaiting other side')) {
-    return 'Awaiting other side input';
+    return 'Awaiting response';
   }
-  return 'Awaiting other side input';
+  return 'Awaiting response';
 }
 
 function buildStage1SharedIntakeSections(params: {

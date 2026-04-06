@@ -53,7 +53,7 @@ test('stage1 shared intake prompt stays explicitly one-sided, neutral, and non-e
   assert.match(prompt, /NOT bilateral mediation, NOT a verdict, and NOT a compatibility judgment/i);
   assert.match(prompt, /Do NOT make confidence, compatibility, bridgeability, or final risk judgments/i);
   assert.match(prompt, /Do NOT predict likely pushback or likely response from the other side/i);
-  assert.match(prompt, /Initial Review: provide a short neutral status only/i);
+  assert.match(prompt, /Status: provide a short neutral status only/i);
   assert.match(prompt, /scope_snapshot should be concise sentence-style items that combine naturally into compact paragraph prose/i);
   assert.match(prompt, /other_side_needed must stay neutral\. Write a single flowing prose paragraph/i);
   assert.match(prompt, /basis_note must say exactly:/i);

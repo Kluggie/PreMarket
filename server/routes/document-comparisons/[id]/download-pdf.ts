@@ -318,7 +318,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     const intakeStatusLabel =
       asText(report.intake_status_label) ||
       asText(report.intake_status).replace(/_/g, ' ').trim() ||
-      'Awaiting other side input';
+      'Awaiting response';
 
     const decisionStatus = getDecisionStatusDetails(report);
     const pdfFormat = getPdfFormat(req);
@@ -377,8 +377,6 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
         metrics: isSharedIntake
           ? [
               { label: 'Status', value: intakeStatusLabel },
-              { label: 'Review Type', value: PRE_SEND_REVIEW_TITLE },
-              { label: 'Input Basis', value: 'One side\'s materials' },
               {
                 label: 'Open Questions',
                 value: `${unansweredQuestions.length} item${unansweredQuestions.length === 1 ? '' : 's'}`,

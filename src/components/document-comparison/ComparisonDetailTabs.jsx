@@ -252,14 +252,6 @@ export function ComparisonAiReportTab({
                   <Badge className={decisionToneClass}>{decisionStatus.label}</Badge>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Review Type</span>
-                  <Badge variant="outline">{reviewLabel}</Badge>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Input Basis</span>
-                  <Badge variant="outline">One side&apos;s materials</Badge>
-                </div>
-                <div className="flex items-center gap-2">
                   <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Open Questions</span>
                   <Badge variant="outline">
                     {intakeQuestionCount} item{intakeQuestionCount !== 1 ? 's' : ''}
