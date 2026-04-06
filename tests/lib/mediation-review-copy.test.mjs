@@ -24,11 +24,11 @@ test('Review surfaces stay stage-aware across proposer-only and bilateral flows'
   };
 
   assert.match(files.copyHelpers, /Run AI Mediation/);
-  assert.match(files.copyHelpers, /Run Initial Review/);
+  assert.match(files.copyHelpers, /Run Shared Intake Summary/);
   assert.match(files.step3Package, /RUN_AI_MEDIATION_LABEL/);
   assert.match(files.comparisonTabs, /AI Mediation Review in progress/);
   assert.match(files.comparisonTabs, /reviewLabel\} in progress/);
-  assert.match(files.comparisonTabs, /Based only on the current materials provided by one side/);
+  assert.match(files.comparisonTabs, /Based only on the currently submitted materials/);
   assert.match(files.comparisonTabs, /Open Questions/);
   assert.match(files.proposalDetail, /Download \$\{reviewLabel\} JSON/);
   assert.match(files.comparisonDetail, /No \$\{reviewLabel\} yet/);
@@ -37,18 +37,18 @@ test('Review surfaces stay stage-aware across proposer-only and bilateral flows'
   assert.match(files.sharedReport, /Step 3: \$\{MEDIATION_REVIEW_LABEL\}/);
   assert.match(files.comparisonPdfRoute, /MEDIATION_REVIEW_TITLE/);
   assert.match(files.comparisonPdfRoute, /PRE_SEND_REVIEW_TITLE/);
-  assert.match(files.comparisonPdfRoute, /Readiness Summary/);
-  assert.match(files.comparisonPdfRoute, /Residual Risks and Points to Tighten|Points to Tighten/);
-  assert.match(files.comparisonPdfRoute, /Review Type/);
-  assert.match(files.comparisonPdfRoute, /One side's materials|current materials from one side/);
+  assert.match(files.comparisonPdfRoute, /Submission Summary/);
   assert.match(files.comparisonPdfRoute, /Open Questions/);
+  assert.match(files.comparisonPdfRoute, /Review Type/);
+  assert.match(files.comparisonPdfRoute, /One side's materials|current submitted materials/);
+  assert.match(files.comparisonPdfRoute, /Shared Intake Scope/);
   assert.match(files.comparisonPdfRoute, /Missing or Redacted Information/);
   assert.match(files.sharedPdfRoute, /PRE_SEND_REVIEW_TITLE/);
-  assert.match(files.sharedPdfRoute, /Readiness Summary/);
-  assert.match(files.sharedPdfRoute, /Residual Risks and Points to Tighten|Points to Tighten/);
-  assert.match(files.sharedPdfRoute, /Review Type/);
-  assert.match(files.sharedPdfRoute, /One side's materials|current materials from one side/);
+  assert.match(files.sharedPdfRoute, /Submission Summary/);
   assert.match(files.sharedPdfRoute, /Open Questions/);
+  assert.match(files.sharedPdfRoute, /Review Type/);
+  assert.match(files.sharedPdfRoute, /One side's materials|current submitted materials/);
+  assert.match(files.sharedPdfRoute, /Shared Intake Scope/);
   assert.match(files.sharedPdfRoute, /Missing or Redacted Information/);
 
   const proposerOnlySurfaces = [
@@ -58,7 +58,10 @@ test('Review surfaces stay stage-aware across proposer-only and bilateral flows'
     files.sharedPdfRoute,
   ].join('\n');
   const combined = Object.values(files).join('\n');
+  assert.match(proposerOnlySurfaces, /Shared Intake Summary/);
+  assert.match(proposerOnlySurfaces, /Based only on the currently submitted materials/);
   assert.doesNotMatch(proposerOnlySurfaces, /\bPre-send Review\b/);
+  assert.doesNotMatch(proposerOnlySurfaces, /\bInitial Review\b/);
   assert.doesNotMatch(proposerOnlySurfaces, /\bsender-side\b/i);
   assert.doesNotMatch(proposerOnlySurfaces, /\bbefore sending\b/i);
   assert.doesNotMatch(combined, /\bAI Report\b/);

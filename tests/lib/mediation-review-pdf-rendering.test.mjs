@@ -68,33 +68,35 @@ test('AI mediation web-parity PDF renders dynamic presentation sections and numb
   assert.match(rawText, /2\.\s*What budget guardrails apply to phase-two expansion\?/);
 });
 
-test('initial review web-parity PDF uses memo-style proposer-only framing without recommendation or confidence labels', async () => {
+test('shared intake web-parity PDF uses neutral Stage 1 framing without readiness, recommendation, or confidence labels', async () => {
   const stored = buildStoredV2Evaluation({
     ok: true,
     data: {
-      analysis_stage: 'pre_send_review',
-      readiness_status: 'ready_with_clarifications',
-      send_readiness_summary:
-        'The draft is suitable for early vendor discussion, with a few remaining clarifications around fixed-price pilot commitment.',
-      missing_information: [
-        'What is included in the initial fixed-price pilot scope?',
+      analysis_stage: 'stage1_shared_intake',
+      submission_summary:
+        'The submitting party appears to be proposing a fixed-scope pilot with milestone approvals, but the current materials still leave ownership and success measures incomplete.',
+      scope_snapshot: [
+        'A fixed-scope pilot is being proposed.',
+        'Milestone approvals and rollout sequencing are visible.',
+      ],
+      unanswered_questions: [
+        'What is included in the initial fixed-scope pilot scope?',
         'What acceptance criteria trigger final approval?',
       ],
-      ambiguous_terms: ['Phase-two pricing remains implied rather than stated.'],
-      likely_recipient_questions: ['Who owns data cleanup before implementation starts?'],
-      likely_pushback_areas: ['A vendor may resist fixed-price responsibility while scope and remediation remain open.'],
-      commercial_risks: ['Pricing posture assumes fixed-price certainty before the change process is defined.'],
-      implementation_risks: ['Documentation quality and remediation ownership remain unclear.'],
-      suggested_clarifications: ['Define scope, acceptance, and remediation ownership in the current draft.'],
+      other_side_needed: ['The responding side should confirm ownership of cleanup and any scope corrections that affect the pilot boundary.'],
+      discussion_starting_points: ['Confirm the pilot scope boundary, measurable outcomes, and ownership of cleanup work.'],
+      intake_status: 'awaiting_other_side_input',
+      basis_note:
+        'Based only on the currently submitted materials. A fuller bilateral mediation analysis becomes possible once the other side responds.',
     },
     model: 'gemini-2.5-pro',
     generation_model: 'gemini-2.5-pro',
   });
   const sections = [
     {
-      heading: 'Review Scope',
+      heading: 'Shared Intake Scope',
       paragraphs: [
-        'Based only on the current materials provided by one side. This review does not yet assess alignment, compatibility, or deal feasibility.',
+        'Based only on the currently submitted materials. A fuller bilateral mediation analysis becomes possible once the other side responds.',
       ],
     },
     ...getPresentationSections(stored.report).map((section) => ({
@@ -106,14 +108,14 @@ test('initial review web-parity PDF uses memo-style proposer-only framing withou
   ];
 
   const buffer = await renderWebParityPdfBuffer({
-    title: 'Initial Review',
+    title: 'Shared Intake Summary',
     subtitle: 'Opportunity',
     comparisonId: 'cmp_presend_pdf',
     metrics: [
-      { label: 'Readiness', value: 'Ready with Clarifications' },
-      { label: 'Review Type', value: 'Initial Review' },
+      { label: 'Status', value: 'Awaiting other side input' },
+      { label: 'Review Type', value: 'Shared Intake Summary' },
       { label: 'Input Basis', value: 'One side\'s materials' },
-      { label: 'Points to Tighten', value: '4 items' },
+      { label: 'Open Questions', value: '2 items' },
     ],
     timelineItems: [
       { label: 'Opportunity Created', value: 'Apr 4, 2026' },
@@ -123,16 +125,21 @@ test('initial review web-parity PDF uses memo-style proposer-only framing withou
   });
 
   const rawText = await extractPdfText(buffer);
-  assert.match(rawText, /Initial Review/);
-  assert.match(rawText, /READINESS/);
+  assert.match(rawText, /Shared Intake Summary/);
+  assert.match(rawText, /STATUS/);
   assert.match(rawText, /REVIEW TYPE/);
   assert.match(rawText, /INPUT BASIS/);
-  assert.match(rawText, /READINESS SUMMARY/);
-  assert.match(rawText, /WHAT MATTERS MOST/);
-  assert.match(rawText, /LIKELY RESPONSE FROM THE OTHER SIDE/);
-  assert.match(rawText, /RESIDUAL RISKS AND POINTS TO TIGHTEN/);
+  assert.match(rawText, /SUBMISSION SUMMARY/);
+  assert.match(rawText, /SCOPE SNAPSHOT/);
+  assert.match(rawText, /OPEN QUESTIONS/);
+  assert.match(rawText, /SUGGESTED CLARIFICATIONS/);
+  assert.match(rawText, /DISCUSSION STARTING POINTS/);
+  assert.match(rawText, /INTAKE STATUS/);
+  assert.match(rawText, /Awaiting other side input/);
+  assert.match(rawText, /Based only on the currently submitted materials/);
+  assert.doesNotMatch(rawText, /READINESS/);
   assert.doesNotMatch(rawText, /RECOMMENDATION/);
   assert.doesNotMatch(rawText, /CONFIDENCE/);
-  assert.doesNotMatch(rawText, /MISSING INFORMATION/);
-  assert.doesNotMatch(rawText, /\bPre-send Review\b|\bsender-side\b|\bbefore sending\b/i);
+  assert.doesNotMatch(rawText, /LIKELY RESPONSE FROM THE OTHER SIDE|RESIDUAL RISKS AND POINTS TO TIGHTEN/i);
+  assert.doesNotMatch(rawText, /\bPre-send Review\b|\bInitial Review\b|\bsender-side\b|\bbefore sending\b/i);
 });

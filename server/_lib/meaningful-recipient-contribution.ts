@@ -8,13 +8,13 @@ import {
 import { sanitizeEditorText } from './document-editor-sanitization.js';
 import {
   MEDIATION_REVIEW_STAGE,
-  PRE_SEND_REVIEW_STAGE,
+  STAGE1_SHARED_INTAKE_STAGE,
 } from '../../src/lib/opportunityReviewStage.js';
 
 type ContributionVisibility =
   | typeof HISTORY_VISIBILITY_SHARED
   | typeof HISTORY_VISIBILITY_CONFIDENTIAL;
-type ReviewStage = typeof PRE_SEND_REVIEW_STAGE | typeof MEDIATION_REVIEW_STAGE;
+type ReviewStage = typeof STAGE1_SHARED_INTAKE_STAGE | typeof MEDIATION_REVIEW_STAGE;
 
 const MIN_MEANINGFUL_TEXT_CHARS = 18;
 const MIN_MEANINGFUL_TOKEN_COUNT = 4;
@@ -354,5 +354,5 @@ export function resolveReviewStageFromRecipientContribution(params: {
 }): ReviewStage {
   return hasMeaningfulRecipientContribution(params).hasMeaningfulContribution
     ? MEDIATION_REVIEW_STAGE
-    : PRE_SEND_REVIEW_STAGE;
+    : STAGE1_SHARED_INTAKE_STAGE;
 }

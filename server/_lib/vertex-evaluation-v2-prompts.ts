@@ -3,6 +3,7 @@ import { wrapRawUserContent } from './vertex-input-sanitizer.js';
 import {
   MEDIATION_STAGE,
   PRE_SEND_STAGE,
+  STAGE1_SHARED_INTAKE_STAGE,
   type EvaluationChunks,
   type Ordering,
   type ProposalDomain,
@@ -415,6 +416,102 @@ export function buildPreSendPromptFromFactSheet(params: {
     JSON.stringify(
       {
         analysis_stage: PRE_SEND_STAGE,
+        fact_sheet: factSheet,
+      },
+      null,
+      2,
+    ),
+    'Return JSON only.',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+export function buildStage1SharedIntakePromptFromFactSheet(params: {
+  factSheet: ProposalFactSheet;
+  reportStyle: ReportStyle;
+  tightMode?: boolean;
+}) {
+  const { factSheet, reportStyle } = params;
+  const tightMode = Boolean(params.tightMode);
+  const domain = classifyProposalDomain(factSheet);
+
+  const voiceGuide =
+    reportStyle.style_id === 'direct'
+      ? 'Voice: plain, restrained, and concise. Use simple factual language.'
+      : reportStyle.style_id === 'collaborative'
+        ? 'Voice: neutral and discussion-oriented. Keep the focus on what has been provided and what still needs to be clarified.'
+        : 'Voice: structured, factual, and restrained. Do not overstate what the materials prove.';
+
+  return [
+    tightMode
+      ? 'STRICT COMPACT MODE: Return JSON only. No markdown. No code fences. No commentary. Keep output compact.'
+      : '',
+    'SYSTEM: You are the Stage 1 Shared Intake Summary analyst for PreMarket.',
+    'You are preparing a shared, neutral intake artifact based only on materials currently submitted by one side.',
+    'This is Stage 1 shared intake analysis.',
+    'It is NOT mediation, NOT an evaluation, NOT a recommendation, and NOT a compatibility judgment.',
+    'You do NOT know the other side’s position yet.',
+    '',
+    'IMPORTANT BOUNDARY:',
+    '- Do NOT make readiness, confidence, compatibility, bridgeability, or final risk judgments.',
+    '- Do NOT predict likely pushback or likely response from the other side.',
+    '- Do NOT write as if bilateral neutrality has already been achieved.',
+    '- Do NOT sound like a consultant memo, negotiation verdict, or adjudication.',
+    '',
+    'CONFIDENTIALITY RULES (strictly enforced):',
+    '- Never quote confidential text verbatim.',
+    '- Never disclose confidential numbers, IDs, emails, pricing, or exact identifiers.',
+    '- Use only generic, safely-derived conclusions when drawing on confidential context.',
+    '',
+    `DOMAIN-SENSITIVE LENS: Classified opportunity domain: ${domain.label}.`,
+    ...buildDomainPromptGuidance(domain),
+    '',
+    voiceGuide,
+    '',
+    'STAGE 1 OBJECTIVES:',
+    '- Submission Summary: explain in plain English what the submitting party appears to be proposing.',
+    '- Scope Snapshot: capture the key scope, exclusions if explicitly stated, and notable commercial / operational / technical elements already visible.',
+    '- Open Questions: surface what is still unresolved from the submitted materials.',
+    '- Suggested Clarifications: state neutrally what would help clarify the record before bilateral mediation would be meaningful.',
+    '- Discussion Starting Points: offer practical prompts that could help structure the next exchange without making recommendations.',
+    '- Intake Status: a short neutral status only. No scoring or verdict.',
+    '',
+    'WRITING RULES:',
+    '- Summarize only what is reasonably supported by the fact_sheet.',
+    '- Separate stated facts from weaker inference. When something is only implied, use restrained phrasing such as "appears", "seems", or "the materials suggest".',
+    '- Keep the tone factual, neutral, descriptive, and incomplete-by-design.',
+    '- submission_summary must be a concise paragraph, not a verdict.',
+    '- scope_snapshot should be concise bullet-style items describing what is currently visible in the materials.',
+    '- unanswered_questions must focus on missing definitions, dependencies, timing, pricing structure, ownership, assumptions, success metrics, or scope boundaries.',
+    '- other_side_needed must stay neutral. Frame it as what the responding side would need to provide or clarify for bilateral mediation to become meaningful.',
+    '- discussion_starting_points must be practical prompts for the next exchange, not recommendations or conclusions.',
+    '- basis_note must explicitly say this summary is based only on the currently submitted materials and that fuller bilateral mediation becomes possible only after the other side responds.',
+    '',
+    'OUTPUT RULES:',
+    '- analysis_stage must be "stage1_shared_intake".',
+    '- intake_status must be "awaiting_other_side_input".',
+    '- Do NOT add recommendation, confidence, likely_other_side_response, compatibility, bridgeability, or feasibility fields.',
+    '',
+    'Required JSON schema:',
+    JSON.stringify(
+      {
+        analysis_stage: STAGE1_SHARED_INTAKE_STAGE,
+        submission_summary: 'string',
+        scope_snapshot: ['string'],
+        unanswered_questions: ['string'],
+        other_side_needed: ['string'],
+        discussion_starting_points: ['string'],
+        intake_status: 'awaiting_other_side_input',
+        basis_note: 'string',
+      },
+      null,
+      2,
+    ),
+    'INPUT JSON:',
+    JSON.stringify(
+      {
+        analysis_stage: STAGE1_SHARED_INTAKE_STAGE,
         fact_sheet: factSheet,
       },
       null,

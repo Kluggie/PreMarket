@@ -21,7 +21,13 @@ import {
   getReviewStageLabel,
   getReviewStatusDetails,
 } from '@/lib/aiReportUtils';
-import { MEDIATION_REVIEW_STAGE, isPreSendReviewStage, resolveOpportunityReviewStage } from '@/lib/opportunityReviewStage';
+import {
+  MEDIATION_REVIEW_STAGE,
+  isLegacyPreSendReviewStage,
+  isPreSendReviewStage,
+  isSharedIntakeReviewStage,
+  resolveOpportunityReviewStage,
+} from '@/lib/opportunityReviewStage';
 
 function asText(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -105,7 +111,9 @@ export function ComparisonAiReportTab({
     analysisStage: reviewStage,
     fallbackStage: MEDIATION_REVIEW_STAGE,
   });
-  const isPreSendReview = isPreSendReviewStage(resolvedReviewStage);
+  const isOneSidedReview = isPreSendReviewStage(resolvedReviewStage);
+  const isSharedIntake = isSharedIntakeReviewStage(resolvedReviewStage);
+  const isLegacyPreSend = isLegacyPreSendReviewStage(resolvedReviewStage);
   const reviewLabel = getReviewStageLabel(resolvedReviewStage);
   const resolvedNoReportMessage =
     noReportMessage ||
@@ -115,7 +123,7 @@ export function ComparisonAiReportTab({
   const reportSectionsFiltered = isV2 ? [] : filterLegacySectionsForDisplay(reportSections);
   const showRunDetailsLink = Boolean(runDetailsHref) && (hasReport || hasEvaluations);
   const normalizedTimelineItems = Array.isArray(timelineItems) ? timelineItems : [];
-  const decisionStatus = isPreSendReview
+  const decisionStatus = isOneSidedReview
     ? getReviewStatusDetails(safeReport)
     : getDecisionStatusDetails(safeReport);
   const confidencePercent = getConfidencePercent(
@@ -128,6 +136,9 @@ export function ComparisonAiReportTab({
   const leadPresentationSection = presentationSections[0] || null;
   const bodyPresentationSections = leadPresentationSection ? presentationSections.slice(1) : [];
   const openQuestionsCount = Array.isArray(safeReport.missing) ? safeReport.missing.length : 0;
+  const intakeQuestionCount = Array.isArray(safeReport.unanswered_questions)
+    ? safeReport.unanswered_questions.length
+    : 0;
   const preSendTightenCount = Array.from(
     new Set(
       [
@@ -160,14 +171,14 @@ export function ComparisonAiReportTab({
             <div className="flex items-center gap-2 text-slate-700">
               <Loader2 className="w-4 h-4 animate-spin" />
               <span className="font-medium">
-                {isPreSendReview ? `${reviewLabel} in progress...` : 'AI Mediation Review in progress...'}
+                {isOneSidedReview ? `${reviewLabel} in progress...` : 'AI Mediation Review in progress...'}
               </span>
             </div>
             <p className="text-sm text-slate-500 mt-2">
               {isPollingTimedOut
                 ? 'Still processing. Refresh to check status.'
-                : isPreSendReview
-                  ? 'This review updates automatically when processing finishes.'
+                : isOneSidedReview
+                  ? 'This summary updates automatically when processing finishes.'
                   : 'The mediation review updates automatically when processing finishes.'}
             </p>
           </CardContent>
@@ -220,17 +231,38 @@ export function ComparisonAiReportTab({
 
       {hasReport ? (
         <>
-          {isPreSendReview ? (
+          {isOneSidedReview ? (
             <Alert className="border-slate-200 bg-slate-50">
               <AlertDescription className="text-slate-700">
-                Based only on the current materials provided by one side. This review does not yet
-                assess alignment, compatibility, or deal feasibility.
+                {asText(safeReport?.basis_note) ||
+                  'Based only on the currently submitted materials. A fuller bilateral mediation analysis becomes possible once the other side responds.'}
               </AlertDescription>
             </Alert>
           ) : null}
           {/* Compact metadata row — lighter alternative to heavy dark strip */}
           <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
-            {isPreSendReview ? (
+            {isSharedIntake ? (
+              <>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Status</span>
+                  <Badge className={decisionToneClass}>{decisionStatus.label}</Badge>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Review Type</span>
+                  <Badge variant="outline">{reviewLabel}</Badge>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Input Basis</span>
+                  <Badge variant="outline">One side&apos;s materials</Badge>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Open Questions</span>
+                  <Badge variant="outline">
+                    {intakeQuestionCount} item{intakeQuestionCount !== 1 ? 's' : ''}
+                  </Badge>
+                </div>
+              </>
+            ) : isLegacyPreSend ? (
               <>
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Readiness</span>
@@ -418,7 +450,7 @@ export function ComparisonAiReportTab({
               )}
 
               {/* Open Questions */}
-              {isV2 && !isPreSendReview && appendixOpenQuestions.length > 0 ? (
+              {isV2 && !isOneSidedReview && appendixOpenQuestions.length > 0 ? (
                 <div className="border-t border-slate-100 pt-6" data-testid="v2-missing-info">
                   <h2 className="text-sm font-semibold text-slate-700 mb-3">{OPEN_QUESTIONS_LABEL}</h2>
                   <ul className="space-y-2.5">
@@ -432,7 +464,7 @@ export function ComparisonAiReportTab({
                 </div>
               ) : null}
 
-              {isV2 && !isPreSendReview && redactionItems.length > 0 ? (
+              {isV2 && !isOneSidedReview && redactionItems.length > 0 ? (
                 <div className="border-t border-slate-100 pt-6" data-testid="v2-redacted-info">
                   <h2 className="text-sm font-semibold text-slate-700 mb-3">{MISSING_OR_REDACTED_INFO_LABEL}</h2>
                   <ul className="space-y-2.5">
@@ -446,7 +478,7 @@ export function ComparisonAiReportTab({
                 </div>
               ) : null}
 
-              {decisionExplanation && !isPreSendReview && presentationSections.length === 0 ? (
+              {decisionExplanation && !isOneSidedReview && presentationSections.length === 0 ? (
                 <div className="border-t border-slate-100 pt-6" data-testid="decision-explanation">
                   <h2 className="text-sm font-semibold text-slate-700 mb-3">Decision Explanation</h2>
                   <p className="text-sm text-slate-700 leading-relaxed">{decisionExplanation}</p>

@@ -45,15 +45,20 @@ export type EvaluationChunks = {
 
 export type FallbackMode = 'salvaged_memo' | 'incomplete';
 export type PostProcessMode = 'normal' | 'salvaged_fallback' | 'incomplete_fallback';
+export type Stage1SharedIntakeStage = 'stage1_shared_intake';
 export type PreSendReviewStage = 'pre_send_review';
 export type MediationReviewStage = 'mediation_review';
-export type ReviewStage = PreSendReviewStage | MediationReviewStage;
+export type OneSidedReviewStage = Stage1SharedIntakeStage | PreSendReviewStage;
+export type ReviewStage = OneSidedReviewStage | MediationReviewStage;
 
+export const STAGE1_SHARED_INTAKE_STAGE: Stage1SharedIntakeStage = 'stage1_shared_intake';
 export const PRE_SEND_STAGE: PreSendReviewStage = 'pre_send_review';
 export const MEDIATION_STAGE: MediationReviewStage = 'mediation_review';
 
 export type VertexEvaluationV2ResponseForStage<Stage extends ReviewStage> =
-  Stage extends PreSendReviewStage
+  Stage extends Stage1SharedIntakeStage
+    ? VertexEvaluationV2Stage1SharedIntakeResponse
+    : Stage extends PreSendReviewStage
     ? VertexEvaluationV2PreSendResponse
     : VertexEvaluationV2MediationResponse;
 
@@ -71,6 +76,8 @@ export type PreSendReadinessStatus =
   | 'ready_with_clarifications'
   | 'ready_to_send';
 
+export type SharedIntakeStatus = 'awaiting_other_side_input';
+
 export interface VertexEvaluationV2MediationResponse {
   analysis_stage: MediationReviewStage;
   fit_level: FitLevel;
@@ -84,6 +91,17 @@ export interface VertexEvaluationV2MediationResponse {
   remaining_deltas?: string[];
   new_open_issues?: string[];
   movement_direction?: MediationMovementDirection;
+}
+
+export interface VertexEvaluationV2Stage1SharedIntakeResponse {
+  analysis_stage: Stage1SharedIntakeStage;
+  submission_summary: string;
+  scope_snapshot: string[];
+  unanswered_questions: string[];
+  other_side_needed: string[];
+  discussion_starting_points: string[];
+  intake_status: SharedIntakeStatus;
+  basis_note: string;
 }
 
 export interface VertexEvaluationV2PreSendResponse {
@@ -101,6 +119,7 @@ export interface VertexEvaluationV2PreSendResponse {
 
 export type VertexEvaluationV2Response =
   | VertexEvaluationV2MediationResponse
+  | VertexEvaluationV2Stage1SharedIntakeResponse
   | VertexEvaluationV2PreSendResponse;
 
 export interface VertexEvaluationV2Error {

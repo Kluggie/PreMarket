@@ -65,15 +65,15 @@ test('hasV2Report: returns false for null/undefined', () => {
   assert.equal(hasV2Report(undefined), false);
 });
 
-test('hasV2Report: returns true for pre-send reports with presentation sections', () => {
+test('hasV2Report: returns true for Stage 1 shared intake reports with presentation sections', () => {
   assert.equal(
     hasV2Report({
-      analysis_stage: 'pre_send_review',
-      send_readiness_summary: 'Clarify ownership before sharing.',
+      analysis_stage: 'stage1_shared_intake',
+      submission_summary: 'The current submission outlines a phased delivery plan.',
       presentation_sections: [
         {
-          heading: 'Readiness to Send',
-          paragraphs: ['Clarify ownership before sharing.'],
+          heading: 'Submission Summary',
+          paragraphs: ['The current submission outlines a phased delivery plan.'],
         },
       ],
     }),
@@ -127,30 +127,33 @@ test('mediation review copy helpers: expose mediation-oriented labels', () => {
   assert.equal(getRunAiMediationLabel({ isPending: true }), 'Running AI Mediation...');
 });
 
-test('review copy helpers: expose pre-send labels for unilateral stage', () => {
-  assert.equal(PRE_SEND_REVIEW_LABEL, 'Initial Review');
-  assert.equal(getReviewStageLabel('pre_send_review'), 'Initial Review');
+test('review copy helpers: expose Shared Intake Summary labels for the one-sided stage', () => {
+  assert.equal(PRE_SEND_REVIEW_LABEL, 'Shared Intake Summary');
+  assert.equal(getReviewStageLabel('stage1_shared_intake'), 'Shared Intake Summary');
+  assert.equal(getReviewStageLabel('pre_send_review'), 'Shared Intake Summary');
   assert.equal(
-    getRunOpportunityReviewLabel({ stage: 'pre_send_review' }),
-    'Run Initial Review',
+    getRunOpportunityReviewLabel({ stage: 'stage1_shared_intake' }),
+    'Run Shared Intake Summary',
   );
   assert.equal(
-    getRunOpportunityReviewLabel({ stage: 'pre_send_review', hasExisting: true }),
-    'Re-run Initial Review',
+    getRunOpportunityReviewLabel({ stage: 'stage1_shared_intake', hasExisting: true }),
+    'Re-run Shared Intake Summary',
   );
 });
 
-test('review status helpers: expose readiness details for pre-send reports', () => {
+test('review status helpers: expose neutral intake details for Stage 1 reports', () => {
   assert.deepEqual(
     getReviewStatusDetails({
-      analysis_stage: 'pre_send_review',
-      readiness_status: 'ready_with_clarifications',
-      send_readiness_summary: 'Clarify acceptance criteria before sharing.',
+      analysis_stage: 'stage1_shared_intake',
+      intake_status: 'awaiting_other_side_input',
+      basis_note:
+        'Based only on the currently submitted materials. A fuller bilateral mediation analysis becomes possible once the other side responds.',
     }),
     {
-      label: 'Ready with Clarifications',
-      tone: 'warning',
-      explanation: 'Clarify acceptance criteria before sharing.',
+      label: 'Awaiting other side input',
+      tone: 'neutral',
+      explanation:
+        'Based only on the currently submitted materials. A fuller bilateral mediation analysis becomes possible once the other side responds.',
     },
   );
 });
@@ -165,65 +168,62 @@ test('mediation review title helpers: avoid Untitled-style placeholders', () => 
   assert.equal(buildMediationReviewSubtitle('', 'Shared Report'), '');
 });
 
-test('buildStoredV2Evaluation: stores pre-send reviews without mediation fields', () => {
+test('buildStoredV2Evaluation: stores Stage 1 shared intake reports without mediation or readiness fields', () => {
   const stored = buildStoredV2Evaluation({
     ok: true,
     data: {
-      analysis_stage: 'pre_send_review',
-      readiness_status: 'ready_with_clarifications',
-      send_readiness_summary: 'Clarify ownership before sharing.',
-      missing_information: ['Name the delivery owner.'],
-      ambiguous_terms: ['Success metrics are still implied.'],
-      likely_recipient_questions: ['Who approves acceptance?'],
-      likely_pushback_areas: ['Undefined remediation responsibility.'],
-      commercial_risks: ['Pricing does not define change handling.'],
-      implementation_risks: ['Integration responsibility remains unclear.'],
-      suggested_clarifications: ['Assign ownership and acceptance criteria.'],
+      analysis_stage: 'stage1_shared_intake',
+      submission_summary:
+        'The submitting party appears to be proposing a milestone-based delivery engagement with defined responsibilities and approval gates.',
+      scope_snapshot: ['Initial delivery scope is outlined.', 'Approval gates are referenced.'],
+      unanswered_questions: ['Name the delivery owner.', 'Who approves acceptance?'],
+      other_side_needed: ['The responding side should confirm ownership, approval sequencing, and any scope corrections.'],
+      discussion_starting_points: ['Confirm the initial scope boundary and who owns acceptance approval.'],
+      intake_status: 'awaiting_other_side_input',
+      basis_note:
+        'Based only on the currently submitted materials. A fuller bilateral mediation analysis becomes possible once the other side responds.',
     },
     model: 'gemini-2.5-pro',
     generation_model: 'gemini-2.5-pro',
   });
 
-  assert.equal(stored.report.analysis_stage, 'pre_send_review');
-  assert.equal(stored.report.report_title, 'Initial Review');
-  assert.equal(stored.report.readiness_status, 'ready_with_clarifications');
+  assert.equal(stored.report.analysis_stage, 'stage1_shared_intake');
+  assert.equal(stored.report.report_title, 'Shared Intake Summary');
+  assert.equal(stored.report.intake_status, 'awaiting_other_side_input');
   assert.equal(Array.isArray(stored.report.presentation_sections), true);
   assert.equal('why' in stored.report, false);
   assert.equal('confidence_0_1' in stored.report, false);
   assert.equal('recommendation' in stored.report, false);
+  assert.equal('readiness_status' in stored.report, false);
+  assert.equal('send_readiness_summary' in stored.report, false);
 });
 
-test('buildStoredV2Evaluation: synthesizes proposer-only sections into a memo-style pre-send report', () => {
+test('buildStoredV2Evaluation: synthesizes Stage 1 shared intake into neutral intake sections', () => {
   const stored = buildStoredV2Evaluation({
     ok: true,
     data: {
-      analysis_stage: 'pre_send_review',
-      readiness_status: 'ready_with_clarifications',
-      send_readiness_summary:
-        'The draft is workable, but a vendor would still need clearer scope, sign-off, and pricing assumptions before treating it as a dependable brief.',
-      missing_information: [
-        'What is included in the initial fixed-price pilot scope?',
+      analysis_stage: 'stage1_shared_intake',
+      submission_summary:
+        'The submitting party appears to be proposing a fixed-scope pilot with milestone approvals, but the current materials still leave ownership and success measures incomplete.',
+      scope_snapshot: [
+        'A fixed-scope pilot is being proposed.',
+        'Milestone approvals and rollout sequencing are referenced.',
+        'Commercial guardrails are mentioned but not fully defined.',
+      ],
+      unanswered_questions: [
+        'What is included in the initial fixed-scope pilot boundary?',
         'What measurable acceptance criteria define completion?',
       ],
-      ambiguous_terms: [
-        'Phase-two pricing remains implied rather than stated.',
-        'Documentation remediation responsibility is still described loosely.',
+      other_side_needed: [
+        'The responding side should confirm ownership of data cleanup and identify any scope corrections or constraints.',
       ],
-      likely_recipient_questions: [
-        'Who owns data or documentation cleanup before implementation starts?',
+      discussion_starting_points: [
+        'Confirm the pilot scope boundary and measurable acceptance gates.',
+        'Clarify ownership of cleanup, approvals, and any follow-on pricing assumptions.',
       ],
-      likely_pushback_areas: [
-        'A vendor may resist fixed-price responsibility while scope and remediation remain open.',
-      ],
-      commercial_risks: [
-        'Pricing posture assumes fixed-price certainty before the change process is defined.',
-      ],
-      implementation_risks: [
-        'Documentation quality and remediation ownership remain unclear.',
-      ],
-      suggested_clarifications: [
-        'Define the initial pilot scope, measurable acceptance criteria, and the change process in the current draft.',
-      ],
+      intake_status: 'awaiting_other_side_input',
+      basis_note:
+        'Based only on the currently submitted materials. A fuller bilateral mediation analysis becomes possible once the other side responds.',
     },
     model: 'gemini-2.5-pro',
     generation_model: 'gemini-2.5-pro',
@@ -231,85 +231,90 @@ test('buildStoredV2Evaluation: synthesizes proposer-only sections into a memo-st
 
   const headings = stored.report.presentation_sections.map((section) => section.heading);
   assert.deepEqual(headings, [
-    'Readiness Summary',
-    'What Matters Most',
-    'Likely Response From the Other Side',
-    'Residual Risks and Points to Tighten',
+    'Submission Summary',
+    'Scope Snapshot',
+    'Open Questions',
+    'Suggested Clarifications',
+    'Discussion Starting Points',
+    'Intake Status',
   ]);
-  assert.match(stored.report.primary_insight, /credible commercial brief/i);
-  assert.match(stored.report.primary_insight, /fixed-price/i);
-  assert.doesNotMatch(headings.join(' | '), /Missing Information|Ambiguous Terms|Likely Recipient Questions|Likely Pushback Areas|Commercial Risks|Implementation Risks/);
+  assert.match(stored.report.primary_insight, /fixed-scope pilot/i);
+  assert.doesNotMatch(
+    headings.join(' | '),
+    /Readiness Summary|What Matters Most|Likely Response From the Other Side|Residual Risks and Points to Tighten/,
+  );
   assert.equal(
-    stored.report.presentation_sections.every((section) => Array.isArray(section.paragraphs) && section.paragraphs.length > 0),
+    stored.report.presentation_sections[0]?.heading,
+    'Submission Summary',
+  );
+  assert.equal(
+    stored.report.presentation_sections.find((section) => section.heading === 'Scope Snapshot')?.bullets?.length > 0,
     true,
   );
   assert.equal(
-    stored.report.presentation_sections
-      .slice(0, 3)
-      .every((section) => !Array.isArray(section.bullets) || section.bullets.length === 0),
+    stored.report.presentation_sections.find((section) => section.heading === 'Open Questions')?.bullets?.length > 0,
     true,
   );
   assert.equal(
-    stored.report.presentation_sections
-      .filter((section) => Array.isArray(section.bullets))
-      .every((section) => section.bullets.length <= 3),
+    stored.report.presentation_sections.find((section) => section.heading === 'Suggested Clarifications')?.bullets?.length > 0,
     true,
   );
-  assert.doesNotMatch(JSON.stringify(stored.report), /\bPre-send Review\b|\bsender-side\b|\bbefore sending\b/i);
+  assert.match(
+    stored.report.presentation_sections.find((section) => section.heading === 'Intake Status')?.paragraphs?.[0] || '',
+    /Based only on the currently submitted materials/i,
+  );
+  assert.doesNotMatch(
+    JSON.stringify(stored.report),
+    /\bPre-send Review\b|\bsender-side\b|\bbefore sending\b|\bReadiness to Send\b|\bconfidence\b|\brecommendation\b/i,
+  );
 });
 
-test('buildStoredV2Evaluation: keeps pre-send readiness summary concise and avoids raw "before sending" action copy', () => {
+test('buildStoredV2Evaluation: keeps Stage 1 intake copy explicitly one-sided and avoids evaluation language', () => {
   const stored = buildStoredV2Evaluation({
     ok: true,
     data: {
-      analysis_stage: 'pre_send_review',
-      readiness_status: 'ready_with_clarifications',
-      send_readiness_summary:
-        'This draft is already a credible commercial brief for discussion, with only limited clarifications left before the parties ask for fixed-price pilot pricing.',
-      missing_information: [
-        'What is included in the initial fixed-price pilot scope?',
+      analysis_stage: 'stage1_shared_intake',
+      submission_summary:
+        'The current submission describes a phased pilot proposal with milestone checkpoints and a stated intent to use fixed-scope pricing for the first phase.',
+      scope_snapshot: [
+        'Phase-one pilot scope is referenced.',
+        'Milestone checkpoints are visible.',
+      ],
+      unanswered_questions: [
         'What measurable acceptance criteria define completion?',
-      ],
-      ambiguous_terms: [
-        'Phase-two pricing remains implied rather than stated.',
-        'Documentation remediation responsibility is still described loosely.',
-      ],
-      likely_recipient_questions: [
         'Who owns data or documentation cleanup before implementation starts?',
       ],
-      likely_pushback_areas: [
-        'A vendor may resist fixed-price responsibility while scope and remediation remain open.',
+      other_side_needed: [
+        'The responding side should confirm any scope corrections, approval requirements, and constraints that affect the pilot boundary.',
       ],
-      commercial_risks: [
-        'Pricing posture assumes fixed-price certainty before the change process is defined.',
+      discussion_starting_points: [
+        'Confirm the pilot boundary, measurable outcomes, and ownership of cleanup work.',
       ],
-      implementation_risks: [
-        'Documentation quality and remediation ownership remain unclear.',
-      ],
-      suggested_clarifications: [
-        'Define the initial pilot scope, measurable acceptance criteria, and the change process before sharing.',
-      ],
+      intake_status: 'awaiting_other_side_input',
+      basis_note:
+        'Based only on the currently submitted materials. A fuller bilateral mediation analysis becomes possible once the other side responds.',
     },
     model: 'gemini-2.5-pro',
     generation_model: 'gemini-2.5-pro',
   });
 
-  const readinessSection = stored.report.presentation_sections.find((section) => section.heading === 'Readiness Summary');
-  const clarificationSection = stored.report.presentation_sections.find((section) => section.heading === 'Residual Risks and Points to Tighten');
+  const submissionSection = stored.report.presentation_sections.find((section) => section.heading === 'Submission Summary');
+  const otherSideSection = stored.report.presentation_sections.find((section) => section.heading === 'Suggested Clarifications');
+  const statusSection = stored.report.presentation_sections.find((section) => section.heading === 'Intake Status');
 
-  assert.equal(readinessSection?.paragraphs?.length, 1);
-  assert.match(readinessSection?.paragraphs?.[0] || '', /credible commercial brief/i);
-  assert.match(readinessSection?.paragraphs?.[0] || '', /limited clarifications/i);
-  assert.doesNotMatch(readinessSection?.paragraphs?.[0] || '', /not yet strong enough/i);
-  assert.match((clarificationSection?.paragraphs || []).join(' '), /cleaner fixed-price pilot pricing/i);
-  assert.doesNotMatch(clarificationSection?.paragraphs?.[0] || '', /\bBefore sending\b/i);
+  assert.equal(submissionSection?.paragraphs?.length, 1);
+  assert.match(submissionSection?.paragraphs?.[0] || '', /current submission describes a phased pilot proposal/i);
+  assert.match((otherSideSection?.bullets || []).join(' '), /responding side should confirm/i);
+  assert.match((statusSection?.paragraphs || []).join(' '), /Awaiting other side input/i);
+  assert.match((statusSection?.paragraphs || []).join(' '), /Based only on the currently submitted materials/i);
+  assert.doesNotMatch(JSON.stringify(stored.report), /\bready_to_send\b|\bready with clarifications\b|\bconfidence\b|\brecommendation\b/i);
   assert.equal(
-    (clarificationSection?.bullets || []).every((bullet) => !/\bBefore sending\b/i.test(bullet)),
+    (otherSideSection?.bullets || []).every((bullet) => !/\bBefore sending\b/i.test(bullet)),
     true,
   );
 });
 
-test('buildStoredV2Evaluation: strong proposer-only results lead with strengths and keep residual issues secondary', () => {
+test('buildStoredV2Evaluation: legacy pre-send reports remain renderable for historical compatibility', () => {
   const stored = buildStoredV2Evaluation({
     ok: true,
     data: {
@@ -329,18 +334,11 @@ test('buildStoredV2Evaluation: strong proposer-only results lead with strengths 
     generation_model: 'gemini-2.5-pro',
   });
 
-  const readinessSection = stored.report.presentation_sections.find((section) => section.heading === 'Readiness Summary');
-  const gapsSection = stored.report.presentation_sections.find((section) => section.heading === 'What Matters Most');
-  const pushbackSection = stored.report.presentation_sections.find((section) => section.heading === 'Likely Response From the Other Side');
-
-  assert.match(stored.report.primary_insight, /strong early-stage commercial brief/i);
-  assert.match(readinessSection?.paragraphs?.[0] || '', /ready for external discussion/i);
-  assert.match(readinessSection?.paragraphs?.[0] || '', /minor clarifications/i);
-  assert.match(gapsSection?.paragraphs?.[0] || '', /remaining work/i);
-  assert.match(gapsSection?.paragraphs?.[0] || '', /strong overall structure/i);
-  assert.match(pushbackSection?.paragraphs?.[0] || '', /ordinary negotiation/i);
-  assert.doesNotMatch(stored.report.presentation_sections.map((section) => section.heading).join(' | '), /Recommendation|Confidence/i);
-  assert.doesNotMatch((readinessSection?.paragraphs || []).join(' '), /not yet strong enough|fundamentally weak/i);
+  assert.equal(stored.report.analysis_stage, 'pre_send_review');
+  assert.equal(stored.report.report_title, 'Shared Intake Summary');
+  assert.equal(Array.isArray(stored.report.presentation_sections), true);
+  assert.equal(stored.report.presentation_sections.length > 0, true);
+  assert.equal('confidence_0_1' in stored.report, false);
 });
 
 test('decision status helpers: prefer canonical Decision Readiness status over fit-level fallback', () => {

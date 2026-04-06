@@ -16,13 +16,16 @@ import {
 import {
   MEDIATION_REVIEW_STAGE,
   PRE_SEND_REVIEW_STAGE,
+  STAGE1_SHARED_INTAKE_STAGE,
+  isSharedIntakeReviewStage,
   resolveOpportunityReviewStage,
 } from '../../../src/lib/opportunityReviewStage.js';
 
 export const CONFIDENTIAL_LABEL = 'Confidential Information';
 export const SHARED_LABEL = 'Shared Information';
 export const MEDIATION_REVIEW_TITLE = 'AI Mediation Review';
-export const PRE_SEND_REVIEW_TITLE = 'Initial Review';
+export const SHARED_INTAKE_SUMMARY_TITLE = 'Shared Intake Summary';
+export const PRE_SEND_REVIEW_TITLE = SHARED_INTAKE_SUMMARY_TITLE;
 export const MEDIATION_REVIEW_ARCHETYPES = Object.freeze([
   'balanced_trade_off',
   'risk_dominant',
@@ -1208,6 +1211,100 @@ function buildPreSendActionBullets(params: {
   );
 }
 
+const DEFAULT_STAGE1_BASIS_NOTE =
+  'Based only on the currently submitted materials. A fuller bilateral mediation analysis becomes possible once the other side responds.';
+
+function normalizeIntakeStatusLabel(value: unknown) {
+  const normalized = normalizeText(value).toLowerCase().replace(/_/g, ' ');
+  if (normalized === 'awaiting other side input' || normalized === 'awaiting other side') {
+    return 'Awaiting other side input';
+  }
+  return 'Awaiting other side input';
+}
+
+function buildStage1SharedIntakeSections(params: {
+  submission_summary: unknown;
+  scope_snapshot: unknown;
+  unanswered_questions: unknown;
+  other_side_needed: unknown;
+  discussion_starting_points: unknown;
+  intake_status?: unknown;
+  basis_note?: unknown;
+}) {
+  const submissionSummary = normalizeText(params.submission_summary);
+  const scopeSnapshot = uniqueText(
+    Array.isArray(params.scope_snapshot) ? params.scope_snapshot as unknown[] : [],
+  );
+  const unansweredQuestions = uniqueText(
+    Array.isArray(params.unanswered_questions) ? params.unanswered_questions as unknown[] : [],
+  );
+  const otherSideNeeded = uniqueText(
+    Array.isArray(params.other_side_needed) ? params.other_side_needed as unknown[] : [],
+  );
+  const discussionStartingPoints = uniqueText(
+    Array.isArray(params.discussion_starting_points) ? params.discussion_starting_points as unknown[] : [],
+  );
+  const basisNote = normalizeText(params.basis_note) || DEFAULT_STAGE1_BASIS_NOTE;
+  const intakeStatusLabel = normalizeIntakeStatusLabel(params.intake_status);
+
+  return [
+    createPresentationSection({
+      key: 'submission_summary',
+      heading: 'Submission Summary',
+      paragraphs: [submissionSummary],
+    }),
+    createPresentationSection({
+      key: 'scope_snapshot',
+      heading: 'Scope Snapshot',
+      bullets: scopeSnapshot,
+    }),
+    createPresentationSection({
+      key: 'still_unanswered',
+      heading: 'Open Questions',
+      bullets: unansweredQuestions,
+    }),
+    createPresentationSection({
+      key: 'what_the_other_side_still_needs_to_provide',
+      heading: 'Suggested Clarifications',
+      bullets: otherSideNeeded,
+    }),
+    createPresentationSection({
+      key: 'discussion_starting_points',
+      heading: 'Discussion Starting Points',
+      bullets: discussionStartingPoints,
+    }),
+    createPresentationSection({
+      key: 'shared_intake_status',
+      heading: 'Intake Status',
+      paragraphs: [`${intakeStatusLabel}. ${basisNote}`],
+    }),
+  ].filter(Boolean) as MediationPresentationSection[];
+}
+
+function buildStage1SharedIntakePresentation(params: {
+  submission_summary: unknown;
+  scope_snapshot: unknown;
+  unanswered_questions: unknown;
+  other_side_needed: unknown;
+  discussion_starting_points: unknown;
+  intake_status?: unknown;
+  basis_note?: unknown;
+}) {
+  const submissionSummary = normalizeText(params.submission_summary);
+  const basisNote = normalizeText(params.basis_note) || DEFAULT_STAGE1_BASIS_NOTE;
+  const sections = buildStage1SharedIntakeSections(params);
+  const intakeStatus = normalizeText(params.intake_status) || 'awaiting_other_side_input';
+
+  return {
+    report_title: SHARED_INTAKE_SUMMARY_TITLE,
+    intake_status: intakeStatus,
+    intake_status_label: normalizeIntakeStatusLabel(intakeStatus),
+    basis_note: basisNote,
+    primary_insight: submissionSummary || basisNote,
+    presentation_sections: sections,
+  };
+}
+
 function buildPreSendReviewSections(params: {
   readiness_status?: unknown;
   send_readiness_summary: unknown;
@@ -1422,6 +1519,77 @@ export function buildStoredV2Evaluation(
     normalizeText(process.env.VERTEX_MODEL) ||
     'gemini-2.5-pro';
   const providerModel = normalizeText(v2Result?.model) || generationModel;
+
+  if (analysisStage === STAGE1_SHARED_INTAKE_STAGE) {
+    const submissionSummary = normalizeText(data?.submission_summary);
+    const scopeSnapshot = Array.isArray(data?.scope_snapshot)
+      ? data.scope_snapshot.map((entry: unknown) => normalizeText(entry)).filter(Boolean)
+      : [];
+    const unansweredQuestions = Array.isArray(data?.unanswered_questions)
+      ? data.unanswered_questions.map((entry: unknown) => normalizeText(entry)).filter(Boolean)
+      : [];
+    const otherSideNeeded = Array.isArray(data?.other_side_needed)
+      ? data.other_side_needed.map((entry: unknown) => normalizeText(entry)).filter(Boolean)
+      : [];
+    const discussionStartingPoints = Array.isArray(data?.discussion_starting_points)
+      ? data.discussion_starting_points.map((entry: unknown) => normalizeText(entry)).filter(Boolean)
+      : [];
+    const intakeStatus = normalizeText(data?.intake_status) || 'awaiting_other_side_input';
+    const basisNote = normalizeText(data?.basis_note) || DEFAULT_STAGE1_BASIS_NOTE;
+    const presentation = buildStage1SharedIntakePresentation({
+      submission_summary: submissionSummary,
+      scope_snapshot: scopeSnapshot,
+      unanswered_questions: unansweredQuestions,
+      other_side_needed: otherSideNeeded,
+      discussion_starting_points: discussionStartingPoints,
+      intake_status: intakeStatus,
+      basis_note: basisNote,
+    });
+    const report = {
+      report_format: 'v2' as const,
+      analysis_stage: STAGE1_SHARED_INTAKE_STAGE,
+      submission_summary: submissionSummary,
+      scope_snapshot: scopeSnapshot,
+      unanswered_questions: unansweredQuestions,
+      other_side_needed: otherSideNeeded,
+      discussion_starting_points: discussionStartingPoints,
+      intake_status: intakeStatus,
+      intake_status_label: presentation.intake_status_label,
+      basis_note: basisNote,
+      generated_at_iso: generatedAt,
+      summary: {
+        intake_status: intakeStatus,
+        next_actions: discussionStartingPoints,
+      },
+      sections: buildStage1SharedIntakeSections({
+        submission_summary: submissionSummary,
+        scope_snapshot: scopeSnapshot,
+        unanswered_questions: unansweredQuestions,
+        other_side_needed: otherSideNeeded,
+        discussion_starting_points: discussionStartingPoints,
+        intake_status: intakeStatus,
+        basis_note: basisNote,
+      }),
+      report_title: presentation.report_title,
+      primary_insight: presentation.primary_insight,
+      presentation_sections: presentation.presentation_sections,
+    };
+
+    return {
+      provider: 'vertex',
+      model: providerModel,
+      generatedAt,
+      score: null,
+      confidence: null,
+      recommendation: null,
+      summary: presentation.primary_insight || basisNote || SHARED_INTAKE_SUMMARY_TITLE,
+      report,
+      evaluation_provider: 'vertex',
+      evaluation_model: generationModel,
+      evaluation_provider_model: providerModel,
+      evaluation_provider_reason: null,
+    };
+  }
 
   if (analysisStage === PRE_SEND_REVIEW_STAGE) {
     const readinessStatus = normalizeReadinessStatus(data?.readiness_status);
@@ -2170,6 +2338,40 @@ function buildFallbackRecipientV2Report(params: {
   confidence: number;
   recommendation: 'High' | 'Medium' | 'Low';
 }) {
+  if (resolveOpportunityReviewStage({ analysis_stage: params.stage }, { fallbackStage: MEDIATION_REVIEW_STAGE }) === STAGE1_SHARED_INTAKE_STAGE) {
+    const presentation = buildStage1SharedIntakePresentation({
+      submission_summary:
+        'A shared intake summary was generated from the currently submitted materials. Some private draft context was excluded for confidentiality.',
+      scope_snapshot: ['The current record includes only the materials available so far for recipient-safe reporting.'],
+      unanswered_questions: ['What still needs to be clarified before both sides can be reviewed together?'],
+      other_side_needed: ['The responding side’s own priorities, constraints, and clarifications on the current submission.'],
+      discussion_starting_points: ['Confirm what has been submitted so far and what still needs to be added before bilateral mediation.'],
+      intake_status: 'awaiting_other_side_input',
+      basis_note: DEFAULT_STAGE1_BASIS_NOTE,
+    });
+    return {
+      report_format: 'v2' as const,
+      analysis_stage: STAGE1_SHARED_INTAKE_STAGE,
+      submission_summary: presentation.primary_insight,
+      scope_snapshot: ['The current record includes only the materials available so far for recipient-safe reporting.'],
+      unanswered_questions: ['What still needs to be clarified before both sides can be reviewed together?'],
+      other_side_needed: ['The responding side’s own priorities, constraints, and clarifications on the current submission.'],
+      discussion_starting_points: ['Confirm what has been submitted so far and what still needs to be added before bilateral mediation.'],
+      intake_status: 'awaiting_other_side_input',
+      intake_status_label: presentation.intake_status_label,
+      basis_note: DEFAULT_STAGE1_BASIS_NOTE,
+      generated_at_iso: params.generatedAt,
+      summary: {
+        intake_status: 'awaiting_other_side_input',
+        next_actions: ['Confirm what has been submitted so far and what still needs to be added before bilateral mediation.'],
+      },
+      sections: presentation.presentation_sections,
+      report_title: presentation.report_title,
+      primary_insight: presentation.primary_insight,
+      presentation_sections: presentation.presentation_sections,
+    };
+  }
+
   if (resolveOpportunityReviewStage({ analysis_stage: params.stage }, { fallbackStage: MEDIATION_REVIEW_STAGE }) === PRE_SEND_REVIEW_STAGE) {
     const presentation = buildPreSendReviewPresentation({
       readiness_status: 'ready_with_clarifications',
@@ -2296,6 +2498,100 @@ function buildV2RecipientProjection(params: {
     source: evaluation.source,
     fallbackStage: MEDIATION_REVIEW_STAGE,
   });
+
+  if (analysisStage === STAGE1_SHARED_INTAKE_STAGE) {
+    const submissionSummary = scrubString(sourceReport.submission_summary, markers, '');
+    const scopeSnapshot = scrubStringArray(sourceReport.scope_snapshot, markers);
+    const unansweredQuestions = scrubStringArray(sourceReport.unanswered_questions, markers);
+    const otherSideNeeded = scrubStringArray(sourceReport.other_side_needed, markers);
+    const discussionStartingPoints = scrubStringArray(sourceReport.discussion_starting_points, markers);
+    const basisNote = scrubString(sourceReport.basis_note, markers, DEFAULT_STAGE1_BASIS_NOTE);
+    const rebuiltPresentation = buildStage1SharedIntakePresentation({
+      submission_summary: submissionSummary,
+      scope_snapshot: scopeSnapshot,
+      unanswered_questions: unansweredQuestions,
+      other_side_needed: otherSideNeeded,
+      discussion_starting_points: discussionStartingPoints,
+      intake_status: sourceReport.intake_status,
+      basis_note: basisNote,
+    });
+    const projectedPresentationSections = Array.isArray(sourceReport.presentation_sections)
+      ? (redactConfidentialStrings(sourceReport.presentation_sections, markers) as unknown[])
+      : [];
+    const normalizedProjectedPresentationSections = serializePresentationSections(
+      getPresentationSections({ presentation_sections: projectedPresentationSections }),
+    );
+    const safeReport = {
+      report_format: 'v2' as const,
+      analysis_stage: STAGE1_SHARED_INTAKE_STAGE,
+      submission_summary: submissionSummary,
+      scope_snapshot: scopeSnapshot,
+      unanswered_questions: unansweredQuestions,
+      other_side_needed: otherSideNeeded,
+      discussion_starting_points: discussionStartingPoints,
+      intake_status: normalizeText(sourceReport.intake_status) || 'awaiting_other_side_input',
+      intake_status_label: rebuiltPresentation.intake_status_label,
+      basis_note: basisNote,
+      generated_at_iso: generatedAt,
+      summary: {
+        intake_status: normalizeText(sourceReport.intake_status) || 'awaiting_other_side_input',
+        next_actions:
+          nextActions.length > 0
+            ? nextActions
+            : discussionStartingPoints,
+      },
+      sections: buildStage1SharedIntakeSections({
+        submission_summary: submissionSummary,
+        scope_snapshot: scopeSnapshot,
+        unanswered_questions: unansweredQuestions,
+        other_side_needed: otherSideNeeded,
+        discussion_starting_points: discussionStartingPoints,
+        intake_status: sourceReport.intake_status,
+        basis_note: basisNote,
+      }),
+      report_title:
+        scrubString(sourceReport.report_title, markers, '') ||
+        rebuiltPresentation.report_title,
+      primary_insight:
+        scrubString(sourceReport.primary_insight, markers, '') ||
+        rebuiltPresentation.primary_insight,
+      presentation_sections:
+        normalizedProjectedPresentationSections.length > 0
+          ? normalizedProjectedPresentationSections
+          : rebuiltPresentation.presentation_sections,
+    } as Record<string, any>;
+
+    const projectedReport = redactConfidentialStrings(safeReport, markers);
+    const projectionHasLeak = hasLeakAfterProjection(projectedReport, markers);
+    const fallbackReport = buildFallbackRecipientV2Report({
+      stage: STAGE1_SHARED_INTAKE_STAGE,
+      title,
+      generatedAt,
+      score,
+      confidence: confidence / 100,
+      recommendation,
+    });
+    const finalReport = projectionHasLeak ? fallbackReport : projectedReport;
+    const summary =
+      scrubString(evaluation.summary, markers, '') ||
+      scrubString(finalReport.primary_insight, markers, '') ||
+      scrubString(finalReport.submission_summary, markers, '') ||
+      'Shared intake summary generated from the current submitted materials.';
+
+    return {
+      evaluation_result: {
+        provider: scrubString(evaluation.provider, markers, 'projection'),
+        model: scrubString(evaluation.model, markers, 'recipient-safe'),
+        generatedAt,
+        score: null,
+        confidence: null,
+        recommendation: null,
+        summary,
+        report: finalReport,
+      },
+      public_report: finalReport,
+    };
+  }
 
   if (analysisStage === PRE_SEND_REVIEW_STAGE) {
     const readinessStatus = normalizeReadinessStatus(sourceReport.readiness_status);

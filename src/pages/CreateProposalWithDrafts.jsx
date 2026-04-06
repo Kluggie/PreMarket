@@ -1449,7 +1449,7 @@ export default function CreateProposalWithDrafts({ guestMode = false }) {
               <Card className="border-0 shadow-sm">
                 <CardHeader>
                   <CardTitle>Review & Submit</CardTitle>
-                  <CardDescription>Review your opportunity from the current one-sided materials.</CardDescription>
+                  <CardDescription>Review your opportunity from the current submitted materials.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-6">
                   <div className="p-4 bg-slate-50 rounded-xl space-y-3">

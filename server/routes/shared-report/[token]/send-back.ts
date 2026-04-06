@@ -247,7 +247,7 @@ async function sendSendBackEmailDirect(params: {
       },
       body: JSON.stringify(payload),
     });
-    const body = await response.json().catch(() => ({}));
+    const body = await response.json().catch(() => ({} as Record<string, unknown>)) as Record<string, unknown>;
     if (!response.ok) {
       return {
         sent: false,

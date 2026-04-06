@@ -7,28 +7,31 @@ import {
 import {
   MEDIATION_REVIEW_STAGE,
   PRE_SEND_REVIEW_STAGE,
+  STAGE1_SHARED_INTAKE_STAGE,
 } from '../../src/lib/opportunityReviewStage.js';
 
-test('pre-send schema validation accepts the intended shape and rejects mediation stage payloads', () => {
+test('stage1 shared intake schema validation accepts the intended shape and rejects mediation stage payloads', () => {
   const valid = validateResponseSchema(
     {
-      analysis_stage: PRE_SEND_REVIEW_STAGE,
-      readiness_status: 'ready_with_clarifications',
-      send_readiness_summary: 'The sender draft is workable but still needs tighter ownership wording.',
-      missing_information: ['Who owns final acceptance?'],
-      ambiguous_terms: ['Success criteria remain implied.'],
-      likely_recipient_questions: ['Which approvals are required before kickoff?'],
-      likely_pushback_areas: ['Open-ended remediation ownership may draw resistance.'],
-      commercial_risks: ['Commercial guardrails still need explicit change treatment.'],
-      implementation_risks: ['Launch sequencing depends on unstated approvals.'],
-      suggested_clarifications: ['Define milestone sign-off before sending.'],
+      analysis_stage: STAGE1_SHARED_INTAKE_STAGE,
+      submission_summary: 'The submitting party appears to be proposing a phased implementation with milestone-based acceptance.',
+      scope_snapshot: ['Initial implementation phase', 'Milestone-based acceptance', 'Budget approval dependency'],
+      unanswered_questions: ['Who owns final acceptance?', 'Which approvals are required before kickoff?'],
+      other_side_needed: ['The responding side should confirm approval ownership and any non-negotiable delivery constraints.'],
+      discussion_starting_points: ['Confirm the initial scope boundary and the approval path for kickoff.'],
+      intake_status: 'awaiting_other_side_input',
+      basis_note:
+        'Based only on the currently submitted materials. A fuller bilateral mediation analysis becomes possible once the other side responds.',
     },
-    PRE_SEND_REVIEW_STAGE,
+    STAGE1_SHARED_INTAKE_STAGE,
   );
 
   assert.equal(valid.ok, true);
   if (!valid.ok) return;
-  assert.equal(valid.normalized.analysis_stage, PRE_SEND_REVIEW_STAGE);
+  assert.equal(valid.normalized.analysis_stage, STAGE1_SHARED_INTAKE_STAGE);
+  assert.equal('confidence_0_1' in valid.normalized, false);
+  assert.equal('recommendation' in valid.normalized, false);
+  assert.equal('compatibility_assessment' in valid.normalized, false);
 
   const wrongStage = validateResponseSchema(
     {
@@ -39,7 +42,7 @@ test('pre-send schema validation accepts the intended shape and rejects mediatio
       missing: ['Who owns launch approval?'],
       redactions: [],
     },
-    PRE_SEND_REVIEW_STAGE,
+    STAGE1_SHARED_INTAKE_STAGE,
   );
 
   assert.equal(wrongStage.ok, false);
@@ -121,6 +124,37 @@ test('legacy mediation coercion keeps mediation stage and extracts redacted flag
   assert.equal(result.candidate.confidence_0_1, 0.82);
   assert.deepEqual(result.candidate.redactions, ['Internal pricing flexibility']);
   assert.equal(result.candidate.movement_direction, 'stalled');
+});
+
+test('stage1 shared intake coercion maps legacy aliases into the neutral intake schema', () => {
+  const result = coerceToSmallSchema(
+    {
+      status: 'Awaiting other side input',
+      summary: 'The current submission outlines a phased rollout with milestone approvals.',
+      scope: ['Phased rollout', 'Milestone approvals'],
+      still_unanswered: ['Who approves final go-live?'],
+      clarifications_needed: ['The responding side should confirm any launch-window constraints.'],
+      discussion_points: ['Confirm the first-phase scope and approval sequence.'],
+      disclaimer:
+        'Based only on the currently submitted materials. A fuller bilateral mediation analysis becomes possible once the other side responds.',
+    },
+    STAGE1_SHARED_INTAKE_STAGE,
+  );
+
+  assert.equal(result.coerced, true);
+  assert.equal(result.candidate.analysis_stage, STAGE1_SHARED_INTAKE_STAGE);
+  assert.equal(result.candidate.intake_status, 'awaiting_other_side_input');
+  assert.equal(result.candidate.submission_summary, 'The current submission outlines a phased rollout with milestone approvals.');
+  assert.deepEqual(result.candidate.scope_snapshot, ['Phased rollout', 'Milestone approvals']);
+  assert.deepEqual(result.candidate.unanswered_questions, ['Who approves final go-live?']);
+  assert.deepEqual(
+    result.candidate.other_side_needed,
+    ['The responding side should confirm any launch-window constraints.'],
+  );
+  assert.deepEqual(
+    result.candidate.discussion_starting_points,
+    ['Confirm the first-phase scope and approval sequence.'],
+  );
 });
 
 test('legacy pre-send coercion keeps pre-send stage and sender-side readiness semantics', () => {

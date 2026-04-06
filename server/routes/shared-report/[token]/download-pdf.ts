@@ -37,7 +37,8 @@ import {
 } from '../../../../src/lib/aiReportUtils.js';
 import {
   MEDIATION_REVIEW_STAGE,
-  PRE_SEND_REVIEW_STAGE,
+  isPreSendReviewStage,
+  isSharedIntakeReviewStage,
   resolveOpportunityReviewStage,
 } from '../../../../src/lib/opportunityReviewStage.js';
 
@@ -87,9 +88,9 @@ function toStringArray(value: unknown) {
 
 function getPreSendScopeSection() {
   return {
-    heading: 'Review Scope',
+    heading: 'Shared Intake Scope',
     paragraphs: [
-      'Based only on the current materials provided by one side. This review does not yet assess alignment, compatibility, or deal feasibility.',
+      'Based only on the currently submitted materials. A fuller bilateral mediation analysis becomes possible once the other side responds.',
     ],
   };
 }
@@ -233,13 +234,14 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       source: asText(evaluationResult?.source),
       fallbackStage: MEDIATION_REVIEW_STAGE,
     });
-    const isPreSendReview = reviewStage === PRE_SEND_REVIEW_STAGE;
-    const defaultFilenameBase = isPreSendReview ? 'initial-review' : 'ai-mediation-review';
-    const fallbackSummaryText = isPreSendReview
-      ? 'No Initial Review content is available yet.'
+    const isOneSidedReview = isPreSendReviewStage(reviewStage);
+    const isSharedIntake = isSharedIntakeReviewStage(reviewStage);
+    const defaultFilenameBase = isOneSidedReview ? 'shared-intake-summary' : 'ai-mediation-review';
+    const fallbackSummaryText = isOneSidedReview
+      ? 'No Shared Intake Summary content is available yet.'
       : 'No AI mediation summary is available yet.';
-    const recipientSafeFooterNote = isPreSendReview
-      ? 'Shared report -- based only on current materials from one side'
+    const recipientSafeFooterNote = isOneSidedReview
+      ? 'Shared report -- based only on the current submitted materials'
       : 'Shared report -- recipient-safe content only';
 
     const isV2 = Array.isArray(report.why) && (report.why as unknown[]).length > 0;
@@ -289,6 +291,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     const ambiguousTerms = toStringArray(report.ambiguous_terms);
     const suggestedClarifications = toStringArray(report.suggested_clarifications);
     const missingInformation = toStringArray(report.missing_information);
+    const unansweredQuestions = toStringArray(report.unanswered_questions);
     const preSendTightenCount = Array.from(
       new Set(
         [...missingInformation, ...ambiguousTerms, ...suggestedClarifications]
@@ -300,11 +303,15 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       asText(report.readiness_label) ||
       asText(report.readiness_status).replace(/_/g, ' ').trim() ||
       'Not Ready to Send';
+    const intakeStatusLabel =
+      asText(report.intake_status_label) ||
+      asText(report.intake_status).replace(/_/g, ' ').trim() ||
+      'Awaiting other side input';
 
     const decisionStatus = getDecisionStatusDetails(report);
     const pdfFormat = getPdfFormat(req);
     if (pdfFormat === 'web-parity') {
-      const title = isPreSendReview
+      const title = isOneSidedReview
         ? PRE_SEND_REVIEW_TITLE
         : buildMediationReviewTitle(
             resolved.comparison?.title,
@@ -312,7 +319,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
             report.title,
             evaluationResult.title,
           );
-      const subtitle = isPreSendReview
+      const subtitle = isOneSidedReview
         ? asText(resolved.comparison?.title) || asText(resolved.proposal?.title)
         : buildMediationReviewSubtitle(
             resolved.comparison?.title,
@@ -321,7 +328,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
             evaluationResult.title,
           );
       const resolvedWebParityTitle = (() => {
-        if (isPreSendReview) {
+        if (isOneSidedReview) {
           return PRE_SEND_REVIEW_TITLE;
         }
         const preferred = asText(subtitle) || asText(title);
@@ -353,11 +360,11 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
           asText(report.summary) ||
           asText(evaluationResult.summary) ||
           fallbackSummaryText,
-        emptyStateHeading: isPreSendReview ? 'Readiness to Send' : 'Executive Summary',
-        prependScopeNote: isPreSendReview,
+        emptyStateHeading: isSharedIntake ? 'Submission Summary' : isOneSidedReview ? 'Readiness to Send' : 'Executive Summary',
+        prependScopeNote: isOneSidedReview,
       });
       const decisionExplanation = asText(decisionStatus.explanation);
-      const webParitySections = !isPreSendReview && decisionExplanation && dynamicPresentationSections.length === 0
+      const webParitySections = !isOneSidedReview && decisionExplanation && dynamicPresentationSections.length === 0
         ? [
             ...sections,
             {
@@ -369,9 +376,19 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
 
       const pdfBuffer = await renderWebParityPdfBuffer({
         title: resolvedWebParityTitle,
-        subtitle: isPreSendReview ? subtitle : '',
+        subtitle: isOneSidedReview ? subtitle : '',
         comparisonId,
-        metrics: isPreSendReview
+        metrics: isSharedIntake
+          ? [
+              { label: 'Status', value: intakeStatusLabel },
+              { label: 'Review Type', value: PRE_SEND_REVIEW_TITLE },
+              { label: 'Input Basis', value: 'One side\'s materials' },
+              {
+                label: 'Open Questions',
+                value: `${unansweredQuestions.length} item${unansweredQuestions.length === 1 ? '' : 's'}`,
+              },
+            ]
+          : isOneSidedReview
           ? [
               { label: 'Readiness', value: readinessLabel },
               { label: 'Review Type', value: PRE_SEND_REVIEW_TITLE },
@@ -558,9 +575,9 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     };
 
     if (dynamicPresentationSections.length > 0) {
-      if (isPreSendReview) {
+      if (isOneSidedReview) {
         reportSections.push({
-          heading: 'Review Scope',
+          heading: 'Shared Intake Scope',
           level: 1,
           paragraphs: getPreSendScopeSection().paragraphs,
         });
@@ -665,9 +682,30 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         });
       }
     } else {
-      if (isPreSendReview) {
+      if (isSharedIntake) {
         reportSections.push({
-          heading: 'Review Scope',
+          heading: 'Shared Intake Scope',
+          level: 1,
+          paragraphs: getPreSendScopeSection().paragraphs,
+        });
+        reportSections.push({
+          heading: 'Submission Summary',
+          level: 1,
+          paragraphs: [
+            asText(report.submission_summary) || asText(evaluationResult.summary) || fallbackSummaryText,
+            `Review type: ${PRE_SEND_REVIEW_TITLE}. Based only on the currently submitted materials. Status: ${intakeStatusLabel}.`,
+          ].filter(Boolean),
+        });
+        if (unansweredQuestions.length > 0) {
+          reportSections.push({
+            heading: 'Open Questions',
+            level: 1,
+            bullets: unansweredQuestions,
+          });
+        }
+      } else if (isOneSidedReview) {
+        reportSections.push({
+          heading: 'Shared Intake Scope',
           level: 1,
           paragraphs: getPreSendScopeSection().paragraphs,
         });
@@ -710,13 +748,13 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
 
     if (reportSections.length === 0) {
       reportSections.push({
-        heading: isPreSendReview ? 'Readiness to Send' : 'Executive Summary',
+        heading: isSharedIntake ? 'Submission Summary' : isOneSidedReview ? 'Readiness to Send' : 'Executive Summary',
         level: 1,
         paragraphs: [fallbackSummaryText],
       });
     }
 
-    const title = isPreSendReview
+    const title = isOneSidedReview
       ? PRE_SEND_REVIEW_TITLE
       : buildMediationReviewTitle(
           resolved.comparison?.title,
@@ -724,7 +762,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
           report.title,
           evaluationResult.title,
         );
-    const subtitle = isPreSendReview
+    const subtitle = isOneSidedReview
       ? asText(resolved.comparison?.title) || asText(resolved.proposal?.title)
       : buildMediationReviewSubtitle(
           resolved.comparison?.title,
@@ -740,11 +778,11 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         : `${filenameBase}-${defaultFilenameBase}.pdf`;
     const finalSections = isV2 ? deduplicateSections(reportSections) : reportSections;
     const pdfBuffer = await renderProfessionalPdfBuffer({
-      title: isPreSendReview ? PRE_SEND_REVIEW_TITLE : MEDIATION_REVIEW_TITLE,
+      title: isOneSidedReview ? PRE_SEND_REVIEW_TITLE : MEDIATION_REVIEW_TITLE,
       subtitle,
       comparisonId,
       footerNote: recipientSafeFooterNote,
-      decisionPanel: isPreSendReview ? undefined : decisionPanel,
+      decisionPanel: isOneSidedReview ? undefined : decisionPanel,
       sections: finalSections,
     });
     sendPdf(res, filename, pdfBuffer);

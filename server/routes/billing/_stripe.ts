@@ -1,5 +1,11 @@
 import { ApiError } from '../../_lib/errors.js';
 
+type StripeResponse = Record<string, unknown> & {
+  error?: {
+    message?: string;
+  };
+};
+
 function asText(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
 }
@@ -26,7 +32,7 @@ function toFormBody(params: Record<string, unknown>) {
   return body.toString();
 }
 
-async function stripeRequest(method: string, path: string, body?: Record<string, unknown>) {
+async function stripeRequest(method: string, path: string, body?: Record<string, unknown>): Promise<StripeResponse> {
   const secret = asText(process.env.STRIPE_SECRET_KEY);
   if (!secret) {
     throw new ApiError(501, 'not_configured', 'Stripe integration is not configured');
@@ -41,7 +47,7 @@ async function stripeRequest(method: string, path: string, body?: Record<string,
     body: body ? toFormBody(body) : undefined,
   });
 
-  const payload = await response.json().catch(() => ({}));
+  const payload = await response.json().catch(() => ({} as StripeResponse)) as StripeResponse;
 
   if (!response.ok) {
     const message =

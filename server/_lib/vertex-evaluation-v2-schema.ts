@@ -2,6 +2,7 @@ import { normalizeOpportunityReviewStage } from '../../src/lib/opportunityReview
 import type { MediationMovementDirection } from './mediation-progress.js';
 import {
   MEDIATION_STAGE,
+  STAGE1_SHARED_INTAKE_STAGE,
   PRE_SEND_STAGE,
   type CoercedSchemaCandidate,
   type CompatibilityAssessment,
@@ -13,9 +14,12 @@ import {
   type NegotiationPartyAnalysis,
   type PreSendReadinessStatus,
   type PreSendReviewStage,
+  type SharedIntakeStatus,
+  type Stage1SharedIntakeStage,
   type ReviewStage,
   type SchemaValidationResult,
   type VertexEvaluationV2MediationResponse,
+  type VertexEvaluationV2Stage1SharedIntakeResponse,
   type VertexEvaluationV2PreSendResponse,
 } from './vertex-evaluation-v2-types.js';
 
@@ -93,6 +97,19 @@ export function normalizeReadinessStatus(value: unknown): PreSendReadinessStatus
     return 'ready_with_clarifications';
   }
   return 'not_ready_to_send';
+}
+
+export function normalizeSharedIntakeStatus(value: unknown): SharedIntakeStatus {
+  const normalized = normalizeKeywordText(asText(value));
+  if (
+    normalized === 'awaiting other side input' ||
+    normalized === 'awaiting other side' ||
+    normalized === 'awaiting counterpart input' ||
+    normalized === 'awaiting response'
+  ) {
+    return 'awaiting_other_side_input';
+  }
+  return 'awaiting_other_side_input';
 }
 
 export function toStringArray(value: unknown) {
@@ -405,6 +422,98 @@ export function validateMediationResponseSchema(
   };
 }
 
+export function validateStage1SharedIntakeResponseSchema(
+  value: unknown,
+): SchemaValidationResult<Stage1SharedIntakeStage> {
+  const raw = toObjectRecord(value);
+  if (!raw) {
+    return {
+      ok: false,
+      missingKeys: [
+        'analysis_stage',
+        'submission_summary',
+        'scope_snapshot',
+        'unanswered_questions',
+        'other_side_needed',
+        'discussion_starting_points',
+        'intake_status',
+        'basis_note',
+      ],
+      invalidFields: ['root_not_object', 'analysis_stage'],
+    };
+  }
+
+  const requiredKeys = [
+    'analysis_stage',
+    'submission_summary',
+    'scope_snapshot',
+    'unanswered_questions',
+    'other_side_needed',
+    'discussion_starting_points',
+    'intake_status',
+    'basis_note',
+  ] as const;
+  const missingKeys = requiredKeys.filter((key) => raw[key] === undefined);
+  const invalidFields: string[] = [];
+  const analysisStage = normalizeOpportunityReviewStage(raw.analysis_stage);
+  if (analysisStage !== STAGE1_SHARED_INTAKE_STAGE) {
+    invalidFields.push('analysis_stage');
+  }
+
+  const submissionSummary = asText(raw.submission_summary || raw.summary || raw.executive_summary);
+  if (!submissionSummary) {
+    invalidFields.push('submission_summary');
+  }
+
+  const basisNote = asText(raw.basis_note || raw.disclaimer || raw.scope_note);
+  if (!basisNote) {
+    invalidFields.push('basis_note');
+  }
+
+  const scope_snapshot = ensureStringArrayField(
+    raw.scope_snapshot ?? raw.scope ?? raw.scope_points,
+    'scope_snapshot',
+    invalidFields,
+  );
+  const unanswered_questions = ensureStringArrayField(
+    raw.unanswered_questions ?? raw.still_unanswered ?? raw.open_questions ?? raw.missing,
+    'unanswered_questions',
+    invalidFields,
+  );
+  const other_side_needed = ensureStringArrayField(
+    raw.other_side_needed ?? raw.clarifications_needed ?? raw.other_side_materials,
+    'other_side_needed',
+    invalidFields,
+  );
+  const discussion_starting_points = ensureStringArrayField(
+    raw.discussion_starting_points ?? raw.discussion_points ?? raw.starting_points ?? raw.next_actions,
+    'discussion_starting_points',
+    invalidFields,
+  );
+
+  if (missingKeys.length || invalidFields.length) {
+    return {
+      ok: false,
+      missingKeys,
+      invalidFields,
+    };
+  }
+
+  return {
+    ok: true,
+    normalized: {
+      analysis_stage: STAGE1_SHARED_INTAKE_STAGE,
+      submission_summary: submissionSummary,
+      scope_snapshot,
+      unanswered_questions,
+      other_side_needed,
+      discussion_starting_points,
+      intake_status: normalizeSharedIntakeStatus(raw.intake_status),
+      basis_note: basisNote,
+    },
+  };
+}
+
 export function validatePreSendResponseSchema(
   value: unknown,
 ): SchemaValidationResult<PreSendReviewStage> {
@@ -507,6 +616,10 @@ export function validatePreSendResponseSchema(
 
 export function validateResponseSchema(
   value: unknown,
+  stage: Stage1SharedIntakeStage,
+): SchemaValidationResult<Stage1SharedIntakeStage>;
+export function validateResponseSchema(
+  value: unknown,
   stage: PreSendReviewStage,
 ): SchemaValidationResult<PreSendReviewStage>;
 export function validateResponseSchema(
@@ -518,11 +631,18 @@ export function validateResponseSchema(
   stage: ReviewStage,
 ): SchemaValidationResult;
 export function validateResponseSchema(value: unknown, stage: ReviewStage): SchemaValidationResult {
+  if (stage === STAGE1_SHARED_INTAKE_STAGE) {
+    return validateStage1SharedIntakeResponseSchema(value);
+  }
   return stage === PRE_SEND_STAGE
     ? validatePreSendResponseSchema(value)
     : validateMediationResponseSchema(value);
 }
 
+export function coerceToSmallSchema(
+  value: unknown,
+  stage: Stage1SharedIntakeStage,
+): CoercedSchemaCandidate<Stage1SharedIntakeStage>;
 export function coerceToSmallSchema(
   value: unknown,
   stage: PreSendReviewStage,
@@ -542,6 +662,47 @@ export function coerceToSmallSchema(
   const raw = toObjectRecord(value);
   if (!raw) {
     return { candidate: value, coerced: false };
+  }
+
+  if (stage === STAGE1_SHARED_INTAKE_STAGE) {
+    const hasCanonicalStage1Shape =
+      raw.analysis_stage === STAGE1_SHARED_INTAKE_STAGE &&
+      raw.submission_summary !== undefined &&
+      raw.scope_snapshot !== undefined &&
+      raw.unanswered_questions !== undefined &&
+      raw.other_side_needed !== undefined &&
+      raw.discussion_starting_points !== undefined &&
+      raw.intake_status !== undefined &&
+      raw.basis_note !== undefined;
+    if (hasCanonicalStage1Shape) {
+      return { candidate: value, coerced: false };
+    }
+
+    const synthetic: VertexEvaluationV2Stage1SharedIntakeResponse = {
+      analysis_stage: STAGE1_SHARED_INTAKE_STAGE,
+      submission_summary: asText(raw.submission_summary || raw.summary || raw.executive_summary),
+      scope_snapshot: toStringArray(raw.scope_snapshot ?? raw.scope ?? raw.scope_points ?? raw.in_scope),
+      unanswered_questions: toStringArray(
+        raw.unanswered_questions ?? raw.still_unanswered ?? raw.open_questions ?? raw.missing ?? raw.missing_information,
+      ),
+      other_side_needed: toStringArray(
+        raw.other_side_needed ??
+          raw.clarifications_needed ??
+          raw.other_side_materials ??
+          raw.suggested_clarifications,
+      ),
+      discussion_starting_points: toStringArray(
+        raw.discussion_starting_points ?? raw.discussion_points ?? raw.starting_points ?? raw.next_actions,
+      ),
+      intake_status: normalizeSharedIntakeStatus(raw.intake_status ?? raw.status),
+      basis_note: asText(
+        raw.basis_note ||
+          raw.disclaimer ||
+          raw.scope_note ||
+          'Based only on the currently submitted materials. A fuller bilateral mediation analysis becomes possible once the other side responds.',
+      ),
+    };
+    return { candidate: synthetic, coerced: true };
   }
 
   if (stage === PRE_SEND_STAGE) {

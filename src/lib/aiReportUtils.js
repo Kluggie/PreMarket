@@ -8,18 +8,22 @@
 import {
   MEDIATION_REVIEW_STAGE,
   PRE_SEND_REVIEW_STAGE,
+  STAGE1_SHARED_INTAKE_STAGE,
+  isLegacyPreSendReviewStage,
   isPreSendReviewStage,
+  isSharedIntakeReviewStage,
   resolveOpportunityReviewStage,
 } from './opportunityReviewStage.js';
 
 export const MEDIATION_REVIEW_LABEL = 'AI Mediation Review';
-export const PRE_SEND_REVIEW_LABEL = 'Initial Review';
+export const STAGE1_SHARED_INTAKE_LABEL = 'Shared Intake Summary';
+export const PRE_SEND_REVIEW_LABEL = STAGE1_SHARED_INTAKE_LABEL;
 export const RUN_AI_MEDIATION_LABEL = 'Run AI Mediation';
 export const RERUN_AI_MEDIATION_LABEL = 'Re-run AI Mediation';
 export const RUNNING_AI_MEDIATION_LABEL = 'Running AI Mediation...';
-export const RUN_PRE_SEND_REVIEW_LABEL = 'Run Initial Review';
-export const RERUN_PRE_SEND_REVIEW_LABEL = 'Re-run Initial Review';
-export const RUNNING_PRE_SEND_REVIEW_LABEL = 'Running Initial Review...';
+export const RUN_PRE_SEND_REVIEW_LABEL = 'Run Shared Intake Summary';
+export const RERUN_PRE_SEND_REVIEW_LABEL = 'Re-run Shared Intake Summary';
+export const RUNNING_PRE_SEND_REVIEW_LABEL = 'Running Shared Intake Summary...';
 export const OPEN_QUESTIONS_LABEL = 'Open Questions';
 export const MISSING_OR_REDACTED_INFO_LABEL = 'Missing or Redacted Information';
 export const DECISION_STATUS_LABELS = Object.freeze([
@@ -219,19 +223,34 @@ function normalizeReadinessStatusLabel(value) {
   return 'Not Ready to Send';
 }
 
+function normalizeIntakeStatusLabel(value) {
+  const normalized = normalizeSpaces(value).toLowerCase().replace(/_/g, ' ');
+  if (normalized === 'awaiting other side input' || normalized === 'awaiting other side') {
+    return 'Awaiting other side input';
+  }
+  return 'Awaiting other side input';
+}
+
 export function getReviewStageLabel(stageOrReport) {
   const stage =
     typeof stageOrReport === 'string'
       ? stageOrReport
       : resolveOpportunityReviewStage(stageOrReport, { fallbackStage: MEDIATION_REVIEW_STAGE });
-  return isPreSendReviewStage(stage) ? PRE_SEND_REVIEW_LABEL : MEDIATION_REVIEW_LABEL;
+  return isPreSendReviewStage(stage) ? STAGE1_SHARED_INTAKE_LABEL : MEDIATION_REVIEW_LABEL;
 }
 
 export function getReviewStatusDetails(report) {
   const stage = resolveOpportunityReviewStage(report, {
     fallbackStage: MEDIATION_REVIEW_STAGE,
   });
-  if (isPreSendReviewStage(stage)) {
+  if (isSharedIntakeReviewStage(stage)) {
+    return {
+      label: normalizeIntakeStatusLabel(report?.intake_status),
+      tone: 'neutral',
+      explanation: normalizeSpaces(report?.basis_note || ''),
+    };
+  }
+  if (isLegacyPreSendReviewStage(stage)) {
     const label = normalizeReadinessStatusLabel(report?.readiness_status);
     return {
       label,
@@ -341,7 +360,14 @@ export function hasV2Report(report) {
   const stage = resolveOpportunityReviewStage(report, {
     fallbackStage: MEDIATION_REVIEW_STAGE,
   });
-  return isPreSendReviewStage(stage) && (
+  if (isSharedIntakeReviewStage(stage)) {
+    return Boolean(
+      normalizeSpaces(report?.submission_summary) ||
+        normalizeSpaces(report?.intake_status) ||
+        normalizeSpaces(report?.basis_note),
+    );
+  }
+  return isLegacyPreSendReviewStage(stage) && (
     normalizeSpaces(report?.send_readiness_summary) ||
     normalizeSpaces(report?.readiness_status)
   );
@@ -569,6 +595,16 @@ export function getPrimaryInsight(report) {
   const direct = normalizeSpaces(report?.primary_insight || '');
   if (direct) {
     return direct;
+  }
+
+  const stage = resolveOpportunityReviewStage(report, {
+    fallbackStage: MEDIATION_REVIEW_STAGE,
+  });
+  if (isSharedIntakeReviewStage(stage)) {
+    const submissionSummary = normalizeSpaces(report?.submission_summary || '');
+    if (submissionSummary) {
+      return submissionSummary;
+    }
   }
 
   const firstSection = getPresentationSections(report)[0];

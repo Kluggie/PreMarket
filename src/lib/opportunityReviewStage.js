@@ -1,5 +1,11 @@
 export const PRE_SEND_REVIEW_STAGE = 'pre_send_review';
+export const STAGE1_SHARED_INTAKE_STAGE = 'stage1_shared_intake';
 export const MEDIATION_REVIEW_STAGE = 'mediation_review';
+
+const STAGE1_SOURCES = new Set([
+  'document_comparison_stage1_intake',
+  'proposal_stage1_intake',
+]);
 
 const PRE_SEND_SOURCES = new Set([
   'document_comparison_pre_send',
@@ -27,6 +33,17 @@ function toObject(value) {
 export function normalizeOpportunityReviewStage(value, fallback = '') {
   const normalized = asText(value).toLowerCase();
   if (
+    normalized === STAGE1_SHARED_INTAKE_STAGE ||
+    normalized === 'shared_intake_summary' ||
+    normalized === 'shared_intake' ||
+    normalized === 'submission_overview' ||
+    normalized === 'intake_overview' ||
+    normalized === 'discussion_setup' ||
+    normalized === 'opportunity_overview'
+  ) {
+    return STAGE1_SHARED_INTAKE_STAGE;
+  }
+  if (
     normalized === PRE_SEND_REVIEW_STAGE ||
     normalized === 'pre-send_review' ||
     normalized === 'pre_send' ||
@@ -53,6 +70,9 @@ export function normalizeOpportunityReviewStage(value, fallback = '') {
 
 export function inferOpportunityReviewStageFromSource(source, fallback = '') {
   const normalized = asText(source).toLowerCase();
+  if (STAGE1_SOURCES.has(normalized)) {
+    return STAGE1_SHARED_INTAKE_STAGE;
+  }
   if (PRE_SEND_SOURCES.has(normalized)) {
     return PRE_SEND_REVIEW_STAGE;
   }
@@ -78,6 +98,21 @@ export function reportHasPreSendShape(report) {
         safeReport.implementation_risks.length > 0) ||
       (Array.isArray(safeReport.suggested_clarifications) &&
         safeReport.suggested_clarifications.length > 0)
+  );
+}
+
+export function reportHasStage1Shape(report) {
+  const safeReport = toObject(report);
+  if (!safeReport) return false;
+  return Boolean(
+    asText(safeReport.submission_summary) ||
+      (Array.isArray(safeReport.scope_snapshot) && safeReport.scope_snapshot.length > 0) ||
+      (Array.isArray(safeReport.unanswered_questions) && safeReport.unanswered_questions.length > 0) ||
+      (Array.isArray(safeReport.other_side_needed) && safeReport.other_side_needed.length > 0) ||
+      (Array.isArray(safeReport.discussion_starting_points) &&
+        safeReport.discussion_starting_points.length > 0) ||
+      asText(safeReport.intake_status) ||
+      asText(safeReport.basis_note)
   );
 }
 
@@ -113,6 +148,10 @@ export function resolveOpportunityReviewStage(report, options = {}) {
     return sourceStage;
   }
 
+  if (reportHasStage1Shape(safeReport)) {
+    return STAGE1_SHARED_INTAKE_STAGE;
+  }
+
   if (reportHasPreSendShape(safeReport)) {
     return PRE_SEND_REVIEW_STAGE;
   }
@@ -129,11 +168,20 @@ export function resolveOpportunityReviewStage(report, options = {}) {
     return normalizeOpportunityReviewStage(options.fallbackStage, MEDIATION_REVIEW_STAGE);
   }
 
-  return normalizeOpportunityReviewStage(options.fallbackStage, PRE_SEND_REVIEW_STAGE);
+  return normalizeOpportunityReviewStage(options.fallbackStage, STAGE1_SHARED_INTAKE_STAGE);
+}
+
+export function isSharedIntakeReviewStage(stage) {
+  return normalizeOpportunityReviewStage(stage) === STAGE1_SHARED_INTAKE_STAGE;
+}
+
+export function isLegacyPreSendReviewStage(stage) {
+  return normalizeOpportunityReviewStage(stage) === PRE_SEND_REVIEW_STAGE;
 }
 
 export function isPreSendReviewStage(stage) {
-  return normalizeOpportunityReviewStage(stage) === PRE_SEND_REVIEW_STAGE;
+  const normalized = normalizeOpportunityReviewStage(stage);
+  return normalized === PRE_SEND_REVIEW_STAGE || normalized === STAGE1_SHARED_INTAKE_STAGE;
 }
 
 export function isMediationReviewStage(stage) {

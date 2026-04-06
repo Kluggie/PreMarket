@@ -37,6 +37,7 @@ import {
 import {
   MEDIATION_REVIEW_STAGE,
   PRE_SEND_REVIEW_STAGE,
+  STAGE1_SHARED_INTAKE_STAGE,
 } from '../../../../src/lib/opportunityReviewStage.js';
 
 function getProposalId(req: any, proposalIdParam?: string) {
@@ -306,14 +307,41 @@ async function loadPriorBilateralRoundContext(params: {
 }
 
 function buildStageFallbackV2Data(analysisStage: string, reason: 'unexpected_error' | 'unavailable') {
+  if (analysisStage === STAGE1_SHARED_INTAKE_STAGE) {
+    return {
+      analysis_stage: STAGE1_SHARED_INTAKE_STAGE,
+      submission_summary:
+        reason === 'unexpected_error'
+          ? 'The Shared Intake Summary could not be generated due to an unexpected internal error.'
+          : 'The Shared Intake Summary could not be generated because the model output was unavailable or invalid.',
+      scope_snapshot: [
+        'The current submission has been received, but a fuller intake summary could not be assembled from the current run.',
+      ],
+      unanswered_questions: [
+        'What is the confirmed scope and set of deliverables?',
+        'What assumptions should be made explicit in the current submission?',
+        'What timeline, ownership, or approval detail still needs clarification?',
+      ],
+      other_side_needed: [
+        'The responding side’s priorities, constraints, and any corrections or additions to the current submission.',
+      ],
+      discussion_starting_points: [
+        'Confirm what has been submitted so far and what still needs to be added before bilateral mediation.',
+      ],
+      intake_status: 'awaiting_other_side_input',
+      basis_note:
+        'Based only on the currently submitted materials. A fuller bilateral mediation analysis becomes possible once the other side responds.',
+    };
+  }
+
   if (analysisStage === PRE_SEND_REVIEW_STAGE) {
     return {
       analysis_stage: PRE_SEND_REVIEW_STAGE,
       readiness_status: 'not_ready_to_send',
       send_readiness_summary:
         reason === 'unexpected_error'
-          ? 'The Initial Review could not be generated due to an unexpected internal error.'
-          : 'The Initial Review could not be generated because the model output was unavailable or invalid.',
+          ? 'The Shared Intake Summary could not be generated due to an unexpected internal error.'
+          : 'The Shared Intake Summary could not be generated because the model output was unavailable or invalid.',
       missing_information: [
         'What is the confirmed scope and set of deliverables?',
         'What assumptions should be explicit in the current brief?',
@@ -324,7 +352,7 @@ function buildStageFallbackV2Data(analysisStage: string, reason: 'unexpected_err
       likely_pushback_areas: ['Which current terms are most likely to trigger pushback if shared as-is?'],
       commercial_risks: [],
       implementation_risks: [],
-      suggested_clarifications: ['Tighten the open items above and re-run the Initial Review.'],
+      suggested_clarifications: ['Tighten the open items above and re-run the Shared Intake Summary.'],
     };
   }
 
@@ -351,6 +379,9 @@ function buildStageFallbackV2Data(analysisStage: string, reason: 'unexpected_err
 }
 
 function getComparisonEvaluationSource(analysisStage: string) {
+  if (analysisStage === STAGE1_SHARED_INTAKE_STAGE) {
+    return 'proposal_stage1_intake';
+  }
   return analysisStage === PRE_SEND_REVIEW_STAGE
     ? 'document_comparison_pre_send'
     : 'document_comparison_mediation';
@@ -358,12 +389,12 @@ function getComparisonEvaluationSource(analysisStage: string) {
 
 function getReviewNotificationCopy(analysisStage: string, title: string) {
   const safeTitle = title || 'your proposal';
-  if (analysisStage === PRE_SEND_REVIEW_STAGE) {
+  if (analysisStage === STAGE1_SHARED_INTAKE_STAGE || analysisStage === PRE_SEND_REVIEW_STAGE) {
     return {
-      title: 'Initial Review ready',
-      message: `An Initial Review is ready for "${safeTitle}".`,
-      emailSubject: 'Initial Review ready',
-      emailText: `Your proposal "${safeTitle}" has a new Initial Review.\n\nSign in to PreMarket to review the one-sided analysis based on the current materials provided so far.`,
+      title: 'Shared Intake Summary ready',
+      message: `A Shared Intake Summary is ready for "${safeTitle}".`,
+      emailSubject: 'Shared Intake Summary ready',
+      emailText: `Your proposal "${safeTitle}" has a new Shared Intake Summary.\n\nSign in to PreMarket to review the neutral intake summary based on the current submitted materials so far.`,
     };
   }
   return {
@@ -419,8 +450,8 @@ function toV2ApiError(error: any) {
 }
 
 function getReviewLabelForSource(source: unknown) {
-  return asText(source) === 'document_comparison_pre_send'
-    ? 'Initial Review'
+  return ['document_comparison_pre_send', 'document_comparison_stage1_intake', 'proposal_stage1_intake'].includes(asText(source))
+    ? 'Shared Intake Summary'
     : 'AI Mediation Review';
 }
 
@@ -635,7 +666,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         }).hasMeaningfulContribution;
         const analysisStage = hasRecipientContributions
           ? MEDIATION_REVIEW_STAGE
-          : PRE_SEND_REVIEW_STAGE;
+          : STAGE1_SHARED_INTAKE_STAGE;
         const mediationRoundContext = analysisStage === MEDIATION_REVIEW_STAGE
           ? await loadPriorBilateralRoundContext({
               db,

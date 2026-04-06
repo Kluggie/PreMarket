@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   buildEvalPromptFromFactSheet,
   buildPreSendPromptFromFactSheet,
+  buildStage1SharedIntakePromptFromFactSheet,
   selectReportStyle,
 } from '../../server/_lib/vertex-evaluation-v2-prompts.ts';
 
@@ -40,19 +41,32 @@ function chunks() {
   };
 }
 
-test('pre-send prompt stays explicitly unilateral and blocks bilateral claims', () => {
-  const prompt = buildPreSendPromptFromFactSheet({
+test('stage1 shared intake prompt stays explicitly one-sided, neutral, and non-evaluative', () => {
+  const prompt = buildStage1SharedIntakePromptFromFactSheet({
     factSheet: factSheet(),
     reportStyle: selectReportStyle(42),
   });
 
+  assert.match(prompt, /Stage 1 Shared Intake Summary analyst/i);
+  assert.match(prompt, /based only on materials currently submitted by one side/i);
+  assert.match(prompt, /NOT mediation, NOT an evaluation, NOT a recommendation, and NOT a compatibility judgment/i);
+  assert.match(prompt, /Do NOT make readiness, confidence, compatibility, bridgeability, or final risk judgments/i);
+  assert.match(prompt, /Do NOT predict likely pushback or likely response from the other side/i);
+  assert.match(prompt, /basis_note must explicitly say this summary is based only on the currently submitted materials/i);
+  assert.match(prompt, /analysis_stage must be "stage1_shared_intake"/i);
+  assert.match(prompt, /intake_status must be "awaiting_other_side_input"/i);
+  assert.doesNotMatch(prompt, /confidence_0_1/i);
+  assert.doesNotMatch(prompt, /ready_to_send/i);
+});
+
+test('legacy pre-send prompt remains explicitly unilateral for historical compatibility', () => {
+  const prompt = buildPreSendPromptFromFactSheet({
+    factSheet: factSheet(),
+    reportStyle: selectReportStyle(7),
+  });
+
   assert.match(prompt, /unilateral draft-readiness review/i);
-  assert.match(prompt, /do NOT know the recipient’s actual position/i);
   assert.match(prompt, /must NOT assess bilateral compatibility/i);
-  assert.match(prompt, /truthful positive assessment is allowed/i);
-  assert.match(prompt, /do NOT manufacture medium-severity concerns/i);
-  assert.match(prompt, /Prefer "ready_to_send" when the brief is genuinely strong/i);
-  assert.match(prompt, /Do NOT default to "not yet strong enough"/i);
   assert.match(prompt, /analysis_stage\": \"pre_send_review\"/i);
 });
 

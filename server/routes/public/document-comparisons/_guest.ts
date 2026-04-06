@@ -9,7 +9,7 @@ import {
 import { buildStoredV2Evaluation } from '../../document-comparisons/_helpers.js';
 import { assertDocumentComparisonWithinLimits } from '../../document-comparisons/_limits.js';
 import { evaluateWithVertexV2 } from '../../../_lib/vertex-evaluation-v2.js';
-import { PRE_SEND_REVIEW_STAGE } from '../../../../src/lib/opportunityReviewStage.js';
+import { STAGE1_SHARED_INTAKE_STAGE } from '../../../../src/lib/opportunityReviewStage.js';
 
 export const GUEST_AI_ASSISTANCE_WINDOW_MS = 15 * 60 * 1000;
 export const GUEST_AI_ASSISTANCE_SESSION_LIMIT = 4;
@@ -599,7 +599,7 @@ export async function runGuestEvaluationModel(params: {
   const v2Result = await evaluateWithVertexV2({
     sharedText: params.docBText || '',
     confidentialText: params.docAText || '',
-    analysisStage: PRE_SEND_REVIEW_STAGE,
+    analysisStage: STAGE1_SHARED_INTAKE_STAGE,
     requestId: params.requestId,
     enforceLeakGuard: false,
     generationModel: asText(process.env.VERTEX_DOC_COMPARE_GENERATION_MODEL) || undefined,

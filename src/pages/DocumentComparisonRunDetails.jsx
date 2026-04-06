@@ -22,7 +22,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { ArrowLeft, BarChart3, Loader2 } from 'lucide-react';
 import { getConfidencePercent, getReviewStageLabel, getReviewStatusDetails } from '@/lib/aiReportUtils';
-import { isPreSendReviewStage, resolveOpportunityReviewStage } from '@/lib/opportunityReviewStage';
+import {
+  isLegacyPreSendReviewStage,
+  isPreSendReviewStage,
+  isSharedIntakeReviewStage,
+  resolveOpportunityReviewStage,
+} from '@/lib/opportunityReviewStage';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -149,7 +154,7 @@ function getEvaluationRowMeta(evaluation, reviewStage) {
       badgeClassName: 'bg-green-100 text-green-700',
       rowClassName: 'rounded-xl border border-green-200 bg-green-50 p-3',
       scoreLabel: isPreSendReviewStage(reviewStage)
-        ? 'initial review'
+        ? 'shared intake'
         : Number.isFinite(numericScore)
         ? `${Math.max(0, Math.round(numericScore))}% confidence`
         : '—',
@@ -271,7 +276,9 @@ export default function DocumentComparisonRunDetails() {
   const reviewStage = resolveOpportunityReviewStage(report, {
     source: latestEvaluation?.source,
   });
-  const isPreSendReview = isPreSendReviewStage(reviewStage);
+  const isOneSidedReview = isPreSendReviewStage(reviewStage);
+  const isSharedIntake = isSharedIntakeReviewStage(reviewStage);
+  const isLegacyPreSend = isLegacyPreSendReviewStage(reviewStage);
   const reviewLabel = getReviewStageLabel(reviewStage);
   const reviewStatus = getReviewStatusDetails(report);
   const comparisonStatus = asLower(comparison?.status);
@@ -640,7 +647,18 @@ export default function DocumentComparisonRunDetails() {
                   <p className="text-4xl font-bold text-slate-900">{sharedWordCount}</p>
                 </div>
               </div>
-              {isPreSendReview ? (
+              {isSharedIntake ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div>
+                    <p className="text-slate-500">Review Type</p>
+                    <p className="text-xl font-semibold text-slate-900">{reviewLabel}</p>
+                  </div>
+                  <div>
+                    <p className="text-slate-500">Intake Status</p>
+                    <p className="text-xl font-semibold text-slate-900">{reviewStatus.label}</p>
+                  </div>
+                </div>
+              ) : isLegacyPreSend ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div>
                     <p className="text-slate-500">Review Type</p>

@@ -14,6 +14,7 @@ import {
   buildEvalPromptFromFactSheet,
   buildFactSheetPrompt,
   buildPreSendPromptFromFactSheet,
+  buildStage1SharedIntakePromptFromFactSheet,
   classifyProposalDomain,
   computeCoverageCount,
   computeReportStyleSeed,
@@ -29,6 +30,7 @@ import {
 import {
   MEDIATION_STAGE,
   PRE_SEND_STAGE,
+  STAGE1_SHARED_INTAKE_STAGE,
   type EvaluationChunks,
   type FallbackMode,
   type FactSheetRisk,
@@ -45,11 +47,13 @@ import {
   type ProposalFactSheetCoverage,
   type ReportStyle,
   type ReviewStage,
+  type Stage1SharedIntakeStage,
   type VertexEvaluationV2Failure,
   type VertexEvaluationV2Internal,
   type VertexEvaluationV2MediationResponse,
   type VertexEvaluationV2Outcome,
   type VertexEvaluationV2PreSendResponse,
+  type VertexEvaluationV2Stage1SharedIntakeResponse,
   type VertexEvaluationV2Request,
   type VertexEvaluationV2Response,
   type VertexEvaluationV2ResponseForStage,
@@ -57,7 +61,7 @@ import {
   type VertexEvaluationV2Telemetry,
 } from './vertex-evaluation-v2-types.js';
 
-export { MEDIATION_STAGE, PRE_SEND_STAGE } from './vertex-evaluation-v2-types.js';
+export { MEDIATION_STAGE, PRE_SEND_STAGE, STAGE1_SHARED_INTAKE_STAGE } from './vertex-evaluation-v2-types.js';
 export { computeReportStyleSeed, selectReportStyle } from './vertex-evaluation-v2-prompts.js';
 export type {
   EvaluationChunks,
@@ -76,11 +80,13 @@ export type {
   ProposalFactSheetCoverage,
   ReportStyle,
   ReviewStage,
+  Stage1SharedIntakeStage,
   VertexEvaluationV2Failure,
   VertexEvaluationV2Internal,
   VertexEvaluationV2MediationResponse,
   VertexEvaluationV2Outcome,
   VertexEvaluationV2PreSendResponse,
+  VertexEvaluationV2Stage1SharedIntakeResponse,
   VertexEvaluationV2Request,
   VertexEvaluationV2Response,
   VertexEvaluationV2ResponseForStage,
@@ -158,12 +164,22 @@ function assertNever(value: never, message: string): never {
 
 function requireAnalysisStage(value: unknown): ReviewStage {
   const normalized = normalizeOpportunityReviewStage(value);
-  if (normalized === PRE_SEND_STAGE || normalized === MEDIATION_STAGE) {
+  if (
+    normalized === STAGE1_SHARED_INTAKE_STAGE ||
+    normalized === PRE_SEND_STAGE ||
+    normalized === MEDIATION_STAGE
+  ) {
     return normalized;
   }
   throw new TypeError(
-    'evaluateWithVertexV2 requires an explicit analysisStage of "pre_send_review" or "mediation_review".',
+    'evaluateWithVertexV2 requires an explicit analysisStage of "stage1_shared_intake", "pre_send_review", or "mediation_review".',
   );
+}
+
+export function isStage1SharedIntakeResponse(
+  response: VertexEvaluationV2Response,
+): response is VertexEvaluationV2Stage1SharedIntakeResponse {
+  return response.analysis_stage === STAGE1_SHARED_INTAKE_STAGE;
 }
 
 export function isPreSendReviewResponse(
@@ -3256,6 +3272,184 @@ function trimStageItems(values: string[], maxItems = 6, fallback: string[] = [])
   return uniqueStrings(fallback).slice(0, maxItems);
 }
 
+const DEFAULT_STAGE1_BASIS_NOTE =
+  'Based only on the currently submitted materials. A fuller bilateral mediation analysis becomes possible once the other side responds.';
+
+function toStage1Question(value: string) {
+  const text = asText(value);
+  if (!text) return '';
+  const { question } = splitMissingEntry(text);
+  const base = stripTrailingPunctuation(question || text);
+  if (!base) return '';
+  if (base.endsWith('?')) return base;
+  if (/^(what|which|who|where|when|why|how)\b/i.test(base)) {
+    return `${base}?`;
+  }
+  return `What remains unclear about ${lowerFirst(base)}?`;
+}
+
+function normalizeStage1Questions(values: string[], fallback: string[] = [], maxItems = 6) {
+  return trimStageItems(
+    values.map((item) => toStage1Question(item)).filter(Boolean),
+    maxItems,
+    fallback.map((item) => toStage1Question(item)).filter(Boolean),
+  );
+}
+
+function buildStage1SubmissionSummary(factSheet: ProposalFactSheet) {
+  const sentences: string[] = [];
+  if (factSheet.project_goal) {
+    sentences.push(
+      `The submitted materials describe an opportunity centered on ${stripTrailingPunctuation(factSheet.project_goal)}.`,
+    );
+  } else if (factSheet.scope_deliverables.length > 0) {
+    sentences.push(
+      `The submitted materials outline an opportunity with named elements such as ${joinNatural(factSheet.scope_deliverables.slice(0, 3).map((item) => stripTrailingPunctuation(item))).toLowerCase()}.`,
+    );
+  } else {
+    sentences.push('The submitted materials outline an opportunity, but the current record remains high level.');
+  }
+
+  const visibleElements: string[] = [];
+  if (factSheet.timeline.duration || factSheet.timeline.start || factSheet.timeline.milestones.length > 0) {
+    visibleElements.push('timing');
+  }
+  if (factSheet.constraints.length > 0 || factSheet.vendor_preferences.length > 0) {
+    visibleElements.push('commercial or operational constraints');
+  }
+  if (factSheet.success_criteria_kpis.length > 0) {
+    visibleElements.push('stated success measures');
+  }
+
+  if (visibleElements.length > 0) {
+    sentences.push(`The current record already references ${joinNatural(visibleElements)}.`);
+  } else {
+    sentences.push('Important scope, timing, and success details are still only partially defined.');
+  }
+
+  return sentences.join(' ');
+}
+
+function buildStage1ScopeSnapshot(factSheet: ProposalFactSheet) {
+  const items: string[] = [];
+  if (factSheet.project_goal) {
+    items.push(`Stated objective: ${stripTrailingPunctuation(factSheet.project_goal)}.`);
+  }
+  if (factSheet.scope_deliverables.length > 0) {
+    items.push(
+      `Named scope elements include ${joinNatural(factSheet.scope_deliverables.slice(0, 3).map((item) => stripTrailingPunctuation(item))).toLowerCase()}.`,
+    );
+  }
+  if (factSheet.timeline.start || factSheet.timeline.duration || factSheet.timeline.milestones.length > 0) {
+    const timelineBits = [
+      factSheet.timeline.start ? `start timing of ${stripTrailingPunctuation(factSheet.timeline.start)}` : '',
+      factSheet.timeline.duration ? `a duration of ${stripTrailingPunctuation(factSheet.timeline.duration)}` : '',
+      factSheet.timeline.milestones.length > 0
+        ? `milestones such as ${joinNatural(factSheet.timeline.milestones.slice(0, 3).map((item) => stripTrailingPunctuation(item))).toLowerCase()}`
+        : '',
+    ].filter(Boolean);
+    if (timelineBits.length > 0) {
+      items.push(`The materials mention ${joinNatural(timelineBits)}.`);
+    }
+  }
+  if (factSheet.constraints.length > 0 || factSheet.vendor_preferences.length > 0) {
+    items.push(
+      `Current constraints or commercial preferences include ${joinNatural(
+        [...factSheet.constraints, ...factSheet.vendor_preferences].slice(0, 3).map((item) => stripTrailingPunctuation(item)),
+      ).toLowerCase()}.`,
+    );
+  }
+  if (factSheet.success_criteria_kpis.length > 0) {
+    items.push(
+      `Success measures already mentioned include ${joinNatural(factSheet.success_criteria_kpis.slice(0, 2).map((item) => stripTrailingPunctuation(item))).toLowerCase()}.`,
+    );
+  }
+  if (factSheet.assumptions.length > 0) {
+    items.push(
+      `Assumptions or dependencies already visible include ${joinNatural(factSheet.assumptions.slice(0, 2).map((item) => stripTrailingPunctuation(item))).toLowerCase()}.`,
+    );
+  }
+  return trimStageItems(items, 5);
+}
+
+function buildStage1OtherSideNeeded(
+  factSheet: ProposalFactSheet,
+  unansweredQuestions: string[],
+) {
+  const items: string[] = [];
+  const addItem = (value: string) => {
+    const text = asText(value);
+    if (!text || items.includes(text)) return;
+    items.push(text);
+  };
+
+  if (unansweredQuestions.length > 0) {
+    unansweredQuestions.slice(0, 2).forEach((question) => {
+      addItem(`A clear response on ${stripTrailingPunctuation(question).replace(/\?$/g, '').replace(/^(what|which|who|where|when|why|how)\s+/i, '').toLowerCase()}.`);
+    });
+  }
+  if (factSheet.constraints.length > 0 || factSheet.vendor_preferences.length > 0) {
+    addItem('Its own constraints, preferences, or boundary conditions for the current opportunity.');
+  }
+  addItem('Any corrections, additions, or counter-assumptions that materially change the current scope, timing, ownership, or commercial framing.');
+  addItem('Enough detail on its priorities and dependencies for a bilateral mediation review to compare both sides on the same record.');
+
+  return trimStageItems(items, 4);
+}
+
+function buildStage1DiscussionStartingPoints(factSheet: ProposalFactSheet) {
+  const items: string[] = [
+    'Confirm what has been submitted so far and what each side believes is in scope for the next exchange.',
+    'Surface the open questions that need answers before a fuller bilateral mediation review would be meaningful.',
+    'Clarify which issues are factual inputs, commercial preferences, timing constraints, or dependencies so the next round is easier to compare.',
+  ];
+  if (factSheet.timeline.duration || factSheet.timeline.start || factSheet.timeline.milestones.length > 0) {
+    items.push('Confirm whether the currently mentioned timeline is a target, a requirement, or still open for discussion.');
+  }
+  if (factSheet.success_criteria_kpis.length > 0) {
+    items.push('Check whether both sides are using the same definition of success, sign-off, or completion.');
+  }
+  return trimStageItems(items, 4);
+}
+
+function safeFallbackStage1SharedIntakeFromFactSheet(
+  factSheet: ProposalFactSheet,
+  params: { failureKind: string },
+): { data: VertexEvaluationV2Stage1SharedIntakeResponse; warnings: string[]; fallbackMode: FallbackMode } {
+  const warningKey =
+    params.failureKind === 'truncated_output'
+      ? 'vertex_truncated_output_fallback_used'
+      : params.failureKind.startsWith('vertex_http') || params.failureKind === 'vertex_timeout'
+        ? 'vertex_request_failed_fallback_used'
+        : params.failureKind === 'not_configured'
+          ? 'vertex_not_configured_fallback_used'
+          : 'vertex_invalid_response_fallback_used';
+
+  const unansweredQuestions = normalizeStage1Questions(
+    [...factSheet.open_questions, ...factSheet.missing_info],
+    [
+      'What is the confirmed scope and current boundary of the opportunity?',
+      'What timing, ownership, or dependency assumptions still need to be clarified?',
+      'What success measures or decision criteria are expected at this stage?',
+    ],
+  );
+
+  return {
+    data: {
+      analysis_stage: STAGE1_SHARED_INTAKE_STAGE,
+      submission_summary: buildStage1SubmissionSummary(factSheet),
+      scope_snapshot: buildStage1ScopeSnapshot(factSheet),
+      unanswered_questions: unansweredQuestions,
+      other_side_needed: buildStage1OtherSideNeeded(factSheet, unansweredQuestions),
+      discussion_starting_points: buildStage1DiscussionStartingPoints(factSheet),
+      intake_status: 'awaiting_other_side_input',
+      basis_note: DEFAULT_STAGE1_BASIS_NOTE,
+    },
+    warnings: [warningKey],
+    fallbackMode: classifyFallbackMode(factSheet),
+  };
+}
+
 function getPreSendReadinessSignals(factSheet: ProposalFactSheet) {
   const coverageCount = computeCoverageCount(factSheet.source_coverage);
   const openItems = uniqueStrings([
@@ -3771,6 +3965,16 @@ function flattenNegotiationAnalysisText(analysis?: NegotiationAnalysis) {
 
 function flattenEvaluationResponseText(response: VertexEvaluationV2Response) {
   switch (response.analysis_stage) {
+    case STAGE1_SHARED_INTAKE_STAGE:
+      return [
+        response.submission_summary,
+        ...response.scope_snapshot,
+        ...response.unanswered_questions,
+        ...response.other_side_needed,
+        ...response.discussion_starting_points,
+        response.intake_status,
+        response.basis_note,
+      ].filter(Boolean);
     case PRE_SEND_STAGE:
       return [
         response.send_readiness_summary,
@@ -4130,6 +4334,10 @@ type LlmVerifierVerdict = 'clean' | 'leak' | 'unsure' | 'unavailable';
  */
 function buildSuppressedOutput(
   warningReason: 'leak_detected' | 'verifier_unavailable',
+  stage: Stage1SharedIntakeStage,
+): VertexEvaluationV2Stage1SharedIntakeResponse;
+function buildSuppressedOutput(
+  warningReason: 'leak_detected' | 'verifier_unavailable',
   stage: PreSendReviewStage,
 ): VertexEvaluationV2PreSendResponse;
 function buildSuppressedOutput(
@@ -4148,6 +4356,19 @@ function buildSuppressedOutput(
     warningReason === 'leak_detected'
       ? 'Output suppressed: evaluation output contained confidential information and could not be shared.'
       : 'Output suppressed: evaluation verifier was unavailable and output safety could not be confirmed.';
+  if (stage === STAGE1_SHARED_INTAKE_STAGE) {
+    return {
+      analysis_stage: STAGE1_SHARED_INTAKE_STAGE,
+      submission_summary: placeholder,
+      scope_snapshot: [],
+      unanswered_questions: [],
+      other_side_needed: [],
+      discussion_starting_points: [],
+      intake_status: 'awaiting_other_side_input',
+      basis_note:
+        'Based only on the currently submitted materials. A fuller bilateral mediation analysis becomes possible once the other side responds.',
+    };
+  }
   if (stage === PRE_SEND_STAGE) {
     return {
       analysis_stage: PRE_SEND_STAGE,
@@ -4776,6 +4997,9 @@ async function attemptRefinementPass(params: {
 }
 
 export async function evaluateWithVertexV2(
+  input: VertexEvaluationV2Request<Stage1SharedIntakeStage>,
+): Promise<VertexEvaluationV2Outcome<Stage1SharedIntakeStage>>;
+export async function evaluateWithVertexV2(
   input: VertexEvaluationV2Request<PreSendReviewStage>,
 ): Promise<VertexEvaluationV2Outcome<PreSendReviewStage>>;
 export async function evaluateWithVertexV2(
@@ -4854,7 +5078,13 @@ export async function evaluateWithVertexV2(
 
   // ── Pass B: final evaluation using Fact Sheet ────────────────────────────
   const buildPrompt = (options: { tightMode?: boolean; includeDigest?: boolean } = {}) =>
-    analysisStage === PRE_SEND_STAGE
+    analysisStage === STAGE1_SHARED_INTAKE_STAGE
+      ? buildStage1SharedIntakePromptFromFactSheet({
+          factSheet,
+          reportStyle,
+          tightMode: options.tightMode,
+        })
+      : analysisStage === PRE_SEND_STAGE
       ? buildPreSendPromptFromFactSheet({
           factSheet,
           reportStyle,
@@ -4884,7 +5114,7 @@ export async function evaluateWithVertexV2(
     preflight = preflightPromptCheck(prompt);
     preflightTrimTriggered = true;
     if (preflight.overCeiling && convergenceDigestText && analysisStage !== PRE_SEND_STAGE) {
-      // Second trim: drop convergence digest entirely.
+    // Second trim: drop convergence digest entirely.
       prompt = buildPrompt({ tightMode: true, includeDigest: false });
       preflight = preflightPromptCheck(prompt);
     }
@@ -5131,6 +5361,42 @@ export async function evaluateWithVertexV2(
       };
     }
 
+    if (analysisStage === STAGE1_SHARED_INTAKE_STAGE) {
+      if (!isStage1SharedIntakeResponse(schemaValidation.normalized)) {
+        throw new TypeError('Stage 1 validation returned a non Stage 1 response.');
+      }
+      return {
+        ok: true,
+        data: schemaValidation.normalized,
+        attempt_count: attempt,
+        model: vertex.model,
+        generation_model: generationModel,
+        _internal: {
+          fact_sheet: factSheet,
+          coverage_count: computeCoverageCount(factSheet.source_coverage),
+          caps_applied: [],
+          pass_a_parse_error: passAParseError,
+          pass_b_attempt_count: attempt,
+          report_style: reportStyle,
+          preflight: {
+            promptChars: preflight.promptChars,
+            estimatedPromptTokens: preflight.estimatedPromptTokens,
+            overCeiling: preflight.overCeiling,
+            ceiling: preflight.ceiling,
+            trimTriggered: preflightTrimTriggered,
+          },
+          models_used: {
+            generation: generationModel,
+            extract: extractModel,
+            verifier: verifierModel,
+            verifier_used: Boolean(llmVerifyMeta),
+            verifier_escalated: Boolean(llmVerifyMeta?.escalated),
+            verifier_unavailable: false,
+          },
+        },
+      };
+    }
+
     if (analysisStage === PRE_SEND_STAGE) {
       if (!isPreSendReviewResponse(schemaValidation.normalized)) {
         throw new TypeError('Pre-send validation returned a non pre-send response.');
@@ -5362,6 +5628,46 @@ export async function evaluateWithVertexV2(
 
   // ── All Pass B attempts failed → safe fallback ───────────────────────────
   // Return ok:true with a clamped fallback evaluation so the API never fails.
+  if (analysisStage === STAGE1_SHARED_INTAKE_STAGE) {
+    const fallback = safeFallbackStage1SharedIntakeFromFactSheet(factSheet, {
+      failureKind: lastParseFailureKind,
+    });
+
+    return {
+      ok: true,
+      data: fallback.data,
+      attempt_count: attempt,
+      model: null,
+      generation_model: generationModel,
+      _internal: {
+        fact_sheet: factSheet,
+        coverage_count: computeCoverageCount(factSheet.source_coverage),
+        caps_applied: [],
+        pass_a_parse_error: passAParseError,
+        pass_b_attempt_count: attempt,
+        report_style: reportStyle,
+        preflight: {
+          promptChars: preflight.promptChars,
+          estimatedPromptTokens: preflight.estimatedPromptTokens,
+          overCeiling: preflight.overCeiling,
+          ceiling: preflight.ceiling,
+          trimTriggered: preflightTrimTriggered,
+        },
+        warnings: fallback.warnings,
+        failure_kind: lastParseFailureKind,
+        fallback_mode: fallback.fallbackMode,
+        models_used: {
+          generation: generationModel,
+          extract: extractModel,
+          verifier: verifierModel,
+          verifier_used: false,
+          verifier_escalated: false,
+          verifier_unavailable: false,
+        },
+      },
+    };
+  }
+
   if (analysisStage === PRE_SEND_STAGE) {
     const fallback = safeFallbackPreSendReviewFromFactSheet(factSheet, {
       failureKind: lastParseFailureKind,

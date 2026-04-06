@@ -11,6 +11,7 @@ import {
 import {
   PRE_SEND_REVIEW_STAGE,
   MEDIATION_REVIEW_STAGE,
+  STAGE1_SHARED_INTAKE_STAGE,
 } from '../../src/lib/opportunityReviewStage.js';
 
 const require = createRequire(import.meta.url);
@@ -120,6 +121,32 @@ function validPreSendPayload(overrides = {}) {
   };
 }
 
+function validStage1Payload(overrides = {}) {
+  return {
+    analysis_stage: STAGE1_SHARED_INTAKE_STAGE,
+    submission_summary:
+      'The submitting party appears to be proposing a phased delivery engagement with milestone-based approvals and a bounded first phase.',
+    scope_snapshot: [
+      'A phased first phase is visible in the materials.',
+      'Milestone approvals and timing assumptions are referenced.',
+    ],
+    unanswered_questions: [
+      'What is the confirmed first-phase scope boundary?',
+      'Who owns final approval at the end of the first milestone?',
+    ],
+    other_side_needed: [
+      'The responding side should confirm any scope corrections, approval requirements, or dependencies that materially affect the first phase.',
+    ],
+    discussion_starting_points: [
+      'Confirm the first-phase scope, milestone approvals, and the success measures that should guide the next exchange.',
+    ],
+    intake_status: 'awaiting_other_side_input',
+    basis_note:
+      'Based only on the currently submitted materials. A fuller bilateral mediation analysis becomes possible once the other side responds.',
+    ...overrides,
+  };
+}
+
 function splitRenderedParagraphs(entries) {
   return entries
     .flatMap((entry) =>
@@ -153,6 +180,19 @@ function validateMediationResponse(value) {
   return validateResponseSchema(value, MEDIATION_REVIEW_STAGE);
 }
 
+test('validateResponseSchema accepts Stage 1 shared intake schema and rejects mediation fallback when stage is Stage 1', () => {
+  const ok = validateResponseSchema(validStage1Payload(), STAGE1_SHARED_INTAKE_STAGE);
+  assert.equal(ok.ok, true);
+  if (!ok.ok) return;
+  assert.equal(ok.normalized.analysis_stage, STAGE1_SHARED_INTAKE_STAGE);
+  assert.equal('confidence_0_1' in ok.normalized, false);
+  assert.equal('readiness_status' in ok.normalized, false);
+  assert.equal('recommendation' in ok.normalized, false);
+
+  const invalid = validateResponseSchema(validPayload(), STAGE1_SHARED_INTAKE_STAGE);
+  assert.equal(invalid.ok, false);
+});
+
 test('validateResponseSchema accepts pre-send schema and rejects mediation fallback when stage is pre-send', () => {
   const ok = validateResponseSchema(validPreSendPayload(), PRE_SEND_REVIEW_STAGE);
   assert.equal(ok.ok, true);
@@ -160,6 +200,52 @@ test('validateResponseSchema accepts pre-send schema and rejects mediation fallb
 
   const invalid = validateResponseSchema(validPayload(), PRE_SEND_REVIEW_STAGE);
   assert.equal(invalid.ok, false);
+});
+
+test('evaluateWithVertexV2 returns Stage 1 shared intake shape when analysisStage is stage1_shared_intake', async () => {
+  const cleanup = setVertexV2MockSequence([
+    {
+      response: {
+        model: 'gemini-2.5-flash-lite',
+        text: JSON.stringify(validFactSheetPayload()),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+    {
+      response: {
+        model: 'gemini-2.5-pro',
+        text: JSON.stringify(validStage1Payload()),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+  ]);
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Shared draft includes scope, milestones, and delivery notes for the counterparty.',
+      confidentialText: 'Internal notes highlight unresolved ownership and timing assumptions.',
+      analysisStage: STAGE1_SHARED_INTAKE_STAGE,
+      requestId: 'test_stage1_shared_intake',
+    });
+
+    assert.equal(outcome.ok, true);
+    assert.equal(outcome.data.analysis_stage, STAGE1_SHARED_INTAKE_STAGE);
+    assert.equal(typeof outcome.data.submission_summary, 'string');
+    assert.equal(Array.isArray(outcome.data.scope_snapshot), true);
+    assert.equal(Array.isArray(outcome.data.unanswered_questions), true);
+    assert.equal(Array.isArray(outcome.data.other_side_needed), true);
+    assert.equal(Array.isArray(outcome.data.discussion_starting_points), true);
+    assert.equal(outcome.data.intake_status, 'awaiting_other_side_input');
+    assert.match(outcome.data.basis_note, /currently submitted materials/i);
+    assert.equal('fit_level' in outcome.data, false);
+    assert.equal('confidence_0_1' in outcome.data, false);
+    assert.equal('readiness_status' in outcome.data, false);
+    assert.equal('send_readiness_summary' in outcome.data, false);
+  } finally {
+    cleanup();
+  }
 });
 
 test('evaluateWithVertexV2 returns pre-send review shape when analysisStage is pre_send_review', async () => {
@@ -197,6 +283,68 @@ test('evaluateWithVertexV2 returns pre-send review shape when analysisStage is p
     assert.equal('fit_level' in outcome.data, false);
     assert.equal('confidence_0_1' in outcome.data, false);
     assert.equal('why' in outcome.data, false);
+  } finally {
+    cleanup();
+  }
+});
+
+test('evaluateWithVertexV2 Stage 1 fallback stays neutral when model output is invalid', async () => {
+  const cleanup = setVertexV2MockSequence([
+    {
+      response: {
+        model: 'gemini-2.5-flash-lite',
+        text: JSON.stringify(validFactSheetPayload({
+          project_goal: 'Launch a phased customer-support automation pilot.',
+          scope_deliverables: ['Pilot scope', 'Milestone approvals'],
+          open_questions: ['Who owns final pilot approval?'],
+          missing_info: ['What measurable success criteria define the pilot outcome?'],
+          source_coverage: {
+            has_scope: true,
+            has_timeline: true,
+            has_kpis: false,
+            has_constraints: true,
+            has_risks: false,
+          },
+        })),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+    {
+      response: {
+        model: 'gemini-2.5-pro',
+        text: 'not valid json',
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+    {
+      response: {
+        model: 'gemini-2.5-pro',
+        text: 'still not valid json',
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+  ]);
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'Shared materials describe a phased automation pilot with milestone approvals.',
+      confidentialText: 'Internal notes say pilot success criteria and approval ownership still need clarification.',
+      analysisStage: STAGE1_SHARED_INTAKE_STAGE,
+      requestId: 'test_stage1_shared_intake_fallback',
+    });
+
+    assert.equal(outcome.ok, true);
+    assert.equal(outcome.data.analysis_stage, STAGE1_SHARED_INTAKE_STAGE);
+    assert.equal(outcome.data.intake_status, 'awaiting_other_side_input');
+    assert.match(outcome.data.basis_note, /currently submitted materials/i);
+    assert.equal(outcome.data.unanswered_questions.length >= 1, true);
+    assert.equal(outcome.data.other_side_needed.length >= 1, true);
+    assert.equal('confidence_0_1' in outcome.data, false);
+    assert.equal('readiness_status' in outcome.data, false);
+    assert.equal('send_readiness_summary' in outcome.data, false);
   } finally {
     cleanup();
   }
@@ -532,7 +680,7 @@ test('validateResponseSchema accepts strict small schema and rejects missing key
   assert.equal(missing.missingKeys.includes('redactions'), true);
 });
 
-test('validateResponseSchema requires analysis_stage for both stages', () => {
+test('validateResponseSchema requires analysis_stage for all supported stages', () => {
   const mediationMissingStage = validateMediationResponse({
     fit_level: 'medium',
     confidence_0_1: 0.6,
@@ -542,6 +690,22 @@ test('validateResponseSchema requires analysis_stage for both stages', () => {
   });
   assert.equal(mediationMissingStage.ok, false);
   assert.equal(mediationMissingStage.missingKeys.includes('analysis_stage'), true);
+
+  const stage1MissingStage = validateResponseSchema(
+    {
+      submission_summary: 'The current submission outlines a phased rollout.',
+      scope_snapshot: ['Phased rollout'],
+      unanswered_questions: ['Who owns final approval?'],
+      other_side_needed: ['The responding side should confirm any approval constraints.'],
+      discussion_starting_points: ['Confirm the approval path.'],
+      intake_status: 'awaiting_other_side_input',
+      basis_note:
+        'Based only on the currently submitted materials. A fuller bilateral mediation analysis becomes possible once the other side responds.',
+    },
+    STAGE1_SHARED_INTAKE_STAGE,
+  );
+  assert.equal(stage1MissingStage.ok, false);
+  assert.equal(stage1MissingStage.missingKeys.includes('analysis_stage'), true);
 
   const preSendMissingStage = validateResponseSchema(
     {

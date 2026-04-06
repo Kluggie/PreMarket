@@ -2036,7 +2036,7 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
   ];
   const step3PrimaryActionLabel = guestMediationLimitReached
     ? 'Sign in for more AI runs'
-    : 'Run Initial Review';
+    : 'Run Shared Intake Summary';
 
   useEffect(() => {
     draftDirtyRef.current = draftDirty;
@@ -2690,7 +2690,7 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
       );
       setShowFinishConfirmDialog(false);
       updateRouteParams({ nextStep: 3, replace: true });
-      toast.success('Initial Review ready');
+      toast.success('Shared Intake Summary ready');
     } catch (error) {
       const code = getApiErrorCode(error);
       const guestLimitMessage = getGuestAiLimitMessage(error);

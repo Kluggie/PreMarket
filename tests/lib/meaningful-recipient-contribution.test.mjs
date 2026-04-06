@@ -103,8 +103,8 @@ test('recipient-authored text, structured answers, and files count as meaningful
   assert.equal(fileDelta.hasMeaningfulContribution, true);
 });
 
-test('review stage resolves to mediation only when recipient contribution is meaningful', () => {
-  const preSendStage = resolveReviewStageFromRecipientContribution({
+test('review stage resolves to Stage 1 shared intake only until recipient contribution becomes meaningful', () => {
+  const stage1SharedIntake = resolveReviewStageFromRecipientContribution({
     recipientAuthorRole: 'recipient',
     historyBaselinePayloads: {
       shared: {
@@ -122,7 +122,7 @@ test('review stage resolves to mediation only when recipient contribution is mea
       },
     ],
   });
-  assert.equal(preSendStage, 'pre_send_review');
+  assert.equal(stage1SharedIntake, 'stage1_shared_intake');
 
   const mediationStage = resolveReviewStageFromRecipientContribution({
     recipientAuthorRole: 'recipient',

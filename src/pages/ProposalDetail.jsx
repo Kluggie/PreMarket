@@ -56,7 +56,7 @@ import {
   getReviewStageLabel,
 } from '@/lib/aiReportUtils';
 import { buildDocumentComparisonReportHref } from '@/lib/notificationTargets';
-import { resolveOpportunityReviewStage } from '@/lib/opportunityReviewStage';
+import { isPreSendReviewStage, resolveOpportunityReviewStage } from '@/lib/opportunityReviewStage';
 import {
   AGREED_LABEL,
   CONTINUE_NEGOTIATING_LABEL,
@@ -1026,8 +1026,8 @@ export default function ProposalDetail() {
                         return;
                       }
                       triggerJsonDownload(
-                        reviewStage === 'pre_send_review'
-                          ? 'proposal-initial-review.json'
+                        isPreSendReviewStage(reviewStage)
+                          ? 'proposal-shared-intake-summary.json'
                           : 'proposal-ai-mediation-review.json',
                         latestResult,
                       );

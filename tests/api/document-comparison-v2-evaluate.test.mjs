@@ -1,10 +1,10 @@
 /**
  * Document Comparison V2 evaluator wiring tests
  *
- * Verifies that proposer-only evaluations:
- * 1. Persist as truthful Pre-send Reviews
+ * Verifies that one-sided evaluations:
+ * 1. Persist as neutral Stage 1 Shared Intake Summaries
  * 2. Preserve the same stage in proposal evaluation history
- * 3. Fall back safely without emitting mediation fields
+ * 3. Fall back safely without emitting mediation fields or readiness verdicts
  * 4. Never leak confidential canary text
  */
 
@@ -79,24 +79,26 @@ function mockVertexV2Call(mockFn) {
   };
 }
 
-function vertexPreSendResponse(overrides = {}) {
+function vertexStage1Response(overrides = {}) {
   return {
     model: 'gemini-2.0-flash-001',
     text: JSON.stringify({
-      analysis_stage: 'pre_send_review',
-      readiness_status: 'ready_with_clarifications',
-      send_readiness_summary:
-        'The sender draft is workable, but ownership and commercial assumptions should be clarified before sharing.',
-      missing_information: [
+      analysis_stage: 'stage1_shared_intake',
+      submission_summary:
+        'The submitting party appears to be proposing a scoped delivery engagement with milestone-based responsibilities and approval checkpoints.',
+      scope_snapshot: [
+        'Delivery scope and milestone structure are outlined.',
+        'Approval ownership and commercial guardrails are referenced but not fully defined.',
+      ],
+      unanswered_questions: [
         'What is the confirmed go-live date?',
         'What are the measurable KPIs for success?',
       ],
-      ambiguous_terms: ['Renewal term ambiguity may confuse the recipient.'],
-      likely_recipient_questions: ['Who owns approvals if delivery dependencies slip?'],
-      likely_pushback_areas: ['Open-ended renewal language may trigger immediate pushback.'],
-      commercial_risks: ['Budget boundaries are not tied to a defined change process.'],
-      implementation_risks: ['Unclear dependency ownership may slow execution.'],
-      suggested_clarifications: ['Clarify renewal mechanics and ownership before sharing.'],
+      other_side_needed: ['The responding side should confirm approval ownership and any delivery constraints that materially affect scope.'],
+      discussion_starting_points: ['Confirm the initial scope boundary, milestone approvals, and success measures for the next exchange.'],
+      intake_status: 'awaiting_other_side_input',
+      basis_note:
+        'Based only on the currently submitted materials. A fuller bilateral mediation analysis becomes possible once the other side responds.',
       ...overrides,
     }),
     finishReason: 'STOP',
@@ -111,14 +113,14 @@ if (!hasDatabaseUrl()) {
     () => {},
   );
 } else {
-  test('proposer-only evaluate persists Pre-send Review without mediation fields', async () => {
+  test('one-sided evaluate persists Shared Intake Summary without mediation fields or readiness verdicts', async () => {
     await ensureMigrated();
     await resetTables();
 
     const cookie = authCookie('v2_eval_t1_owner', 'v2-eval-t1@example.com');
     const comparisonId = await createComparison(cookie);
 
-    const cleanup = mockVertexV2Call(async () => vertexPreSendResponse());
+    const cleanup = mockVertexV2Call(async () => vertexStage1Response());
     try {
       const res = await runEvaluate(cookie, comparisonId, { engine: 'v2' });
       assert.equal(res.statusCode, 200, `Expected 200; got ${res.statusCode}: ${JSON.stringify(res.jsonBody())}`);
@@ -128,17 +130,22 @@ if (!hasDatabaseUrl()) {
       const report = evalResult.report ?? {};
 
       assert.equal(report.report_format, 'v2');
-      assert.equal(report.analysis_stage, 'pre_send_review');
-      assert.equal(report.readiness_status, 'ready_with_clarifications');
-      assert.equal(typeof report.send_readiness_summary, 'string');
-      assert.equal(Array.isArray(report.missing_information), true);
-      assert.equal(Array.isArray(report.likely_recipient_questions), true);
+      assert.equal(report.analysis_stage, 'stage1_shared_intake');
+      assert.equal(typeof report.submission_summary, 'string');
+      assert.equal(Array.isArray(report.scope_snapshot), true);
+      assert.equal(Array.isArray(report.unanswered_questions), true);
+      assert.equal(Array.isArray(report.other_side_needed), true);
+      assert.equal(Array.isArray(report.discussion_starting_points), true);
+      assert.equal(report.intake_status, 'awaiting_other_side_input');
+      assert.equal(typeof report.basis_note, 'string');
       assert.equal(Array.isArray(report.presentation_sections), true);
       assert.equal(report.presentation_sections.length > 0, true);
       assert.equal('why' in report, false);
       assert.equal('confidence_0_1' in report, false);
       assert.equal('recommendation' in report, false);
-      assert.equal(typeof evalResult.score, 'number');
+      assert.equal('readiness_status' in report, false);
+      assert.equal('send_readiness_summary' in report, false);
+      assert.equal(evalResult.score ?? null, null);
       assert.equal(evalResult.recommendation ?? null, null);
       assert.equal(body.evaluation_provider, 'vertex');
     } finally {
@@ -146,14 +153,14 @@ if (!hasDatabaseUrl()) {
     }
   });
 
-  test('proposal evaluations preserve pre-send stage and source', async () => {
+  test('proposal evaluations preserve Stage 1 shared intake stage and source', async () => {
     await ensureMigrated();
     await resetTables();
 
     const cookie = authCookie('v2_eval_t2_owner', 'v2-eval-t2@example.com');
     const comparisonId = await createComparison(cookie);
 
-    const cleanup = mockVertexV2Call(async () => vertexPreSendResponse());
+    const cleanup = mockVertexV2Call(async () => vertexStage1Response());
     try {
       const evalRes = await runEvaluate(cookie, comparisonId, { engine: 'v2' });
       assert.equal(evalRes.statusCode, 200, `Evaluate failed: ${JSON.stringify(evalRes.jsonBody())}`);
@@ -165,16 +172,17 @@ if (!hasDatabaseUrl()) {
       assert.equal(listRes.statusCode, 200, `GET evaluations failed: ${JSON.stringify(listRes.jsonBody())}`);
 
       const latest = (listRes.jsonBody().evaluations ?? [])[0];
-      assert.equal(latest?.source, 'document_comparison_pre_send');
-      assert.equal(latest?.result?.report?.analysis_stage, 'pre_send_review');
+      assert.equal(latest?.source, 'document_comparison_stage1_intake');
+      assert.equal(latest?.result?.report?.analysis_stage, 'stage1_shared_intake');
       assert.equal(Array.isArray(latest?.result?.report?.presentation_sections), true);
       assert.equal('why' in (latest?.result?.report ?? {}), false);
+      assert.equal('readiness_status' in (latest?.result?.report ?? {}), false);
     } finally {
       cleanup();
     }
   });
 
-  test('unexpected Vertex throw still returns HTTP 200 with fallback pre-send review', async () => {
+  test('unexpected Vertex throw still returns HTTP 200 with fallback Stage 1 shared intake output', async () => {
     await ensureMigrated();
     await resetTables();
 
@@ -189,15 +197,18 @@ if (!hasDatabaseUrl()) {
       assert.equal(res.statusCode, 200, `Expected 200 on Vertex failure; got: ${res.statusCode}`);
 
       const report = res.jsonBody().comparison?.evaluation_result?.report ?? {};
-      assert.equal(report.analysis_stage, 'pre_send_review');
-      assert.equal(typeof report.send_readiness_summary, 'string');
+      assert.equal(report.analysis_stage, 'stage1_shared_intake');
+      assert.equal(typeof report.submission_summary, 'string');
+      assert.equal(report.intake_status, 'awaiting_other_side_input');
+      assert.match(report.basis_note || '', /currently submitted materials/i);
       assert.equal('why' in report, false);
+      assert.equal('readiness_status' in report, false);
     } finally {
       cleanup();
     }
   });
 
-  test('confidential canary never appears in proposer-only public output fields', async () => {
+  test('confidential canary never appears in one-sided shared intake public output fields', async () => {
     await ensureMigrated();
     await resetTables();
 
@@ -209,14 +220,12 @@ if (!hasDatabaseUrl()) {
     });
 
     const cleanup = mockVertexV2Call(async () =>
-      vertexPreSendResponse({
-        send_readiness_summary:
-          'The shared draft aligns with stated objectives, but still needs a clearer go-live date before sharing.',
-        missing_information: ['What is the confirmed go-live date?'],
-        ambiguous_terms: [],
-        likely_recipient_questions: ['Who owns the final delivery milestone?'],
-        likely_pushback_areas: [],
-        suggested_clarifications: ['Add an explicit go-live date to the shared draft.'],
+      vertexStage1Response({
+        submission_summary:
+          'The submitting party appears to be proposing a milestone-based engagement, but the timeline and delivery ownership still need clarification.',
+        unanswered_questions: ['What is the confirmed go-live date?'],
+        other_side_needed: ['The responding side should confirm who owns the final delivery milestone.'],
+        discussion_starting_points: ['Confirm the delivery milestone owner and add the go-live date to the next exchange.'],
       }),
     );
     try {
@@ -226,12 +235,12 @@ if (!hasDatabaseUrl()) {
       const evalResult = res.jsonBody().comparison?.evaluation_result ?? {};
       const report = evalResult.report ?? {};
       const publicOutput = JSON.stringify({
-        send_readiness_summary: report.send_readiness_summary,
-        missing_information: report.missing_information,
-        ambiguous_terms: report.ambiguous_terms,
-        likely_recipient_questions: report.likely_recipient_questions,
-        likely_pushback_areas: report.likely_pushback_areas,
-        suggested_clarifications: report.suggested_clarifications,
+        submission_summary: report.submission_summary,
+        scope_snapshot: report.scope_snapshot,
+        unanswered_questions: report.unanswered_questions,
+        other_side_needed: report.other_side_needed,
+        discussion_starting_points: report.discussion_starting_points,
+        basis_note: report.basis_note,
         summary: evalResult.summary,
         report_summary: report.summary,
         sections: report.sections,
