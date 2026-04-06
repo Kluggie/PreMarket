@@ -89,7 +89,7 @@ function getPreSendScopeSection() {
   return {
     heading: 'Review Scope',
     paragraphs: [
-      'This Pre-send Review is based only on the sender’s materials. It does not assess recipient alignment, bilateral feasibility, or agreement likelihood.',
+      'Based only on the current materials provided by one side. This review does not yet assess alignment, compatibility, or deal feasibility.',
     ],
   };
 }
@@ -234,12 +234,12 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       fallbackStage: MEDIATION_REVIEW_STAGE,
     });
     const isPreSendReview = reviewStage === PRE_SEND_REVIEW_STAGE;
-    const defaultFilenameBase = isPreSendReview ? 'pre-send-review' : 'ai-mediation-review';
+    const defaultFilenameBase = isPreSendReview ? 'initial-review' : 'ai-mediation-review';
     const fallbackSummaryText = isPreSendReview
-      ? 'No Pre-send Review content is available yet.'
+      ? 'No Initial Review content is available yet.'
       : 'No AI mediation summary is available yet.';
     const recipientSafeFooterNote = isPreSendReview
-      ? 'Shared report -- based only on sender-side materials'
+      ? 'Shared report -- based only on current materials from one side'
       : 'Shared report -- recipient-safe content only';
 
     const isV2 = Array.isArray(report.why) && (report.why as unknown[]).length > 0;
@@ -373,9 +373,9 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         comparisonId,
         metrics: isPreSendReview
           ? [
-              { label: 'Readiness to Send', value: readinessLabel },
+              { label: 'Readiness', value: readinessLabel },
               { label: 'Review Type', value: PRE_SEND_REVIEW_TITLE },
-              { label: 'Scope', value: 'Sender-side only' },
+              { label: 'Input Basis', value: 'One side\'s materials' },
               {
                 label: 'Points to Tighten',
                 value: `${preSendTightenCount} item${preSendTightenCount === 1 ? '' : 's'}`,
@@ -676,12 +676,12 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
           level: 1,
           paragraphs: [
             asText(report.send_readiness_summary) || asText(evaluationResult.summary) || fallbackSummaryText,
-            `Review type: ${PRE_SEND_REVIEW_TITLE}. Scope: sender-side only. Readiness to Send: ${readinessLabel}.`,
+            `Review type: ${PRE_SEND_REVIEW_TITLE}. Based only on the current materials from one side. Readiness: ${readinessLabel}.`,
           ].filter(Boolean),
         });
         if (suggestedClarifications.length > 0) {
           reportSections.push({
-            heading: 'Suggested Clarifications Before Sending',
+            heading: 'Points to Tighten',
             level: 1,
             bullets: suggestedClarifications,
           });

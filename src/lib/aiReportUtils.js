@@ -13,13 +13,13 @@ import {
 } from './opportunityReviewStage.js';
 
 export const MEDIATION_REVIEW_LABEL = 'AI Mediation Review';
-export const PRE_SEND_REVIEW_LABEL = 'Pre-send Review';
+export const PRE_SEND_REVIEW_LABEL = 'Initial Review';
 export const RUN_AI_MEDIATION_LABEL = 'Run AI Mediation';
 export const RERUN_AI_MEDIATION_LABEL = 'Re-run AI Mediation';
 export const RUNNING_AI_MEDIATION_LABEL = 'Running AI Mediation...';
-export const RUN_PRE_SEND_REVIEW_LABEL = 'Run Pre-send Review';
-export const RERUN_PRE_SEND_REVIEW_LABEL = 'Re-run Pre-send Review';
-export const RUNNING_PRE_SEND_REVIEW_LABEL = 'Running Pre-send Review...';
+export const RUN_PRE_SEND_REVIEW_LABEL = 'Run Initial Review';
+export const RERUN_PRE_SEND_REVIEW_LABEL = 'Re-run Initial Review';
+export const RUNNING_PRE_SEND_REVIEW_LABEL = 'Running Initial Review...';
 export const OPEN_QUESTIONS_LABEL = 'Open Questions';
 export const MISSING_OR_REDACTED_INFO_LABEL = 'Missing or Redacted Information';
 export const DECISION_STATUS_LABELS = Object.freeze([

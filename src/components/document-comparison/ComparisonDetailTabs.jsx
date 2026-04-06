@@ -109,7 +109,7 @@ export function ComparisonAiReportTab({
   const reviewLabel = getReviewStageLabel(resolvedReviewStage);
   const resolvedNoReportMessage =
     noReportMessage ||
-    (isPreSendReview ? 'No Pre-send Review yet.' : 'No AI Mediation Review yet.');
+    `No ${reviewLabel} yet.`;
   const isV2 = hasV2Report(safeReport);
   const reportSections = Array.isArray(safeReport?.sections) ? safeReport.sections : [];
   const reportSectionsFiltered = isV2 ? [] : filterLegacySectionsForDisplay(reportSections);
@@ -160,14 +160,14 @@ export function ComparisonAiReportTab({
             <div className="flex items-center gap-2 text-slate-700">
               <Loader2 className="w-4 h-4 animate-spin" />
               <span className="font-medium">
-                {isPreSendReview ? 'Pre-send Review in progress...' : 'AI Mediation Review in progress...'}
+                {isPreSendReview ? `${reviewLabel} in progress...` : 'AI Mediation Review in progress...'}
               </span>
             </div>
             <p className="text-sm text-slate-500 mt-2">
               {isPollingTimedOut
                 ? 'Still processing. Refresh to check status.'
                 : isPreSendReview
-                  ? 'The sender-side review updates automatically when processing finishes.'
+                  ? 'This review updates automatically when processing finishes.'
                   : 'The mediation review updates automatically when processing finishes.'}
             </p>
           </CardContent>
@@ -223,8 +223,8 @@ export function ComparisonAiReportTab({
           {isPreSendReview ? (
             <Alert className="border-slate-200 bg-slate-50">
               <AlertDescription className="text-slate-700">
-                Based only on the sender&apos;s materials. This review does not assess recipient
-                alignment, compatibility, or deal feasibility.
+                Based only on the current materials provided by one side. This review does not yet
+                assess alignment, compatibility, or deal feasibility.
               </AlertDescription>
             </Alert>
           ) : null}
@@ -233,16 +233,16 @@ export function ComparisonAiReportTab({
             {isPreSendReview ? (
               <>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Readiness to Send</span>
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Readiness</span>
                   <Badge className={decisionToneClass}>{decisionStatus.label}</Badge>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Review Type</span>
-                  <Badge variant="outline">Pre-send Review</Badge>
+                  <Badge variant="outline">{reviewLabel}</Badge>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Scope</span>
-                  <Badge variant="outline">Sender-side only</Badge>
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Input Basis</span>
+                  <Badge variant="outline">One side&apos;s materials</Badge>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Points to Tighten</span>

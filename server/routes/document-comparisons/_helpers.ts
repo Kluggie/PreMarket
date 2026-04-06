@@ -22,7 +22,7 @@ import {
 export const CONFIDENTIAL_LABEL = 'Confidential Information';
 export const SHARED_LABEL = 'Shared Information';
 export const MEDIATION_REVIEW_TITLE = 'AI Mediation Review';
-export const PRE_SEND_REVIEW_TITLE = 'Pre-send Review';
+export const PRE_SEND_REVIEW_TITLE = 'Initial Review';
 export const MEDIATION_REVIEW_ARCHETYPES = Object.freeze([
   'balanced_trade_off',
   'risk_dominant',
@@ -1060,36 +1060,72 @@ function getPreSendCommitmentThreshold(params: {
   pilotSignal: boolean;
   forInlineClause?: boolean;
 }) {
-  const prefix = params.forInlineClause ? '' : 'Before ';
+  const prefix = params.forInlineClause ? '' : 'To support ';
   if (params.fixedPriceSignal && params.pilotSignal) {
-    return `${prefix}requesting a reliable fixed-price pilot proposal`;
+    return `${prefix}cleaner fixed-price pilot pricing`;
   }
   if (params.fixedPriceSignal) {
-    return `${prefix}asking a vendor to lock scope or commercial terms`;
+    return `${prefix}cleaner fixed-price pricing and commitment terms`;
   }
-  return `${prefix}treating the brief as commitment-ready`;
+  return `${prefix}a cleaner commitment discussion`;
 }
 
 function refinePreSendActionText(value: string, params: {
   fixedPriceSignal: boolean;
   pilotSignal: boolean;
 }) {
-  const text = normalizeText(value);
+  let text = normalizeText(value);
   if (!text) return '';
   const replacement = getPreSendCommitmentThreshold({
     fixedPriceSignal: params.fixedPriceSignal,
     pilotSignal: params.pilotSignal,
     forInlineClause: true,
   });
-  return text.replace(/\bbefore sending\b/gi, (match) =>
-    match.charAt(0) === match.charAt(0).toUpperCase()
-      ? capitalizeFirstLetter(replacement)
-      : replacement,
-  );
+  const replaceWithCase = (pattern: RegExp) => {
+    text = text.replace(pattern, (match) =>
+      match.charAt(0) === match.charAt(0).toUpperCase()
+        ? capitalizeFirstLetter(replacement)
+        : replacement,
+    );
+  };
+  replaceWithCase(/\bbefore sending\b/gi);
+  replaceWithCase(/\bbefore sharing\b/gi);
+  text = text
+    .replace(/\bwhen sharing the draft\b/gi, 'in the current draft')
+    .replace(/\bwhen the draft is shared\b/gi, 'in the current draft')
+    .replace(/\bwhen shared\b/gi, 'in the current draft')
+    .replace(/\bsender-side\b/gi, 'one-sided')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return text;
 }
 
 function compactPreSendBullets(values: string[], maxItems = 3) {
   return uniqueText(values.map((value) => stripMissingWhyMatters(normalizeText(value))).filter(Boolean)).slice(0, maxItems);
+}
+
+function toPreSendNarrativePhrase(value: string) {
+  let text = stripMissingWhyMatters(normalizeText(value)).replace(/[.?!]+$/g, '').trim();
+  if (!text) return '';
+  text = text
+    .replace(/^(Clarify|Confirm|Define|Tighten wording around|Tighten|Keep|Align)\s*:?\s*/i, '')
+    .replace(/^What is included in /i, '')
+    .replace(/^What is the agreed position on /i, '')
+    .replace(/^What is the /i, '')
+    .replace(/^What are the /i, '')
+    .replace(/^Which /i, '')
+    .replace(/^Who owns /i, 'ownership of ')
+    .replace(/^Who approves /i, 'approval for ')
+    .replace(/^Who is responsible for /i, 'responsibility for ')
+    .trim();
+  return text ? text.charAt(0).toLowerCase() + text.slice(1) : '';
+}
+
+function summarizePreSendNarrative(values: string[], fallback: string) {
+  const phrases = compactPreSendBullets(values, 2)
+    .map((value) => toPreSendNarrativePhrase(value))
+    .filter(Boolean);
+  return phrases.length > 0 ? joinNatural(phrases) : fallback;
 }
 
 function buildPreSendReasonClauses(themeIds: string[]) {
@@ -1123,19 +1159,19 @@ function buildPreSendReadinessSummary(params: {
   if (params.readinessStatus === 'ready_to_send') {
     if (params.summaryThemes.length > 0) {
       return [
-        `This is a strong early-stage commercial brief and appears ready to share now. Any remaining points sit mainly in ${themeSummary} and read as minor clarifications rather than structural blockers.`,
+        `This is a strong early-stage commercial brief. It already reads as ready for external discussion, and any remaining points sit mainly in ${themeSummary} as minor clarifications rather than structural blockers.`,
       ];
     }
     return fallbackSummary
       ? [fallbackSummary]
-      : ['This is a strong early-stage commercial brief and appears ready to share now.'];
+      : ['This is a strong early-stage commercial brief and already reads as ready for external discussion.'];
   }
 
   if (params.readinessStatus === 'ready_with_clarifications') {
     return [
       params.fixedPriceSignal
-        ? `This draft is already a credible sender-side brief for vendor discussion. The main remaining points sit in ${themeSummary} and read more like limited clarifications than structural blockers; tighten them before asking a vendor to lock ${fixedPriceLockLabel}.`
-        : `This draft is already a credible sender-side brief for vendor discussion. The main remaining points sit in ${themeSummary} and read more like limited clarifications than structural blockers, but tightening them should make the brief easier to review and paper cleanly.`,
+        ? `This draft is already a credible commercial brief for discussion. The main remaining points sit in ${themeSummary} and read more like limited clarifications than structural blockers. Tightening them should support cleaner ${fixedPriceLockLabel}.`
+        : `This draft is already a credible commercial brief for discussion. The main remaining points sit in ${themeSummary} and read more like limited clarifications than structural blockers, but tightening them should make the brief easier to review and paper cleanly.`,
     ];
   }
 
@@ -1239,8 +1275,6 @@ function buildPreSendReviewSections(params: {
     ...suggestedClarifications,
   ]);
   const mainGapBullets = compactPreSendBullets([...missingInformation, ...ambiguousTerms], 3);
-  const pushbackBullets = compactPreSendBullets([...likelyPushbackAreas, ...likelyRecipientQuestions], 3);
-  const riskBullets = compactPreSendBullets([...commercialRisks, ...implementationRisks], 3);
   const clarificationBullets = buildPreSendActionBullets({
     suggestedClarifications,
     mainGapBullets,
@@ -1264,10 +1298,10 @@ function buildPreSendReviewSections(params: {
     riskThemes.length > 0 ? riskThemes : summaryThemes,
     'scope, delivery, and commercial risk allocation',
   );
-  const clarificationThemeSummary = describeThemes(
-    clarificationThemes.length > 0 ? clarificationThemes : summaryThemes,
-    'scope, sign-off, and risk allocation',
-  );
+  const clarificationThemeSummary = describeThemes(clarificationThemes.length > 0 ? clarificationThemes : summaryThemes, 'scope, sign-off, and risk allocation');
+  const mainGapFocus = summarizePreSendNarrative([...missingInformation, ...ambiguousTerms], gapsThemeSummary);
+  const responseFocus = summarizePreSendNarrative([...likelyPushbackAreas, ...likelyRecipientQuestions], pushbackThemeSummary);
+  const residualRiskFocus = summarizePreSendNarrative([...commercialRisks, ...implementationRisks], riskThemeSummary);
 
   return [
     createPresentationSection({
@@ -1276,69 +1310,59 @@ function buildPreSendReviewSections(params: {
       paragraphs: readinessParagraphs,
     }),
     createPresentationSection({
-      key: 'main_gaps_before_sharing',
-      heading: 'Main Gaps Before Sharing',
+      key: 'what_matters_most',
+      heading: 'What Matters Most',
       paragraphs: [
         readinessStatus === 'ready_to_send'
-          ? `The remaining gaps before sharing are limited and mostly sit in ${gapsThemeSummary}. They read as minor papering or implementation-detail clarifications rather than structural blockers.`
+          ? `Most of the remaining work sits in ${gapsThemeSummary}. In practice, that means keeping ${mainGapFocus} explicit in the current brief so the strong overall structure is not diluted by avoidable ambiguity.`
           : readinessStatus === 'ready_with_clarifications'
             ? fixedPriceSignal
-              ? `The main gaps before sharing are concentrated around ${gapsThemeSummary}. Tightening those points should make the draft easier to price and negotiate cleanly, especially if the sender wants reliable fixed-price or pilot pricing.`
-              : `The main gaps before sharing are concentrated around ${gapsThemeSummary}. They look more like limited clarifications than signs that the brief is fundamentally weak, but tightening them should reduce friction in a serious vendor review.`
+              ? `The most important tightening work sits around ${gapsThemeSummary}. The brief is already usable, but clearer treatment of ${mainGapFocus} will do the most to support cleaner pricing and a firmer commitment discussion.`
+              : `The points doing most of the work now sit around ${gapsThemeSummary}. The brief already has substance, and clearer treatment of ${mainGapFocus} should reduce unnecessary friction without changing the basic commercial shape.`
             : fixedPriceSignal
-              ? `The main gaps before sharing are concentrated around ${gapsThemeSummary}. Those points matter because the current draft asks for fixed-price or tightly bounded commitment language before the underlying assumptions are fully pinned down.`
-              : `The main gaps before sharing are concentrated around ${gapsThemeSummary}. Those are the points most likely to interrupt a serious vendor review if they remain implicit.`,
+              ? `What matters most now sits in ${gapsThemeSummary}. Until ${mainGapFocus} is clearer, the draft is likely to invite scope and pricing questions before the commercial discussion can settle.`
+              : `What matters most now sits in ${gapsThemeSummary}. Until ${mainGapFocus} is clearer, the brief is likely to keep attracting basic scope, ownership, or delivery questions that slow the conversation down.`,
       ],
-      bullets: mainGapBullets,
     }),
     createPresentationSection({
-      key: 'likely_vendor_pushback',
-      heading: 'Likely Vendor Pushback',
+      key: 'likely_response_from_the_other_side',
+      heading: 'Likely Response From the Other Side',
       paragraphs: [
         readinessStatus === 'ready_to_send'
-          ? `Any likely vendor pushback is more likely to show up as ordinary negotiation questions around ${pushbackThemeSummary} than as resistance to the overall brief.`
+          ? `On the other side, the most likely response is ordinary negotiation around ${pushbackThemeSummary} rather than resistance to the overall brief. Questions are more likely to land on ${responseFocus} than on whether the opportunity is commercially serious.`
           : readinessStatus === 'ready_with_clarifications'
             ? fixedPriceSignal
-              ? `A reasonable vendor is most likely to test ${pushbackThemeSummary} as part of ordinary pricing and risk-allocation negotiation, especially if fixed-price certainty is being requested early.`
-              : `A reasonable vendor is most likely to push on ${pushbackThemeSummary}, but more as ordinary negotiation points than as reasons to dismiss the brief outright.`
+              ? `A reasonable counterparty is likely to come back first on ${pushbackThemeSummary}, especially if fixed-price certainty is being discussed early. That should read more like normal diligence on ${responseFocus} than a sign that the brief itself is fundamentally off base.`
+              : `Expect the first response to concentrate on ${pushbackThemeSummary}. In a draft this far along, those questions usually read more like routine diligence on ${responseFocus} than a reason to dismiss the opportunity outright.`
             : fixedPriceSignal
-              ? `A reasonable vendor is most likely to push back where the draft appears to ask for fixed-price certainty before ${pushbackThemeSummary} is fully bounded.`
-              : `A reasonable vendor is most likely to push back where the draft still leaves ${pushbackThemeSummary} open to interpretation.`,
+              ? `The other side is most likely to push back where the draft appears to ask for fixed-price certainty before ${pushbackThemeSummary} is fully bounded. That means ${responseFocus} is likely to dominate the response before pricing or commitment can settle.`
+              : `The other side is most likely to focus on ${pushbackThemeSummary}. If ${responseFocus} stays implicit, those questions are likely to shape the conversation before commercial terms can move very far.`,
       ],
-      bullets: pushbackBullets,
     }),
     createPresentationSection({
-      key: 'commercial_and_delivery_risks',
-      heading: 'Commercial and Delivery Risks',
+      key: 'residual_risks_and_points_to_tighten',
+      heading: 'Residual Risks and Points to Tighten',
       paragraphs: [
         readinessStatus === 'ready_to_send'
-          ? `The residual commercial and delivery risks sit in ${riskThemeSummary}. At this stage they look closer to normal negotiation and implementation-detail points than structural weaknesses, but they are still worth tightening if the sender wants cleaner pricing or sign-off.`
+          ? `Residual risk now sits mostly in ${riskThemeSummary}. Those are normal execution and papering points rather than structural weaknesses, but tightening ${residualRiskFocus} will help preserve the current momentum if the parties move toward pricing or formal commitment.`
           : readinessStatus === 'ready_with_clarifications'
-            ? `The main commercial and delivery risks sit in ${riskThemeSummary}. As drafted, they read more as clarifications to tighten than structural blockers, but they could still create avoidable friction around pricing, timing, or sign-off if left implicit.`
-            : `The main commercial and delivery risks sit in ${riskThemeSummary}. As drafted, those issues could still shift cost, timing, remediation, or sign-off exposure later in the process.`,
-      ],
-      bullets: riskBullets,
-    }),
-    createPresentationSection({
-      key: 'suggested_clarifications_before_sending',
-      heading: 'Suggested Clarifications Before Sending',
-      paragraphs: [
+            ? `Residual risk still sits in ${riskThemeSummary}. As drafted, those points read more like clarifications to tighten than structural blockers, but leaving ${residualRiskFocus} implicit could still create avoidable friction around pricing, timing, or sign-off.`
+            : `Residual risk remains concentrated in ${riskThemeSummary}. Until ${residualRiskFocus} is clearer, cost, timing, remediation, or approval exposure is still likely to move around later in the process.`,
         readinessStatus === 'ready_to_send'
           ? fixedPriceSignal
-            ? `The brief is already strong enough to share. If the sender wants especially reliable fixed-price or pilot pricing, tighten the few items that most affect ${clarificationThemeSummary}.`
-            : `The brief is already strong enough to share. Tighten the few items that most affect ${clarificationThemeSummary} if the sender wants the cleanest possible vendor response and smoother papering.`
+            ? `If the parties want especially reliable fixed-price or pilot pricing, tighten the few points that most affect ${clarificationThemeSummary}.`
+            : `The brief is already in usable shape, so the best next step is to tighten the few points that most affect ${clarificationThemeSummary}.`
           : readinessStatus === 'ready_with_clarifications'
-            ? `The draft is already usable for vendor discussion. ${getPreSendCommitmentThreshold({
+            ? `${getPreSendCommitmentThreshold({
               fixedPriceSignal,
               pilotSignal,
-            })}, tighten the few items that most affect ${clarificationThemeSummary}.`
+            })}, focus on the few points that most affect ${clarificationThemeSummary}.`
             : `${getPreSendCommitmentThreshold({
               fixedPriceSignal,
               pilotSignal,
-            })}, tighten the few items that most affect ${clarificationThemeSummary} so the draft reads as an intentional commercial brief rather than an opening outline.`,
+            })}, tighten the points below so the draft reads as an intentional commercial brief rather than an opening outline.`,
       ],
       bullets: clarificationBullets,
-      numbered_bullets: true,
     }),
   ].filter(Boolean) as MediationPresentationSection[];
 }
@@ -1361,10 +1385,10 @@ function buildPreSendReviewPresentation(params: {
     sections[0]?.paragraphs?.[0] ||
     sendReadinessSummary ||
     (readinessStatus === 'ready_to_send'
-      ? 'This draft is a strong sender-side brief and is ready to share.'
+      ? 'This draft is a strong commercial brief and already reads as ready for external discussion.'
       : readinessStatus === 'ready_with_clarifications'
-        ? 'This draft is already a credible sender-side brief for vendor discussion, with limited clarifications still worth tightening.'
-        : 'This draft is not yet ready to send confidently.');
+        ? 'This draft is already a credible commercial brief for discussion, with limited clarifications still worth tightening.'
+        : 'This draft is not yet ready to use as a dependable commercial brief.');
 
   return {
     report_title: PRE_SEND_REVIEW_TITLE,

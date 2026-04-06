@@ -873,19 +873,19 @@ function buildStageFallbackV2Data(analysisStage: string, reason: 'unexpected_err
       readiness_status: 'not_ready_to_send',
       send_readiness_summary:
         reason === 'unexpected_error'
-          ? 'The Pre-send Review could not be generated due to an unexpected internal error.'
-          : 'The Pre-send Review could not be generated because the model output was unavailable or invalid.',
+          ? 'The Initial Review could not be generated due to an unexpected internal error.'
+          : 'The Initial Review could not be generated because the model output was unavailable or invalid.',
       missing_information: [
         'What is the confirmed scope and set of deliverables?',
         'What is the confirmed timeline and decision process?',
-        'What assumptions should be explicit before sharing?',
+        'What assumptions should be explicit in the current brief?',
       ],
       ambiguous_terms: ['Which responsibilities, dependencies, or success criteria remain implicit?'],
       likely_recipient_questions: ['What would a reasonable recipient need clarified before responding?'],
       likely_pushback_areas: ['Which draft terms could trigger immediate pushback if left unstated?'],
       commercial_risks: [],
       implementation_risks: [],
-      suggested_clarifications: ['Tighten the open items above and re-run the Pre-send Review.'],
+      suggested_clarifications: ['Tighten the open items above and re-run the Initial Review.'],
     };
   }
 
@@ -921,13 +921,13 @@ function getReviewNotificationCopy(analysisStage: string, title: string) {
   const safeTitle = title || 'your proposal';
   if (analysisStage === PRE_SEND_REVIEW_STAGE) {
     return {
-      title: 'Pre-send Review ready',
-      message: `A Pre-send Review is ready for "${safeTitle}".`,
-      emailSubject: 'Pre-send Review ready',
+      title: 'Initial Review ready',
+      message: `An Initial Review is ready for "${safeTitle}".`,
+      emailSubject: 'Initial Review ready',
       emailText: [
-        `Your proposal "${safeTitle}" has a new Pre-send Review.`,
+        `Your proposal "${safeTitle}" has a new Initial Review.`,
         '',
-        'Sign in to PreMarket to review the sender-side draft feedback.',
+        'Sign in to PreMarket to review the one-sided analysis based on the current materials provided so far.',
       ].join('\n'),
     };
   }
@@ -954,7 +954,7 @@ async function waitMs(ms: number) {
 }
 
 function getReviewFailureLabel(analysisStage: string) {
-  return analysisStage === PRE_SEND_REVIEW_STAGE ? 'Pre-send Review' : 'AI Mediation Review';
+  return analysisStage === PRE_SEND_REVIEW_STAGE ? 'Initial Review' : 'AI Mediation Review';
 }
 
 function classifyEvaluationFailure(error: any, analysisStage: string): ClassifiedEvaluationFailure {

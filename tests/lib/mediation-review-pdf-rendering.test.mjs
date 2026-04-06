@@ -68,14 +68,14 @@ test('AI mediation web-parity PDF renders dynamic presentation sections and numb
   assert.match(rawText, /2\.\s*What budget guardrails apply to phase-two expansion\?/);
 });
 
-test('pre-send web-parity PDF uses memo-style proposer-only framing without recommendation or confidence labels', async () => {
+test('initial review web-parity PDF uses memo-style proposer-only framing without recommendation or confidence labels', async () => {
   const stored = buildStoredV2Evaluation({
     ok: true,
     data: {
       analysis_stage: 'pre_send_review',
       readiness_status: 'ready_with_clarifications',
       send_readiness_summary:
-        'The draft is suitable for early vendor discussion, but it is not yet strong enough for a reliable fixed-price pilot commitment.',
+        'The draft is suitable for early vendor discussion, with a few remaining clarifications around fixed-price pilot commitment.',
       missing_information: [
         'What is included in the initial fixed-price pilot scope?',
         'What acceptance criteria trigger final approval?',
@@ -85,7 +85,7 @@ test('pre-send web-parity PDF uses memo-style proposer-only framing without reco
       likely_pushback_areas: ['A vendor may resist fixed-price responsibility while scope and remediation remain open.'],
       commercial_risks: ['Pricing posture assumes fixed-price certainty before the change process is defined.'],
       implementation_risks: ['Documentation quality and remediation ownership remain unclear.'],
-      suggested_clarifications: ['Define scope, acceptance, and remediation ownership before sending.'],
+      suggested_clarifications: ['Define scope, acceptance, and remediation ownership in the current draft.'],
     },
     model: 'gemini-2.5-pro',
     generation_model: 'gemini-2.5-pro',
@@ -94,7 +94,7 @@ test('pre-send web-parity PDF uses memo-style proposer-only framing without reco
     {
       heading: 'Review Scope',
       paragraphs: [
-        'This Pre-send Review is based only on the sender’s materials. It does not assess recipient alignment or agreement likelihood.',
+        'Based only on the current materials provided by one side. This review does not yet assess alignment, compatibility, or deal feasibility.',
       ],
     },
     ...getPresentationSections(stored.report).map((section) => ({
@@ -106,13 +106,13 @@ test('pre-send web-parity PDF uses memo-style proposer-only framing without reco
   ];
 
   const buffer = await renderWebParityPdfBuffer({
-    title: 'Pre-send Review',
+    title: 'Initial Review',
     subtitle: 'Opportunity',
     comparisonId: 'cmp_presend_pdf',
     metrics: [
-      { label: 'Readiness to Send', value: 'Ready with Clarifications' },
-      { label: 'Review Type', value: 'Pre-send Review' },
-      { label: 'Scope', value: 'Sender-side only' },
+      { label: 'Readiness', value: 'Ready with Clarifications' },
+      { label: 'Review Type', value: 'Initial Review' },
+      { label: 'Input Basis', value: 'One side\'s materials' },
       { label: 'Points to Tighten', value: '4 items' },
     ],
     timelineItems: [
@@ -123,15 +123,16 @@ test('pre-send web-parity PDF uses memo-style proposer-only framing without reco
   });
 
   const rawText = await extractPdfText(buffer);
-  assert.match(rawText, /Pre-send Review/);
-  assert.match(rawText, /READINESS TO SEND/);
+  assert.match(rawText, /Initial Review/);
+  assert.match(rawText, /READINESS/);
   assert.match(rawText, /REVIEW TYPE/);
-  assert.match(rawText, /SCOPE/);
+  assert.match(rawText, /INPUT BASIS/);
   assert.match(rawText, /READINESS SUMMARY/);
-  assert.match(rawText, /MAIN GAPS BEFORE SHARING/);
-  assert.match(rawText, /LIKELY VENDOR PUSHBACK/);
-  assert.match(rawText, /COMMERCIAL AND DELIVERY RISKS/);
+  assert.match(rawText, /WHAT MATTERS MOST/);
+  assert.match(rawText, /LIKELY RESPONSE FROM THE OTHER SIDE/);
+  assert.match(rawText, /RESIDUAL RISKS AND POINTS TO TIGHTEN/);
   assert.doesNotMatch(rawText, /RECOMMENDATION/);
   assert.doesNotMatch(rawText, /CONFIDENCE/);
   assert.doesNotMatch(rawText, /MISSING INFORMATION/);
+  assert.doesNotMatch(rawText, /\bPre-send Review\b|\bsender-side\b|\bbefore sending\b/i);
 });

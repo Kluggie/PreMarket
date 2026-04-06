@@ -128,15 +128,15 @@ test('mediation review copy helpers: expose mediation-oriented labels', () => {
 });
 
 test('review copy helpers: expose pre-send labels for unilateral stage', () => {
-  assert.equal(PRE_SEND_REVIEW_LABEL, 'Pre-send Review');
-  assert.equal(getReviewStageLabel('pre_send_review'), 'Pre-send Review');
+  assert.equal(PRE_SEND_REVIEW_LABEL, 'Initial Review');
+  assert.equal(getReviewStageLabel('pre_send_review'), 'Initial Review');
   assert.equal(
     getRunOpportunityReviewLabel({ stage: 'pre_send_review' }),
-    'Run Pre-send Review',
+    'Run Initial Review',
   );
   assert.equal(
     getRunOpportunityReviewLabel({ stage: 'pre_send_review', hasExisting: true }),
-    'Re-run Pre-send Review',
+    'Re-run Initial Review',
   );
 });
 
@@ -185,7 +185,7 @@ test('buildStoredV2Evaluation: stores pre-send reviews without mediation fields'
   });
 
   assert.equal(stored.report.analysis_stage, 'pre_send_review');
-  assert.equal(stored.report.report_title, 'Pre-send Review');
+  assert.equal(stored.report.report_title, 'Initial Review');
   assert.equal(stored.report.readiness_status, 'ready_with_clarifications');
   assert.equal(Array.isArray(stored.report.presentation_sections), true);
   assert.equal('why' in stored.report, false);
@@ -200,7 +200,7 @@ test('buildStoredV2Evaluation: synthesizes proposer-only sections into a memo-st
       analysis_stage: 'pre_send_review',
       readiness_status: 'ready_with_clarifications',
       send_readiness_summary:
-        'The sender draft is workable, but a vendor would still need clearer scope, sign-off, and pricing assumptions before treating it as a dependable brief.',
+        'The draft is workable, but a vendor would still need clearer scope, sign-off, and pricing assumptions before treating it as a dependable brief.',
       missing_information: [
         'What is included in the initial fixed-price pilot scope?',
         'What measurable acceptance criteria define completion?',
@@ -222,7 +222,7 @@ test('buildStoredV2Evaluation: synthesizes proposer-only sections into a memo-st
         'Documentation quality and remediation ownership remain unclear.',
       ],
       suggested_clarifications: [
-        'Define the initial pilot scope, measurable acceptance criteria, and the change process before sending.',
+        'Define the initial pilot scope, measurable acceptance criteria, and the change process in the current draft.',
       ],
     },
     model: 'gemini-2.5-pro',
@@ -232,12 +232,11 @@ test('buildStoredV2Evaluation: synthesizes proposer-only sections into a memo-st
   const headings = stored.report.presentation_sections.map((section) => section.heading);
   assert.deepEqual(headings, [
     'Readiness Summary',
-    'Main Gaps Before Sharing',
-    'Likely Vendor Pushback',
-    'Commercial and Delivery Risks',
-    'Suggested Clarifications Before Sending',
+    'What Matters Most',
+    'Likely Response From the Other Side',
+    'Residual Risks and Points to Tighten',
   ]);
-  assert.match(stored.report.primary_insight, /credible sender-side brief/i);
+  assert.match(stored.report.primary_insight, /credible commercial brief/i);
   assert.match(stored.report.primary_insight, /fixed-price/i);
   assert.doesNotMatch(headings.join(' | '), /Missing Information|Ambiguous Terms|Likely Recipient Questions|Likely Pushback Areas|Commercial Risks|Implementation Risks/);
   assert.equal(
@@ -246,10 +245,17 @@ test('buildStoredV2Evaluation: synthesizes proposer-only sections into a memo-st
   );
   assert.equal(
     stored.report.presentation_sections
+      .slice(0, 3)
+      .every((section) => !Array.isArray(section.bullets) || section.bullets.length === 0),
+    true,
+  );
+  assert.equal(
+    stored.report.presentation_sections
       .filter((section) => Array.isArray(section.bullets))
       .every((section) => section.bullets.length <= 3),
     true,
   );
+  assert.doesNotMatch(JSON.stringify(stored.report), /\bPre-send Review\b|\bsender-side\b|\bbefore sending\b/i);
 });
 
 test('buildStoredV2Evaluation: keeps pre-send readiness summary concise and avoids raw "before sending" action copy', () => {
@@ -259,7 +265,7 @@ test('buildStoredV2Evaluation: keeps pre-send readiness summary concise and avoi
       analysis_stage: 'pre_send_review',
       readiness_status: 'ready_with_clarifications',
       send_readiness_summary:
-        'This draft is already a credible sender-side brief for vendor discussion, with only limited clarifications left before the sender asks for fixed-price pilot pricing.',
+        'This draft is already a credible commercial brief for discussion, with only limited clarifications left before the parties ask for fixed-price pilot pricing.',
       missing_information: [
         'What is included in the initial fixed-price pilot scope?',
         'What measurable acceptance criteria define completion?',
@@ -281,7 +287,7 @@ test('buildStoredV2Evaluation: keeps pre-send readiness summary concise and avoi
         'Documentation quality and remediation ownership remain unclear.',
       ],
       suggested_clarifications: [
-        'Define the initial pilot scope, measurable acceptance criteria, and the change process before sending.',
+        'Define the initial pilot scope, measurable acceptance criteria, and the change process before sharing.',
       ],
     },
     model: 'gemini-2.5-pro',
@@ -289,13 +295,13 @@ test('buildStoredV2Evaluation: keeps pre-send readiness summary concise and avoi
   });
 
   const readinessSection = stored.report.presentation_sections.find((section) => section.heading === 'Readiness Summary');
-  const clarificationSection = stored.report.presentation_sections.find((section) => section.heading === 'Suggested Clarifications Before Sending');
+  const clarificationSection = stored.report.presentation_sections.find((section) => section.heading === 'Residual Risks and Points to Tighten');
 
   assert.equal(readinessSection?.paragraphs?.length, 1);
-  assert.match(readinessSection?.paragraphs?.[0] || '', /credible sender-side brief/i);
+  assert.match(readinessSection?.paragraphs?.[0] || '', /credible commercial brief/i);
   assert.match(readinessSection?.paragraphs?.[0] || '', /limited clarifications/i);
   assert.doesNotMatch(readinessSection?.paragraphs?.[0] || '', /not yet strong enough/i);
-  assert.match(clarificationSection?.paragraphs?.[0] || '', /Before requesting a reliable fixed-price pilot proposal/i);
+  assert.match((clarificationSection?.paragraphs || []).join(' '), /cleaner fixed-price pilot pricing/i);
   assert.doesNotMatch(clarificationSection?.paragraphs?.[0] || '', /\bBefore sending\b/i);
   assert.equal(
     (clarificationSection?.bullets || []).every((bullet) => !/\bBefore sending\b/i.test(bullet)),
@@ -324,15 +330,15 @@ test('buildStoredV2Evaluation: strong proposer-only results lead with strengths 
   });
 
   const readinessSection = stored.report.presentation_sections.find((section) => section.heading === 'Readiness Summary');
-  const gapsSection = stored.report.presentation_sections.find((section) => section.heading === 'Main Gaps Before Sharing');
-  const pushbackSection = stored.report.presentation_sections.find((section) => section.heading === 'Likely Vendor Pushback');
+  const gapsSection = stored.report.presentation_sections.find((section) => section.heading === 'What Matters Most');
+  const pushbackSection = stored.report.presentation_sections.find((section) => section.heading === 'Likely Response From the Other Side');
 
   assert.match(stored.report.primary_insight, /strong early-stage commercial brief/i);
-  assert.match(readinessSection?.paragraphs?.[0] || '', /ready to share now/i);
+  assert.match(readinessSection?.paragraphs?.[0] || '', /ready for external discussion/i);
   assert.match(readinessSection?.paragraphs?.[0] || '', /minor clarifications/i);
-  assert.match(gapsSection?.paragraphs?.[0] || '', /limited/i);
-  assert.match(gapsSection?.paragraphs?.[0] || '', /rather than structural blockers/i);
-  assert.match(pushbackSection?.paragraphs?.[0] || '', /ordinary negotiation questions/i);
+  assert.match(gapsSection?.paragraphs?.[0] || '', /remaining work/i);
+  assert.match(gapsSection?.paragraphs?.[0] || '', /strong overall structure/i);
+  assert.match(pushbackSection?.paragraphs?.[0] || '', /ordinary negotiation/i);
   assert.doesNotMatch(stored.report.presentation_sections.map((section) => section.heading).join(' | '), /Recommendation|Confidence/i);
   assert.doesNotMatch((readinessSection?.paragraphs || []).join(' '), /not yet strong enough|fundamentally weak/i);
 });
@@ -475,7 +481,7 @@ test('buildMediationReviewPresentation: keeps bilateral recommendation framing a
   const headings = presentation.presentation_sections.map((section) => section.heading);
   assert.equal(headings.includes('Recommendation'), true);
   assert.equal(headings.includes('Readiness Summary'), false);
-  assert.equal(headings.includes('Suggested Clarifications Before Sending'), false);
+  assert.equal(headings.includes('Residual Risks and Points to Tighten'), false);
 });
 
 test('buildMediationReviewPresentation: routes low-fit and missing-heavy cases to different archetypes', () => {

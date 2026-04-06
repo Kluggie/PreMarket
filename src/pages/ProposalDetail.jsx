@@ -1027,7 +1027,7 @@ export default function ProposalDetail() {
                       }
                       triggerJsonDownload(
                         reviewStage === 'pre_send_review'
-                          ? 'proposal-pre-send-review.json'
+                          ? 'proposal-initial-review.json'
                           : 'proposal-ai-mediation-review.json',
                         latestResult,
                       );

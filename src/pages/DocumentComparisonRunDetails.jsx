@@ -149,7 +149,7 @@ function getEvaluationRowMeta(evaluation, reviewStage) {
       badgeClassName: 'bg-green-100 text-green-700',
       rowClassName: 'rounded-xl border border-green-200 bg-green-50 p-3',
       scoreLabel: isPreSendReviewStage(reviewStage)
-        ? 'sender-side review'
+        ? 'initial review'
         : Number.isFinite(numericScore)
         ? `${Math.max(0, Math.round(numericScore))}% confidence`
         : '—',
