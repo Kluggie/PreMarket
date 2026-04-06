@@ -25,7 +25,7 @@ test('Review surfaces stay stage-aware across proposer-only and bilateral flows'
   };
 
   assert.match(files.copyHelpers, /Run AI Mediation/);
-  assert.match(files.copyHelpers, /Run Shared Intake Summary/);
+  assert.match(files.copyHelpers, /Run Initial Review/);
   assert.match(files.step3Package, /RUN_AI_MEDIATION_LABEL/);
   assert.match(files.comparisonTabs, /AI Mediation Review in progress/);
   assert.match(files.comparisonTabs, /reviewLabel\} in progress/);
@@ -62,7 +62,7 @@ test('Review surfaces stay stage-aware across proposer-only and bilateral flows'
     files.sharedPdfRoute,
   ].join('\n');
   const combined = Object.values(files).join('\n');
-  assert.match(proposerOnlySurfaces, /Shared Intake Summary/);
+  assert.match(proposerOnlySurfaces, /Initial Review/);
   assert.match(proposerOnlySurfaces, /preliminary summary|STAGE1_PRELIMINARY_SUMMARY_NOTE/i);
   assert.doesNotMatch(proposerOnlySurfaces, /\bPre-send Review\b/);
   assert.match(proposerOnlySurfaces, /\bInitial Review\b/);

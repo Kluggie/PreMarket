@@ -241,7 +241,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     const isSharedIntake = isSharedIntakeReviewStage(reviewStage);
     const defaultFilenameBase = isOneSidedReview ? 'shared-intake-summary' : 'ai-mediation-review';
     const fallbackSummaryText = isOneSidedReview
-      ? 'No Shared Intake Summary content is available yet.'
+      ? 'No Initial Review content is available yet.'
       : 'No AI mediation summary is available yet.';
     const senderOnlyFooterNote = isOneSidedReview
       ? 'Confidential -- Based only on the current submitted materials'

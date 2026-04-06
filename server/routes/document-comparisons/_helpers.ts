@@ -25,7 +25,7 @@ import {
 export const CONFIDENTIAL_LABEL = 'Confidential Information';
 export const SHARED_LABEL = 'Shared Information';
 export const MEDIATION_REVIEW_TITLE = 'AI Mediation Review';
-export const SHARED_INTAKE_SUMMARY_TITLE = 'Shared Intake Summary';
+export const SHARED_INTAKE_SUMMARY_TITLE = 'Initial Review';
 export const PRE_SEND_REVIEW_TITLE = SHARED_INTAKE_SUMMARY_TITLE;
 export const MEDIATION_REVIEW_ARCHETYPES = Object.freeze([
   'balanced_trade_off',
@@ -2305,7 +2305,7 @@ function buildFallbackRecipientV2Report(params: {
   if (resolveOpportunityReviewStage({ analysis_stage: params.stage }, { fallbackStage: MEDIATION_REVIEW_STAGE }) === STAGE1_SHARED_INTAKE_STAGE) {
     const presentation = buildStage1SharedIntakePresentation({
       submission_summary:
-        'A shared intake summary was generated from the submitted materials. Some private draft context was excluded for confidentiality.',
+        'An initial review was generated from the submitted materials. Some private draft context was excluded for confidentiality.',
       scope_snapshot: ['The current record includes only the materials available so far for recipient-safe reporting.'],
       unanswered_questions: ['What still needs to be clarified before both sides can be reviewed together?'],
       other_side_needed: ['Any priorities, constraints, or clarifications that may shape the next exchange.'],
@@ -2540,7 +2540,7 @@ function buildV2RecipientProjection(params: {
       scrubString(evaluation.summary, markers, '') ||
       scrubString(finalReport.primary_insight, markers, '') ||
       scrubString(finalReport.submission_summary, markers, '') ||
-      'Shared intake summary generated from the current submitted materials.';
+      'Initial review generated from the current submitted materials.';
 
     return {
       evaluation_result: {

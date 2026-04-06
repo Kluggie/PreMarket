@@ -313,8 +313,8 @@ function buildStageFallbackV2Data(analysisStage: string, reason: 'unexpected_err
       analysis_stage: STAGE1_SHARED_INTAKE_STAGE,
       submission_summary:
         reason === 'unexpected_error'
-          ? 'The Shared Intake Summary could not be generated due to an unexpected internal error.'
-          : 'The Shared Intake Summary could not be generated because the model output was unavailable or invalid.',
+          ? 'The Initial Review could not be generated due to an unexpected internal error.'
+          : 'The Initial Review could not be generated because the model output was unavailable or invalid.',
       scope_snapshot: [
         'The current submission has been received, but a fuller intake summary could not be assembled from the current run.',
       ],
@@ -340,8 +340,8 @@ function buildStageFallbackV2Data(analysisStage: string, reason: 'unexpected_err
       readiness_status: 'not_ready_to_send',
       send_readiness_summary:
         reason === 'unexpected_error'
-          ? 'The Shared Intake Summary could not be generated due to an unexpected internal error.'
-          : 'The Shared Intake Summary could not be generated because the model output was unavailable or invalid.',
+          ? 'The Initial Review could not be generated due to an unexpected internal error.'
+          : 'The Initial Review could not be generated because the model output was unavailable or invalid.',
       missing_information: [
         'What is the confirmed scope and set of deliverables?',
         'What assumptions should be explicit in the current brief?',
@@ -352,7 +352,7 @@ function buildStageFallbackV2Data(analysisStage: string, reason: 'unexpected_err
       likely_pushback_areas: ['Which current terms are most likely to trigger pushback if shared as-is?'],
       commercial_risks: [],
       implementation_risks: [],
-      suggested_clarifications: ['Tighten the open items above and re-run the Shared Intake Summary.'],
+      suggested_clarifications: ['Tighten the open items above and re-run the Initial Review.'],
     };
   }
 
@@ -391,10 +391,10 @@ function getReviewNotificationCopy(analysisStage: string, title: string) {
   const safeTitle = title || 'your proposal';
   if (analysisStage === STAGE1_SHARED_INTAKE_STAGE || analysisStage === PRE_SEND_REVIEW_STAGE) {
     return {
-      title: 'Shared Intake Summary ready',
-      message: `A Shared Intake Summary is ready for "${safeTitle}".`,
-      emailSubject: 'Shared Intake Summary ready',
-      emailText: `Your proposal "${safeTitle}" has a new Shared Intake Summary.\n\nSign in to PreMarket to review the neutral intake summary based on the current submitted materials so far.`,
+      title: 'Initial Review ready',
+      message: `An Initial Review is ready for "${safeTitle}".`,
+      emailSubject: 'Initial Review ready',
+      emailText: `Your proposal "${safeTitle}" has a new Initial Review.\n\nSign in to PreMarket to review the neutral summary based on the current submitted materials so far.`,
     };
   }
   return {
@@ -451,7 +451,7 @@ function toV2ApiError(error: any) {
 
 function getReviewLabelForSource(source: unknown) {
   return ['document_comparison_pre_send', 'document_comparison_stage1_intake', 'proposal_stage1_intake'].includes(asText(source))
-    ? 'Shared Intake Summary'
+    ? 'Initial Review'
     : 'AI Mediation Review';
 }
 

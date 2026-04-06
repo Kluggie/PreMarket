@@ -2,7 +2,7 @@
  * Document Comparison V2 evaluator wiring tests
  *
  * Verifies that one-sided evaluations:
- * 1. Persist as neutral Stage 1 Shared Intake Summaries
+ * 1. Persist as neutral Stage 1 Initial Reviews
  * 2. Preserve the same stage in proposal evaluation history
  * 3. Fall back safely without emitting mediation fields or readiness verdicts
  * 4. Never leak confidential canary text
@@ -113,7 +113,7 @@ if (!hasDatabaseUrl()) {
     () => {},
   );
 } else {
-  test('one-sided evaluate persists Shared Intake Summary without mediation fields or readiness verdicts', async () => {
+  test('one-sided evaluate persists Initial Review without mediation fields or readiness verdicts', async () => {
     await ensureMigrated();
     await resetTables();
 

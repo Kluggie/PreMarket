@@ -108,12 +108,12 @@ test('shared intake web-parity PDF uses neutral Stage 1 framing without readines
   ];
 
   const buffer = await renderWebParityPdfBuffer({
-    title: 'Shared Intake Summary',
+    title: 'Initial Review',
     subtitle: 'Opportunity',
     comparisonId: 'cmp_presend_pdf',
     metrics: [
       { label: 'Status', value: 'Awaiting other side input' },
-      { label: 'Review Type', value: 'Shared Intake Summary' },
+      { label: 'Review Type', value: 'Initial Review' },
       { label: 'Input Basis', value: 'One side\'s materials' },
       { label: 'Open Questions', value: '2 items' },
     ],
@@ -125,7 +125,7 @@ test('shared intake web-parity PDF uses neutral Stage 1 framing without readines
   });
 
   const rawText = await extractPdfText(buffer);
-  assert.match(rawText, /Shared Intake Summary/);
+  assert.match(rawText, /Initial Review/);
   assert.match(rawText, /STATUS/);
   assert.match(rawText, /REVIEW TYPE/);
   assert.match(rawText, /INPUT BASIS/);

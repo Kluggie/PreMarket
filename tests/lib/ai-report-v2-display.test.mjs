@@ -127,17 +127,17 @@ test('mediation review copy helpers: expose mediation-oriented labels', () => {
   assert.equal(getRunAiMediationLabel({ isPending: true }), 'Running AI Mediation...');
 });
 
-test('review copy helpers: expose Shared Intake Summary labels for the one-sided stage', () => {
-  assert.equal(PRE_SEND_REVIEW_LABEL, 'Shared Intake Summary');
-  assert.equal(getReviewStageLabel('stage1_shared_intake'), 'Shared Intake Summary');
-  assert.equal(getReviewStageLabel('pre_send_review'), 'Shared Intake Summary');
+test('review copy helpers: expose Initial Review labels for the one-sided stage', () => {
+  assert.equal(PRE_SEND_REVIEW_LABEL, 'Initial Review');
+  assert.equal(getReviewStageLabel('stage1_shared_intake'), 'Initial Review');
+  assert.equal(getReviewStageLabel('pre_send_review'), 'Initial Review');
   assert.equal(
     getRunOpportunityReviewLabel({ stage: 'stage1_shared_intake' }),
-    'Run Shared Intake Summary',
+    'Run Initial Review',
   );
   assert.equal(
     getRunOpportunityReviewLabel({ stage: 'stage1_shared_intake', hasExisting: true }),
-    'Re-run Shared Intake Summary',
+    'Re-run Initial Review',
   );
 });
 
@@ -188,7 +188,7 @@ test('buildStoredV2Evaluation: stores Stage 1 shared intake reports without medi
   });
 
   assert.equal(stored.report.analysis_stage, 'stage1_shared_intake');
-  assert.equal(stored.report.report_title, 'Shared Intake Summary');
+  assert.equal(stored.report.report_title, 'Initial Review');
   assert.equal(stored.report.intake_status, 'awaiting_other_side_input');
   assert.equal(Array.isArray(stored.report.presentation_sections), true);
   assert.equal('why' in stored.report, false);
@@ -381,7 +381,7 @@ test('buildStoredV2Evaluation: legacy pre-send reports remain renderable for his
   });
 
   assert.equal(stored.report.analysis_stage, 'pre_send_review');
-  assert.equal(stored.report.report_title, 'Shared Intake Summary');
+  assert.equal(stored.report.report_title, 'Initial Review');
   assert.equal(Array.isArray(stored.report.presentation_sections), true);
   assert.equal(stored.report.presentation_sections.length > 0, true);
   assert.equal('confidence_0_1' in stored.report, false);

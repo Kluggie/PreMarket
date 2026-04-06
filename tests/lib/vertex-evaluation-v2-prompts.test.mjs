@@ -47,7 +47,7 @@ test('stage1 shared intake prompt stays explicitly one-sided, neutral, and non-e
     reportStyle: selectReportStyle(42),
   });
 
-  assert.match(prompt, /Stage 1 Shared Intake Summary writer/i);
+  assert.match(prompt, /Stage 1 Initial Review writer/i);
   assert.match(prompt, /based only on materials currently submitted by one side/i);
   assert.match(prompt, /preliminary summary intended to help structure the next exchange/i);
   assert.match(prompt, /NOT bilateral mediation, NOT a verdict, and NOT a compatibility judgment/i);
@@ -55,7 +55,7 @@ test('stage1 shared intake prompt stays explicitly one-sided, neutral, and non-e
   assert.match(prompt, /Do NOT predict likely pushback or likely response from the other side/i);
   assert.match(prompt, /Initial Review: provide a short neutral status only/i);
   assert.match(prompt, /scope_snapshot should be concise sentence-style items that combine naturally into compact paragraph prose/i);
-  assert.match(prompt, /other_side_needed must stay neutral\. Prefer concise collaborative fragments/i);
+  assert.match(prompt, /other_side_needed must stay neutral\. Write a single flowing prose paragraph/i);
   assert.match(prompt, /basis_note must say exactly:/i);
   assert.match(prompt, /preliminary summary intended to help structure the next exchange/i);
   assert.match(prompt, /analysis_stage must be "stage1_shared_intake"/i);

@@ -16,14 +16,14 @@ import {
 } from './opportunityReviewStage.js';
 
 export const MEDIATION_REVIEW_LABEL = 'AI Mediation Review';
-export const STAGE1_SHARED_INTAKE_LABEL = 'Shared Intake Summary';
+export const STAGE1_SHARED_INTAKE_LABEL = 'Initial Review';
 export const PRE_SEND_REVIEW_LABEL = STAGE1_SHARED_INTAKE_LABEL;
 export const RUN_AI_MEDIATION_LABEL = 'Run AI Mediation';
 export const RERUN_AI_MEDIATION_LABEL = 'Re-run AI Mediation';
 export const RUNNING_AI_MEDIATION_LABEL = 'Running AI Mediation...';
-export const RUN_PRE_SEND_REVIEW_LABEL = 'Run Shared Intake Summary';
-export const RERUN_PRE_SEND_REVIEW_LABEL = 'Re-run Shared Intake Summary';
-export const RUNNING_PRE_SEND_REVIEW_LABEL = 'Running Shared Intake Summary...';
+export const RUN_PRE_SEND_REVIEW_LABEL = 'Run Initial Review';
+export const RERUN_PRE_SEND_REVIEW_LABEL = 'Re-run Initial Review';
+export const RUNNING_PRE_SEND_REVIEW_LABEL = 'Running Initial Review...';
 export const OPEN_QUESTIONS_LABEL = 'Open Questions';
 export const MISSING_OR_REDACTED_INFO_LABEL = 'Missing or Redacted Information';
 export const STAGE1_PRELIMINARY_SUMMARY_NOTE =
@@ -283,6 +283,16 @@ function buildStage1CompactParagraphs(values, itemsPerParagraph = 2) {
   return paragraphs;
 }
 
+function buildStage1ProseParagraph(values) {
+  const fragments = (Array.isArray(values) ? values : [])
+    .map((value) => stripTrailingTerminalPunctuation(normalizeSpaces(value)))
+    .filter(Boolean);
+  if (fragments.length === 0) return [];
+  if (fragments.length === 1) return [`${fragments[0]}.`];
+  const lowered = fragments.map((f, i) => (i === 0 ? f : f.replace(/^[A-Z]/, (ch) => ch.toLowerCase())));
+  return [`Useful clarifications at this stage would include ${lowered.join(', ')}.`];
+}
+
 function buildStage1PresentationSectionsFromReport(report) {
   const submissionSummary = normalizeSpaces(report?.submission_summary);
   const scopeSnapshot = Array.isArray(report?.scope_snapshot) ? report.scope_snapshot : [];
@@ -318,7 +328,7 @@ function buildStage1PresentationSectionsFromReport(report) {
     {
       key: 'what_the_other_side_still_needs_to_provide',
       heading: 'Suggested Clarifications',
-      paragraphs: buildStage1CompactParagraphs(
+      paragraphs: buildStage1ProseParagraph(
         otherSideNeeded.map((entry) => normalizeStage1ClarificationBullet(entry)),
       ),
       bullets: [],
@@ -670,7 +680,7 @@ export function getPresentationSections(report) {
       }
       return {
         ...section,
-        paragraphs: buildStage1CompactParagraphs(
+        paragraphs: buildStage1ProseParagraph(
           (Array.isArray(section.bullets) ? section.bullets : [])
             .map((entry) => normalizeStage1ClarificationBullet(entry))
             .filter(Boolean),
