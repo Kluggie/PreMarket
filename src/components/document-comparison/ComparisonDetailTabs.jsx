@@ -17,6 +17,7 @@ import {
   OPEN_QUESTIONS_LABEL,
   parseV2WhyEntry,
   splitV2WhyBodyParagraphs,
+  STAGE1_INITIAL_REVIEW_LABEL,
   STAGE1_PRELIMINARY_SUMMARY_NOTE,
   filterLegacySectionsForDisplay,
   getReviewStageLabel,
@@ -245,7 +246,9 @@ export function ComparisonAiReportTab({
             {isSharedIntake ? (
               <>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Status</span>
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                    {STAGE1_INITIAL_REVIEW_LABEL}
+                  </span>
                   <Badge className={decisionToneClass}>{decisionStatus.label}</Badge>
                 </div>
                 <div className="flex items-center gap-2">

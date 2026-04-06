@@ -16,6 +16,7 @@ test('Review surfaces stay stage-aware across proposer-only and bilateral flows'
     copyHelpers: readRepoFile('src/lib/aiReportUtils.js'),
     step3Package: readRepoFile('src/components/document-comparison/Step3ReviewPackage.jsx'),
     comparisonTabs: readRepoFile('src/components/document-comparison/ComparisonDetailTabs.jsx'),
+    runDetails: readRepoFile('src/pages/DocumentComparisonRunDetails.jsx'),
     proposalDetail: readRepoFile('src/pages/ProposalDetail.jsx'),
     comparisonDetail: readRepoFile('src/pages/DocumentComparisonDetail.jsx'),
     sharedReport: readRepoFile('src/pages/SharedReport.jsx'),
@@ -30,6 +31,7 @@ test('Review surfaces stay stage-aware across proposer-only and bilateral flows'
   assert.match(files.comparisonTabs, /reviewLabel\} in progress/);
   assert.match(files.copyHelpers, /preliminary summary intended to help structure the next exchange/i);
   assert.match(files.comparisonTabs, /STAGE1_PRELIMINARY_SUMMARY_NOTE/);
+  assert.match(files.runDetails, /STAGE1_INITIAL_REVIEW_LABEL/);
   assert.match(files.comparisonTabs, /Open Questions/);
   assert.match(files.proposalDetail, /Download \$\{reviewLabel\} JSON/);
   assert.match(files.comparisonDetail, /No \$\{reviewLabel\} yet/);
@@ -55,6 +57,7 @@ test('Review surfaces stay stage-aware across proposer-only and bilateral flows'
   const proposerOnlySurfaces = [
     files.copyHelpers,
     files.comparisonTabs,
+    files.runDetails,
     files.comparisonPdfRoute,
     files.sharedPdfRoute,
   ].join('\n');
@@ -62,7 +65,8 @@ test('Review surfaces stay stage-aware across proposer-only and bilateral flows'
   assert.match(proposerOnlySurfaces, /Shared Intake Summary/);
   assert.match(proposerOnlySurfaces, /preliminary summary|STAGE1_PRELIMINARY_SUMMARY_NOTE/i);
   assert.doesNotMatch(proposerOnlySurfaces, /\bPre-send Review\b/);
-  assert.doesNotMatch(proposerOnlySurfaces, /\bInitial Review\b/);
+  assert.match(proposerOnlySurfaces, /\bInitial Review\b/);
+  assert.doesNotMatch(proposerOnlySurfaces, /\bIntake Status\b/);
   assert.doesNotMatch(proposerOnlySurfaces, /\bsender-side\b/i);
   assert.doesNotMatch(proposerOnlySurfaces, /\bbefore sending\b/i);
   assert.doesNotMatch(combined, /\bAI Report\b/);

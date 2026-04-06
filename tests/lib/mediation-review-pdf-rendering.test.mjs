@@ -134,12 +134,12 @@ test('shared intake web-parity PDF uses neutral Stage 1 framing without readines
   assert.match(rawText, /OPEN QUESTIONS/);
   assert.match(rawText, /SUGGESTED CLARIFICATIONS/);
   assert.match(rawText, /DISCUSSION STARTING POINTS/);
-  assert.match(rawText, /INTAKE STATUS/);
+  assert.match(rawText, /INITIAL REVIEW/);
   assert.match(rawText, /Awaiting other side input/);
   assert.match(rawText, /preliminary summary/i);
   assert.doesNotMatch(rawText, /READINESS/);
   assert.doesNotMatch(rawText, /RECOMMENDATION/);
   assert.doesNotMatch(rawText, /CONFIDENCE/);
   assert.doesNotMatch(rawText, /LIKELY RESPONSE FROM THE OTHER SIDE|RESIDUAL RISKS AND POINTS TO TIGHTEN/i);
-  assert.doesNotMatch(rawText, /\bPre-send Review\b|\bInitial Review\b|\bsender-side\b|\bbefore sending\b/i);
+  assert.doesNotMatch(rawText, /\bPre-send Review\b|\bIntake Status\b|\bsender-side\b|\bbefore sending\b/i);
 });

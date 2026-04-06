@@ -28,6 +28,7 @@ export const OPEN_QUESTIONS_LABEL = 'Open Questions';
 export const MISSING_OR_REDACTED_INFO_LABEL = 'Missing or Redacted Information';
 export const STAGE1_PRELIMINARY_SUMMARY_NOTE =
   'This summary is based solely on the materials submitted by one party. It is a preliminary summary intended to help structure the next exchange. A more complete understanding will be possible once the other side has had an opportunity to review and respond.';
+export const STAGE1_INITIAL_REVIEW_LABEL = 'Initial Review';
 export const DECISION_STATUS_LABELS = Object.freeze([
   'Not viable',
   'Explore further',
@@ -262,6 +263,82 @@ export function normalizeStage1ClarificationBullet(value) {
     .replace(/^Initial detail on (the )/i, 'Initial detail on ')
     .replace(/^Further context on (the )/i, 'Further context on ')
     .trim();
+}
+
+function ensureStage1Sentence(value) {
+  const text = normalizeSpaces(value);
+  if (!text) return '';
+  if (/[.!?]$/.test(text)) return text;
+  return `${text}.`;
+}
+
+function buildStage1CompactParagraphs(values, itemsPerParagraph = 2) {
+  const sentences = (Array.isArray(values) ? values : [])
+    .map((value) => ensureStage1Sentence(value))
+    .filter(Boolean);
+  const paragraphs = [];
+  for (let index = 0; index < sentences.length; index += itemsPerParagraph) {
+    paragraphs.push(sentences.slice(index, index + itemsPerParagraph).join(' '));
+  }
+  return paragraphs;
+}
+
+function buildStage1PresentationSectionsFromReport(report) {
+  const submissionSummary = normalizeSpaces(report?.submission_summary);
+  const scopeSnapshot = Array.isArray(report?.scope_snapshot) ? report.scope_snapshot : [];
+  const unansweredQuestions = Array.isArray(report?.unanswered_questions) ? report.unanswered_questions : [];
+  const otherSideNeeded = Array.isArray(report?.other_side_needed) ? report.other_side_needed : [];
+  const discussionStartingPoints = Array.isArray(report?.discussion_starting_points)
+    ? report.discussion_starting_points
+    : [];
+  const intakeStatus = normalizeIntakeStatusLabel(report?.intake_status);
+
+  return [
+    {
+      key: 'submission_summary',
+      heading: 'Submission Summary',
+      paragraphs: submissionSummary ? [submissionSummary] : [],
+      bullets: [],
+      numberedBullets: false,
+    },
+    {
+      key: 'scope_snapshot',
+      heading: 'Scope Snapshot',
+      paragraphs: buildStage1CompactParagraphs(scopeSnapshot),
+      bullets: [],
+      numberedBullets: false,
+    },
+    {
+      key: 'still_unanswered',
+      heading: OPEN_QUESTIONS_LABEL,
+      paragraphs: buildStage1CompactParagraphs(unansweredQuestions),
+      bullets: [],
+      numberedBullets: false,
+    },
+    {
+      key: 'what_the_other_side_still_needs_to_provide',
+      heading: 'Suggested Clarifications',
+      paragraphs: buildStage1CompactParagraphs(
+        otherSideNeeded.map((entry) => normalizeStage1ClarificationBullet(entry)),
+      ),
+      bullets: [],
+      numberedBullets: false,
+    },
+    {
+      key: 'discussion_starting_points',
+      heading: 'Discussion Starting Points',
+      paragraphs: buildStage1CompactParagraphs(discussionStartingPoints),
+      bullets: [],
+      numberedBullets: false,
+    },
+    {
+      key: 'shared_intake_status',
+      heading: STAGE1_INITIAL_REVIEW_LABEL,
+      paragraphs: intakeStatus ? [`${intakeStatus}.`] : [],
+      bullets: [],
+      numberedBullets: false,
+    },
+  ].filter((section) => section.paragraphs.length > 0 || section.bullets.length > 0);
 }
 
 export function getReviewStageLabel(stageOrReport) {
@@ -560,39 +637,55 @@ function normalizePresentationSection(section, index = 0) {
 }
 
 export function getPresentationSections(report) {
+  const stage = resolveOpportunityReviewStage(report, {
+    fallbackStage: MEDIATION_REVIEW_STAGE,
+  });
   if (!Array.isArray(report?.presentation_sections)) {
-    return [];
+    return isSharedIntakeReviewStage(stage)
+      ? buildStage1PresentationSectionsFromReport(report)
+      : [];
   }
   const sections = report.presentation_sections
     .map((section, index) => normalizePresentationSection(section, index))
     .filter(Boolean);
-  const stage = resolveOpportunityReviewStage(report, {
-    fallbackStage: MEDIATION_REVIEW_STAGE,
-  });
   if (!isSharedIntakeReviewStage(stage)) {
     return sections;
   }
   return sections.map((section) => {
     const heading = normalizeSpaces(section.heading).toLowerCase();
+    if (heading === 'scope snapshot' || heading === 'open questions' || heading === 'discussion starting points') {
+      if (section.paragraphs.length > 0 && section.bullets.length === 0) {
+        return section;
+      }
+      return {
+        ...section,
+        paragraphs: buildStage1CompactParagraphs(section.bullets),
+        bullets: [],
+        numberedBullets: false,
+      };
+    }
     if (heading === 'suggested clarifications') {
+      if (section.paragraphs.length > 0 && section.bullets.length === 0) {
+        return section;
+      }
       return {
         ...section,
-        bullets: (Array.isArray(section.bullets) ? section.bullets : [])
-          .map((entry) => normalizeStage1ClarificationBullet(entry))
-          .filter(Boolean),
+        paragraphs: buildStage1CompactParagraphs(
+          (Array.isArray(section.bullets) ? section.bullets : [])
+            .map((entry) => normalizeStage1ClarificationBullet(entry))
+            .filter(Boolean),
+        ),
+        bullets: [],
+        numberedBullets: false,
       };
     }
-    if (heading === 'discussion starting points') {
-      return {
-        ...section,
-        numberedBullets: true,
-      };
-    }
-    if (heading === 'intake status') {
+    if (heading === 'intake status' || heading === 'initial review') {
       return {
         key: section.key,
-        heading: section.heading,
+        heading: STAGE1_INITIAL_REVIEW_LABEL,
         paragraphs: [`${normalizeIntakeStatusLabel(report?.intake_status || (section.paragraphs || []).join(' '))}.`],
+        bullets: [],
+        numberedBullets: false,
       };
     }
     return section;

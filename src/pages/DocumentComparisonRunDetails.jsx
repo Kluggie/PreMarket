@@ -21,7 +21,12 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { ArrowLeft, BarChart3, Loader2 } from 'lucide-react';
-import { getConfidencePercent, getReviewStageLabel, getReviewStatusDetails } from '@/lib/aiReportUtils';
+import {
+  getConfidencePercent,
+  getReviewStageLabel,
+  getReviewStatusDetails,
+  STAGE1_INITIAL_REVIEW_LABEL,
+} from '@/lib/aiReportUtils';
 import {
   isLegacyPreSendReviewStage,
   isPreSendReviewStage,
@@ -654,7 +659,7 @@ export default function DocumentComparisonRunDetails() {
                     <p className="text-xl font-semibold text-slate-900">{reviewLabel}</p>
                   </div>
                   <div>
-                    <p className="text-slate-500">Intake Status</p>
+                    <p className="text-slate-500">{STAGE1_INITIAL_REVIEW_LABEL}</p>
                     <p className="text-xl font-semibold text-slate-900">{reviewStatus.label}</p>
                   </div>
                 </div>

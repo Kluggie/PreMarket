@@ -10,7 +10,6 @@ import {
   getMediationReviewSubtitle,
   getMediationReviewTitle,
   getSentenceSafePreview,
-  normalizeStage1ClarificationBullet,
   parseV2WhyEntry,
   splitV2WhyBodyParagraphs,
   STAGE1_PRELIMINARY_SUMMARY_NOTE,
@@ -1232,56 +1231,18 @@ function buildStage1SharedIntakeSections(params: {
   intake_status?: unknown;
   basis_note?: unknown;
 }) {
-  const submissionSummary = normalizeText(params.submission_summary);
-  const scopeSnapshot = uniqueText(
-    Array.isArray(params.scope_snapshot) ? params.scope_snapshot as unknown[] : [],
+  return serializePresentationSections(
+    getPresentationSections({
+      analysis_stage: STAGE1_SHARED_INTAKE_STAGE,
+      submission_summary: params.submission_summary,
+      scope_snapshot: params.scope_snapshot,
+      unanswered_questions: params.unanswered_questions,
+      other_side_needed: params.other_side_needed,
+      discussion_starting_points: params.discussion_starting_points,
+      intake_status: params.intake_status,
+      basis_note: params.basis_note,
+    }),
   );
-  const unansweredQuestions = uniqueText(
-    Array.isArray(params.unanswered_questions) ? params.unanswered_questions as unknown[] : [],
-  );
-  const otherSideNeeded = uniqueText(
-    (Array.isArray(params.other_side_needed) ? params.other_side_needed as unknown[] : [])
-      .map((entry) => normalizeStage1ClarificationBullet(entry)),
-  );
-  const discussionStartingPoints = uniqueText(
-    Array.isArray(params.discussion_starting_points) ? params.discussion_starting_points as unknown[] : [],
-  );
-  const basisNote = normalizeText(params.basis_note) || DEFAULT_STAGE1_BASIS_NOTE;
-  const intakeStatusLabel = normalizeIntakeStatusLabel(params.intake_status);
-
-  return [
-    createPresentationSection({
-      key: 'submission_summary',
-      heading: 'Submission Summary',
-      paragraphs: [submissionSummary],
-    }),
-    createPresentationSection({
-      key: 'scope_snapshot',
-      heading: 'Scope Snapshot',
-      bullets: scopeSnapshot,
-    }),
-    createPresentationSection({
-      key: 'still_unanswered',
-      heading: 'Open Questions',
-      bullets: unansweredQuestions,
-    }),
-    createPresentationSection({
-      key: 'what_the_other_side_still_needs_to_provide',
-      heading: 'Suggested Clarifications',
-      bullets: otherSideNeeded,
-    }),
-    createPresentationSection({
-      key: 'discussion_starting_points',
-      heading: 'Discussion Starting Points',
-      bullets: discussionStartingPoints,
-      numbered_bullets: true,
-    }),
-    createPresentationSection({
-      key: 'shared_intake_status',
-      heading: 'Intake Status',
-      paragraphs: [`${intakeStatusLabel}.`],
-    }),
-  ].filter(Boolean) as MediationPresentationSection[];
 }
 
 function buildStage1SharedIntakePresentation(params: {
