@@ -785,7 +785,7 @@ function truncateWhyOutput(why: string[], maxChars: number): string[] {
 
 function compressWhySectionsForRequiredCoverage(sections: WhySection[], maxChars: number) {
   const ordered = orderedWhySections(sections)
-    .filter((section) => REQUIRED_WHY_SECTION_KEYS.includes(section.key))
+    .filter((section) => ALL_KNOWN_WHY_SECTION_KEYS.includes(section.key))
     .filter((section) => splitParagraphs(section.body).length > 0);
   if (ordered.length === 0) return [] as string[];
 
@@ -801,42 +801,6 @@ function compressWhySectionsForRequiredCoverage(sections: WhySection[], maxChars
     const reservedPerSection = Math.max(140, Math.floor(remaining / sectionsLeft));
     const bodyBudget = Math.max(90, reservedPerSection - heading.length - 2);
     const preferredParagraphs = (() => {
-      if (section.key === 'decision assessment') {
-        const selected: string[] = [];
-        const riskIndex = paragraphs.findIndex((paragraph) => /^Risk Summary:/i.test(paragraph));
-        const strengthsIndex = paragraphs.findIndex((paragraph) => /^Key Strengths:/i.test(paragraph));
-        if (riskIndex >= 0) selected.push(paragraphs[riskIndex]);
-        if (strengthsIndex >= 0) {
-          selected.push(paragraphs[strengthsIndex]);
-          const followUp = paragraphs[strengthsIndex + 1];
-          if (followUp && !/^[A-Z][A-Za-z ]+:/i.test(followUp)) {
-            selected.push(followUp);
-          }
-        }
-        return selected.length > 0 ? selected : [paragraphs[0]];
-      }
-      if (section.key === 'negotiation insights') {
-        const selected = [
-          paragraphs.find((paragraph) => /^Likely priorities:/i.test(paragraph)) || '',
-          paragraphs.find((paragraph) => /^Possible concessions:/i.test(paragraph)) || '',
-          paragraphs.find((paragraph) => /^Structural tensions:/i.test(paragraph)) || '',
-        ].filter(Boolean);
-        return selected.length > 0 ? selected : [paragraphs[0]];
-      }
-      if (section.key === 'leverage signals') {
-        const selected = paragraphs
-          .filter((paragraph) => /^Leverage signal:/i.test(paragraph))
-          .slice(0, 3);
-        return selected.length > 0 ? selected : [paragraphs[0]];
-      }
-      if (section.key === 'potential deal structures') {
-        const selected = [
-          paragraphs.find((paragraph) => /^Option A/i.test(paragraph)) || '',
-          paragraphs.find((paragraph) => /^Option B/i.test(paragraph)) || '',
-          paragraphs.find((paragraph) => /^Option C/i.test(paragraph)) || '',
-        ].filter(Boolean);
-        return selected.length > 0 ? selected : [paragraphs[0]];
-      }
       if (section.key === 'decision readiness') {
         const selected = [
           paragraphs.find((paragraph) => /^Decision status:/i.test(paragraph)) || '',
@@ -845,6 +809,7 @@ function compressWhySectionsForRequiredCoverage(sections: WhySection[], maxChars
         ].filter(Boolean);
         return selected.length > 0 ? selected : [paragraphs[0]];
       }
+      // For mediation sections, take first paragraph as priority
       return [paragraphs[0]];
     })();
 
@@ -925,14 +890,31 @@ type WhySection = {
 };
 
 const REQUIRED_WHY_SECTION_KEYS = [
-  'executive summary',
-  'decision assessment',
-  'negotiation insights',
-  'leverage signals',
-  'potential deal structures',
+  'mediation summary',
   'decision readiness',
+];
+
+/**
+ * Adaptive headings the AI may include alongside the two required sections.
+ * The orchestration layer preserves any of these that appear in the AI output
+ * instead of filtering to a fixed list.
+ */
+const ADAPTIVE_WHY_SECTION_KEYS = [
+  'where agreement exists',
+  'what is blocking commitment',
+  'the real hesitation',
+  'risk and how to reduce it',
+  'proposed bridge',
+  'what can be agreed now',
+  'what must wait',
+  'likely landing zone',
+  'each side\'s position',
+  'missing information that matters',
+  'suggested next step',
   'recommended path',
 ];
+
+const ALL_KNOWN_WHY_SECTION_KEYS = [...REQUIRED_WHY_SECTION_KEYS, ...ADAPTIVE_WHY_SECTION_KEYS];
 
 type CalibrationSignals = {
   domain: ProposalDomain;
@@ -1020,11 +1002,25 @@ function hasCoachingLanguage(value: string) {
 function normalizeWhyHeadingKey(value: string) {
   const normalized = normalizeKeywordText(value);
   if (!normalized) return '';
-  if (['executive summary', 'decision snapshot', 'snapshot'].includes(normalized)) return 'executive summary';
-  if (['decision assessment', 'assessment'].includes(normalized)) return 'decision assessment';
-  if (['negotiation insights', 'negotiation insight'].includes(normalized)) return 'negotiation insights';
-  if (['leverage signals', 'leverage', 'leverage signal'].includes(normalized)) return 'leverage signals';
-  if (['potential deal structures', 'deal structures', 'deal structure', 'options'].includes(normalized)) return 'potential deal structures';
+  // --- New mediation headings ---
+  if (['mediation summary', 'mediation overview', 'summary'].includes(normalized)) return 'mediation summary';
+  if (['where agreement exists', 'agreement', 'areas of agreement'].includes(normalized)) return 'where agreement exists';
+  if (['what is blocking commitment', 'blocking commitment', 'blockers'].includes(normalized)) return 'what is blocking commitment';
+  if (['the real hesitation', 'real hesitation', 'hesitation'].includes(normalized)) return 'the real hesitation';
+  if (['risk and how to reduce it', 'risk reduction'].includes(normalized)) return 'risk and how to reduce it';
+  if (['proposed bridge', 'bridge', 'bridging proposal'].includes(normalized)) return 'proposed bridge';
+  if (['what can be agreed now', 'agree now'].includes(normalized)) return 'what can be agreed now';
+  if (['what must wait', 'deferred', 'must wait'].includes(normalized)) return 'what must wait';
+  if (['likely landing zone', 'landing zone'].includes(normalized)) return 'likely landing zone';
+  if (['each side s position', 'each sides position', 'positions'].includes(normalized)) return 'each side\'s position';
+  if (['missing information that matters', 'missing information', 'information gaps'].includes(normalized)) return 'missing information that matters';
+  if (['suggested next step', 'next step'].includes(normalized)) return 'suggested next step';
+  // --- Legacy headings (map to closest mediation equivalent) ---
+  if (['executive summary', 'decision snapshot', 'snapshot'].includes(normalized)) return 'mediation summary';
+  if (['decision assessment', 'assessment'].includes(normalized)) return 'mediation summary';
+  if (['negotiation insights', 'negotiation insight'].includes(normalized)) return 'where agreement exists';
+  if (['leverage signals', 'leverage', 'leverage signal'].includes(normalized)) return 'the real hesitation';
+  if (['potential deal structures', 'deal structures', 'deal structure', 'options'].includes(normalized)) return 'proposed bridge';
   if (['recommendation', 'recommendations', 'recommended next step', 'next steps', 'path forward'].includes(normalized)) {
     return 'recommended path';
   }
@@ -1033,18 +1029,25 @@ function normalizeWhyHeadingKey(value: string) {
 
 function canonicalWhyHeading(key: string) {
   const normalized = normalizeWhyHeadingKey(key);
-  if (normalized === 'executive summary') return 'Executive Summary';
-  if (normalized === 'decision assessment') return 'Decision Assessment';
-  if (normalized === 'negotiation insights') return 'Negotiation Insights';
-  if (normalized === 'leverage signals') return 'Leverage Signals';
-  if (normalized === 'potential deal structures') return 'Potential Deal Structures';
+  // New mediation headings
+  if (normalized === 'mediation summary') return 'Mediation Summary';
+  if (normalized === 'where agreement exists') return 'Where Agreement Exists';
+  if (normalized === 'what is blocking commitment') return 'What Is Blocking Commitment';
+  if (normalized === 'the real hesitation') return 'The Real Hesitation';
+  if (normalized === 'risk and how to reduce it') return 'Risk and How to Reduce It';
+  if (normalized === 'proposed bridge') return 'Proposed Bridge';
+  if (normalized === 'what can be agreed now') return 'What Can Be Agreed Now';
+  if (normalized === 'what must wait') return 'What Must Wait';
+  if (normalized === 'likely landing zone') return 'Likely Landing Zone';
+  if (normalized === 'each side\'s position') return 'Each Side\u2019s Position';
+  if (normalized === 'missing information that matters') return 'Missing Information That Matters';
+  if (normalized === 'suggested next step') return 'Suggested Next Step';
   if (normalized === 'recommended path') return 'Recommended Path';
-  if (normalized === 'snapshot') return 'Executive Summary';
+  if (normalized === 'decision readiness') return 'Decision Readiness';
+  // Legacy aliases (kept for backward compatibility with stored reports)
   if (normalized === 'risk summary') return 'Risk Summary';
   if (normalized === 'key risks') return 'Key Risks';
   if (normalized === 'key strengths') return 'Key Strengths';
-  if (normalized === 'decision readiness') return 'Decision Readiness';
-  if (normalized === 'recommendations') return 'Recommended Path';
   if (normalized === 'implementation notes') return 'Implementation Notes';
   if (normalized === 'commercial notes') return 'Commercial Notes';
   if (normalized === 'data security notes') return 'Data & Security Notes';
@@ -1064,42 +1067,42 @@ function coalesceLegacyWhySections(sections: WhySection[]) {
 
   next.forEach((section) => {
     if (section.key === 'snapshot') {
-      section.key = 'executive summary';
-      section.heading = 'Executive Summary';
+      section.key = 'mediation summary';
+      section.heading = 'Mediation Summary';
     } else if (section.key === 'recommendations') {
       section.key = 'recommended path';
       section.heading = 'Recommended Path';
     }
   });
 
-  const decisionAssessmentParagraphs: string[] = [];
+  const mediationSummaryParagraphs: string[] = [];
   const retained = next.filter((section) => {
     if (section.key === 'key risks' || section.key === 'risk summary') {
       const body = combineParagraphs(splitParagraphs(section.body));
-      if (body) decisionAssessmentParagraphs.push(`Risk Summary: ${body}`);
+      if (body) mediationSummaryParagraphs.push(`Risk Summary: ${body}`);
       return false;
     }
     if (section.key === 'key strengths') {
       const body = combineParagraphs(splitParagraphs(section.body));
-      if (body) decisionAssessmentParagraphs.push(`Key Strengths: ${body}`);
+      if (body) mediationSummaryParagraphs.push(`Key Strengths: ${body}`);
       return false;
     }
     return true;
   });
 
-  if (decisionAssessmentParagraphs.length > 0) {
-    const existing = retained.find((section) => section.key === 'decision assessment');
+  if (mediationSummaryParagraphs.length > 0) {
+    const existing = retained.find((section) => section.key === 'mediation summary');
     const mergedBody = combineParagraphs([
       ...(existing ? splitParagraphs(existing.body) : []),
-      ...decisionAssessmentParagraphs,
+      ...mediationSummaryParagraphs,
     ]);
     if (existing) {
-      existing.heading = 'Decision Assessment';
+      existing.heading = 'Mediation Summary';
       existing.body = mergedBody;
     } else {
       retained.push({
-        heading: 'Decision Assessment',
-        key: 'decision assessment',
+        heading: 'Mediation Summary',
+        key: 'mediation summary',
         body: mergedBody,
       });
     }
@@ -1204,13 +1207,12 @@ function dropLowestPriorityParagraph(sectionKey: string, paragraphs: string[]) {
 }
 
 function maxParagraphsForSection(sectionKey: string) {
-  if (sectionKey === 'executive summary') return 3;
-  if (sectionKey === 'decision assessment') return 3;
-  if (sectionKey === 'negotiation insights') return 3;
-  if (sectionKey === 'leverage signals') return 4;
-  if (sectionKey === 'potential deal structures') return 3;
+  if (sectionKey === 'mediation summary') return 4;
   if (sectionKey === 'decision readiness') return 3;
   if (sectionKey === 'recommended path') return 2;
+  if (sectionKey === 'suggested next step') return 2;
+  // Adaptive sections get a reasonable default
+  if (ALL_KNOWN_WHY_SECTION_KEYS.includes(sectionKey)) return 3;
   return 2;
 }
 
@@ -2691,7 +2693,7 @@ function buildSectionRoleDefaults(params: {
           explanation: `The deal may be workable, but the present record is still too conditional or incomplete because ${snapshotBlockerSummary}.`,
         };
 
-  const executiveSummaryLead =
+  const mediationSummaryLead =
     params.data.fit_level === 'low'
       ? `${alignmentSummary ? `Some alignment is still visible around ${alignmentSummary}, but ` : ''}the deal is not yet workable on the current record because ${snapshotBlockerSummary}.`
       : cleanBounded && params.data.fit_level === 'high'
@@ -2700,35 +2702,37 @@ function buildSectionRoleDefaults(params: {
       ? `The deal appears fundamentally workable, but not yet sign-ready: alignment exists around ${alignmentSummary}, while ${snapshotBlockerSummary}.`
       : `The deal merits further work rather than immediate commitment because ${snapshotBlockerSummary}.`;
 
-  const executiveSummaryTension =
+  const mediationSummaryTension =
     params.data.fit_level === 'low'
-      ? 'The core negotiation tension is that the current materials still leave scope, dependency, or commercial exposure too open for either side to rely on the draft.'
+      ? 'The current materials still leave scope, dependency, or commercial exposure too open for either side to rely on the draft.'
       : cleanBounded
-      ? 'The remaining negotiation tension sits mainly in final approvals, execution governance, and preserving the current assumptions in papering rather than in core feasibility.'
+      ? 'The remaining tension sits mainly in final approvals, execution governance, and preserving the current assumptions in papering rather than in core feasibility.'
       : params.signals.conditionallyViable
-      ? `The core negotiation tension is between the visible alignment and the fact that ${riskBlockerSummary}.${riskTransferSummary ? ` As drafted, ${riskTransferSummary}.` : ''}`
-      : `The core tension is that ${riskBlockerSummary}.${riskTransferSummary ? ` As drafted, ${riskTransferSummary}.` : ''}`;
+      ? `The tension is between the visible alignment and the fact that ${riskBlockerSummary}.${riskTransferSummary ? ` As drafted, ${riskTransferSummary}.` : ''}`
+      : `The tension is that ${riskBlockerSummary}.${riskTransferSummary ? ` As drafted, ${riskTransferSummary}.` : ''}`;
 
-  const executiveSummaryNext =
+  const mediationSummaryNext =
     cleanBounded && params.data.fit_level === 'high'
-      ? 'Before commitment, the remaining work is to preserve the bounded structure through final approvals and clean documentation rather than renegotiate the commercial foundation.'
-      : `Before commitment, the parties still need to ${conditionSummary}. One realistic bridge is to ${lowerFirst(pathsToAgreement[0] || 'convert the current draft into explicit bilateral conditions to proceed')}.`;
+      ? 'The remaining work is to preserve the bounded structure through final approvals and clean documentation rather than renegotiate the commercial foundation.'
+      : `The parties still need to ${conditionSummary}. One realistic bridge is to ${lowerFirst(pathsToAgreement[0] || 'convert the current draft into explicit bilateral conditions to proceed')}.`;
 
   const defaults: Record<string, string[]> = {
-    'executive summary': [
-      executiveSummaryLead,
-      executiveSummaryTension,
-      executiveSummaryNext,
+    'mediation summary': [
+      mediationSummaryLead,
+      mediationSummaryTension,
+      mediationSummaryNext,
     ],
-    'decision assessment': [
-      cleanBounded
-        ? 'Risk Summary: Remaining risk is concentrated in execution governance, handoff sequencing, and final confirmation of the written assumptions rather than in core feasibility.'
-        : `Risk Summary: The primary risks sit where ${riskBlockerSummary}.${riskTransferSummary ? ` As drafted, ${riskTransferSummary}.` : ''} Assumptions / Dependencies remain around ${assumptionsSummary}.`,
+    'where agreement exists': [
       `Key Strengths: ${combineParagraphs(strengthParagraphs)}`,
-    ],
-    'negotiation insights': [
       buildLikelyPrioritiesParagraph(params),
-      buildPossibleConcessionsParagraph(params),
+    ],
+    'what is blocking commitment': [
+      cleanBounded
+        ? 'Remaining risk is concentrated in execution governance, handoff sequencing, and final confirmation of the written assumptions rather than in core feasibility.'
+        : `The primary risks sit where ${riskBlockerSummary}.${riskTransferSummary ? ` As drafted, ${riskTransferSummary}.` : ''} Assumptions and dependencies remain around ${assumptionsSummary}.`,
+    ],
+    'the real hesitation': buildLeverageSignalParagraphs(params),
+    'risk and how to reduce it': [
       buildStructuralTensionsParagraph({
         signals: params.signals,
         cleanBounded,
@@ -2736,12 +2740,18 @@ function buildSectionRoleDefaults(params: {
         riskTransferSummary,
       }),
     ],
-    'leverage signals': buildLeverageSignalParagraphs(params),
-    'potential deal structures': buildDealStructureParagraphs({
+    'proposed bridge': buildDealStructureParagraphs({
       factSheet: params.factSheet,
       signals: params.signals,
       cleanBounded,
     }),
+    'each side\'s position': [
+      buildLikelyPrioritiesParagraph(params),
+      buildPossibleConcessionsParagraph(params),
+    ],
+    'likely landing zone': [
+      buildPossibleConcessionsParagraph(params),
+    ],
     'decision readiness': [
       `Decision status: ${decisionStatus.label}. ${decisionStatus.explanation}`,
       buildNowVsLaterSummary(params),
@@ -2755,11 +2765,19 @@ function buildSectionRoleDefaults(params: {
       conditionSummary,
       agendaItems,
     }),
+    'suggested next step': buildRecommendedPathParagraphs({
+      factSheet: params.factSheet,
+      signals: params.signals,
+      data: params.data,
+      cleanBounded,
+      conditionSummary,
+      agendaItems,
+    }),
   };
 
-  if (params.signals.fixedPriceSignal && defaults['leverage signals'].length < 3) {
-    defaults['leverage signals'].push(
-      'Leverage signal: any fixed-price or fixed-scope posture appears to depend on tighter acceptance criteria, change-order triggers, and risk ownership than the current draft may yet provide.',
+  if (params.signals.fixedPriceSignal && (defaults['the real hesitation'] || []).length < 3) {
+    defaults['the real hesitation'].push(
+      'Any fixed-price or fixed-scope posture appears to depend on tighter acceptance criteria, change-order triggers, and risk ownership than the current draft may yet provide.',
     );
   }
 
@@ -2767,10 +2785,10 @@ function buildSectionRoleDefaults(params: {
 }
 
 function orderedWhySections(sections: WhySection[]) {
-  const order = new Map(REQUIRED_WHY_SECTION_KEYS.map((key, index) => [key, index]));
+  const order = new Map(ALL_KNOWN_WHY_SECTION_KEYS.map((key, index) => [key, index]));
   return [...sections].sort((left, right) => {
-    const leftIndex = order.has(left.key) ? (order.get(left.key) as number) : REQUIRED_WHY_SECTION_KEYS.length + 1;
-    const rightIndex = order.has(right.key) ? (order.get(right.key) as number) : REQUIRED_WHY_SECTION_KEYS.length + 1;
+    const leftIndex = order.has(left.key) ? (order.get(left.key) as number) : ALL_KNOWN_WHY_SECTION_KEYS.length + 1;
+    const rightIndex = order.has(right.key) ? (order.get(right.key) as number) : ALL_KNOWN_WHY_SECTION_KEYS.length + 1;
     if (leftIndex !== rightIndex) return leftIndex - rightIndex;
     return 0;
   });
@@ -2778,7 +2796,7 @@ function orderedWhySections(sections: WhySection[]) {
 
 function buildWhyEntriesFromRoleDefaults(roleDefaults: Record<string, string[]>) {
   return sanitizeWhyEntries(
-    REQUIRED_WHY_SECTION_KEYS
+    ALL_KNOWN_WHY_SECTION_KEYS
       .map((key) => {
         const body = combineParagraphs(roleDefaults[key] || []);
         if (!body) return '';
@@ -2807,11 +2825,12 @@ function buildCalibrationSignals(params: {
   const whyBodiesAll = whySections.map((section) => section.body);
   const whyBodies = whySections
     .filter((section) => [
-      'decision assessment',
-      'negotiation insights',
-      'leverage signals',
+      'what is blocking commitment',
+      'the real hesitation',
+      'risk and how to reduce it',
       'decision readiness',
       'recommended path',
+      'suggested next step',
     ].includes(section.key))
     .map((section) => section.body);
   const issueTexts = [
@@ -2936,19 +2955,19 @@ function rewriteWhyForCalibration(params: {
   sections.forEach((section) => {
     let nextBody = neutralizeShareableText(section.body);
     if (hasCoachingLanguage(nextBody)) {
-      if (section.key === 'decision assessment') {
+      if (section.key === 'mediation summary') {
         nextBody = combineParagraphs([
-          'Decision assessment should stay grounded in the current proposal mechanics rather than praise or one-sided drafting advice.',
+          'The mediation summary should stay grounded in the current proposal mechanics rather than praise or one-sided drafting advice.',
           nextBody,
         ]);
-      } else if (section.key === 'negotiation insights') {
+      } else if (section.key === 'where agreement exists' || section.key === 'each side\'s position') {
         nextBody = combineParagraphs([
-          'Negotiation insight should stay neutral and explain how each side may respond to the current structure.',
+          'This section should stay neutral and explain how each side may respond to the current structure.',
           nextBody,
         ]);
-      } else if (section.key === 'leverage signals') {
+      } else if (section.key === 'the real hesitation' || section.key === 'what is blocking commitment') {
         nextBody = combineParagraphs([
-          'Leverage should be described as an abstract signal in the deal dynamics, not as a confidential fact or one-sided tactic.',
+          'Hesitation and blockers should be described as dynamics visible to both sides, not as a confidential fact or one-sided tactic.',
           nextBody,
         ]);
       } else if (section.key === 'decision readiness') {
@@ -2956,7 +2975,7 @@ function rewriteWhyForCalibration(params: {
           'Readiness depends on what the parties can bound now versus defer to a later phase.',
           nextBody,
         ]);
-      } else if (section.key === 'recommended path') {
+      } else if (section.key === 'recommended path' || section.key === 'suggested next step' || section.key === 'proposed bridge') {
         nextBody = combineParagraphs([
           'The recommended path should turn the remaining gaps into a neutral next negotiation step rather than one-sided drafting advice.',
           nextBody,

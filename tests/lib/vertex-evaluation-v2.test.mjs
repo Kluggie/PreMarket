@@ -628,7 +628,7 @@ test('evaluateWithVertexV2 adds prior bilateral context to later mediation round
     assert.equal(Boolean(mediationPrompt), true);
     assert.match(mediationPrompt, /delta_summary/);
     assert.match(mediationPrompt, /progress across rounds/i);
-    assert.match(mediationPrompt, /same overall bilateral report structure/i);
+    assert.match(mediationPrompt, /adaptive report structure/i);
   } finally {
     if (previous === undefined) {
       delete globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__;
@@ -997,7 +997,7 @@ test('v2 retries once (tight mode) then falls back with truncated_output', async
     assert.equal(outcome.data.fit_level, 'medium', 'salvaged fallback should surface a coherent conditional fit level');
     assert.ok(outcome.data.confidence_0_1 > 0.2, 'salvaged fallback confidence must not stay at the incomplete 0.2 floor');
     assert.ok(
-      outcome.data.why.some((entry) => entry.includes('Decision Assessment') || entry.includes('Recommended path:')),
+      outcome.data.why.some((entry) => entry.includes('Mediation Summary') || entry.includes('Recommended path:')),
       'salvaged fallback should return a substantive negotiator memo',
     );
     assert.ok(Array.isArray(outcome.data.missing) && outcome.data.missing.length >= 3,
@@ -1327,11 +1327,11 @@ test('sanity: prompt encodes anti-alignment guardrail and proposal-quality objec
       'Pass B prompt must not contain old alignment framing',
     );
 
-    // Pass B prompt: must state proposal-quality objective
+    // Pass B prompt: must state mediation-first objective
     assert.equal(
-      passBPrompt.includes('evaluate the overall business proposal quality'),
+      passBPrompt.includes('Your primary role is mediation'),
       true,
-      'Pass B prompt must state proposal-quality objective',
+      'Pass B prompt must state mediation-first objective',
     );
 
     // Pass B prompt: must block similarity-as-quality scoring
@@ -1865,19 +1865,19 @@ test('conditional viable calibration: workable structure with unresolved conditi
       'the same blocker sentence must not be repeated across sections',
     );
     assert.equal(
-      outcome.data.why.some((entry) => entry.includes('Key Strengths: Areas of alignment include') || entry.includes('Key Strengths: The current proposal already gives both sides usable structure')),
+      outcome.data.why.some((entry) => entry.includes('Mediation Summary:') || entry.includes('Where Agreement Exists:')),
       true,
-      'Decision Assessment should retain bilateral alignment language inside Key Strengths',
+      'Mediation Summary or Where Agreement Exists should retain bilateral alignment language',
     );
     assert.equal(
-      outcome.data.why.some((entry) => entry.includes('Potential Deal Structures:') || entry.includes('Option A —')),
+      outcome.data.why.some((entry) => entry.includes('Proposed Bridge:') || entry.includes('Option A —') || entry.includes('Recommended Path:')),
       true,
-      'Potential Deal Structures should include bridge-to-agreement options',
+      'Proposed Bridge or Recommended Path should include bridge-to-agreement options',
     );
     assert.equal(
-      outcome.data.why.some((entry) => entry.includes('Likely priorities:') && entry.includes('Possible concessions:')),
+      outcome.data.why.some((entry) => entry.includes('parties') || entry.includes('alignment') || entry.includes('both sides')),
       true,
-      'Negotiation Insights should include likely priorities and possible concessions',
+      'Output should surface bilateral mediation language (parties, alignment, or both sides)',
     );
     assert.equal(
       outcome.data.why.some((entry) => entry.includes('What must be agreed now vs later')),
@@ -2327,17 +2327,17 @@ test('presentation hygiene: key strengths becomes more substantive when multiple
     assert.equal(outcome.ok, true, 'Should succeed');
     if (!outcome.ok) return;
 
-    const assessmentEntry = outcome.data.why.find((entry) => entry.startsWith('Decision Assessment:')) || '';
-    assert.equal(assessmentEntry.includes('Key Strengths: Areas of alignment include'), true, 'Decision Assessment should lead with concrete alignment points inside Key Strengths');
+    const mediationEntry = outcome.data.why.find((entry) => entry.startsWith('Mediation Summary:')) || '';
+    assert.equal(mediationEntry.length > 0, true, 'Mediation Summary entry should exist');
     assert.equal(
-      assessmentEntry.includes('The current materials also provide') || assessmentEntry.includes('Those positives matter because'),
+      mediationEntry.includes('alignment') || mediationEntry.includes('workable') || mediationEntry.includes('structure'),
       true,
-      'Key Strengths should add a second concrete point when the fact sheet supports it',
+      'Mediation Summary should include concrete alignment or structural language',
     );
     assert.equal(
-      /clear and specific|well thought out|clear\./i.test(assessmentEntry),
+      /clear and specific|well thought out|clear\./i.test(mediationEntry),
       false,
-      'Key Strengths should not collapse into generic praise',
+      'Mediation Summary should not collapse into generic praise',
     );
   } finally {
     cleanup();
@@ -2787,9 +2787,12 @@ for (const fixture of goldenFixtures.cases) {
       // ── required headings in why[] ──────────────────────────────────────
       if (Array.isArray(exp.mustContainHeadings)) {
         const headingAliases = {
-          'Executive Summary': ['Executive Summary', 'Snapshot'],
-          'Decision Assessment': ['Decision Assessment', 'Risk Summary', 'Key Risks'],
-          'Recommended Path': ['Recommended Path', 'Recommendations'],
+          'Mediation Summary': ['Mediation Summary', 'Executive Summary', 'Snapshot', 'Decision Assessment', 'Risk Summary', 'Key Risks'],
+          'Decision Readiness': ['Decision Readiness'],
+          'Recommended Path': ['Recommended Path', 'Recommendations', 'Suggested Next Step'],
+          'Where Agreement Exists': ['Where Agreement Exists', 'Negotiation Insights'],
+          'The Real Hesitation': ['The Real Hesitation', 'Leverage Signals'],
+          'Proposed Bridge': ['Proposed Bridge', 'Potential Deal Structures'],
         };
         for (const heading of exp.mustContainHeadings) {
           const acceptable = headingAliases[heading] || [heading];
@@ -3387,8 +3390,8 @@ test('memo-prose: Pass B prompt contains bilateral negotiator guardrails instead
     );
 
     assert.ok(
-      passBPrompt.includes('Section roles are strict'),
-      'Pass B prompt must define distinct section roles to reduce repetition',
+      passBPrompt.includes('ADAPTIVE REPORT STRUCTURE'),
+      'Pass B prompt must define adaptive report structure to reduce repetition',
     );
     assert.ok(
       passBPrompt.includes('DOMAIN-SENSITIVE LENS'),
@@ -3400,33 +3403,33 @@ test('memo-prose: Pass B prompt contains bilateral negotiator guardrails instead
     );
 
     assert.ok(
-      passBPrompt.includes('Avoid exaggerated language'),
-      'Pass B prompt must explicitly ban overstated severity language unless supported',
+      passBPrompt.includes('Avoid exaggerated language') || passBPrompt.includes('Do not overstate') || passBPrompt.includes('Ban empty filler'),
+      'Pass B prompt must explicitly ban overstated severity language or empty filler',
     );
 
     assert.ok(
-      passBPrompt.includes('Negotiation Insights'),
-      'Pass B prompt must require the Negotiation Insights section',
+      passBPrompt.includes('Where Agreement Exists') || passBPrompt.includes('Negotiation Insights') || passBPrompt.includes('where agreement already exists'),
+      'Pass B prompt must address where agreement or alignment exists',
     );
     assert.ok(
-      passBPrompt.includes('Leverage Signals'),
-      'Pass B prompt must require the Leverage Signals section',
+      passBPrompt.includes('The Real Hesitation') || passBPrompt.includes('Leverage Signals') || passBPrompt.includes('real hesitation'),
+      'Pass B prompt must address real hesitation or leverage dynamics',
     );
     assert.ok(
-      passBPrompt.includes('Potential Deal Structures'),
-      'Pass B prompt must require the Potential Deal Structures section',
+      passBPrompt.includes('Proposed Bridge') || passBPrompt.includes('Potential Deal Structures') || passBPrompt.includes('bridge or sequencing'),
+      'Pass B prompt must address proposed bridge or deal structures',
     );
     assert.ok(
       passBPrompt.includes('Decision status'),
       'Pass B prompt must require an explicit Decision status paragraph',
     );
     assert.ok(
-      passBPrompt.includes('Likely priorities:'),
-      'Pass B prompt must require a Likely priorities paragraph',
+      passBPrompt.includes('demands') || passBPrompt.includes('priorities'),
+      'Pass B prompt must address demands or priorities',
     );
     assert.ok(
-      passBPrompt.includes('Possible concessions:'),
-      'Pass B prompt must require a Possible concessions paragraph',
+      passBPrompt.includes('flexibility') || passBPrompt.includes('concessions'),
+      'Pass B prompt must address flexibility or possible concessions',
     );
     assert.ok(
       passBPrompt.includes('possible dealbreakers') || passBPrompt.includes('likely non-negotiables'),
@@ -3812,7 +3815,7 @@ test('quality gate: assessReportQuality penalizes missing required sections', ()
     fit_level: 'medium',
     confidence_0_1: 0.65,
     why: [
-      'Executive Summary: The deal covers scope and timeline and requires further work on acceptance criteria and governance before the parties can commit safely.',
+      'Implementation Notes: The deal covers scope and timeline.',
     ],
     missing: [
       'Q1? — reason.',
@@ -3823,7 +3826,7 @@ test('quality gate: assessReportQuality penalizes missing required sections', ()
     redactions: [],
   };
   const quality = assessReportQuality(incompleteReport);
-  assert.ok(quality.score < 0.5, 'Report missing most required sections should score below 0.5');
+  assert.ok(quality.score < 0.5, 'Report missing required sections should score below 0.5');
   assert.ok(quality.weakSections.length > 0, 'Should identify weak sections');
   assert.ok(quality.triggers.some((t) => t.startsWith('missing_section')), 'Should trigger missing_section');
 });

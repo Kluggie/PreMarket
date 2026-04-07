@@ -536,8 +536,22 @@ export function normalizeV2Heading(raw) {
 
   /** @type {[string[], string][]} — [aliases, canonical] */
   const HEADING_MAP = [
-    [['executive summary', 'summary', 'overview', 'intro', 'introduction', 'snapshot', 'decision snapshot'], 'Executive Summary'],
-    [['decision assessment', 'assessment'], 'Decision Assessment'],
+    // New mediation headings
+    [['mediation summary', 'mediation overview'], 'Mediation Summary'],
+    [['where agreement exists', 'agreement', 'areas of agreement'], 'Where Agreement Exists'],
+    [['what is blocking commitment', 'blocking commitment', 'blockers'], 'What Is Blocking Commitment'],
+    [['the real hesitation', 'real hesitation', 'hesitation'], 'The Real Hesitation'],
+    [['risk and how to reduce it', 'risk reduction'], 'Risk and How to Reduce It'],
+    [['proposed bridge', 'bridge', 'bridging proposal'], 'Proposed Bridge'],
+    [['what can be agreed now', 'agree now'], 'What Can Be Agreed Now'],
+    [['what must wait', 'deferred', 'must wait'], 'What Must Wait'],
+    [['likely landing zone', 'landing zone'], 'Likely Landing Zone'],
+    [['each side\u2019s position', 'each sides position', 'each side\'s position', 'positions'], 'Each Side\u2019s Position'],
+    [['missing information that matters', 'information gaps'], 'Missing Information That Matters'],
+    [['suggested next step', 'next step'], 'Suggested Next Step'],
+    // Legacy headings (kept for backward compatibility with stored reports)
+    [['executive summary', 'summary', 'overview', 'intro', 'introduction', 'snapshot', 'decision snapshot'], 'Mediation Summary'],
+    [['decision assessment', 'assessment'], 'Mediation Summary'],
     [
       ['decision snapshot', 'snapshot', 'situation', 'context', 'background'],
       'Decision Snapshot',
@@ -571,9 +585,9 @@ export function normalizeV2Heading(raw) {
       ],
       'Key Risks',
     ],
-    [['negotiation insights', 'negotiation insight'], 'Negotiation Insights'],
-    [['leverage signals', 'leverage', 'leverage signal'], 'Leverage Signals'],
-    [['potential deal structures', 'deal structures', 'deal structure'], 'Potential Deal Structures'],
+    [['negotiation insights', 'negotiation insight'], 'Where Agreement Exists'],
+    [['leverage signals', 'leverage', 'leverage signal'], 'The Real Hesitation'],
+    [['potential deal structures', 'deal structures', 'deal structure'], 'Proposed Bridge'],
     [
       ['decision readiness', 'readiness', 'readiness assessment', 'data completeness'],
       'Decision Readiness',

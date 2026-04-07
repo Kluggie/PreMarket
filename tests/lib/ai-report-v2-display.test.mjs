@@ -85,7 +85,7 @@ test('hasV2Report: returns true for Stage 1 shared intake reports with presentat
 
 test('parseV2WhyEntry: extracts heading and body from standard V2 entry', () => {
   const result = parseV2WhyEntry('Executive Summary: The proposal clearly defines deliverables.');
-  assert.equal(result.heading, 'Executive Summary');
+  assert.equal(result.heading, 'Mediation Summary');
   assert.equal(result.body, 'The proposal clearly defines deliverables.');
 });
 
@@ -600,10 +600,10 @@ test('buildMediationReviewPresentation: uses direct top-level V2 sections for sh
     fit_level: 'medium',
     confidence_0_1: 0.63,
     why: [
-      'Executive Summary: The draft is commercially promising, but delivery ownership remains underdefined.',
-      'Key Strengths: Renewal economics and commercial scope are already aligned.',
-      'Key Risks: Timeline ownership and change-control mechanics remain unsettled.',
-      'Structural tensions: The main tension is launch speed versus approval control.',
+      'Mediation Summary: The draft is commercially promising, but delivery ownership remains underdefined.',
+      'Where Agreement Exists: Renewal economics and commercial scope are already aligned.',
+      'What Is Blocking Commitment: Timeline ownership and change-control mechanics remain unsettled.',
+      'Risk and How to Reduce It: The main tension is launch speed versus approval control.',
       'Decision Readiness: Decision status: Proceed with conditions. Timeline ownership still needs to be made explicit.',
       'Recommended Path: Recommended path: resolve timeline ownership before final approval.',
     ],

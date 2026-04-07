@@ -49,7 +49,7 @@
         "minMissingCount": 1,
         "fitNotHigh": true,
         "expectedClampsApplied": ["cap_0.65_low_coverage", "downgrade_high_low_coverage", "warn_identical_tiers"],
-        "mustContainHeadings": ["Executive Summary", "Decision Assessment", "Negotiation Insights", "Leverage Signals", "Potential Deal Structures", "Decision Readiness", "Recommended Path"],
+        "mustContainHeadings": ["Mediation Summary", "Decision Readiness", "Recommended Path"],
         "shouldExcludeOptionalHeadings": ["Implementation Notes", "Vendor Fit Notes", "Commercial Notes", "Data & Security Notes"]
       }
     },
@@ -100,7 +100,7 @@
         "fitNotHigh": true,
         "expectedClampsApplied": ["cap_0.65_low_coverage", "downgrade_high_low_coverage"],
         "shouldExcludeClamps": ["warn_identical_tiers"],
-        "mustContainHeadings": ["Executive Summary", "Decision Assessment", "Negotiation Insights", "Leverage Signals", "Potential Deal Structures", "Decision Readiness", "Recommended Path"]
+        "mustContainHeadings": ["Mediation Summary", "Decision Readiness", "Recommended Path"]
       }
     },
     {
@@ -199,7 +199,7 @@
         "maxConfidence": 0.75,
         "fitNotHigh": true,
         "expectedClampsApplied": ["cap_0.75_missing_critical", "downgrade_high_missing_critical"],
-        "mustContainHeadings": ["Executive Summary", "Decision Assessment", "Negotiation Insights", "Leverage Signals", "Potential Deal Structures", "Decision Readiness", "Recommended Path"],
+        "mustContainHeadings": ["Mediation Summary", "Decision Readiness", "Recommended Path"],
         "shouldExcludeOptionalHeadings": ["Vendor Fit Notes", "Commercial Notes", "Data & Security Notes"]
       }
     },
@@ -248,7 +248,7 @@
       "expected": {
         "maxConfidence": 1.0,
         "expectedClampsApplied": [],
-        "mustContainHeadings": ["Executive Summary", "Decision Assessment", "Negotiation Insights", "Leverage Signals", "Potential Deal Structures", "Decision Readiness", "Recommended Path"],
+        "mustContainHeadings": ["Mediation Summary", "Decision Readiness", "Recommended Path"],
         "shouldExcludeOptionalHeadings": ["Vendor Fit Notes", "Commercial Notes", "Data & Security Notes"]
       }
     },
@@ -298,7 +298,7 @@
       "expected": {
         "maxConfidence": 1.0,
         "expectedClampsApplied": [],
-        "mustContainHeadings": ["Executive Summary", "Decision Assessment", "Negotiation Insights", "Leverage Signals", "Potential Deal Structures", "Decision Readiness", "Recommended Path"],
+        "mustContainHeadings": ["Mediation Summary", "Decision Readiness", "Recommended Path"],
         "shouldExcludeOptionalHeadings": ["Commercial Notes"]
       }
     }

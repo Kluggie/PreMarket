@@ -368,7 +368,7 @@ function buildWhyLookup(why: string[]) {
     const raw = normalizeText(entry);
     if (!raw) return;
     const { heading, body } = parseV2WhyEntry(raw);
-    const resolvedHeading = heading || (index === 0 ? 'Executive Summary' : `Section ${index + 1}`);
+    const resolvedHeading = heading || (index === 0 ? 'Mediation Summary' : `Section ${index + 1}`);
     const paragraphs = splitV2WhyBodyParagraphs(body || raw);
     sections.set(normalizeHeadingKey(resolvedHeading), {
       heading: resolvedHeading,
@@ -685,16 +685,16 @@ export function buildMediationReviewPresentation(params: {
   const movementDirection = progress?.movement_direction || null;
 
   const whyLookup = buildWhyLookup(why);
-  const executiveParagraphs = whyLookup.getSectionParagraphs('Executive Summary', 'Decision Snapshot');
-  const strengthParagraphs = whyLookup.getSignalParagraphs('Key Strengths');
-  const riskParagraphs = whyLookup.getSignalParagraphs('Risk Summary', 'Key Risks');
+  const executiveParagraphs = whyLookup.getSectionParagraphs('Mediation Summary', 'Executive Summary', 'Decision Snapshot');
+  const strengthParagraphs = whyLookup.getSignalParagraphs('Where Agreement Exists', 'Key Strengths');
+  const riskParagraphs = whyLookup.getSignalParagraphs('What Is Blocking Commitment', 'Risk Summary', 'Key Risks');
   const prioritiesParagraphs = whyLookup.getSignalParagraphs('Likely priorities');
-  const tensionsParagraphs = whyLookup.getSignalParagraphs('Structural tensions');
-  const leverageParagraphs = whyLookup.getSignalParagraphs('Leverage Signals', 'Leverage signal');
-  const dealStructureParagraphs = whyLookup.getSectionParagraphs('Potential Deal Structures');
+  const tensionsParagraphs = whyLookup.getSignalParagraphs('Risk and How to Reduce It', 'Structural tensions');
+  const leverageParagraphs = whyLookup.getSignalParagraphs('The Real Hesitation', 'Leverage Signals', 'Leverage signal');
+  const dealStructureParagraphs = whyLookup.getSectionParagraphs('Proposed Bridge', 'Potential Deal Structures');
   const decisionReadinessParagraphs = whyLookup.getSectionParagraphs('Decision Readiness');
-  const agreementParagraphs = whyLookup.getSignalParagraphs('What must be agreed now vs later', 'What would change the verdict');
-  const recommendedPathParagraphs = whyLookup.getSignalParagraphs('Recommended Path', 'Recommended path');
+  const agreementParagraphs = whyLookup.getSignalParagraphs('What Can Be Agreed Now', 'What Must Wait', 'What must be agreed now vs later', 'What would change the verdict');
+  const recommendedPathParagraphs = whyLookup.getSignalParagraphs('Suggested Next Step', 'Recommended Path', 'Recommended path');
 
   const concernThemeIds = detectThemes([...riskParagraphs, ...decisionReadinessParagraphs, ...missing]);
   const strengthThemeIds = detectThemes([...strengthParagraphs, ...executiveParagraphs]);
