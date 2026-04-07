@@ -1677,7 +1677,7 @@ test('2-pass clamps: full coverage + detailed proposal → high/medium preserved
     const caps = outcome._internal?.caps_applied || [];
     assert.equal(caps.includes('cap_0.65_low_coverage'), false, 'low-coverage cap must not fire');
     assert.equal(caps.includes('cap_0.75_missing_critical'), false, 'missing-critical cap must not fire');
-    assert.equal(caps.includes('cap_material_uncertainty'), false, 'material-uncertainty cap must not fire');
+    assert.equal(caps.includes('calibrate_conditional'), false, 'conditional calibration must not fire');
     assert.equal(caps.includes('cap_0.45_severe_uncertainty'), false, 'severe-uncertainty cap must not fire');
     assert.equal(caps.includes('downgrade_high_low_coverage'), false, 'low-coverage downgrade must not fire');
     assert.equal(caps.includes('downgrade_high_missing_critical'), false, 'missing-critical downgrade must not fire');
@@ -1745,16 +1745,16 @@ test('consistency calibration: unresolved data cleanup, acceptance, and change-o
     if (!outcome.ok) return;
 
     assert.equal(outcome.data.fit_level, 'medium', 'material unresolved risk should force a conditional medium verdict');
-    assert.equal(outcome.data.confidence_0_1 <= 0.58, true, 'confidence must not remain near 0.95 when contradictions remain');
+    assert.equal(outcome.data.confidence_0_1 <= 0.72, true, 'confidence must not remain near 0.95 when contradictions remain');
     assert.equal(
       outcome._internal?.caps_applied.includes('downgrade_high_material_uncertainty'),
       true,
       'material-uncertainty downgrade must be recorded',
     );
     assert.equal(
-      outcome._internal?.caps_applied.includes('cap_0.55_contradiction_confidence'),
+      outcome._internal?.caps_applied.includes('calibrate_conditional'),
       true,
-      'contradiction confidence cap must be recorded',
+      'conditional calibration must be recorded',
     );
     assert.equal(
       outcome.data.why.some((entry) => entry.includes('Decision status: Proceed with conditions') || entry.includes('Decision status: Explore further')),
@@ -1762,7 +1762,7 @@ test('consistency calibration: unresolved data cleanup, acceptance, and change-o
       'Decision language must be rewritten to a conditional posture',
     );
     assert.equal(
-      outcome.data.why.some((entry) => entry.includes('Recommended path:')),
+      outcome.data.why.some((entry) => /Recommended Path:/i.test(entry)),
       true,
       'Recommended Path must be populated for conditional cases',
     );

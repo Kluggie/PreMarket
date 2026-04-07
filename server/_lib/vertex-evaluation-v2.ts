@@ -1193,19 +1193,18 @@ function dropLowestPriorityParagraph(sectionKey: string, paragraphs: string[]) {
 }
 
 function maxParagraphsForSection(sectionKey: string) {
-  if (sectionKey === 'mediation summary') return 3;
-  if (sectionKey === 'decision readiness') return 3;
+  if (sectionKey === 'mediation summary') return 4;
+  if (sectionKey === 'decision readiness') return 2;
   if (sectionKey === 'recommended path') return 2;
   if (sectionKey === 'suggested next step') return 1;
-  // Adaptive sections get a tighter default to reduce heading overload
+  // Adaptive sections — enough for substance, not enough for bloat
   if (ALL_KNOWN_WHY_SECTION_KEYS.includes(sectionKey)) return 2;
   return 2;
 }
 
 function isRoleLockedParagraph(value: string) {
-  return /^(Risk Summary|Key Strengths|Decision status|What must be agreed now vs later|What would change the verdict|Recommended path|Immediate next step):/i.test(
-    normalizeSpaces(value),
-  );
+  // Only lock Decision status lines — everything else should be subject to dedup
+  return /^Decision status:/i.test(normalizeSpaces(value));
 }
 
 function isLowSignalParagraph(value: string) {
@@ -1227,6 +1226,7 @@ function isLowSignalParagraph(value: string) {
     /^the remaining work is to preserve/i,
     /^the deal merits further work rather than/i,
     /^assumptions and dependencies remain around/i,
+    /^Key Strengths:.*\bis clear\b/i,
   ].some((pattern) => pattern.test(text));
 }
 
@@ -2269,28 +2269,28 @@ function buildNegotiationAgendaItems(signals: CalibrationSignals) {
   };
 
   signals.rules.forEach((rule) => {
-    if (rule.id === 'scope') addItem('define the current commitment boundary and explicit exclusions');
-    if (rule.id === 'data_cleanup') addItem('assign remediation ownership and quantify cleanup effort');
-    if (rule.id === 'acceptance') addItem('agree measurable acceptance criteria for the key deliverables');
-    if (rule.id === 'dependency') addItem('name dependency owners, approvals, and fallback treatment');
-    if (rule.id === 'change_order') addItem('set change-order triggers for the known uncertainty');
-    if (rule.id === 'technical') addItem('validate the core technical and integration assumptions');
-    if (rule.id === 'timeline') addItem('confirm milestones and any non-negotiable deadline assumptions');
-    if (rule.id === 'commercial') addItem('tie pricing posture to explicit assumptions and exclusions');
-    if (rule.id === 'phase_boundary') addItem('separate current-phase obligations from later-phase options');
-    if (rule.id === 'governance') addItem('align governance rights, approval thresholds, and control protections');
-    if (rule.id === 'valuation') addItem('tie valuation and dilution assumptions to the wider deal structure');
-    if (rule.id === 'tranche') addItem('define whether closing is single-step or milestone-based');
-    if (rule.id === 'specification') addItem('lock the technical specification and defect treatment');
-    if (rule.id === 'volume_commitment') addItem('tie pricing or exclusivity to explicit volume commitments');
-    if (rule.id === 'logistics') addItem('assign logistics ownership, lead times, and delay remedies');
-    if (rule.id === 'staffing') addItem('lock the staffing model and continuity expectations');
-    if (rule.id === 'billing_trigger') addItem('align billing triggers with milestone sign-off and deliverables');
+    if (rule.id === 'scope') addItem('tighten the scope definition and exclusions');
+    if (rule.id === 'data_cleanup') addItem('clarify who owns data remediation and estimate the effort');
+    if (rule.id === 'acceptance') addItem('agree on acceptance criteria for the key deliverables');
+    if (rule.id === 'dependency') addItem('confirm who owns each dependency and what happens if one fails');
+    if (rule.id === 'change_order') addItem('agree how change requests will be handled');
+    if (rule.id === 'technical') addItem('validate the core technical assumptions');
+    if (rule.id === 'timeline') addItem('confirm the milestone schedule');
+    if (rule.id === 'commercial') addItem('tie pricing to explicit assumptions');
+    if (rule.id === 'phase_boundary') addItem('separate current-phase work from later options');
+    if (rule.id === 'governance') addItem('align governance and approval rights');
+    if (rule.id === 'valuation') addItem('tie valuation assumptions to the deal structure');
+    if (rule.id === 'tranche') addItem('clarify whether closing is single-step or staged');
+    if (rule.id === 'specification') addItem('finalise the technical specification');
+    if (rule.id === 'volume_commitment') addItem('tie pricing to volume commitments');
+    if (rule.id === 'logistics') addItem('assign logistics ownership and lead times');
+    if (rule.id === 'staffing') addItem('confirm the staffing model');
+    if (rule.id === 'billing_trigger') addItem('align billing triggers with deliverables');
   });
 
-  if (items.length < 3) addItem('confirm which issues must be fixed now versus deferred to a later phase');
-  if (items.length < 3) addItem('align the commercial posture with the actual risk ownership');
-  if (items.length < 3) addItem('confirm the narrowest commit-ready version of the current proposal');
+  if (items.length < 3) addItem('confirm which issues need resolving before commitment');
+  if (items.length < 3) addItem('align commercial terms with actual risk allocation');
+  if (items.length < 3) addItem('narrow the scope to the most commit-ready version');
 
   return items.slice(0, 3);
 }
@@ -2996,8 +2996,27 @@ function rewriteWhyForCalibration(params: {
       }
     }
 
+    // Only inject role defaults when the AI produced thin or empty content.
+    // For sections where the AI produced ≥2 substantive paragraphs, prefer
+    // the AI's own prose over template-generated defaults.
+    const aiHasSubstance = existingParagraphs.filter((p) => asText(p).length > 40).length >= 2;
+    const sectionNeedsDefaults =
+      needsRichRewrite &&
+      !aiHasSubstance &&
+      (roleDefaults[section.key] || []).length > 0;
+
+    // For decision readiness, always inject the calibrated Decision status line
+    const decisionStatusOnly =
+      needsRichRewrite &&
+      section.key === 'decision readiness' &&
+      !sectionNeedsDefaults;
+
     const candidateParagraphs = [
-      ...(needsRichRewrite ? (roleDefaults[section.key] || []) : []),
+      ...(sectionNeedsDefaults
+        ? (roleDefaults[section.key] || [])
+        : decisionStatusOnly
+          ? (roleDefaults[section.key] || []).filter((p) => /^Decision status:/i.test(normalizeSpaces(p)))
+          : []),
       ...existingParagraphs,
     ];
 
@@ -3087,48 +3106,63 @@ function capConfidenceToSignals(params: {
   signals: CalibrationSignals;
 }) {
   let confidence_0_1 = params.confidence_0_1;
-  let confidenceCap = 1;
-  let confidenceCapReason = '';
   const capsApplied: string[] = [];
 
-  const applyCap = (value: number, reason: string) => {
-    if (value < confidenceCap) {
-      confidenceCap = value;
-      confidenceCapReason = reason;
-    }
-  };
-
   if (params.signals.shouldBeLow && !params.signals.hasCrediblePath) {
-    applyCap(0.45, 'cap_0.45_severe_uncertainty');
+    // Severe uncertainty: map into 0.20–0.45 range
+    confidence_0_1 = mapConfidenceIntoRange(confidence_0_1, 0.20, 0.45);
+    capsApplied.push('cap_0.45_severe_uncertainty');
   } else if (params.signals.shouldBeConditional) {
-    // Graduate the cap based on viability signals so different cases produce
-    // different confidence values instead of always collapsing to a single number.
+    // Conditional: map into signal-aware range that preserves variation.
+    // The range endpoints depend on how strong the viability signals are.
     const viability = params.signals.structuralViabilityScore;
     const alignment = params.signals.alignmentPoints.length;
     const coverage = params.signals.coverageCount;
-    const conditionalCap =
-      (params.signals.conditionallyViable && viability >= 4 && alignment >= 3) ? 0.68
-      : (params.signals.conditionallyViable && viability >= 3) ? 0.64
-      : (params.signals.bodySuggestsViablePath && alignment >= 2) ? 0.60
-      : (coverage >= 3 && alignment >= 1) ? 0.56
-      : 0.52;
-    applyCap(conditionalCap, 'cap_material_uncertainty');
+
+    let floor: number;
+    let ceiling: number;
+    if (params.signals.conditionallyViable && viability >= 4 && alignment >= 3) {
+      floor = 0.58; ceiling = 0.72;
+    } else if (params.signals.conditionallyViable && viability >= 3) {
+      floor = 0.52; ceiling = 0.67;
+    } else if (params.signals.bodySuggestsViablePath && alignment >= 2) {
+      floor = 0.48; ceiling = 0.63;
+    } else if (coverage >= 3 && alignment >= 1) {
+      floor = 0.44; ceiling = 0.58;
+    } else {
+      floor = 0.38; ceiling = 0.54;
+    }
+
+    confidence_0_1 = mapConfidenceIntoRange(confidence_0_1, floor, ceiling);
+    capsApplied.push('calibrate_conditional');
   }
 
   if (params.signals.hasConditionalLanguage && !params.signals.conditionallyViable) {
-    applyCap(0.64, 'cap_0.64_conditional_language');
+    if (confidence_0_1 > 0.64) {
+      confidence_0_1 = 0.64;
+      capsApplied.push('cap_0.64_conditional_language');
+    }
   }
 
   if (confidence_0_1 > 0.85 && (params.signals.shouldBeConditional || params.signals.hasConditionalLanguage)) {
-    applyCap(0.55, 'cap_0.55_contradiction_confidence');
+    confidence_0_1 = mapConfidenceIntoRange(confidence_0_1, 0.42, 0.58);
+    capsApplied.push('cap_contradiction_confidence');
   }
 
-  if (confidenceCapReason && confidence_0_1 > confidenceCap) {
-    confidence_0_1 = confidenceCap;
-    capsApplied.push(confidenceCapReason);
-  }
+  return { confidence_0_1: clamp01(confidence_0_1), capsApplied };
+}
 
-  return { confidence_0_1, capsApplied };
+/**
+ * Map an AI confidence value into a target range proportionally.
+ * The AI's 0.0–1.0 range is projected into [floor, ceiling] so that
+ * a higher AI value still produces a higher output within the range.
+ * This preserves relative differences instead of collapsing to a single cap.
+ * Never pushes a value UP — only applies downward pressure.
+ */
+function mapConfidenceIntoRange(aiConfidence: number, floor: number, ceiling: number) {
+  const clamped = Math.max(0, Math.min(1, aiConfidence));
+  const mapped = floor + clamped * (ceiling - floor);
+  return Math.min(mapped, aiConfidence);
 }
 
 function applyConsistencyCalibration(params: {
