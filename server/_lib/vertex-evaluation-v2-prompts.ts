@@ -699,6 +699,9 @@ export function buildEvalPromptFromFactSheet(params: {
     '  "The most realistic route forward may be\u2026"',
     '  "A short discovery step may be the easiest way to reduce the current uncertainty."',
     '- Do NOT repeat the same conclusion across sections unless each section adds a new negotiation implication.',
+    '- Do NOT include more than one "Decision status:" line in the entire output.',
+    '- Do NOT reuse the same blocker description or alignment point under multiple headings. State each substantive point once, then reference or build on it elsewhere.',
+    '- Avoid rigid formulaic labels like "Leverage signal:", "Structural tensions:", "Option A/B/C", or "Likely priorities:" — integrate those ideas into natural prose instead.',
     hasPriorBilateralContext
       ? '- Keep the mediation narrative progress-aware rather than rewriting the whole negotiation from scratch.'
       : '',

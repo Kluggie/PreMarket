@@ -1157,28 +1157,14 @@ function paragraphsAreNearDuplicates(a: string, b: string) {
 
 function paragraphDropPriority(sectionKey: string, paragraph: string, index: number) {
   const text = normalizeSpaces(paragraph);
+  // Legacy section keys (kept for backward compatibility)
   if (sectionKey === 'decision assessment') {
     if (/^Risk Summary:/i.test(text)) return 1;
     if (/^Key Strengths:/i.test(text)) return 2;
     return 3 + index / 10;
   }
-  if (sectionKey === 'negotiation insights') {
-    if (/^Structural tensions:/i.test(text)) return 1;
-    if (/^Likely priorities:/i.test(text)) return 2;
-    if (/^Possible concessions:/i.test(text)) return 3;
-    return 4 + index / 10;
-  }
-  if (sectionKey === 'leverage signals') {
-    if (/^Leverage signal:/i.test(text)) return 1;
-    return 2 + index / 10;
-  }
-  if (sectionKey === 'potential deal structures') {
-    if (/^Option A/i.test(text)) return 1;
-    if (/^Option B/i.test(text)) return 2;
-    if (/^Option C/i.test(text)) return 3;
-    return 4 + index / 10;
-  }
-  if (sectionKey === 'recommended path') {
+  // Current mediation section keys
+  if (sectionKey === 'recommended path' || sectionKey === 'suggested next step') {
     if (/^Recommended path:/i.test(text)) return 1;
     if (/^Immediate next step:/i.test(text)) return 2;
     return 3 + index / 10;
@@ -1217,7 +1203,7 @@ function maxParagraphsForSection(sectionKey: string) {
 }
 
 function isRoleLockedParagraph(value: string) {
-  return /^(Risk Summary|Key Strengths|Likely priorities|Possible concessions|Structural tensions|Leverage signal|Option [A-C]|Decision status|What must be agreed now vs later|What would change the verdict|Recommended path|Immediate next step):/i.test(
+  return /^(Risk Summary|Key Strengths|Decision status|What must be agreed now vs later|What would change the verdict|Recommended path|Immediate next step):/i.test(
     normalizeSpaces(value),
   );
 }
@@ -1233,6 +1219,11 @@ function isLowSignalParagraph(value: string) {
     /tighten details during delivery/i,
     /^proceed and /i,
     /^ready to proceed/i,
+    /risk[- ]dominant/i,
+    /^this section should stay/i,
+    /^hesitation and blockers should/i,
+    /^readiness depends on what the parties/i,
+    /^the recommended path should turn/i,
   ].some((pattern) => pattern.test(text));
 }
 
@@ -2400,7 +2391,7 @@ function buildLikelyPrioritiesParagraph(params: {
   if (proposingSide.length === 0) add(proposingSide, 'clarity on scope, timing, and execution accountability');
   if (counterparty.length === 0) add(counterparty, 'confidence that the commitment is bounded and governable');
 
-  return `Likely priorities: the proposing side may prioritize ${joinNatural(proposingSide.slice(0, 2))}; the counterparty may prioritize ${joinNatural(counterparty.slice(0, 2))}.`;
+  return `The proposing side is likely to prioritize ${joinNatural(proposingSide.slice(0, 2))}. The counterparty is likely to prioritize ${joinNatural(counterparty.slice(0, 2))}.`;
 }
 
 function buildPossibleConcessionsParagraph(params: {
@@ -2440,7 +2431,7 @@ function buildPossibleConcessionsParagraph(params: {
     add('either side may need to trade some flexibility on scope, timing, or governance to convert the draft into a signable structure');
   }
 
-  return `Possible concessions: ${concessions.slice(0, 2).join('; ')}.`;
+  return `On possible concessions, ${concessions.slice(0, 2).join('; ')}.`;
 }
 
 function buildStructuralTensionsParagraph(params: {
@@ -2450,19 +2441,19 @@ function buildStructuralTensionsParagraph(params: {
   riskTransferSummary: string;
 }) {
   if (params.cleanBounded) {
-    return 'Structural tensions: the remaining tension sits mainly in execution governance, papering discipline, and final approval sequencing rather than in core feasibility.';
+    return 'The remaining tension sits mainly in execution governance, papering discipline, and final approval sequencing rather than in core feasibility.';
   }
   if (params.signals.domain.id === 'investment') {
-    return `Structural tensions: the main tension is between the headline economics and the control package, because ${params.riskBlockerSummary}.${params.riskTransferSummary ? ` As drafted, ${params.riskTransferSummary}.` : ''} ${buildStickingPointsParagraph(params.signals)}`;
+    return `The main tension is between the headline economics and the control package, because ${params.riskBlockerSummary}.${params.riskTransferSummary ? ` As drafted, ${params.riskTransferSummary}.` : ''} ${buildStickingPointsParagraph(params.signals)}`;
   }
   if (params.signals.domain.id === 'supply') {
-    return `Structural tensions: the main tension is between price certainty and operating commitments on volume, specification, and service reliability, because ${params.riskBlockerSummary}.${params.riskTransferSummary ? ` As drafted, ${params.riskTransferSummary}.` : ''} ${buildStickingPointsParagraph(params.signals)}`;
+    return `The main tension is between price certainty and operating commitments on volume, specification, and service reliability, because ${params.riskBlockerSummary}.${params.riskTransferSummary ? ` As drafted, ${params.riskTransferSummary}.` : ''} ${buildStickingPointsParagraph(params.signals)}`;
   }
   if (params.signals.domain.id === 'services') {
-    return `Structural tensions: the main tension is between commercial certainty and the still-open delivery mechanics around staffing, dependencies, and sign-off, because ${params.riskBlockerSummary}.${params.riskTransferSummary ? ` As drafted, ${params.riskTransferSummary}.` : ''} ${buildStickingPointsParagraph(params.signals)}`;
+    return `The main tension is between commercial certainty and the still-open delivery mechanics around staffing, dependencies, and sign-off, because ${params.riskBlockerSummary}.${params.riskTransferSummary ? ` As drafted, ${params.riskTransferSummary}.` : ''} ${buildStickingPointsParagraph(params.signals)}`;
   }
   const bridge = buildStickingPointsParagraph(params.signals);
-  return `Structural tensions: the main tension is that ${params.riskBlockerSummary}.${params.riskTransferSummary ? ` As drafted, ${params.riskTransferSummary}.` : ''} ${bridge}`;
+  return `The main tension is that ${params.riskBlockerSummary}.${params.riskTransferSummary ? ` As drafted, ${params.riskTransferSummary}.` : ''} ${bridge}`;
 }
 
 function buildLeverageSignalParagraphs(params: {
@@ -2476,46 +2467,46 @@ function buildLeverageSignalParagraphs(params: {
   };
 
   if (params.signals.domain.id === 'software') {
-    add('Leverage signal: implementation continuity appears valuable, so switching costs may be meaningful where integrations, data migration, or workflow reconfiguration are involved.');
-    add('Leverage signal: delivery certainty may matter more than a nominal price reduction if rollout timing, support expectations, or SLA posture carries internal visibility.');
+    add('Implementation continuity appears valuable, so switching costs may be meaningful where integrations, data migration, or workflow reconfiguration are involved.');
+    add('Delivery certainty may matter more than a nominal price reduction if rollout timing, support expectations, or SLA posture carries internal visibility.');
     if (hasCommercialSignal(params.factSheet) || params.signals.fixedPriceSignal) {
-      add('Leverage signal: internal pricing flexibility may exist around onboarding, implementation effort, or term length even if the headline commercial posture looks firm.');
+      add('Internal pricing flexibility may exist around onboarding, implementation effort, or term length even if the headline commercial posture looks firm.');
     }
   } else if (params.signals.domain.id === 'investment') {
-    add('Leverage signal: governance and control provisions may matter more than headline valuation, which can shift the real negotiation away from price alone.');
-    add('Leverage signal: timeline pressure around financing or runway may make closing certainty more valuable than a final incremental move in economics.');
-    add('Leverage signal: alternative capital options may exist but still appear imperfect, which can strengthen whichever side is better positioned to offer certainty on diligence and close mechanics.');
+    add('Governance and control provisions may matter more than headline valuation, which can shift the real negotiation away from price alone.');
+    add('Timeline pressure around financing or runway may make closing certainty more valuable than a final incremental move in economics.');
+    add('Alternative capital options may exist but still appear imperfect, which can strengthen whichever side is better positioned to offer certainty on diligence and close mechanics.');
   } else if (params.signals.domain.id === 'supply') {
-    add('Leverage signal: switching or supplier-qualification costs may be meaningful, which can make delivery certainty and defect treatment more valuable than a small unit-price concession.');
-    add('Leverage signal: capacity utilization or forecast visibility may strengthen willingness to close if one side can offer cleaner volume planning.');
-    add('Leverage signal: exclusivity or regional rights may carry more strategic value than the headline price point if they affect channel access or capacity reservation.');
+    add('Switching or supplier-qualification costs may be meaningful, which can make delivery certainty and defect treatment more valuable than a small unit-price concession.');
+    add('Capacity utilization or forecast visibility may strengthen willingness to close if one side can offer cleaner volume planning.');
+    add('Exclusivity or regional rights may carry more strategic value than the headline price point if they affect channel access or capacity reservation.');
   } else if (params.signals.domain.id === 'services') {
-    add('Leverage signal: start-date pressure and limited specialist capacity may favor the side able to offer reliable staffing and dependency readiness.');
-    add('Leverage signal: continuity of delivery knowledge may raise switching costs, especially where mobilization, site familiarity, or stakeholder context already matters.');
-    add('Leverage signal: billing certainty may be less important than dependency control if client-side approvals or inputs can still move the delivery plan.');
+    add('Start-date pressure and limited specialist capacity may favor the side able to offer reliable staffing and dependency readiness.');
+    add('Continuity of delivery knowledge may raise switching costs, especially where mobilization, site familiarity, or stakeholder context already matters.');
+    add('Billing certainty may be less important than dependency control if client-side approvals or inputs can still move the delivery plan.');
   }
 
   if (params.signals.ruleIds.has('timeline') || containsAny(params.factSheet.constraints, ['deadline', 'urgent', 'asap', 'hard deadline'])) {
-    add('Leverage signal: one side appears to face timeline pressure, which can favor the party able to offer a credible phased timetable or dependency relief.');
+    add('One side appears to face timeline pressure, which can favor the party able to offer a credible phased timetable or dependency relief.');
   }
   if (params.signals.ruleIds.has('dependency')) {
-    add('Leverage signal: approvals, access, and third-party inputs appear to be controlled asymmetrically, which gives the controlling party influence over sequencing and contingency language.');
+    add('Approvals, access, and third-party inputs appear to be controlled asymmetrically, which gives the controlling party influence over sequencing and contingency language.');
   }
   if (
     containsAny(params.factSheet.scope_deliverables, ['integration', 'api', 'system', 'platform', 'reporting', 'workflow'])
     || containsAny(params.factSheet.constraints, ['existing infrastructure', 'existing system', 'existing process'])
   ) {
-    add('Leverage signal: switching costs appear meaningful because the proposal seems to depend on continuity with existing systems, workflows, or operating processes.');
+    add('Switching costs appear meaningful because the proposal seems to depend on continuity with existing systems, workflows, or operating processes.');
   }
   if (hasCommercialSignal(params.factSheet) || params.signals.fixedPriceSignal) {
-    add('Leverage signal: budget discipline or pricing posture appears to be shaping the negotiation, which can favor structures that trade certainty for narrower scope or staged commitment.');
+    add('Budget discipline or pricing posture appears to be shaping the negotiation, which can favor structures that trade certainty for narrower scope or staged commitment.');
   }
   if (params.factSheet.vendor_preferences.length > 0) {
-    add('Leverage signal: stated provider or operating preferences narrow the feasible option set and can shift leverage toward counterparties that already fit those constraints.');
+    add('Stated provider or operating preferences narrow the feasible option set and can shift leverage toward counterparties that already fit those constraints.');
   }
 
   if (items.length === 0) {
-    add('Leverage signal: the main leverage appears to sit with whichever party can either narrow the commitment quickly or absorb uncertainty without reopening the commercial structure.');
+    add('The main leverage appears to sit with whichever party can either narrow the commitment quickly or absorb uncertainty without reopening the commercial structure.');
   }
 
   return items.slice(0, 4);
@@ -2585,10 +2576,8 @@ function buildDealStructureParagraphs(params: {
   }
 
   const minOptions = params.signals.coverageCount >= 3 ? 3 : 2;
-  const optionLabels = ['A', 'B', 'C'] as const;
   return optionBodies
-    .slice(0, Math.max(2, Math.min(3, minOptions)))
-    .map((body, index) => `Option ${optionLabels[index]} — ${body}`);
+    .slice(0, Math.max(2, Math.min(3, minOptions)));
 }
 
 function buildRecommendedPathParagraphs(params: {
@@ -2724,7 +2713,6 @@ function buildSectionRoleDefaults(params: {
     ],
     'where agreement exists': [
       `Key Strengths: ${combineParagraphs(strengthParagraphs)}`,
-      buildLikelyPrioritiesParagraph(params),
     ],
     'what is blocking commitment': [
       cleanBounded
@@ -2750,7 +2738,7 @@ function buildSectionRoleDefaults(params: {
       buildPossibleConcessionsParagraph(params),
     ],
     'likely landing zone': [
-      buildPossibleConcessionsParagraph(params),
+      `The most realistic path to agreement likely involves ${joinNatural(pathsToAgreement.slice(0, 2))}.`,
     ],
     'decision readiness': [
       `Decision status: ${decisionStatus.label}. ${decisionStatus.explanation}`,
@@ -2765,14 +2753,9 @@ function buildSectionRoleDefaults(params: {
       conditionSummary,
       agendaItems,
     }),
-    'suggested next step': buildRecommendedPathParagraphs({
-      factSheet: params.factSheet,
-      signals: params.signals,
-      data: params.data,
-      cleanBounded,
-      conditionSummary,
-      agendaItems,
-    }),
+    'suggested next step': [
+      `Immediate next step: ${agendaItems.join('; ')}.`,
+    ],
   };
 
   if (params.signals.fixedPriceSignal && (defaults['the real hesitation'] || []).length < 3) {
@@ -2996,7 +2979,22 @@ function rewriteWhyForCalibration(params: {
 
   const globallySeenParagraphs: string[] = [];
   const rewrittenSections = orderedWhySections(sections).map((section) => {
-    const existingParagraphs = splitParagraphs(section.body);
+    let existingParagraphs = splitParagraphs(section.body);
+
+    // Prevent contradictory decision statuses: when role defaults provide a
+    // calibrated "Decision status:" paragraph, strip any conflicting model-
+    // generated status line from the existing paragraphs.
+    if (needsRichRewrite && section.key === 'decision readiness') {
+      const roleStatusParagraph = (roleDefaults[section.key] || []).find(
+        (p) => /^Decision status:/i.test(normalizeSpaces(p)),
+      );
+      if (roleStatusParagraph) {
+        existingParagraphs = existingParagraphs.filter(
+          (p) => !/^Decision status:/i.test(normalizeSpaces(p)),
+        );
+      }
+    }
+
     const candidateParagraphs = [
       ...(needsRichRewrite ? (roleDefaults[section.key] || []) : []),
       ...existingParagraphs,
