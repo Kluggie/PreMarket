@@ -416,10 +416,10 @@ const MISSING_RULES: MissingRule[] = [
     priority: 110,
     severity: 'severe',
     patterns: ['scope', 'deliverable', 'deliverables', 'mvp', 'requirements', 'use case', 'workflow', 'out of scope'],
-    label: 'the initial scope still needs a tighter commitment boundary',
+    label: 'the initial scope still needs tighter definition before commitment',
     question: 'What is included in the initial committed scope or current phase, and what is explicitly out of scope?',
     why: 'scope boundaries determine pricing, delivery sequencing, and change exposure',
-    condition: 'define the current commitment boundary and explicit exclusions',
+    condition: 'define the current scope and explicit exclusions',
     confidenceUp: 'a narrower initial scope or phase definition with explicit in-scope and out-of-scope items',
     confidenceDown: 'scope stays open-ended while the proposal still implies a firm commitment',
   },
@@ -700,7 +700,7 @@ const NEUTRAL_TONE_REPLACEMENTS: Array<{ pattern: RegExp; replacement: string }>
 ];
 
 const STOCK_PHRASE_POLISH_REPLACEMENTS: Array<{ pattern: RegExp; replacement: string }> = [
-  { pattern: /\bcore scope is not bounded tightly enough\b/gi, replacement: 'the initial scope still needs a tighter commitment boundary' },
+  { pattern: /\bcore scope is not bounded tightly enough\b/gi, replacement: 'the initial scope still needs tighter definition before commitment' },
   { pattern: /\bacceptance criteria are not concrete enough for sign-off\b/gi, replacement: 'acceptance criteria still need to be defined more concretely for reliable sign-off' },
   { pattern: /\bownership of major dependencies or approvals is still unclear\b/gi, replacement: 'major dependencies and approvals still need named owners and fallback treatment' },
   { pattern: /\bchange-order triggers are not defined for known uncertainty\b/gi, replacement: 'change-order treatment is still loose around known uncertainty' },
@@ -719,6 +719,9 @@ const STOCK_PHRASE_POLISH_REPLACEMENTS: Array<{ pattern: RegExp; replacement: st
   { pattern: /\boperationally and contractually\b/gi, replacement: 'in practice and on paper' },
   { pattern: /\bstructurally and operationally\b/gi, replacement: 'in scope and in practice' },
   { pattern: /\bdecision-ready\b/gi, replacement: 'ready for a decision' },
+  { pattern: /\bcommitment boundary\b/gi, replacement: 'scope and commitment' },
+  { pattern: /\brisk-dominant\b/gi, replacement: 'risk-heavy' },
+  { pattern: /\bproceed with conditions\b/gi, replacement: 'move forward once conditions are met' },
 ];
 
 const COACHING_GUARD_PATTERNS = [
@@ -906,20 +909,14 @@ const REQUIRED_WHY_SECTION_KEYS = [
 
 /**
  * Adaptive headings the AI may include alongside the two required sections.
- * The orchestration layer preserves any of these that appear in the AI output
- * instead of filtering to a fixed list.
+ * Kept deliberately short — the goal is 2-4 total why[] entries, not many sections.
+ * Legacy keys are still recognized by normalizeWhyHeadingKey but not listed here
+ * so the orchestration layer does not backfill them as role defaults.
  */
 const ADAPTIVE_WHY_SECTION_KEYS = [
   'where agreement exists',
   'what is blocking commitment',
-  'the real hesitation',
-  'risk and how to reduce it',
   'proposed bridge',
-  'what can be agreed now',
-  'what must wait',
-  'likely landing zone',
-  'each side\'s position',
-  'missing information that matters',
   'suggested next step',
   'recommended path',
 ];
@@ -1181,9 +1178,8 @@ function paragraphDropPriority(sectionKey: string, paragraph: string, index: num
   }
   if (sectionKey === 'decision readiness') {
     if (/^Decision status:/i.test(text)) return 1;
-    if (/^What would change the verdict:/i.test(text)) return 4;
-    if (/^What must be agreed now vs later:/i.test(text)) return 2;
-    return 3 + index / 10;
+    // All other paragraphs in decision readiness are low priority — drop them
+    return 5 + index / 10;
   }
   return 1 + index / 10;
 }
@@ -1204,8 +1200,8 @@ function dropLowestPriorityParagraph(sectionKey: string, paragraphs: string[]) {
 
 function maxParagraphsForSection(sectionKey: string) {
   if (sectionKey === 'mediation summary') return 4;
-  if (sectionKey === 'decision readiness') return 2;
-  if (sectionKey === 'recommended path') return 2;
+  if (sectionKey === 'decision readiness') return 1;
+  if (sectionKey === 'recommended path') return 1;
   if (sectionKey === 'suggested next step') return 1;
   // Adaptive sections — enough for substance, not enough for bloat
   if (ALL_KNOWN_WHY_SECTION_KEYS.includes(sectionKey)) return 2;
@@ -1237,6 +1233,19 @@ function isLowSignalParagraph(value: string) {
     /^the deal merits further work rather than/i,
     /^assumptions and dependencies remain around/i,
     /^Key Strengths:.*\bis clear\b/i,
+    // Template-generated role-default patterns that sound robotic
+    /^the deal is fundamentally workable and close to executable/i,
+    /^the deal appears broadly workable, but not yet ready to commit/i,
+    /^the tension is between the visible alignment/i,
+    /^the tension is that /i,
+    /^remaining risk is concentrated in execution governance/i,
+    /^the primary risks sit where /i,
+    /commitment boundary/i,
+    /defensible commitment/i,
+    /^the parties still need to .*before committing/i,
+    /^one realistic bridge is to /i,
+    /commercially workable and close to executable/i,
+    /^the current record is bounded enough on scope/i,
   ].some((pattern) => pattern.test(text));
 }
 
@@ -2110,7 +2119,7 @@ function buildRiskTransferSummary(signals: CalibrationSignals) {
 
 function describeBlockerForContext(ruleId: string, context: 'snapshot' | 'risk') {
   const snapshotMap: Record<string, string> = {
-    scope: 'the initial scope still needs a tighter commitment boundary',
+    scope: 'the initial scope still needs tighter definition before commitment',
     data_cleanup: 'data remediation remains unquantified and unowned',
     acceptance: 'sign-off criteria are still too loose for reliable acceptance',
     dependency: 'major dependencies still lack clear owners and fallback treatment',
@@ -2394,7 +2403,7 @@ function buildLikelyPrioritiesParagraph(params: {
   }
   if (params.factSheet.success_criteria_kpis.length > 0 || params.signals.ruleIds.has('acceptance')) {
     add(proposingSide, 'objective acceptance and measurable outcomes');
-    add(counterparty, 'sign-off mechanics that match the actual commitment boundary');
+    add(counterparty, 'sign-off mechanics that match the actual scope and commitment');
   }
   if (params.signals.ruleIds.has('dependency')) {
     add(proposingSide, 'named owners for approvals, access, and third-party inputs');
@@ -2673,80 +2682,51 @@ function buildSectionRoleDefaults(params: {
     cleanBounded && params.data.fit_level === 'high'
       ? {
           label: 'Ready to finalize',
-          explanation: 'The current record is bounded enough on scope, timing, acceptance, dependencies, and risk treatment to support final commitment.',
+          explanation: 'Both sides have enough definition on scope, acceptance, and risk treatment to move to final commitment.',
         }
       : params.data.fit_level === 'low'
       ? {
           label: 'Not viable',
-          explanation: `The current draft still leaves too much structural uncertainty because ${snapshotBlockerSummary}.`,
+          explanation: `Too much remains undefined for either side to rely on this draft.`,
         }
       : params.signals.conditionallyViable
       ? {
           label: 'Proceed with conditions',
-          explanation: `A credible path exists, but the parties still need to ${conditionSummary} before committing.`,
+          explanation: `A workable path exists once the parties ${conditionSummary}.`,
         }
       : {
           label: 'Explore further',
-          explanation: `The deal may be workable, but the present record is still too conditional or incomplete because ${snapshotBlockerSummary}.`,
+          explanation: `The deal may be workable but still needs more definition before commitment.`,
         };
 
   const mediationSummaryLead =
     params.data.fit_level === 'low'
-      ? `${alignmentSummary ? `Some alignment is still visible around ${alignmentSummary}, but ` : ''}the deal is not yet workable on the current record because ${snapshotBlockerSummary}.`
+      ? `${alignmentSummary ? `There is some alignment around ${alignmentSummary}, but ` : ''}the current draft does not yet give either side enough to commit because ${snapshotBlockerSummary}.`
       : cleanBounded && params.data.fit_level === 'high'
-      ? `The deal is fundamentally workable and close to executable: alignment exists around ${alignmentSummary}, and the proposal is bounded enough for both sides to treat it as a final commitment structure.`
+      ? `Both sides appear aligned around ${alignmentSummary}, and the current proposal is defined well enough to support a clean commitment.`
       : params.signals.conditionallyViable
-      ? `The deal appears broadly workable, but not yet ready to commit: alignment exists around ${alignmentSummary}, while ${snapshotBlockerSummary}.`
-      : `The deal merits further work rather than immediate commitment because ${snapshotBlockerSummary}.`;
+      ? `There appears to be a workable deal here. Alignment exists around ${alignmentSummary}, but ${snapshotBlockerSummary}.`
+      : `The deal is worth pursuing, but ${snapshotBlockerSummary}.`;
 
   const mediationSummaryTension =
     params.data.fit_level === 'low'
-      ? 'The current materials still leave scope, dependency, or commercial exposure too open for either side to rely on the draft.'
+      ? 'The current materials leave too much open for either side to treat this as a basis for commitment.'
       : cleanBounded
-      ? 'The remaining tension sits mainly in final approvals, execution governance, and preserving the current assumptions in papering rather than in core feasibility.'
-      : params.signals.conditionallyViable
-      ? `The tension is between the visible alignment and the fact that ${riskBlockerSummary}.${riskTransferSummary ? ` As drafted, ${riskTransferSummary}.` : ''}`
-      : `The tension is that ${riskBlockerSummary}.${riskTransferSummary ? ` As drafted, ${riskTransferSummary}.` : ''}`;
+      ? 'Remaining work is mostly about preserving these assumptions through papering and final approvals.'
+      : `The main hesitation is likely around ${riskBlockerSummary}.${riskTransferSummary ? ` As drafted, ${riskTransferSummary}.` : ''}`;
 
-  const mediationSummaryNext =
+  const mediationSummaryBridge =
     cleanBounded && params.data.fit_level === 'high'
-      ? 'The remaining work is to preserve the bounded structure through final approvals and clean documentation rather than renegotiate the commercial foundation.'
-      : `The parties still need to ${conditionSummary}. One realistic bridge is to ${lowerFirst(pathsToAgreement[0] || 'convert the current draft into explicit bilateral conditions to proceed')}.`;
+      ? ''
+      : `The most realistic route forward is probably to ${lowerFirst(pathsToAgreement[0] || 'work through the unresolved items together before treating the current draft as final')}.`;
 
+  // Only generate defaults for the sections we actually want backfilled.
+  // Keep this deliberately sparse to avoid template bloat.
   const defaults: Record<string, string[]> = {
     'mediation summary': [
       mediationSummaryLead,
       mediationSummaryTension,
-      mediationSummaryNext,
-    ],
-    'where agreement exists': [
-      `Key Strengths: ${combineParagraphs(strengthParagraphs)}`,
-    ],
-    'what is blocking commitment': [
-      cleanBounded
-        ? 'Remaining risk is concentrated in execution governance, handoff sequencing, and final confirmation of the written assumptions rather than in core feasibility.'
-        : `The primary risks sit where ${riskBlockerSummary}.${riskTransferSummary ? ` As drafted, ${riskTransferSummary}.` : ''} Assumptions and dependencies remain around ${assumptionsSummary}.`,
-    ],
-    'the real hesitation': buildLeverageSignalParagraphs(params),
-    'risk and how to reduce it': [
-      buildStructuralTensionsParagraph({
-        signals: params.signals,
-        cleanBounded,
-        riskBlockerSummary,
-        riskTransferSummary,
-      }),
-    ],
-    'proposed bridge': buildDealStructureParagraphs({
-      factSheet: params.factSheet,
-      signals: params.signals,
-      cleanBounded,
-    }),
-    'each side\'s position': [
-      buildLikelyPrioritiesParagraph(params),
-      buildPossibleConcessionsParagraph(params),
-    ],
-    'likely landing zone': [
-      `The most realistic path to agreement likely involves ${joinNatural(pathsToAgreement.slice(0, 2))}.`,
+      ...(mediationSummaryBridge ? [mediationSummaryBridge] : []),
     ],
     'decision readiness': [
       `Decision status: ${decisionStatus.label}. ${decisionStatus.explanation}`,
@@ -2760,13 +2740,12 @@ function buildSectionRoleDefaults(params: {
       agendaItems,
     }),
     'suggested next step': [],
+    // Adaptive sections intentionally have NO role defaults.
+    // If the AI didn't generate them, we don't backfill with template prose.
+    'where agreement exists': [],
+    'what is blocking commitment': [],
+    'proposed bridge': [],
   };
-
-  if (params.signals.fixedPriceSignal && (defaults['the real hesitation'] || []).length < 3) {
-    defaults['the real hesitation'].push(
-      'Any fixed-price or fixed-scope posture appears to depend on tighter acceptance criteria, change-order triggers, and risk ownership than the current draft may yet provide.',
-    );
-  }
 
   return defaults;
 }
@@ -3117,7 +3096,7 @@ function capConfidenceToSignals(params: {
     capsApplied.push('cap_0.45_severe_uncertainty');
   } else if (params.signals.shouldBeConditional) {
     // Conditional: map into signal-aware range that preserves variation.
-    // The range endpoints depend on how strong the viability signals are.
+    // Wider ranges than before to avoid clustering around 0.58–0.62.
     const viability = params.signals.structuralViabilityScore;
     const alignment = params.signals.alignmentPoints.length;
     const coverage = params.signals.coverageCount;
@@ -3125,15 +3104,15 @@ function capConfidenceToSignals(params: {
     let floor: number;
     let ceiling: number;
     if (params.signals.conditionallyViable && viability >= 4 && alignment >= 3) {
-      floor = 0.58; ceiling = 0.72;
+      floor = 0.55; ceiling = 0.78;
     } else if (params.signals.conditionallyViable && viability >= 3) {
-      floor = 0.52; ceiling = 0.67;
+      floor = 0.48; ceiling = 0.72;
     } else if (params.signals.bodySuggestsViablePath && alignment >= 2) {
-      floor = 0.48; ceiling = 0.63;
+      floor = 0.42; ceiling = 0.66;
     } else if (coverage >= 3 && alignment >= 1) {
-      floor = 0.44; ceiling = 0.58;
+      floor = 0.38; ceiling = 0.60;
     } else {
-      floor = 0.38; ceiling = 0.54;
+      floor = 0.30; ceiling = 0.54;
     }
 
     confidence_0_1 = mapConfidenceIntoRange(confidence_0_1, floor, ceiling);
@@ -4761,7 +4740,7 @@ const GENERIC_FILLER_PATTERNS = [
 
 const MIN_WHY_TOTAL_CHARS = 1200;
 const MIN_SECTION_BODY_CHARS = 80;
-const MIN_MISSING_ITEMS_QUALITY = 4;
+const MIN_MISSING_ITEMS_QUALITY = 3;
 const MAX_GENERIC_FILLER_HITS = 3;
 
 interface QualityAssessment {

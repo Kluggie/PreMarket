@@ -829,12 +829,12 @@ export function buildMediationReviewPresentation(params: {
       const renderedLower = normalizeText(rendered).toLowerCase();
       if (!renderedLower || !lower) return false;
       if (renderedLower === lower) return true;
-      // Check for substantial phrase overlap (>45% of shorter text's words)
+      // Check for substantial phrase overlap (>35% of shorter text's words)
       const aWords = lower.split(/\s+/).filter((w) => w.length > 3);
       const bWords = new Set(renderedLower.split(/\s+/).filter((w) => w.length > 3));
       if (aWords.length === 0) return false;
       const overlap = aWords.filter((w) => bWords.has(w)).length;
-      return overlap / Math.max(1, aWords.length) >= 0.45;
+      return overlap / Math.max(1, aWords.length) >= 0.35;
     });
   });
   const recommendationSection = createPresentationSection({

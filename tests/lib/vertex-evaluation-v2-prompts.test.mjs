@@ -85,7 +85,7 @@ test('mediation prompt keeps the stable bilateral structure and required heading
   assert.match(prompt, /shared neutral artifact/i);
   assert.match(prompt, /Mediation Summary/i);
   assert.match(prompt, /Decision Readiness/i);
-  assert.match(prompt, /adaptive/i);
+  assert.match(prompt, /OUTPUT SHAPE/i);
   assert.match(prompt, /mediat/i);
   assert.match(prompt, /analysis_stage must be "mediation_review"/i);
 });
@@ -106,7 +106,7 @@ test('later bilateral mediation prompt becomes progress-aware without changing r
   });
 
   assert.match(prompt, /progress across rounds/i);
-  assert.match(prompt, /adaptive report structure/i);
+  assert.match(prompt, /output shape/i);
   assert.match(prompt, /prior_bilateral_context/i);
   assert.match(prompt, /movement_direction/i);
 });
