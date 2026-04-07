@@ -414,7 +414,7 @@ export function getDecisionStatusDetails(report) {
       ? 'Ready to finalize'
       : fit === 'low'
       ? 'Not viable'
-      : fit === 'medium' && Number.isFinite(confidence) && confidence >= 0.62 && missingCount <= 4
+      : fit === 'medium' && Number.isFinite(confidence) && confidence >= 0.56 && missingCount <= 4
       ? 'Proceed with conditions'
       : 'Explore further';
 
@@ -775,11 +775,21 @@ export function getAppendixOpenQuestions(report) {
   return missingItems.filter((item) => {
     const comparableItem = normalizeOpenQuestionComparableText(item);
     if (!comparableItem) return false;
-    return !comparableSectionTexts.some(
+    // Exact or substring match
+    if (comparableSectionTexts.some(
       (sectionText) =>
         sectionText === comparableItem ||
         sectionText.includes(comparableItem),
-    );
+    )) return false;
+    // Keyword overlap check — if >60% of the question's key words already
+    // appear in the rendered narrative, the question is redundant.
+    const itemWords = comparableItem.split(' ').filter((w) => w.length > 3);
+    if (itemWords.length >= 3) {
+      const allRendered = comparableSectionTexts.join(' ');
+      const matchCount = itemWords.filter((w) => allRendered.includes(w)).length;
+      if (matchCount / itemWords.length >= 0.6) return false;
+    }
+    return true;
   });
 }
 

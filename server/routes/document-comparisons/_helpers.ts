@@ -800,7 +800,9 @@ export function buildMediationReviewPresentation(params: {
     }
   }
 
-  // Build the merged Recommendation section
+  // Build the merged Recommendation section — deduplicate against content
+  // already rendered in earlier sections to avoid restating the same points.
+  const allRenderedParagraphs = sections.flatMap((s) => s.paragraphs || []);
   if (!hasDecisionStatusInRecommendation && decisionStatus.label) {
     const explanation = normalizeText(decisionStatus.explanation);
     recommendationParagraphs.unshift(
@@ -811,7 +813,7 @@ export function buildMediationReviewPresentation(params: {
   }
   // Enrich with negotiation bridgeability if available
   const bridgeabilityNotes = negotiationAnalysis?.bridgeability_notes || [];
-  if (bridgeabilityNotes.length > 0 && recommendationParagraphs.length < 4) {
+  if (bridgeabilityNotes.length > 0 && recommendationParagraphs.length < 3) {
     bridgeabilityNotes.slice(0, 1).forEach((note) => {
       const trimmed = normalizeText(note);
       if (trimmed && !recommendationParagraphs.some((existing) => existing.toLowerCase() === trimmed.toLowerCase())) {
@@ -819,14 +821,30 @@ export function buildMediationReviewPresentation(params: {
       }
     });
   }
+  // Remove recommendation paragraphs that substantially overlap with earlier sections
+  const dedupedRecommendation = recommendationParagraphs.filter((paragraph) => {
+    const lower = normalizeText(paragraph).toLowerCase();
+    if (/^decision status:/i.test(lower)) return true; // always keep decision status
+    return !allRenderedParagraphs.some((rendered) => {
+      const renderedLower = normalizeText(rendered).toLowerCase();
+      if (!renderedLower || !lower) return false;
+      if (renderedLower === lower) return true;
+      // Check for substantial phrase overlap (>60% of shorter text's words)
+      const aWords = lower.split(/\s+/).filter((w) => w.length > 3);
+      const bWords = new Set(renderedLower.split(/\s+/).filter((w) => w.length > 3));
+      if (aWords.length === 0) return false;
+      const overlap = aWords.filter((w) => bWords.has(w)).length;
+      return overlap / Math.max(1, aWords.length) >= 0.55;
+    });
+  });
   const recommendationSection = createPresentationSection({
     key: 'recommendation',
     heading: 'Recommendation',
     paragraphs: uniqueText(
-      recommendationParagraphs.length > 0
-        ? recommendationParagraphs
+      dedupedRecommendation.length > 0
+        ? dedupedRecommendation
         : ['Use the current open issues as the next mediation agenda before moving to commitment.'],
-    ).slice(0, 4),
+    ).slice(0, 3),
   });
   if (recommendationSection) {
     sections.push(recommendationSection);

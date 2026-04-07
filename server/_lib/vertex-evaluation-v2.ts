@@ -1152,7 +1152,7 @@ function paragraphsAreNearDuplicates(a: string, b: string) {
     if (rightSet.has(token)) overlap += 1;
   });
   const denominator = Math.max(1, Math.min(leftSet.size, rightSet.size));
-  return overlap / denominator >= 0.72;
+  return overlap / denominator >= 0.60;
 }
 
 function paragraphDropPriority(sectionKey: string, paragraph: string, index: number) {
@@ -1193,12 +1193,12 @@ function dropLowestPriorityParagraph(sectionKey: string, paragraphs: string[]) {
 }
 
 function maxParagraphsForSection(sectionKey: string) {
-  if (sectionKey === 'mediation summary') return 4;
+  if (sectionKey === 'mediation summary') return 3;
   if (sectionKey === 'decision readiness') return 3;
   if (sectionKey === 'recommended path') return 2;
-  if (sectionKey === 'suggested next step') return 2;
-  // Adaptive sections get a reasonable default
-  if (ALL_KNOWN_WHY_SECTION_KEYS.includes(sectionKey)) return 3;
+  if (sectionKey === 'suggested next step') return 1;
+  // Adaptive sections get a tighter default to reduce heading overload
+  if (ALL_KNOWN_WHY_SECTION_KEYS.includes(sectionKey)) return 2;
   return 2;
 }
 
@@ -1224,6 +1224,9 @@ function isLowSignalParagraph(value: string) {
     /^hesitation and blockers should/i,
     /^readiness depends on what the parties/i,
     /^the recommended path should turn/i,
+    /^the remaining work is to preserve/i,
+    /^the deal merits further work rather than/i,
+    /^assumptions and dependencies remain around/i,
   ].some((pattern) => pattern.test(text));
 }
 
@@ -2742,8 +2745,6 @@ function buildSectionRoleDefaults(params: {
     ],
     'decision readiness': [
       `Decision status: ${decisionStatus.label}. ${decisionStatus.explanation}`,
-      buildNowVsLaterSummary(params),
-      `What would change the verdict: confidence would increase with ${confidenceUp}; it would fall further if ${confidenceDown}.`,
     ],
     'recommended path': buildRecommendedPathParagraphs({
       factSheet: params.factSheet,
@@ -3100,15 +3101,26 @@ function capConfidenceToSignals(params: {
   if (params.signals.shouldBeLow && !params.signals.hasCrediblePath) {
     applyCap(0.45, 'cap_0.45_severe_uncertainty');
   } else if (params.signals.shouldBeConditional) {
-    applyCap(0.62, 'cap_0.62_material_uncertainty');
+    // Graduate the cap based on viability signals so different cases produce
+    // different confidence values instead of always collapsing to a single number.
+    const viability = params.signals.structuralViabilityScore;
+    const alignment = params.signals.alignmentPoints.length;
+    const coverage = params.signals.coverageCount;
+    const conditionalCap =
+      (params.signals.conditionallyViable && viability >= 4 && alignment >= 3) ? 0.68
+      : (params.signals.conditionallyViable && viability >= 3) ? 0.64
+      : (params.signals.bodySuggestsViablePath && alignment >= 2) ? 0.60
+      : (coverage >= 3 && alignment >= 1) ? 0.56
+      : 0.52;
+    applyCap(conditionalCap, 'cap_material_uncertainty');
   }
 
-  if (params.signals.hasConditionalLanguage) {
-    applyCap(0.68, 'cap_0.68_conditional_language');
+  if (params.signals.hasConditionalLanguage && !params.signals.conditionallyViable) {
+    applyCap(0.64, 'cap_0.64_conditional_language');
   }
 
   if (confidence_0_1 > 0.85 && (params.signals.shouldBeConditional || params.signals.hasConditionalLanguage)) {
-    applyCap(0.58, 'cap_0.58_contradiction_confidence');
+    applyCap(0.55, 'cap_0.55_contradiction_confidence');
   }
 
   if (confidenceCapReason && confidence_0_1 > confidenceCap) {
