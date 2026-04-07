@@ -638,18 +638,44 @@ function buildRecommendationParagraphs(params: {
   return ['Use the current open issues as the next mediation agenda before moving to commitment.'];
 }
 
-function countTradeoffTerms(text: string) {
-  const lower = normalizeText(text).toLowerCase();
-  const patterns = [
-    /\bpriorit(?:y|ies)\b/,
-    /\bconcession(?:s)?\b/,
-    /\btension(?:s)?\b/,
-    /\btrade[- ]?off(?:s)?\b/,
-    /\bbalance\b/,
-    /\bversus\b|\bvs\b/,
-    /\bdepends on\b/,
-  ];
-  return patterns.reduce((count, pattern) => count + (pattern.test(lower) ? 1 : 0), 0);
+/**
+ * Section keys that should be folded into the Recommendation section
+ * rather than displayed as separate visible sections.
+ */
+const RECOMMENDATION_FOLD_KEYS = new Set([
+  'decision readiness',
+  'recommended path',
+  'suggested next step',
+]);
+
+/**
+ * Canonical heading for display — normalizes AI headings to cleaner display names.
+ */
+function canonicalDisplayHeading(heading: string): string {
+  const key = normalizeHeadingKey(heading);
+  const MAP: Record<string, string> = {
+    'mediation summary': 'Mediation Summary',
+    'where agreement exists': 'Where Agreement Exists',
+    'what is blocking commitment': 'What Is Blocking Commitment',
+    'the real hesitation': 'The Real Hesitation',
+    'risk and how to reduce it': 'Risk and How to Reduce It',
+    'proposed bridge': 'Proposed Bridge',
+    'what can be agreed now': 'What Can Be Agreed Now',
+    'what must wait': 'What Must Wait',
+    'likely landing zone': 'Likely Landing Zone',
+    'each side s position': 'Each Side\'s Position',
+    'decision readiness': 'Decision Readiness',
+    'recommended path': 'Path Forward',
+    'suggested next step': 'Path Forward',
+  };
+  return MAP[key] || normalizeText(heading);
+}
+
+function classifyArchetypeFromFitLevel(fitLevel: string, confidence: number, missingCount: number): MediationReviewArchetype {
+  if (fitLevel === 'low') return 'risk_dominant';
+  if (fitLevel === 'unknown' || missingCount >= 5) return 'gap_analysis';
+  if (fitLevel === 'high' && confidence >= 0.72 && missingCount <= 2) return 'strong_alignment';
+  return 'balanced_trade_off';
 }
 
 export function buildMediationReviewPresentation(params: {
@@ -684,44 +710,8 @@ export function buildMediationReviewPresentation(params: {
   const newOpenIssues = uniqueText(progress?.new_open_issues || []).slice(0, 3);
   const movementDirection = progress?.movement_direction || null;
 
+  // Parse the AI's own section structure from why[]
   const whyLookup = buildWhyLookup(why);
-  const executiveParagraphs = whyLookup.getSectionParagraphs('Mediation Summary', 'Executive Summary', 'Decision Snapshot');
-  const strengthParagraphs = whyLookup.getSignalParagraphs('Where Agreement Exists', 'Key Strengths');
-  const riskParagraphs = whyLookup.getSignalParagraphs('What Is Blocking Commitment', 'Risk Summary', 'Key Risks');
-  const prioritiesParagraphs = whyLookup.getSignalParagraphs('Likely priorities');
-  const tensionsParagraphs = whyLookup.getSignalParagraphs('Risk and How to Reduce It', 'Structural tensions');
-  const leverageParagraphs = whyLookup.getSignalParagraphs('The Real Hesitation', 'Leverage Signals', 'Leverage signal');
-  const dealStructureParagraphs = whyLookup.getSectionParagraphs('Proposed Bridge', 'Potential Deal Structures');
-  const decisionReadinessParagraphs = whyLookup.getSectionParagraphs('Decision Readiness');
-  const agreementParagraphs = whyLookup.getSignalParagraphs('What Can Be Agreed Now', 'What Must Wait', 'What must be agreed now vs later', 'What would change the verdict');
-  const recommendedPathParagraphs = whyLookup.getSignalParagraphs('Suggested Next Step', 'Recommended Path', 'Recommended path');
-
-  const concernThemeIds = detectThemes([...riskParagraphs, ...decisionReadinessParagraphs, ...missing]);
-  const strengthThemeIds = detectThemes([...strengthParagraphs, ...executiveParagraphs]);
-  const allThemeIds = detectThemes([
-    ...executiveParagraphs,
-    ...strengthParagraphs,
-    ...riskParagraphs,
-    ...prioritiesParagraphs,
-    ...tensionsParagraphs,
-    ...leverageParagraphs,
-    ...dealStructureParagraphs,
-    ...decisionReadinessParagraphs,
-    ...missing,
-  ]);
-  const concernThemes = describeThemes(concernThemeIds, 'material execution detail');
-  const strengthThemes = describeThemes(strengthThemeIds, 'the core proposal structure');
-  const complexityThemeCount = allThemeIds.length;
-  const tradeoffSignalCount = countTradeoffTerms([
-    ...prioritiesParagraphs,
-    ...tensionsParagraphs,
-    ...leverageParagraphs,
-    ...dealStructureParagraphs,
-  ].join(' '));
-  const hasStrongRiskLanguage = /\b(critical|severe|concentrated|material risk|not viable|blocker|exposure|unbounded)\b/i.test(
-    [...riskParagraphs, ...decisionReadinessParagraphs].join(' '),
-  );
-
   const decisionStatus = getDecisionStatusDetails({
     fit_level: fitLevel,
     confidence_0_1: confidence,
@@ -729,293 +719,142 @@ export function buildMediationReviewPresentation(params: {
     missing,
   });
 
-  let archetype: MediationReviewArchetype;
-  if (fitLevel === 'low' || decisionStatus.label === 'Not viable' || hasStrongRiskLanguage) {
-    archetype = 'risk_dominant';
-  } else if (fitLevel === 'unknown' || missing.length >= 5 || (missing.length >= 4 && confidence < 0.58)) {
-    archetype = 'gap_analysis';
-  } else if (fitLevel === 'high' && confidence >= 0.72 && missing.length <= 2) {
-    archetype = 'strong_alignment';
-  } else if (
-    fitLevel !== 'unknown' &&
-    confidence >= 0.58 &&
-    missing.length <= 4 &&
-    complexityThemeCount >= 3 &&
-    tradeoffSignalCount >= 3
-  ) {
-    archetype = 'strategic_framing';
-  } else {
-    archetype = 'balanced_trade_off';
+  // Classify archetype for backward compatibility — but no longer drives section structure
+  const archetype = classifyArchetypeFromFitLevel(fitLevel, confidence, missing.length);
+
+  // Build sections by passing through the AI's own sections
+  const sections: MediationPresentationSection[] = [];
+  const seenKeys = new Set<string>();
+
+  // Walk through each AI why[] entry and convert to a presentation section
+  const whyEntries = (Array.isArray(why) ? why : []).map((entry) => {
+    const raw = normalizeText(entry);
+    if (!raw) return null;
+    const parsed = parseV2WhyEntry(raw);
+    const heading = parsed.heading || 'Mediation Summary';
+    const key = normalizeHeadingKey(heading);
+    const paragraphs = splitV2WhyBodyParagraphs(parsed.body || raw);
+    return { heading, key, paragraphs };
+  }).filter(Boolean) as Array<{ heading: string; key: string; paragraphs: string[] }>;
+
+  // Collect recommendation-related paragraphs for the merged Recommendation section
+  const recommendationParagraphs: string[] = [];
+  let hasDecisionStatusInRecommendation = false;
+
+  whyEntries.forEach((entry) => {
+    if (seenKeys.has(entry.key)) return; // avoid duplicate sections
+    seenKeys.add(entry.key);
+
+    if (RECOMMENDATION_FOLD_KEYS.has(entry.key)) {
+      // Fold decision readiness, recommended path, and suggested next step
+      // into a single merged Recommendation section
+      entry.paragraphs.forEach((paragraph) => {
+        const trimmed = normalizeText(paragraph);
+        if (!trimmed) return;
+        if (/^Decision status:/i.test(trimmed)) hasDecisionStatusInRecommendation = true;
+        recommendationParagraphs.push(trimmed);
+      });
+      return;
+    }
+
+    // Regular AI section — pass through with its own heading
+    const displayHeading = canonicalDisplayHeading(entry.heading);
+    const section = createPresentationSection({
+      key: entry.key.replace(/\s+/g, '_'),
+      heading: displayHeading,
+      paragraphs: uniqueText(entry.paragraphs),
+    });
+    if (section) {
+      sections.push(section);
+    }
+  });
+
+  // Insert Progress Since Prior Review after the lead section (for multi-round mediation)
+  if (hasPriorBilateralRound) {
+    const progressParagraphs = uniqueText([
+      progressSummary,
+      movementDirection === 'converging'
+        ? 'Overall movement appears to be toward executable agreement, although the remaining deltas still matter.'
+        : movementDirection === 'diverging'
+          ? 'Overall movement appears to be away from executable agreement because new friction or regressions now matter more than the resolved items.'
+          : movementDirection === 'stalled'
+            ? 'Overall movement appears limited, so the next round should focus on the most decision-relevant unresolved deltas rather than reopening settled ground.'
+            : '',
+      resolvedSinceLastRound.length > 0
+        ? `Newly resolved or narrowed issues: ${joinNatural(resolvedSinceLastRound)}.`
+        : '',
+      newOpenIssues.length > 0
+        ? `Newly introduced blockers or reopened issues: ${joinNatural(newOpenIssues)}.`
+        : '',
+    ]);
+    const progressSection = createPresentationSection({
+      key: 'progress_since_prior_review',
+      heading: 'Progress Since Prior Review',
+      paragraphs: progressParagraphs,
+      bullets: remainingDeltas,
+      numbered_bullets: remainingDeltas.length > 0,
+    });
+    if (progressSection) {
+      // Insert after the lead section
+      sections.splice(1, 0, progressSection);
+    }
   }
 
-  const shortenedMissing = uniqueText(missing.map((item) => stripMissingWhyMatters(item))).slice(0, 6);
-  const strengthPreviews = previewParagraphs(
-    strengthParagraphs.length > 0 ? strengthParagraphs : executiveParagraphs,
-    2,
-  );
-  const negotiationTensionParagraphs = buildNegotiationTensionParagraphs(negotiationAnalysis);
-  const negotiationPriorityParagraphs = buildNegotiationPriorityParagraphs(negotiationAnalysis);
-  const concernPreviews = previewParagraphs(
-    riskParagraphs.length > 0 ? riskParagraphs : decisionReadinessParagraphs.concat(negotiationTensionParagraphs).concat(missing),
-    2,
-  );
-  const tradeoffPreviews = previewParagraphs(
-    tensionsParagraphs.concat(negotiationTensionParagraphs).concat(leverageParagraphs).concat(dealStructureParagraphs),
-    2,
-  );
-  const tensionSourceParagraphs = tensionsParagraphs.length > 0
-    ? tensionsParagraphs
-    : prioritiesParagraphs
-        .concat(negotiationTensionParagraphs)
-        .filter((paragraph) => /\b(tension|trade[- ]?off|balance|versus|vs|incompatible)\b/i.test(paragraph));
-  const tensionPreviews = previewParagraphs(
-    tensionSourceParagraphs.length > 0 ? tensionSourceParagraphs : leverageParagraphs.concat(dealStructureParagraphs),
-    2,
-  );
-  const bridgeabilityPreviews = previewParagraphs(negotiationAnalysis?.bridgeability_notes || [], 2);
-  const priorityPreviews = previewParagraphs(
-    prioritiesParagraphs.length > 0
-      ? prioritiesParagraphs
-      : negotiationPriorityParagraphs.length > 0
-        ? negotiationPriorityParagraphs
-        : leverageParagraphs,
-    2,
-  );
-  const implicationPreviews = previewParagraphs(
-    leverageParagraphs.concat(dealStructureParagraphs).concat(bridgeabilityPreviews),
-    2,
-  );
-  const recommendationParagraphs = buildRecommendationParagraphs({
-    decisionStatusLabel: decisionStatus.label,
-    decisionExplanation: normalizeText(decisionStatus.explanation),
-    agreementParagraphs: agreementParagraphs.concat(bridgeabilityPreviews),
-    recommendationParagraphs: recommendedPathParagraphs.concat(bridgeabilityPreviews),
+  // Build the merged Recommendation section
+  if (!hasDecisionStatusInRecommendation && decisionStatus.label) {
+    const explanation = normalizeText(decisionStatus.explanation);
+    recommendationParagraphs.unshift(
+      explanation
+        ? `Decision status: ${decisionStatus.label}. ${explanation}`
+        : `Decision status: ${decisionStatus.label}.`,
+    );
+  }
+  // Enrich with negotiation bridgeability if available
+  const bridgeabilityNotes = negotiationAnalysis?.bridgeability_notes || [];
+  if (bridgeabilityNotes.length > 0 && recommendationParagraphs.length < 4) {
+    bridgeabilityNotes.slice(0, 1).forEach((note) => {
+      const trimmed = normalizeText(note);
+      if (trimmed && !recommendationParagraphs.some((existing) => existing.toLowerCase() === trimmed.toLowerCase())) {
+        recommendationParagraphs.push(trimmed);
+      }
+    });
+  }
+  const recommendationSection = createPresentationSection({
+    key: 'recommendation',
+    heading: 'Recommendation',
+    paragraphs: uniqueText(
+      recommendationParagraphs.length > 0
+        ? recommendationParagraphs
+        : ['Use the current open issues as the next mediation agenda before moving to commitment.'],
+    ).slice(0, 4),
   });
-  const executivePreview = previewParagraphs(executiveParagraphs, 1, 180)[0] || '';
-  const riskPreview = previewParagraphs(riskParagraphs, 1, 180)[0] || '';
-  const strategicPreview = previewParagraphs(
-    tensionsParagraphs
-      .concat(negotiationTensionParagraphs)
-      .concat(prioritiesParagraphs)
-      .concat(negotiationPriorityParagraphs)
-      .concat(leverageParagraphs)
-      .concat(dealStructureParagraphs),
-    1,
-    180,
-  )[0] || '';
-  const compatibilityInsight = buildNegotiationCompatibilityInsight(negotiationAnalysis, archetype);
+  if (recommendationSection) {
+    sections.push(recommendationSection);
+  }
 
-  const baselinePrimaryInsight =
-    archetype === 'risk_dominant'
-      ? compatibilityInsight || riskPreview || `The current proposal concentrates material risk around ${concernThemes}, which blocks a confident commitment.`
-      : archetype === 'gap_analysis'
-        ? compatibilityInsight || executivePreview || `The main constraint is incomplete detail around ${concernThemes}, rather than a clearly workable final structure.`
-        : archetype === 'strong_alignment'
-          ? compatibilityInsight || (missing.length > 0
-            ? `The proposal is broadly well-structured, with only limited gaps around ${concernThemes}.`
-            : `The proposal is broadly well-structured and only minor issues remain before final agreement.`)
-          : archetype === 'strategic_framing'
-        ? compatibilityInsight || executivePreview || strategicPreview || `The proposal is workable in principle, but the outcome depends on how the parties balance ${describeThemes(allThemeIds, 'the visible deal priorities')}.`
-            : compatibilityInsight || executivePreview || `The proposal shows credible alignment around ${strengthThemes}, but ${concernThemes} still introduces material trade-offs.`;
+  // Determine primary insight from the lead section
+  const leadSection = sections[0];
   const primaryInsight = hasPriorBilateralRound && progressSummary
     ? progressSummary
-    : baselinePrimaryInsight;
+    : (leadSection?.paragraphs?.[0] || '');
 
-  const fallbackTradeoffParagraph =
-    archetype === 'strategic_framing'
-      ? `The most visible tension is how ${strengthThemes} is balanced against ${concernThemes} before the parties treat the draft as final.`
-      : `The key trade-off is between preserving ${strengthThemes} and resolving ${concernThemes} before the draft is treated as final.`;
-
-  const progressParagraphs = uniqueText([
-    progressSummary,
-    movementDirection === 'converging'
-      ? 'Overall movement appears to be toward executable agreement, although the remaining deltas still matter.'
-      : movementDirection === 'diverging'
-        ? 'Overall movement appears to be away from executable agreement because new friction or regressions now matter more than the resolved items.'
-        : movementDirection === 'stalled'
-          ? 'Overall movement appears limited, so the next round should focus on the most decision-relevant unresolved deltas rather than reopening settled ground.'
-          : '',
-    resolvedSinceLastRound.length > 0
-      ? `Newly resolved or narrowed issues: ${joinNatural(resolvedSinceLastRound)}.`
-      : '',
-    newOpenIssues.length > 0
-      ? `Newly introduced blockers or reopened issues: ${joinNatural(newOpenIssues)}.`
-      : '',
-  ]);
-
-  const sections = [
-    archetype === 'risk_dominant'
-      ? createPresentationSection({
-          key: 'primary_concern',
-          heading: 'Primary Concern',
-          paragraphs: [primaryInsight],
-        })
-      : archetype === 'gap_analysis'
-        ? createPresentationSection({
-            key: 'what_is_unclear',
-            heading: 'What Is Unclear',
-            paragraphs: [primaryInsight],
-          })
-        : archetype === 'strong_alignment'
-          ? createPresentationSection({
-              key: 'overall_assessment',
-              heading: 'Overall Assessment',
-              paragraphs: [primaryInsight],
-            })
-          : archetype === 'strategic_framing'
-            ? createPresentationSection({
-                key: 'core_deal_dynamic',
-                heading: 'Core Deal Dynamic',
-                paragraphs: [primaryInsight],
-              })
-            : createPresentationSection({
-                key: 'primary_insight',
-                heading: 'Primary Insight',
-                paragraphs: [primaryInsight],
-              }),
-    hasPriorBilateralRound
-      ? createPresentationSection({
-          key: 'progress_since_prior_review',
-          heading: 'Progress Since Prior Review',
-          paragraphs: progressParagraphs,
-          bullets: remainingDeltas,
-          numbered_bullets: remainingDeltas.length > 0,
-        })
-      : null,
-    archetype === 'risk_dominant'
-      ? createPresentationSection({
-          key: 'critical_risks',
-          heading: 'Critical Risks',
-          paragraphs: concernPreviews.length > 0
-            ? concernPreviews.concat(previewParagraphs(leverageParagraphs, 1))
-            : [`The main risk concentration remains around ${concernThemes}.`],
-        })
-      : archetype === 'gap_analysis'
-        ? createPresentationSection({
-            key: 'blocking_questions',
-            heading: 'Blocking Questions',
-            bullets: shortenedMissing.slice(0, 4),
-            paragraphs: shortenedMissing.length === 0
-              ? [`The immediate questions cluster around ${concernThemes}.`]
-              : [],
-            numbered_bullets: true,
-          })
-        : archetype === 'strong_alignment'
-          ? createPresentationSection({
-              key: 'key_strengths',
-              heading: 'Key Strengths',
-              paragraphs: strengthPreviews.length > 0
-                ? strengthPreviews
-                : [`Visible alignment is strongest around ${strengthThemes}.`],
-            })
-          : archetype === 'strategic_framing'
-            ? createPresentationSection({
-                key: 'what_appears_to_be_prioritised',
-                heading: 'What Appears to Be Prioritised',
-                paragraphs: priorityPreviews.length > 0
-                  ? priorityPreviews
-                  : [`The visible priorities cluster around ${strengthThemes}.`],
-              })
-            : createPresentationSection({
-                key: 'areas_of_strength',
-                heading: 'Areas of Strength',
-                paragraphs: strengthPreviews.length > 0
-                  ? strengthPreviews
-                  : [`There is credible alignment around ${strengthThemes}.`],
-              }),
-    archetype === 'risk_dominant'
-      ? createPresentationSection({
-          key: 'missing_or_weak_elements',
-          heading: 'Missing or Weak Elements',
-          bullets: shortenedMissing.slice(0, 4),
-          paragraphs: shortenedMissing.length === 0
-            ? [`The weaker elements remain concentrated around ${concernThemes}.`]
-            : [],
-          numbered_bullets: true,
-        })
-      : archetype === 'gap_analysis'
-        ? createPresentationSection({
-            key: 'impact_of_missing_information',
-            heading: 'Impact of Missing Information',
-            paragraphs: concernPreviews.length > 0
-              ? concernPreviews
-              : [`Confidence remains constrained until ${concernThemes} is specified more concretely.`],
-          })
-      : archetype === 'strong_alignment'
-          ? createPresentationSection({
-              key: 'minor_gaps',
-              heading: 'Minor Gaps',
-              bullets: shortenedMissing.slice(0, 3),
-              paragraphs: shortenedMissing.length === 0
-                ? ['Remaining gaps are limited and do not currently outweigh the visible strengths.']
-                : [],
-            })
-          : archetype === 'strategic_framing'
-            ? createPresentationSection({
-                key: 'key_tensions',
-                heading: 'Key Tensions',
-                paragraphs: tensionPreviews.length > 0
-                  ? tensionPreviews
-                  : [fallbackTradeoffParagraph],
-              })
-            : createPresentationSection({
-                key: 'areas_of_concern',
-                heading: 'Areas of Concern',
-                paragraphs: concernPreviews.length > 0
-                  ? concernPreviews
-                  : [`Material uncertainty remains around ${concernThemes}.`],
-              }),
-    archetype === 'risk_dominant'
-      ? createPresentationSection({
-          key: 'what_must_be_resolved',
-          heading: 'What Must Be Resolved',
-          paragraphs: previewParagraphs(agreementParagraphs, 2).length > 0
-            ? previewParagraphs(agreementParagraphs, 2)
-            : [`The immediate condition to proceed is resolving ${concernThemes} in explicit terms.`],
-        })
-      : archetype === 'gap_analysis'
-        ? createPresentationSection({
-            key: 'what_needs_clarification',
-            heading: 'What Needs Clarification',
-            bullets: shortenedMissing.slice(4, 8),
-            numbered_bullets: true,
-            paragraphs: shortenedMissing.length <= 4
-              ? [`Clarification should focus first on ${concernThemes} so the parties can test whether the current structure is workable.`]
-              : [],
-          })
-        : archetype === 'strong_alignment'
-          ? createPresentationSection({
-              key: 'why_it_works',
-              heading: 'Why It Works',
-              paragraphs: priorityPreviews.length > 0
-                ? priorityPreviews
-                : [`The draft works best where ${strengthThemes} is already explicit enough for both parties to act on.`],
-            })
-          : archetype === 'strategic_framing'
-            ? createPresentationSection({
-                key: 'strategic_implications',
-                heading: 'Strategic Implications',
-                paragraphs: implicationPreviews.length > 0
-                  ? implicationPreviews
-                  : [`The visible implications sit in how ${strengthThemes} and ${concernThemes} are sequenced into a bounded agreement path.`],
-              })
-            : createPresentationSection({
-                key: 'key_trade_offs',
-                heading: 'Key Trade-Offs',
-                paragraphs: tradeoffPreviews.length > 0
-                  ? tradeoffPreviews
-                  : [fallbackTradeoffParagraph],
-              }),
-    createPresentationSection({
-      key: 'recommendation',
-      heading: 'Recommendation',
-      paragraphs: recommendationParagraphs,
-    }),
-  ].filter(Boolean) as MediationPresentationSection[];
+  // Enrich lead section with compatibility insight from negotiation_analysis if available
+  if (negotiationAnalysis?.compatibility_rationale && leadSection?.paragraphs) {
+    const rationale = normalizeText(negotiationAnalysis.compatibility_rationale);
+    if (
+      rationale &&
+      !leadSection.paragraphs.some((existing) => existing.toLowerCase().includes(rationale.slice(0, 60).toLowerCase()))
+    ) {
+      // Only add if lead section seems thin and rationale adds real value
+      if (leadSection.paragraphs.length <= 1 && rationale.length > 30) {
+        leadSection.paragraphs.push(rationale);
+      }
+    }
+  }
 
   return {
     report_archetype: archetype,
-    report_title: ARCHETYPE_TITLES[archetype],
+    report_title: '',
     primary_insight: primaryInsight,
     presentation_sections: sections,
     redactions_count: redactions.length,

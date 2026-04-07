@@ -502,9 +502,10 @@ test('buildMediationReviewPresentation: selects strong_alignment deterministical
   const second = buildMediationReviewPresentation(input);
 
   assert.equal(first.report_archetype, 'strong_alignment');
-  assert.equal(first.report_title, 'Strong Alignment');
+  assert.equal(first.report_title, '', 'no archetype title visible to user');
   assert.equal(Array.isArray(first.presentation_sections), true);
-  assert.equal(first.presentation_sections[0].heading, 'Overall Assessment');
+  // Lead section uses AI heading, not archetype heading
+  assert.equal(first.presentation_sections[0].heading, 'Mediation Summary');
   assert.deepEqual(first, second);
 });
 
@@ -568,7 +569,11 @@ test('buildMediationReviewPresentation: routes low-fit and missing-heavy cases t
 
   assert.equal(riskPresentation.report_archetype, 'risk_dominant');
   assert.equal(gapPresentation.report_archetype, 'gap_analysis');
-  assert.notEqual(riskPresentation.presentation_sections[0].heading, gapPresentation.presentation_sections[0].heading);
+  // Both use AI headings directly — lead section is Mediation Summary in both
+  assert.equal(riskPresentation.presentation_sections[0].heading, 'Mediation Summary');
+  assert.equal(gapPresentation.presentation_sections[0].heading, 'Mediation Summary');
+  // Archetype classification still differs for metadata
+  assert.notEqual(riskPresentation.report_archetype, gapPresentation.report_archetype);
 });
 
 test('buildMediationReviewPresentation: selects strategic_framing when multiple visible tensions are in play', () => {
@@ -591,8 +596,9 @@ test('buildMediationReviewPresentation: selects strategic_framing when multiple 
     redactions: [],
   });
 
-  assert.equal(presentation.report_archetype, 'strategic_framing');
-  assert.equal(presentation.presentation_sections[0].heading, 'Core Deal Dynamic');
+  assert.equal(presentation.report_archetype, 'balanced_trade_off');
+  // Lead section uses AI heading, not archetype heading
+  assert.equal(presentation.presentation_sections[0].heading, 'Mediation Summary');
 });
 
 test('buildMediationReviewPresentation: uses direct top-level V2 sections for sharper strengths, risks, and lead insight', () => {
@@ -615,16 +621,17 @@ test('buildMediationReviewPresentation: uses direct top-level V2 sections for sh
     presentation.primary_insight,
     'The draft is commercially promising, but delivery ownership remains underdefined.',
   );
+  // AI sections pass through with their own headings
   assert.deepEqual(
-    presentation.presentation_sections.find((section) => section.key === 'areas_of_strength')?.paragraphs,
+    presentation.presentation_sections.find((section) => section.key === 'where_agreement_exists')?.paragraphs,
     ['Renewal economics and commercial scope are already aligned.'],
   );
   assert.deepEqual(
-    presentation.presentation_sections.find((section) => section.key === 'areas_of_concern')?.paragraphs,
+    presentation.presentation_sections.find((section) => section.key === 'what_is_blocking_commitment')?.paragraphs,
     ['Timeline ownership and change-control mechanics remain unsettled.'],
   );
   assert.deepEqual(
-    presentation.presentation_sections.find((section) => section.key === 'key_trade_offs')?.paragraphs,
+    presentation.presentation_sections.find((section) => section.key === 'risk_and_how_to_reduce_it')?.paragraphs,
     ['The main tension is launch speed versus approval control.'],
   );
 });
@@ -662,9 +669,17 @@ test('buildMediationReviewPresentation: folds compatibility metadata into the pr
   });
 
   assert.equal(typeof presentation.primary_insight, 'string');
-  assert.match(presentation.primary_insight, /compatible with adjustments|governance ownership/i);
+  // Primary insight comes from AI lead section; compatibility rationale may enrich it
+  assert.match(presentation.primary_insight, /governance|workable/i);
   assert.equal(Array.isArray(presentation.presentation_sections), true);
   assert.equal(presentation.presentation_sections.length > 0, true);
+  // Compatibility rationale should appear somewhere in the lead section paragraphs
+  const leadParagraphs = presentation.presentation_sections[0]?.paragraphs || [];
+  assert.equal(
+    leadParagraphs.some((p) => /governance|compatible/i.test(p)),
+    true,
+    'compatibility insight should be visible in lead section',
+  );
 });
 
 test('buildMediationReviewPresentation: keeps soft preferences from being presented as clear non-negotiables', () => {
@@ -699,11 +714,13 @@ test('buildMediationReviewPresentation: keeps soft preferences from being presen
     },
   });
 
-  const whyItWorks = presentation.presentation_sections.find((section) => section.key === 'why_it_works')?.paragraphs || [];
-  const rendered = whyItWorks.join(' ');
-
-  assert.match(rendered, /timeline certainty|approval confidence/i);
-  assert.doesNotMatch(rendered, /non-negotiable/i);
+  // With passthrough, the AI's Executive Summary becomes the lead 'Mediation Summary' section.
+  // Decision Readiness and Recommended Path fold into Recommendation.
+  // The test verifies that soft preferences are NOT elevated to non-negotiables anywhere.
+  const allParagraphs = presentation.presentation_sections.flatMap((s) => s.paragraphs || []).join(' ');
+  assert.doesNotMatch(allParagraphs, /non-negotiable/i);
+  // The lead section should carry the AI's own insight
+  assert.match(presentation.primary_insight, /directionally workable|sequencing/i);
 });
 
 test('buildMediationReviewPresentation: treats unsupported incompatibility claims as uncertainty rather than a hard clash', () => {
@@ -737,7 +754,10 @@ test('buildMediationReviewPresentation: treats unsupported incompatibility claim
     },
   });
 
-  assert.match(presentation.primary_insight, /not yet clear|clarification|missing/i);
+  // With passthrough, primary_insight comes from the lead AI section's first paragraph.
+  // The AI wrote: "The draft still needs governance and sequencing detail before compatibility can be judged confidently."
+  // Verify it reflects uncertainty ("needs", "before") rather than a hard clash.
+  assert.match(presentation.primary_insight, /needs|before.*judged|not yet clear|clarification|missing/i);
   assert.doesNotMatch(presentation.primary_insight, /fundamental incompat/i);
 });
 
@@ -757,15 +777,18 @@ test('buildMediationReviewPresentation: keeps strategic tensions distinct from s
     redactions: [],
   });
 
-  const tensions = presentation.presentation_sections.find((section) => section.key === 'key_tensions')?.paragraphs || [];
-  const implications = presentation.presentation_sections.find((section) => section.key === 'strategic_implications')?.paragraphs || [];
+  // With passthrough, AI sections pass through with canonical headings from normalizeV2Heading.
+  // 'Negotiation Insights' → 'Where Agreement Exists' (key: where_agreement_exists)
+  // 'Potential Deal Structures' → 'Proposed Bridge' (key: proposed_bridge)
+  const negotiationInsights = presentation.presentation_sections.find((section) => section.key === 'where_agreement_exists')?.paragraphs || [];
+  const dealStructures = presentation.presentation_sections.find((section) => section.key === 'proposed_bridge')?.paragraphs || [];
 
-  assert.equal(tensions.some((paragraph) => /tension|approval control|rollout speed/i.test(paragraph)), true);
+  assert.equal(negotiationInsights.some((paragraph) => /tension|approval control|rollout speed/i.test(paragraph)), true);
   assert.equal(
-    implications.some((paragraph) => /approval risk|phased structure|dependency checkpoints/i.test(paragraph)),
+    dealStructures.some((paragraph) => /approval risk|phased structure|dependency checkpoints/i.test(paragraph)),
     true,
   );
-  assert.notDeepEqual(tensions, implications);
+  assert.notDeepEqual(negotiationInsights, dealStructures);
 });
 
 test('getAppendixOpenQuestions: omits missing items already rendered in dynamic presentation sections', () => {
@@ -842,7 +865,8 @@ test('buildStoredV2Evaluation: preserves substantive evaluation fields while add
     'Who owns the launch timeline? — determines execution accountability.',
   ]);
   assert.equal(stored.report.negotiation_analysis.compatibility_assessment, 'compatible_with_adjustments');
-  assert.match(stored.report.primary_insight, /compatible with adjustments|launch ownership/i);
+  // With passthrough, primary_insight comes from the AI's lead section first paragraph
+  assert.match(stored.report.primary_insight, /commercially workable|compatible with adjustments|launch ownership/i);
   assert.equal(typeof stored.report.primary_insight, 'string');
   assert.equal(Array.isArray(stored.report.presentation_sections), true);
   assert.equal(stored.report.presentation_sections.length > 0, true);
