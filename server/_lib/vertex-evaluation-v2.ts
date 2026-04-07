@@ -709,6 +709,16 @@ const STOCK_PHRASE_POLISH_REPLACEMENTS: Array<{ pattern: RegExp; replacement: st
   { pattern: /\btimeline assumptions are not reliable enough yet\b/gi, replacement: 'timeline assumptions still need firmer confirmation' },
   { pattern: /\bcommercial assumptions are not fully tied to defined scope and risk\b/gi, replacement: 'commercial terms are not yet tied cleanly to the current assumptions and risk allocation' },
   { pattern: /\brisk allocation is still too vague\b/gi, replacement: 'risk ownership and mitigation treatment are still too vague' },
+  // Synthetic consultant phrasing → natural commercial language
+  { pattern: /\bnot yet sign-ready\b/gi, replacement: 'not yet ready to commit' },
+  { pattern: /\bcontractually[- ]sound\b/gi, replacement: 'solid enough to commit to' },
+  { pattern: /\bcontractually[- ]binding definition\b/gi, replacement: 'binding definition' },
+  { pattern: /\bcurrent commitment boundary\b/gi, replacement: 'current scope and commitment' },
+  { pattern: /\bcommitment is defensible\b/gi, replacement: 'a commitment can be made' },
+  { pattern: /\bdefensible commitment\b/gi, replacement: 'reliable commitment' },
+  { pattern: /\boperationally and contractually\b/gi, replacement: 'in practice and on paper' },
+  { pattern: /\bstructurally and operationally\b/gi, replacement: 'in scope and in practice' },
+  { pattern: /\bdecision-ready\b/gi, replacement: 'ready for a decision' },
 ];
 
 const COACHING_GUARD_PATTERNS = [
@@ -2593,27 +2603,22 @@ function buildRecommendedPathParagraphs(params: {
 }) {
   if (params.cleanBounded && params.data.fit_level === 'high') {
     return [
-      'Recommended path: move to final papering, final approvals, and signature preparation without reopening the bounded scope, acceptance, dependency, or governance mechanics already visible in the record.',
-      'Immediate next step: confirm final approvals, lock the execution governance cadence, and preserve the current commercial assumptions in the final documentation.',
+      'Recommended path: move to final papering and signature preparation.',
     ];
   }
 
   if (params.data.fit_level === 'low') {
     return [
-      `Recommended path: pause signature and convert the discussion into a restructuring or ${domainDiligenceLabel(params.signals.domain)} focused on what is needed to ${params.conditionSummary}.`,
-      `Immediate next step: ${params.agendaItems.join('; ')}.`,
+      `Recommended path: pause and convert the discussion into a ${domainDiligenceLabel(params.signals.domain)} focused on what would need to change before commitment.`,
     ];
   }
 
   const lead =
     params.signals.ruleIds.has('technical') || params.signals.ruleIds.has('data_cleanup')
-      ? `Recommended path: run a short ${domainDiligenceLabel(params.signals.domain)} to ${params.conditionSummary}, then reconvene to lock the bounded commitment.`
-      : `Recommended path: use the next negotiation round to ${params.conditionSummary} before either side treats the current draft as final.`;
+      ? `Recommended path: run a short ${domainDiligenceLabel(params.signals.domain)} to resolve the outstanding items, then reconvene to finalise terms.`
+      : 'Recommended path: use the next round to resolve the remaining items before treating the current draft as final.';
 
-  return [
-    lead,
-    `Immediate next step: ${params.agendaItems.join('; ')}.`,
-  ];
+  return [lead];
 }
 
 function buildSectionRoleDefaults(params: {
@@ -2678,7 +2683,7 @@ function buildSectionRoleDefaults(params: {
       : params.signals.conditionallyViable
       ? {
           label: 'Proceed with conditions',
-          explanation: `A credible path exists, but the parties still need to ${conditionSummary} before commitment is defensible.`,
+          explanation: `A credible path exists, but the parties still need to ${conditionSummary} before committing.`,
         }
       : {
           label: 'Explore further',
@@ -2691,7 +2696,7 @@ function buildSectionRoleDefaults(params: {
       : cleanBounded && params.data.fit_level === 'high'
       ? `The deal is fundamentally workable and close to executable: alignment exists around ${alignmentSummary}, and the proposal is bounded enough for both sides to treat it as a final commitment structure.`
       : params.signals.conditionallyViable
-      ? `The deal appears fundamentally workable, but not yet sign-ready: alignment exists around ${alignmentSummary}, while ${snapshotBlockerSummary}.`
+      ? `The deal appears broadly workable, but not yet ready to commit: alignment exists around ${alignmentSummary}, while ${snapshotBlockerSummary}.`
       : `The deal merits further work rather than immediate commitment because ${snapshotBlockerSummary}.`;
 
   const mediationSummaryTension =
@@ -2754,9 +2759,7 @@ function buildSectionRoleDefaults(params: {
       conditionSummary,
       agendaItems,
     }),
-    'suggested next step': [
-      `Immediate next step: ${agendaItems.join('; ')}.`,
-    ],
+    'suggested next step': [],
   };
 
   if (params.signals.fixedPriceSignal && (defaults['the real hesitation'] || []).length < 3) {
