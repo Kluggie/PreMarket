@@ -668,7 +668,14 @@ export function buildEvalPromptFromFactSheet(params: {
     '14. Deal stage: assess whether this is early exploration, active negotiation, near-agreement, or a restructuring / reset. Calibrate your tone, specificity, and recommendation accordingly — an exploratory proposal needs directional guidance, not detailed contracting advice; a near-agreement needs precise remaining-item identification.',
     '15. Decision-readiness: is this ready for a clean commitment, only for a conditional path, or not yet ready? Use source_coverage flags to guide your assessment.',
     hasPriorBilateralContext
-      ? '16. Progress across rounds: because this is not the first bilateral review, track what changed since the prior round — what was resolved, what narrowed, what regressed, and whether the negotiation is converging, stalled, or diverging.'
+      ? [
+          `16. Issue ledger — progress across rounds (round ${bilateralRoundNumber}): do NOT rewrite the negotiation from scratch. Treat mediation as a sequence of tracked issues.`,
+          '    a. Build the active issue list from prior_bilateral_context. For each issue, classify its current status: resolved by agreement, resolved by narrowing / partial agreement, still open, newly introduced, no longer relevant, or incompatible / blocking.',
+          '    b. Compare issue-by-issue against the prior round. For each: what changed, what did not change, did the gap narrow / widen / stay the same, did an issue move from ambiguity to a real commitment blocker, or was it closed by agreement / deferred safely / shown to be fundamentally incompatible.',
+          '    c. Close issues when justified. If the parties have effectively agreed on a point, mark it resolved — stop treating it as open. If a critical issue remains open after repeated focused attempts with no meaningful narrowing, mark it as likely incompatible rather than keeping it indefinitely open.',
+          '    d. Judge momentum: converging (issues being closed or narrowed), stalled (same core blockers remain with little real movement), or diverging (parties moving further apart or introducing new blockers faster than resolving old ones).',
+          '    e. Distinguish bridgeable issues from fit issues. Not every unresolved item is proof of poor fit. But if a commitment-critical issue remains open across multiple rounds with no meaningful narrowing, or the parties\u2019 required outcomes are mutually incompatible, say so clearly.',
+        ].join('\n')
       : '',
     '',
     'DOMAIN-SENSITIVE LENS:',
@@ -719,13 +726,16 @@ export function buildEvalPromptFromFactSheet(params: {
     '- Do NOT recycle the same unresolved items across summary, recommendation, and open questions. If a point is made in the narrative, the open questions should add NEW information, not restate.',
     '- Avoid rigid formulaic labels like "Leverage signal:", "Structural tensions:", "Option A/B/C", or "Likely priorities:" — integrate those ideas into natural prose instead.',
     hasPriorBilateralContext
-      ? '- Keep the mediation narrative progress-aware rather than rewriting the whole negotiation from scratch.'
-      : '',
-    hasPriorBilateralContext
-      ? '- When prior_bilateral_context is present, include concrete delta analysis for what changed, what remains open, and whether the negotiation is moving toward agreement.'
+      ? '- Do NOT rewrite the negotiation from scratch. Write progress-aware narrative that references the issue ledger from step 16. Name which issues closed, which narrowed, which remain stuck.'
       : '',
     hasPriorBilateralContext
       ? '- Include your progress analysis as prose narrative — statements about what changed, what narrowed, what was resolved, not lists of open questions. Minimise question marks in the progress analysis. Write it as mediator observations, not interrogation.'
+      : '',
+    hasPriorBilateralContext
+      ? `- ESCALATION OVER TIME (current round: ${bilateralRoundNumber}): Round 1-2: focus on diagnosis, bridgeability, and suggested structure. Round 3-4: focus on whether issues are actually closing — if the same core blockers persist, say so directly. Round 5+: if commitment-critical issues remain open without real narrowing, stop presenting the deal as merely "needs more discussion" and explicitly assess whether the parties are not a fit under the current structure.`
+      : '',
+    hasPriorBilateralContext
+      ? '- PREVENT ENDLESS MEDIATION: if the same critical issue has appeared in materially similar form across multiple rounds without meaningful narrowing, treat that as evidence of stalled fit. If the parties\u2019 required outcomes remain incompatible after repeated attempts, say the parties do not currently fit unless one side changes position or the deal structure changes materially.'
       : '',
     '',
     'OUTPUT SHAPE — this is critical:',
@@ -743,6 +753,9 @@ export function buildEvalPromptFromFactSheet(params: {
     '   The Mediation Summary should contain ALL the substantive analysis. Other sections are supplements, not repeats.',
     '',
     '2. "Recommended Next Step: …" — 1-2 substantive paragraphs that do three things: (1) states the recommended next step, (2) explains why that sequence is the cleanest path, (3) names what that step must settle. Be specific about WHICH issues, WHY that order, and WHAT each step must produce. Do NOT restate the mediation summary or collapse into a single generic sentence like "resolve open issues before proceeding".',
+    hasPriorBilateralContext
+      ? `   ROUND-AWARE RECOMMENDATION (round ${bilateralRoundNumber}): The recommendation must become more decisive over time. Early rounds (1-2): recommend a bridge or structure. Mid rounds (3-4): recommend either the minimum remaining agenda to close the deal, or flag that critical issues are not closing. Late rounds (5+): recommend either a concrete closing path or a conclusion that the current structure is unlikely to result in agreement. Do NOT keep producing open-ended "explore further" recommendations indefinitely.`
+      : '',
     '',
     '3. "Decision Readiness: Decision status: [label]. [one sentence explanation]."',
     '   The label MUST be one of: "Not viable", "Explore further", "Proceed with conditions", or "Ready to finalize".',
@@ -876,7 +889,7 @@ export function buildEvalPromptFromFactSheet(params: {
     '- why/missing/redactions must be arrays (can be empty).',
     '- negotiation_analysis is optional, but if you include it the structure must match the schema above.',
     hasPriorBilateralContext
-      ? '- Because prior_bilateral_context exists, the progress fields should reflect concrete round-to-round movement rather than generic filler.'
+      ? '- Because prior_bilateral_context exists: resolved_since_last_round must list issues genuinely closed or narrowed this round. remaining_deltas must list issues still open with their current status classification. new_open_issues must list issues newly introduced this round. movement_direction must reflect your honest momentum assessment from step 16d — converging, stalled, or diverging. Do NOT use generic filler.'
       : '- If this is the first bilateral review, you may omit the optional progress fields rather than inventing prior-round movement.',
     '- Keep ALL statements safe for public sharing.',
     '- Use generic derived wording for confidential-driven conclusions.',
