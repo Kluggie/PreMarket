@@ -1199,7 +1199,7 @@ function dropLowestPriorityParagraph(sectionKey: string, paragraphs: string[]) {
 }
 
 function maxParagraphsForSection(sectionKey: string) {
-  if (sectionKey === 'mediation summary') return 4;
+  if (sectionKey === 'mediation summary') return 3;
   if (sectionKey === 'decision readiness') return 1;
   if (sectionKey === 'recommended path') return 1;
   if (sectionKey === 'suggested next step') return 1;
@@ -1540,7 +1540,7 @@ function normalizeMissingQuestions(params: {
     GENERIC_FALLBACK_MISSING.forEach((item) => addEntry(toActionableMissingQuestion(item), null));
   }
 
-  return dedupeMissingEntries(
+  const deduped = dedupeMissingEntries(
     entries
       .sort((a, b) => b.priority - a.priority)
       .map((entry) => ({
@@ -1548,9 +1548,20 @@ function normalizeMissingQuestions(params: {
         text: sanitizeMissingEntry(entry.text),
       }))
       .filter((entry) => entry.text),
-  )
-    .slice(0, MISSING_MAX_ITEMS)
-    .map((entry) => entry.text);
+  );
+
+  // Separate identical-tier warnings so they are never clipped by the cap
+  const identicalWarnings = deduped.filter((e) =>
+    /shared and confidential inputs materially different|identical tiers/i.test(e.text),
+  );
+  const regularEntries = deduped.filter((e) =>
+    !/shared and confidential inputs materially different|identical tiers/i.test(e.text),
+  );
+
+  return [
+    ...regularEntries.slice(0, MISSING_MAX_ITEMS).map((e) => e.text),
+    ...identicalWarnings.map((e) => e.text),
+  ];
 }
 
 type VisibilityIndex = {
@@ -1942,7 +1953,15 @@ function filterVisibleMissingItems(params: {
     kept.push(text);
   });
 
-  return kept.slice(0, MISSING_MAX_ITEMS);
+  // Separate the identical-tier warning (always preserved outside the cap)
+  const identicalWarning = kept.filter((text) =>
+    /shared and confidential inputs materially different|identical tiers/i.test(text),
+  );
+  const regularItems = kept.filter((text) =>
+    !/shared and confidential inputs materially different|identical tiers/i.test(text),
+  );
+
+  return [...regularItems.slice(0, MISSING_MAX_ITEMS), ...identicalWarning];
 }
 
 function normalizeRedactions(params: {
@@ -2612,22 +2631,35 @@ function buildRecommendedPathParagraphs(params: {
 }) {
   if (params.cleanBounded && params.data.fit_level === 'high') {
     return [
-      'Recommended path: move to final papering and signature preparation.',
+      'The cleanest path forward is to move to final papering and signature preparation, preserving the current scope, acceptance, and risk treatment into the binding document.',
     ];
   }
 
   if (params.data.fit_level === 'low') {
     return [
-      `Recommended path: pause and convert the discussion into a ${domainDiligenceLabel(params.signals.domain)} focused on what would need to change before commitment.`,
+      `The recommended path is to pause the current commitment and convert the discussion into a ${domainDiligenceLabel(params.signals.domain)} focused on what would need to change before either side can rely on this draft. That step should settle ${params.conditionSummary || 'the key open items'} before any broader commitment is treated as final.`,
     ];
   }
 
-  const lead =
-    params.signals.ruleIds.has('technical') || params.signals.ruleIds.has('data_cleanup')
-      ? `Recommended path: run a short ${domainDiligenceLabel(params.signals.domain)} to resolve the outstanding items, then reconvene to finalise terms.`
-      : 'Recommended path: use the next round to resolve the remaining items before treating the current draft as final.';
+  // Build a substantive recommendation paragraph: what to do, why, what it must settle
+  const agendaSlice = params.agendaItems.slice(0, 4);
+  const settleClause = agendaSlice.length > 0
+    ? joinNatural(agendaSlice)
+    : params.conditionSummary || 'the remaining open items';
 
-  return [lead];
+  const step =
+    params.signals.ruleIds.has('technical') || params.signals.ruleIds.has('data_cleanup')
+      ? `agree a short paid ${domainDiligenceLabel(params.signals.domain)}`
+      : 'use the next round to resolve the remaining open items';
+
+  const rationale =
+    params.signals.ruleIds.has('technical') || params.signals.ruleIds.has('data_cleanup')
+      ? 'because locking that work first avoids the risk of committing to terms that depend on assumptions neither side has validated'
+      : 'because treating the current draft as final while these items remain open would leave both sides exposed to scope, cost, or timeline shifts';
+
+  return [
+    `The recommended path is to pause final commitment on the current terms, ${step}, and use that step to settle ${settleClause}. This sequence is the cleanest route ${rationale}. Once those items are resolved, the agreed specification can be converted into binding terms.`,
+  ];
 }
 
 function buildSectionRoleDefaults(params: {
@@ -4740,7 +4772,7 @@ const GENERIC_FILLER_PATTERNS = [
 
 const MIN_WHY_TOTAL_CHARS = 1200;
 const MIN_SECTION_BODY_CHARS = 80;
-const MIN_MISSING_ITEMS_QUALITY = 3;
+const MIN_MISSING_ITEMS_QUALITY = 2;
 const MAX_GENERIC_FILLER_HITS = 3;
 
 interface QualityAssessment {

@@ -781,13 +781,13 @@ export function getAppendixOpenQuestions(report) {
         sectionText === comparableItem ||
         sectionText.includes(comparableItem),
     )) return false;
-    // Keyword overlap check — if >60% of the question's key words already
+    // Keyword overlap check — if >50% of the question's key words already
     // appear in the rendered narrative, the question is redundant.
     const itemWords = comparableItem.split(' ').filter((w) => w.length > 3);
     if (itemWords.length >= 3) {
       const allRendered = comparableSectionTexts.join(' ');
       const matchCount = itemWords.filter((w) => allRendered.includes(w)).length;
-      if (matchCount / itemWords.length >= 0.6) return false;
+      if (matchCount / itemWords.length >= 0.5) return false;
     }
     return true;
   });

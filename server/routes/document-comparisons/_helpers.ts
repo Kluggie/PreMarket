@@ -739,7 +739,6 @@ export function buildMediationReviewPresentation(params: {
 
   // Collect recommendation-related paragraphs for the merged Recommendation section
   const recommendationParagraphs: string[] = [];
-  let hasDecisionStatusInRecommendation = false;
 
   whyEntries.forEach((entry) => {
     if (seenKeys.has(entry.key)) return; // avoid duplicate sections
@@ -751,7 +750,6 @@ export function buildMediationReviewPresentation(params: {
       entry.paragraphs.forEach((paragraph) => {
         const trimmed = normalizeText(paragraph);
         if (!trimmed) return;
-        if (/^Decision status:/i.test(trimmed)) hasDecisionStatusInRecommendation = true;
         recommendationParagraphs.push(trimmed);
       });
       return;
@@ -769,82 +767,90 @@ export function buildMediationReviewPresentation(params: {
     }
   });
 
-  // Insert Progress Since Prior Review after the lead section (for multi-round mediation)
+  // Insert Progress Since Prior Review after the lead section (for multi-round mediation).
+  // Keep this deliberately short: 1-2 concise paragraphs, no bullet lists, no issue dumps.
   if (hasPriorBilateralRound) {
-    const progressParagraphs = uniqueText([
-      progressSummary,
-      movementDirection === 'converging'
-        ? 'Overall movement appears to be toward executable agreement, although the remaining deltas still matter.'
-        : movementDirection === 'diverging'
-          ? 'Overall movement appears to be away from executable agreement because new friction or regressions now matter more than the resolved items.'
-          : movementDirection === 'stalled'
-            ? 'Overall movement appears limited, so the next round should focus on the most decision-relevant unresolved deltas rather than reopening settled ground.'
-            : '',
-      resolvedSinceLastRound.length > 0
-        ? `Newly resolved or narrowed issues: ${joinNatural(resolvedSinceLastRound)}.`
-        : '',
-      newOpenIssues.length > 0
-        ? `Newly introduced blockers or reopened issues: ${joinNatural(newOpenIssues)}.`
-        : '',
-    ]);
-    const progressSection = createPresentationSection({
-      key: 'progress_since_prior_review',
-      heading: 'Progress Since Prior Review',
-      paragraphs: progressParagraphs,
-      bullets: remainingDeltas,
-      numbered_bullets: remainingDeltas.length > 0,
-    });
-    if (progressSection) {
-      // Insert after the lead section
-      sections.splice(1, 0, progressSection);
+    const progressParts: string[] = [];
+
+    // Primary delta — what materially changed or narrowed
+    if (progressSummary) {
+      progressParts.push(progressSummary);
+    } else if (resolvedSinceLastRound.length > 0) {
+      progressParts.push(`Since the prior review, ${joinNatural(resolvedSinceLastRound)} ${resolvedSinceLastRound.length === 1 ? 'has' : 'have'} been resolved or narrowed.`);
+    }
+
+    // Optional second sentence — what still remains, only if genuinely new
+    const unresolvedNote = newOpenIssues.length > 0
+      ? `New issues have emerged around ${joinNatural(newOpenIssues)}.`
+      : remainingDeltas.length > 0
+        ? `The main remaining items are ${joinNatural(remainingDeltas.slice(0, 2))}.`
+        : '';
+    if (unresolvedNote && progressParts.length > 0) {
+      progressParts.push(unresolvedNote);
+    }
+
+    const progressParagraphs = uniqueText(progressParts);
+    if (progressParagraphs.length > 0) {
+      const progressSection = createPresentationSection({
+        key: 'progress_since_prior_review',
+        heading: 'Progress Since Prior Review',
+        paragraphs: progressParagraphs.slice(0, 2),
+      });
+      if (progressSection) {
+        sections.splice(1, 0, progressSection);
+      }
     }
   }
 
-  // Build the merged Recommendation section — deduplicate against content
-  // already rendered in earlier sections to avoid restating the same points.
+  // Build the merged Recommendation section — exactly ONE substantive path-forward
+  // paragraph. Decision status is prepended as a short labelled line. The recommendation
+  // paragraph must say: what to do next, why that sequence works, what it must settle.
   const allRenderedParagraphs = sections.flatMap((s) => s.paragraphs || []);
-  if (!hasDecisionStatusInRecommendation && decisionStatus.label) {
-    const explanation = normalizeText(decisionStatus.explanation);
-    recommendationParagraphs.unshift(
-      explanation
-        ? `Decision status: ${decisionStatus.label}. ${explanation}`
-        : `Decision status: ${decisionStatus.label}.`,
-    );
+  const decisionLine = decisionStatus.label
+    ? `Decision status: ${decisionStatus.label}.${decisionStatus.explanation ? ` ${normalizeText(decisionStatus.explanation)}` : ''}`
+    : '';
+
+  // Find the best substantive recommendation paragraph from the folded entries.
+  // Prefer the longest non-Decision-status paragraph that isn't a near-duplicate.
+  const substantiveRecommendationCandidates = recommendationParagraphs
+    .filter((p) => !/^Decision status:/i.test(normalizeText(p)))
+    .filter((paragraph) => {
+      const lower = normalizeText(paragraph).toLowerCase();
+      return !allRenderedParagraphs.some((rendered) => {
+        const renderedLower = normalizeText(rendered).toLowerCase();
+        if (!renderedLower || !lower) return false;
+        if (renderedLower === lower) return true;
+        const aWords = lower.split(/\s+/).filter((w) => w.length > 3);
+        const bWords = new Set(renderedLower.split(/\s+/).filter((w) => w.length > 3));
+        if (aWords.length === 0) return false;
+        const overlap = aWords.filter((w) => bWords.has(w)).length;
+        return overlap / Math.max(1, aWords.length) >= 0.35;
+      });
+    })
+    .sort((a, b) => b.length - a.length);
+
+  const bestRecommendation = substantiveRecommendationCandidates[0]
+    || 'Use the current open issues as the next mediation agenda before moving to commitment.';
+
+  // Optionally enrich with bridgeability notes if the recommendation is thin
+  let enrichedRecommendation = bestRecommendation;
+  if (enrichedRecommendation.length < 120) {
+    const bridgeabilityNotes = negotiationAnalysis?.bridgeability_notes || [];
+    const bridgeNote = bridgeabilityNotes[0] ? normalizeText(bridgeabilityNotes[0]) : '';
+    if (bridgeNote && bridgeNote.length > 20) {
+      enrichedRecommendation = `${enrichedRecommendation} ${bridgeNote}`;
+    }
   }
-  // Enrich with negotiation bridgeability if available
-  const bridgeabilityNotes = negotiationAnalysis?.bridgeability_notes || [];
-  if (bridgeabilityNotes.length > 0 && recommendationParagraphs.length < 3) {
-    bridgeabilityNotes.slice(0, 1).forEach((note) => {
-      const trimmed = normalizeText(note);
-      if (trimmed && !recommendationParagraphs.some((existing) => existing.toLowerCase() === trimmed.toLowerCase())) {
-        recommendationParagraphs.push(trimmed);
-      }
-    });
-  }
-  // Remove recommendation paragraphs that substantially overlap with earlier sections
-  const dedupedRecommendation = recommendationParagraphs.filter((paragraph) => {
-    const lower = normalizeText(paragraph).toLowerCase();
-    if (/^decision status:/i.test(lower)) return true; // always keep decision status
-    return !allRenderedParagraphs.some((rendered) => {
-      const renderedLower = normalizeText(rendered).toLowerCase();
-      if (!renderedLower || !lower) return false;
-      if (renderedLower === lower) return true;
-      // Check for substantial phrase overlap (>35% of shorter text's words)
-      const aWords = lower.split(/\s+/).filter((w) => w.length > 3);
-      const bWords = new Set(renderedLower.split(/\s+/).filter((w) => w.length > 3));
-      if (aWords.length === 0) return false;
-      const overlap = aWords.filter((w) => bWords.has(w)).length;
-      return overlap / Math.max(1, aWords.length) >= 0.35;
-    });
-  });
+
+  const recommendationSectionParagraphs = uniqueText([
+    decisionLine,
+    enrichedRecommendation,
+  ]);
+
   const recommendationSection = createPresentationSection({
     key: 'recommendation',
     heading: 'Recommendation',
-    paragraphs: uniqueText(
-      dedupedRecommendation.length > 0
-        ? dedupedRecommendation
-        : ['Use the current open issues as the next mediation agenda before moving to commitment.'],
-    ).slice(0, 2),
+    paragraphs: recommendationSectionParagraphs,
   });
   if (recommendationSection) {
     sections.push(recommendationSection);

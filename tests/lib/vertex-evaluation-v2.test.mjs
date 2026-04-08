@@ -3360,10 +3360,10 @@ test('memo-prose: Pass B prompt contains bilateral negotiator guardrails instead
     assert.equal(outcome.ok, true, 'Evaluation must succeed');
     assert.ok(passBPrompt.length > 0, 'Pass B prompt must have been captured');
 
-    // Fixed 2–4 paragraph writing requirement
+    // Fixed 2–3 paragraph writing requirement
     assert.ok(
-      passBPrompt.includes('2\u20134 short paragraphs'),
-      'Pass B prompt must specify the 2\u20134 short paragraphs per required heading writing requirement',
+      passBPrompt.includes('2\u20133 short paragraphs'),
+      'Pass B prompt must specify the 2\u20133 short paragraphs per required heading writing requirement',
     );
 
     // Prose-first / sparingly rule (replacing hard "Max 1 bullet list")

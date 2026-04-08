@@ -18,8 +18,8 @@ import {
 
 export const WHY_MAX_CHARS_STANDARD = 5800;
 export const WHY_MAX_CHARS_TIGHT = 2600;
-export const MISSING_MIN_ITEMS = 3;
-export const MISSING_MAX_ITEMS = 6;
+export const MISSING_MIN_ITEMS = 2;
+export const MISSING_MAX_ITEMS = 4;
 export const REDACTIONS_MAX_ITEMS = 8;
 
 const STYLE_IDS: StyleId[] = ['analytical', 'direct', 'collaborative'];
@@ -619,7 +619,7 @@ export function buildEvalPromptFromFactSheet(params: {
       : {}),
   };
 
-  const paragraphReq = '2–4 short paragraphs';
+  const paragraphReq = '2–3 short paragraphs';
 
   return [
     tightMode
@@ -726,12 +726,12 @@ export function buildEvalPromptFromFactSheet(params: {
     '',
     'REQUIRED why[] ENTRIES:',
     '',
-    '1. "Mediation Summary: …" — this is the backbone. Write 2-4 paragraphs with clear \\n\\n breaks:',
+    '1. "Mediation Summary: …" — this is the backbone. Write 2-3 paragraphs with clear \\n\\n breaks:',
     '   Paragraph 1: Where the parties appear aligned and the shape of the deal. Keep this short and orienting.',
     '   Paragraph 2: What is actually preventing commitment. Write this in plain English — name the specific issues.',
-    '   Paragraph 3: Whether this looks bridgeable and the most realistic route forward.',
-    '   Paragraph 4 (optional): Anything else that does not fit above.',
+    '   Paragraph 3: Why the issue is bridgeable and what structure could unlock movement.',
     '   Do NOT compress everything into one dense paragraph. Spread ideas out so they are easy to absorb.',
+    '   Do NOT add a 4th paragraph unless there is truly no other place for the content.',
     '   The Mediation Summary should contain ALL the substantive analysis. Other sections are supplements, not repeats.',
     '',
     '2. "Decision Readiness: Decision status: [label]. [one sentence explanation]."',
@@ -742,7 +742,7 @@ export function buildEvalPromptFromFactSheet(params: {
     '   Only add an extra section if it contributes genuinely new insight not already in the Mediation Summary.',
     `   If you add one, pick a heading that fits this specific case: ${adaptiveHeadings.join(', ')}, or a custom heading.`,
     '   If the content would be short or thin, fold it into the Mediation Summary instead of creating a separate section.',
-    '   A "Recommended Next Step" section must ONLY say what to do next — one short paragraph, not a restated analysis.',
+    '   A "Recommended Next Step" section must be exactly ONE substantive paragraph that does three things: (1) states the recommended next step, (2) explains why that sequence is the cleanest path, (3) names what that step must settle. It must NOT restate the mediation summary or collapse into a single thin sentence.',
     '',
     hasFixedPriceContract
       ? 'CONDITIONAL \u2014 fixed-price signals detected: discuss how commercial certainty, acceptance criteria, change-order triggers, and risk allocation shape the analysis.'
@@ -762,8 +762,8 @@ export function buildEvalPromptFromFactSheet(params: {
     '- Total why[] array: 2-4 entries. Default to 2-3. Only 4 if the case genuinely needs it.',
     '',
     'MISSING FIELD \u2014 QUALITY RULES:',
-    `- Generate 3-6 items. Maximum ${MISSING_MAX_ITEMS} items. Include ONLY questions that would materially change the path to agreement.`,
-    '- Prefer 3-4 high-value questions over 8-9 that rehash earlier content. Only include a question if it adds information not already embedded in the mediation narrative.',
+    `- Generate 2-4 items. Maximum ${MISSING_MAX_ITEMS} items. Include ONLY questions that would materially change the path to agreement.`,
+    '- Prefer 2-3 high-value questions over 5-6 that rehash earlier content. Only include a question if it adds information not already embedded in the mediation narrative.',
     '- Each item must be an actionable question AND include a "why it matters" clause after an em-dash (\u2014).',
     '  Example: "What is the event schema and retention policy for the source data? \u2014 determines ingestion approach and governance risk."',
     '- Order by criticality: deal-blockers first, then technical unknowns, then operational gaps.',
@@ -772,7 +772,7 @@ export function buildEvalPromptFromFactSheet(params: {
     '- Paraphrase items from fact_sheet.missing_info and fact_sheet.open_questions as actionable questions with why-matters clauses, but only if they are genuinely unresolved.',
     '- If information appears to exist privately but cannot be shared, prefer placing it in redactions[] rather than restating it as missing[].',
     coverageCount < 3
-      ? '- Coverage is thin (multiple false source_coverage fields): missing[] MUST still contain at least 4 decision-blocking items with em-dash why clauses.'
+      ? '- Coverage is thin (multiple false source_coverage fields): missing[] MUST still contain at least 3 decision-blocking items with em-dash why clauses.'
       : '',
     '',
     'REDACTIONS FIELD — QUALITY RULES:',
