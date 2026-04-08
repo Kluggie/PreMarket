@@ -14,6 +14,7 @@ import ComparisonWorkflowShell from '@/components/document-comparison/Comparison
 import SuggestionCoachPanel from '@/components/document-comparison/SuggestionCoachPanel';
 import Step1AddSources from '@/components/document-comparison/Step1AddSources';
 import Step2EditSources from '@/components/document-comparison/Step2EditSources';
+import Step3ReviewPackage from '@/components/document-comparison/Step3ReviewPackage';
 import ComparisonEvaluationStep from '@/components/document-comparison/ComparisonEvaluationStep';
 import {
   buildCoachActionRequest,
@@ -506,6 +507,9 @@ export default function SharedReport() {
   const [draftDirty, setDraftDirty] = useState(false);
   const [latestEvaluatedReport, setLatestEvaluatedReport] = useState(null);
   const [stepHydrated, setStepHydrated] = useState(false);
+  // When true, Step 3 shows the ComparisonEvaluationStep (results).
+  // When false, Step 3 shows Step3ReviewPackage (pre-mediation review).
+  const [showStep3Results, setShowStep3Results] = useState(false);
   const [verificationCode, setVerificationCode] = useState('');
   const [verificationRequested, setVerificationRequested] = useState(false);
   const [forcedMismatchInvitedEmail, setForcedMismatchInvitedEmail] = useState('');
@@ -1168,6 +1172,24 @@ export default function SharedReport() {
     if (!stepHydrated) {
       setStep(hydratedStep);
       setStepHydrated(true);
+      // If resuming at Step 3, decide whether to show results or the review
+      // package.  Only show results when the latest evaluation actually belongs
+      // to the **current** draft/revision — i.e. the evaluation's revision_id
+      // matches the active draft or the latest sent revision.  This prevents
+      // stale reports from a previous round (or the baseline proposer report)
+      // from being displayed as if they were the recipient's current results.
+      if (hydratedStep === 3) {
+        const evalRevisionId = latestEvaluation?.revision_id || null;
+        const activeDraftId = recipientDraft?.id || latestSentRevision?.id || null;
+        const evaluationBelongsToCurrentDraft =
+          Boolean(evalRevisionId) &&
+          Boolean(activeDraftId) &&
+          evalRevisionId === activeDraftId &&
+          Boolean(latestEvaluation?.public_report) &&
+          typeof latestEvaluation.public_report === 'object' &&
+          Object.keys(latestEvaluation.public_report).length > 0;
+        setShowStep3Results(evaluationBelongsToCurrentDraft);
+      }
     } else if (!isAuthenticated && step !== 0) {
       setStep(0);
     }
@@ -1374,12 +1396,13 @@ export default function SharedReport() {
   const evaluateMutation = useMutation({
     mutationFn: async () => {
       if (draftDirty) {
-        await saveDraftMutation.mutateAsync({ stepToSave: 2, silent: true });
+        await saveDraftMutation.mutateAsync({ stepToSave: 3, silent: true });
       }
       return sharedReportsClient.evaluateRecipient(token);
     },
     onSuccess: async (result) => {
       setLatestEvaluatedReport(result?.evaluation?.public_report || null);
+      setShowStep3Results(true);
       setStep(3);
       toast.success('AI mediation review ready');
       await workspaceQuery.refetch();
@@ -1398,6 +1421,7 @@ export default function SharedReport() {
     onSuccess: async () => {
       toast.success(sendDirectionCopy.sentCtaLabel);
       setDraftDirty(false);
+      setShowStep3Results(true);
       setStep(3);
       await workspaceQuery.refetch();
     },
@@ -1699,21 +1723,34 @@ export default function SharedReport() {
         return;
       }
     }
+    if (bounded === 3 && step <= 2 && draftDirty) {
+      try {
+        await saveDraftMutation.mutateAsync({ stepToSave: 2, silent: true });
+      } catch {
+        return;
+      }
+    }
+    // Navigating forward to Step 3 always shows the review package first.
+    if (bounded === 3 && step < 3) {
+      setShowStep3Results(false);
+    }
     setStep(bounded);
   };
 
-  const runEvaluationFromStep2 = async () => {
+  const runEvaluationFromReview = async () => {
     if (requiresRecipientVerification) {
       toast.error('Verify access before running AI mediation.');
       setStep(0);
       return;
     }
-    // Do NOT pre-emptively setStep(3) here. The step transition happens only
-    // inside onSuccess so that when step 3 renders the report data is already
-    // ready and `step3IsEvaluationRunning` is definitively false. This
-    // eliminates the flash (step-3 shows briefly with isPending=false before
-    // isPending becomes true) and the inconsistency where the review panel
-    // shows 'updates automatically' after the evaluation has already finished.
+    // Save any pending draft changes before evaluation.
+    if (draftDirty) {
+      try {
+        await saveDraftMutation.mutateAsync({ stepToSave: 3, silent: true });
+      } catch {
+        return;
+      }
+    }
     await evaluateMutation.mutateAsync();
   };
 
@@ -2975,13 +3012,8 @@ export default function SharedReport() {
                 saveDraftMutation.mutate({ stepToSave: 2 });
               }}
               onBack={() => setStep(1)}
-              onContinue={runEvaluationFromStep2}
-              continueLabel={getRunOpportunityReviewLabel({
-                stage: MEDIATION_REVIEW_STAGE,
-                isPending: evaluateMutation.isPending,
-                hasExisting: Boolean(latestEvaluation),
-              })}
-              continueDisabled={evaluateMutation.isPending || !canReevaluate || requiresRecipientVerification}
+              onContinue={() => jumpStep(3)}
+              continueDisabled={saveDraftMutation.isPending || requiresRecipientVerification}
               coachPanel={coachPanelNode}
               focusEditorRequest={focusEditorRequest}
               replaceSelectionRequest={replaceSelectionRequest}
@@ -3009,78 +3041,100 @@ export default function SharedReport() {
         {/* ════════════════════════════════════════════════════════════
             STEP 3 — Evaluation results  (shared ComparisonEvaluationStep)
             ════════════════════════════════════════════════════════════ */}
+        {/* ════════════════════════════════════════════════════════════
+            STEP 3 — Review Package (pre-mediation) or Results (post-mediation)
+            ════════════════════════════════════════════════════════════ */}
         {step === 3 ? (
-          <ComparisonEvaluationStep
-            stepTitle={`Step 3: ${MEDIATION_REVIEW_LABEL}`}
-            stepDescription={sendDirectionCopy.step3Description}
-            actionSlot={
-              <>
-                <Button
-                  type="button"
-                  onClick={sendToCounterparty}
-                  disabled={
-                    sendBackMutation.isPending ||
-                    saveDraftMutation.isPending ||
-                    !canSendBack ||
-                    Boolean(parentThreadState?.isClosed) ||
-                    isSentToCounterparty ||
-                    requiresRecipientVerification
-                  }
-                >
-                  {sendBackMutation.isPending
-                    ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    : <Send className="w-4 h-4 mr-2" />}
-                  {getSharedReportSendActionLabel(draftDocumentOwner, {
-                    isSent: isSentToCounterparty,
-                    isPending: sendBackMutation.isPending,
-                  })}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setStep(2)}
-                  disabled={requiresRecipientVerification}
-                >
-                  Edit again
-                </Button>
-              </>
-            }
-            activeTab={recipientDetailTab}
-            onTabChange={setRecipientDetailTab}
-            hasReportBadge={hasStep3Report}
-            tabOrder={['details', 'report']}
-            detailsTabLabel="Opportunity"
-            aiReportProps={{
-              isEvaluationRunning: step3IsEvaluationRunning,
-              isPollingTimedOut: false,
-              isEvaluationNotConfigured: step3IsEvaluationNotConfigured,
-              showConfidentialityWarning: false,
-              confidentialityWarningMessage: '',
-              confidentialityWarningDetails: '',
-              isEvaluationFailed: step3IsEvaluationFailed,
-              evaluationFailureBannerMessage: step3EvaluationFailureMessage,
-              hasReport: hasStep3Report,
-              hasEvaluations: Boolean(latestEvaluation),
-              noReportMessage: sendDirectionCopy.noReportMessage,
-              report: updatedRecipientReport,
-              reviewStage: MEDIATION_REVIEW_STAGE,
-              recommendation: step3Recommendation,
-              timelineItems,
-            }}
-            proposalDetailsProps={{
-              description: sendDirectionCopy.proposalDetailsDescription,
-              leftLabel: CONFIDENTIAL_LABEL,
-              rightLabel: SHARED_LABEL,
-              leftText: step3Bundles.confidential.text,
-              leftHtml: step3Bundles.confidential.html,
-              rightText: step3Bundles.shared.text,
-              rightHtml: step3Bundles.shared.html,
-              leftBadges: [step3Bundles.confidential.source || 'typed'],
-              rightBadges: [step3Bundles.shared.source || 'typed'],
-            }}
-            onBack={() => setStep(2)}
-            backLabel="Back to Editor"
-          />
+          showStep3Results ? (
+            <ComparisonEvaluationStep
+              stepTitle={`Step 3: ${MEDIATION_REVIEW_LABEL}`}
+              stepDescription={sendDirectionCopy.step3Description}
+              actionSlot={
+                <>
+                  <Button
+                    type="button"
+                    onClick={sendToCounterparty}
+                    disabled={
+                      sendBackMutation.isPending ||
+                      saveDraftMutation.isPending ||
+                      !canSendBack ||
+                      Boolean(parentThreadState?.isClosed) ||
+                      isSentToCounterparty ||
+                      requiresRecipientVerification
+                    }
+                  >
+                    {sendBackMutation.isPending
+                      ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      : <Send className="w-4 h-4 mr-2" />}
+                    {getSharedReportSendActionLabel(draftDocumentOwner, {
+                      isSent: isSentToCounterparty,
+                      isPending: sendBackMutation.isPending,
+                    })}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => { setShowStep3Results(false); setStep(2); }}
+                    disabled={requiresRecipientVerification}
+                  >
+                    Edit again
+                  </Button>
+                </>
+              }
+              activeTab={recipientDetailTab}
+              onTabChange={setRecipientDetailTab}
+              hasReportBadge={hasStep3Report}
+              tabOrder={['details', 'report']}
+              detailsTabLabel="Opportunity"
+              aiReportProps={{
+                isEvaluationRunning: step3IsEvaluationRunning,
+                isPollingTimedOut: false,
+                isEvaluationNotConfigured: step3IsEvaluationNotConfigured,
+                showConfidentialityWarning: false,
+                confidentialityWarningMessage: '',
+                confidentialityWarningDetails: '',
+                isEvaluationFailed: step3IsEvaluationFailed,
+                evaluationFailureBannerMessage: step3EvaluationFailureMessage,
+                hasReport: hasStep3Report,
+                hasEvaluations: Boolean(latestEvaluation),
+                noReportMessage: sendDirectionCopy.noReportMessage,
+                report: updatedRecipientReport,
+                reviewStage: MEDIATION_REVIEW_STAGE,
+                recommendation: step3Recommendation,
+                timelineItems,
+              }}
+              proposalDetailsProps={{
+                description: sendDirectionCopy.proposalDetailsDescription,
+                leftLabel: CONFIDENTIAL_LABEL,
+                rightLabel: SHARED_LABEL,
+                leftText: step3Bundles.confidential.text,
+                leftHtml: step3Bundles.confidential.html,
+                rightText: step3Bundles.shared.text,
+                rightHtml: step3Bundles.shared.html,
+                leftBadges: [step3Bundles.confidential.source || 'typed'],
+                rightBadges: [step3Bundles.shared.source || 'typed'],
+              }}
+              onBack={() => { setShowStep3Results(false); setStep(2); }}
+              backLabel="Back to Editor"
+            />
+          ) : (
+            <Step3ReviewPackage
+              documents={allDisplayDocuments}
+              confidentialBundle={step3Bundles.confidential}
+              sharedBundle={step3Bundles.shared}
+              isFinishing={evaluateMutation.isPending}
+              finishStage={evaluateMutation.isPending ? 'evaluating' : 'idle'}
+              exceedsAnySizeLimit={false}
+              saveDraftPending={saveDraftMutation.isPending}
+              onBack={() => setStep(2)}
+              onRunEvaluation={runEvaluationFromReview}
+              runActionLabel={getRunOpportunityReviewLabel({
+                stage: MEDIATION_REVIEW_STAGE,
+                isPending: evaluateMutation.isPending,
+                hasExisting: Boolean(latestEvaluation),
+              })}
+            />
+          )
         ) : null}
       </ComparisonWorkflowShell>
     </div>
