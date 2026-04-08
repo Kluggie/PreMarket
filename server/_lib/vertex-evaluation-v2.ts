@@ -822,10 +822,10 @@ function compressWhySectionsForRequiredCoverage(sections: WhySection[], maxChars
         ].filter(Boolean);
         return selected.length > 0 ? selected : [paragraphs[0]];
       }
-      // For mediation summary, preserve up to 2 paragraphs so the multi-paragraph
+      // For mediation summary, preserve up to 3 paragraphs so the multi-paragraph
       // structure requested by the prompt survives compression
       if (section.key === 'mediation summary') {
-        return paragraphs.slice(0, 2);
+        return paragraphs.slice(0, 3);
       }
       // For recommended path / suggested next step, preserve up to 2 paragraphs
       if (section.key === 'recommended path' || section.key === 'suggested next step') {

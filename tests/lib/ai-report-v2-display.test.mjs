@@ -1011,6 +1011,121 @@ test('buildStoredV2Evaluation: confidence 0.625 stabilizes to 0.65', () => {
   assert.equal(stored.score, 65);
 });
 
+// ─── Progress: AI-authored sanitization ──────────────────────────────────────
+
+test('buildMediationReviewPresentation: AI-authored progress section has question marks stripped', () => {
+  const presentation = buildMediationReviewPresentation({
+    fit_level: 'medium',
+    confidence_0_1: 0.60,
+    why: [
+      'Mediation Summary: The parties have made progress on scope definition.',
+      'Progress Since Prior Review: Since the last round, the parties have narrowed the scope boundary dispute. The main remaining friction sits around What specific actions would trigger the change control process? and What are the precise deliverables for the discovery phase? These need to be resolved before commitment.',
+      'Decision Readiness: Decision status: Explore further.',
+    ],
+    missing: [],
+    redactions: [],
+    bilateral_round_number: 2,
+    prior_bilateral_round_id: 'prior-ai-q',
+    prior_bilateral_round_number: 1,
+    delta_summary: null,
+    resolved_since_last_round: [],
+    remaining_deltas: [],
+    new_open_issues: [],
+    movement_direction: 'converging',
+  });
+
+  const progressSection = presentation.presentation_sections.find((s) => s.key === 'progress_since_prior_review');
+  assert.ok(progressSection, 'Progress section must exist');
+  const allText = (progressSection.paragraphs || []).join(' ');
+  // AI-authored progress should have question marks stripped
+  assert.ok(
+    !/\?/.test(allText),
+    `AI-authored progress should have zero question marks, got: "${allText}"`,
+  );
+  // Core content should survive
+  assert.ok(
+    /scope boundary/i.test(allText),
+    'AI-authored content should be preserved after sanitization',
+  );
+});
+
+// ─── Progress: Metadata fallback produces natural prose ──────────────────────
+
+test('buildMediationReviewPresentation: metadata fallback does not use robotic template language', () => {
+  const presentation = buildMediationReviewPresentation({
+    fit_level: 'medium',
+    confidence_0_1: 0.55,
+    why: [
+      'Mediation Summary: Negotiations continue.',
+      'Decision Readiness: Decision status: Explore further.',
+    ],
+    missing: [],
+    redactions: [],
+    bilateral_round_number: 2,
+    prior_bilateral_round_id: 'prior-robot',
+    prior_bilateral_round_number: 1,
+    delta_summary: null,
+    resolved_since_last_round: [
+      'What specific actions, dependency failures, or requests would trigger the change control process and a priced variation?',
+      'What are the precise deliverables and exit criteria for the one-week discovery phase, including the process if agreement on rules is not reached in that timeframe?',
+    ],
+    remaining_deltas: [
+      'What are the specific deliverables, success criteria, and exit gates for the one-week discovery phase?',
+      'What is included in the initial committed scope or current phase, and what is explicitly out of scope?',
+    ],
+    new_open_issues: [
+      'How will the zero severity-1 failure for burst pipes be defined and measured?',
+    ],
+    movement_direction: 'converging',
+  });
+
+  const progressSection = presentation.presentation_sections.find((s) => s.key === 'progress_since_prior_review');
+  assert.ok(progressSection, 'Progress section must exist');
+  const allText = (progressSection.paragraphs || []).join(' ');
+
+  // Must not contain any question marks
+  assert.ok(
+    !/\?/.test(allText),
+    `Progress section must have zero question marks, got: "${allText}"`,
+  );
+  // Must not contain robotic template fragments
+  assert.ok(
+    !/resolved or narrowed/i.test(allText),
+    `Must not use "resolved or narrowed", got: "${allText}"`,
+  );
+  assert.ok(
+    !/the main remaining deltas/i.test(allText),
+    `Must not use "main remaining deltas", got: "${allText}"`,
+  );
+  assert.ok(
+    !/new issues have emerged around/i.test(allText),
+    `Must not use "new issues have emerged around", got: "${allText}"`,
+  );
+  // Should contain natural mediator prose
+  assert.ok(
+    /since the prior round/i.test(allText),
+    'Should use natural progress framing',
+  );
+  assert.ok(
+    /narrowed/i.test(allText),
+    'Should reference narrowing of discussion',
+  );
+  // Raw long questions must not appear
+  assert.ok(
+    !/What specific actions/i.test(allText),
+    'Raw question text must not appear',
+  );
+  assert.ok(
+    !/What are the precise deliverables/i.test(allText),
+    'Raw question text must not appear',
+  );
+  // Truncated topic phrases should be reasonable length (< 80 chars each)
+  assert.ok(
+    !/What is included in the initial committed scope/i.test(allText),
+    'Raw question text must not appear',
+  );
+});
+
 // ─── Progress: Interrogative-to-Declarative Conversion ───────────────────────
 
 test('buildMediationReviewPresentation: progress metadata fallback converts questions to declarative phrases', () => {
@@ -1054,15 +1169,15 @@ test('buildMediationReviewPresentation: progress metadata fallback converts ques
     /data migration/i.test(allText),
     'Declarative form of resolved item should appear',
   );
-  // Movement direction should be woven in, not a separate sentence
+  // Movement direction should be present
   assert.ok(
-    /converging/i.test(allText),
-    'Movement direction should be present',
+    /converging toward agreement/i.test(allText),
+    'Movement direction should be present in progress section',
   );
-  // Must not contain a standalone robotic direction sentence
+  // Must not contain robotic template language
   assert.ok(
-    !/\. The negotiation appears to be converging\.$/.test(allText.trim()),
-    'Movement direction should not be a tacked-on final sentence',
+    !/resolved or narrowed/i.test(allText),
+    'Should not use robotic template language',
   );
 });
 
@@ -1194,11 +1309,19 @@ test('buildMediationReviewPresentation: movement direction is woven into resolve
   const progressSection = presentation.presentation_sections.find((s) => s.key === 'progress_since_prior_review');
   assert.ok(progressSection, 'Progress section must exist');
   const paragraph = (progressSection.paragraphs || [])[0] || '';
-  // The diverging message should be in the same sentence as the resolved clause,
-  // not as a standalone final sentence
+  // Both the narrowing observation and diverging direction should be present
   assert.ok(
-    /resolved or narrowed.*further apart/i.test(paragraph),
-    `Movement direction should be woven into the primary clause, got: "${paragraph}"`,
+    /narrowed/i.test(paragraph),
+    `Progress should mention narrowing of resolved items, got: "${paragraph}"`,
+  );
+  assert.ok(
+    /further apart/i.test(paragraph),
+    `Diverging direction should be present, got: "${paragraph}"`,
+  );
+  // Must not contain robotic template language
+  assert.ok(
+    !/resolved or narrowed/i.test(paragraph),
+    'Should not use robotic "resolved or narrowed" template language',
   );
 });
 

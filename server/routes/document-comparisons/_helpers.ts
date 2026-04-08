@@ -149,30 +149,65 @@ function joinNatural(parts: string[]) {
 }
 
 /**
- * Convert a possibly-interrogative metadata item into a declarative noun phrase.
- * "What is the event retention policy?" → "event retention policy"
- * "Who owns the migration?" → "ownership of the migration"
- * "Timeline milestones" → "timeline milestones"  (passthrough)
+ * Extract a short topic phrase (max ~80 chars) from a metadata item that may be
+ * a full question, an imperative, or already a noun phrase.
+ *
+ * Examples:
+ *   "What specific actions would trigger the change control process?" → "change-control triggers"
+ *   "What are the precise deliverables and exit criteria for the one-week discovery phase?" → "discovery-phase deliverables and exit criteria"
+ *   "Who owns the migration?" → "ownership of the migration"
+ *   "Timeline milestones" → "timeline milestones"
  */
 function toDeclarativeProgressPhrase(value: string) {
   let text = normalizeText(value).replace(/[.?!]+$/g, '').trim();
   if (!text) return '';
+
+  // Strip leading question words / imperatives
   text = text
     .replace(/^What is included in /i, '')
     .replace(/^What is the agreed position on /i, '')
-    .replace(/^What (is|are) the /i, '')
+    .replace(/^What (specific |precise |exact |agreed |confirmed )?(actions?|steps?|measures?|processes?|mechanisms?|procedures?),?[^?]*(would|could|should|will|might|can)\b[^?]*/i,
+      (_, _adj, noun) => noun ? noun.toLowerCase() : '')
+    .replace(/^What (is|are) the (specific |precise |exact |agreed |confirmed )?/i, '')
     .replace(/^What (is|are) /i, '')
+    .replace(/^What (specific |precise |exact )?/i, '')
     .replace(/^Which /i, '')
-    .replace(/^How (will|should|does|do|would|can) /i, '')
+    .replace(/^How (will|should|does|do|would|can|is|are) /i, '')
     .replace(/^Who owns /i, 'ownership of ')
-    .replace(/^Who approves /i, 'approval for ')
+    .replace(/^Who approves /i, 'approval of ')
     .replace(/^Who is responsible for /i, 'responsibility for ')
-    .replace(/^(Is there|Are there) (an? |the )?(agreed |clear )?(position|plan|path|approach) (on|for|to|around) /i, '')
+    .replace(/^Who (will|should|would|does|can) /i, '')
+    .replace(/^(Is there|Are there) (an? |the )?(agreed |clear )?(position|plan|path|approach|process|mechanism) (on|for|to|around) /i, '')
     .replace(/^(Is there|Are there) /i, '')
-    .replace(/^(Have the parties|Has the|Will the|Can the) /i, '')
-    .replace(/^(Clarify|Confirm|Define|Tighten wording around|Tighten|Keep|Align)\s*:?\s*/i, '')
+    .replace(/^(Have the parties|Has the|Will the|Can the|Would the|Could the|Should the) /i, '')
+    .replace(/^(When will|When should|When does|When is|Where will|Where should|Where does|Where is) /i, '')
+    .replace(/^(Clarify|Confirm|Define|Specify|Determine|Establish|Tighten wording around|Tighten|Keep|Align)\s*:?\s*/i, '')
     .trim();
-  return text ? text.charAt(0).toLowerCase() + text.slice(1) : '';
+
+  if (!text) return '';
+
+  // Strip trailing passive-voice fragments ("is required", "are needed", etc.)
+  text = text.replace(/\s+(?:is|are|was|were|will be|should be|would be|has been|have been)\s+(?:required|needed|expected|included|excluded|planned|proposed|agreed|defined|approved|specified|determined|envisaged|anticipated|allocated|measured)\s*$/i, '');
+
+  // Lowercase first char
+  text = text.charAt(0).toLowerCase() + text.slice(1);
+
+  // Truncate: cut at natural break points if too long
+  if (text.length > 80) {
+    // Cut at subordinate clause boundaries
+    text = text
+      .replace(/,\s*(including|specifically|particularly|such as|and what|and how|and whether|and if|given that|noting that|in particular)\b.*$/i, '')
+      .replace(/\s*\u2014\s*.*$/, '')  // em-dash trailing clause
+      .replace(/\s*—\s*.*$/, '')
+      .trim();
+  }
+  // Final hard cap
+  if (text.length > 80) {
+    const cutPoint = text.lastIndexOf(' ', 75);
+    text = cutPoint > 20 ? text.slice(0, cutPoint) : text.slice(0, 75);
+  }
+
+  return text;
 }
 
 /**
@@ -822,7 +857,6 @@ export function buildMediationReviewPresentation(params: {
   // to metadata-assembled prose only when the AI did not produce a progress section.
   if (hasPriorBilateralRound) {
     // Check whether the AI authored a progress-related section in its why[] narrative.
-    // If so, use those paragraphs directly — they will read like mediator analysis.
     const progressEntry = whyEntries.find((entry) => {
       const k = entry.key;
       return (
@@ -837,8 +871,19 @@ export function buildMediationReviewPresentation(params: {
     let progressParagraphs: string[] = [];
 
     if (progressEntry && progressEntry.paragraphs.length > 0) {
-      // Use the AI's authored progress prose directly
-      progressParagraphs = uniqueText(progressEntry.paragraphs);
+      // Sanitize AI-authored progress: strip any raw question text that leaked through
+      progressParagraphs = uniqueText(progressEntry.paragraphs).map((p) => {
+        // Replace inline question-shaped fragments with declarative rewrites
+        let cleaned = p;
+        // Replace "What is/are..." mid-sentence question fragments
+        cleaned = cleaned.replace(/\b(What|Which|Who|How|Is there|Are there|Has the|Have the|Will the|Can the)\b[^.!?]*\?/g, (match) => {
+          const phrase = toDeclarativeProgressPhrase(match);
+          return phrase || match.replace(/\?/g, '');
+        });
+        // Remove any remaining stray question marks
+        cleaned = cleaned.replace(/\?/g, '');
+        return cleaned;
+      }).filter(Boolean);
       // Remove from main sections if it was already added there
       const progressIdx = sections.findIndex(
         (s) => s.key === progressEntry.key.replace(/\s+/g, '_'),
@@ -847,49 +892,50 @@ export function buildMediationReviewPresentation(params: {
         sections.splice(progressIdx, 1);
       }
     } else {
-      // Metadata-based fallback — assemble from structured sidecar fields.
-      // Convert interrogative items to declarative noun phrases so the output
-      // reads like mediator analysis rather than a question dump.
-      const resolvedPhrases = resolvedSinceLastRound.map(toDeclarativeProgressPhrase).filter(Boolean);
-      const remainingPhrases = remainingDeltas.map(toDeclarativeProgressPhrase).filter(Boolean);
-      const newIssuePhrases = newOpenIssues.map(toDeclarativeProgressPhrase).filter(Boolean);
-      const progressParts: string[] = [];
+      // Metadata-based fallback — build mediator prose from structured sidecar fields.
+      const resolvedTopics = resolvedSinceLastRound.map(toDeclarativeProgressPhrase).filter(Boolean);
+      const remainingTopics = remainingDeltas.map(toDeclarativeProgressPhrase).filter(Boolean);
+      const newIssueTopics = newOpenIssues.map(toDeclarativeProgressPhrase).filter(Boolean);
 
-      // Primary delta — what materially changed or narrowed
+      const directionPhrase = movementDirection === 'converging'
+        ? 'Overall, the positions appear to be converging toward agreement.'
+        : movementDirection === 'stalled'
+          ? 'However, progress on the remaining items appears to have stalled.'
+          : movementDirection === 'diverging'
+            ? 'However, the parties appear to be moving further apart on key points.'
+            : '';
+
       const usableSummary = progressSummary && isDeltaSummaryUsable(progressSummary) ? progressSummary : '';
+
+      // Build a single coherent paragraph rather than stitched template fragments.
+      const sentences: string[] = [];
+
       if (usableSummary) {
-        // Weave movement direction into the summary when available
-        if (movementDirection === 'converging') {
-          progressParts.push(`${usableSummary.replace(/\.\s*$/, '')}${/converging|closer|narrowed/i.test(usableSummary) ? '.' : ', and the negotiation appears to be converging.'}`);
-        } else if (movementDirection === 'stalled') {
-          progressParts.push(`${usableSummary.replace(/\.\s*$/, '')}${/stalled|stuck|plateau/i.test(usableSummary) ? '.' : ', though the remaining items appear to have stalled.'}`);
-        } else if (movementDirection === 'diverging') {
-          progressParts.push(`${usableSummary.replace(/\.\s*$/, '')}${/diverging|further apart|widened/i.test(usableSummary) ? '.' : ', and the parties appear to be moving further apart on key points.'}`);
-        } else {
-          progressParts.push(usableSummary);
-        }
-      } else if (resolvedPhrases.length > 0) {
-        // Build from resolved items
-        const resolvedClause = `Since the prior review, ${joinNatural(resolvedPhrases)} ${resolvedPhrases.length === 1 ? 'has' : 'have'} been resolved or narrowed`;
-        if (movementDirection === 'converging') {
-          progressParts.push(`${resolvedClause}, and the negotiation appears to be converging.`);
-        } else if (movementDirection === 'stalled') {
-          progressParts.push(`${resolvedClause}, though progress on the remaining items appears to have stalled.`);
-        } else if (movementDirection === 'diverging') {
-          progressParts.push(`${resolvedClause}, but the parties appear to be moving further apart on key points.`);
-        } else {
-          progressParts.push(`${resolvedClause}.`);
-        }
+        sentences.push(usableSummary.replace(/\.\s*$/, '.'));
+      } else if (resolvedTopics.length > 0) {
+        const topicList = resolvedTopics.slice(0, 2).join(' and ');
+        sentences.push(`Since the prior round, the discussion around ${topicList} appears to have narrowed.`);
       }
 
-      // Optional second sentence — what still remains, only if genuinely new
-      if (newIssuePhrases.length > 0 && progressParts.length > 0) {
-        progressParts.push(`New issues have emerged around ${joinNatural(newIssuePhrases)}.`);
-      } else if (remainingPhrases.length > 0 && progressParts.length > 0) {
-        progressParts.push(`The main remaining items are ${joinNatural(remainingPhrases.slice(0, 2))}.`);
+      if (remainingTopics.length > 0) {
+        const topicList = remainingTopics.slice(0, 2).join(' and ');
+        sentences.push(`The main outstanding points now centre on ${topicList}.`);
       }
 
-      progressParagraphs = uniqueText(progressParts);
+      if (newIssueTopics.length > 0) {
+        const topicList = newIssueTopics.slice(0, 2).join(' and ');
+        sentences.push(newIssueTopics.length === 1
+          ? `A new point has emerged around ${topicList}.`
+          : `New points have emerged around ${topicList}.`);
+      }
+
+      if (directionPhrase && sentences.length > 0) {
+        sentences.push(directionPhrase);
+      }
+
+      if (sentences.length > 0) {
+        progressParagraphs = [sentences.join(' ')];
+      }
     }
 
     if (progressParagraphs.length > 0) {
