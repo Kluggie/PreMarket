@@ -945,10 +945,12 @@ type CalibrationSignals = {
   shouldBeConditional: boolean;
   shouldBeLow: boolean;
   conditionallyViable: boolean;
+  structurallyViable: boolean;
   fixedPriceSignal: boolean;
   coverageCount: number;
   alignmentPoints: string[];
   hasCrediblePath: boolean;
+  hasStructuralCrediblePath: boolean;
   structuralViabilityScore: number;
   bodySuggestsViablePath: boolean;
 };
@@ -2879,6 +2881,12 @@ function buildCalibrationSignals(params: {
     (alignmentPoints.length >= 2 && sc.has_scope && (sc.has_timeline || sc.has_constraints)) ||
     (bodySuggestsViablePath && structuralViabilityScore >= 2);
 
+  // Structural-only credible path — excludes text-derived signals so that
+  // confidence bucket selection is deterministic across reruns on identical data.
+  const hasStructuralCrediblePath =
+    structuralViabilityScore >= 3 ||
+    (alignmentPoints.length >= 2 && sc.has_scope && (sc.has_timeline || sc.has_constraints));
+
   const highEligible =
     sc.has_scope &&
     sc.has_timeline &&
@@ -2926,6 +2934,18 @@ function buildCalibrationSignals(params: {
       bodySuggestsViablePath
     );
 
+  // Structural-only viability — used for deterministic confidence bucket selection.
+  // Excludes bodySuggestsViablePath so the bucket does not shift across reruns
+  // when the model rephrases the same conclusion differently.
+  const structurallyViable =
+    shouldBeConditional &&
+    !shouldBeLow &&
+    hasStructuralCrediblePath &&
+    (
+      alignmentPoints.length >= 2 ||
+      structuralViabilityScore >= 3
+    );
+
   return {
     domain,
     rules,
@@ -2939,10 +2959,12 @@ function buildCalibrationSignals(params: {
     shouldBeConditional,
     shouldBeLow,
     conditionallyViable,
+    structurallyViable,
     fixedPriceSignal,
     coverageCount,
     alignmentPoints,
     hasCrediblePath,
+    hasStructuralCrediblePath,
     structuralViabilityScore,
     bodySuggestsViablePath,
   } as CalibrationSignals;
@@ -3139,24 +3161,25 @@ function capConfidenceToSignals(params: {
   let confidence_0_1 = params.confidence_0_1;
   const capsApplied: string[] = [];
 
-  if (params.signals.shouldBeLow && !params.signals.hasCrediblePath) {
+  if (params.signals.shouldBeLow && !params.signals.hasStructuralCrediblePath) {
     // Severe uncertainty: map into 0.20–0.45 range
     confidence_0_1 = mapConfidenceIntoRange(confidence_0_1, 0.20, 0.45);
     capsApplied.push('cap_0.45_severe_uncertainty');
   } else if (params.signals.shouldBeConditional) {
-    // Conditional: map into signal-aware range that preserves variation.
-    // Wider ranges than before to avoid clustering around 0.58–0.62.
+    // Conditional: use STRUCTURAL signals only for bucket selection so that
+    // identical fact-sheet inputs always select the same range regardless of
+    // how the model phrases its narrative on a given run.
     const viability = params.signals.structuralViabilityScore;
     const alignment = params.signals.alignmentPoints.length;
     const coverage = params.signals.coverageCount;
 
     let floor: number;
     let ceiling: number;
-    if (params.signals.conditionallyViable && viability >= 4 && alignment >= 3) {
+    if (params.signals.structurallyViable && viability >= 4 && alignment >= 3) {
       floor = 0.55; ceiling = 0.78;
-    } else if (params.signals.conditionallyViable && viability >= 3) {
+    } else if (params.signals.structurallyViable && viability >= 3) {
       floor = 0.48; ceiling = 0.72;
-    } else if (params.signals.bodySuggestsViablePath && alignment >= 2) {
+    } else if (params.signals.hasStructuralCrediblePath && alignment >= 2) {
       floor = 0.42; ceiling = 0.66;
     } else if (coverage >= 3 && alignment >= 1) {
       floor = 0.38; ceiling = 0.60;
@@ -3168,14 +3191,8 @@ function capConfidenceToSignals(params: {
     capsApplied.push('calibrate_conditional');
   }
 
-  if (params.signals.hasConditionalLanguage && !params.signals.conditionallyViable) {
-    if (confidence_0_1 > 0.64) {
-      confidence_0_1 = 0.64;
-      capsApplied.push('cap_0.64_conditional_language');
-    }
-  }
-
-  if (confidence_0_1 > 0.85 && (params.signals.shouldBeConditional || params.signals.hasConditionalLanguage)) {
+  // Hard cap for contradiction: very high raw confidence with conditional structural signals
+  if (confidence_0_1 > 0.85 && params.signals.shouldBeConditional) {
     confidence_0_1 = mapConfidenceIntoRange(confidence_0_1, 0.42, 0.58);
     capsApplied.push('cap_contradiction_confidence');
   }

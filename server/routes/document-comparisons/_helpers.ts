@@ -148,6 +148,46 @@ function joinNatural(parts: string[]) {
   return `${values.slice(0, -1).join(', ')}, and ${values[values.length - 1]}`;
 }
 
+/**
+ * Convert a possibly-interrogative metadata item into a declarative noun phrase.
+ * "What is the event retention policy?" → "event retention policy"
+ * "Who owns the migration?" → "ownership of the migration"
+ * "Timeline milestones" → "timeline milestones"  (passthrough)
+ */
+function toDeclarativeProgressPhrase(value: string) {
+  let text = normalizeText(value).replace(/[.?!]+$/g, '').trim();
+  if (!text) return '';
+  text = text
+    .replace(/^What is included in /i, '')
+    .replace(/^What is the agreed position on /i, '')
+    .replace(/^What (is|are) the /i, '')
+    .replace(/^What (is|are) /i, '')
+    .replace(/^Which /i, '')
+    .replace(/^How (will|should|does|do|would|can) /i, '')
+    .replace(/^Who owns /i, 'ownership of ')
+    .replace(/^Who approves /i, 'approval for ')
+    .replace(/^Who is responsible for /i, 'responsibility for ')
+    .replace(/^(Is there|Are there) (an? |the )?(agreed |clear )?(position|plan|path|approach) (on|for|to|around) /i, '')
+    .replace(/^(Is there|Are there) /i, '')
+    .replace(/^(Have the parties|Has the|Will the|Can the) /i, '')
+    .replace(/^(Clarify|Confirm|Define|Tighten wording around|Tighten|Keep|Align)\s*:?\s*/i, '')
+    .trim();
+  return text ? text.charAt(0).toLowerCase() + text.slice(1) : '';
+}
+
+/**
+ * Check whether a delta_summary string is too weak / question-shaped / fragmentary
+ * to be rendered as mediator prose.
+ */
+function isDeltaSummaryUsable(text: string) {
+  if (!text || text.length < 30) return false;
+  // Reject pure questions
+  if (/\?$/.test(text.trim())) return false;
+  // Reject text that starts with a Q-word and reads like a question
+  if (/^(What|Which|Who|Where|When|Why|How|Is there|Are there|Has the|Have the)\b/i.test(text.trim()) && text.trim().length < 80) return false;
+  return true;
+}
+
 function normalizeDealbreakerBasis(value: unknown): ReportDealbreakerBasis {
   const normalized = normalizeHeadingKey(value);
   if (normalized === 'stated') return 'stated';
@@ -330,6 +370,16 @@ function clampConfidence01(value: unknown) {
     return 0;
   }
   return Math.max(0, Math.min(1, numeric));
+}
+
+/**
+ * Stabilize confidence for display by rounding to the nearest 0.05 (5% increments).
+ * This prevents minor model-sampling variance from producing visibly different
+ * percentages (e.g. 49% vs 52%) on identical underlying data.
+ */
+function stabilizeConfidence(value: number) {
+  const clamped = Math.max(0, Math.min(1, value));
+  return Math.round(clamped * 20) / 20;
 }
 
 function stripMissingWhyMatters(value: string) {
@@ -797,37 +847,46 @@ export function buildMediationReviewPresentation(params: {
         sections.splice(progressIdx, 1);
       }
     } else {
-      // Metadata-based fallback — assemble from structured sidecar fields
+      // Metadata-based fallback — assemble from structured sidecar fields.
+      // Convert interrogative items to declarative noun phrases so the output
+      // reads like mediator analysis rather than a question dump.
+      const resolvedPhrases = resolvedSinceLastRound.map(toDeclarativeProgressPhrase).filter(Boolean);
+      const remainingPhrases = remainingDeltas.map(toDeclarativeProgressPhrase).filter(Boolean);
+      const newIssuePhrases = newOpenIssues.map(toDeclarativeProgressPhrase).filter(Boolean);
       const progressParts: string[] = [];
 
       // Primary delta — what materially changed or narrowed
-      if (progressSummary) {
-        progressParts.push(progressSummary);
-      } else if (resolvedSinceLastRound.length > 0) {
-        progressParts.push(`Since the prior review, ${joinNatural(resolvedSinceLastRound)} ${resolvedSinceLastRound.length === 1 ? 'has' : 'have'} been resolved or narrowed.`);
+      const usableSummary = progressSummary && isDeltaSummaryUsable(progressSummary) ? progressSummary : '';
+      if (usableSummary) {
+        // Weave movement direction into the summary when available
+        if (movementDirection === 'converging') {
+          progressParts.push(`${usableSummary.replace(/\.\s*$/, '')}${/converging|closer|narrowed/i.test(usableSummary) ? '.' : ', and the negotiation appears to be converging.'}`);
+        } else if (movementDirection === 'stalled') {
+          progressParts.push(`${usableSummary.replace(/\.\s*$/, '')}${/stalled|stuck|plateau/i.test(usableSummary) ? '.' : ', though the remaining items appear to have stalled.'}`);
+        } else if (movementDirection === 'diverging') {
+          progressParts.push(`${usableSummary.replace(/\.\s*$/, '')}${/diverging|further apart|widened/i.test(usableSummary) ? '.' : ', and the parties appear to be moving further apart on key points.'}`);
+        } else {
+          progressParts.push(usableSummary);
+        }
+      } else if (resolvedPhrases.length > 0) {
+        // Build from resolved items
+        const resolvedClause = `Since the prior review, ${joinNatural(resolvedPhrases)} ${resolvedPhrases.length === 1 ? 'has' : 'have'} been resolved or narrowed`;
+        if (movementDirection === 'converging') {
+          progressParts.push(`${resolvedClause}, and the negotiation appears to be converging.`);
+        } else if (movementDirection === 'stalled') {
+          progressParts.push(`${resolvedClause}, though progress on the remaining items appears to have stalled.`);
+        } else if (movementDirection === 'diverging') {
+          progressParts.push(`${resolvedClause}, but the parties appear to be moving further apart on key points.`);
+        } else {
+          progressParts.push(`${resolvedClause}.`);
+        }
       }
 
       // Optional second sentence — what still remains, only if genuinely new
-      const unresolvedNote = newOpenIssues.length > 0
-        ? `New issues have emerged around ${joinNatural(newOpenIssues)}.`
-        : remainingDeltas.length > 0
-          ? `The main remaining items are ${joinNatural(remainingDeltas.slice(0, 2))}.`
-          : '';
-      if (unresolvedNote && progressParts.length > 0) {
-        progressParts.push(unresolvedNote);
-      }
-
-      // Movement direction sentence if available and not already covered
-      if (movementDirection && progressParts.length > 0) {
-        const directionLabels: Record<string, string> = {
-          converging: 'The negotiation appears to be converging.',
-          stalled: 'The negotiation appears to have stalled on the remaining items.',
-          diverging: 'The parties appear to be moving further apart on key points.',
-        };
-        const directionNote = directionLabels[movementDirection];
-        if (directionNote) {
-          progressParts.push(directionNote);
-        }
+      if (newIssuePhrases.length > 0 && progressParts.length > 0) {
+        progressParts.push(`New issues have emerged around ${joinNatural(newIssuePhrases)}.`);
+      } else if (remainingPhrases.length > 0 && progressParts.length > 0) {
+        progressParts.push(`The main remaining items are ${joinNatural(remainingPhrases.slice(0, 2))}.`);
       }
 
       progressParagraphs = uniqueText(progressParts);
@@ -1635,12 +1694,14 @@ export function buildStoredV2Evaluation(
     presentation_sections: presentation.presentation_sections,
   };
 
+  const stableConfidence = stabilizeConfidence(confidence);
+
   return {
     provider: 'vertex',
     model: providerModel,
     generatedAt,
-    score: Math.round(confidence * 100),
-    confidence,
+    score: Math.round(stableConfidence * 100),
+    confidence: stableConfidence,
     recommendation,
     summary: presentation.primary_insight || why[0] || 'AI mediation review complete',
     report,

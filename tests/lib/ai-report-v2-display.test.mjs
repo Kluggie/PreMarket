@@ -954,6 +954,254 @@ test('buildMediationReviewPresentation: progress section falls back to metadata 
   );
 });
 
+// ─── Confidence Stabilization ────────────────────────────────────────────────
+
+test('buildStoredV2Evaluation: confidence is stabilized to 5% increments', () => {
+  const stored = buildStoredV2Evaluation({
+    generation_model: 'gemini-test',
+    model: 'gemini-test',
+    data: {
+      analysis_stage: 'mediation_review',
+      fit_level: 'medium',
+      confidence_0_1: 0.617,
+      why: ['Mediation Summary: The proposal is broadly aligned but pricing remains open.'],
+      missing: ['What is the pricing structure?'],
+      redactions: [],
+    },
+  });
+  // 0.617 should round to 0.60 (nearest 0.05)
+  assert.equal(stored.confidence, 0.60, 'confidence should be rounded to nearest 0.05');
+  assert.equal(stored.score, 60, 'score should reflect stabilized confidence');
+});
+
+test('buildStoredV2Evaluation: confidence 0.49 and 0.51 both stabilize to 0.50', () => {
+  const build = (conf) => buildStoredV2Evaluation({
+    generation_model: 'gemini-test',
+    model: 'gemini-test',
+    data: {
+      analysis_stage: 'mediation_review',
+      fit_level: 'medium',
+      confidence_0_1: conf,
+      why: ['Mediation Summary: Placeholder.'],
+      missing: [],
+      redactions: [],
+    },
+  });
+  assert.equal(build(0.49).confidence, 0.50, '0.49 stabilizes to 0.50');
+  assert.equal(build(0.51).confidence, 0.50, '0.51 stabilizes to 0.50');
+  assert.equal(build(0.49).score, 50, 'score from 0.49');
+  assert.equal(build(0.51).score, 50, 'score from 0.51');
+});
+
+test('buildStoredV2Evaluation: confidence 0.625 stabilizes to 0.65', () => {
+  const stored = buildStoredV2Evaluation({
+    generation_model: 'gemini-test',
+    model: 'gemini-test',
+    data: {
+      analysis_stage: 'mediation_review',
+      fit_level: 'medium',
+      confidence_0_1: 0.625,
+      why: ['Mediation Summary: Balanced proposal with a few gaps.'],
+      missing: [],
+      redactions: [],
+    },
+  });
+  // 0.625 is exactly midpoint between 0.60 and 0.65 — Math.round(0.625*20)/20 = Math.round(12.5)/20 = 13/20 = 0.65
+  assert.equal(stored.confidence, 0.65, '0.625 stabilizes to 0.65');
+  assert.equal(stored.score, 65);
+});
+
+// ─── Progress: Interrogative-to-Declarative Conversion ───────────────────────
+
+test('buildMediationReviewPresentation: progress metadata fallback converts questions to declarative phrases', () => {
+  const presentation = buildMediationReviewPresentation({
+    fit_level: 'medium',
+    confidence_0_1: 0.60,
+    why: [
+      'Mediation Summary: The parties are still negotiating the core terms.',
+      'Decision Readiness: Decision status: Explore further. Key terms remain open.',
+    ],
+    missing: ['What is the pricing model?'],
+    redactions: [],
+    bilateral_round_number: 2,
+    prior_bilateral_round_id: 'prior-789',
+    prior_bilateral_round_number: 1,
+    delta_summary: null,
+    resolved_since_last_round: ['What is the event retention policy?', 'Who owns the data migration?'],
+    remaining_deltas: ['What are the pricing terms?'],
+    new_open_issues: [],
+    movement_direction: 'converging',
+  });
+
+  const progressSection = presentation.presentation_sections.find((s) => s.key === 'progress_since_prior_review');
+  assert.ok(progressSection, 'Progress section must exist');
+  const allText = (progressSection.paragraphs || []).join(' ');
+  // Must not contain raw question marks from the metadata items
+  assert.ok(
+    !allText.includes('What is the event retention policy?'),
+    'Raw interrogative should not appear in progress section',
+  );
+  assert.ok(
+    !allText.includes('Who owns the data migration?'),
+    'Raw interrogative should not appear in progress section',
+  );
+  // Should contain declarative-converted versions
+  assert.ok(
+    /event retention policy/i.test(allText),
+    'Declarative form of resolved item should appear',
+  );
+  assert.ok(
+    /data migration/i.test(allText),
+    'Declarative form of resolved item should appear',
+  );
+  // Movement direction should be woven in, not a separate sentence
+  assert.ok(
+    /converging/i.test(allText),
+    'Movement direction should be present',
+  );
+  // Must not contain a standalone robotic direction sentence
+  assert.ok(
+    !/\. The negotiation appears to be converging\.$/.test(allText.trim()),
+    'Movement direction should not be a tacked-on final sentence',
+  );
+});
+
+test('buildMediationReviewPresentation: progress metadata fallback with new open issues also converts questions', () => {
+  const presentation = buildMediationReviewPresentation({
+    fit_level: 'medium',
+    confidence_0_1: 0.55,
+    why: [
+      'Mediation Summary: Commercial terms are still fluid.',
+      'Decision Readiness: Decision status: Explore further.',
+    ],
+    missing: [],
+    redactions: [],
+    bilateral_round_number: 3,
+    prior_bilateral_round_id: 'prior-abc',
+    prior_bilateral_round_number: 2,
+    delta_summary: null,
+    resolved_since_last_round: ['Timeline milestones'],
+    remaining_deltas: [],
+    new_open_issues: ['What approval process is required?', 'Is there an agreed data governance framework?'],
+    movement_direction: 'stalled',
+  });
+
+  const progressSection = presentation.presentation_sections.find((s) => s.key === 'progress_since_prior_review');
+  assert.ok(progressSection, 'Progress section must exist');
+  const allText = (progressSection.paragraphs || []).join(' ');
+  // No question marks from new open issues
+  assert.ok(
+    !/\?/.test(allText),
+    `Progress section should contain zero question marks, got: "${allText}"`,
+  );
+  // Should reference stalled direction
+  assert.ok(
+    /stalled/i.test(allText),
+    'Progress section should reference stalled direction',
+  );
+});
+
+// ─── Progress: delta_summary Quality Gate ────────────────────────────────────
+
+test('buildMediationReviewPresentation: drops questionable delta_summary and falls back to resolved items', () => {
+  const presentation = buildMediationReviewPresentation({
+    fit_level: 'medium',
+    confidence_0_1: 0.58,
+    why: [
+      'Mediation Summary: The terms are being reworked after the prior exchange.',
+      'Decision Readiness: Decision status: Explore further.',
+    ],
+    missing: [],
+    redactions: [],
+    bilateral_round_number: 2,
+    prior_bilateral_round_id: 'prior-delta',
+    prior_bilateral_round_number: 1,
+    delta_summary: 'What changed?',
+    resolved_since_last_round: ['Scope boundary', 'Payment milestones'],
+    remaining_deltas: [],
+    new_open_issues: [],
+    movement_direction: 'converging',
+  });
+
+  const progressSection = presentation.presentation_sections.find((s) => s.key === 'progress_since_prior_review');
+  assert.ok(progressSection, 'Progress section must exist');
+  const allText = (progressSection.paragraphs || []).join(' ');
+  assert.ok(
+    !/What changed\?/i.test(allText),
+    'Questionable delta_summary should be dropped',
+  );
+  assert.ok(
+    /scope boundary/i.test(allText),
+    'Should fall back to resolved items when delta_summary fails quality gate',
+  );
+});
+
+test('buildMediationReviewPresentation: drops too-short delta_summary', () => {
+  const presentation = buildMediationReviewPresentation({
+    fit_level: 'medium',
+    confidence_0_1: 0.55,
+    why: [
+      'Mediation Summary: Active negotiation in progress.',
+      'Decision Readiness: Decision status: Explore further.',
+    ],
+    missing: [],
+    redactions: [],
+    bilateral_round_number: 2,
+    prior_bilateral_round_id: 'prior-short',
+    prior_bilateral_round_number: 1,
+    delta_summary: 'Minor changes.',
+    resolved_since_last_round: ['Integration dependencies'],
+    remaining_deltas: [],
+    new_open_issues: [],
+    movement_direction: null,
+  });
+
+  const progressSection = presentation.presentation_sections.find((s) => s.key === 'progress_since_prior_review');
+  assert.ok(progressSection, 'Progress section must exist');
+  const allText = (progressSection.paragraphs || []).join(' ');
+  assert.ok(
+    !/Minor changes\./i.test(allText),
+    'Short delta_summary should be dropped',
+  );
+  assert.ok(
+    /integration dependencies/i.test(allText),
+    'Should fall back to resolved items when delta_summary is too short',
+  );
+});
+
+// ─── Progress: Movement Direction Integration ────────────────────────────────
+
+test('buildMediationReviewPresentation: movement direction is woven into resolved clause, not appended', () => {
+  const presentation = buildMediationReviewPresentation({
+    fit_level: 'medium',
+    confidence_0_1: 0.62,
+    why: [
+      'Mediation Summary: Both sides are narrowing differences.',
+      'Decision Readiness: Decision status: Proceed with conditions.',
+    ],
+    missing: [],
+    redactions: [],
+    bilateral_round_number: 2,
+    prior_bilateral_round_id: 'prior-woven',
+    prior_bilateral_round_number: 1,
+    delta_summary: null,
+    resolved_since_last_round: ['Pricing structure'],
+    remaining_deltas: ['Acceptance criteria'],
+    new_open_issues: [],
+    movement_direction: 'diverging',
+  });
+
+  const progressSection = presentation.presentation_sections.find((s) => s.key === 'progress_since_prior_review');
+  assert.ok(progressSection, 'Progress section must exist');
+  const paragraph = (progressSection.paragraphs || [])[0] || '';
+  // The diverging message should be in the same sentence as the resolved clause,
+  // not as a standalone final sentence
+  assert.ok(
+    /resolved or narrowed.*further apart/i.test(paragraph),
+    `Movement direction should be woven into the primary clause, got: "${paragraph}"`,
+  );
+});
+
 test('getAppendixOpenQuestions: omits missing items already rendered in dynamic presentation sections', () => {
   const report = {
     missing: [
@@ -1018,7 +1266,7 @@ test('buildStoredV2Evaluation: preserves substantive evaluation fields while add
   const stored = buildStoredV2Evaluation(v2Result);
 
   assert.equal(stored.recommendation, 'Medium');
-  assert.equal(stored.confidence, 0.64);
+  assert.equal(stored.confidence, 0.65, 'confidence 0.64 stabilizes to 0.65');
   assert.equal(stored.report.fit_level, 'medium');
   assert.deepEqual(stored.report.why, [
     'Executive Summary: The scope is commercially workable.',
