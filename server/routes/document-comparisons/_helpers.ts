@@ -842,10 +842,45 @@ export function buildMediationReviewPresentation(params: {
 
     // Regular AI section — pass through with its own heading
     const displayHeading = canonicalDisplayHeading(entry.heading);
+    let sectionParagraphs = uniqueText(entry.paragraphs);
+
+    // Mediation Summary: ensure readable paragraph structure.
+    // If the first paragraph is very long (>4 sentences), split it at a natural
+    // boundary so the rendered report doesn't present one giant wall of text.
+    if (entry.key === 'mediation summary' && sectionParagraphs.length > 0) {
+      const first = sectionParagraphs[0];
+      // Count sentences (rough: split on ". " that follows a lowercase/digit word char)
+      const sentenceBreaks = first.match(/[.!]\s+(?=[A-Z])/g);
+      const sentenceCount = sentenceBreaks ? sentenceBreaks.length + 1 : 1;
+      if (sentenceCount > 3 && first.length > 300) {
+        // Find the sentence boundary closest to the midpoint
+        const mid = Math.floor(first.length / 2);
+        const breakPattern = /[.!]\s+(?=[A-Z])/g;
+        let best = -1;
+        let bestDist = Infinity;
+        let m: RegExpExecArray | null;
+        while ((m = breakPattern.exec(first)) !== null) {
+          const pos = m.index + m[0].trimEnd().length;
+          const dist = Math.abs(pos - mid);
+          if (dist < bestDist) {
+            bestDist = dist;
+            best = pos;
+          }
+        }
+        if (best > 80 && best < first.length - 80) {
+          const p1 = first.slice(0, best).trim();
+          const p2 = first.slice(best).trim();
+          if (p1 && p2) {
+            sectionParagraphs = [p1, p2, ...sectionParagraphs.slice(1)];
+          }
+        }
+      }
+    }
+
     const section = createPresentationSection({
       key: entry.key.replace(/\s+/g, '_'),
       heading: displayHeading,
-      paragraphs: uniqueText(entry.paragraphs),
+      paragraphs: sectionParagraphs,
     });
     if (section) {
       sections.push(section);
@@ -870,20 +905,23 @@ export function buildMediationReviewPresentation(params: {
 
     let progressParagraphs: string[] = [];
 
-    if (progressEntry && progressEntry.paragraphs.length > 0) {
-      // Sanitize AI-authored progress: strip any raw question text that leaked through
-      progressParagraphs = uniqueText(progressEntry.paragraphs).map((p) => {
-        // Replace inline question-shaped fragments with declarative rewrites
-        let cleaned = p;
-        // Replace "What is/are..." mid-sentence question fragments
-        cleaned = cleaned.replace(/\b(What|Which|Who|How|Is there|Are there|Has the|Have the|Will the|Can the)\b[^.!?]*\?/g, (match) => {
-          const phrase = toDeclarativeProgressPhrase(match);
-          return phrase || match.replace(/\?/g, '');
-        });
-        // Remove any remaining stray question marks
-        cleaned = cleaned.replace(/\?/g, '');
-        return cleaned;
-      }).filter(Boolean);
+    // Quality-gate: only use AI-authored progress if it reads like clean mediator prose.
+    // Reject it when the AI embeds raw question text or template-skeleton language.
+    const aiProgressIsUsable = (() => {
+      if (!progressEntry || progressEntry.paragraphs.length === 0) return false;
+      const combined = progressEntry.paragraphs.join(' ');
+      // Reject if it contains question marks (raw questions leaked through)
+      if (/\?/.test(combined)) return false;
+      // Reject if it contains template-skeleton phrases from the metadata sidecar
+      if (/appears?\s+narrower\s+or\s+resolved/i.test(combined)) return false;
+      if (/remaining\s+deltas?\s+now\s+cent(er|re)\s+on/i.test(combined)) return false;
+      if (/main\s+remaining\s+deltas/i.test(combined)) return false;
+      return true;
+    })();
+
+    if (aiProgressIsUsable && progressEntry) {
+      // AI prose passed the quality gate — use it directly
+      progressParagraphs = uniqueText(progressEntry.paragraphs);
       // Remove from main sections if it was already added there
       const progressIdx = sections.findIndex(
         (s) => s.key === progressEntry.key.replace(/\s+/g, '_'),
@@ -892,6 +930,16 @@ export function buildMediationReviewPresentation(params: {
         sections.splice(progressIdx, 1);
       }
     } else {
+      // Remove the rejected AI progress entry from main sections if present
+      if (progressEntry) {
+        const progressIdx = sections.findIndex(
+          (s) => s.key === progressEntry.key.replace(/\s+/g, '_'),
+        );
+        if (progressIdx > 0) {
+          sections.splice(progressIdx, 1);
+        }
+      }
+
       // Metadata-based fallback — build mediator prose from structured sidecar fields.
       const resolvedTopics = resolvedSinceLastRound.map(toDeclarativeProgressPhrase).filter(Boolean);
       const remainingTopics = remainingDeltas.map(toDeclarativeProgressPhrase).filter(Boolean);

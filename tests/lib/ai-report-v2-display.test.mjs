@@ -1011,15 +1011,15 @@ test('buildStoredV2Evaluation: confidence 0.625 stabilizes to 0.65', () => {
   assert.equal(stored.score, 65);
 });
 
-// ─── Progress: AI-authored sanitization ──────────────────────────────────────
+// ─── Progress: AI-authored quality gate ──────────────────────────────────────
 
-test('buildMediationReviewPresentation: AI-authored progress section has question marks stripped', () => {
+test('buildMediationReviewPresentation: rejects AI progress with raw questions, falls back to metadata', () => {
   const presentation = buildMediationReviewPresentation({
     fit_level: 'medium',
     confidence_0_1: 0.60,
     why: [
       'Mediation Summary: The parties have made progress on scope definition.',
-      'Progress Since Prior Review: Since the last round, the parties have narrowed the scope boundary dispute. The main remaining friction sits around What specific actions would trigger the change control process? and What are the precise deliverables for the discovery phase? These need to be resolved before commitment.',
+      'Progress Since Prior Review: Since the last round, What specific actions would trigger the change control process? and What are the precise deliverables for the discovery phase? appear narrower. These need to be resolved before commitment.',
       'Decision Readiness: Decision status: Explore further.',
     ],
     missing: [],
@@ -1028,8 +1028,8 @@ test('buildMediationReviewPresentation: AI-authored progress section has questio
     prior_bilateral_round_id: 'prior-ai-q',
     prior_bilateral_round_number: 1,
     delta_summary: null,
-    resolved_since_last_round: [],
-    remaining_deltas: [],
+    resolved_since_last_round: ['Change-control triggers', 'Discovery-phase deliverables'],
+    remaining_deltas: ['Acceptance criteria'],
     new_open_issues: [],
     movement_direction: 'converging',
   });
@@ -1037,15 +1037,54 @@ test('buildMediationReviewPresentation: AI-authored progress section has questio
   const progressSection = presentation.presentation_sections.find((s) => s.key === 'progress_since_prior_review');
   assert.ok(progressSection, 'Progress section must exist');
   const allText = (progressSection.paragraphs || []).join(' ');
-  // AI-authored progress should have question marks stripped
+  // Should NOT contain the raw AI progress text (it had ? marks, failed quality gate)
   assert.ok(
     !/\?/.test(allText),
-    `AI-authored progress should have zero question marks, got: "${allText}"`,
+    `Progress should have zero question marks, got: "${allText}"`,
   );
-  // Core content should survive
   assert.ok(
-    /scope boundary/i.test(allText),
-    'AI-authored content should be preserved after sanitization',
+    !/What specific actions/i.test(allText),
+    'Raw AI question text should not appear',
+  );
+  // Should use metadata fallback instead — check for metadata-derived content
+  assert.ok(
+    /change-control/i.test(allText) || /discovery/i.test(allText),
+    `Metadata fallback should provide content, got: "${allText}"`,
+  );
+  assert.ok(
+    /converging/i.test(allText),
+    'Movement direction should be present from metadata fallback',
+  );
+});
+
+test('buildMediationReviewPresentation: accepts clean AI-authored progress prose', () => {
+  const presentation = buildMediationReviewPresentation({
+    fit_level: 'medium',
+    confidence_0_1: 0.62,
+    why: [
+      'Mediation Summary: The parties remain aligned on scope.',
+      'Progress Since Prior Review: Since the last round, the parties have narrowed the scope boundary dispute and agreed on the phased delivery model. The main remaining friction has shifted from scope definition to pricing.',
+      'Decision Readiness: Decision status: Proceed with conditions.',
+    ],
+    missing: [],
+    redactions: [],
+    bilateral_round_number: 2,
+    prior_bilateral_round_id: 'prior-clean',
+    prior_bilateral_round_number: 1,
+    delta_summary: 'Scope narrowed; pricing still open.',
+    resolved_since_last_round: ['Scope boundary'],
+    remaining_deltas: ['Pricing'],
+    new_open_issues: [],
+    movement_direction: 'converging',
+  });
+
+  const progressSection = presentation.presentation_sections.find((s) => s.key === 'progress_since_prior_review');
+  assert.ok(progressSection, 'Progress section must exist');
+  const allText = (progressSection.paragraphs || []).join(' ');
+  // Clean AI progress should be used directly
+  assert.ok(
+    /narrowed the scope boundary/i.test(allText),
+    'Clean AI-authored progress should be used when it passes quality gate',
   );
 });
 
@@ -1322,6 +1361,96 @@ test('buildMediationReviewPresentation: movement direction is woven into resolve
   assert.ok(
     !/resolved or narrowed/i.test(paragraph),
     'Should not use robotic "resolved or narrowed" template language',
+  );
+});
+
+// ─── Progress: AI-authored quality gate with exact user-reported input ────────
+
+test('buildMediationReviewPresentation: rejects AI progress that embeds raw questions in template skeleton', () => {
+  // This is the exact scenario from production: the AI writes a Progress section
+  // that contains full raw question text embedded in template-like language.
+  const presentation = buildMediationReviewPresentation({
+    fit_level: 'medium',
+    confidence_0_1: 0.65,
+    why: [
+      'Mediation Summary: The parties are aligned on the strategic goal of testing an AI-driven call triage system.',
+      'Progress Since Prior Review: Since the prior bilateral round, What is the agreed process if the triage rules and KPI definitions cannot be finalized within the one-week discovery? and How will the zero severity-1 failure for burst pipes be defined and measured, and what is the contingency plan if a failure occurs? appears narrower or resolved, while the main remaining deltas now center on What are the specific deliverables, sign-off criteria, and exit gates for the one-week discovery phase? and What specific actions would trigger the change control process and a priced variation?',
+      'Decision Readiness: Decision status: Proceed with conditions.',
+    ],
+    missing: [],
+    redactions: [],
+    bilateral_round_number: 3,
+    prior_bilateral_round_id: 'prior-exact',
+    prior_bilateral_round_number: 2,
+    delta_summary: null,
+    resolved_since_last_round: [
+      'What is the agreed process if the triage rules and KPI definitions cannot be finalized within the one-week discovery?',
+      'How will the zero severity-1 failure for burst pipes be defined and measured?',
+    ],
+    remaining_deltas: [
+      'What are the specific deliverables, sign-off criteria, and exit gates for the one-week discovery phase?',
+      'What specific actions, dependency failures, or requests would trigger the change control process?',
+    ],
+    new_open_issues: [],
+    movement_direction: 'converging',
+  });
+
+  const progressSection = presentation.presentation_sections.find((s) => s.key === 'progress_since_prior_review');
+  assert.ok(progressSection, 'Progress section must exist');
+  const allText = (progressSection.paragraphs || []).join(' ');
+  // Must not contain any question marks
+  assert.ok(
+    !/\?/.test(allText),
+    `Must have zero question marks, got: "${allText}"`,
+  );
+  // Must not contain the AI's raw template skeleton
+  assert.ok(
+    !/appears?\s+narrower\s+or\s+resolved/i.test(allText),
+    `Must not use "appears narrower or resolved", got: "${allText}"`,
+  );
+  // Must not contain raw question text
+  assert.ok(
+    !/What is the agreed process/i.test(allText),
+    'Must not contain raw question text',
+  );
+  // Should use clean metadata-assembled prose instead
+  assert.ok(
+    /since the prior round/i.test(allText),
+    'Should use metadata fallback with natural framing',
+  );
+  assert.ok(
+    /converging/i.test(allText),
+    'Should include movement direction',
+  );
+});
+
+// ─── Mediation Summary: Paragraph Structure ──────────────────────────────────
+
+test('buildMediationReviewPresentation: splits oversized mediation summary into readable paragraphs', () => {
+  const longSummary = 'Mediation Summary: The parties are well-aligned on the pilot strategic goal and have made significant progress defining its functional boundaries. The negotiation appears stalled not on intent but on how to manage the execution risk associated with a fixed-price commitment. The core hesitation sits around the ambiguity of the inputs required to deliver the pilot. This looks more like a structural standoff than a fundamental misalignment. The friction can be resolved by formalizing the proposed one-week discovery phase as a distinct paid engagement. If this initial step produces a binding specification it would provide the certainty needed for the vendor to commit to a fixed price.';
+  const presentation = buildMediationReviewPresentation({
+    fit_level: 'medium',
+    confidence_0_1: 0.65,
+    why: [
+      longSummary,
+      'Decision Readiness: Decision status: Proceed with conditions.',
+    ],
+    missing: [],
+    redactions: [],
+  });
+
+  const summarySection = presentation.presentation_sections.find((s) => s.key === 'mediation_summary');
+  assert.ok(summarySection, 'Mediation Summary section must exist');
+  const paragraphs = summarySection.paragraphs || [];
+  // A 6-sentence summary should get split into at least 2 paragraphs
+  assert.ok(
+    paragraphs.length >= 2,
+    `Should split into multiple paragraphs, got ${paragraphs.length}: "${paragraphs[0]?.slice(0, 60)}..."`,
+  );
+  // Each paragraph should be non-trivial
+  assert.ok(
+    paragraphs.every((p) => p.length > 40),
+    'Each paragraph should be substantial',
   );
 });
 
