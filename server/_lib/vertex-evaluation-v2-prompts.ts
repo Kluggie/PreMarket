@@ -556,6 +556,7 @@ export function buildEvalPromptFromFactSheet(params: {
 
   const requiredHeadings = [
     'Mediation Summary',
+    'Recommended Next Step',
     'Decision Readiness',
   ];
 
@@ -565,7 +566,6 @@ export function buildEvalPromptFromFactSheet(params: {
     'Risk and Hesitation',
     'Possible Bridges',
     'What Can Be Agreed Now',
-    'Recommended Next Step',
   ];
 
   const voiceGuide =
@@ -729,7 +729,7 @@ export function buildEvalPromptFromFactSheet(params: {
       : '',
     '',
     'OUTPUT SHAPE — this is critical:',
-    'The default output has 2-3 why[] entries. Only add a 4th if the case genuinely needs it.',
+    'The default output has 3-4 why[] entries. Only add more if the case genuinely needs it.',
     '',
     'REQUIRED why[] ENTRIES:',
     '',
@@ -742,15 +742,16 @@ export function buildEvalPromptFromFactSheet(params: {
     '   Do NOT add a 4th paragraph unless there is truly no other place for the content.',
     '   The Mediation Summary should contain ALL the substantive analysis. Other sections are supplements, not repeats.',
     '',
-    '2. "Decision Readiness: Decision status: [label]. [one sentence explanation]."',
+    '2. "Recommended Next Step: …" — 1-2 substantive paragraphs that do three things: (1) states the recommended next step, (2) explains why that sequence is the cleanest path, (3) names what that step must settle. Be specific about WHICH issues, WHY that order, and WHAT each step must produce. Do NOT restate the mediation summary or collapse into a single generic sentence like "resolve open issues before proceeding".',
+    '',
+    '3. "Decision Readiness: Decision status: [label]. [one sentence explanation]."',
     '   The label MUST be one of: "Not viable", "Explore further", "Proceed with conditions", or "Ready to finalize".',
     '   This is a single sentence — it is NOT a second summary. Do NOT restate blockers. Do NOT add sub-headings.',
     '',
-    'OPTIONAL why[] ENTRIES (0-2 at most):',
-    '   Only add an extra section if it contributes genuinely new insight not already in the Mediation Summary.',
+    'OPTIONAL why[] ENTRIES (0-1 at most):',
+    '   Only add an extra section if it contributes genuinely new insight not already in the Mediation Summary or Recommended Next Step.',
     `   If you add one, pick a heading that fits this specific case: ${adaptiveHeadings.join(', ')}, or a custom heading.`,
     '   If the content would be short or thin, fold it into the Mediation Summary instead of creating a separate section.',
-    '   A "Recommended Next Step" section must be 1-2 substantive paragraphs that do three things: (1) states the recommended next step, (2) explains why that sequence is the cleanest path, (3) names what that step must settle. It must NOT restate the mediation summary or collapse into a single generic sentence like "resolve open issues before proceeding". Be specific about WHICH issues, WHY that order, and WHAT each step must produce.',
     '',
     hasFixedPriceContract
       ? 'CONDITIONAL \u2014 fixed-price signals detected: discuss how commercial certainty, acceptance criteria, change-order triggers, and risk allocation shape the analysis.'
@@ -767,7 +768,7 @@ export function buildEvalPromptFromFactSheet(params: {
     '- Each entry starts with heading + ": " (e.g., "Mediation Summary: Both sides appear broadly aligned…").',
     '- Separate paragraphs within one entry using \\n\\n.',
     `- Required: ${requiredHeadings.join(', ')}.`,
-    '- Total why[] array: 2-4 entries. Default to 2-3. Only 4 if the case genuinely needs it.',
+    '- Total why[] array: 3-4 entries. Default to 3. Only 4 if the case genuinely needs it.',
     '',
     'MISSING FIELD \u2014 QUALITY RULES:',
     `- Generate 2-4 items. Maximum ${MISSING_MAX_ITEMS} items. Include ONLY questions that would materially change the path to agreement.`,
