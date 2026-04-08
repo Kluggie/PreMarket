@@ -166,8 +166,7 @@ function toDeclarativeProgressPhrase(value: string) {
   text = text
     .replace(/^What is included in /i, '')
     .replace(/^What is the agreed position on /i, '')
-    .replace(/^What (specific |precise |exact |agreed |confirmed )?(actions?|steps?|measures?|processes?|mechanisms?|procedures?),?[^?]*(would|could|should|will|might|can)\b[^?]*/i,
-      (_, _adj, noun) => noun ? noun.toLowerCase() : '')
+    .replace(/^What (specific |precise |exact |agreed |confirmed )?(actions?|steps?|measures?|processes?|mechanisms?|procedures?)[^?]*(would|could|should|will|might|can) (trigger|cause|initiate|activate|invoke|start|begin|lead to|result in) /i, '')
     .replace(/^What (is|are) the (specific |precise |exact |agreed |confirmed )?/i, '')
     .replace(/^What (is|are) /i, '')
     .replace(/^What (specific |precise |exact )?/i, '')
@@ -216,10 +215,13 @@ function toDeclarativeProgressPhrase(value: string) {
  */
 function isDeltaSummaryUsable(text: string) {
   if (!text || text.length < 30) return false;
-  // Reject pure questions
-  if (/\?$/.test(text.trim())) return false;
+  // Reject if ANY question mark appears anywhere (raw questions embedded in prose)
+  if (/\?/.test(text)) return false;
   // Reject text that starts with a Q-word and reads like a question
-  if (/^(What|Which|Who|Where|When|Why|How|Is there|Are there|Has the|Have the)\b/i.test(text.trim()) && text.trim().length < 80) return false;
+  if (/^(What|Which|Who|Where|When|Why|How|Is there|Are there|Has the|Have the)\b/i.test(text.trim())) return false;
+  // Reject template-skeleton language from AI that regurgitated metadata
+  if (/appears?\s+narrower\s+or\s+resolved/i.test(text)) return false;
+  if (/remaining\s+deltas?\s+now\s+cent(er|re)\s+on/i.test(text)) return false;
   return true;
 }
 

@@ -1424,6 +1424,70 @@ test('buildMediationReviewPresentation: rejects AI progress that embeds raw ques
   );
 });
 
+// ─── Progress: delta_summary with embedded questions rejected ────────────────
+
+test('buildMediationReviewPresentation: rejects delta_summary with embedded question marks', () => {
+  // Exact scenario: AI sets delta_summary to contaminated text with raw questions embedded
+  const presentation = buildMediationReviewPresentation({
+    fit_level: 'medium',
+    confidence_0_1: 0.65,
+    why: [
+      'Mediation Summary: The parties are aligned on the strategic goal.',
+      'Decision Readiness: Decision status: Proceed with conditions.',
+    ],
+    missing: [],
+    redactions: [],
+    bilateral_round_number: 3,
+    prior_bilateral_round_id: 'prior-ds',
+    prior_bilateral_round_number: 2,
+    delta_summary: 'Since the prior bilateral round, What are the technical integration requirements and data schema for writing call summaries into the booking system? appears narrower or resolved, while the main remaining deltas now center on What are the specific deliverables and exit criteria for the one-week discovery phase, and what is the process if agreement on the pilot specification is not reached? and What specific actions, dependency failures, or out-of-scope requests would trigger the change control process and a priced variation?',
+    resolved_since_last_round: [
+      'What are the technical integration requirements and data schema for writing call summaries into the booking system?',
+    ],
+    remaining_deltas: [
+      'What are the specific deliverables and exit criteria for the one-week discovery phase, and what is the process if agreement on the pilot specification is not reached?',
+      'What specific actions, dependency failures, or out-of-scope requests would trigger the change control process and a priced variation?',
+    ],
+    new_open_issues: [
+      'What is the data schema and write-permission scope required for the booking system?',
+    ],
+    movement_direction: 'converging',
+  });
+
+  const progressSection = presentation.presentation_sections.find((s) => s.key === 'progress_since_prior_review');
+  assert.ok(progressSection, 'Progress section must exist');
+  const allText = (progressSection.paragraphs || []).join(' ');
+  // Must not contain ANY question marks
+  assert.ok(
+    !/\?/.test(allText),
+    `Must have zero question marks, got: "${allText}"`,
+  );
+  // Must not contain raw question text from delta_summary
+  assert.ok(
+    !/What are the technical integration/i.test(allText),
+    `Must not contain raw question text, got: "${allText}"`,
+  );
+  // Must not contain template skeleton language
+  assert.ok(
+    !/appears?\s+narrower\s+or\s+resolved/i.test(allText),
+    `Must not contain template skeleton, got: "${allText}"`,
+  );
+  // Must not contain truncated single-word fragments like "and actions"
+  assert.ok(
+    !/\band actions\b/i.test(allText),
+    `Must not contain truncated single-word topics, got: "${allText}"`,
+  );
+  // Should use clean metadata prose instead
+  assert.ok(
+    /since the prior round/i.test(allText),
+    `Should use natural progress framing, got: "${allText}"`,
+  );
+  assert.ok(
+    /converging/i.test(allText),
+    'Should include movement direction',
+  );
+});
+
 // ─── Mediation Summary: Paragraph Structure ──────────────────────────────────
 
 test('buildMediationReviewPresentation: splits oversized mediation summary into readable paragraphs', () => {
