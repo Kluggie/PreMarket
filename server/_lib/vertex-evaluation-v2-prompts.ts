@@ -720,6 +720,9 @@ export function buildEvalPromptFromFactSheet(params: {
     hasPriorBilateralContext
       ? '- When prior_bilateral_context is present, include concrete delta analysis for what changed, what remains open, and whether the negotiation is moving toward agreement.'
       : '',
+    hasPriorBilateralContext
+      ? '- Include your progress analysis as prose narrative — statements about what changed, what narrowed, what was resolved, not lists of open questions. Minimise question marks in the progress analysis. Write it as mediator observations, not interrogation.'
+      : '',
     '',
     'OUTPUT SHAPE — this is critical:',
     'The default output has 2-3 why[] entries. Only add a 4th if the case genuinely needs it.',
@@ -731,6 +734,7 @@ export function buildEvalPromptFromFactSheet(params: {
     '   Paragraph 2: What is actually preventing commitment. Write this in plain English — name the specific issues.',
     '   Paragraph 3: Why the issue is bridgeable and what structure could unlock movement.',
     '   Do NOT compress everything into one dense paragraph. Spread ideas out so they are easy to absorb.',
+    '   Each paragraph should contain one main idea. If a paragraph exceeds 4 sentences, split it.',
     '   Do NOT add a 4th paragraph unless there is truly no other place for the content.',
     '   The Mediation Summary should contain ALL the substantive analysis. Other sections are supplements, not repeats.',
     '',
@@ -742,7 +746,7 @@ export function buildEvalPromptFromFactSheet(params: {
     '   Only add an extra section if it contributes genuinely new insight not already in the Mediation Summary.',
     `   If you add one, pick a heading that fits this specific case: ${adaptiveHeadings.join(', ')}, or a custom heading.`,
     '   If the content would be short or thin, fold it into the Mediation Summary instead of creating a separate section.',
-    '   A "Recommended Next Step" section must be exactly ONE substantive paragraph that does three things: (1) states the recommended next step, (2) explains why that sequence is the cleanest path, (3) names what that step must settle. It must NOT restate the mediation summary or collapse into a single thin sentence.',
+    '   A "Recommended Next Step" section must be 1-2 substantive paragraphs that do three things: (1) states the recommended next step, (2) explains why that sequence is the cleanest path, (3) names what that step must settle. It must NOT restate the mediation summary or collapse into a single generic sentence like "resolve open issues before proceeding". Be specific about WHICH issues, WHY that order, and WHAT each step must produce.',
     '',
     hasFixedPriceContract
       ? 'CONDITIONAL \u2014 fixed-price signals detected: discuss how commercial certainty, acceptance criteria, change-order triggers, and risk allocation shape the analysis.'

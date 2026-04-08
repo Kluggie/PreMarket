@@ -791,6 +791,169 @@ test('buildMediationReviewPresentation: keeps strategic tensions distinct from s
   assert.notDeepEqual(negotiationInsights, dealStructures);
 });
 
+// ─── Recommendation quality ──────────────────────────────────────────────────
+
+test('buildMediationReviewPresentation: recommendation preserves authored paragraph that shares normal vocabulary with mediation summary', () => {
+  const presentation = buildMediationReviewPresentation({
+    fit_level: 'medium',
+    confidence_0_1: 0.64,
+    why: [
+      'Mediation Summary: Both sides appear broadly aligned on the phased rollout concept, but the remaining friction sits around acceptance criteria and change-control scope. The sticking point is not whether to proceed but how to allocate execution risk during the first phase.',
+      'Decision Readiness: Decision status: Proceed with conditions. A workable path exists once acceptance criteria and change-control scope are tightened.',
+      'Recommended Path: The cleanest route forward is a short paid discovery step to define acceptance criteria and change-control triggers before locking the first phase. This sequence lets both sides reduce ambiguity without committing to terms they cannot yet measure. The discovery step should produce bounded acceptance definitions and a change-control protocol that both sides can price against.',
+    ],
+    missing: ['What defines acceptable completion for the first phase? — determines whether sign-off is measurable.'],
+    redactions: [],
+  });
+
+  const recSection = presentation.presentation_sections.find((s) => s.key === 'recommendation');
+  assert.ok(recSection, 'Recommendation section must exist');
+  // The authored recommendation paragraph must survive — it is NOT a near-duplicate just
+  // because it shares vocabulary ("acceptance criteria", "change-control") with the summary
+  const recParagraphs = recSection.paragraphs || [];
+  assert.ok(
+    recParagraphs.some((p) => /discovery step/i.test(p)),
+    'Authored recommendation about discovery step must be preserved',
+  );
+  assert.ok(
+    recParagraphs.length >= 2,
+    'Recommendation should have at least 2 paragraphs (decision status + recommendation)',
+  );
+});
+
+test('buildMediationReviewPresentation: recommendation keeps up to 2 authored paragraphs from AI', () => {
+  const presentation = buildMediationReviewPresentation({
+    fit_level: 'medium',
+    confidence_0_1: 0.60,
+    why: [
+      'Mediation Summary: The proposal outlines a viable integration but leaves dependency ownership and timeline assumptions open.',
+      'Decision Readiness: Decision status: Explore further. Key dependencies remain unresolved.',
+      'Recommended Path: The next step should be a joint scoping workshop to map dependency ownership and validate timeline assumptions against both sides\u2019 capacity. This approach avoids locking terms before the parties understand the real delivery constraints.\n\nIf the scoping workshop confirms feasibility, the parties could then move to a conditional commitment with explicit change-order triggers for the dependencies that remain uncertain.',
+    ],
+    missing: ['Who owns the integration dependency chain? — determines delivery accountability.'],
+    redactions: [],
+  });
+
+  const recSection = presentation.presentation_sections.find((s) => s.key === 'recommendation');
+  assert.ok(recSection, 'Recommendation section must exist');
+  const recParagraphs = recSection.paragraphs || [];
+  // Decision line + up to 2 authored paragraphs = 3
+  assert.ok(
+    recParagraphs.some((p) => /scoping workshop/i.test(p)),
+    'First authored recommendation paragraph preserved',
+  );
+  assert.ok(
+    recParagraphs.some((p) => /change-order triggers/i.test(p)),
+    'Second authored recommendation paragraph preserved',
+  );
+});
+
+test('buildMediationReviewPresentation: recommendation falls back to bridgeability notes when AI provides no recommendation section', () => {
+  const presentation = buildMediationReviewPresentation({
+    fit_level: 'medium',
+    confidence_0_1: 0.58,
+    why: [
+      'Mediation Summary: The proposal has a workable structure but needs tighter risk allocation.',
+      'Decision Readiness: Decision status: Explore further. Risk allocation is the main open item.',
+    ],
+    missing: ['How is change-order risk allocated? — determines pricing certainty.'],
+    redactions: [],
+    negotiation_analysis: {
+      proposing_party: { demands: [], priorities: [], dealbreakers: [], flexibility: [] },
+      counterparty: { demands: [], priorities: [], dealbreakers: [], flexibility: [] },
+      compatibility_assessment: 'compatible_with_adjustments',
+      compatibility_rationale: 'Compatible with adjustments once risk allocation is bounded.',
+      bridgeability_notes: ['A structured risk-sharing protocol could bridge the current gap by giving both sides proportional exposure rather than undefined liability.'],
+      critical_incompatibilities: [],
+    },
+  });
+
+  const recSection = presentation.presentation_sections.find((s) => s.key === 'recommendation');
+  assert.ok(recSection, 'Recommendation section must exist');
+  const recParagraphs = recSection.paragraphs || [];
+  // Should use the bridgeability note, not the generic fallback
+  assert.ok(
+    recParagraphs.some((p) => /risk-sharing protocol/i.test(p)),
+    'Recommendation should use bridgeability note when no authored recommendation exists',
+  );
+  assert.ok(
+    !recParagraphs.some((p) => /current open issues as the next mediation agenda/i.test(p)),
+    'Generic fallback sentence should NOT appear when bridgeability notes are available',
+  );
+});
+
+// ─── Progress Since Prior Review ─────────────────────────────────────────────
+
+test('buildMediationReviewPresentation: progress section uses AI-authored narrative from why[] when available', () => {
+  const presentation = buildMediationReviewPresentation({
+    fit_level: 'medium',
+    confidence_0_1: 0.62,
+    why: [
+      'Mediation Summary: The parties remain broadly aligned on the core scope but the commercial terms are still being negotiated.',
+      'Progress Since Prior Review: Since the last round, the parties have narrowed the scope boundary dispute and agreed on the phased delivery model. The main remaining friction has shifted from scope definition to pricing and change-control mechanics. The negotiation appears to be converging, though the pricing gap has not yet been formally bridged.',
+      'Decision Readiness: Decision status: Proceed with conditions. The scope is now well-defined but pricing terms need final agreement.',
+    ],
+    missing: ['What change-order triggers apply? — determines whether the pricing structure is viable.'],
+    redactions: [],
+    bilateral_round_number: 2,
+    prior_bilateral_round_id: 'prior-123',
+    prior_bilateral_round_number: 1,
+    delta_summary: 'Scope narrowed; pricing still open.',
+    resolved_since_last_round: ['Scope boundary'],
+    remaining_deltas: ['Pricing structure'],
+    new_open_issues: [],
+    movement_direction: 'converging',
+  });
+
+  const progressSection = presentation.presentation_sections.find((s) => s.key === 'progress_since_prior_review');
+  assert.ok(progressSection, 'Progress section must exist');
+  const progressParagraphs = progressSection.paragraphs || [];
+  // Should use the AI's authored narrative, not the metadata-stitched version
+  assert.ok(
+    progressParagraphs.some((p) => /narrowed the scope boundary/i.test(p)),
+    'AI-authored progress narrative should be used when available',
+  );
+  assert.ok(
+    progressParagraphs.some((p) => /pricing gap/i.test(p)),
+    'AI-authored progress narrative should contain the full analysis',
+  );
+});
+
+test('buildMediationReviewPresentation: progress section falls back to metadata when no AI narrative exists', () => {
+  const presentation = buildMediationReviewPresentation({
+    fit_level: 'medium',
+    confidence_0_1: 0.60,
+    why: [
+      'Mediation Summary: The parties are still negotiating the core terms.',
+      'Decision Readiness: Decision status: Explore further. Key terms remain open.',
+    ],
+    missing: ['What is the pricing model? — determines commercial viability.'],
+    redactions: [],
+    bilateral_round_number: 2,
+    prior_bilateral_round_id: 'prior-456',
+    prior_bilateral_round_number: 1,
+    delta_summary: 'Timeline assumptions have been clarified since the prior round.',
+    resolved_since_last_round: ['Timeline milestones'],
+    remaining_deltas: ['Pricing', 'Change-order scope'],
+    new_open_issues: ['Integration dependencies'],
+    movement_direction: 'stalled',
+  });
+
+  const progressSection = presentation.presentation_sections.find((s) => s.key === 'progress_since_prior_review');
+  assert.ok(progressSection, 'Progress section must exist');
+  const progressParagraphs = progressSection.paragraphs || [];
+  // Should use delta_summary since no AI-authored progress section exists
+  assert.ok(
+    progressParagraphs.some((p) => /timeline assumptions/i.test(p)),
+    'Metadata-based delta_summary should be used as fallback',
+  );
+  // Should include movement direction observation
+  assert.ok(
+    progressParagraphs.some((p) => /stalled/i.test(p)),
+    'Movement direction should be reflected in progress section',
+  );
+});
+
 test('getAppendixOpenQuestions: omits missing items already rendered in dynamic presentation sections', () => {
   const report = {
     missing: [

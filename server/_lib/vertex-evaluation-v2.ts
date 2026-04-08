@@ -822,7 +822,16 @@ function compressWhySectionsForRequiredCoverage(sections: WhySection[], maxChars
         ].filter(Boolean);
         return selected.length > 0 ? selected : [paragraphs[0]];
       }
-      // For mediation sections, take first paragraph as priority
+      // For mediation summary, preserve up to 2 paragraphs so the multi-paragraph
+      // structure requested by the prompt survives compression
+      if (section.key === 'mediation summary') {
+        return paragraphs.slice(0, 2);
+      }
+      // For recommended path / suggested next step, preserve up to 2 paragraphs
+      if (section.key === 'recommended path' || section.key === 'suggested next step') {
+        return paragraphs.slice(0, 2);
+      }
+      // Other adaptive sections — take first paragraph as priority
       return [paragraphs[0]];
     })();
 
@@ -1201,8 +1210,8 @@ function dropLowestPriorityParagraph(sectionKey: string, paragraphs: string[]) {
 function maxParagraphsForSection(sectionKey: string) {
   if (sectionKey === 'mediation summary') return 3;
   if (sectionKey === 'decision readiness') return 1;
-  if (sectionKey === 'recommended path') return 1;
-  if (sectionKey === 'suggested next step') return 1;
+  if (sectionKey === 'recommended path') return 2;
+  if (sectionKey === 'suggested next step') return 2;
   // Adaptive sections — enough for substance, not enough for bloat
   if (ALL_KNOWN_WHY_SECTION_KEYS.includes(sectionKey)) return 2;
   return 2;
@@ -1365,6 +1374,11 @@ function sanitizeNarrativeParagraph(value: string) {
       return '';
     }
   }
+
+  // Fix double-punctuation artifacts like "?." or "!." that can survive model
+  // output or intermediate cleanup steps. Keep the first terminator only.
+  next = next.replace(/([?!])\.+$/g, '$1');
+  next = next.replace(/\.([?!])$/g, '$1');
 
   return normalizeSpaces(next);
 }
@@ -3011,9 +3025,12 @@ function rewriteWhyForCalibration(params: {
     }
 
     // Only inject role defaults when the AI produced thin or empty content.
-    // For sections where the AI produced ≥2 substantive paragraphs, prefer
-    // the AI's own prose over template-generated defaults.
-    const aiHasSubstance = existingParagraphs.filter((p) => asText(p).length > 40).length >= 2;
+    // For mediation-style sections a single substantive paragraph (>100 chars)
+    // is enough to indicate the AI authored real prose. Preserve that authored
+    // nuance rather than replacing it with template defaults.
+    const aiHasSubstance =
+      existingParagraphs.filter((p) => asText(p).length > 100).length >= 1 ||
+      existingParagraphs.filter((p) => asText(p).length > 40).length >= 2;
     const sectionNeedsDefaults =
       needsRichRewrite &&
       !aiHasSubstance &&
