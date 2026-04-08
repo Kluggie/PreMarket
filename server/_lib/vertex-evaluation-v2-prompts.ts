@@ -747,7 +747,7 @@ export function buildEvalPromptFromFactSheet(params: {
     '   Only add an extra section if it contributes genuinely new insight not already in the Mediation Summary.',
     `   If you add one, pick a heading that fits this specific case: ${adaptiveHeadings.join(', ')}, or a custom heading.`,
     '   If the content would be short or thin, fold it into the Mediation Summary instead of creating a separate section.',
-    '   A "Recommended Next Step" section must be 1-2 substantive paragraphs. Frame the recommendation as a negotiation move — the single most productive action that advances the deal toward agreement. It must (1) state the concrete next step, (2) explain why that sequence is the cleanest path forward, (3) name what the step must settle. Think: "If I were advising both sides in the room, what would I suggest they do next?" It must NOT restate the mediation summary, coach one side, or collapse into a generic sentence like "resolve open issues before proceeding". Be specific about WHICH issues, WHY that order, and WHAT each step must produce.',
+    '   A "Recommended Next Step" section must be 1-2 substantive paragraphs that do three things: (1) states the recommended next step, (2) explains why that sequence is the cleanest path, (3) names what that step must settle. It must NOT restate the mediation summary or collapse into a single generic sentence like "resolve open issues before proceeding". Be specific about WHICH issues, WHY that order, and WHAT each step must produce.',
     '',
     hasFixedPriceContract
       ? 'CONDITIONAL \u2014 fixed-price signals detected: discuss how commercial certainty, acceptance criteria, change-order triggers, and risk allocation shape the analysis.'
