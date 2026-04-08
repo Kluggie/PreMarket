@@ -923,8 +923,12 @@ export function buildMediationReviewPresentation(params: {
     const aiProgressIsUsable = (() => {
       if (!progressEntry || progressEntry.paragraphs.length === 0) return false;
       const combined = progressEntry.paragraphs.join(' ');
-      // Reject if it contains question marks (raw questions leaked through)
-      if (/\?/.test(combined)) return false;
+      // Reject if it contains 2+ question marks (raw questions leaked through).
+      // Allow a single ? since the AI may use one rhetorical observation.
+      const questionMarkCount = (combined.match(/\?/g) || []).length;
+      if (questionMarkCount >= 2) return false;
+      // Reject a single question mark if it looks like a raw question (starts with Q-word)
+      if (questionMarkCount === 1 && /^(What|Which|Who|Where|When|Why|How|Is there|Are there|Has the|Have the)\b/i.test(combined.trim())) return false;
       // Reject if it contains template-skeleton phrases from the metadata sidecar
       if (/appears?\s+narrower\s+or\s+resolved/i.test(combined)) return false;
       if (/remaining\s+deltas?\s+now\s+cent(er|re)\s+on/i.test(combined)) return false;
@@ -980,14 +984,14 @@ export function buildMediationReviewPresentation(params: {
 
       if (remainingTopics.length > 0) {
         const topicList = remainingTopics.slice(0, 2).join(' and ');
-        sentences.push(`The main outstanding points now centre on ${topicList}.`);
+        sentences.push(`The main open areas are ${topicList}.`);
       }
 
       if (newIssueTopics.length > 0) {
         const topicList = newIssueTopics.slice(0, 2).join(' and ');
         sentences.push(newIssueTopics.length === 1
-          ? `A new point has emerged around ${topicList}.`
-          : `New points have emerged around ${topicList}.`);
+          ? `A new area has surfaced: ${topicList}.`
+          : `New areas have surfaced: ${topicList}.`);
       }
 
       if (directionPhrase && sentences.length > 0) {
@@ -1114,11 +1118,58 @@ export function buildMediationReviewPresentation(params: {
     }
   }
 
+  // ── Final visible prose cleanup ──────────────────────────────────────────
+  // Enforce report-wide discipline on the assembled sections before returning.
+
+  // 1. Ensure exactly one "Decision status:" line across the entire report.
+  //    The recommendation section has the canonical one; strip any others.
+  let decisionStatusSeen = false;
+  sections.forEach((section) => {
+    if (!section.paragraphs) return;
+    section.paragraphs = section.paragraphs.filter((p) => {
+      if (/^Decision status:/i.test(normalizeText(p))) {
+        if (decisionStatusSeen) return false;
+        decisionStatusSeen = true;
+      }
+      return true;
+    });
+  });
+
+  // 2. Cross-section anti-repetition: if a recommendation paragraph is a
+  //    near-exact restatement of a summary paragraph (≥75% word overlap on
+  //    words >3 chars), replace it with just its first sentence to preserve the
+  //    action orientation without restating the same blockers.
+  const summarySection = sections.find((s) => s.key === 'mediation_summary');
+  const recSection = sections.find((s) => s.key === 'recommendation');
+  if (summarySection?.paragraphs && recSection?.paragraphs) {
+    const summaryWords = new Set(
+      summarySection.paragraphs.join(' ').toLowerCase().split(/\s+/).filter((w) => w.length > 3),
+    );
+    recSection.paragraphs = recSection.paragraphs.map((p) => {
+      if (/^Decision status:/i.test(p)) return p;
+      const pWords = p.toLowerCase().split(/\s+/).filter((w) => w.length > 3);
+      if (pWords.length < 4) return p;
+      const overlap = pWords.filter((w) => summaryWords.has(w)).length / pWords.length;
+      if (overlap >= 0.75) {
+        // High overlap — trim to first sentence only (the action)
+        const firstSentence = p.match(/^[^.!?]+[.!?]/)?.[0];
+        return firstSentence && firstSentence.length > 30 ? firstSentence : p;
+      }
+      return p;
+    });
+  }
+
+  // 3. Remove empty sections that may result from the cleanup passes above
+  const cleanedSections = sections.filter((s) =>
+    (s.paragraphs && s.paragraphs.length > 0) ||
+    (s.bullets && s.bullets.length > 0),
+  );
+
   return {
     report_archetype: archetype,
     report_title: '',
     primary_insight: primaryInsight,
-    presentation_sections: sections,
+    presentation_sections: cleanedSections,
     redactions_count: redactions.length,
   };
 }

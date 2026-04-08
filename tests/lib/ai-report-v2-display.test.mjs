@@ -2272,3 +2272,201 @@ test('buildMediationReviewPresentation: splits 3-sentence mediation summary over
     `Should split 3-sentence 280+ char paragraph into 2, got ${paragraphs.length}: "${paragraphs[0]?.slice(0, 60)}..."`,
   );
 });
+
+// ─── Anti-repetition: Decision status line dedup ─────────────────────────────
+
+test('buildMediationReviewPresentation: only one Decision status line appears in the entire report', () => {
+  const presentation = buildMediationReviewPresentation({
+    fit_level: 'medium',
+    confidence_0_1: 0.62,
+    why: [
+      'Mediation Summary: The scope is commercially workable but several items remain open.',
+      'What Is Blocking Commitment: The vendor wants a binding specification before committing to a fixed price.',
+      'Decision Readiness: Decision status: Proceed with conditions. The path is viable if the discovery phase terms are settled.\n\nDecision status: Proceed with conditions. Some conditions apply.',
+    ],
+    missing: [],
+    redactions: [],
+  });
+
+  const allParagraphs = presentation.presentation_sections.flatMap((s) => s.paragraphs || []);
+  const decisionStatusLines = allParagraphs.filter((p) => /^Decision status:/i.test(p));
+  assert.equal(
+    decisionStatusLines.length, 1,
+    `Must have exactly one Decision status line, got ${decisionStatusLines.length}: ${JSON.stringify(decisionStatusLines)}`,
+  );
+});
+
+// ─── Anti-repetition: recommendation trims summary restatements ──────────────
+
+test('buildMediationReviewPresentation: recommendation paragraph that purely restates summary blockers is trimmed to first sentence', () => {
+  const summaryText = 'Mediation Summary: The parties agree on the pilot concept but the vendor requires a binding specification before committing to a fixed price while the buyer needs cost visibility before approving discovery. The friction is structural rather than adversarial and both sides want the same outcome but disagree on who bears the interim risk.';
+  // This recommendation paragraph PURELY restates the summary without adding actionable advice
+  const restatingRec = 'Recommended Path: Proceed by resolving the binding specification requirement since the vendor requires a binding specification before committing to a fixed price while the buyer needs cost visibility before approving discovery. The friction is structural rather than adversarial and both sides want the same outcome but disagree on who bears the interim risk so there is a path forward.';
+  const presentation = buildMediationReviewPresentation({
+    fit_level: 'medium',
+    confidence_0_1: 0.63,
+    why: [
+      summaryText,
+      restatingRec,
+      'Decision Readiness: Decision status: Proceed with conditions.',
+    ],
+    missing: [],
+    redactions: [],
+  });
+
+  const recSection = presentation.presentation_sections.find((s) => s.key === 'recommendation');
+  assert.ok(recSection, 'Recommendation section must exist');
+  const nonStatusParagraphs = (recSection.paragraphs || []).filter((p) => !/^Decision status:/i.test(p));
+  assert.ok(
+    nonStatusParagraphs.length > 0,
+    'Recommendation should still have substantive content',
+  );
+  // The pure restatement should be trimmed to its first sentence
+  const longestNonStatus = Math.max(...nonStatusParagraphs.map((p) => p.length));
+  assert.ok(
+    longestNonStatus < restatingRec.length - 50,
+    `Pure restatement should be trimmed (${longestNonStatus} vs ${restatingRec.length} chars)`,
+  );
+});
+
+// ─── Open Questions: higher threshold preserves domain-overlap questions ──────
+
+test('getAppendixOpenQuestions: preserves open questions with moderate domain vocabulary overlap', () => {
+  const report = {
+    missing: [
+      'What are the measurable acceptance criteria for the pilot deliverables? — determines whether the vendor can commit to fixed pricing.',
+      'Who owns the third-party API integration approvals? — clarifies the external dependency path.',
+    ],
+    presentation_sections: [
+      {
+        heading: 'Mediation Summary',
+        paragraphs: [
+          'The parties agree on the pilot deliverables but the acceptance criteria and pricing model need further definition.',
+          'The vendor requires clarity on what measurable criteria would constitute successful delivery before committing to a fixed price.',
+        ],
+      },
+      {
+        heading: 'Recommendation',
+        paragraphs: [
+          'Decision status: Proceed with conditions.',
+          'Fund the discovery phase to define the pilot specification.',
+        ],
+      },
+    ],
+  };
+
+  const openQuestions = getAppendixOpenQuestions(report);
+  // The acceptance criteria question shares domain vocabulary with the narrative
+  // but asks a DIFFERENT question (measurable criteria for deliverables specifically).
+  // With the raised 70% threshold, it should survive.
+  assert.ok(
+    openQuestions.length >= 1,
+    `Should preserve at least one domain-overlap question, got ${openQuestions.length}: ${JSON.stringify(openQuestions)}`,
+  );
+  // The third-party API question has no narrative overlap — must survive
+  assert.ok(
+    openQuestions.some((q) => /third-party/i.test(q)),
+    'Should preserve the third-party API question',
+  );
+});
+
+// ─── Progress: updated template phrasing ─────────────────────────────────────
+
+test('buildMediationReviewPresentation: progress fallback uses updated natural phrasing', () => {
+  const presentation = buildMediationReviewPresentation({
+    fit_level: 'medium',
+    confidence_0_1: 0.58,
+    why: ['Mediation Summary: Both sides broadly agree on scope.'],
+    missing: [],
+    redactions: [],
+    bilateral_round_number: 2,
+    prior_bilateral_round_id: 'prior-phr',
+    prior_bilateral_round_number: 1,
+    resolved_since_last_round: ['Pricing model for the initial phase'],
+    remaining_deltas: ['Acceptance criteria for pilot deliverables'],
+    new_open_issues: ['Data schema and write-permission scope for integrations'],
+    movement_direction: 'converging',
+  });
+
+  const progressSection = presentation.presentation_sections.find((s) => s.key === 'progress_since_prior_review');
+  assert.ok(progressSection, 'Progress section must exist');
+  const allText = (progressSection.paragraphs || []).join(' ');
+  // Must use updated phrasing, not old mechanical templates
+  assert.ok(
+    !/outstanding points now centre/i.test(allText),
+    `Must not use old "outstanding points now centre" phrasing, got: "${allText}"`,
+  );
+  assert.ok(
+    !/new point has emerged around/i.test(allText),
+    `Must not use old "new point has emerged around" phrasing, got: "${allText}"`,
+  );
+  // Should use the updated natural phrasing
+  assert.ok(
+    /main open areas/i.test(allText),
+    `Should use "main open areas" phrasing, got: "${allText}"`,
+  );
+  assert.ok(
+    /surfaced/i.test(allText),
+    `Should use "surfaced" for new issues, got: "${allText}"`,
+  );
+});
+
+// ─── Progress: smarter question mark quality gate ────────────────────────────
+
+test('buildMediationReviewPresentation: AI progress with single rhetorical question mark is accepted', () => {
+  const presentation = buildMediationReviewPresentation({
+    fit_level: 'medium',
+    confidence_0_1: 0.60,
+    why: [
+      'Mediation Summary: Both sides agree on the core deliverable.',
+      'Progress Since Prior Review: Since the last round, the scope boundary has narrowed significantly. The remaining question is whether the parties can converge on acceptance criteria before the pilot deadline.',
+    ],
+    missing: [],
+    redactions: [],
+    bilateral_round_number: 2,
+    prior_bilateral_round_id: 'prior-q',
+    prior_bilateral_round_number: 1,
+  });
+
+  const progressSection = presentation.presentation_sections.find((s) => s.key === 'progress_since_prior_review');
+  assert.ok(progressSection, 'Progress section must exist');
+  const allText = (progressSection.paragraphs || []).join(' ');
+  // Should use the AI's own prose since it only has one rhetorical ?
+  assert.ok(
+    /scope boundary has narrowed/i.test(allText),
+    `Should use AI-authored progress with single rhetorical ?, got: "${allText}"`,
+  );
+});
+
+test('buildMediationReviewPresentation: AI progress with multiple question marks is rejected', () => {
+  const presentation = buildMediationReviewPresentation({
+    fit_level: 'medium',
+    confidence_0_1: 0.60,
+    why: [
+      'Mediation Summary: Both sides agree on the core deliverable.',
+      'Progress Since Prior Review: What specific actions would trigger change control? The parties seem closer on acceptance criteria. But what are the exit gates for discovery?',
+    ],
+    missing: [],
+    redactions: [],
+    bilateral_round_number: 2,
+    prior_bilateral_round_id: 'prior-q2',
+    prior_bilateral_round_number: 1,
+    resolved_since_last_round: ['Change control triggers'],
+    remaining_deltas: [],
+    new_open_issues: [],
+    movement_direction: 'converging',
+  });
+
+  const progressSection = presentation.presentation_sections.find((s) => s.key === 'progress_since_prior_review');
+  assert.ok(progressSection, 'Progress section must exist');
+  const allText = (progressSection.paragraphs || []).join(' ');
+  // Should reject AI progress (2 question marks = raw questions) and use metadata fallback
+  assert.ok(
+    !/What specific actions/i.test(allText),
+    `Should reject AI progress with multiple ?, got: "${allText}"`,
+  );
+  assert.ok(
+    /since the prior round/i.test(allText) || /converging/i.test(allText),
+    `Should use metadata fallback, got: "${allText}"`,
+  );
+});

@@ -1144,6 +1144,10 @@ const DEDUPE_STOPWORDS = new Set([
   'while', 'under', 'over', 'they', 'them', 'also', 'does', 'doesn', 'being',
   'ready', 'proceed', 'proposal', 'current', 'agreement', 'against', 'between',
   'around', 'about', 'before', 'after', 'until', 'through', 'needs', 'need',
+  // Domain terms that inflate overlap scores in mediation prose
+  'scope', 'risk', 'pricing', 'timeline', 'appears', 'likely', 'appears',
+  'commitment', 'delivery', 'phase', 'step', 'path', 'forward', 'next',
+  'issue', 'issues', 'point', 'points', 'item', 'items', 'remaining',
 ]);
 
 function paragraphKeywords(value: string) {
@@ -1220,9 +1224,18 @@ function maxParagraphsForSection(sectionKey: string) {
 }
 
 function isRoleLockedParagraph(value: string) {
-  // Only lock Decision status lines — everything else should be subject to dedup
+  // Lock Decision status lines — always preserved regardless of overlap
   return /^Decision status:/i.test(normalizeSpaces(value));
 }
+
+// Recommendation sections naturally share vocabulary with the mediation summary
+// (they discuss the same deal) but provide different content (what to do vs what
+// is wrong). Exempt them from the global dedup so the AI's action-oriented
+// recommendation paragraphs are not silently dropped.
+const RECOMMENDATION_SECTION_KEYS = new Set([
+  'recommended path',
+  'suggested next step',
+]);
 
 function isLowSignalParagraph(value: string) {
   const text = normalizeSpaces(value);
@@ -3080,7 +3093,16 @@ function rewriteWhyForCalibration(params: {
       if (needsRichRewrite && isLowSignalParagraph(trimmed)) return;
       const roleLocked = isRoleLockedParagraph(trimmed);
       if (finalParagraphs.some((existing) => paragraphsAreNearDuplicates(existing, trimmed))) return;
-      if (!roleLocked && globallySeenParagraphs.some((existing) => paragraphsAreNearDuplicates(existing, trimmed))) return;
+      // Recommendation sections naturally share vocabulary with the summary
+      // (same deal topics). Exempt them from keyword-overlap dedup but still
+      // block exact duplicates so the same literal sentence doesn't repeat.
+      const isRecommendationSection = RECOMMENDATION_SECTION_KEYS.has(section.key);
+      if (!roleLocked && !isRecommendationSection && globallySeenParagraphs.some((existing) => paragraphsAreNearDuplicates(existing, trimmed))) return;
+      if (!roleLocked && isRecommendationSection && globallySeenParagraphs.some((existing) => {
+        const left = normalizeSpaces(existing).toLowerCase();
+        const right = normalizeSpaces(trimmed).toLowerCase();
+        return left === right || left.slice(0, 140) === right.slice(0, 140);
+      })) return;
       finalParagraphs.push(trimmed);
       globallySeenParagraphs.push(trimmed);
     });
