@@ -188,6 +188,10 @@ function toDeclarativeProgressPhrase(value: string) {
   // Strip trailing passive-voice fragments ("is required", "are needed", etc.)
   text = text.replace(/\s+(?:is|are|was|were|will be|should be|would be|has been|have been)\s+(?:required|needed|expected|included|excluded|planned|proposed|agreed|defined|approved|specified|determined|envisaged|anticipated|allocated|measured)\s*$/i, '');
 
+  // Strip trailing bare infinitives left after "How should" stripping
+  // e.g. "the X be defined and measured" → "the X"
+  text = text.replace(/\s+be\s+\w+(?:\s+and\s+\w+)*\s*$/i, '');
+
   // Lowercase first char
   text = text.charAt(0).toLowerCase() + text.slice(1);
 
@@ -195,7 +199,7 @@ function toDeclarativeProgressPhrase(value: string) {
   if (text.length > 80) {
     // Cut at subordinate clause boundaries
     text = text
-      .replace(/,\s*(including|specifically|particularly|such as|and what|and how|and whether|and if|given that|noting that|in particular)\b.*$/i, '')
+      .replace(/,\s*(including|specifically|particularly|such as|like|and what|and how|and whether|and if|given that|noting that|in particular)\b.*$/i, '')
       .replace(/\s*\u2014\s*.*$/, '')  // em-dash trailing clause
       .replace(/\s*—\s*.*$/, '')
       .trim();
@@ -205,6 +209,12 @@ function toDeclarativeProgressPhrase(value: string) {
     const cutPoint = text.lastIndexOf(' ', 75);
     text = cutPoint > 20 ? text.slice(0, cutPoint) : text.slice(0, 75);
   }
+
+  // Post-truncation cleanup: strip dangling trailing prepositions, conjunctions,
+  // articles, and other function words that make no sense at phrase end.
+  text = text
+    .replace(/\s+(?:like|for|with|around|on|to|of|from|by|about|into|between|through|within|under|over|after|before|during|against|without|upon|toward|towards|among|across|behind|beyond|along|above|below|whether|that|which|where|when|if|and|or|but|nor|the|a|an)\s*$/i, '')
+    .trim();
 
   return text;
 }
@@ -847,21 +857,22 @@ export function buildMediationReviewPresentation(params: {
     let sectionParagraphs = uniqueText(entry.paragraphs);
 
     // Mediation Summary: ensure readable paragraph structure.
-    // If the first paragraph is very long (>4 sentences), split it at a natural
-    // boundary so the rendered report doesn't present one giant wall of text.
+    // Split any individual paragraph that is unreasonably dense so the rendered
+    // report doesn't present one giant wall of text.
     if (entry.key === 'mediation summary' && sectionParagraphs.length > 0) {
-      const first = sectionParagraphs[0];
-      // Count sentences (rough: split on ". " that follows a lowercase/digit word char)
-      const sentenceBreaks = first.match(/[.!]\s+(?=[A-Z])/g);
-      const sentenceCount = sentenceBreaks ? sentenceBreaks.length + 1 : 1;
-      if (sentenceCount > 3 && first.length > 300) {
-        // Find the sentence boundary closest to the midpoint
-        const mid = Math.floor(first.length / 2);
+      const splitIfDense = (paragraph: string): string[] => {
+        const sentenceBreaks = paragraph.match(/[.!]\s+(?=[A-Z])/g);
+        const sentenceCount = sentenceBreaks ? sentenceBreaks.length + 1 : 1;
+        // Split when 3+ sentences over 250 chars, or any paragraph over 450 chars
+        if (!((sentenceCount > 2 && paragraph.length > 250) || paragraph.length > 450)) {
+          return [paragraph];
+        }
+        const mid = Math.floor(paragraph.length / 2);
         const breakPattern = /[.!]\s+(?=[A-Z])/g;
         let best = -1;
         let bestDist = Infinity;
         let m: RegExpExecArray | null;
-        while ((m = breakPattern.exec(first)) !== null) {
+        while ((m = breakPattern.exec(paragraph)) !== null) {
           const pos = m.index + m[0].trimEnd().length;
           const dist = Math.abs(pos - mid);
           if (dist < bestDist) {
@@ -869,14 +880,14 @@ export function buildMediationReviewPresentation(params: {
             best = pos;
           }
         }
-        if (best > 80 && best < first.length - 80) {
-          const p1 = first.slice(0, best).trim();
-          const p2 = first.slice(best).trim();
-          if (p1 && p2) {
-            sectionParagraphs = [p1, p2, ...sectionParagraphs.slice(1)];
-          }
+        if (best > 80 && best < paragraph.length - 80) {
+          const p1 = paragraph.slice(0, best).trim();
+          const p2 = paragraph.slice(best).trim();
+          if (p1 && p2) return [p1, p2];
         }
-      }
+        return [paragraph];
+      };
+      sectionParagraphs = sectionParagraphs.flatMap(splitIfDense);
     }
 
     const section = createPresentationSection({
@@ -1027,13 +1038,22 @@ export function buildMediationReviewPresentation(params: {
   };
 
   const substantiveRecommendationCandidates = recommendationParagraphs
-    .filter((p) => !/^Decision status:/i.test(normalizeText(p)))
+    .filter((p) => !/^Decision status:/i.test(normalizeText(p)));
+
+  // Always keep the first authored recommendation paragraph — it is the AI's
+  // primary actionable advice. Apply near-duplicate filtering only to additional
+  // paragraphs to prevent the recommendation from becoming too thin when
+  // vocabulary naturally overlaps with the analytical narrative.
+  const firstSubstantive = substantiveRecommendationCandidates[0];
+  const additionalSubstantive = substantiveRecommendationCandidates.slice(1)
     .filter((p) => !isNearDuplicateOfRendered(p));
 
   // Preserve paragraph order (the AI's authored sequence) rather than sorting
   // by length. Take up to 2 substantive paragraphs so the recommendation can
   // explain both the next step and why that sequence is the cleanest path.
-  const keptRecommendationParagraphs = substantiveRecommendationCandidates.slice(0, 2);
+  const keptRecommendationParagraphs = firstSubstantive
+    ? [firstSubstantive, ...additionalSubstantive].slice(0, 2)
+    : [];
 
   // Enrich with bridgeability notes only when the recommendation is genuinely
   // empty or very thin — not merely when it is a single concise sentence.

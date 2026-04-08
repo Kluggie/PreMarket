@@ -2152,3 +2152,123 @@ test('getConfidencePercent: returns 0 for missing data', () => {
   assert.equal(getConfidencePercent(null, null), 0);
   assert.equal(getConfidencePercent(undefined, undefined), 0);
 });
+
+// ─── toDeclarativeProgressPhrase: dangling fragment cleanup ──────────────────
+
+test('buildMediationReviewPresentation: progress topic truncation does not leave dangling prepositions', () => {
+  const presentation = buildMediationReviewPresentation({
+    fit_level: 'medium',
+    confidence_0_1: 0.60,
+    why: ['Mediation Summary: Both sides agree in principle.'],
+    missing: [],
+    redactions: [],
+    bilateral_round_number: 2,
+    prior_bilateral_round_id: 'prior-1',
+    prior_bilateral_round_number: 1,
+    resolved_since_last_round: [
+      'What are the precise, measurable definitions for key acceptance criteria like classification accuracy and reduction in manual handling?',
+    ],
+    remaining_deltas: [],
+    new_open_issues: [],
+    movement_direction: 'converging',
+  });
+
+  const progressSection = presentation.presentation_sections.find((s) => s.key === 'progress_since_prior_review');
+  assert.ok(progressSection, 'Progress section must exist');
+  const allText = (progressSection.paragraphs || []).join(' ');
+  // Must not end a topic phrase with a dangling preposition like "like"
+  assert.ok(
+    !/\blike\b[^a-z]/i.test(allText.replace(/\blike(ly|wise)\b/gi, '')) || !/\bcriteria like\b/i.test(allText),
+    `Must not contain dangling preposition "like", got: "${allText}"`,
+  );
+});
+
+test('buildMediationReviewPresentation: progress topic strips dangling infinitives from "How should" questions', () => {
+  const presentation = buildMediationReviewPresentation({
+    fit_level: 'medium',
+    confidence_0_1: 0.55,
+    why: ['Mediation Summary: The parties are close to agreement.'],
+    missing: [],
+    redactions: [],
+    bilateral_round_number: 2,
+    prior_bilateral_round_id: 'prior-2',
+    prior_bilateral_round_number: 1,
+    resolved_since_last_round: [
+      'How should the zero-severity-one-failure target for burst pipes be defined and measured?',
+    ],
+    remaining_deltas: [],
+    new_open_issues: [],
+    movement_direction: 'converging',
+  });
+
+  const progressSection = presentation.presentation_sections.find((s) => s.key === 'progress_since_prior_review');
+  assert.ok(progressSection, 'Progress section must exist');
+  const allText = (progressSection.paragraphs || []).join(' ');
+  // Must not contain dangling "be defined and measured"
+  assert.ok(
+    !/\bbe defined and measured\b/i.test(allText),
+    `Must not contain dangling infinitive "be defined and measured", got: "${allText}"`,
+  );
+  // Should still reference the substantive topic
+  assert.ok(
+    /zero-severity|burst pipes/i.test(allText),
+    `Should reference the topic substance, got: "${allText}"`,
+  );
+});
+
+// ─── Recommendation: first paragraph always preserved ────────────────────────
+
+test('buildMediationReviewPresentation: recommendation preserves first authored paragraph even when vocabulary overlaps narrative', () => {
+  const presentation = buildMediationReviewPresentation({
+    fit_level: 'medium',
+    confidence_0_1: 0.62,
+    why: [
+      'Mediation Summary: The pilot scope and pricing model need further negotiation before the parties can commit.',
+      'What Is Blocking Commitment: The vendor requires a binding specification before committing to a fixed price, while the buyer needs a cost ceiling before approving the discovery phase.',
+      'Recommended Path: The most pragmatic route is to fund the one-week discovery phase as a distinct engagement so the vendor can produce the specification the buyer needs to evaluate a fixed-price commitment.',
+      'Decision Readiness: Decision status: Proceed with conditions. The fundamentals are commercially viable provided the discovery-phase terms are settled.',
+    ],
+    missing: [
+      'Who funds the discovery phase?',
+      'What is the cost ceiling for the pilot?',
+    ],
+    redactions: [],
+  });
+
+  const recSection = presentation.presentation_sections.find((s) => s.key === 'recommendation');
+  assert.ok(recSection, 'Recommendation section must exist');
+  const paragraphs = recSection.paragraphs || [];
+  // The first authored recommendation paragraph should survive even if it overlaps the narrative
+  const hasSubstantiveRecommendation = paragraphs.some((p) =>
+    /discovery phase|specification|fixed.price/i.test(p) && !/^Decision status:/i.test(p)
+  );
+  assert.ok(
+    hasSubstantiveRecommendation,
+    `Recommendation should preserve substantive authored paragraph, got: ${JSON.stringify(paragraphs)}`,
+  );
+});
+
+// ─── Mediation Summary: improved paragraph splitting ─────────────────────────
+
+test('buildMediationReviewPresentation: splits 3-sentence mediation summary over 250 chars', () => {
+  // 3 sentences, each ~100 chars = ~300 chars total — should trigger the lowered threshold
+  const longSummary = 'Mediation Summary: The parties agree on the commercial framework but remain divided on how execution risk should be allocated between them. The vendor is seeking certainty through a binding specification phase. The buyer is reluctant to invest in discovery without cost visibility.';
+  const presentation = buildMediationReviewPresentation({
+    fit_level: 'medium',
+    confidence_0_1: 0.60,
+    why: [
+      longSummary,
+      'Decision Readiness: Decision status: Explore further.',
+    ],
+    missing: [],
+    redactions: [],
+  });
+
+  const summarySection = presentation.presentation_sections.find((s) => s.key === 'mediation_summary');
+  assert.ok(summarySection, 'Mediation Summary section must exist');
+  const paragraphs = summarySection.paragraphs || [];
+  assert.ok(
+    paragraphs.length >= 2,
+    `Should split 3-sentence 280+ char paragraph into 2, got ${paragraphs.length}: "${paragraphs[0]?.slice(0, 60)}..."`,
+  );
+});
