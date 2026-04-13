@@ -484,7 +484,6 @@ export default function DocumentComparisonDetail() {
       }
       return 2000;
     },
-    refetchIntervalInBackground: true,
   });
 
   const comparison = comparisonQuery.data?.comparison || null;
@@ -1208,7 +1207,7 @@ export default function DocumentComparisonDetail() {
           <DialogHeader>
             <DialogTitle>Send Shared Report</DialogTitle>
             <DialogDescription>
-              Send recipient-safe report links by email. Confidential information stays private and never appears in email content.
+              Send shared report links by email. Confidential information stays private and never appears in email content.
             </DialogDescription>
           </DialogHeader>
 
@@ -1367,7 +1366,7 @@ export default function DocumentComparisonDetail() {
                 <div className="space-y-1 pt-2">
                   {activeSharedReport.deliveries.map((delivery) => (
                     <p key={delivery.id} className="text-xs text-slate-600">
-                      {delivery.status} • {delivery.sent_to_email || 'recipient'} •{' '}
+                      {delivery.status} • {delivery.sent_to_email || 'unknown'} •{' '}
                       {formatDateTime(delivery.sent_at || delivery.created_at)}
                       {delivery.last_error ? ` • ${delivery.last_error}` : ''}
                     </p>

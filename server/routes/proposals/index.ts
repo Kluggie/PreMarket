@@ -1,4 +1,4 @@
-import { and, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
+import { and, desc, eq, getTableColumns, ilike, inArray, or, sql } from 'drizzle-orm';
 import { ok } from '../../_lib/api-response.js';
 import { requireUser } from '../../_lib/auth.js';
 import { getDatabaseIdentitySnapshot, getDb, schema } from '../../_lib/db/client.js';
@@ -94,6 +94,12 @@ function hasStep2DraftContent(comparison: any) {
     return false;
   }
 
+  // When lightweight boolean flags are available (from list query projection),
+  // use them directly to avoid needing heavy field data.
+  if ('hasDocAText' in comparison || 'hasDocBText' in comparison || 'hasInputsContent' in comparison) {
+    return Boolean(comparison.hasDocAText) || Boolean(comparison.hasDocBText) || Boolean(comparison.hasInputsContent);
+  }
+
   if (asText(comparison.docAText).length > 0 || asText(comparison.docBText).length > 0) {
     return true;
   }
@@ -129,6 +135,12 @@ function hasStep2DraftContent(comparison: any) {
 function hasEvaluationProjection(comparison: any) {
   if (!comparison || typeof comparison !== 'object') {
     return false;
+  }
+
+  // When lightweight boolean flags are available (from list query projection),
+  // use them directly to avoid needing heavy field data.
+  if ('hasEvaluationResult' in comparison || 'hasPublicReport' in comparison) {
+    return Boolean(comparison.hasEvaluationResult) || Boolean(comparison.hasPublicReport);
   }
 
   const evaluationResult =
@@ -420,8 +432,9 @@ export default async function handler(req: any, res: any) {
 
       let rows;
       try {
+        const { payload: _payload, ...proposalListColumns } = getTableColumns(schema.proposals);
         rows = await db
-          .select()
+          .select(proposalListColumns)
           .from(schema.proposals)
           .where(whereClause)
           .orderBy(desc(schema.proposals.updatedAt), desc(schema.proposals.id));
@@ -573,11 +586,11 @@ export default async function handler(req: any, res: any) {
                 title: schema.documentComparisons.title,
                 status: schema.documentComparisons.status,
                 draftStep: schema.documentComparisons.draftStep,
-                docAText: schema.documentComparisons.docAText,
-                docBText: schema.documentComparisons.docBText,
-                inputs: schema.documentComparisons.inputs,
-                evaluationResult: schema.documentComparisons.evaluationResult,
-                publicReport: schema.documentComparisons.publicReport,
+                hasDocAText: sql<boolean>`length(coalesce(${schema.documentComparisons.docAText}, '')) > 0`,
+                hasDocBText: sql<boolean>`length(coalesce(${schema.documentComparisons.docBText}, '')) > 0`,
+                hasInputsContent: sql<boolean>`${schema.documentComparisons.inputs} != '{}'::jsonb`,
+                hasEvaluationResult: sql<boolean>`${schema.documentComparisons.evaluationResult} != '{}'::jsonb`,
+                hasPublicReport: sql<boolean>`${schema.documentComparisons.publicReport} != '{}'::jsonb`,
               })
               .from(schema.documentComparisons)
               .where(inArray(schema.documentComparisons.id, documentComparisonIds))

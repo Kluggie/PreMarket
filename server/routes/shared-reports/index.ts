@@ -109,7 +109,10 @@ export default async function handler(req: any, res: any) {
 
       if (comparisonId) {
         const [comparison] = await db
-          .select()
+          .select({
+            id: schema.documentComparisons.id,
+            proposalId: schema.documentComparisons.proposalId,
+          })
           .from(schema.documentComparisons)
           .where(
             and(
@@ -192,7 +195,10 @@ export default async function handler(req: any, res: any) {
     }
 
     const [comparison] = await db
-      .select()
+      .select({
+        id: schema.documentComparisons.id,
+        proposalId: schema.documentComparisons.proposalId,
+      })
       .from(schema.documentComparisons)
       .where(
         and(

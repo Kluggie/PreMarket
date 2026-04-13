@@ -1088,7 +1088,7 @@ if (!hasDatabaseUrl()) {
     const initialActorRole = String(initialWorkspace.jsonBody().party_context?.draft_author_role || '');
     const initialTurnCopy = buildSharedReportTurnCopy(initialActorRole);
     assert.equal(initialTurnCopy.actorRole, 'recipient');
-    assert.equal(initialTurnCopy.sendCtaLabel, 'Send to proposer');
+    assert.equal(initialTurnCopy.sendCtaLabel, 'Send to the other party');
 
     const round2Save = await saveRecipientDraft(initialLink.token, {
       shared_payload: { label: 'Shared Information', text: 'Recipient round 2 shared update.' },
@@ -1112,7 +1112,7 @@ if (!hasDatabaseUrl()) {
     const round2ActorRole = String(round2Workspace.jsonBody().party_context?.draft_author_role || '');
     const round2TurnCopy = buildSharedReportTurnCopy(round2ActorRole);
     assert.equal(round2TurnCopy.actorRole, 'proposer');
-    assert.equal(round2TurnCopy.sendCtaLabel, 'Send to recipient');
+    assert.equal(round2TurnCopy.sendCtaLabel, 'Send to the other party');
 
     const round3Save = await saveRecipientDraft(round2Token, {
       shared_payload: { label: 'Shared Information', text: 'Owner round 3 shared update.' },
@@ -1136,7 +1136,7 @@ if (!hasDatabaseUrl()) {
     const round3ActorRole = String(round3Workspace.jsonBody().party_context?.draft_author_role || '');
     const round3TurnCopy = buildSharedReportTurnCopy(round3ActorRole);
     assert.equal(round3TurnCopy.actorRole, 'recipient');
-    assert.equal(round3TurnCopy.sendCtaLabel, 'Send to proposer');
+    assert.equal(round3TurnCopy.sendCtaLabel, 'Send to the other party');
   });
 
   test('workspace parent status stays consistent with proposals inbox row status across round ownership flips', async () => {

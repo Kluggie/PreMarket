@@ -78,7 +78,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
 
     const db = getDb();
     const [existing] = await db
-      .select()
+      .select({ id: schema.documentComparisons.id })
       .from(schema.documentComparisons)
       .where(
         and(

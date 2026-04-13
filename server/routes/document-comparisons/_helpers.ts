@@ -1990,6 +1990,30 @@ export function mapComparisonRow(row: any) {
   };
 }
 
+/**
+ * Lightweight projection for list/index views.
+ * Excludes heavy payload fields (doc texts, evaluation_result, public_report, inputs, metadata)
+ * to avoid unnecessary network transfer on summary screens.
+ */
+export function mapComparisonListRow(row: any) {
+  return {
+    id: row.id,
+    user_id: row.userId,
+    proposal_id: row.proposalId || null,
+    title: row.title,
+    status: row.status,
+    draft_step: Number(row.draftStep || 1),
+    party_a_label: normalizeComparisonLabel('a'),
+    party_b_label: normalizeComparisonLabel('b'),
+    company_name: row.companyName || null,
+    company_website: row.companyWebsite || null,
+    recipient_name: row.recipientName || null,
+    recipient_email: row.recipientEmail || null,
+    created_date: row.createdAt,
+    updated_date: row.updatedAt,
+  };
+}
+
 function toSafeObject(value: unknown) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return {} as Record<string, any>;

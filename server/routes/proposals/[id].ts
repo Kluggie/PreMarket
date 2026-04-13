@@ -1,4 +1,4 @@
-import { and, asc, desc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, sql } from 'drizzle-orm';
 import { ok } from '../../_lib/api-response.js';
 import { logAuditEventBestEffort } from '../../_lib/audit-events.js';
 import { assertProposalOwnership, requireUser } from '../../_lib/auth.js';
@@ -264,7 +264,19 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
           .orderBy(desc(schema.sharedLinks.createdAt))
           .limit(20),
         db
-          .select()
+          .select({
+            id: schema.proposalVersions.id,
+            proposalId: schema.proposalVersions.proposalId,
+            actorRole: schema.proposalVersions.actorRole,
+            milestone: schema.proposalVersions.milestone,
+            status: schema.proposalVersions.status,
+            snapshotMeta: schema.proposalVersions.snapshotMeta,
+            createdAt: schema.proposalVersions.createdAt,
+            snapshotData: sql`jsonb_build_object(
+              'proposal', ${schema.proposalVersions.snapshotData}->'proposal',
+              'documentComparison', ${schema.proposalVersions.snapshotData}->'documentComparison'
+            )`,
+          })
           .from(schema.proposalVersions)
           .where(eq(schema.proposalVersions.proposalId, proposalId))
           .orderBy(desc(schema.proposalVersions.createdAt))

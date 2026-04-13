@@ -73,6 +73,7 @@ import {
 import { MEDIATION_REVIEW_STAGE, resolveOpportunityReviewStage } from '@/lib/opportunityReviewStage';
 import {
   buildSharedReportTurnCopy,
+  getContextualPartyLabel,
   getSharedReportSendActionLabel,
 } from '@/lib/sharedReportSendDirection';
 import {
@@ -303,10 +304,6 @@ function coercePayloadToDocument(payload, fallbackLabel, fallbackText = '') {
   };
 }
 
-function getPartyRoleLabel(value) {
-  return asText(value).toLowerCase() === OWNER_PROPOSER ? 'Proposer' : 'Recipient';
-}
-
 function getPrimaryStatusClass(value) {
   const normalized = asText(value).toLowerCase();
   if (normalized === 'closed_won') return 'bg-emerald-100 text-emerald-700 border-emerald-200';
@@ -436,7 +433,7 @@ function toFriendlyEvaluateError(error) {
   return error?.message || 'Unable to run AI mediation.';
 }
 
-function toFriendlySendBackError(error, sendTargetNoun = 'proposer') {
+function toFriendlySendBackError(error, sendTargetNoun = 'the other party') {
   const code = asText(error?.code).toLowerCase();
   if (Number(error?.status || 0) === 401 || code === 'unauthorized') {
     return `Please sign in to send updates to the ${sendTargetNoun}.`;
@@ -617,9 +614,14 @@ export default function SharedReport() {
   const draftDocumentOwner = asText(partyContext?.draft_author_role).toLowerCase() === OWNER_PROPOSER
     ? OWNER_PROPOSER
     : OWNER_RECIPIENT;
+  const proposerDisplayName = asText(parent?.proposer_name) || '';
+  const recipientDisplayName = asText(comparison?.counterparty_name) || '';
+  const counterpartyDisplayName = draftDocumentOwner === OWNER_RECIPIENT
+    ? proposerDisplayName || undefined
+    : recipientDisplayName || undefined;
   const sendDirectionCopy = useMemo(
-    () => buildSharedReportTurnCopy(draftDocumentOwner),
-    [draftDocumentOwner],
+    () => buildSharedReportTurnCopy(draftDocumentOwner, { counterpartyName: counterpartyDisplayName }),
+    [draftDocumentOwner, counterpartyDisplayName],
   );
   const activeRoundNumber = useMemo(() => {
     const nextOutgoingRound = Number(partyContext?.next_outgoing_round || 0);
@@ -688,14 +690,17 @@ export default function SharedReport() {
   );
 
   const sharedHistoryDocuments = useMemo(() => {
+    const contextualLabel = (role) =>
+      getContextualPartyLabel(role, { viewerRole: draftDocumentOwner, proposerName: proposerDisplayName, recipientName: recipientDisplayName });
+
     if (sharedHistoryEntries.length > 0) {
       return sharedHistoryEntries.map((entry, index) =>
         createDocument({
           id: `${HISTORY_SHARED_DOC_ID_PREFIX}${entry.id || index}`,
           title:
             entry.round_number
-              ? `Round ${entry.round_number} - ${entry.visibility_label || `Shared by ${entry.author_label || getPartyRoleLabel(entry.author_role)}`}`
-              : (entry.visibility_label || `Shared by ${entry.author_label || getPartyRoleLabel(entry.author_role)}`),
+              ? `Round ${entry.round_number} - ${entry.visibility_label || `Shared by ${entry.author_label || contextualLabel(entry.author_role)}`}`
+              : (entry.visibility_label || `Shared by ${entry.author_label || contextualLabel(entry.author_role)}`),
           visibility: VISIBILITY_SHARED,
           owner: asText(entry.author_role).toLowerCase() === OWNER_PROPOSER
             ? OWNER_PROPOSER
@@ -722,7 +727,7 @@ export default function SharedReport() {
     return [
       createDocument({
         id: 'shared-history-baseline',
-        title: baselineSharedDocument.label || 'Round 1 - Shared by Proposer',
+        title: baselineSharedDocument.label || `Round 1 - Shared by ${contextualLabel(OWNER_PROPOSER)}`,
         visibility: VISIBILITY_SHARED,
         owner: OWNER_PROPOSER,
         source: baselineSharedDocument.source || 'typed',
@@ -1436,7 +1441,7 @@ export default function SharedReport() {
         handleRecipientMismatch(error);
         return;
       }
-      toast.error(toFriendlySendBackError(error, sendDirectionCopy.counterpartyNoun));
+      toast.error(toFriendlySendBackError(error, sendDirectionCopy.counterpartyDisplay));
     },
   });
 
@@ -2919,21 +2924,24 @@ export default function SharedReport() {
               proposalDetailsProps={{
                 description: 'Read-only cumulative shared history. Each round stays labeled by author and remains immutable.',
                 documents: sharedHistoryEntries.length > 0
-                  ? sharedHistoryEntries.map((entry) => ({
+                  ? sharedHistoryEntries.map((entry) => {
+                      const authorDisplay = entry.author_label || getContextualPartyLabel(entry.author_role, { viewerRole: draftDocumentOwner, proposerName: proposerDisplayName, recipientName: recipientDisplayName });
+                      return {
                       label:
                         entry.round_number
-                          ? `Round ${entry.round_number} - ${entry.visibility_label || `Shared by ${entry.author_label || getPartyRoleLabel(entry.author_role)}`}`
-                          : (entry.visibility_label || `Shared by ${entry.author_label || getPartyRoleLabel(entry.author_role)}`),
+                          ? `Round ${entry.round_number} - ${entry.visibility_label || `Shared by ${authorDisplay}`}`
+                          : (entry.visibility_label || `Shared by ${authorDisplay}`),
                       text: entry.text || '',
                       html: entry.html || '',
                       badges: [
                         entry.source || 'typed',
-                        entry.author_label || getPartyRoleLabel(entry.author_role),
+                        authorDisplay,
                       ],
-                    }))
+                    };
+                    })
                   : [
                       {
-                        label: baselineSharedDocument.label || 'Round 1 - Shared by Proposer',
+                        label: baselineSharedDocument.label || `Round 1 - Shared by ${proposerDisplayName || 'the other party'}`,
                         text: baselineSharedDocument.text || '',
                         html: baselineSharedDocument.html || '',
                         badges: [baselineSharedDocument.source || 'typed'],
@@ -3069,6 +3077,7 @@ export default function SharedReport() {
                     {getSharedReportSendActionLabel(draftDocumentOwner, {
                       isSent: isSentToCounterparty,
                       isPending: sendBackMutation.isPending,
+                      counterpartyName: counterpartyDisplayName,
                     })}
                   </Button>
                   <Button

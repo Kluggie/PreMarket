@@ -39,7 +39,7 @@ function VisibilitySelector({ docId, visibility, onSetVisibility }) {
           ${visibility === VISIBILITY_CONFIDENTIAL
             ? 'bg-rose-100 text-rose-700 border-rose-400'
             : 'bg-white text-slate-500 border-slate-200 hover:border-rose-300 hover:text-rose-600'}`}
-        title="Mark as Confidential – not visible to recipient"
+        title="Mark as Confidential – not visible to the other party"
       >
         <Lock className="w-3 h-3" />
         Confidential
@@ -51,7 +51,7 @@ function VisibilitySelector({ docId, visibility, onSetVisibility }) {
           ${visibility === VISIBILITY_SHARED
             ? 'bg-emerald-100 text-emerald-700 border-emerald-400'
             : 'bg-white text-slate-500 border-slate-200 hover:border-emerald-300 hover:text-emerald-600'}`}
-        title="Mark as Shared – included in recipient-facing output"
+        title="Mark as Shared – included in shared output"
       >
         <Users className="w-3 h-3" />
         Shared

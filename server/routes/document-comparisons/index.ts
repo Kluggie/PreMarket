@@ -17,6 +17,7 @@ import {
   CONFIDENTIAL_LABEL,
   SHARED_LABEL,
   mapComparisonRow,
+  mapComparisonListRow,
   normalizeEmail,
   parseStep,
   toArray,
@@ -59,9 +60,24 @@ export default async function handler(req: any, res: any) {
       const limitRaw = Number(req.query?.limit || 50);
       const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(Math.floor(limitRaw), 1), 200) : 50;
 
+      const listColumns = {
+        id: schema.documentComparisons.id,
+        userId: schema.documentComparisons.userId,
+        proposalId: schema.documentComparisons.proposalId,
+        title: schema.documentComparisons.title,
+        status: schema.documentComparisons.status,
+        draftStep: schema.documentComparisons.draftStep,
+        companyName: schema.documentComparisons.companyName,
+        companyWebsite: schema.documentComparisons.companyWebsite,
+        recipientName: schema.documentComparisons.recipientName,
+        recipientEmail: schema.documentComparisons.recipientEmail,
+        createdAt: schema.documentComparisons.createdAt,
+        updatedAt: schema.documentComparisons.updatedAt,
+      };
+
       const rows = status
         ? await db
-            .select()
+            .select(listColumns)
             .from(schema.documentComparisons)
             .where(
               and(
@@ -72,14 +88,14 @@ export default async function handler(req: any, res: any) {
             .orderBy(desc(schema.documentComparisons.updatedAt))
             .limit(limit)
         : await db
-            .select()
+            .select(listColumns)
             .from(schema.documentComparisons)
             .where(eq(schema.documentComparisons.userId, auth.user.id))
             .orderBy(desc(schema.documentComparisons.updatedAt))
             .limit(limit);
 
       ok(res, 200, {
-        comparisons: rows.map(mapComparisonRow),
+        comparisons: rows.map(mapComparisonListRow),
       });
       return;
     }

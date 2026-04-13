@@ -380,7 +380,7 @@ export default function ProposalDetail() {
     const actorRole = asLower(proposal.last_thread_actor_role);
     const actorLabel =
       actorRole === 'party_a'
-        ? 'Proposer'
+        ? 'You'
         : actorRole === 'party_b'
           ? 'Counterparty'
           : 'System';
@@ -748,13 +748,12 @@ export default function ProposalDetail() {
           <h1 className="text-3xl font-bold text-slate-900 leading-tight break-words">{proposal.title}</h1>
           <p className="mt-1.5 text-sm text-slate-500 flex flex-wrap items-center gap-x-4 gap-y-1">
             <span>
-              <span className="font-medium text-slate-600">Proposer:</span>{' '}
+              <span className="font-medium text-slate-600">You:</span>{' '}
               {proposerDisplay}
-              <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-slate-100 text-slate-500 font-medium">You</span>
             </span>
             <span className="text-slate-300" aria-hidden>·</span>
             <span>
-              <span className="font-medium text-slate-600">Recipient:</span>{' '}
+              <span className="font-medium text-slate-600">{proposal.party_b_name || 'Other party'}:</span>{' '}
               {recipientDisplay}
             </span>
             <span className="text-slate-300" aria-hidden>·</span>
@@ -1089,7 +1088,7 @@ export default function ProposalDetail() {
                               html: comparison?.doc_b_html || '',
                               source: comparison?.doc_b_source || 'typed',
                               roundNumber: null,
-                              authorLabel: 'Proposer',
+                              authorLabel: 'You',
                             },
                           ]).map((entry) => (
                             <div

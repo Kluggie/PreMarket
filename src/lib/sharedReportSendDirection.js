@@ -30,11 +30,21 @@ export function getSharedReportPartyLabel(role) {
   return getSharedReportPartyNoun(role) === 'proposer' ? 'Proposer' : 'Recipient';
 }
 
-export function buildSharedReportTurnCopy(draftAuthorRole) {
+export function getContextualPartyLabel(role, { viewerRole, proposerName, recipientName } = {}) {
+  const normalized = normalizeSharedReportPartyRole(role);
+  if (viewerRole && normalizeSharedReportPartyRole(viewerRole) === normalized) {
+    return 'You';
+  }
+  const displayName = normalized === PROPOSER_ROLE ? proposerName : recipientName;
+  return displayName || 'Other party';
+}
+
+export function buildSharedReportTurnCopy(draftAuthorRole, { counterpartyName } = {}) {
   const actorRole = normalizeSharedReportPartyRole(draftAuthorRole);
   const actorNoun = getSharedReportPartyNoun(actorRole);
   const counterpartyRole = getCounterpartyRole(actorRole);
   const counterpartyNoun = getSharedReportPartyNoun(counterpartyRole);
+  const counterpartyDisplay = counterpartyName || 'the other party';
 
   return {
     actorRole,
@@ -43,17 +53,18 @@ export function buildSharedReportTurnCopy(draftAuthorRole) {
     counterpartyRole,
     counterpartyNoun,
     counterpartyLabel: getSharedReportPartyLabel(counterpartyRole),
-    sendCtaLabel: `Send to ${counterpartyNoun}`,
-    sentCtaLabel: `Sent to ${counterpartyNoun}`,
-    signInToSendLabel: `Please sign in to send updates to the ${counterpartyNoun}.`,
-    step3Description: `Run and review the latest ${actorNoun}-side AI mediation review.`,
-    noReportMessage: `No ${actorNoun} mediation review is available yet. Run AI Mediation to generate one.`,
-    proposalDetailsDescription: `Read-only current opportunity state after ${actorNoun} edits.`,
+    counterpartyDisplay,
+    sendCtaLabel: `Send to ${counterpartyDisplay}`,
+    sentCtaLabel: `Sent to ${counterpartyDisplay}`,
+    signInToSendLabel: `Please sign in to send updates to ${counterpartyDisplay}.`,
+    step3Description: 'Run and review your AI mediation review.',
+    noReportMessage: 'No mediation review is available yet. Run AI Mediation to generate one.',
+    proposalDetailsDescription: 'Read-only current opportunity state after your edits.',
   };
 }
 
-export function getSharedReportSendActionLabel(draftAuthorRole, { isSent = false, isPending = false } = {}) {
-  const copy = buildSharedReportTurnCopy(draftAuthorRole);
+export function getSharedReportSendActionLabel(draftAuthorRole, { isSent = false, isPending = false, counterpartyName } = {}) {
+  const copy = buildSharedReportTurnCopy(draftAuthorRole, { counterpartyName });
   if (isSent) {
     return copy.sentCtaLabel;
   }

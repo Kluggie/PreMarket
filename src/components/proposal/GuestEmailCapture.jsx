@@ -50,7 +50,7 @@ export default function GuestEmailCapture({ onEmailSubmit, isSubmitting }) {
             </div>
             <div className="flex items-start gap-2 text-sm text-blue-700">
               <CheckCircle2 className="w-4 h-4 flex-shrink-0 mt-0.5" />
-              <span>Share opportunity with recipient</span>
+              <span>Share opportunity with the other party</span>
             </div>
           </div>
 

@@ -1,4 +1,4 @@
-import { desc, eq, inArray } from 'drizzle-orm';
+import { desc, eq, inArray, sql } from 'drizzle-orm';
 import { ok } from '../../_lib/api-response.js';
 import { requireUser } from '../../_lib/auth.js';
 import { logAuditEventBestEffort } from '../../_lib/audit-events.js';
@@ -212,8 +212,28 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
               eventType: schema.proposalEvents.eventType,
               actorRole: schema.proposalEvents.actorRole,
               createdAt: schema.proposalEvents.createdAt,
-              eventData: schema.proposalEvents.eventData,
-              versionSnapshot: schema.proposalVersions.snapshotData,
+              eventData: sql`jsonb_build_object(
+                'shared_link_id', coalesce(${schema.proposalEvents.eventData}->>'shared_link_id', ${schema.proposalEvents.eventData}->>'sharedLinkId', ${schema.proposalEvents.eventData}->>'link_id', ${schema.proposalEvents.eventData}->>'linkId', ${schema.proposalEvents.eventData}->>'share_id', ${schema.proposalEvents.eventData}->>'shareId', ${schema.proposalEvents.eventData}->>'shared_report_link_id', ${schema.proposalEvents.eventData}->>'sharedReportLinkId'),
+                'shared_link_token', coalesce(${schema.proposalEvents.eventData}->>'shared_link_token', ${schema.proposalEvents.eventData}->>'sharedLinkToken', ${schema.proposalEvents.eventData}->>'share_token', ${schema.proposalEvents.eventData}->>'shareToken', ${schema.proposalEvents.eventData}->>'link_token', ${schema.proposalEvents.eventData}->>'linkToken', ${schema.proposalEvents.eventData}->>'token'),
+                'recipient_email', coalesce(${schema.proposalEvents.eventData}->>'recipient_email', ${schema.proposalEvents.eventData}->>'recipientEmail'),
+                'revision_id', coalesce(${schema.proposalEvents.eventData}->>'revision_id', ${schema.proposalEvents.eventData}->>'revisionId'),
+                'evaluation_run_id', coalesce(${schema.proposalEvents.eventData}->>'evaluation_run_id', ${schema.proposalEvents.eventData}->>'evaluationRunId'),
+                'comparison_id', coalesce(${schema.proposalEvents.eventData}->>'comparison_id', ${schema.proposalEvents.eventData}->>'comparisonId', ${schema.proposalEvents.eventData}->>'document_comparison_id', ${schema.proposalEvents.eventData}->>'documentComparisonId')
+              )`,
+              versionSnapshot: sql`jsonb_build_object(
+                'proposal', jsonb_build_object(
+                  'partyBEmail', ${schema.proposalVersions.snapshotData}->'proposal'->>'partyBEmail',
+                  'party_b_email', ${schema.proposalVersions.snapshotData}->'proposal'->>'party_b_email',
+                  'documentComparisonId', ${schema.proposalVersions.snapshotData}->'proposal'->>'documentComparisonId',
+                  'document_comparison_id', ${schema.proposalVersions.snapshotData}->'proposal'->>'document_comparison_id'
+                ),
+                'sharedLinks', coalesce(${schema.proposalVersions.snapshotData}->'sharedLinks', '[]'::jsonb),
+                'recipientRevisions', coalesce(${schema.proposalVersions.snapshotData}->'recipientRevisions', '[]'::jsonb),
+                'evaluations', coalesce(${schema.proposalVersions.snapshotData}->'evaluations', '[]'::jsonb),
+                'documentComparison', jsonb_build_object(
+                  'id', ${schema.proposalVersions.snapshotData}->'documentComparison'->>'id'
+                )
+              )`,
             })
             .from(schema.proposalEvents)
             .leftJoin(
