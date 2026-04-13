@@ -126,7 +126,7 @@ export default function Billing() {
                     ) : null}
                   </div>
                   <p className="text-sm text-slate-500 mt-1">
-                    {isProfessional ? '$49 per month' : 'Free forever'}
+                    {isProfessional ? '$0.01 per month' : 'Free forever'}
                   </p>
                 </div>
                 <div className="text-right">
