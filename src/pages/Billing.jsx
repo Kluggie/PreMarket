@@ -44,7 +44,7 @@ export default function Billing() {
   const checkoutMutation = useMutation({
     mutationFn: () => billingClient.checkout(),
     onSuccess: (payload) => {
-      queryClient.invalidateQueries(['billing-status']);
+      queryClient.invalidateQueries({ queryKey: ['billing-status'] });
       const checkoutUrl = payload?.checkout?.url || null;
       if (checkoutUrl) {
         window.location.assign(checkoutUrl);
@@ -54,9 +54,14 @@ export default function Billing() {
 
   const cancelMutation = useMutation({
     mutationFn: () => billingClient.cancel(),
-    onSuccess: () => {
-      queryClient.invalidateQueries(['billing-status']);
-      refetch();
+    onSuccess: (data) => {
+      // Immediately update the cache with the fresh billing object returned by the
+      // cancel route (which already has currentPeriodEnd written) so the date
+      // appears instantly without a second round-trip.
+      if (data) {
+        queryClient.setQueryData(['billing-status'], data);
+      }
+      queryClient.invalidateQueries({ queryKey: ['billing-status'] });
     },
   });
 

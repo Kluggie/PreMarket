@@ -4,7 +4,7 @@ import { requireUser } from '../../_lib/auth.js';
 import { getDb, schema } from '../../_lib/db/client.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 import { ensureBillingRow, mapBilling } from './_shared.js';
-import { getStripeCheckoutConfig, getStripeSubscription } from './_stripe.js';
+import { getStripeCheckoutConfig, getStripeSubscription, listStripeCustomerSubscriptions } from './_stripe.js';
 
 function parsePeriodEnd(unixSeconds: unknown) {
   const numeric = Number(unixSeconds);
@@ -12,6 +12,10 @@ function parsePeriodEnd(unixSeconds: unknown) {
     return null;
   }
   return new Date(Math.floor(numeric) * 1000);
+}
+
+function asText(value: unknown) {
+  return typeof value === 'string' ? value.trim() : '';
 }
 
 export default async function handler(req: any, res: any) {
@@ -35,26 +39,47 @@ export default async function handler(req: any, res: any) {
     billing.plan_tier = auth.user.plan_tier || billing.plan_tier;
 
     // Lazy sync: when a subscription is scheduled to cancel but current_period_end
-    // is missing from the DB (e.g. cancellation was set via admin, Stripe dashboard,
-    // or a path that predates the cancel route fix), fetch it from Stripe once and
-    // persist it so the UI can show the exact cancellation date.
-    const stripeSubId =
-      typeof row?.stripeSubscriptionId === 'string' && row.stripeSubscriptionId.length > 0
-        ? row.stripeSubscriptionId
-        : null;
-
-    if (stripe.configured && row?.cancelAtPeriodEnd && !row?.currentPeriodEnd && stripeSubId) {
+    // is missing from the DB, fetch it from Stripe once and persist it so the UI
+    // can show the exact cancellation date.
+    // Handles two sub-cases:
+    //   A. stripeSubscriptionId is known → fetch subscription directly
+    //   B. stripeSubscriptionId is null but stripeCustomerId exists → look up
+    //      active subscriptions by customer, recover the ID, then fetch
+    if (stripe.configured && row?.cancelAtPeriodEnd && !row?.currentPeriodEnd) {
       try {
-        const sub = await getStripeSubscription(stripeSubId);
-        const currentPeriodEnd = parsePeriodEnd(sub?.current_period_end);
-        if (currentPeriodEnd) {
-          const db = getDb();
-          await db
-            .update(schema.billingReferences)
-            .set({ currentPeriodEnd, updatedAt: new Date() })
-            .where(eq(schema.billingReferences.userId, auth.user.id));
-          // Reflect the synced value in this response without a second DB round-trip.
-          billing.current_period_end = currentPeriodEnd;
+        const db = getDb();
+        let stripeSubId = asText(row?.stripeSubscriptionId);
+
+        // Sub-case B: recover the subscription ID via customer lookup
+        if (!stripeSubId) {
+          const customerId = asText(row?.stripeCustomerId);
+          if (customerId) {
+            const subs = await listStripeCustomerSubscriptions(customerId);
+            const activeSub = (subs as any)?.data?.[0];
+            const recoveredId = asText(activeSub?.id);
+            if (recoveredId) {
+              stripeSubId = recoveredId;
+              // Persist the recovered subscription ID
+              await db
+                .update(schema.billingReferences)
+                .set({ stripeSubscriptionId: recoveredId, updatedAt: new Date() })
+                .where(eq(schema.billingReferences.userId, auth.user.id));
+            }
+          }
+        }
+
+        // Sub-cases A and B (after recovery): fetch subscription and sync date
+        if (stripeSubId) {
+          const sub = await getStripeSubscription(stripeSubId);
+          const currentPeriodEnd = parsePeriodEnd(sub?.current_period_end);
+          if (currentPeriodEnd) {
+            await db
+              .update(schema.billingReferences)
+              .set({ currentPeriodEnd, updatedAt: new Date() })
+              .where(eq(schema.billingReferences.userId, auth.user.id));
+            // Reflect the synced value in this response without a second DB round-trip.
+            billing.current_period_end = currentPeriodEnd;
+          }
         }
       } catch {
         // Degrade gracefully — status still returns, just without the period end date.

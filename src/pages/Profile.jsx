@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useBeforeUnload, useNavigate } from 'react-router-dom';
+import { Link, useBeforeUnload, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { format } from 'date-fns';
 import { accountClient } from '@/api/accountClient';
+import { billingClient } from '@/api/billingClient';
 import { directoryClient } from '@/api/directoryClient';
 import { useAuth } from '@/lib/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -27,6 +29,13 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { createPageUrl } from '../utils';
+
+const PLAN_LABELS = {
+  professional: 'Professional',
+  enterprise: 'Enterprise',
+  early_access: 'Free trial',
+  starter: 'Starter',
+};
 
 const MAX_TAGLINE_LENGTH = 80;
 const MAX_PSEUDONYM_LENGTH = 80;
@@ -277,6 +286,12 @@ export default function Profile() {
     enabled: Boolean(user?.email),
   });
 
+  const { data: billing } = useQuery({
+    queryKey: ['billing-status'],
+    queryFn: () => billingClient.get(),
+    enabled: Boolean(user),
+  });
+
   const {
     data: industryFacets = [],
     error: industryFacetError,
@@ -362,6 +377,25 @@ export default function Profile() {
     () => getDirectoryVisibilityState(user),
     [user],
   );
+
+  const planTier = billing?.plan_tier || 'starter';
+  const subscriptionLabel = PLAN_LABELS[planTier] ?? 'Starter';
+  const cancelAtPeriodEnd = Boolean(billing?.cancel_at_period_end);
+  const currentPeriodEnd = billing?.current_period_end;
+  const subscriptionDetail = (() => {
+    if (planTier === 'professional' && cancelAtPeriodEnd) {
+      if (currentPeriodEnd) {
+        try {
+          return `Cancels on ${format(new Date(currentPeriodEnd), 'MMM d, yyyy')}`;
+        } catch {
+          // fall through
+        }
+      }
+      return 'Scheduled to cancel';
+    }
+    return null;
+  })();
+
   const previewName = directoryVisibility.displayName ||
     'Your full name will appear here in the public directory';
   const previewTitle = normalizeText(formData.title) || 'Add your title / role';
@@ -521,6 +555,29 @@ export default function Profile() {
         </div>
 
         <Tabs value="profile" className="space-y-4">
+          <TabsList className="bg-white border border-slate-200 p-1 w-fit">
+            <TabsTrigger value="profile" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
+              <User className="w-4 h-4 mr-2" />
+              Profile
+            </TabsTrigger>
+          </TabsList>
+          <Card className="border-0 shadow-sm">
+            <CardContent className="p-4 sm:p-6">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-sm font-medium text-slate-900">Subscription</p>
+                  <p className="text-sm text-slate-600 mt-0.5">{subscriptionLabel}</p>
+                  {subscriptionDetail ? (
+                    <p className="text-xs text-amber-600 mt-0.5">{subscriptionDetail}</p>
+                  ) : null}
+                </div>
+                <Link to={createPageUrl('Billing')}>
+                  <Button variant="outline" size="sm">Manage</Button>
+                </Link>
+              </div>
+            </CardContent>
+          </Card>
+
           <TabsList className="bg-white border border-slate-200 p-1 w-fit">
             <TabsTrigger value="profile" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white">
               <User className="w-4 h-4 mr-2" />
