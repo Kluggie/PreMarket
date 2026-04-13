@@ -109,3 +109,7 @@ export async function cancelStripeSubscription(subscriptionId: string) {
 export async function listStripeCustomerSubscriptions(customerId: string) {
   return stripeRequest('GET', `/subscriptions?customer=${encodeURIComponent(customerId)}&status=active&limit=1`);
 }
+
+export async function getStripeSubscription(subscriptionId: string) {
+  return stripeRequest('GET', `/subscriptions/${encodeURIComponent(subscriptionId)}`);
+}
