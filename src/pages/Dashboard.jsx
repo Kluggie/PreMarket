@@ -192,7 +192,7 @@ function StarterUsageCard({ starterUsage }) {
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <div>
             <p className="text-sm font-semibold text-slate-900">Starter plan usage</p>
-            <p className="text-xs text-slate-600">Evaluate up to 5 opportunities each month.</p>
+            <p className="text-xs text-slate-600">Evaluate up to 3 opportunities each month.</p>
           </div>
           <Badge variant="outline" className="border-amber-300 bg-white text-amber-800">Starter</Badge>
         </div>

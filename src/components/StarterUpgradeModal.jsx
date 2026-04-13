@@ -25,7 +25,7 @@ export function StarterUpgradeModal({ open, onClose }) {
         <DialogHeader>
           <DialogTitle>You've used all your opportunities this month</DialogTitle>
           <DialogDescription>
-            You've already used all 5 opportunities included in Starter this month. Upgrade to continue evaluating deals.
+            You've reached your opportunity limit for this month. Upgrade to continue evaluating deals.
           </DialogDescription>
         </DialogHeader>
         <p className="text-sm text-slate-500">

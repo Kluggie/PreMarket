@@ -23,6 +23,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Check, X, Zap, Building2, Shield } from 'lucide-react';
+import { PLAN_FEATURES } from '@/lib/planFeatures';
 import { toast } from 'sonner';
 
 export default function Pricing() {
@@ -150,13 +151,7 @@ export default function Pricing() {
       description: 'Perfect for individuals testing the workflow',
       icon: Zap,
       color: 'from-slate-500 to-slate-600',
-      features: [
-        { text: '3 opportunities per month', included: true },
-        { text: '2 active opportunities at once', included: true },
-        { text: '10 AI evaluations per month', included: true },
-        { text: 'Standard AI evaluation report', included: true },
-        { text: 'Organization profiles', included: true },
-      ],
+      features: PLAN_FEATURES.starter.map((f) => ({ text: f.text, included: true })),
       cta: 'Get Started',
       popular: false,
     },
@@ -167,14 +162,7 @@ export default function Pricing() {
       description: 'For professionals running ongoing opportunities',
       icon: Building2,
       color: 'from-blue-500 to-indigo-600',
-      features: [
-        { text: 'Unlimited opportunities', included: true },
-        { text: 'Unlimited active opportunities', included: true },
-        { text: 'Unlimited AI evaluations', included: true },
-        { text: 'Private mode', included: true },
-        { text: 'Priority support', included: true },
-        { text: 'Organization profiles', included: true },
-      ],
+      features: PLAN_FEATURES.professional.map((f) => ({ text: f.text, included: true })),
       cta: 'Start Subscription',
       popular: true,
     },
@@ -185,16 +173,7 @@ export default function Pricing() {
       description: 'For teams with sensitive or complex workflows',
       icon: Shield,
       color: 'from-indigo-500 to-purple-600',
-      features: [
-        { text: 'Unlimited opportunities', included: true },
-        { text: 'Unlimited active opportunities', included: true },
-        { text: 'Unlimited AI evaluations', included: true },
-        { text: 'Private mode', included: true },
-        { text: 'Priority support', included: true },
-        { text: 'Organization profiles', included: true },
-        { text: 'Custom security review + onboarding', included: true },
-        { text: 'Advanced data analytics', included: true },
-      ],
+      features: PLAN_FEATURES.enterprise.map((f) => ({ text: f.text, included: true })),
       cta: 'Contact Sales',
       popular: false,
     },

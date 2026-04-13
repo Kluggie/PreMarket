@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { CreditCard, CheckCircle2, AlertCircle, Loader2, Calendar, Zap } from 'lucide-react';
+import { PLAN_FEATURES } from '@/lib/planFeatures';
 
 function formatDate(value) {
   if (!value) return null;
@@ -227,22 +228,13 @@ export default function Billing() {
             </CardHeader>
             <CardContent>
               <div className="space-y-3">
-                {isProfessional ? (
-                  <>
-                    <Feature text="Unlimited opportunities per month" detail="Create as many opportunities as needed" />
-                    <Feature text="3 re-evaluations per opportunity" detail="Update and re-run evaluations" />
-                    <Feature text="All templates" detail="Access all pre-qualification templates" />
-                    <Feature text="Organization profiles" detail="Create and manage organization profiles" />
-                    <Feature text="Priority support" detail="Faster support turnaround" />
-                  </>
-                ) : (
-                  <>
-                    <Feature text="3 opportunities per month" detail="Starter monthly allowance" />
-                    <Feature text="1 re-evaluation per opportunity" detail="Single recipient re-run per opportunity" />
-                    <Feature text="All templates" detail="Use canonical baseline templates" />
-                    <Feature text="Pseudonymous mode" detail="Identity reveal only when needed" />
-                  </>
-                )}
+                {PLAN_FEATURES[planTier]
+                  ? PLAN_FEATURES[planTier].map((f) => (
+                      <Feature key={f.text} text={f.text} detail={f.detail} />
+                    ))
+                  : PLAN_FEATURES.starter.map((f) => (
+                      <Feature key={f.text} text={f.text} detail={f.detail} />
+                    ))}
               </div>
             </CardContent>
           </Card>
