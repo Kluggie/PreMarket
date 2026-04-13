@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { createPageUrl } from '@/utils';
 import { authClient } from '@/api/authClient';
+import { billingClient } from '@/api/billingClient';
 import { contactClient } from '@/api/contactClient';
 import { betaClient } from '@/api/betaClient';
 import { useAuth } from '@/lib/AuthContext';
@@ -56,6 +57,27 @@ export default function Pricing() {
     }));
     setBetaEmail((prev) => prev || user.email || '');
   }, [user]);
+
+  const { data: billing } = useQuery({
+    queryKey: ['billing-status'],
+    queryFn: () => billingClient.get(),
+    enabled: Boolean(user),
+  });
+
+  // professionalState: null (not on pro), 'active', 'past_due', or 'managed'
+  // 'managed' = plan_tier is 'professional' but status is neither active nor past_due
+  // (e.g. admin-elevated users whose status is 'inactive' by default — still fully functional)
+  const professionalState = (() => {
+    if (!user || billing?.plan_tier !== 'professional') return null;
+    const status = billing?.subscription_status;
+    if (status === 'past_due') return 'past_due';
+    if (status === 'active') return 'active';
+    return 'managed';
+  })();
+
+  // Enterprise is always admin-provisioned — no Stripe billing cycle.
+  // subscription_status is effectively meaningless for enterprise users.
+  const isEnterprise = Boolean(user) && billing?.plan_tier === 'enterprise';
 
   const {
     data: betaCount,
@@ -197,7 +219,12 @@ export default function Pricing() {
 
   const handleCTA = async (plan) => {
     if (plan.name === 'Enterprise') {
-      setShowContactSales(true);
+      if (isEnterprise) {
+        // Already on Enterprise — route to Billing, not Contact Sales.
+        navigate(createPageUrl('Billing'));
+      } else {
+        setShowContactSales(true);
+      }
       return;
     }
 
@@ -293,12 +320,33 @@ export default function Pricing() {
               transition={{ delay: index * 0.1 }}
               className="relative"
             >
-              {plan.popular ? (
+              {plan.name === 'Professional' && (professionalState === 'active' || professionalState === 'managed') ? (
+                <div className="absolute -top-4 left-1/2 -translate-x-1/2 z-10">
+                  <Badge className="bg-green-600 text-white px-4 py-1">Current Plan</Badge>
+                </div>
+              ) : plan.name === 'Professional' && professionalState === 'past_due' ? (
+                <div className="absolute -top-4 left-1/2 -translate-x-1/2 z-10">
+                  <Badge className="bg-amber-500 text-white px-4 py-1">Payment Issue</Badge>
+                </div>
+              ) : plan.name === 'Enterprise' && isEnterprise ? (
+                <div className="absolute -top-4 left-1/2 -translate-x-1/2 z-10">
+                  <Badge className="bg-green-600 text-white px-4 py-1">Current Plan</Badge>
+                </div>
+              ) : plan.popular ? (
                 <div className="absolute -top-4 left-1/2 -translate-x-1/2 z-10">
                   <Badge className="bg-blue-600 text-white px-4 py-1">Most Popular</Badge>
                 </div>
               ) : null}
-              <Card className={`h-full ${plan.popular ? 'border-2 border-blue-500 shadow-lg' : 'border-0 shadow-sm'}`}>
+              <Card className={`h-full ${
+                  (plan.name === 'Professional' && (professionalState === 'active' || professionalState === 'managed'))
+                  || (plan.name === 'Enterprise' && isEnterprise)
+                    ? 'border-2 border-green-500 shadow-lg'
+                    : plan.name === 'Professional' && professionalState === 'past_due'
+                      ? 'border-2 border-amber-400 shadow-lg'
+                      : plan.popular && !professionalState
+                        ? 'border-2 border-blue-500 shadow-lg'
+                        : 'border-0 shadow-sm'
+                }`}>
                 <CardHeader className="text-center pb-2">
                   <div
                     className={`w-12 h-12 rounded-xl bg-gradient-to-br ${plan.color} flex items-center justify-center mx-auto mb-4`}
@@ -331,10 +379,30 @@ export default function Pricing() {
 
                   <Button
                     onClick={() => handleCTA(plan)}
-                    className={`w-full ${plan.popular ? 'bg-blue-600 hover:bg-blue-700' : ''}`}
-                    variant={plan.popular ? 'default' : 'outline'}
+                    className={`w-full ${
+                      plan.name === 'Professional' && (professionalState === 'active' || professionalState === 'managed')
+                        ? 'bg-green-600 hover:bg-green-700'
+                        : plan.name === 'Professional' && professionalState === 'past_due'
+                          ? 'bg-amber-500 hover:bg-amber-600'
+                          : plan.popular && !professionalState
+                            ? 'bg-blue-600 hover:bg-blue-700'
+                            : ''
+                    }`}
+                    variant={
+                      professionalState ||
+                      (plan.name === 'Enterprise' && isEnterprise) ||
+                      (plan.popular && !professionalState)
+                        ? 'default'
+                        : 'outline'
+                    }
                   >
-                    {plan.cta}
+                    {plan.name === 'Professional' && (professionalState === 'active' || professionalState === 'managed')
+                      ? 'Manage Subscription'
+                      : plan.name === 'Professional' && professionalState === 'past_due'
+                        ? 'Update Billing'
+                        : plan.name === 'Enterprise' && isEnterprise
+                          ? 'View Plan'
+                          : plan.cta}
                   </Button>
                 </CardContent>
               </Card>
