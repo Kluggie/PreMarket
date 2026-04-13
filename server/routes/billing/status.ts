@@ -41,11 +41,12 @@ export default async function handler(req: any, res: any) {
     // Lazy sync: when a subscription is scheduled to cancel but current_period_end
     // is missing from the DB, fetch it from Stripe once and persist it so the UI
     // can show the exact cancellation date.
-    // Handles two sub-cases:
-    //   A. stripeSubscriptionId is known → fetch subscription directly
-    //   B. stripeSubscriptionId is null but stripeCustomerId exists → look up
-    //      active subscriptions by customer, recover the ID, then fetch
-    if (stripe.configured && row?.cancelAtPeriodEnd && !row?.currentPeriodEnd) {
+    // Gate: only needs STRIPE_SECRET_KEY — intentionally does NOT require the full
+    // checkout config (PROFESSIONAL_STRIPE_PRICE_ID + APP_BASE_URL), which may be
+    // absent in some envs even when Stripe reads are functional.
+    const stripeReadConfigured = Boolean(asText(process.env.STRIPE_SECRET_KEY));
+
+    if (stripeReadConfigured && row?.cancelAtPeriodEnd && !row?.currentPeriodEnd) {
       try {
         const db = getDb();
         let stripeSubId = asText(row?.stripeSubscriptionId);
