@@ -105,3 +105,7 @@ export async function cancelStripeSubscription(subscriptionId: string) {
     cancel_at_period_end: 'true',
   });
 }
+
+export async function listStripeCustomerSubscriptions(customerId: string) {
+  return stripeRequest('GET', `/subscriptions?customer=${encodeURIComponent(customerId)}&status=active&limit=1`);
+}

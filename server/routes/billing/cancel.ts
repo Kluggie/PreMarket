@@ -5,7 +5,7 @@ import { getDb, schema } from '../../_lib/db/client.js';
 import { ApiError } from '../../_lib/errors.js';
 import { ensureMethod, withApiRoute } from '../../_lib/route.js';
 import { ensureBillingRow, mapBilling } from './_shared.js';
-import { cancelStripeSubscription, getStripeCheckoutConfig } from './_stripe.js';
+import { cancelStripeSubscription, getStripeCheckoutConfig, listStripeCustomerSubscriptions } from './_stripe.js';
 
 function asText(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
@@ -35,15 +35,31 @@ export default async function handler(req: any, res: any) {
     }
 
     const existing = await ensureBillingRow(auth.user.id);
-    const subscriptionId = asText(existing?.stripeSubscriptionId);
+    let subscriptionId = asText(existing?.stripeSubscriptionId);
+
+    const db = getDb();
+
     if (!subscriptionId) {
-      throw new ApiError(400, 'invalid_input', 'No active Stripe subscription to cancel');
+      const customerId = asText(existing?.stripeCustomerId);
+      if (!customerId) {
+        throw new ApiError(400, 'invalid_input', 'No active Stripe subscription to cancel');
+      }
+      const subs = await listStripeCustomerSubscriptions(customerId);
+      const activeSub = (subs as any)?.data?.[0];
+      subscriptionId = asText(activeSub?.id);
+      if (!subscriptionId) {
+        throw new ApiError(400, 'invalid_input', 'No active Stripe subscription to cancel');
+      }
+      // Persist the recovered subscription ID for future operations
+      await db
+        .update(schema.billingReferences)
+        .set({ stripeSubscriptionId: subscriptionId, updatedAt: new Date() })
+        .where(eq(schema.billingReferences.userId, auth.user.id));
     }
 
     const canceled = await cancelStripeSubscription(subscriptionId);
     const currentPeriodEnd = parsePeriodEnd(canceled?.current_period_end);
 
-    const db = getDb();
     const updateValues = {
       cancelAtPeriodEnd: true,
       currentPeriodEnd,
