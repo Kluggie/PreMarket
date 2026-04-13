@@ -134,7 +134,7 @@ export default function Billing() {
                   {isProfessional && periodEnd ? (
                     <div className="flex items-center gap-2 text-sm text-slate-600">
                       <Calendar className="w-4 h-4" />
-                      {cancelAtPeriodEnd ? 'Ends' : 'Renews'} {periodEnd}
+                      {cancelAtPeriodEnd ? 'Cancels on' : 'Renews'} {periodEnd}
                     </div>
                   ) : null}
                 </div>

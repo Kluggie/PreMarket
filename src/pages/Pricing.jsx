@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { format } from 'date-fns';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { createPageUrl } from '@/utils';
@@ -25,6 +26,15 @@ import { Badge } from '@/components/ui/badge';
 import { Check, X, Zap, Building2, Shield } from 'lucide-react';
 import { PLAN_FEATURES } from '@/lib/planFeatures';
 import { toast } from 'sonner';
+
+function formatCancelDate(value) {
+  if (!value) return null;
+  try {
+    return format(new Date(value), 'MMM d, yyyy');
+  } catch {
+    return null;
+  }
+}
 
 export default function Pricing() {
   const navigate = useNavigate();
@@ -79,6 +89,13 @@ export default function Pricing() {
   // Enterprise is always admin-provisioned — no Stripe billing cycle.
   // subscription_status is effectively meaningless for enterprise users.
   const isEnterprise = Boolean(user) && billing?.plan_tier === 'enterprise';
+
+  // cancelingSoon: subscription is active (or managed) but scheduled to end at period end.
+  // Distinct from plain 'active' — triggers amber warning treatment throughout the card.
+  const cancelingSoon =
+    (professionalState === 'active' || professionalState === 'managed') &&
+    Boolean(billing?.cancel_at_period_end);
+  const cancelDate = cancelingSoon ? formatCancelDate(billing?.current_period_end) : null;
 
   const {
     data: betaCount,
@@ -299,7 +316,11 @@ export default function Pricing() {
               transition={{ delay: index * 0.1 }}
               className="relative"
             >
-              {plan.name === 'Professional' && (professionalState === 'active' || professionalState === 'managed') ? (
+              {plan.name === 'Professional' && cancelingSoon ? (
+                <div className="absolute -top-4 left-1/2 -translate-x-1/2 z-10">
+                  <Badge className="bg-amber-500 text-white px-4 py-1">Cancels Soon</Badge>
+                </div>
+              ) : plan.name === 'Professional' && (professionalState === 'active' || professionalState === 'managed') ? (
                 <div className="absolute -top-4 left-1/2 -translate-x-1/2 z-10">
                   <Badge className="bg-green-600 text-white px-4 py-1">Current Plan</Badge>
                 </div>
@@ -317,14 +338,16 @@ export default function Pricing() {
                 </div>
               ) : null}
               <Card className={`h-full ${
-                  (plan.name === 'Professional' && (professionalState === 'active' || professionalState === 'managed'))
-                  || (plan.name === 'Enterprise' && isEnterprise)
-                    ? 'border-2 border-green-500 shadow-lg'
-                    : plan.name === 'Professional' && professionalState === 'past_due'
-                      ? 'border-2 border-amber-400 shadow-lg'
-                      : plan.popular && !professionalState
-                        ? 'border-2 border-blue-500 shadow-lg'
-                        : 'border-0 shadow-sm'
+                  plan.name === 'Professional' && cancelingSoon
+                    ? 'border-2 border-amber-400 shadow-lg'
+                    : (plan.name === 'Professional' && (professionalState === 'active' || professionalState === 'managed'))
+                      || (plan.name === 'Enterprise' && isEnterprise)
+                        ? 'border-2 border-green-500 shadow-lg'
+                        : plan.name === 'Professional' && professionalState === 'past_due'
+                          ? 'border-2 border-amber-400 shadow-lg'
+                          : plan.popular && !professionalState
+                            ? 'border-2 border-blue-500 shadow-lg'
+                            : 'border-0 shadow-sm'
                 }`}>
                 <CardHeader className="text-center pb-2">
                   <div
@@ -339,6 +362,11 @@ export default function Pricing() {
                   <div className="text-center mb-6">
                     <span className="text-4xl font-bold text-slate-900">{plan.price}</span>
                     <span className="text-slate-500 ml-2">{plan.period}</span>
+                    {plan.name === 'Professional' && cancelingSoon ? (
+                      <p className="text-sm text-amber-600 mt-2">
+                        {cancelDate ? `Active until ${cancelDate}` : 'Scheduled to cancel'}
+                      </p>
+                    ) : null}
                   </div>
 
                   <ul className="space-y-3 mb-8">
@@ -359,13 +387,15 @@ export default function Pricing() {
                   <Button
                     onClick={() => handleCTA(plan)}
                     className={`w-full ${
-                      plan.name === 'Professional' && (professionalState === 'active' || professionalState === 'managed')
-                        ? 'bg-green-600 hover:bg-green-700'
-                        : plan.name === 'Professional' && professionalState === 'past_due'
-                          ? 'bg-amber-500 hover:bg-amber-600'
-                          : plan.popular && !professionalState
-                            ? 'bg-blue-600 hover:bg-blue-700'
-                            : ''
+                      plan.name === 'Professional' && cancelingSoon
+                        ? 'bg-amber-500 hover:bg-amber-600'
+                        : plan.name === 'Professional' && (professionalState === 'active' || professionalState === 'managed')
+                          ? 'bg-green-600 hover:bg-green-700'
+                          : plan.name === 'Professional' && professionalState === 'past_due'
+                            ? 'bg-amber-500 hover:bg-amber-600'
+                            : plan.popular && !professionalState
+                              ? 'bg-blue-600 hover:bg-blue-700'
+                              : ''
                     }`}
                     variant={
                       professionalState ||
