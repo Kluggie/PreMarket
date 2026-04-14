@@ -6,6 +6,7 @@ import { ApiError } from '../_lib/errors.js';
 import { getStripeWebhookSecret } from '../_lib/integrations.js';
 import { readRawBody } from '../_lib/http.js';
 import { ensureMethod, withApiRoute } from '../_lib/route.js';
+import { getStripeSubscription } from './billing/_stripe.js';
 
 const STRIPE_SIGNATURE_TOLERANCE_SECONDS = 60 * 5;
 
@@ -183,12 +184,33 @@ async function handleCheckoutSessionCompleted(payload: any) {
     return;
   }
 
+  const subscriptionId = asOptionalString(payload?.subscription);
+
+  // The checkout session object doesn't include current_period_end — that lives
+  // on the subscription itself. Fetch it so the billing row is complete from the
+  // start, rather than relying on the customer.subscription.created webhook
+  // (which may arrive later or be missed).
+  let currentPeriodEnd: Date | null = null;
+  if (subscriptionId) {
+    try {
+      const sub = await getStripeSubscription(subscriptionId);
+      currentPeriodEnd = toDateFromUnixSeconds(sub?.current_period_end);
+    } catch {
+      // Non-critical — the lazy sync in status.ts or the subscription webhook
+      // will recover it later.
+    }
+  }
+
   await upsertBillingByUserId(userId, {
     plan: 'professional',
     status: 'active',
     stripeCustomerId: asOptionalString(payload?.customer),
-    stripeSubscriptionId: asOptionalString(payload?.subscription),
+    stripeSubscriptionId: subscriptionId,
     cancelAtPeriodEnd: false,
+    // Only include currentPeriodEnd if we actually fetched a valid date.
+    // undefined is filtered out by toUpdateValues, so it won't overwrite
+    // any existing value from a prior webhook.
+    ...(currentPeriodEnd ? { currentPeriodEnd } : {}),
   });
 }
 
@@ -242,6 +264,7 @@ async function applyStripeEvent(event: StripeEvent) {
     case 'checkout.session.completed':
       await handleCheckoutSessionCompleted(payload);
       break;
+    case 'customer.subscription.created':
     case 'customer.subscription.updated':
       await handleSubscriptionEvent(payload, false);
       break;

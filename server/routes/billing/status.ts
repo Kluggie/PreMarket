@@ -76,23 +76,18 @@ export default async function handler(req: any, res: any) {
         if (stripeSubId) {
           const sub = await getStripeSubscription(stripeSubId);
           const currentPeriodEnd = parsePeriodEnd(sub?.current_period_end);
-          const syncedCancelAtPeriodEnd = Boolean(sub?.cancel_at_period_end);
           if (currentPeriodEnd) {
             await db
               .update(schema.billingReferences)
-              .set({
-                currentPeriodEnd,
-                cancelAtPeriodEnd: syncedCancelAtPeriodEnd,
-                updatedAt: new Date(),
-              })
+              .set({ currentPeriodEnd, updatedAt: new Date() })
               .where(eq(schema.billingReferences.userId, auth.user.id));
-            // Reflect the synced values in this response without a second DB round-trip.
+            // Reflect the synced value in this response without a second DB round-trip.
             billing.current_period_end = currentPeriodEnd;
-            billing.cancel_at_period_end = syncedCancelAtPeriodEnd;
           }
         }
-      } catch {
-        // Degrade gracefully — status still returns, just without the period end date.
+      } catch (err) {
+        // Log the actual error so silent failures are diagnosable.
+        console.error('[billing/status] lazy sync failed:', err instanceof Error ? err.message : err);
       }
     }
 
