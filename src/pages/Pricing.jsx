@@ -174,7 +174,7 @@ export default function Pricing() {
     },
     {
       name: 'Professional',
-      price: '$0.01',
+      price: 'A$49.99',
       period: 'per month',
       description: 'For professionals running ongoing opportunities',
       icon: Building2,
