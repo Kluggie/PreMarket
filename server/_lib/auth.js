@@ -63,6 +63,7 @@ function mapDatabaseUser(userRow, billingRow, betaRow = null) {
     stripe_subscription_id: billingRow?.stripeSubscriptionId || null,
     cancel_at_period_end: Boolean(billingRow?.cancelAtPeriodEnd),
     current_period_end: billingRow?.currentPeriodEnd || null,
+    trial_ends_at: betaRow?.trialEndsAt || null,
     created_date: userRow.createdAt,
   };
 }

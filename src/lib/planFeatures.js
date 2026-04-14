@@ -11,7 +11,7 @@
 
 export const PLAN_FEATURES = {
   starter: [
-    { text: '3 opportunities per month',     detail: 'Starter monthly allowance' },
+    { text: '5 opportunities per month',     detail: 'Starter monthly allowance' },
     { text: '2 active opportunities at once', detail: 'Manage up to 2 open opportunities simultaneously' },
     { text: '10 AI evaluations per month',   detail: 'AI evaluation monthly allowance' },
     { text: 'Standard AI evaluation report', detail: 'Full evaluation with scoring and insights' },
@@ -36,3 +36,6 @@ export const PLAN_FEATURES = {
     { text: 'Advanced data analytics',             detail: 'Deeper reporting and workflow insights' },
   ],
 };
+
+// Early-access (trial) users get the same feature set as Professional.
+PLAN_FEATURES.early_access = PLAN_FEATURES.professional;

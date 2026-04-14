@@ -97,9 +97,20 @@ export default function Billing() {
 
   const planTier = billing?.plan_tier || 'starter';
   const isProfessional = planTier === 'professional';
+  const isEarlyAccess = planTier === 'early_access';
+  const hasProAccess = isProfessional || isEarlyAccess;
   const isActive = billing?.subscription_status === 'active';
   const cancelAtPeriodEnd = Boolean(billing?.cancel_at_period_end);
   const periodEnd = formatDate(billing?.current_period_end);
+  const trialEndDate = formatDate(billing?.trial_ends_at);
+
+  const PLAN_LABELS = {
+    professional: 'Professional',
+    enterprise: 'Enterprise',
+    early_access: 'Free Trial',
+    starter: 'Starter',
+  };
+  const planLabel = PLAN_LABELS[planTier] || planTier;
 
   return (
     <div className="min-h-screen bg-slate-50 py-8">
@@ -121,19 +132,28 @@ export default function Billing() {
               <div className="flex items-center justify-between">
                 <div>
                   <div className="flex items-center gap-3 flex-wrap">
-                    <h3 className="text-2xl font-bold text-slate-900 capitalize">{planTier}</h3>
+                    <h3 className="text-2xl font-bold text-slate-900">{planLabel}</h3>
                     {isProfessional && isActive ? (
                       <Badge className="bg-green-100 text-green-700">Active</Badge>
                     ) : null}
                     {isProfessional && cancelAtPeriodEnd ? (
                       <Badge className="bg-amber-100 text-amber-700">Cancels Soon</Badge>
                     ) : null}
+                    {isEarlyAccess ? (
+                      <Badge className="bg-blue-100 text-blue-700">Trial</Badge>
+                    ) : null}
                     {billing?.subscription_status === 'past_due' ? (
                       <Badge className="bg-red-100 text-red-700">Past Due</Badge>
                     ) : null}
                   </div>
                   <p className="text-sm text-slate-500 mt-1">
-                    {isProfessional ? 'A$49.99 per month' : 'Free forever'}
+                    {isProfessional
+                      ? 'A$49.99 per month'
+                      : isEarlyAccess
+                        ? trialEndDate
+                          ? `Professional features until ${trialEndDate}`
+                          : 'Professional features — free trial'
+                        : 'Free forever'}
                   </p>
                 </div>
                 <div className="text-right">
@@ -184,7 +204,7 @@ export default function Billing() {
               ) : null}
 
               <div className="flex gap-3 pt-2 flex-wrap">
-                {!isProfessional ? (
+                {!hasProAccess ? (
                   <Button
                     onClick={() => checkoutMutation.mutate()}
                     disabled={checkoutMutation.isPending}

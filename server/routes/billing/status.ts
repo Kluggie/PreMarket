@@ -37,6 +37,7 @@ export default async function handler(req: any, res: any) {
     // for EA users whose plan is determined by betaSignups, not by a billing row.
     const billing = mapBilling(row);
     billing.plan_tier = auth.user.plan_tier || billing.plan_tier;
+    billing.trial_ends_at = auth.user.trial_ends_at || null;
 
     // Lazy sync: when a subscription is scheduled to cancel but current_period_end
     // is missing from the DB, fetch it from Stripe once and persist it so the UI

@@ -5,7 +5,7 @@ import { getProposalFinalOutcomeStatus } from './proposal-outcomes.js';
 import { schema } from './db/client.js';
 
 export const STARTER_LIMITS = {
-  opportunitiesPerMonth: 3,
+  opportunitiesPerMonth: 5,
   activeOpportunities: 2,
   aiEvaluationsPerMonth: 10,
   uploadBytesPerOpportunity: 25 * 1024 * 1024,
@@ -127,7 +127,7 @@ export async function assertStarterOpportunityCreateAllowed(db: any, userId: str
   if (monthlyCreated >= STARTER_LIMITS.opportunitiesPerMonth) {
     throw buildLimitError({
       code: 'starter_opportunities_monthly_limit_reached',
-      message: 'Starter plan allows up to 3 new opportunities per month.',
+      message: 'Starter plan allows up to 5 new opportunities per month.',
       extra: {
         limit: STARTER_LIMITS.opportunitiesPerMonth,
         used: monthlyCreated,

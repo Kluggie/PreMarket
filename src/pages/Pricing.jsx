@@ -75,11 +75,15 @@ export default function Pricing() {
     enabled: Boolean(user),
   });
 
-  // professionalState: null (not on pro), 'active', 'past_due', or 'managed'
+  // professionalState: null (not on pro), 'active', 'past_due', 'managed', or 'trial'
   // 'managed' = plan_tier is 'professional' but status is neither active nor past_due
   // (e.g. admin-elevated users whose status is 'inactive' by default — still fully functional)
+  // 'trial' = early_access users who have Professional features via free trial
   const professionalState = (() => {
-    if (!user || billing?.plan_tier !== 'professional') return null;
+    if (!user) return null;
+    const tier = billing?.plan_tier;
+    if (tier === 'early_access') return 'trial';
+    if (tier !== 'professional') return null;
     const status = billing?.subscription_status;
     if (status === 'past_due') return 'past_due';
     if (status === 'active') return 'active';
@@ -324,6 +328,10 @@ export default function Pricing() {
                 <div className="absolute -top-4 left-1/2 -translate-x-1/2 z-10">
                   <Badge className="bg-green-600 text-white px-4 py-1">Current Plan</Badge>
                 </div>
+              ) : plan.name === 'Professional' && professionalState === 'trial' ? (
+                <div className="absolute -top-4 left-1/2 -translate-x-1/2 z-10">
+                  <Badge className="bg-blue-600 text-white px-4 py-1">Free Trial</Badge>
+                </div>
               ) : plan.name === 'Professional' && professionalState === 'past_due' ? (
                 <div className="absolute -top-4 left-1/2 -translate-x-1/2 z-10">
                   <Badge className="bg-amber-500 text-white px-4 py-1">Payment Issue</Badge>
@@ -343,11 +351,13 @@ export default function Pricing() {
                     : (plan.name === 'Professional' && (professionalState === 'active' || professionalState === 'managed'))
                       || (plan.name === 'Enterprise' && isEnterprise)
                         ? 'border-2 border-green-500 shadow-lg'
-                        : plan.name === 'Professional' && professionalState === 'past_due'
-                          ? 'border-2 border-amber-400 shadow-lg'
-                          : plan.popular && !professionalState
-                            ? 'border-2 border-blue-500 shadow-lg'
-                            : 'border-0 shadow-sm'
+                        : plan.name === 'Professional' && professionalState === 'trial'
+                          ? 'border-2 border-blue-500 shadow-lg'
+                          : plan.name === 'Professional' && professionalState === 'past_due'
+                            ? 'border-2 border-amber-400 shadow-lg'
+                            : plan.popular && !professionalState
+                              ? 'border-2 border-blue-500 shadow-lg'
+                              : 'border-0 shadow-sm'
                 }`}>
                 <CardHeader className="text-center pb-2">
                   <div
@@ -391,11 +401,13 @@ export default function Pricing() {
                         ? 'bg-amber-500 hover:bg-amber-600'
                         : plan.name === 'Professional' && (professionalState === 'active' || professionalState === 'managed')
                           ? 'bg-green-600 hover:bg-green-700'
-                          : plan.name === 'Professional' && professionalState === 'past_due'
-                            ? 'bg-amber-500 hover:bg-amber-600'
-                            : plan.popular && !professionalState
-                              ? 'bg-blue-600 hover:bg-blue-700'
-                              : ''
+                          : plan.name === 'Professional' && professionalState === 'trial'
+                            ? 'bg-blue-600 hover:bg-blue-700'
+                            : plan.name === 'Professional' && professionalState === 'past_due'
+                              ? 'bg-amber-500 hover:bg-amber-600'
+                              : plan.popular && !professionalState
+                                ? 'bg-blue-600 hover:bg-blue-700'
+                                : ''
                     }`}
                     variant={
                       professionalState ||
@@ -407,11 +419,13 @@ export default function Pricing() {
                   >
                     {plan.name === 'Professional' && (professionalState === 'active' || professionalState === 'managed')
                       ? 'Manage Subscription'
-                      : plan.name === 'Professional' && professionalState === 'past_due'
-                        ? 'Update Billing'
-                        : plan.name === 'Enterprise' && isEnterprise
-                          ? 'View Plan'
-                          : plan.cta}
+                      : plan.name === 'Professional' && professionalState === 'trial'
+                        ? 'Current Plan'
+                        : plan.name === 'Professional' && professionalState === 'past_due'
+                          ? 'Update Billing'
+                          : plan.name === 'Enterprise' && isEnterprise
+                            ? 'View Plan'
+                            : plan.cta}
                   </Button>
                 </CardContent>
               </Card>
