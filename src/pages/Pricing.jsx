@@ -100,6 +100,10 @@ export default function Pricing() {
     (professionalState === 'active' || professionalState === 'managed') &&
     Boolean(billing?.cancel_at_period_end);
   const cancelDate = cancelingSoon ? formatCancelDate(billing?.current_period_end) : null;
+  const renewalDate =
+    !cancelingSoon && (professionalState === 'active' || professionalState === 'managed')
+      ? formatCancelDate(billing?.current_period_end)
+      : null;
 
   const {
     data: betaCount,
@@ -375,6 +379,10 @@ export default function Pricing() {
                     {plan.name === 'Professional' && cancelingSoon ? (
                       <p className="text-sm text-amber-600 mt-2">
                         {cancelDate ? `Active until ${cancelDate}` : 'Scheduled to cancel'}
+                      </p>
+                    ) : plan.name === 'Professional' && renewalDate ? (
+                      <p className="text-sm text-slate-500 mt-2">
+                        Renews on {renewalDate}
                       </p>
                     ) : null}
                   </div>

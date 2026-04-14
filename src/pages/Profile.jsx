@@ -386,12 +386,26 @@ export default function Profile() {
     if (planTier === 'professional' && cancelAtPeriodEnd) {
       if (currentPeriodEnd) {
         try {
-          return `Cancels on ${format(new Date(currentPeriodEnd), 'MMM d, yyyy')}`;
+          return { text: `Cancels on ${format(new Date(currentPeriodEnd), 'MMM d, yyyy')}`, color: 'text-amber-600' };
         } catch {
           // fall through
         }
       }
-      return 'Scheduled to cancel';
+      return { text: 'Scheduled to cancel', color: 'text-amber-600' };
+    }
+    if (planTier === 'professional' && currentPeriodEnd) {
+      try {
+        return { text: `Renews on ${format(new Date(currentPeriodEnd), 'MMM d, yyyy')}`, color: 'text-slate-500' };
+      } catch {
+        // fall through
+      }
+    }
+    if (planTier === 'early_access' && billing?.trial_ends_at) {
+      try {
+        return { text: `Trial ends on ${format(new Date(billing.trial_ends_at), 'MMM d, yyyy')}`, color: 'text-blue-600' };
+      } catch {
+        // fall through
+      }
     }
     return null;
   })();
@@ -568,7 +582,7 @@ export default function Profile() {
                   <p className="text-sm font-medium text-slate-900">Subscription</p>
                   <p className="text-sm text-slate-600 mt-0.5">{subscriptionLabel}</p>
                   {subscriptionDetail ? (
-                    <p className="text-xs text-amber-600 mt-0.5">{subscriptionDetail}</p>
+                    <p className={`text-xs ${subscriptionDetail.color} mt-0.5`}>{subscriptionDetail.text}</p>
                   ) : null}
                 </div>
                 <Link to={createPageUrl('Billing')}>

@@ -39,15 +39,17 @@ export default async function handler(req: any, res: any) {
     billing.plan_tier = auth.user.plan_tier || billing.plan_tier;
     billing.trial_ends_at = auth.user.trial_ends_at || null;
 
-    // Lazy sync: when a subscription is scheduled to cancel but current_period_end
-    // is missing from the DB, fetch it from Stripe once and persist it so the UI
-    // can show the exact cancellation date.
+    // Lazy sync: when current_period_end is missing from the DB but the user has
+    // a Stripe subscription linkage, fetch it from Stripe once and persist it so
+    // the UI can show the exact renewal or cancellation date.
+    // This covers both active (renewal) and cancel-at-period-end (cancel date).
     // Gate: only needs STRIPE_SECRET_KEY — intentionally does NOT require the full
     // checkout config (PROFESSIONAL_STRIPE_PRICE_ID + APP_BASE_URL), which may be
     // absent in some envs even when Stripe reads are functional.
     const stripeReadConfigured = Boolean(asText(process.env.STRIPE_SECRET_KEY));
+    const hasStripeLinkage = Boolean(asText(row?.stripeSubscriptionId) || asText(row?.stripeCustomerId));
 
-    if (stripeReadConfigured && row?.cancelAtPeriodEnd && !row?.currentPeriodEnd) {
+    if (stripeReadConfigured && !row?.currentPeriodEnd && hasStripeLinkage) {
       try {
         const db = getDb();
         let stripeSubId = asText(row?.stripeSubscriptionId);
@@ -74,13 +76,19 @@ export default async function handler(req: any, res: any) {
         if (stripeSubId) {
           const sub = await getStripeSubscription(stripeSubId);
           const currentPeriodEnd = parsePeriodEnd(sub?.current_period_end);
+          const syncedCancelAtPeriodEnd = Boolean(sub?.cancel_at_period_end);
           if (currentPeriodEnd) {
             await db
               .update(schema.billingReferences)
-              .set({ currentPeriodEnd, updatedAt: new Date() })
+              .set({
+                currentPeriodEnd,
+                cancelAtPeriodEnd: syncedCancelAtPeriodEnd,
+                updatedAt: new Date(),
+              })
               .where(eq(schema.billingReferences.userId, auth.user.id));
-            // Reflect the synced value in this response without a second DB round-trip.
+            // Reflect the synced values in this response without a second DB round-trip.
             billing.current_period_end = currentPeriodEnd;
+            billing.cancel_at_period_end = syncedCancelAtPeriodEnd;
           }
         }
       } catch {

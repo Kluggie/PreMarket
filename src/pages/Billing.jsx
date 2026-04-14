@@ -55,11 +55,9 @@ export default function Billing() {
   const cancelMutation = useMutation({
     mutationFn: () => billingClient.cancel(),
     onSuccess: (data) => {
-      // The cancel route returns the full billing row with currentPeriodEnd already
-      // set. Write it directly to the cache. Do NOT also invalidate — that would
-      // trigger a background refetch of /api/billing/status which may still return
-      // null for current_period_end (if the lazy Stripe sync hasn't run yet),
-      // overwriting the correct value we just received.
+      // The cancel route returns the full billing row with current_period_end
+      // already set from Stripe. Write it directly to the cache so the date
+      // appears immediately on Billing, Pricing, and Profile pages.
       if (data) {
         queryClient.setQueryData(['billing-status'], data);
       }
