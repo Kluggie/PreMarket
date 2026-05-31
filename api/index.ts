@@ -432,7 +432,7 @@ export default async function handler(req: any, res: any) {
   }
 
   const sharedReportEvaluateMatch = pathname.match(/^\/api\/shared-report\/([^/]+)\/evaluate$/);
-  if (sharedReportEvaluateMatch && method === 'POST') {
+  if (sharedReportEvaluateMatch) {
     const token = decodeURIComponent(sharedReportEvaluateMatch[1]);
     return sharedReportEvaluateHandler(req, res, token);
   }

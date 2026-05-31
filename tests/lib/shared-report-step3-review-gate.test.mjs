@@ -13,6 +13,11 @@ const PROPOSER_PATH = path.resolve(
   'src/pages/DocumentComparisonCreate.jsx',
 );
 
+const SHARED_REPORTS_CLIENT_PATH = path.resolve(
+  process.cwd(),
+  'src/api/sharedReportsClient.js',
+);
+
 // ─────────────────────────────────────────────────────────────────
 //  Core requirement: Step 2 must NOT run AI mediation directly
 // ─────────────────────────────────────────────────────────────────
@@ -122,6 +127,46 @@ test('recipient Step 3 review package has Run AI Mediation action', async () => 
   assert.ok(
     reviewPkgBlock.includes('onRunEvaluation={runEvaluationFromReview}'),
     'Review package must wire onRunEvaluation to runEvaluationFromReview',
+  );
+});
+
+test('recipient Run AI Mediation client calls shared-report evaluate with POST', async () => {
+  const source = await readFile(SHARED_REPORTS_CLIENT_PATH, 'utf8');
+  const start = source.indexOf('async evaluateRecipient(token)');
+  assert.ok(start >= 0, 'Expected sharedReportsClient.evaluateRecipient');
+
+  const block = source.slice(start, start + 450);
+  assert.ok(
+    block.includes('/api/shared-report/${encodeToken(token)}/evaluate'),
+    'evaluateRecipient must call the shared-report evaluate endpoint',
+  );
+  assert.ok(
+    block.includes("method: 'POST'"),
+    'evaluateRecipient must use POST, not GET',
+  );
+});
+
+test('recipient Run AI Mediation settles the click handler on route failure', async () => {
+  const source = await readFile(SHARED_REPORT_PATH, 'utf8');
+  const mutationStart = source.indexOf('const evaluateMutation = useMutation');
+  assert.ok(mutationStart >= 0, 'Expected evaluateMutation');
+  const mutationBlock = source.slice(mutationStart, mutationStart + 900);
+  assert.ok(
+    mutationBlock.includes('onError:'),
+    'evaluateMutation must keep a user-facing error handler',
+  );
+
+  const start = source.indexOf('const runEvaluationFromReview = async');
+  assert.ok(start >= 0, 'Expected runEvaluationFromReview handler');
+
+  const block = source.slice(start, start + 900);
+  assert.ok(
+    block.includes('await evaluateMutation.mutateAsync()'),
+    'Run Mediation must trigger the evaluate mutation',
+  );
+  assert.ok(
+    block.includes('try {') && block.includes('catch'),
+    'Run Mediation must catch route failures after the mutation error handler shows the error',
   );
 });
 

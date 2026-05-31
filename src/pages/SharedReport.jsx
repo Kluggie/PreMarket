@@ -1756,7 +1756,11 @@ export default function SharedReport() {
         return;
       }
     }
-    await evaluateMutation.mutateAsync();
+    try {
+      await evaluateMutation.mutateAsync();
+    } catch {
+      // evaluateMutation.onError owns the user-facing error toast; keep the click handler settled.
+    }
   };
 
   const runCoach = async ({
