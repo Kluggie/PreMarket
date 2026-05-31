@@ -20,6 +20,7 @@ import {
   getPresentationReportTitle,
   getPresentationSections,
   getPrimaryInsight,
+  getPublicRedactionItems,
   getRunAiMediationLabel,
   getRunOpportunityReviewLabel,
   getReviewStageLabel,
@@ -1792,6 +1793,165 @@ test('buildStoredV2Evaluation: later bilateral rounds infer convergence from sha
   assert.equal(stored.report.bilateral_round_number, 2);
   assert.equal(stored.report.movement_direction, 'converging');
   assert.match(stored.report.delta_summary, /Since the prior bilateral round/i);
+});
+
+test('buildStoredV2Evaluation: public mediation report omits confidential redaction diagnostics', () => {
+  const stored = buildStoredV2Evaluation({
+    generation_model: 'gpt-openai-test',
+    model: 'gpt-openai-test',
+    _internal: {
+      models_used: { provider: 'openai' },
+    },
+    data: {
+      analysis_stage: 'mediation_review',
+      fit_level: 'medium',
+      confidence_0_1: 0.66,
+      why: [
+        'Mediation Summary: The parties appear aligned on a SaaS referral pilot, but commission structure and lead attribution remain unresolved.',
+        'Recommended Next Step: Define attribution, commission triggers, client protection, and pilot success criteria before expanding the partnership.',
+        'Decision Readiness: Decision status: Proceed with conditions. The deal is workable if the unresolved commercial terms are clarified.',
+      ],
+      missing: [
+        'What commission trigger applies to a successful referral? — determines when commission is earned.',
+        'How will lead attribution be tracked? — determines client protection and non-circumvention treatment.',
+      ],
+      redactions: [
+        'Specific commission threshold considered a walk-away point',
+        'Internal pipeline pressure at the SaaS company',
+        'Party B may accept a lower commission as a private fallback',
+      ],
+    },
+  });
+
+  assert.equal(stored.provider, 'openai');
+  assert.deepEqual(stored.report.redactions, []);
+  assert.equal(
+    stored.report.sections.some((section) => section.key === 'redactions' || /redaction/i.test(section.heading)),
+    false,
+  );
+  assert.equal(
+    stored.report.presentation_sections.some((section) => /Missing or Redacted|redaction/i.test(section.heading)),
+    false,
+  );
+  assert.doesNotMatch(
+    JSON.stringify(stored.report),
+    /walk-away|pipeline pressure|private fallback|may accept a lower commission/i,
+  );
+});
+
+test('buildRecipientSafeEvaluationProjection: strips legacy public redaction sections from mediation reports', () => {
+  const sourceReport = {
+    report_format: 'v2',
+    analysis_stage: 'mediation_review',
+    fit_level: 'medium',
+    confidence_0_1: 0.61,
+    why: [
+      'Mediation Summary: Commission structure remains unresolved.',
+      'Recommended Next Step: Clarify commission triggers and lead attribution using shared terms.',
+      'Decision Readiness: Decision status: Proceed with conditions. The parties need to clarify commercial terms.',
+    ],
+    missing: ['What commission trigger applies? — determines attribution and payment treatment.'],
+    redactions: [
+      'Specific commission threshold considered a walk-away point',
+      'Internal pipeline pressure at the SaaS company',
+      'Private resourcing concerns',
+    ],
+    sections: [
+      { key: 'why', heading: 'Why', bullets: ['Commission structure remains unresolved.'] },
+      {
+        key: 'redactions',
+        heading: 'Missing or Redacted Information',
+        bullets: ['Specific commission threshold considered a walk-away point'],
+      },
+    ],
+    presentation_sections: [
+      {
+        key: 'mediation_summary',
+        heading: 'Mediation Summary',
+        paragraphs: ['Commission structure remains unresolved.'],
+      },
+      {
+        key: 'redactions',
+        heading: 'Missing or Redacted Information',
+        bullets: ['Internal pipeline pressure at the SaaS company'],
+      },
+    ],
+  };
+
+  const projection = buildRecipientSafeEvaluationProjection({
+    evaluationResult: {
+      provider: 'vertex',
+      model: 'gemini-test',
+      score: 60,
+      confidence: 0.6,
+      recommendation: 'Medium',
+      report: sourceReport,
+    },
+    publicReport: sourceReport,
+    confidentialText:
+      'Specific commission threshold considered a walk-away point. Internal pipeline pressure at the SaaS company. Private resourcing concerns.',
+    sharedText: 'Commission structure remains unresolved.',
+    title: 'SaaS referral partnership',
+  });
+
+  assert.deepEqual(projection.public_report.redactions, []);
+  assert.equal(
+    projection.public_report.sections.some((section) => section.key === 'redactions' || /redaction/i.test(section.heading)),
+    false,
+  );
+  assert.equal(
+    projection.public_report.presentation_sections.some((section) => /Missing or Redacted|redaction/i.test(section.heading)),
+    false,
+  );
+  assert.doesNotMatch(
+    JSON.stringify(projection.public_report),
+    /walk-away|pipeline pressure|Private resourcing|hidden limit|private fallback/i,
+  );
+});
+
+test('getPresentationSections: hides mediation redaction diagnostics from legacy public reports', () => {
+  const sections = getPresentationSections({
+    analysis_stage: 'mediation_review',
+    presentation_sections: [
+      {
+        key: 'mediation_summary',
+        heading: 'Mediation Summary',
+        paragraphs: ['Commission structure remains unresolved.'],
+      },
+      {
+        key: 'redactions',
+        heading: 'Missing or Redacted Information',
+        bullets: ['Internal pipeline pressure at the SaaS company'],
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    sections.map((section) => section.heading),
+    ['Mediation Summary'],
+  );
+  assert.doesNotMatch(JSON.stringify(sections), /pipeline pressure|redacted/i);
+});
+
+test('getPublicRedactionItems: omits mediation redactions but preserves non-mediation behavior', () => {
+  assert.deepEqual(
+    getPublicRedactionItems({
+      analysis_stage: 'mediation_review',
+      redactions: [
+        'Specific commission threshold considered a walk-away point',
+        'Internal pipeline pressure at the SaaS company',
+      ],
+    }),
+    [],
+  );
+
+  assert.deepEqual(
+    getPublicRedactionItems({
+      analysis_stage: 'pre_send_review',
+      redactions: ['Visible non-mediation redaction note'],
+    }),
+    ['Visible non-mediation redaction note'],
+  );
 });
 
 test('buildRecipientSafeEvaluationProjection: preserves safe presentation metadata and strips confidential markers', () => {

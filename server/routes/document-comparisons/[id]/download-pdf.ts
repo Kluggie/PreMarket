@@ -29,6 +29,7 @@ import {
   filterLegacySectionsForDisplay,
   getAppendixOpenQuestions,
   getPresentationSections,
+  getPublicRedactionItems,
   MISSING_OR_REDACTED_INFO_LABEL,
   OPEN_QUESTIONS_LABEL,
   splitV2WhyBodyParagraphs,
@@ -131,9 +132,7 @@ function buildWebParitySections(params: {
       });
     }
 
-    const redactions = Array.isArray(report.redactions)
-      ? (report.redactions as unknown[]).map((entry) => asText(entry)).filter(Boolean)
-      : [];
+    const redactions = getPublicRedactionItems(report);
     if (redactions.length > 0) {
       sections.push({
         heading: MISSING_OR_REDACTED_INFO_LABEL,
@@ -161,9 +160,7 @@ function buildWebParitySections(params: {
       });
     }
 
-    const redactions = Array.isArray(report.redactions)
-      ? (report.redactions as unknown[]).map((entry) => asText(entry)).filter(Boolean)
-      : [];
+    const redactions = getPublicRedactionItems(report);
     if (redactions.length > 0) {
       sections.push({
         heading: MISSING_OR_REDACTED_INFO_LABEL,
@@ -622,9 +619,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
         });
       }
 
-      const redactions = Array.isArray(report.redactions)
-        ? (report.redactions as unknown[]).map((e) => asText(e)).filter(Boolean)
-        : [];
+      const redactions = getPublicRedactionItems(report);
       if (redactions.length > 0) {
         reportSections.push({
           heading: 'Missing or Redacted Information',
@@ -711,9 +706,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       }
 
       // Missing or Redacted Information
-      const redactions = Array.isArray(report.redactions)
-        ? (report.redactions as unknown[]).map((e) => asText(e)).filter(Boolean)
-        : [];
+      const redactions = getPublicRedactionItems(report);
       if (redactions.length > 0) {
         reportSections.push({
           heading: 'Missing or Redacted Information',

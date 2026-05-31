@@ -16,7 +16,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { evaluateWithVertexV2 } from '../../server/_lib/vertex-evaluation-v2.ts';
-import { MEDIATION_REVIEW_STAGE } from '../../src/lib/opportunityReviewStage.js';
+import { MEDIATION_REVIEW_STAGE, STAGE1_SHARED_INTAKE_STAGE } from '../../src/lib/opportunityReviewStage.js';
 
 // ─── Input fixtures ───────────────────────────────────────────────────────────
 
@@ -71,6 +71,21 @@ function evalPayload(overrides = {}) {
   });
 }
 
+function stage1Payload(overrides = {}) {
+  return JSON.stringify({
+    analysis_stage: 'stage1_shared_intake',
+    submission_summary: 'The submitting party describes an initial proposal and needs the other side to respond.',
+    scope_snapshot: ['The current materials describe only one side of the intended deal.'],
+    unanswered_questions: ['What does the other side need clarified before responding?'],
+    other_side_needed: ['The other side should provide its own priorities and constraints.'],
+    discussion_starting_points: ['Clarify the submitted terms before bilateral mediation.'],
+    intake_status: 'awaiting_other_side_input',
+    basis_note:
+      'This summary is based solely on the materials submitted by one party. It is a preliminary summary intended to help structure the next exchange. A more complete understanding will be possible once the other side has had an opportunity to review and respond.',
+    ...overrides,
+  });
+}
+
 // ─── Hook helpers ─────────────────────────────────────────────────────────────
 
 /** Records which preferredModel values were received by each Vertex call. */
@@ -107,6 +122,15 @@ function setVerifierHook(fn) {
   };
 }
 
+function setOpenAIHook(fn) {
+  const prev = globalThis.__PREMARKET_TEST_OPENAI_EVAL_V2_CALL__;
+  globalThis.__PREMARKET_TEST_OPENAI_EVAL_V2_CALL__ = fn;
+  return () => {
+    if (prev === undefined) delete globalThis.__PREMARKET_TEST_OPENAI_EVAL_V2_CALL__;
+    else globalThis.__PREMARKET_TEST_OPENAI_EVAL_V2_CALL__ = prev;
+  };
+}
+
 function setEnv(key, value) {
   const prev = process.env[key];
   process.env[key] = value;
@@ -116,9 +140,25 @@ function setEnv(key, value) {
   };
 }
 
+function clearEnv(key) {
+  const prev = process.env[key];
+  delete process.env[key];
+  return () => {
+    if (prev === undefined) delete process.env[key];
+    else process.env[key] = prev;
+  };
+}
+
 function evaluateMediationWithVertexV2(input) {
   return evaluateWithVertexV2({
     analysisStage: MEDIATION_REVIEW_STAGE,
+    ...input,
+  });
+}
+
+function evaluateStage1WithVertexV2(input) {
+  return evaluateWithVertexV2({
+    analysisStage: STAGE1_SHARED_INTAKE_STAGE,
     ...input,
   });
 }
@@ -535,5 +575,251 @@ await test('D2 — leak detected by LLM verifier: ok:true suppressed result, no 
     restoreVerifier();
     restoreEnvGen();
     restoreEnvVerifier();
+  }
+});
+
+// ─── OpenAI mediation-family provider routing ────────────────────────────────
+
+await test('O1 — first bilateral mediation review uses OpenAI when MEDIATION_AI_PROVIDER=openai', async () => {
+  const openAICalls = [];
+  const openAIHook = async (params) => {
+    openAICalls.push(params);
+    const text = openAICalls.length === 1 ? factSheetPayload() : evalPayload();
+    return { model: params.preferredModel || 'gpt-openai-test', text, finishReason: 'STOP', httpStatus: 200 };
+  };
+  const vertexHook = async () => {
+    throw new Error('Vertex should not be called for OpenAI-routed mediation reviews');
+  };
+
+  const restoreOpenAI = setOpenAIHook(openAIHook);
+  const restoreVertex = setMainHook(vertexHook);
+  const restoreProvider = setEnv('MEDIATION_AI_PROVIDER', 'openai');
+  const restoreModel = setEnv('MEDIATION_AI_MODEL', 'gpt-openai-test');
+  const restoreKey = setEnv('OPENAI_API_KEY', 'test-openai-key');
+
+  try {
+    const result = await evaluateMediationWithVertexV2({
+      sharedText: SHARED_TEXT,
+      confidentialText: CONFIDENTIAL_TEXT,
+      enforceLeakGuard: false,
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.generation_model, 'gpt-openai-test');
+    assert.equal(result.model, 'gpt-openai-test');
+    assert.equal(result._internal?.models_used?.provider, 'openai');
+    assert.equal(openAICalls.length, 2, 'OpenAI should handle Pass A and Pass B');
+    assert.equal(openAICalls[0].preferredModel, 'gpt-openai-test');
+    assert.equal(openAICalls[1].preferredModel, 'gpt-openai-test');
+  } finally {
+    restoreOpenAI();
+    restoreVertex();
+    restoreProvider();
+    restoreModel();
+    restoreKey();
+  }
+});
+
+await test('O2 — later progress-aware mediation review also uses OpenAI when MEDIATION_AI_PROVIDER=openai', async () => {
+  const openAICalls = [];
+  const openAIHook = async (params) => {
+    openAICalls.push(params);
+    const text = openAICalls.length === 1
+      ? factSheetPayload()
+      : evalPayload({
+          bilateral_round_number: 2,
+          prior_bilateral_round_id: 'eval-prev-1',
+          prior_bilateral_round_number: 1,
+          delta_summary: 'Commercial terms have narrowed since the prior mediation review.',
+          resolved_since_last_round: ['Timeline'],
+          remaining_deltas: ['Pricing'],
+          new_open_issues: [],
+          movement_direction: 'converging',
+        });
+    return { model: params.preferredModel || 'gpt-openai-progress', text, finishReason: 'STOP', httpStatus: 200 };
+  };
+  const vertexHook = async () => {
+    throw new Error('Vertex should not be called for progress-aware OpenAI mediation reviews');
+  };
+
+  const restoreOpenAI = setOpenAIHook(openAIHook);
+  const restoreVertex = setMainHook(vertexHook);
+  const restoreProvider = setEnv('MEDIATION_AI_PROVIDER', 'openai');
+  const restoreModel = setEnv('MEDIATION_AI_MODEL', 'gpt-openai-progress');
+  const restoreKey = setEnv('OPENAI_API_KEY', 'test-openai-key');
+
+  try {
+    const result = await evaluateMediationWithVertexV2({
+      sharedText: SHARED_TEXT,
+      confidentialText: CONFIDENTIAL_TEXT,
+      enforceLeakGuard: false,
+      mediationRoundContext: {
+        current_bilateral_round_number: 2,
+        prior_bilateral_round_id: 'eval-prev-1',
+        prior_bilateral_round_number: 1,
+        prior_primary_insight: 'Pricing remained open in the prior round.',
+        prior_missing: ['What is the pricing model?'],
+        prior_bridgeability_notes: ['Tie price to milestone risk.'],
+      },
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result._internal?.models_used?.provider, 'openai');
+    assert.equal(openAICalls.length >= 2, true, 'OpenAI should handle the progress-aware mediation calls');
+    assert.equal(
+      openAICalls.some((call) => String(call.prompt || '').includes('prior_bilateral_context')),
+      true,
+      'OpenAI Pass B prompt should include prior bilateral context for progress-aware mediation',
+    );
+  } finally {
+    restoreOpenAI();
+    restoreVertex();
+    restoreProvider();
+    restoreModel();
+    restoreKey();
+  }
+});
+
+for (const providerValue of [undefined, '', 'vertex', 'gemini', 'unknown-provider']) {
+  await test(`O3 — mediation uses existing Vertex path when MEDIATION_AI_PROVIDER=${providerValue ?? 'unset'}`, async () => {
+    const mainSequence = [factSheetPayload(), evalPayload()];
+    const vertexCalls = [];
+    const vertexHook = async (params) => {
+      vertexCalls.push(params);
+      const step = mainSequence[vertexCalls.length - 1];
+      if (!step) return { model: 'gemini-2.5-pro', text: evalPayload(), finishReason: 'STOP', httpStatus: 200 };
+      return { model: 'gemini-2.5-pro', text: step, finishReason: 'STOP', httpStatus: 200 };
+    };
+    const openAIHook = async () => {
+      throw new Error('OpenAI should not be called unless MEDIATION_AI_PROVIDER=openai');
+    };
+
+    const restoreVertex = setMainHook(vertexHook);
+    const restoreOpenAI = setOpenAIHook(openAIHook);
+    const restoreProvider = providerValue === undefined
+      ? clearEnv('MEDIATION_AI_PROVIDER')
+      : setEnv('MEDIATION_AI_PROVIDER', providerValue);
+
+    try {
+      const result = await evaluateMediationWithVertexV2({
+        sharedText: SHARED_TEXT,
+        confidentialText: CONFIDENTIAL_TEXT,
+        enforceLeakGuard: false,
+      });
+
+      assert.equal(result.ok, true);
+      assert.equal(result._internal?.models_used?.provider, 'vertex');
+      assert.equal(vertexCalls.length, 2, 'Vertex should handle Pass A and Pass B');
+    } finally {
+      restoreVertex();
+      restoreOpenAI();
+      restoreProvider();
+    }
+  });
+}
+
+await test('O4 — Stage 1 remains on Vertex even when MEDIATION_AI_PROVIDER=openai', async () => {
+  const vertexSequence = [factSheetPayload(), stage1Payload()];
+  const vertexCalls = [];
+  const vertexHook = async (params) => {
+    vertexCalls.push(params);
+    return { model: 'gemini-2.5-pro', text: vertexSequence[vertexCalls.length - 1], finishReason: 'STOP', httpStatus: 200 };
+  };
+  const openAIHook = async () => {
+    throw new Error('OpenAI should not be called for Stage 1');
+  };
+
+  const restoreVertex = setMainHook(vertexHook);
+  const restoreOpenAI = setOpenAIHook(openAIHook);
+  const restoreProvider = setEnv('MEDIATION_AI_PROVIDER', 'openai');
+  const restoreKey = clearEnv('OPENAI_API_KEY');
+
+  try {
+    const result = await evaluateStage1WithVertexV2({
+      sharedText: SHARED_TEXT,
+      confidentialText: CONFIDENTIAL_TEXT,
+      enforceLeakGuard: false,
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.data?.analysis_stage, 'stage1_shared_intake');
+    assert.equal(result._internal?.models_used?.provider, 'vertex');
+    assert.equal(vertexCalls.length, 2, 'Stage 1 should still use Vertex Pass A and Pass B');
+  } finally {
+    restoreVertex();
+    restoreOpenAI();
+    restoreProvider();
+    restoreKey();
+  }
+});
+
+await test('O5 — missing OPENAI_API_KEY throws a clear error only for OpenAI-routed mediation', async () => {
+  const restoreProvider = setEnv('MEDIATION_AI_PROVIDER', 'openai');
+  const restoreKey = clearEnv('OPENAI_API_KEY');
+  const restoreOpenAI = (() => {
+    const prev = globalThis.__PREMARKET_TEST_OPENAI_EVAL_V2_CALL__;
+    delete globalThis.__PREMARKET_TEST_OPENAI_EVAL_V2_CALL__;
+    return () => {
+      if (prev === undefined) delete globalThis.__PREMARKET_TEST_OPENAI_EVAL_V2_CALL__;
+      else globalThis.__PREMARKET_TEST_OPENAI_EVAL_V2_CALL__ = prev;
+    };
+  })();
+
+  try {
+    await assert.rejects(
+      evaluateMediationWithVertexV2({
+        sharedText: SHARED_TEXT,
+        confidentialText: CONFIDENTIAL_TEXT,
+        enforceLeakGuard: false,
+      }),
+      (error) => {
+        assert.equal(error?.code, 'openai_not_configured');
+        assert.match(String(error?.message || ''), /MEDIATION_AI_PROVIDER=openai requires OPENAI_API_KEY/i);
+        return true;
+      },
+    );
+  } finally {
+    restoreProvider();
+    restoreKey();
+    restoreOpenAI();
+  }
+});
+
+await test('O6 — OpenAI mediation defaults to GPT-5.4 when MEDIATION_AI_MODEL is unset', async () => {
+  const openAICalls = [];
+  const openAIHook = async (params) => {
+    openAICalls.push(params);
+    const text = openAICalls.length === 1 ? factSheetPayload() : evalPayload();
+    return { model: params.preferredModel || 'gpt-5.4', text, finishReason: 'STOP', httpStatus: 200 };
+  };
+  const vertexHook = async () => {
+    throw new Error('Vertex should not be called for OpenAI-routed mediation reviews');
+  };
+
+  const restoreOpenAI = setOpenAIHook(openAIHook);
+  const restoreVertex = setMainHook(vertexHook);
+  const restoreProvider = setEnv('MEDIATION_AI_PROVIDER', 'openai');
+  const restoreModel = clearEnv('MEDIATION_AI_MODEL');
+  const restoreKey = setEnv('OPENAI_API_KEY', 'test-openai-key');
+
+  try {
+    const result = await evaluateMediationWithVertexV2({
+      sharedText: SHARED_TEXT,
+      confidentialText: CONFIDENTIAL_TEXT,
+      enforceLeakGuard: false,
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.generation_model, 'gpt-5.4');
+    assert.equal(result._internal?.models_used?.provider, 'openai');
+    assert.equal(openAICalls.length, 2, 'OpenAI should handle Pass A and Pass B');
+    assert.equal(openAICalls[0].preferredModel, 'gpt-5.4');
+    assert.equal(openAICalls[1].preferredModel, 'gpt-5.4');
+  } finally {
+    restoreOpenAI();
+    restoreVertex();
+    restoreProvider();
+    restoreModel();
+    restoreKey();
   }
 });

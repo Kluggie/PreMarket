@@ -226,6 +226,7 @@ export interface VertexEvaluationV2Internal {
     trimTriggered: boolean;
   };
   models_used?: {
+    provider?: 'vertex' | 'openai';
     generation: string;
     extract: string;
     verifier: string;

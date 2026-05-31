@@ -610,6 +610,9 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
             mediationRoundContext,
           });
         } catch (unexpectedError: any) {
+          if (asLower(unexpectedError?.code) === 'openai_not_configured') {
+            throw unexpectedError;
+          }
           v2Result = {
             ok: true,
             data: {

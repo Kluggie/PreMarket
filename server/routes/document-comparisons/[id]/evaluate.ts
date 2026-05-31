@@ -1686,6 +1686,9 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
               extractModel: asText(process.env.VERTEX_DOC_COMPARE_EXTRACT_MODEL) || undefined,
             });
           } catch (unexpectedError: any) {
+            if (asLower(unexpectedError?.code) === 'openai_not_configured') {
+              throw unexpectedError;
+            }
             console.error(
               JSON.stringify({
                 level: 'error',

@@ -13,6 +13,7 @@ import {
   getPresentationReportTitle,
   getPresentationSections,
   getPrimaryInsight,
+  getPublicRedactionItems,
   MISSING_OR_REDACTED_INFO_LABEL,
   OPEN_QUESTIONS_LABEL,
   parseV2WhyEntry,
@@ -162,7 +163,7 @@ export function ComparisonAiReportTab({
       : decisionStatus.tone === 'danger'
       ? 'bg-rose-100 text-rose-700 border-rose-200'
       : 'bg-slate-100 text-slate-700 border-slate-200';
-  const redactionItems = Array.isArray(safeReport.redactions) ? safeReport.redactions : [];
+  const redactionItems = getPublicRedactionItems(safeReport);
 
   return (
     <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-6 items-start">

@@ -126,6 +126,22 @@ function normalizeHeadingKey(value: unknown) {
     .trim();
 }
 
+function isPublicMediationRedactionSection(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const section = value as Record<string, unknown>;
+  const key = normalizeHeadingKey(section.key);
+  const heading = normalizeHeadingKey(section.heading);
+  return (
+    key.includes('redaction') ||
+    heading.includes('redaction') ||
+    heading.includes('missing or redacted information')
+  );
+}
+
+function omitPublicMediationRedactionSections(values: unknown[]) {
+  return (Array.isArray(values) ? values : []).filter((entry) => !isPublicMediationRedactionSection(entry));
+}
+
 function uniqueText(values: unknown[]) {
   const seen = new Set<string>();
   const result: string[] = [];
@@ -1161,8 +1177,9 @@ export function buildMediationReviewPresentation(params: {
 
   // 3. Remove empty sections that may result from the cleanup passes above
   const cleanedSections = sections.filter((s) =>
-    (s.paragraphs && s.paragraphs.length > 0) ||
-    (s.bullets && s.bullets.length > 0),
+    !isPublicMediationRedactionSection(s) &&
+    ((s.paragraphs && s.paragraphs.length > 0) ||
+      (s.bullets && s.bullets.length > 0)),
   );
 
   return {
@@ -1635,6 +1652,11 @@ export function buildStoredV2Evaluation(
     normalizeText(process.env.VERTEX_MODEL) ||
     'gemini-2.5-pro';
   const providerModel = normalizeText(v2Result?.model) || generationModel;
+  const evaluationProvider =
+    analysisStage === MEDIATION_REVIEW_STAGE &&
+    normalizeHeadingKey(v2Result?._internal?.models_used?.provider) === 'openai'
+      ? 'openai'
+      : 'vertex';
 
   if (analysisStage === STAGE1_SHARED_INTAKE_STAGE) {
     const submissionSummary = normalizeText(data?.submission_summary);
@@ -1692,7 +1714,7 @@ export function buildStoredV2Evaluation(
     };
 
     return {
-      provider: 'vertex',
+      provider: evaluationProvider,
       model: providerModel,
       generatedAt,
       score: null,
@@ -1700,7 +1722,7 @@ export function buildStoredV2Evaluation(
       recommendation: null,
       summary: presentation.primary_insight || basisNote || SHARED_INTAKE_SUMMARY_TITLE,
       report,
-      evaluation_provider: 'vertex',
+      evaluation_provider: evaluationProvider,
       evaluation_model: generationModel,
       evaluation_provider_model: providerModel,
       evaluation_provider_reason: null,
@@ -1778,7 +1800,7 @@ export function buildStoredV2Evaluation(
     };
 
     return {
-      provider: 'vertex',
+      provider: evaluationProvider,
       model: providerModel,
       generatedAt,
       score,
@@ -1786,7 +1808,7 @@ export function buildStoredV2Evaluation(
       recommendation: null,
       summary: presentation.primary_insight || sendReadinessSummary || PRE_SEND_REVIEW_TITLE,
       report,
-      evaluation_provider: 'vertex',
+      evaluation_provider: evaluationProvider,
       evaluation_model: generationModel,
       evaluation_provider_model: providerModel,
       evaluation_provider_reason: null,
@@ -1806,9 +1828,7 @@ export function buildStoredV2Evaluation(
   const missing = Array.isArray(data?.missing)
     ? data.missing.map((entry: unknown) => normalizeText(entry)).filter(Boolean)
     : [];
-  const redactions = Array.isArray(data?.redactions)
-    ? data.redactions.map((entry: unknown) => normalizeText(entry)).filter(Boolean)
-    : [];
+  const redactions: string[] = [];
   const negotiationAnalysis = normalizeNegotiationAnalysis(data?.negotiation_analysis);
   const progress = buildStoredMediationProgress({
     currentMissing: data?.remaining_deltas ?? missing,
@@ -1858,13 +1878,13 @@ export function buildStoredV2Evaluation(
     report_archetype: presentation.report_archetype,
     report_title: presentation.report_title,
     primary_insight: presentation.primary_insight,
-    presentation_sections: presentation.presentation_sections,
+    presentation_sections: omitPublicMediationRedactionSections(presentation.presentation_sections),
   };
 
   const stableConfidence = stabilizeConfidence(confidence);
 
   return {
-    provider: 'vertex',
+    provider: evaluationProvider,
     model: providerModel,
     generatedAt,
     score: Math.round(stableConfidence * 100),
@@ -1872,7 +1892,7 @@ export function buildStoredV2Evaluation(
     recommendation,
     summary: presentation.primary_insight || why[0] || 'AI mediation review complete',
     report,
-    evaluation_provider: 'vertex',
+    evaluation_provider: evaluationProvider,
     evaluation_model: generationModel,
     evaluation_provider_model: providerModel,
     evaluation_provider_reason: null,
@@ -2839,7 +2859,7 @@ function buildV2RecipientProjection(params: {
 
   const why = scrubStringArray(sourceReport.why, markers);
   const missing = scrubStringArray(sourceReport.missing, markers);
-  const redactions = scrubStringArray(sourceReport.redactions, markers);
+  const redactions: string[] = [];
   const progress = normalizeStoredMediationProgress({
     bilateral_round_number: sourceReport.bilateral_round_number,
     prior_bilateral_round_id: sourceReport.prior_bilateral_round_id,
@@ -2870,8 +2890,10 @@ function buildV2RecipientProjection(params: {
   const projectedPresentationSections = Array.isArray(sourceReport.presentation_sections)
     ? (redactConfidentialStrings(sourceReport.presentation_sections, markers) as unknown[])
     : [];
-  const normalizedProjectedPresentationSections = serializePresentationSections(
-    getPresentationSections({ presentation_sections: projectedPresentationSections }),
+  const normalizedProjectedPresentationSections = omitPublicMediationRedactionSections(
+    serializePresentationSections(
+      getPresentationSections({ presentation_sections: projectedPresentationSections }),
+    ),
   );
 
   const safeReport = {
@@ -2920,7 +2942,7 @@ function buildV2RecipientProjection(params: {
     presentation_sections:
       normalizedProjectedPresentationSections.length > 0
         ? normalizedProjectedPresentationSections
-        : rebuiltPresentation.presentation_sections,
+        : omitPublicMediationRedactionSections(rebuiltPresentation.presentation_sections),
   } as Record<string, any>;
 
   const projectedReport = redactConfidentialStrings(safeReport, markers);

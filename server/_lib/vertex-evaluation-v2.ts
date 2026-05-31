@@ -1,4 +1,5 @@
 import { createSign } from 'node:crypto';
+import OpenAI from 'openai';
 import { ApiError } from './errors.js';
 import { getVertexConfig, getVertexNotConfiguredError, type VertexServiceAccountCredentials } from './integrations.js';
 import { sanitizeUserInput } from './vertex-input-sanitizer.js';
@@ -115,6 +116,7 @@ const MIN_LEAK_TOKEN_LEN = 4;
 const DEFAULT_GENERATION_MODEL = 'gemini-2.5-pro';
 const DEFAULT_VERIFIER_MODEL = 'gemini-2.5-flash-lite';
 const DEFAULT_EXTRACT_MODEL = 'gemini-2.5-flash-lite';
+const DEFAULT_MEDIATION_OPENAI_MODEL = 'gpt-5.4';
 
 type VertexCallResponse = {
   model: string;
@@ -144,6 +146,8 @@ declare global {
   var __PREMARKET_TEST_VERTEX_EVAL_V2_CALL__: VertexCallOverride | undefined;
   // Test-only hook for overriding the leak-verifier Vertex call.
   var __PREMARKET_TEST_VERTEX_EVAL_V2_VERIFIER_CALL__: VertexCallOverride | undefined;
+  // Test-only hook for mediation reviews routed through OpenAI.
+  var __PREMARKET_TEST_OPENAI_EVAL_V2_CALL__: VertexCallOverride | undefined;
 }
 
 function asText(value: unknown) {
@@ -154,6 +158,26 @@ function asText(value: unknown) {
 
 function asLower(value: unknown) {
   return asText(value).toLowerCase();
+}
+
+function resolveMediationAiProvider() {
+  return asLower(process.env.MEDIATION_AI_PROVIDER) === 'openai' ? 'openai' : 'vertex';
+}
+
+function resolveMediationOpenAiModel() {
+  return asText(process.env.MEDIATION_AI_MODEL) || DEFAULT_MEDIATION_OPENAI_MODEL;
+}
+
+function hasOpenAICallOverride() {
+  return typeof globalThis.__PREMARKET_TEST_OPENAI_EVAL_V2_CALL__ === 'function';
+}
+
+function hasOpenAIApiKey() {
+  return Boolean(asText(process.env.OPENAI_API_KEY));
+}
+
+function isMediationFamilyReview(stage: ReviewStage) {
+  return stage === MEDIATION_STAGE;
 }
 
 function clamp01(value: number) {
@@ -4448,12 +4472,107 @@ async function callVertexV2(params: {
   });
 }
 
+function extractOpenAIResponseText(payload: any) {
+  const direct = asText(payload?.output_text);
+  if (direct) return direct;
+
+  const parts: string[] = [];
+  const output = Array.isArray(payload?.output) ? payload.output : [];
+  for (const item of output) {
+    const content = Array.isArray(item?.content) ? item.content : [];
+    for (const part of content) {
+      const text = asText(part?.text);
+      if (text) parts.push(text);
+    }
+  }
+  return parts.join('\n').trim();
+}
+
+function extractOpenAIFinishReason(payload: any) {
+  const status = asLower(payload?.status);
+  if (status === 'completed') return 'STOP';
+  if (status === 'incomplete') {
+    return asText(payload?.incomplete_details?.reason) || 'MAX_OUTPUT_TOKENS';
+  }
+  return status || null;
+}
+
+async function callOpenAIV2(params: {
+  prompt: string;
+  requestId?: string;
+  inputChars: number;
+  maxOutputTokens?: number;
+  preferredModel?: string;
+}): Promise<VertexCallResponse> {
+  const apiKey = asText(process.env.OPENAI_API_KEY);
+  if (!apiKey) {
+    throw new ApiError(
+      501,
+      'openai_not_configured',
+      'MEDIATION_AI_PROVIDER=openai requires OPENAI_API_KEY for mediation reviews.',
+      {
+        provider: 'openai',
+        requestId: asText(params.requestId) || null,
+      },
+    );
+  }
+
+  const model = asText(params.preferredModel) || resolveMediationOpenAiModel();
+  const client = new OpenAI({
+    apiKey,
+    timeout: VERTEX_TIMEOUT_MS,
+  });
+
+  try {
+    const response = await client.responses.create({
+      model: model as any,
+      input: params.prompt,
+      max_output_tokens: params.maxOutputTokens ?? 4096,
+      store: false,
+      text: {
+        format: { type: 'json_object' },
+        verbosity: 'medium',
+      },
+    } as any);
+
+    return {
+      model,
+      text: extractOpenAIResponseText(response),
+      finishReason: extractOpenAIFinishReason(response),
+      httpStatus: 200,
+    };
+  } catch (error: any) {
+    if (asLower(error?.code) === 'openai_not_configured') throw error;
+    const upstreamStatus = Number(error?.status || error?.statusCode || 0);
+    const upstreamMessage =
+      asText(error?.message) ||
+      asText(error?.error?.message) ||
+      'OpenAI mediation request failed';
+    throw new ApiError(502, 'openai_request_failed', 'OpenAI mediation request failed', {
+      model,
+      provider: 'openai',
+      upstreamStatus: upstreamStatus || null,
+      upstreamMessage: upstreamMessage.slice(0, 400),
+      requestId: asText(params.requestId) || null,
+      inputChars: params.inputChars,
+    });
+  }
+}
+
 function getVertexCallImplementation(): VertexCallOverride {
   const override = globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__;
   if (typeof override === 'function') {
     return override;
   }
   return callVertexV2;
+}
+
+function getOpenAICallImplementation(): VertexCallOverride {
+  const override = globalThis.__PREMARKET_TEST_OPENAI_EVAL_V2_CALL__;
+  if (typeof override === 'function') {
+    return override;
+  }
+  return callOpenAIV2;
 }
 
 /**
@@ -5164,21 +5283,30 @@ export async function evaluateWithVertexV2(
   const enforceLeakGuard = input.enforceLeakGuard === true;
   const requestId = asText(input.requestId) || undefined;
   const inputChars = sharedText.length + confidentialText.length;
+  const modelProvider =
+    isMediationFamilyReview(analysisStage) && resolveMediationAiProvider() === 'openai'
+      ? 'openai'
+      : 'vertex';
+  const useOpenAIMediation = modelProvider === 'openai';
 
   // ── Model resolution (env var overrides > request params > built-in defaults) ─
-  const generationModel =
+  const vertexGenerationModel =
     asText(input.generationModel) ||
     asText(process.env.VERTEX_DOC_COMPARE_GENERATION_MODEL) ||
     asText(process.env.VERTEX_MODEL) ||
     DEFAULT_GENERATION_MODEL;
-  const verifierModel =
+  const vertexVerifierModel =
     asText(input.verifierModel) ||
     asText(process.env.VERTEX_DOC_COMPARE_VERIFIER_MODEL) ||
     DEFAULT_VERIFIER_MODEL;
-  const extractModel =
+  const vertexExtractModel =
     asText(input.extractModel) ||
     asText(process.env.VERTEX_DOC_COMPARE_EXTRACT_MODEL) ||
-    verifierModel;
+    vertexVerifierModel;
+  const openAIMediationModel = resolveMediationOpenAiModel();
+  const generationModel = useOpenAIMediation ? openAIMediationModel : vertexGenerationModel;
+  const verifierModel = useOpenAIMediation ? openAIMediationModel : vertexVerifierModel;
+  const extractModel = useOpenAIMediation ? openAIMediationModel : vertexExtractModel;
 
   const convergenceDigestText = asText(input.convergenceDigestText) || undefined;
 
@@ -5194,10 +5322,22 @@ export async function evaluateWithVertexV2(
     });
   }
 
+  if (useOpenAIMediation && !hasOpenAIApiKey() && !hasOpenAICallOverride()) {
+    throw new ApiError(
+      501,
+      'openai_not_configured',
+      'MEDIATION_AI_PROVIDER=openai requires OPENAI_API_KEY for mediation reviews.',
+      {
+        provider: 'openai',
+        requestId: requestId || null,
+      },
+    );
+  }
+
   const chunks = buildChunks(sharedText, confidentialText);
   const forbiddenChunks = buildSourceChunks(forbiddenLeakText.slice(0, MAX_CONFIDENTIAL_CHARS), 'conf');
-  const callVertex = getVertexCallImplementation();
-  const callVerifier = getVertexVerifierCallImplementation();
+  const callModel = useOpenAIMediation ? getOpenAICallImplementation() : getVertexCallImplementation();
+  const callVerifier = useOpenAIMediation ? getOpenAICallImplementation() : getVertexVerifierCallImplementation();
 
   // ── Pass A: extract structured Fact Sheet ────────────────────────────────
   const proposalTextExcerpt =
@@ -5217,7 +5357,7 @@ export async function evaluateWithVertexV2(
   const { sheet: factSheet, parseError: passAParseError } = await extractProposalFactsV2({
     proposalTextExcerpt,
     requestId,
-    callVertex,
+    callVertex: callModel,
     preferredModel: extractModel,
   });
 
@@ -5279,7 +5419,7 @@ export async function evaluateWithVertexV2(
       | undefined;
 
     try {
-      vertex = await callVertex({
+      vertex = await callModel({
         prompt,
         requestId,
         inputChars,
@@ -5415,6 +5555,7 @@ export async function evaluateWithVertexV2(
             warnings: ['confidential_leak_detected_output_suppressed'],
             failure_kind: 'confidential_leak_detected',
             models_used: {
+              provider: modelProvider,
               generation: generationModel,
               extract: extractModel,
               verifier: verifierModel,
@@ -5437,7 +5578,7 @@ export async function evaluateWithVertexV2(
         verifierModel,
         escalationModel: generationModel,
         callVerifier,
-        callGeneration: callVertex,
+        callGeneration: callModel,
       });
       if (llmVerifyResult.verdict === 'leak') {
         // LLM verifier detected leak: suppress output, return ok:true with warnings.
@@ -5458,6 +5599,7 @@ export async function evaluateWithVertexV2(
             warnings: ['confidential_leak_detected_output_suppressed'],
             failure_kind: 'confidential_leak_detected',
             models_used: {
+              provider: modelProvider,
               generation: generationModel,
               extract: extractModel,
               verifier: verifierModel,
@@ -5489,6 +5631,7 @@ export async function evaluateWithVertexV2(
             warnings: ['verifier_unavailable_output_suppressed'],
             failure_kind: 'verifier_unavailable',
             models_used: {
+              provider: modelProvider,
               generation: generationModel,
               extract: extractModel,
               verifier: verifierModel,
@@ -5531,6 +5674,7 @@ export async function evaluateWithVertexV2(
             trimTriggered: preflightTrimTriggered,
           },
           models_used: {
+            provider: modelProvider,
             generation: generationModel,
             extract: extractModel,
             verifier: verifierModel,
@@ -5568,6 +5712,7 @@ export async function evaluateWithVertexV2(
             trimTriggered: preflightTrimTriggered,
           },
           models_used: {
+            provider: modelProvider,
             generation: generationModel,
             extract: extractModel,
             verifier: verifierModel,
@@ -5613,7 +5758,7 @@ export async function evaluateWithVertexV2(
         requestId,
         inputChars,
         generationModel,
-        callVertex,
+        callVertex: callModel,
         forbiddenLeakText,
         sharedText,
         forbiddenChunks,
@@ -5647,7 +5792,7 @@ export async function evaluateWithVertexV2(
       // Regeneration: re-run Pass B once with a strengthened prompt
       try {
         const regenPrompt = buildPrompt();
-        const regenVertex = await callVertex({
+        const regenVertex = await callModel({
           prompt: regenPrompt,
           requestId: requestId ? `${requestId}_regen` : undefined,
           inputChars,
@@ -5757,6 +5902,7 @@ export async function evaluateWithVertexV2(
           trimTriggered: preflightTrimTriggered,
         },
         models_used: {
+          provider: modelProvider,
           generation: generationModel,
           extract: extractModel,
           verifier: verifierModel,
@@ -5802,6 +5948,7 @@ export async function evaluateWithVertexV2(
         failure_kind: lastParseFailureKind,
         fallback_mode: fallback.fallbackMode,
         models_used: {
+          provider: modelProvider,
           generation: generationModel,
           extract: extractModel,
           verifier: verifierModel,
@@ -5842,6 +5989,7 @@ export async function evaluateWithVertexV2(
         failure_kind: lastParseFailureKind,
         fallback_mode: fallback.fallbackMode,
         models_used: {
+          provider: modelProvider,
           generation: generationModel,
           extract: extractModel,
           verifier: verifierModel,
@@ -5906,6 +6054,7 @@ export async function evaluateWithVertexV2(
       failure_kind: lastParseFailureKind,
       fallback_mode: fallback.fallbackMode,
       models_used: {
+        provider: modelProvider,
         generation: generationModel,
         extract: extractModel,
         verifier: verifierModel,

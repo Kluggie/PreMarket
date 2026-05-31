@@ -708,7 +708,10 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
               enforceLeakGuard: false,
               ...(mediationRoundContext ? { mediationRoundContext } : {}),
             });
-          } catch {
+          } catch (unexpectedError: any) {
+            if (asLower(unexpectedError?.code) === 'openai_not_configured') {
+              throw unexpectedError;
+            }
             v2Result = {
               ok: true,
               data: buildStageFallbackV2Data(analysisStage, 'unexpected_error'),

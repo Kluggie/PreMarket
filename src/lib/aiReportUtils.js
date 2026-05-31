@@ -660,6 +660,27 @@ function normalizePresentationSection(section, index = 0) {
   };
 }
 
+function isRedactionDiagnosticSection(section) {
+  if (!section || typeof section !== 'object') return false;
+  const key = normalizeSpaces(section.key).toLowerCase();
+  const heading = normalizeSpaces(section.heading).toLowerCase();
+  return (
+    key.includes('redaction') ||
+    heading.includes('redaction') ||
+    heading === 'missing or redacted information'
+  );
+}
+
+export function getPublicRedactionItems(report) {
+  const stage = resolveOpportunityReviewStage(report, {
+    fallbackStage: MEDIATION_REVIEW_STAGE,
+  });
+  if (stage === MEDIATION_REVIEW_STAGE) return [];
+  return Array.isArray(report?.redactions)
+    ? report.redactions.map((entry) => normalizeSpaces(entry)).filter(Boolean)
+    : [];
+}
+
 export function getPresentationSections(report) {
   const stage = resolveOpportunityReviewStage(report, {
     fallbackStage: MEDIATION_REVIEW_STAGE,
@@ -672,6 +693,9 @@ export function getPresentationSections(report) {
   const sections = report.presentation_sections
     .map((section, index) => normalizePresentationSection(section, index))
     .filter(Boolean);
+  if (stage === MEDIATION_REVIEW_STAGE) {
+    return sections.filter((section) => !isRedactionDiagnosticSection(section));
+  }
   if (!isSharedIntakeReviewStage(stage)) {
     return sections;
   }
