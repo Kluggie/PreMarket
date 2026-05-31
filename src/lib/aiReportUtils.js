@@ -536,22 +536,23 @@ export function normalizeV2Heading(raw) {
 
   /** @type {[string[], string][]} — [aliases, canonical] */
   const HEADING_MAP = [
-    // New mediation headings
-    [['mediation summary', 'mediation overview'], 'Mediation Summary'],
-    [['where agreement exists', 'agreement', 'areas of agreement'], 'Where Agreement Exists'],
-    [['what is blocking commitment', 'blocking commitment', 'blockers'], 'What Is Blocking Commitment'],
+    // Mediation decision-brief headings
+    [['recommendation', 'recommended path', 'recommendations'], 'Recommendation'],
+    [['what changed since last round', 'progress since prior review', 'progress since last round', 'progress update'], 'What Changed Since Last Round'],
+    [['where the parties align', 'where agreement exists', 'agreement', 'areas of agreement'], 'Where the Parties Align'],
+    [['where the deal is stuck', 'what is blocking agreement', 'what is blocking commitment', 'blocking commitment', 'blockers'], 'Where the Deal Is Stuck'],
+    [['suggested bridge', 'proposed bridge', 'possible bridges', 'bridge', 'bridging proposal'], 'Suggested Bridge'],
+    [['suggested next step', 'next step', 'next steps'], 'Next Step'],
+    // Legacy headings (kept for backward compatibility with stored reports)
+    [['mediation summary', 'mediation overview', 'executive summary', 'summary', 'overview', 'intro', 'introduction', 'snapshot', 'decision snapshot'], 'Where the Parties Align'],
+    [['decision assessment', 'assessment', 'key risks', 'risks', 'risk summary', 'key gaps', 'gaps', 'concerns', 'flags', 'top blockers', 'cons', 'downsides'], 'Where the Deal Is Stuck'],
     [['the real hesitation', 'real hesitation', 'hesitation'], 'The Real Hesitation'],
     [['risk and how to reduce it', 'risk reduction'], 'Risk and How to Reduce It'],
-    [['proposed bridge', 'bridge', 'bridging proposal'], 'Proposed Bridge'],
     [['what can be agreed now', 'agree now'], 'What Can Be Agreed Now'],
     [['what must wait', 'deferred', 'must wait'], 'What Must Wait'],
     [['likely landing zone', 'landing zone'], 'Likely Landing Zone'],
     [['each side\u2019s position', 'each sides position', 'each side\'s position', 'positions'], 'Each Side\u2019s Position'],
     [['missing information that matters', 'information gaps'], 'Missing Information That Matters'],
-    [['suggested next step', 'next step'], 'Suggested Next Step'],
-    // Legacy headings (kept for backward compatibility with stored reports)
-    [['executive summary', 'summary', 'overview', 'intro', 'introduction', 'snapshot', 'decision snapshot'], 'Mediation Summary'],
-    [['decision assessment', 'assessment'], 'Mediation Summary'],
     [
       ['decision snapshot', 'snapshot', 'situation', 'context', 'background'],
       'Decision Snapshot',
@@ -583,11 +584,11 @@ export function normalizeV2Heading(raw) {
         'cons',
         'downsides',
       ],
-      'Key Risks',
+      'Where the Deal Is Stuck',
     ],
-    [['negotiation insights', 'negotiation insight'], 'Where Agreement Exists'],
+    [['negotiation insights', 'negotiation insight'], 'Where the Parties Align'],
     [['leverage signals', 'leverage', 'leverage signal'], 'The Real Hesitation'],
-    [['potential deal structures', 'deal structures', 'deal structure'], 'Proposed Bridge'],
+    [['potential deal structures', 'deal structures', 'deal structure'], 'Suggested Bridge'],
     [
       ['decision readiness', 'readiness', 'readiness assessment', 'data completeness'],
       'Decision Readiness',
@@ -603,7 +604,7 @@ export function normalizeV2Heading(raw) {
         'next actions',
         'actions',
       ],
-      'Recommended Path',
+      'Recommendation',
     ],
     [
       [
@@ -694,7 +695,23 @@ export function getPresentationSections(report) {
     .map((section, index) => normalizePresentationSection(section, index))
     .filter(Boolean);
   if (stage === MEDIATION_REVIEW_STAGE) {
-    return sections.filter((section) => !isRedactionDiagnosticSection(section));
+    const hasPriorBilateralRound =
+      Number(report?.bilateral_round_number || 0) > 1 ||
+      Boolean(normalizeSpaces(report?.prior_bilateral_round_id || ''));
+    return sections
+      .filter((section) => !isRedactionDiagnosticSection(section))
+      .map((section) => {
+        const heading = normalizeV2Heading(section.heading);
+        return {
+          ...section,
+          heading,
+          key: normalizeSpaces(section.key || heading).toLowerCase().replace(/[^a-z0-9]+/g, '_'),
+        };
+      })
+      .filter((section) =>
+        hasPriorBilateralRound ||
+        normalizeSpaces(section.heading).toLowerCase() !== 'what changed since last round',
+      );
   }
   if (!isSharedIntakeReviewStage(stage)) {
     return sections;

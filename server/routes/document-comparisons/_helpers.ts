@@ -481,7 +481,7 @@ function buildWhyLookup(why: string[]) {
     const raw = normalizeText(entry);
     if (!raw) return;
     const { heading, body } = parseV2WhyEntry(raw);
-    const resolvedHeading = heading || (index === 0 ? 'Mediation Summary' : `Section ${index + 1}`);
+    const resolvedHeading = heading || (index === 0 ? 'Where the Parties Align' : `Section ${index + 1}`);
     const paragraphs = splitV2WhyBodyParagraphs(body || raw);
     sections.set(normalizeHeadingKey(resolvedHeading), {
       heading: resolvedHeading,
@@ -758,7 +758,64 @@ function buildRecommendationParagraphs(params: {
 const RECOMMENDATION_FOLD_KEYS = new Set([
   'decision readiness',
   'recommended path',
+  'recommendation',
+  'recommendations',
+]);
+
+const NEXT_STEP_KEYS = new Set([
+  'next step',
+  'next steps',
   'suggested next step',
+  'suggested next action',
+  'recommended next step',
+  'path forward',
+  'next actions',
+  'actions',
+]);
+
+const PROGRESS_KEYS = new Set([
+  'what changed since last round',
+  'progress since prior review',
+  'progress since last round',
+  'progress update',
+  'round update',
+  'delta summary',
+]);
+
+const ALIGNMENT_KEYS = new Set([
+  'where the parties align',
+  'where agreement exists',
+  'areas of agreement',
+  'key strengths',
+  'strengths',
+]);
+
+const STUCK_KEYS = new Set([
+  'where the deal is stuck',
+  'what is blocking agreement',
+  'what is blocking commitment',
+  'the real hesitation',
+  'risk and hesitation',
+  'key risks',
+  'risks',
+  'blockers',
+]);
+
+const BRIDGE_KEYS = new Set([
+  'suggested bridge',
+  'possible bridges',
+  'proposed bridge',
+  'potential deal structures',
+  'deal structures',
+  'what can be agreed now',
+  'likely landing zone',
+]);
+
+const LEGACY_SUMMARY_KEYS = new Set([
+  'mediation summary',
+  'executive summary',
+  'summary',
+  'decision assessment',
 ]);
 
 /**
@@ -767,19 +824,30 @@ const RECOMMENDATION_FOLD_KEYS = new Set([
 function canonicalDisplayHeading(heading: string): string {
   const key = normalizeHeadingKey(heading);
   const MAP: Record<string, string> = {
-    'mediation summary': 'Mediation Summary',
-    'where agreement exists': 'Where Agreement Exists',
-    'what is blocking commitment': 'What Is Blocking Commitment',
+    'mediation summary': 'Where the Parties Align',
+    'executive summary': 'Where the Parties Align',
+    'summary': 'Where the Parties Align',
+    'decision assessment': 'Where the Deal Is Stuck',
+    'where agreement exists': 'Where the Parties Align',
+    'where the parties align': 'Where the Parties Align',
+    'where the deal is stuck': 'Where the Deal Is Stuck',
+    'what is blocking commitment': 'Where the Deal Is Stuck',
+    'what is blocking agreement': 'Where the Deal Is Stuck',
     'the real hesitation': 'The Real Hesitation',
     'risk and how to reduce it': 'Risk and How to Reduce It',
-    'proposed bridge': 'Proposed Bridge',
+    'proposed bridge': 'Suggested Bridge',
+    'possible bridges': 'Suggested Bridge',
+    'suggested bridge': 'Suggested Bridge',
     'what can be agreed now': 'What Can Be Agreed Now',
     'what must wait': 'What Must Wait',
     'likely landing zone': 'Likely Landing Zone',
     'each side s position': 'Each Side\'s Position',
     'decision readiness': 'Decision Readiness',
-    'recommended path': 'Path Forward',
-    'suggested next step': 'Path Forward',
+    'recommended path': 'Recommendation',
+    'suggested next step': 'Next Step',
+    'next step': 'Next Step',
+    'progress since prior review': 'What Changed Since Last Round',
+    'what changed since last round': 'What Changed Since Last Round',
   };
   return MAP[key] || normalizeText(heading);
 }
@@ -823,8 +891,6 @@ export function buildMediationReviewPresentation(params: {
   const newOpenIssues = uniqueText(progress?.new_open_issues || []).slice(0, 3);
   const movementDirection = progress?.movement_direction || null;
 
-  // Parse the AI's own section structure from why[]
-  const whyLookup = buildWhyLookup(why);
   const decisionStatus = getDecisionStatusDetails({
     fit_level: fitLevel,
     confidence_0_1: confidence,
@@ -835,110 +901,127 @@ export function buildMediationReviewPresentation(params: {
   // Classify archetype for backward compatibility — but no longer drives section structure
   const archetype = classifyArchetypeFromFitLevel(fitLevel, confidence, missing.length);
 
-  // Build sections by passing through the AI's own sections
   const sections: MediationPresentationSection[] = [];
-  const seenKeys = new Set<string>();
-
-  // Walk through each AI why[] entry and convert to a presentation section
   const whyEntries = (Array.isArray(why) ? why : []).map((entry) => {
     const raw = normalizeText(entry);
     if (!raw) return null;
     const parsed = parseV2WhyEntry(raw);
-    const heading = parsed.heading || 'Mediation Summary';
+    const heading = parsed.heading || 'Where the Parties Align';
     const key = normalizeHeadingKey(heading);
     const paragraphs = splitV2WhyBodyParagraphs(parsed.body || raw);
     return { heading, key, paragraphs };
   }).filter(Boolean) as Array<{ heading: string; key: string; paragraphs: string[] }>;
 
-  // Collect recommendation-related paragraphs for the merged Recommendation section
   const recommendationParagraphs: string[] = [];
+  const alignmentParagraphs: string[] = [];
+  const stuckParagraphs: string[] = [];
+  const bridgeParagraphs: string[] = [];
+  const nextStepParagraphs: string[] = [];
+  const authoredProgressParagraphs: string[] = [];
+
+  const addParagraphs = (target: string[], values: string[]) => {
+    uniqueText(values).forEach((value) => {
+      const normalized = normalizeText(value);
+      if (normalized && !target.some((existing) => existing.toLowerCase() === normalized.toLowerCase())) {
+        target.push(normalized);
+      }
+    });
+  };
+
+  const splitIfDense = (paragraph: string): string[] => {
+    const sentenceBreaks = paragraph.match(/[.!]\s+(?=[A-Z])/g);
+    const sentenceCount = sentenceBreaks ? sentenceBreaks.length + 1 : 1;
+    if (!((sentenceCount > 2 && paragraph.length > 250) || paragraph.length > 450)) {
+      return [paragraph];
+    }
+    const mid = Math.floor(paragraph.length / 2);
+    const breakPattern = /[.!]\s+(?=[A-Z])/g;
+    let best = -1;
+    let bestDist = Infinity;
+    let m: RegExpExecArray | null;
+    while ((m = breakPattern.exec(paragraph)) !== null) {
+      const pos = m.index + m[0].trimEnd().length;
+      const dist = Math.abs(pos - mid);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = pos;
+      }
+    }
+    if (best > 80 && best < paragraph.length - 80) {
+      const p1 = paragraph.slice(0, best).trim();
+      const p2 = paragraph.slice(best).trim();
+      if (p1 && p2) return [p1, p2];
+    }
+    return [paragraph];
+  };
+
+  const isProgressKey = (key: string) =>
+    PROGRESS_KEYS.has(key) ||
+    key.includes('progress') ||
+    key.includes('prior review') ||
+    key.includes('since last') ||
+    key.includes('round update') ||
+    key.includes('delta');
+
+  const distributeLegacySummary = (paragraphs: string[]) => {
+    const normalized = uniqueText(paragraphs).flatMap(splitIfDense);
+    if (normalized[0]) addParagraphs(alignmentParagraphs, [normalized[0]]);
+    if (normalized[1]) addParagraphs(stuckParagraphs, [normalized[1]]);
+    if (normalized[2]) addParagraphs(bridgeParagraphs, [normalized[2]]);
+    if (normalized.length > 3) addParagraphs(stuckParagraphs, normalized.slice(3));
+  };
 
   whyEntries.forEach((entry) => {
-    if (seenKeys.has(entry.key)) return; // avoid duplicate sections
-    seenKeys.add(entry.key);
+    const paragraphs = uniqueText(entry.paragraphs).flatMap(splitIfDense);
+    if (paragraphs.length === 0) return;
 
+    if (isProgressKey(entry.key)) {
+      addParagraphs(authoredProgressParagraphs, paragraphs);
+      return;
+    }
     if (RECOMMENDATION_FOLD_KEYS.has(entry.key)) {
-      // Fold decision readiness, recommended path, and suggested next step
-      // into a single merged Recommendation section
-      entry.paragraphs.forEach((paragraph) => {
-        const trimmed = normalizeText(paragraph);
-        if (!trimmed) return;
-        recommendationParagraphs.push(trimmed);
-      });
+      addParagraphs(recommendationParagraphs, paragraphs);
+      return;
+    }
+    if (NEXT_STEP_KEYS.has(entry.key)) {
+      addParagraphs(nextStepParagraphs, paragraphs);
+      return;
+    }
+    if (ALIGNMENT_KEYS.has(entry.key)) {
+      addParagraphs(alignmentParagraphs, paragraphs);
+      return;
+    }
+    if (STUCK_KEYS.has(entry.key)) {
+      addParagraphs(stuckParagraphs, paragraphs);
+      return;
+    }
+    if (BRIDGE_KEYS.has(entry.key)) {
+      addParagraphs(bridgeParagraphs, paragraphs);
+      return;
+    }
+    if (LEGACY_SUMMARY_KEYS.has(entry.key)) {
+      distributeLegacySummary(paragraphs);
       return;
     }
 
-    // Regular AI section — pass through with its own heading
     const displayHeading = canonicalDisplayHeading(entry.heading);
-    let sectionParagraphs = uniqueText(entry.paragraphs);
-
-    // Mediation Summary: ensure readable paragraph structure.
-    // Split any individual paragraph that is unreasonably dense so the rendered
-    // report doesn't present one giant wall of text.
-    if (entry.key === 'mediation summary' && sectionParagraphs.length > 0) {
-      const splitIfDense = (paragraph: string): string[] => {
-        const sentenceBreaks = paragraph.match(/[.!]\s+(?=[A-Z])/g);
-        const sentenceCount = sentenceBreaks ? sentenceBreaks.length + 1 : 1;
-        // Split when 3+ sentences over 250 chars, or any paragraph over 450 chars
-        if (!((sentenceCount > 2 && paragraph.length > 250) || paragraph.length > 450)) {
-          return [paragraph];
-        }
-        const mid = Math.floor(paragraph.length / 2);
-        const breakPattern = /[.!]\s+(?=[A-Z])/g;
-        let best = -1;
-        let bestDist = Infinity;
-        let m: RegExpExecArray | null;
-        while ((m = breakPattern.exec(paragraph)) !== null) {
-          const pos = m.index + m[0].trimEnd().length;
-          const dist = Math.abs(pos - mid);
-          if (dist < bestDist) {
-            bestDist = dist;
-            best = pos;
-          }
-        }
-        if (best > 80 && best < paragraph.length - 80) {
-          const p1 = paragraph.slice(0, best).trim();
-          const p2 = paragraph.slice(best).trim();
-          if (p1 && p2) return [p1, p2];
-        }
-        return [paragraph];
-      };
-      sectionParagraphs = sectionParagraphs.flatMap(splitIfDense);
-    }
-
-    const section = createPresentationSection({
-      key: entry.key.replace(/\s+/g, '_'),
-      heading: displayHeading,
-      paragraphs: sectionParagraphs,
-    });
-    if (section) {
-      sections.push(section);
-    }
+    const displayKey = normalizeHeadingKey(displayHeading);
+    if (ALIGNMENT_KEYS.has(displayKey)) addParagraphs(alignmentParagraphs, paragraphs);
+    else if (STUCK_KEYS.has(displayKey)) addParagraphs(stuckParagraphs, paragraphs);
+    else if (BRIDGE_KEYS.has(displayKey)) addParagraphs(bridgeParagraphs, paragraphs);
+    else if (NEXT_STEP_KEYS.has(displayKey)) addParagraphs(nextStepParagraphs, paragraphs);
+    else addParagraphs(stuckParagraphs, paragraphs);
   });
 
-  // Insert Progress Since Prior Review after the lead section (for multi-round mediation).
-  // Prefer the AI's own authored progress narrative from why[] if available. Fall back
-  // to metadata-assembled prose only when the AI did not produce a progress section.
+  // Later bilateral rounds get a concise "What Changed Since Last Round" section.
+  // Prefer clean AI-authored progress prose; otherwise build it from progress metadata.
+  let progressParagraphs: string[] = [];
   if (hasPriorBilateralRound) {
-    // Check whether the AI authored a progress-related section in its why[] narrative.
-    const progressEntry = whyEntries.find((entry) => {
-      const k = entry.key;
-      return (
-        k.includes('progress') ||
-        k.includes('prior review') ||
-        k.includes('since last') ||
-        k.includes('round update') ||
-        k.includes('delta')
-      );
-    });
-
-    let progressParagraphs: string[] = [];
-
     // Quality-gate: only use AI-authored progress if it reads like clean mediator prose.
     // Reject it when the AI embeds raw question text or template-skeleton language.
     const aiProgressIsUsable = (() => {
-      if (!progressEntry || progressEntry.paragraphs.length === 0) return false;
-      const combined = progressEntry.paragraphs.join(' ');
+      if (authoredProgressParagraphs.length === 0) return false;
+      const combined = authoredProgressParagraphs.join(' ');
       // Reject if it contains 2+ question marks (raw questions leaked through).
       // Allow a single ? since the AI may use one rhetorical observation.
       const questionMarkCount = (combined.match(/\?/g) || []).length;
@@ -952,27 +1035,9 @@ export function buildMediationReviewPresentation(params: {
       return true;
     })();
 
-    if (aiProgressIsUsable && progressEntry) {
-      // AI prose passed the quality gate — use it directly
-      progressParagraphs = uniqueText(progressEntry.paragraphs);
-      // Remove from main sections if it was already added there
-      const progressIdx = sections.findIndex(
-        (s) => s.key === progressEntry.key.replace(/\s+/g, '_'),
-      );
-      if (progressIdx > 0) {
-        sections.splice(progressIdx, 1);
-      }
+    if (aiProgressIsUsable) {
+      progressParagraphs = uniqueText(authoredProgressParagraphs);
     } else {
-      // Remove the rejected AI progress entry from main sections if present
-      if (progressEntry) {
-        const progressIdx = sections.findIndex(
-          (s) => s.key === progressEntry.key.replace(/\s+/g, '_'),
-        );
-        if (progressIdx > 0) {
-          sections.splice(progressIdx, 1);
-        }
-      }
-
       // Metadata-based fallback — build mediator prose from structured sidecar fields.
       const resolvedTopics = resolvedSinceLastRound.map(toDeclarativeProgressPhrase).filter(Boolean);
       const remainingTopics = remainingDeltas.map(toDeclarativeProgressPhrase).filter(Boolean);
@@ -1018,23 +1083,47 @@ export function buildMediationReviewPresentation(params: {
         progressParagraphs = [sentences.join(' ')];
       }
     }
-
-    if (progressParagraphs.length > 0) {
-      const progressSection = createPresentationSection({
-        key: 'progress_since_prior_review',
-        heading: 'Progress Since Prior Review',
-        paragraphs: progressParagraphs,
-      });
-      if (progressSection) {
-        sections.splice(1, 0, progressSection);
-      }
-    }
   }
 
-  // Build the merged Recommendation section. Decision status is prepended as a
-  // short labelled line. The remaining paragraphs should read like a mediator's
-  // authored path-forward: what to do next, why that sequence works, what it must settle.
-  const allRenderedParagraphs = sections.flatMap((s) => s.paragraphs || []);
+  if (alignmentParagraphs.length === 0) {
+    const compatibilityRationale = normalizeText(negotiationAnalysis?.compatibility_rationale);
+    if (compatibilityRationale) {
+      addParagraphs(alignmentParagraphs, [compatibilityRationale]);
+    }
+  }
+  if (stuckParagraphs.length === 0) {
+    const tension = buildNegotiationTensionParagraphs(negotiationAnalysis);
+    if (tension.length > 0) {
+      addParagraphs(stuckParagraphs, tension);
+    } else if (missing.length > 0) {
+      addParagraphs(
+        stuckParagraphs,
+        missing.slice(0, 2).map((item) => `${stripMissingWhyMatters(item)} remains unresolved.`),
+      );
+    }
+  }
+  if (bridgeParagraphs.length === 0) {
+    const bridgeNote = normalizeText(negotiationAnalysis?.bridgeability_notes?.[0]);
+    if (bridgeNote) {
+      addParagraphs(bridgeParagraphs, [bridgeNote]);
+    } else {
+      addParagraphs(bridgeParagraphs, ['A workable bridge should convert the open commercial issues into specific conditions before either side treats the deal as ready to commit.']);
+    }
+  }
+  if (nextStepParagraphs.length === 0) {
+    addParagraphs(nextStepParagraphs, [
+      missing.length > 0
+        ? 'Use the open questions below as the closing agenda for the next exchange.'
+        : 'Confirm the agreed commercial terms in writing before moving to documentation.',
+    ]);
+  }
+
+  const allRenderedParagraphs = [
+    ...alignmentParagraphs,
+    ...stuckParagraphs,
+    ...bridgeParagraphs,
+    ...nextStepParagraphs,
+  ];
   const decisionLine = decisionStatus.label
     ? `Decision status: ${decisionStatus.label}.${decisionStatus.explanation ? ` ${normalizeText(decisionStatus.explanation)}` : ''}`
     : '';
@@ -1087,9 +1176,7 @@ export function buildMediationReviewPresentation(params: {
     } else if (compatibilityRationale && compatibilityRationale.length > 30) {
       keptRecommendationParagraphs.push(compatibilityRationale);
     } else {
-      keptRecommendationParagraphs.push(
-        'Use the current open issues as the next mediation agenda before moving to commitment.',
-      );
+      keptRecommendationParagraphs.push(nextStepParagraphs[0]);
     }
   } else if (keptRecommendationParagraphs.length === 1 && keptRecommendationParagraphs[0].length < 80) {
     // Single very short sentence — try to enrich with a bridgeability note
@@ -1114,22 +1201,74 @@ export function buildMediationReviewPresentation(params: {
     sections.push(recommendationSection);
   }
 
-  // Determine primary insight from the lead section
+  if (hasPriorBilateralRound && progressParagraphs.length > 0) {
+    const progressSection = createPresentationSection({
+      key: 'what_changed_since_last_round',
+      heading: 'What Changed Since Last Round',
+      paragraphs: progressParagraphs,
+    });
+    if (progressSection) sections.push(progressSection);
+  }
+
+  const alignmentSection = createPresentationSection({
+    key: 'where_the_parties_align',
+    heading: 'Where the Parties Align',
+    paragraphs: alignmentParagraphs.slice(0, 2),
+  });
+  if (alignmentSection) sections.push(alignmentSection);
+
+  const stuckSection = createPresentationSection({
+    key: 'where_the_deal_is_stuck',
+    heading: 'Where the Deal Is Stuck',
+    paragraphs: stuckParagraphs.slice(0, 2),
+  });
+  if (stuckSection) sections.push(stuckSection);
+
+  const bridgeSection = createPresentationSection({
+    key: 'suggested_bridge',
+    heading: 'Suggested Bridge',
+    paragraphs: bridgeParagraphs.slice(0, 2),
+  });
+  if (bridgeSection) sections.push(bridgeSection);
+
+  const openQuestionsSection = createPresentationSection({
+    key: 'open_questions',
+    heading: 'Open Questions',
+    bullets: missing,
+    numbered_bullets: true,
+  });
+  if (openQuestionsSection) sections.push(openQuestionsSection);
+
+  const nextStepSection = createPresentationSection({
+    key: 'next_step',
+    heading: 'Next Step',
+    paragraphs: nextStepParagraphs.slice(0, 1),
+  });
+  if (nextStepSection) sections.push(nextStepSection);
+
+  // Determine primary insight from the first substantive decision-brief paragraph.
   const leadSection = sections[0];
   const primaryInsight = hasPriorBilateralRound && progressSummary
     ? progressSummary
-    : (leadSection?.paragraphs?.[0] || '');
+    : (
+        recommendationSection?.paragraphs?.find((paragraph) => !/^Decision status:/i.test(normalizeText(paragraph))) ||
+        alignmentSection?.paragraphs?.[0] ||
+        leadSection?.paragraphs?.find((paragraph) => !/^Decision status:/i.test(normalizeText(paragraph))) ||
+        leadSection?.paragraphs?.[0] ||
+        ''
+      );
 
-  // Enrich lead section with compatibility insight from negotiation_analysis if available
-  if (negotiationAnalysis?.compatibility_rationale && leadSection?.paragraphs) {
+  // Enrich the alignment section with compatibility insight from negotiation_analysis if available.
+  const alignmentForEnrichment = sections.find((section) => section.key === 'where_the_parties_align');
+  if (negotiationAnalysis?.compatibility_rationale && alignmentForEnrichment?.paragraphs) {
     const rationale = normalizeText(negotiationAnalysis.compatibility_rationale);
     if (
       rationale &&
-      !leadSection.paragraphs.some((existing) => existing.toLowerCase().includes(rationale.slice(0, 60).toLowerCase()))
+      !alignmentForEnrichment.paragraphs.some((existing) => existing.toLowerCase().includes(rationale.slice(0, 60).toLowerCase()))
     ) {
-      // Only add if lead section seems thin and rationale adds real value
-      if (leadSection.paragraphs.length <= 1 && rationale.length > 30) {
-        leadSection.paragraphs.push(rationale);
+      // Only add if the section seems thin and rationale adds real value.
+      if (alignmentForEnrichment.paragraphs.length <= 1 && rationale.length > 30) {
+        alignmentForEnrichment.paragraphs.push(rationale);
       }
     }
   }
@@ -1152,20 +1291,22 @@ export function buildMediationReviewPresentation(params: {
   });
 
   // 2. Cross-section anti-repetition: if a recommendation paragraph is a
-  //    near-exact restatement of a summary paragraph (≥75% word overlap on
+  //    near-exact restatement of an analysis paragraph (≥75% word overlap on
   //    words >3 chars), replace it with just its first sentence to preserve the
   //    action orientation without restating the same blockers.
-  const summarySection = sections.find((s) => s.key === 'mediation_summary');
   const recSection = sections.find((s) => s.key === 'recommendation');
-  if (summarySection?.paragraphs && recSection?.paragraphs) {
-    const summaryWords = new Set(
-      summarySection.paragraphs.join(' ').toLowerCase().split(/\s+/).filter((w) => w.length > 3),
+  const analysisParagraphsForOverlap = sections
+    .filter((s) => ['where_the_parties_align', 'where_the_deal_is_stuck', 'suggested_bridge'].includes(s.key))
+    .flatMap((s) => s.paragraphs || []);
+  if (analysisParagraphsForOverlap.length > 0 && recSection?.paragraphs) {
+    const analysisWords = new Set(
+      analysisParagraphsForOverlap.join(' ').toLowerCase().split(/\s+/).filter((w) => w.length > 3),
     );
     recSection.paragraphs = recSection.paragraphs.map((p) => {
       if (/^Decision status:/i.test(p)) return p;
       const pWords = p.toLowerCase().split(/\s+/).filter((w) => w.length > 3);
       if (pWords.length < 4) return p;
-      const overlap = pWords.filter((w) => summaryWords.has(w)).length / pWords.length;
+      const overlap = pWords.filter((w) => analysisWords.has(w)).length / pWords.length;
       if (overlap >= 0.75) {
         // High overlap — trim to first sentence only (the action)
         const firstSentence = p.match(/^[^.!?]+[.!?]/)?.[0];

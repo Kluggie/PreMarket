@@ -251,8 +251,18 @@ export function classifyProposalDomain(factSheet: ProposalFactSheet): ProposalDo
   return { id: top.id, label: top.label };
 }
 
-export function buildDomainPromptGuidance(domain: ProposalDomain) {
+export function buildDomainPromptGuidance(
+  domain: ProposalDomain,
+  options: { mediation?: boolean } = {},
+) {
+  const mediation = Boolean(options.mediation);
   if (domain.id === 'software') {
+    if (mediation) {
+      return [
+        '- Domain lens: software / data-platform context. Use software-specific terms only where the fact_sheet makes product integration, data migration, rollout, support, adoption metrics, or SLAs deal-critical.',
+        '- Do not treat a software context as a project-delivery agreement by default. If the inferred archetype is a SaaS referral/channel/implementation partnership, prefer attribution, commission or revenue-share, client protection, training/support responsibilities, customer handoff, pilot success, and post-pilot economics over scope, acceptance, sequencing, or change-control wording.',
+      ];
+    }
     return [
       '- Domain lens: software / data-platform negotiation. Emphasize implementation scope, integrations, data migration or remediation, rollout phases, adoption metrics, support obligations, SLAs, and change-order treatment.',
       '- Use software delivery language only where the fact_sheet supports it. If phased product scope exists, terms like MVP or pilot are acceptable; otherwise prefer "initial rollout" or "current phase".',
@@ -555,17 +565,20 @@ export function buildEvalPromptFromFactSheet(params: {
   ]);
 
   const requiredHeadings = [
-    'Mediation Summary',
-    'Recommended Next Step',
-    'Decision Readiness',
+    'Recommendation',
+    ...(hasPriorBilateralContext ? ['What Changed Since Last Round'] : []),
+    'Where the Parties Align',
+    'Where the Deal Is Stuck',
+    'Suggested Bridge',
+    'Next Step',
   ];
 
   const adaptiveHeadings = [
-    'Where the Parties Align',
-    'What Is Blocking Agreement',
-    'Risk and Hesitation',
-    'Possible Bridges',
-    'What Can Be Agreed Now',
+    'Deal Economics',
+    'Customer Relationship',
+    'Risk Allocation',
+    'Timing and Sequencing',
+    'What Can Wait',
   ];
 
   const voiceGuide =
@@ -587,7 +600,7 @@ export function buildEvalPromptFromFactSheet(params: {
     reportStyle.ordering === 'risks_first'
       ? 'Ordering: front-load the main blocker and conditions to proceed before upside or polish.'
       : reportStyle.ordering === 'strengths_first'
-        ? 'Ordering: acknowledge strengths, but the first paragraph of Executive Summary and Decision Readiness must still lead with the main blocker and the condition to proceed.'
+        ? 'Ordering: acknowledge strengths, but Recommendation and Where the Deal Is Stuck must still lead with the main blocker and the condition to proceed.'
         : 'Ordering: balance strengths and risks, but front-load the main blocker and negotiation implication.';
 
   const whyMaxChars = tightMode ? WHY_MAX_CHARS_TIGHT : WHY_MAX_CHARS_STANDARD;
@@ -704,7 +717,7 @@ export function buildEvalPromptFromFactSheet(params: {
     '',
     'DOMAIN-SENSITIVE LENS:',
     `- Classified proposal domain: ${domain.label}.`,
-    ...buildDomainPromptGuidance(domain),
+    ...buildDomainPromptGuidance(domain, { mediation: true }),
     '- This classified domain is only a starting point. The deal archetype inferred from the actual fact_sheet controls the mediation vocabulary and the open questions.',
     '',
     'REPORT STYLE:',
@@ -745,10 +758,10 @@ export function buildEvalPromptFromFactSheet(params: {
     '  "The friction appears to be less about intent and more about how execution risk is being allocated."',
     '  "This looks more bridgeable than misaligned, but the unresolved items still need tighter definition."',
     '- REASONING STABILITY: Your mediation logic must be driven by the substance of the deal — the actual terms, gaps, risks, and dynamics — not by surface wording. Two proposals describing the same commercial arrangement in different words should produce the same reasoning conclusions. Anchor every judgment to concrete fact_sheet evidence, not to how eloquently the proposal is written.',
-    '- CRITICAL ANTI-REPETITION RULE: Each substantive point (blocker, alignment point, bridge, open question) may appear ONCE in the entire output. Do NOT restate the same idea in Mediation Summary, then again in another section, then again in Decision Readiness or Recommendation. State it clearly once; reference it briefly elsewhere only if essential.',
-    '- If the Mediation Summary already explains the sticking points, the Recommendation must NOT restate those same sticking points. Instead, just say what to do next.',
+    '- CRITICAL ANTI-REPETITION RULE: Each substantive point (blocker, alignment point, bridge, open question) may appear ONCE in the entire output. Do NOT restate the same idea in Recommendation, Where the Deal Is Stuck, Suggested Bridge, and Next Step. State it clearly once; reference it briefly elsewhere only if essential.',
+    '- The Recommendation must be the decision brief, not a second summary. It should say what to do now, why the status/confidence was chosen, and avoid repeating all later sections.',
     '- Do NOT include more than one "Decision status:" line in the entire output.',
-    '- Do NOT recycle the same unresolved items across summary, recommendation, and open questions. If a point is made in the narrative, the open questions should add NEW information, not restate.',
+    '- Do NOT recycle the same unresolved items across Recommendation, deal analysis, and Open Questions. If a point is made in the narrative, the open questions should add NEW information, not restate.',
     '- Avoid rigid formulaic labels like "Leverage signal:", "Structural tensions:", "Option A/B/C", or "Likely priorities:" — integrate those ideas into natural prose instead.',
     hasPriorBilateralContext
       ? '- Do NOT rewrite the negotiation from scratch. Write progress-aware narrative that references the issue ledger from step 16. Name which issues closed, which narrowed, which remain stuck.'
@@ -764,32 +777,36 @@ export function buildEvalPromptFromFactSheet(params: {
       : '',
     '',
     'OUTPUT SHAPE — this is critical:',
-    'The default output has 3-4 why[] entries. Only add more if the case genuinely needs it.',
+    hasPriorBilateralContext
+      ? 'The visible mediation brief must follow this order: Recommendation, What Changed Since Last Round, Where the Parties Align, Where the Deal Is Stuck, Suggested Bridge, Open Questions, Next Step.'
+      : 'The visible mediation brief must follow this order: Recommendation, Where the Parties Align, Where the Deal Is Stuck, Suggested Bridge, Open Questions, Next Step.',
+    'Open Questions come from missing[]. The other visible sections come from why[].',
     '',
     'REQUIRED why[] ENTRIES:',
     '',
-    '1. "Mediation Summary: …" — this is the backbone. Write 2-3 paragraphs with clear \\n\\n breaks:',
-    '   Paragraph 1: Where the parties appear aligned and the shape of the deal. Keep this short and orienting.',
-    '   Paragraph 2: What is actually preventing commitment. Write this in plain English — name the specific issues.',
-    '   Paragraph 3: Why the issue is bridgeable and what structure could unlock movement.',
-    '   Do NOT compress everything into one dense paragraph. Spread ideas out so they are easy to absorb.',
-    '   Each paragraph should contain one main idea. If a paragraph exceeds 4 sentences, split it.',
-    '   Do NOT add a 4th paragraph unless there is truly no other place for the content.',
-    '   The Mediation Summary should contain ALL the substantive analysis. Other sections are supplements, not repeats.',
-    '',
-    '2. "Recommended Next Step: …" — 1-2 substantive paragraphs that do six things: (1) states the recommended next step, (2) names where the parties align, (3) names where they are apart, (4) proposes the bridge terms that could work, (5) states the conditions needed before proceeding, and (6) explains which unresolved issues matter most and why the status/confidence was chosen. Use the inferred deal archetype: for SaaS referral/channel partnerships, bridge terms should focus on attribution, commission or revenue-share triggers, implementation/support responsibility, client protection, pilot duration, and performance-based exclusivity or renegotiation. Do NOT restate the mediation summary or collapse into a single generic sentence like "resolve open issues before proceeding".',
+    '1. "Recommendation: Decision status: [label]. [brief explanation]." Then add 1 short paragraph answering: what should the parties do now, what conditions are needed before proceeding, which unresolved issues matter most, and why the confidence level is appropriate. Do NOT repeat every alignment, blocker, bridge, or open question.',
     hasPriorBilateralContext
       ? `   ROUND-AWARE RECOMMENDATION (round ${bilateralRoundNumber}): The recommendation must become more decisive over time. Early rounds (1-2): recommend a bridge or structure. Mid rounds (3-4): recommend either the minimum remaining agenda to close the deal, or flag that critical issues are not closing. Late rounds (5+): recommend either a concrete closing path or a conclusion that the current structure is unlikely to result in agreement. Do NOT keep producing open-ended "explore further" recommendations indefinitely.`
       : '',
     '',
-    '3. "Decision Readiness: Decision status: [label]. [one sentence explanation]."',
-    '   The label MUST be one of: "Not viable", "Explore further", "Proceed with conditions", or "Ready to finalize".',
-    '   This is a single sentence — it is NOT a second summary. Do NOT restate blockers. Do NOT add sub-headings.',
+    hasPriorBilateralContext
+      ? '2. "What Changed Since Last Round: …" — 1 short paragraph only. Include only genuine movement from prior_bilateral_context: what narrowed, what widened, what closed, and what new issue emerged. Do NOT include this section on first bilateral reviews. Do NOT use "Progress Since Prior Review".'
+      : '',
+    `${hasPriorBilateralContext ? '3' : '2'}. "Where the Parties Align: …" — identify the deal-specific areas where both sides appear commercially compatible. For SaaS referral/channel/implementation partnerships, this may include pilot structure, referral relationship, implementation support, training, performance-based renegotiation, or shared commercial intent.`,
+    '',
+    `${hasPriorBilateralContext ? '4' : '3'}. "Where the Deal Is Stuck: …" — identify the key unresolved gaps in plain commercial language. For SaaS referral/channel/implementation partnerships, focus on referral attribution, client protection / non-circumvention, commission triggers, recurring revenue-share triggers, implementation fee ownership, training/support responsibilities, customer handoff, pilot success criteria, semi-exclusivity thresholds, and performance-based renegotiation.`,
+    '',
+    `${hasPriorBilateralContext ? '5' : '4'}. "Suggested Bridge: …" — propose practical, safe, non-binding compromise terms. For SaaS referral/channel partnerships, bridge terms should focus on attribution, commission or revenue-share triggers, implementation/support responsibility, client protection, pilot duration, and performance-based exclusivity or renegotiation. Use safe derived language only; do not reveal confidential limits or private fallbacks.`,
+    '',
+    `${hasPriorBilateralContext ? '6' : '5'}. "Next Step: …" — give one concrete next action. For a partnership/referral deal, examples include drafting a one-page Pilot Rules of Engagement, agreeing attribution and client protection before long-term economics, or creating a closing agenda covering commission, revenue share, implementation fees, support responsibilities, and post-pilot review.`,
+    '',
+    'The Recommendation label MUST include one of: "Not viable", "Explore further", "Proceed with conditions", or "Ready to finalize".',
+    'Do NOT create a visible "Mediation Summary" section. Do NOT create a visible "Progress Since Prior Review" section.',
     '',
     'OPTIONAL why[] ENTRIES (0-1 at most):',
-    '   Only add an extra section if it contributes genuinely new insight not already in the Mediation Summary or Recommended Next Step.',
+    '   Only add an extra section if it contributes genuinely new insight not already in the required decision-brief sections.',
     `   If you add one, pick a heading that fits this specific case: ${adaptiveHeadings.join(', ')}, or a custom heading.`,
-    '   If the content would be short or thin, fold it into the Mediation Summary instead of creating a separate section.',
+    '   If the content would be short or thin, fold it into the closest required decision-brief section instead of creating a separate section.',
     '',
     hasFixedPriceContract
       ? 'CONDITIONAL \u2014 fixed-price signals detected: discuss how commercial certainty, acceptance criteria, change-order triggers, and risk allocation shape the analysis.'
@@ -803,10 +820,12 @@ export function buildEvalPromptFromFactSheet(params: {
     '',
     'WHY FIELD \u2014 FORMAT:',
     `- Total combined length of all why[] entries MUST NOT exceed ${whyMaxChars} characters.`,
-    '- Each entry starts with heading + ": " (e.g., "Mediation Summary: Both sides appear broadly aligned…").',
+    '- Each entry starts with heading + ": " (e.g., "Where the Parties Align: Both sides appear broadly aligned…").',
     '- Separate paragraphs within one entry using \\n\\n.',
     `- Required: ${requiredHeadings.join(', ')}.`,
-    '- Total why[] array: 3-4 entries. Default to 3. Only 4 if the case genuinely needs it.',
+    hasPriorBilateralContext
+      ? '- Total why[] array: 6-7 entries. Default to 6. Only 7 if the case genuinely needs one extra insight.'
+      : '- Total why[] array: 5-6 entries. Default to 5. Only 6 if the case genuinely needs one extra insight.',
     '',
     'MISSING FIELD \u2014 QUALITY RULES:',
     `- Generate 2-4 items. Maximum ${MISSING_MAX_ITEMS} items. Include ONLY questions that would materially change the path to agreement.`,

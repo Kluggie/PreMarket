@@ -140,8 +140,11 @@ test('mediation prompt keeps the stable bilateral structure and required heading
   });
 
   assert.match(prompt, /shared neutral artifact/i);
-  assert.match(prompt, /Mediation Summary/i);
-  assert.match(prompt, /Decision Readiness/i);
+  assert.match(prompt, /Recommendation, Where the Parties Align, Where the Deal Is Stuck, Suggested Bridge, Open Questions, Next Step/i);
+  assert.match(prompt, /Do NOT create a visible "Mediation Summary" section/i);
+  assert.match(prompt, /Do NOT create a visible "Progress Since Prior Review" section/i);
+  assert.doesNotMatch(prompt, /Required: .*Mediation Summary/i);
+  assert.doesNotMatch(prompt, /What Changed Since Last Round, Where the Parties Align/i);
   assert.match(prompt, /OUTPUT SHAPE/i);
   assert.match(prompt, /mediat/i);
   assert.match(prompt, /analysis_stage must be "mediation_review"/i);
@@ -229,6 +232,8 @@ test('later bilateral mediation prompt becomes progress-aware without changing r
 
   assert.match(prompt, /progress across rounds/i);
   assert.match(prompt, /output shape/i);
+  assert.match(prompt, /What Changed Since Last Round/i);
+  assert.match(prompt, /Do NOT use "Progress Since Prior Review"/i);
   assert.match(prompt, /prior_bilateral_context/i);
   assert.match(prompt, /movement_direction/i);
 });

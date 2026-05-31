@@ -3397,7 +3397,7 @@ test('memo-prose: Pass B prompt contains bilateral negotiator guardrails instead
       'Pass B prompt must include an explicit domain-sensitive writing block',
     );
     assert.ok(
-      passBPrompt.includes('Domain lens: software / data-platform negotiation'),
+      passBPrompt.includes('Domain lens: software / data-platform context'),
       'Software-oriented fact sheets must receive software-specific prompt guidance',
     );
 
@@ -3415,7 +3415,7 @@ test('memo-prose: Pass B prompt contains bilateral negotiator guardrails instead
       'Pass B prompt must address real hesitation or leverage dynamics',
     );
     assert.ok(
-      passBPrompt.includes('Possible Bridges') || passBPrompt.includes('Potential Deal Structures') || passBPrompt.includes('bridge or sequencing') || passBPrompt.includes('What bridge would help'),
+      passBPrompt.includes('Suggested Bridge') || passBPrompt.includes('Potential Deal Structures') || passBPrompt.includes('bridge or sequencing') || passBPrompt.includes('What bridge would help'),
       'Pass B prompt must address proposed bridge or deal structures',
     );
     assert.ok(

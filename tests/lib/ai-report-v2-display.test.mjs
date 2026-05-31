@@ -86,7 +86,7 @@ test('hasV2Report: returns true for Stage 1 shared intake reports with presentat
 
 test('parseV2WhyEntry: extracts heading and body from standard V2 entry', () => {
   const result = parseV2WhyEntry('Executive Summary: The proposal clearly defines deliverables.');
-  assert.equal(result.heading, 'Mediation Summary');
+  assert.equal(result.heading, 'Where the Parties Align');
   assert.equal(result.body, 'The proposal clearly defines deliverables.');
 });
 
@@ -117,7 +117,7 @@ test('parseV2WhyEntry: empty string returns null heading and empty body', () => 
 test('parseV2WhyEntry: handles Recommendations with long body', () => {
   const body = 'Ensure timeline milestones are agreed before contract signing. Address budget constraints.';
   const result = parseV2WhyEntry(`Recommendations: ${body}`);
-  assert.equal(result.heading, 'Recommendations');
+  assert.equal(result.heading, 'Recommendation');
   assert.equal(result.body, body);
 });
 
@@ -505,9 +505,44 @@ test('buildMediationReviewPresentation: selects strong_alignment deterministical
   assert.equal(first.report_archetype, 'strong_alignment');
   assert.equal(first.report_title, '', 'no archetype title visible to user');
   assert.equal(Array.isArray(first.presentation_sections), true);
-  // Lead section uses AI heading, not archetype heading
-  assert.equal(first.presentation_sections[0].heading, 'Mediation Summary');
+  assert.equal(first.presentation_sections[0].heading, 'Recommendation');
   assert.deepEqual(first, second);
+});
+
+test('buildMediationReviewPresentation: first bilateral review uses decision-brief structure', () => {
+  const presentation = buildMediationReviewPresentation({
+    fit_level: 'medium',
+    confidence_0_1: 0.68,
+    why: [
+      'Recommendation: Decision status: Proceed with conditions. The parties should move forward only after clarifying the referral economics and attribution rules.',
+      'Where the Parties Align: Both sides support a six-month referral pilot with implementation support and a path to renegotiate after performance is visible.',
+      'Where the Deal Is Stuck: Commission triggers, recurring revenue share, lead attribution, client protection, and semi-exclusivity thresholds remain unresolved.',
+      'Suggested Bridge: Use a non-exclusive pilot with written referral attribution, implementation fees retained by the consultant, and any revenue share tied to documented ongoing support.',
+      'Next Step: Draft a one-page Pilot Rules of Engagement covering commission, revenue share, implementation fees, support responsibilities, and post-pilot review.',
+    ],
+    missing: ['What counts as a successful referral? — determines when commission is earned.'],
+    redactions: [],
+  });
+
+  assert.deepEqual(
+    presentation.presentation_sections.map((section) => section.heading),
+    [
+      'Recommendation',
+      'Where the Parties Align',
+      'Where the Deal Is Stuck',
+      'Suggested Bridge',
+      'Open Questions',
+      'Next Step',
+    ],
+  );
+  assert.equal(
+    presentation.presentation_sections.some((section) => section.heading === 'Mediation Summary'),
+    false,
+  );
+  assert.equal(
+    presentation.presentation_sections.some((section) => section.heading === 'What Changed Since Last Round'),
+    false,
+  );
 });
 
 test('buildMediationReviewPresentation: keeps bilateral recommendation framing and does not reuse pre-send memo headings', () => {
@@ -570,9 +605,8 @@ test('buildMediationReviewPresentation: routes low-fit and missing-heavy cases t
 
   assert.equal(riskPresentation.report_archetype, 'risk_dominant');
   assert.equal(gapPresentation.report_archetype, 'gap_analysis');
-  // Both use AI headings directly — lead section is Mediation Summary in both
-  assert.equal(riskPresentation.presentation_sections[0].heading, 'Mediation Summary');
-  assert.equal(gapPresentation.presentation_sections[0].heading, 'Mediation Summary');
+  assert.equal(riskPresentation.presentation_sections[0].heading, 'Recommendation');
+  assert.equal(gapPresentation.presentation_sections[0].heading, 'Recommendation');
   // Archetype classification still differs for metadata
   assert.notEqual(riskPresentation.report_archetype, gapPresentation.report_archetype);
 });
@@ -598,11 +632,10 @@ test('buildMediationReviewPresentation: selects strategic_framing when multiple 
   });
 
   assert.equal(presentation.report_archetype, 'balanced_trade_off');
-  // Lead section uses AI heading, not archetype heading
-  assert.equal(presentation.presentation_sections[0].heading, 'Mediation Summary');
+  assert.equal(presentation.presentation_sections[0].heading, 'Recommendation');
 });
 
-test('buildMediationReviewPresentation: uses direct top-level V2 sections for sharper strengths, risks, and lead insight', () => {
+test('buildMediationReviewPresentation: maps legacy top-level V2 sections into the decision brief', () => {
   const presentation = buildMediationReviewPresentation({
     fit_level: 'medium',
     confidence_0_1: 0.63,
@@ -620,20 +653,22 @@ test('buildMediationReviewPresentation: uses direct top-level V2 sections for sh
 
   assert.equal(
     presentation.primary_insight,
-    'The draft is commercially promising, but delivery ownership remains underdefined.',
+    'Recommended path: resolve timeline ownership before final approval.',
   );
-  // AI sections pass through with their own headings
+  // Legacy AI sections are repurposed under the decision-brief headings.
   assert.deepEqual(
-    presentation.presentation_sections.find((section) => section.key === 'where_agreement_exists')?.paragraphs,
-    ['Renewal economics and commercial scope are already aligned.'],
+    presentation.presentation_sections.find((section) => section.key === 'where_the_parties_align')?.paragraphs,
+    [
+      'The draft is commercially promising, but delivery ownership remains underdefined.',
+      'Renewal economics and commercial scope are already aligned.',
+    ],
   );
   assert.deepEqual(
-    presentation.presentation_sections.find((section) => section.key === 'what_is_blocking_commitment')?.paragraphs,
-    ['Timeline ownership and change-control mechanics remain unsettled.'],
-  );
-  assert.deepEqual(
-    presentation.presentation_sections.find((section) => section.key === 'risk_and_how_to_reduce_it')?.paragraphs,
-    ['The main tension is launch speed versus approval control.'],
+    presentation.presentation_sections.find((section) => section.key === 'where_the_deal_is_stuck')?.paragraphs,
+    [
+      'Timeline ownership and change-control mechanics remain unsettled.',
+      'The main tension is launch speed versus approval control.',
+    ],
   );
 });
 
@@ -715,7 +750,7 @@ test('buildMediationReviewPresentation: keeps soft preferences from being presen
     },
   });
 
-  // With passthrough, the AI's Executive Summary becomes the lead 'Mediation Summary' section.
+  // Legacy Executive Summary is folded into the decision-brief structure.
   // Decision Readiness and Recommended Path fold into Recommendation.
   // The test verifies that soft preferences are NOT elevated to non-negotiables anywhere.
   const allParagraphs = presentation.presentation_sections.flatMap((s) => s.paragraphs || []).join(' ');
@@ -757,8 +792,8 @@ test('buildMediationReviewPresentation: treats unsupported incompatibility claim
 
   // With passthrough, primary_insight comes from the lead AI section's first paragraph.
   // The AI wrote: "The draft still needs governance and sequencing detail before compatibility can be judged confidently."
-  // Verify it reflects uncertainty ("needs", "before") rather than a hard clash.
-  assert.match(presentation.primary_insight, /needs|before.*judged|not yet clear|clarification|missing/i);
+  // Verify it reflects an open question rather than a hard clash.
+  assert.match(presentation.primary_insight, /resolve|open|governance|sequencing/i);
   assert.doesNotMatch(presentation.primary_insight, /fundamental incompat/i);
 });
 
@@ -778,13 +813,11 @@ test('buildMediationReviewPresentation: keeps strategic tensions distinct from s
     redactions: [],
   });
 
-  // With passthrough, AI sections pass through with canonical headings from normalizeV2Heading.
-  // 'Negotiation Insights' → 'Where Agreement Exists' (key: where_agreement_exists)
-  // 'Potential Deal Structures' → 'Proposed Bridge' (key: proposed_bridge)
-  const negotiationInsights = presentation.presentation_sections.find((section) => section.key === 'where_agreement_exists')?.paragraphs || [];
-  const dealStructures = presentation.presentation_sections.find((section) => section.key === 'proposed_bridge')?.paragraphs || [];
+  // Legacy strategic analysis is folded into the new align/bridge sections.
+  const negotiationInsights = presentation.presentation_sections.find((section) => section.key === 'where_the_parties_align')?.paragraphs || [];
+  const dealStructures = presentation.presentation_sections.find((section) => section.key === 'suggested_bridge')?.paragraphs || [];
 
-  assert.equal(negotiationInsights.some((paragraph) => /tension|approval control|rollout speed/i.test(paragraph)), true);
+  assert.equal(negotiationInsights.some((paragraph) => /approval control|rollout speed/i.test(paragraph)), true);
   assert.equal(
     dealStructures.some((paragraph) => /approval risk|phased structure|dependency checkpoints/i.test(paragraph)),
     true,
@@ -883,7 +916,7 @@ test('buildMediationReviewPresentation: recommendation falls back to bridgeabili
   );
 });
 
-// ─── Progress Since Prior Review ─────────────────────────────────────────────
+// ─── What Changed Since Last Round ───────────────────────────────────────────
 
 test('buildMediationReviewPresentation: progress section uses AI-authored narrative from why[] when available', () => {
   const presentation = buildMediationReviewPresentation({
@@ -906,8 +939,20 @@ test('buildMediationReviewPresentation: progress section uses AI-authored narrat
     movement_direction: 'converging',
   });
 
-  const progressSection = presentation.presentation_sections.find((s) => s.key === 'progress_since_prior_review');
+  const progressSection = presentation.presentation_sections.find((s) => s.key === 'what_changed_since_last_round');
   assert.ok(progressSection, 'Progress section must exist');
+  assert.deepEqual(
+    presentation.presentation_sections.map((section) => section.heading),
+    [
+      'Recommendation',
+      'What Changed Since Last Round',
+      'Where the Parties Align',
+      'Where the Deal Is Stuck',
+      'Suggested Bridge',
+      'Open Questions',
+      'Next Step',
+    ],
+  );
   const progressParagraphs = progressSection.paragraphs || [];
   // Should use the AI's authored narrative, not the metadata-stitched version
   assert.ok(
@@ -940,7 +985,7 @@ test('buildMediationReviewPresentation: progress section falls back to metadata 
     movement_direction: 'stalled',
   });
 
-  const progressSection = presentation.presentation_sections.find((s) => s.key === 'progress_since_prior_review');
+  const progressSection = presentation.presentation_sections.find((s) => s.key === 'what_changed_since_last_round');
   assert.ok(progressSection, 'Progress section must exist');
   const progressParagraphs = progressSection.paragraphs || [];
   // Should use delta_summary since no AI-authored progress section exists
@@ -1035,7 +1080,7 @@ test('buildMediationReviewPresentation: rejects AI progress with raw questions, 
     movement_direction: 'converging',
   });
 
-  const progressSection = presentation.presentation_sections.find((s) => s.key === 'progress_since_prior_review');
+  const progressSection = presentation.presentation_sections.find((s) => s.key === 'what_changed_since_last_round');
   assert.ok(progressSection, 'Progress section must exist');
   const allText = (progressSection.paragraphs || []).join(' ');
   // Should NOT contain the raw AI progress text (it had ? marks, failed quality gate)
@@ -1079,7 +1124,7 @@ test('buildMediationReviewPresentation: accepts clean AI-authored progress prose
     movement_direction: 'converging',
   });
 
-  const progressSection = presentation.presentation_sections.find((s) => s.key === 'progress_since_prior_review');
+  const progressSection = presentation.presentation_sections.find((s) => s.key === 'what_changed_since_last_round');
   assert.ok(progressSection, 'Progress section must exist');
   const allText = (progressSection.paragraphs || []).join(' ');
   // Clean AI progress should be used directly
@@ -1119,7 +1164,7 @@ test('buildMediationReviewPresentation: metadata fallback does not use robotic t
     movement_direction: 'converging',
   });
 
-  const progressSection = presentation.presentation_sections.find((s) => s.key === 'progress_since_prior_review');
+  const progressSection = presentation.presentation_sections.find((s) => s.key === 'what_changed_since_last_round');
   assert.ok(progressSection, 'Progress section must exist');
   const allText = (progressSection.paragraphs || []).join(' ');
 
@@ -1188,7 +1233,7 @@ test('buildMediationReviewPresentation: progress metadata fallback converts ques
     movement_direction: 'converging',
   });
 
-  const progressSection = presentation.presentation_sections.find((s) => s.key === 'progress_since_prior_review');
+  const progressSection = presentation.presentation_sections.find((s) => s.key === 'what_changed_since_last_round');
   assert.ok(progressSection, 'Progress section must exist');
   const allText = (progressSection.paragraphs || []).join(' ');
   // Must not contain raw question marks from the metadata items
@@ -1241,7 +1286,7 @@ test('buildMediationReviewPresentation: progress metadata fallback with new open
     movement_direction: 'stalled',
   });
 
-  const progressSection = presentation.presentation_sections.find((s) => s.key === 'progress_since_prior_review');
+  const progressSection = presentation.presentation_sections.find((s) => s.key === 'what_changed_since_last_round');
   assert.ok(progressSection, 'Progress section must exist');
   const allText = (progressSection.paragraphs || []).join(' ');
   // No question marks from new open issues
@@ -1278,7 +1323,7 @@ test('buildMediationReviewPresentation: drops questionable delta_summary and fal
     movement_direction: 'converging',
   });
 
-  const progressSection = presentation.presentation_sections.find((s) => s.key === 'progress_since_prior_review');
+  const progressSection = presentation.presentation_sections.find((s) => s.key === 'what_changed_since_last_round');
   assert.ok(progressSection, 'Progress section must exist');
   const allText = (progressSection.paragraphs || []).join(' ');
   assert.ok(
@@ -1311,7 +1356,7 @@ test('buildMediationReviewPresentation: drops too-short delta_summary', () => {
     movement_direction: null,
   });
 
-  const progressSection = presentation.presentation_sections.find((s) => s.key === 'progress_since_prior_review');
+  const progressSection = presentation.presentation_sections.find((s) => s.key === 'what_changed_since_last_round');
   assert.ok(progressSection, 'Progress section must exist');
   const allText = (progressSection.paragraphs || []).join(' ');
   assert.ok(
@@ -1346,7 +1391,7 @@ test('buildMediationReviewPresentation: movement direction is woven into resolve
     movement_direction: 'diverging',
   });
 
-  const progressSection = presentation.presentation_sections.find((s) => s.key === 'progress_since_prior_review');
+  const progressSection = presentation.presentation_sections.find((s) => s.key === 'what_changed_since_last_round');
   assert.ok(progressSection, 'Progress section must exist');
   const paragraph = (progressSection.paragraphs || [])[0] || '';
   // Both the narrowing observation and diverging direction should be present
@@ -1396,7 +1441,7 @@ test('buildMediationReviewPresentation: rejects AI progress that embeds raw ques
     movement_direction: 'converging',
   });
 
-  const progressSection = presentation.presentation_sections.find((s) => s.key === 'progress_since_prior_review');
+  const progressSection = presentation.presentation_sections.find((s) => s.key === 'what_changed_since_last_round');
   assert.ok(progressSection, 'Progress section must exist');
   const allText = (progressSection.paragraphs || []).join(' ');
   // Must not contain any question marks
@@ -1455,7 +1500,7 @@ test('buildMediationReviewPresentation: rejects delta_summary with embedded ques
     movement_direction: 'converging',
   });
 
-  const progressSection = presentation.presentation_sections.find((s) => s.key === 'progress_since_prior_review');
+  const progressSection = presentation.presentation_sections.find((s) => s.key === 'what_changed_since_last_round');
   assert.ok(progressSection, 'Progress section must exist');
   const allText = (progressSection.paragraphs || []).join(' ');
   // Must not contain ANY question marks
@@ -1489,9 +1534,9 @@ test('buildMediationReviewPresentation: rejects delta_summary with embedded ques
   );
 });
 
-// ─── Mediation Summary: Paragraph Structure ──────────────────────────────────
+// ─── Legacy Summary Paragraph Structure ──────────────────────────────────────
 
-test('buildMediationReviewPresentation: splits oversized mediation summary into readable paragraphs', () => {
+test('buildMediationReviewPresentation: splits oversized legacy summary into readable decision-brief paragraphs', () => {
   const longSummary = 'Mediation Summary: The parties are well-aligned on the pilot strategic goal and have made significant progress defining its functional boundaries. The negotiation appears stalled not on intent but on how to manage the execution risk associated with a fixed-price commitment. The core hesitation sits around the ambiguity of the inputs required to deliver the pilot. This looks more like a structural standoff than a fundamental misalignment. The friction can be resolved by formalizing the proposed one-week discovery phase as a distinct paid engagement. If this initial step produces a binding specification it would provide the certainty needed for the vendor to commit to a fixed price.';
   const presentation = buildMediationReviewPresentation({
     fit_level: 'medium',
@@ -1504,18 +1549,22 @@ test('buildMediationReviewPresentation: splits oversized mediation summary into 
     redactions: [],
   });
 
-  const summarySection = presentation.presentation_sections.find((s) => s.key === 'mediation_summary');
-  assert.ok(summarySection, 'Mediation Summary section must exist');
-  const paragraphs = summarySection.paragraphs || [];
-  // A 6-sentence summary should get split into at least 2 paragraphs
+  const legacyParagraphs = presentation.presentation_sections
+    .filter((section) => ['where_the_parties_align', 'where_the_deal_is_stuck', 'suggested_bridge'].includes(section.key))
+    .flatMap((section) => section.paragraphs || []);
+  // A 6-sentence legacy summary should get split across decision-brief sections.
   assert.ok(
-    paragraphs.length >= 2,
-    `Should split into multiple paragraphs, got ${paragraphs.length}: "${paragraphs[0]?.slice(0, 60)}..."`,
+    legacyParagraphs.length >= 2,
+    `Should split into multiple paragraphs, got ${legacyParagraphs.length}: "${legacyParagraphs[0]?.slice(0, 60)}..."`,
   );
   // Each paragraph should be non-trivial
   assert.ok(
-    paragraphs.every((p) => p.length > 40),
+    legacyParagraphs.every((p) => p.length > 40),
     'Each paragraph should be substantial',
+  );
+  assert.equal(
+    presentation.presentation_sections.some((section) => section.heading === 'Mediation Summary'),
+    false,
   );
 });
 
@@ -1593,8 +1642,7 @@ test('buildStoredV2Evaluation: preserves substantive evaluation fields while add
     'Who owns the launch timeline? — determines execution accountability.',
   ]);
   assert.equal(stored.report.negotiation_analysis.compatibility_assessment, 'compatible_with_adjustments');
-  // With passthrough, primary_insight comes from the AI's lead section first paragraph
-  assert.match(stored.report.primary_insight, /commercially workable|compatible with adjustments|launch ownership/i);
+  assert.match(stored.report.primary_insight, /timeline ownership|launch ownership|commercially workable|compatible with adjustments/i);
   assert.equal(typeof stored.report.primary_insight, 'string');
   assert.equal(Array.isArray(stored.report.presentation_sections), true);
   assert.equal(stored.report.presentation_sections.length > 0, true);
@@ -1650,7 +1698,7 @@ test('buildStoredV2Evaluation: later bilateral rounds stay mediation_review whil
   assert.equal(stored.report.movement_direction, 'converging');
   assert.match(stored.report.delta_summary, /implementation sequencing/i);
   assert.equal(
-    stored.report.presentation_sections.some((section) => section.heading === 'Progress Since Prior Review'),
+    stored.report.presentation_sections.some((section) => section.heading === 'What Changed Since Last Round'),
     true,
   );
   assert.equal(
@@ -1928,9 +1976,38 @@ test('getPresentationSections: hides mediation redaction diagnostics from legacy
 
   assert.deepEqual(
     sections.map((section) => section.heading),
-    ['Mediation Summary'],
+    ['Where the Parties Align'],
   );
   assert.doesNotMatch(JSON.stringify(sections), /pipeline pressure|redacted/i);
+});
+
+test('getPresentationSections: first bilateral mediation reports do not show round-change section', () => {
+  const sections = getPresentationSections({
+    analysis_stage: 'mediation_review',
+    bilateral_round_number: 1,
+    presentation_sections: [
+      {
+        key: 'recommendation',
+        heading: 'Recommendation',
+        paragraphs: ['Decision status: Proceed with conditions.'],
+      },
+      {
+        key: 'progress_since_prior_review',
+        heading: 'Progress Since Prior Review',
+        paragraphs: ['This should not be visible on the first bilateral review.'],
+      },
+      {
+        key: 'mediation_summary',
+        heading: 'Mediation Summary',
+        paragraphs: ['Commission structure remains unresolved.'],
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    sections.map((section) => section.heading),
+    ['Recommendation', 'Where the Parties Align'],
+  );
 });
 
 test('getPublicRedactionItems: omits mediation redactions but preserves non-mediation behavior', () => {
@@ -2333,7 +2410,7 @@ test('buildMediationReviewPresentation: progress topic truncation does not leave
     movement_direction: 'converging',
   });
 
-  const progressSection = presentation.presentation_sections.find((s) => s.key === 'progress_since_prior_review');
+  const progressSection = presentation.presentation_sections.find((s) => s.key === 'what_changed_since_last_round');
   assert.ok(progressSection, 'Progress section must exist');
   const allText = (progressSection.paragraphs || []).join(' ');
   // Must not end a topic phrase with a dangling preposition like "like"
@@ -2361,7 +2438,7 @@ test('buildMediationReviewPresentation: progress topic strips dangling infinitiv
     movement_direction: 'converging',
   });
 
-  const progressSection = presentation.presentation_sections.find((s) => s.key === 'progress_since_prior_review');
+  const progressSection = presentation.presentation_sections.find((s) => s.key === 'what_changed_since_last_round');
   assert.ok(progressSection, 'Progress section must exist');
   const allText = (progressSection.paragraphs || []).join(' ');
   // Must not contain dangling "be defined and measured"
@@ -2408,9 +2485,9 @@ test('buildMediationReviewPresentation: recommendation preserves first authored 
   );
 });
 
-// ─── Mediation Summary: improved paragraph splitting ─────────────────────────
+// ─── Legacy Summary: improved paragraph splitting ────────────────────────────
 
-test('buildMediationReviewPresentation: splits 3-sentence mediation summary over 250 chars', () => {
+test('buildMediationReviewPresentation: splits 3-sentence legacy summary over 250 chars', () => {
   // 3 sentences, each ~100 chars = ~300 chars total — should trigger the lowered threshold
   const longSummary = 'Mediation Summary: The parties agree on the commercial framework but remain divided on how execution risk should be allocated between them. The vendor is seeking certainty through a binding specification phase. The buyer is reluctant to invest in discovery without cost visibility.';
   const presentation = buildMediationReviewPresentation({
@@ -2424,12 +2501,16 @@ test('buildMediationReviewPresentation: splits 3-sentence mediation summary over
     redactions: [],
   });
 
-  const summarySection = presentation.presentation_sections.find((s) => s.key === 'mediation_summary');
-  assert.ok(summarySection, 'Mediation Summary section must exist');
-  const paragraphs = summarySection.paragraphs || [];
+  const paragraphs = presentation.presentation_sections
+    .filter((section) => ['where_the_parties_align', 'where_the_deal_is_stuck', 'suggested_bridge'].includes(section.key))
+    .flatMap((section) => section.paragraphs || []);
   assert.ok(
     paragraphs.length >= 2,
     `Should split 3-sentence 280+ char paragraph into 2, got ${paragraphs.length}: "${paragraphs[0]?.slice(0, 60)}..."`,
+  );
+  assert.equal(
+    presentation.presentation_sections.some((section) => section.heading === 'Mediation Summary'),
+    false,
   );
 });
 
@@ -2548,7 +2629,7 @@ test('buildMediationReviewPresentation: progress fallback uses updated natural p
     movement_direction: 'converging',
   });
 
-  const progressSection = presentation.presentation_sections.find((s) => s.key === 'progress_since_prior_review');
+  const progressSection = presentation.presentation_sections.find((s) => s.key === 'what_changed_since_last_round');
   assert.ok(progressSection, 'Progress section must exist');
   const allText = (progressSection.paragraphs || []).join(' ');
   // Must use updated phrasing, not old mechanical templates
@@ -2588,7 +2669,7 @@ test('buildMediationReviewPresentation: AI progress with single rhetorical quest
     prior_bilateral_round_number: 1,
   });
 
-  const progressSection = presentation.presentation_sections.find((s) => s.key === 'progress_since_prior_review');
+  const progressSection = presentation.presentation_sections.find((s) => s.key === 'what_changed_since_last_round');
   assert.ok(progressSection, 'Progress section must exist');
   const allText = (progressSection.paragraphs || []).join(' ');
   // Should use the AI's own prose since it only has one rhetorical ?
@@ -2617,7 +2698,7 @@ test('buildMediationReviewPresentation: AI progress with multiple question marks
     movement_direction: 'converging',
   });
 
-  const progressSection = presentation.presentation_sections.find((s) => s.key === 'progress_since_prior_review');
+  const progressSection = presentation.presentation_sections.find((s) => s.key === 'what_changed_since_last_round');
   assert.ok(progressSection, 'Progress section must exist');
   const allText = (progressSection.paragraphs || []).join(' ');
   // Should reject AI progress (2 question marks = raw questions) and use metadata fallback
