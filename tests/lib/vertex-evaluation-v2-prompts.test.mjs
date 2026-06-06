@@ -178,15 +178,29 @@ test('mediation prompt steers SaaS referral partnership reviews toward deal-spec
   assert.match(prompt, /Do NOT default to project delivery/i);
   assert.match(prompt, /ANTI-GENERIC STAGE 2 RULE/i);
   assert.match(prompt, /Do NOT default to generic project-management or delivery-contract language/i);
+  assert.match(prompt, /current scope and explicit exclusions/i);
   assert.match(prompt, /key deliverables/i);
   assert.match(prompt, /acceptance criteria for deliverables/i);
+  assert.match(prompt, /measurable acceptance criteria/i);
   assert.match(prompt, /delivery sequencing/i);
   assert.match(prompt, /change exposure/i);
   assert.match(prompt, /scope control/i);
   assert.match(prompt, /current phase/i);
+  assert.match(prompt, /data remediation/i);
+  assert.match(prompt, /data migration/i);
   assert.match(prompt, /sign-off/i);
   assert.match(prompt, /dependency ownership/i);
   assert.match(prompt, /unless they are specifically relevant to the inferred deal archetype/i);
+  assert.match(prompt, /Where the Parties Align must contain only compatibility\/common-ground points/i);
+  assert.match(prompt, /Where the Deal Is Stuck must contain only unresolved gaps or blockers/i);
+  assert.match(prompt, /non-exclusive six-month pilot/i);
+  assert.match(prompt, /registered-referral process/i);
+  assert.match(prompt, /client-protection window/i);
+  assert.match(prompt, /direct-sell rules/i);
+  assert.match(prompt, /active ongoing support/i);
+  assert.match(prompt, /Draft a one-page Pilot Rules of Engagement/i);
+  assert.match(prompt, /Do NOT write "Decision status:" inside the visible body/i);
+  assert.doesNotMatch(prompt, /Recommendation: Decision status/i);
 });
 
 test('mediation prompt protects private walk-away and hidden-limit information', () => {

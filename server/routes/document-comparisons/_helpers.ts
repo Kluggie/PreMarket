@@ -5,7 +5,6 @@ import {
   type MediationRoundContext,
 } from '../../_lib/mediation-progress.js';
 import {
-  getDecisionStatusDetails,
   getPresentationSections,
   getMediationReviewSubtitle,
   getMediationReviewTitle,
@@ -756,7 +755,6 @@ function buildRecommendationParagraphs(params: {
  * rather than displayed as separate visible sections.
  */
 const RECOMMENDATION_FOLD_KEYS = new Set([
-  'decision readiness',
   'recommended path',
   'recommendation',
   'recommendations',
@@ -817,6 +815,232 @@ const LEGACY_SUMMARY_KEYS = new Set([
   'summary',
   'decision assessment',
 ]);
+
+const ALIGNMENT_SIGNAL_PATTERNS = [
+  /^Key Strengths?:/i,
+  /\bboth sides\b/i,
+  /\bthe parties\b.*\b(aligned|align|agree|support|want|share|compatible|workable)\b/i,
+  /\b(aligned|alignment|compatible|compatibility|agreement|common ground|shared commercial intent|commercially promising|directionally workable|workable structure)\b/i,
+  /\b(pilot structure|referral relationship|implementation support|training|shared intent|commercially compatible)\b/i,
+];
+
+const STUCK_SIGNAL_PATTERNS = [
+  /^Risk Summary:/i,
+  /\b(unresolved|remain(?:s)? open|open issue|gap|blocker|blocking|stuck|tension|friction|risk|concern|unclear|underdefined|undefined|unsettled|not yet|still need|needs? to (?:agree|define|clarify|resolve)|must be (?:agreed|defined|resolved)|apart)\b/i,
+  /\b(commission|attribution|client protection|non-circumvention|revenue[- ]share|semi-exclusivity|exclusivity|trigger|threshold)\b.*\b(unresolved|open|unclear|underdefined|not yet|still)\b/i,
+];
+
+const BRIDGE_SIGNAL_PATTERNS = [
+  /\b(bridge|compromise|package|landing zone|structure|pilot rules|rules of engagement)\b/i,
+  /\b(non-exclusive|registered-referral|registered referral|client-protection|client protection|commission trigger|revenue[- ]share|implementation fee|post-pilot|semi-exclusivity|performance threshold)\b/i,
+];
+
+const GENERIC_NEXT_STEP_PATTERNS = [
+  /\buse the open questions\b/i,
+  /\bclosing agenda for the next exchange\b/i,
+  /\bnext exchange\b/i,
+  /\bconfirm the agreed commercial terms\b/i,
+];
+
+const SAAS_PARTNERSHIP_CONTEXT_PATTERNS = [
+  /\bsaas\b/i,
+  /\bsoftware\b/i,
+  /\bchannel\b/i,
+  /\breferral\b/i,
+  /\bimplementation partner(ship)?\b/i,
+  /\bcommission\b/i,
+  /\brevenue[- ]share\b/i,
+  /\blead attribution\b/i,
+  /\bclient protection\b/i,
+  /\bnon-circumvention\b/i,
+  /\bsemi-exclusivity\b/i,
+];
+
+const GENERIC_PROJECT_DELIVERY_QUESTION_PATTERNS = [
+  /\bcurrent scope\b/i,
+  /\bexplicit exclusions\b/i,
+  /\bkey deliverables\b/i,
+  /\bacceptance criteria\b.*\bdeliverables\b/i,
+  /\bmeasurable acceptance criteria\b/i,
+  /\bdelivery sequencing\b/i,
+  /\bchange exposure\b/i,
+  /\bscope control\b/i,
+  /\bcurrent phase\b/i,
+  /\bdata remediation\b/i,
+  /\bdata migration\b/i,
+  /\bmigration work\b/i,
+  /\bdependency ownership\b/i,
+  /\bdependency owners\b/i,
+  /\bwhat happens if they slip\b/i,
+];
+
+const SAAS_PARTNERSHIP_OPEN_QUESTIONS = [
+  'What counts as a successful referral: introduction, qualified meeting, signed customer, paid subscription, or completed implementation? — determines when commission is earned and how attribution is tracked.',
+  'When is commission earned and paid? — determines the trigger, timing, and auditability of the referral economics.',
+  'When does recurring revenue share apply: only during the first year, only while the partner provides documented ongoing support, or across renewals? — determines whether recurring economics track ongoing value.',
+  'How long does client protection last after a lead is introduced? — determines whether client ownership and direct-sell rights are workable.',
+  'What actions count as bypassing the partner? — determines the practical scope of non-circumvention.',
+  'What implementation work is included in onboarding versus separately paid consulting? — determines implementation fee ownership and support expectations.',
+  'What pilot outcome would justify semi-exclusivity or renegotiation? — determines whether future commitments are performance-based.',
+];
+
+function signalScore(value: string, patterns: RegExp[]) {
+  const text = normalizeText(value);
+  if (!text) return 0;
+  return patterns.reduce((score, pattern) => score + (pattern.test(text) ? 1 : 0), 0);
+}
+
+function hasAlignmentSignal(value: string) {
+  return signalScore(value, ALIGNMENT_SIGNAL_PATTERNS) > 0;
+}
+
+function hasStuckSignal(value: string) {
+  return signalScore(value, STUCK_SIGNAL_PATTERNS) > 0;
+}
+
+function hasBridgeSignal(value: string) {
+  return signalScore(value, BRIDGE_SIGNAL_PATTERNS) > 0;
+}
+
+function isDominantlyStuck(value: string) {
+  const stuckScore = signalScore(value, STUCK_SIGNAL_PATTERNS);
+  const alignmentScore = signalScore(value, ALIGNMENT_SIGNAL_PATTERNS);
+  return stuckScore > 0 && stuckScore > alignmentScore;
+}
+
+function isDominantlyAligned(value: string) {
+  const stuckScore = signalScore(value, STUCK_SIGNAL_PATTERNS);
+  const alignmentScore = signalScore(value, ALIGNMENT_SIGNAL_PATTERNS);
+  return alignmentScore > 0 && alignmentScore > stuckScore;
+}
+
+function sentenceFromFragment(value: string) {
+  let next = normalizeText(value)
+    .replace(/^[-:;., ]+/, '')
+    .replace(/[,:;—-]+\s*$/g, '')
+    .trim();
+  if (!next) return '';
+  if (/^[a-z]/.test(next)) {
+    next = next.charAt(0).toUpperCase() + next.slice(1);
+  }
+  if (!/[.!?]$/.test(next)) {
+    next = `${next}.`;
+  }
+  return next;
+}
+
+function splitAlignmentStuckParagraph(value: string) {
+  const text = normalizeText(value);
+  if (!text) return null;
+  const match = text.match(/\b(but|however|while|although|though)\b/i);
+  if (!match || match.index === undefined) return null;
+  const before = text.slice(0, match.index).trim();
+  const after = text.slice(match.index + match[0].length).trim();
+  if (!before || !after) return null;
+  if (!hasAlignmentSignal(before) || !hasStuckSignal(after)) return null;
+  return {
+    alignment: sentenceFromFragment(before),
+    stuck: sentenceFromFragment(after),
+  };
+}
+
+function stripDecisionStatusPrefix(value: string) {
+  const text = normalizeText(value);
+  const match = text.match(
+    /^Decision status:\s*(Not viable|Explore further|Proceed with conditions|Ready to finalize)\b\.?\s*(.*)$/i,
+  );
+  if (!match) return text;
+  return sentenceFromFragment(match[2] || '');
+}
+
+function stripLegacyActionPrefix(value: string) {
+  return normalizeText(value)
+    .replace(/^(Recommended path|Recommended next step|Next step|Suggested next step):\s*/i, '')
+    .trim();
+}
+
+function cleanDecisionBriefParagraph(value: string) {
+  const withoutDecisionStatus = stripDecisionStatusPrefix(value);
+  if (!withoutDecisionStatus) return '';
+  return stripLegacyActionPrefix(withoutDecisionStatus)
+    .replace(/^(Risk Summary|Key Strengths|Likely priorities|Possible concessions|Structural tensions|Leverage signal):\s*/i, '')
+    .trim();
+}
+
+function looksLikeSaasPartnershipBrief(value: string) {
+  const text = normalizeText(value);
+  if (!text) return false;
+  const score = signalScore(text, SAAS_PARTNERSHIP_CONTEXT_PATTERNS);
+  const hasReferralEconomics = /\b(referral|lead attribution|client attribution|client protection|non-circumvention|commission|revenue[- ]share)\b/i.test(text);
+  const hasSoftwareOrChannelContext = /\b(saas|software|platform|channel|implementation partner(ship)?|reseller|referral partner)\b/i.test(text);
+  return score >= 3 || (hasReferralEconomics && hasSoftwareOrChannelContext);
+}
+
+function isGenericProjectDeliveryQuestion(value: string) {
+  return GENERIC_PROJECT_DELIVERY_QUESTION_PATTERNS.some((pattern) => pattern.test(normalizeText(value)));
+}
+
+function hasSeveralSaasBridgeTerms(values: string[]) {
+  const text = normalizeText(values.join(' '));
+  const termPatterns = [
+    /\bnon-exclusive\b/i,
+    /\bregistered[- ]referral\b/i,
+    /\bclient protection\b/i,
+    /\bdirect[- ]sell\b/i,
+    /\bcommission trigger\b/i,
+    /\brevenue[- ]share\b/i,
+    /\bactive ongoing support\b/i,
+    /\bimplementation fee\b/i,
+    /\bpost-pilot\b/i,
+    /\bsemi-exclusivity\b/i,
+    /\bperformance threshold\b/i,
+  ];
+  return termPatterns.filter((pattern) => pattern.test(text)).length >= 4;
+}
+
+function buildSaasPartnershipBridgeParagraph(contextText: string) {
+  const text = normalizeText(contextText);
+  const terms: string[] = [];
+  const pilotTerm = /\b(6|six)[-\s]?month\b/i.test(text)
+    ? 'a non-exclusive six-month pilot'
+    : /\bpilot\b/i.test(text)
+      ? 'a time-boxed non-exclusive pilot'
+      : 'a non-exclusive pilot period';
+  terms.push(pilotTerm);
+  terms.push('a registered-referral process');
+  terms.push('a client-protection window with clear direct-sell and non-circumvention rules');
+  terms.push('commission earned only on agreed referral triggers');
+  terms.push('recurring revenue share only while the partner provides documented active ongoing support');
+  terms.push('a separate path for implementation fees');
+  terms.push('post-pilot renegotiation based on measurable referrals');
+  terms.push('semi-exclusivity only after a defined performance threshold is met');
+  return `A practical bridge would package ${terms.join(', ')}.`;
+}
+
+function buildSaasPartnershipNextStep() {
+  return 'Draft a one-page Pilot Rules of Engagement covering referral registration, client protection, commission and revenue-share triggers, implementation fee ownership, support responsibilities, and post-pilot renegotiation criteria.';
+}
+
+function normalizeOpenQuestionsForMediation(missing: string[], contextText: string) {
+  const isSaasPartnership = looksLikeSaasPartnershipBrief(contextText);
+  if (!isSaasPartnership) {
+    return missing;
+  }
+
+  const filtered = uniqueText(missing.filter((item) => !isGenericProjectDeliveryQuestion(item)));
+  SAAS_PARTNERSHIP_OPEN_QUESTIONS.forEach((question) => {
+    if (filtered.length >= 4) return;
+    const questionKey = normalizeHeadingKey(question.split('—')[0] || question).slice(0, 80);
+    const alreadyCovered = filtered.some((existing) =>
+      normalizeHeadingKey(existing).includes(questionKey.slice(0, 35)) ||
+      normalizeHeadingKey(question).includes(normalizeHeadingKey(existing).slice(0, 35)),
+    );
+    if (!alreadyCovered) {
+      filtered.push(question);
+    }
+  });
+  return filtered.slice(0, 4);
+}
 
 /**
  * Canonical heading for display — normalizes AI headings to cleaner display names.
@@ -891,13 +1115,6 @@ export function buildMediationReviewPresentation(params: {
   const newOpenIssues = uniqueText(progress?.new_open_issues || []).slice(0, 3);
   const movementDirection = progress?.movement_direction || null;
 
-  const decisionStatus = getDecisionStatusDetails({
-    fit_level: fitLevel,
-    confidence_0_1: confidence,
-    why,
-    missing,
-  });
-
   // Classify archetype for backward compatibility — but no longer drives section structure
   const archetype = classifyArchetypeFromFitLevel(fitLevel, confidence, missing.length);
 
@@ -921,10 +1138,66 @@ export function buildMediationReviewPresentation(params: {
 
   const addParagraphs = (target: string[], values: string[]) => {
     uniqueText(values).forEach((value) => {
-      const normalized = normalizeText(value);
+      const normalized = cleanDecisionBriefParagraph(value);
       if (normalized && !target.some((existing) => existing.toLowerCase() === normalized.toLowerCase())) {
         target.push(normalized);
       }
+    });
+  };
+
+  const addAlignmentParagraphs = (values: string[]) => {
+    uniqueText(values).forEach((value) => {
+      const split = splitAlignmentStuckParagraph(value);
+      if (split) {
+        addParagraphs(alignmentParagraphs, [split.alignment]);
+        addParagraphs(stuckParagraphs, [split.stuck]);
+        return;
+      }
+      if (isDominantlyStuck(value)) {
+        addParagraphs(stuckParagraphs, [value]);
+        return;
+      }
+      addParagraphs(alignmentParagraphs, [value]);
+    });
+  };
+
+  const addStuckParagraphs = (values: string[]) => {
+    uniqueText(values).forEach((value) => {
+      const split = splitAlignmentStuckParagraph(value);
+      if (split) {
+        addParagraphs(alignmentParagraphs, [split.alignment]);
+        addParagraphs(stuckParagraphs, [split.stuck]);
+        return;
+      }
+      if (isDominantlyAligned(value) && !hasStuckSignal(value)) {
+        addParagraphs(alignmentParagraphs, [value]);
+        return;
+      }
+      addParagraphs(stuckParagraphs, [value]);
+    });
+  };
+
+  const distributeParagraphsByContent = (values: string[]) => {
+    uniqueText(values).forEach((value) => {
+      const split = splitAlignmentStuckParagraph(value);
+      if (split) {
+        addParagraphs(alignmentParagraphs, [split.alignment]);
+        addParagraphs(stuckParagraphs, [split.stuck]);
+        return;
+      }
+      if (hasBridgeSignal(value) && !isDominantlyStuck(value)) {
+        addParagraphs(bridgeParagraphs, [value]);
+        return;
+      }
+      if (isDominantlyAligned(value)) {
+        addParagraphs(alignmentParagraphs, [value]);
+        return;
+      }
+      if (hasStuckSignal(value)) {
+        addParagraphs(stuckParagraphs, [value]);
+        return;
+      }
+      addParagraphs(stuckParagraphs, [value]);
     });
   };
 
@@ -965,10 +1238,7 @@ export function buildMediationReviewPresentation(params: {
 
   const distributeLegacySummary = (paragraphs: string[]) => {
     const normalized = uniqueText(paragraphs).flatMap(splitIfDense);
-    if (normalized[0]) addParagraphs(alignmentParagraphs, [normalized[0]]);
-    if (normalized[1]) addParagraphs(stuckParagraphs, [normalized[1]]);
-    if (normalized[2]) addParagraphs(bridgeParagraphs, [normalized[2]]);
-    if (normalized.length > 3) addParagraphs(stuckParagraphs, normalized.slice(3));
+    distributeParagraphsByContent(normalized);
   };
 
   whyEntries.forEach((entry) => {
@@ -977,6 +1247,10 @@ export function buildMediationReviewPresentation(params: {
 
     if (isProgressKey(entry.key)) {
       addParagraphs(authoredProgressParagraphs, paragraphs);
+      return;
+    }
+    if (entry.key === 'decision readiness') {
+      addStuckParagraphs(paragraphs);
       return;
     }
     if (RECOMMENDATION_FOLD_KEYS.has(entry.key)) {
@@ -988,11 +1262,11 @@ export function buildMediationReviewPresentation(params: {
       return;
     }
     if (ALIGNMENT_KEYS.has(entry.key)) {
-      addParagraphs(alignmentParagraphs, paragraphs);
+      addAlignmentParagraphs(paragraphs);
       return;
     }
     if (STUCK_KEYS.has(entry.key)) {
-      addParagraphs(stuckParagraphs, paragraphs);
+      addStuckParagraphs(paragraphs);
       return;
     }
     if (BRIDGE_KEYS.has(entry.key)) {
@@ -1006,8 +1280,8 @@ export function buildMediationReviewPresentation(params: {
 
     const displayHeading = canonicalDisplayHeading(entry.heading);
     const displayKey = normalizeHeadingKey(displayHeading);
-    if (ALIGNMENT_KEYS.has(displayKey)) addParagraphs(alignmentParagraphs, paragraphs);
-    else if (STUCK_KEYS.has(displayKey)) addParagraphs(stuckParagraphs, paragraphs);
+    if (ALIGNMENT_KEYS.has(displayKey)) addAlignmentParagraphs(paragraphs);
+    else if (STUCK_KEYS.has(displayKey)) addStuckParagraphs(paragraphs);
     else if (BRIDGE_KEYS.has(displayKey)) addParagraphs(bridgeParagraphs, paragraphs);
     else if (NEXT_STEP_KEYS.has(displayKey)) addParagraphs(nextStepParagraphs, paragraphs);
     else addParagraphs(stuckParagraphs, paragraphs);
@@ -1088,13 +1362,13 @@ export function buildMediationReviewPresentation(params: {
   if (alignmentParagraphs.length === 0) {
     const compatibilityRationale = normalizeText(negotiationAnalysis?.compatibility_rationale);
     if (compatibilityRationale) {
-      addParagraphs(alignmentParagraphs, [compatibilityRationale]);
+      addAlignmentParagraphs([compatibilityRationale]);
     }
   }
   if (stuckParagraphs.length === 0) {
     const tension = buildNegotiationTensionParagraphs(negotiationAnalysis);
     if (tension.length > 0) {
-      addParagraphs(stuckParagraphs, tension);
+      addStuckParagraphs(tension);
     } else if (missing.length > 0) {
       addParagraphs(
         stuckParagraphs,
@@ -1118,16 +1392,43 @@ export function buildMediationReviewPresentation(params: {
     ]);
   }
 
+  const mediationContextText = normalizeText([
+    why.join(' '),
+    missing.join(' '),
+    alignmentParagraphs.join(' '),
+    stuckParagraphs.join(' '),
+    bridgeParagraphs.join(' '),
+    nextStepParagraphs.join(' '),
+    negotiationAnalysis?.compatibility_rationale || '',
+    ...(negotiationAnalysis?.bridgeability_notes || []),
+    ...(negotiationAnalysis?.critical_incompatibilities || []),
+  ].join(' '));
+  const isSaasPartnershipBrief = looksLikeSaasPartnershipBrief(mediationContextText);
+
+  if (isSaasPartnershipBrief && !hasSeveralSaasBridgeTerms(bridgeParagraphs)) {
+    const saasBridge = buildSaasPartnershipBridgeParagraph(mediationContextText);
+    const substantiveExistingBridge = bridgeParagraphs.filter((paragraph) => !isGenericProjectDeliveryQuestion(paragraph));
+    bridgeParagraphs.splice(0, bridgeParagraphs.length, ...uniqueText([saasBridge, ...substantiveExistingBridge]).slice(0, 2));
+  }
+
+  if (
+    isSaasPartnershipBrief &&
+    (
+      nextStepParagraphs.length === 0 ||
+      nextStepParagraphs.some((paragraph) => GENERIC_NEXT_STEP_PATTERNS.some((pattern) => pattern.test(paragraph)))
+    )
+  ) {
+    nextStepParagraphs.splice(0, nextStepParagraphs.length, buildSaasPartnershipNextStep());
+  }
+
+  const openQuestions = normalizeOpenQuestionsForMediation(missing, mediationContextText);
+
   const allRenderedParagraphs = [
     ...alignmentParagraphs,
     ...stuckParagraphs,
     ...bridgeParagraphs,
     ...nextStepParagraphs,
   ];
-  const decisionLine = decisionStatus.label
-    ? `Decision status: ${decisionStatus.label}.${decisionStatus.explanation ? ` ${normalizeText(decisionStatus.explanation)}` : ''}`
-    : '';
-
   // Keep authored recommendation paragraphs that are not exact duplicates of
   // already-rendered content. Use a high overlap threshold (60%) so that normal
   // vocabulary overlap between the mediation narrative and the recommendation
@@ -1147,7 +1448,8 @@ export function buildMediationReviewPresentation(params: {
   };
 
   const substantiveRecommendationCandidates = recommendationParagraphs
-    .filter((p) => !/^Decision status:/i.test(normalizeText(p)));
+    .map((p) => cleanDecisionBriefParagraph(p))
+    .filter(Boolean);
 
   // Always keep the first authored recommendation paragraph — it is the AI's
   // primary actionable advice. Apply near-duplicate filtering only to additional
@@ -1188,7 +1490,6 @@ export function buildMediationReviewPresentation(params: {
   }
 
   const recommendationSectionParagraphs = uniqueText([
-    decisionLine,
     ...keptRecommendationParagraphs,
   ]);
 
@@ -1234,7 +1535,7 @@ export function buildMediationReviewPresentation(params: {
   const openQuestionsSection = createPresentationSection({
     key: 'open_questions',
     heading: 'Open Questions',
-    bullets: missing,
+    bullets: openQuestions,
     numbered_bullets: true,
   });
   if (openQuestionsSection) sections.push(openQuestionsSection);
@@ -1276,18 +1577,13 @@ export function buildMediationReviewPresentation(params: {
   // ── Final visible prose cleanup ──────────────────────────────────────────
   // Enforce report-wide discipline on the assembled sections before returning.
 
-  // 1. Ensure exactly one "Decision status:" line across the entire report.
-  //    The recommendation section has the canonical one; strip any others.
-  let decisionStatusSeen = false;
+  // 1. Remove clunky status boilerplate from visible body sections. Status is
+  //    already rendered from fit/confidence metadata in the page chrome.
   sections.forEach((section) => {
     if (!section.paragraphs) return;
-    section.paragraphs = section.paragraphs.filter((p) => {
-      if (/^Decision status:/i.test(normalizeText(p))) {
-        if (decisionStatusSeen) return false;
-        decisionStatusSeen = true;
-      }
-      return true;
-    });
+    section.paragraphs = section.paragraphs
+      .map((p) => cleanDecisionBriefParagraph(p))
+      .filter(Boolean);
   });
 
   // 2. Cross-section anti-repetition: if a recommendation paragraph is a
@@ -1303,7 +1599,6 @@ export function buildMediationReviewPresentation(params: {
       analysisParagraphsForOverlap.join(' ').toLowerCase().split(/\s+/).filter((w) => w.length > 3),
     );
     recSection.paragraphs = recSection.paragraphs.map((p) => {
-      if (/^Decision status:/i.test(p)) return p;
       const pWords = p.toLowerCase().split(/\s+/).filter((w) => w.length > 3);
       if (pWords.length < 4) return p;
       const overlap = pWords.filter((w) => analysisWords.has(w)).length / pWords.length;

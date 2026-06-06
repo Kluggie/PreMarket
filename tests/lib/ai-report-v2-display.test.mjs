@@ -543,6 +543,13 @@ test('buildMediationReviewPresentation: first bilateral review uses decision-bri
     presentation.presentation_sections.some((section) => section.heading === 'What Changed Since Last Round'),
     false,
   );
+  const recommendationParagraphs =
+    presentation.presentation_sections.find((section) => section.key === 'recommendation')?.paragraphs || [];
+  assert.equal(
+    recommendationParagraphs.some((paragraph) => /^Decision status:/i.test(paragraph)),
+    false,
+    `Recommendation body should not duplicate the status chip wording: ${JSON.stringify(recommendationParagraphs)}`,
+  );
 });
 
 test('buildMediationReviewPresentation: keeps bilateral recommendation framing and does not reuse pre-send memo headings', () => {
@@ -563,6 +570,71 @@ test('buildMediationReviewPresentation: keeps bilateral recommendation framing a
   assert.equal(headings.includes('Recommendation'), true);
   assert.equal(headings.includes('Readiness Summary'), false);
   assert.equal(headings.includes('Residual Risks and Points to Tighten'), false);
+});
+
+test('buildMediationReviewPresentation: keeps SaaS partnership sections specific and correctly placed', () => {
+  const presentation = buildMediationReviewPresentation({
+    fit_level: 'medium',
+    confidence_0_1: 0.68,
+    why: [
+      'Recommendation: Decision status: Proceed with conditions. The parties should proceed only if the pilot rules define attribution, economics, and customer protection without revealing any private limits.',
+      'Where the Parties Align: Both sides support a non-exclusive six-month referral pilot, implementation partner support, training, and performance-based renegotiation after successful referrals.',
+      'Where the Deal Is Stuck: The parties are apart on referral attribution, client protection / non-circumvention, commission triggers, recurring revenue-share triggers, implementation fee ownership, customer handoff, pilot success criteria, and semi-exclusivity thresholds.',
+      'Suggested Bridge: Use a pilot structure and clarify the commercial terms.',
+      'Next Step: Use the open questions below as the agenda for the next exchange.',
+    ],
+    missing: [
+      'What is included in the current scope and explicit exclusions? — determines delivery sequencing and change exposure.',
+      'What measurable acceptance criteria will define completion for the key deliverables? — determines sign-off and payment exposure.',
+      'Who owns data remediation and dependency ownership? — determines whether the current phase can proceed.',
+      'What counts as a successful referral? — determines when commission is earned.',
+    ],
+    redactions: [
+      'Specific commission threshold considered a walk-away point',
+      'Internal pipeline pressure at the SaaS company',
+    ],
+  });
+
+  const sectionByKey = new Map(presentation.presentation_sections.map((section) => [section.key, section]));
+  const recommendationText = (sectionByKey.get('recommendation')?.paragraphs || []).join(' ');
+  const alignmentText = (sectionByKey.get('where_the_parties_align')?.paragraphs || []).join(' ');
+  const stuckText = (sectionByKey.get('where_the_deal_is_stuck')?.paragraphs || []).join(' ');
+  const bridgeText = (sectionByKey.get('suggested_bridge')?.paragraphs || []).join(' ');
+  const nextStepText = (sectionByKey.get('next_step')?.paragraphs || []).join(' ');
+  const questionsText = (sectionByKey.get('open_questions')?.bullets || []).join(' ');
+  const allText = JSON.stringify(presentation.presentation_sections);
+
+  assert.doesNotMatch(recommendationText, /^Decision status:/i);
+  assert.match(alignmentText, /support|pilot|training|renegotiation/i);
+  assert.doesNotMatch(alignmentText, /apart|unresolved|stuck|blocker|remain unresolved/i);
+  assert.match(stuckText, /attribution|client protection|commission|revenue-share|semi-exclusivity/i);
+  assert.doesNotMatch(stuckText, /^Both sides support/i);
+
+  for (const term of [
+    /non-exclusive six-month pilot/i,
+    /registered-referral process/i,
+    /client-protection window/i,
+    /direct-sell/i,
+    /commission earned/i,
+    /recurring revenue share/i,
+    /active ongoing support/i,
+    /implementation fees/i,
+    /post-pilot renegotiation/i,
+    /semi-exclusivity/i,
+  ]) {
+    assert.match(bridgeText, term);
+  }
+
+  assert.match(nextStepText, /Draft a one-page Pilot Rules of Engagement/i);
+  assert.match(nextStepText, /referral registration/i);
+  assert.match(nextStepText, /post-pilot renegotiation criteria/i);
+
+  assert.match(questionsText, /successful referral|commission earned|recurring revenue share|client protection/i);
+  assert.doesNotMatch(
+    questionsText,
+    /current scope|explicit exclusions|key deliverables|measurable acceptance criteria|delivery sequencing|change exposure|data remediation|dependency ownership/i,
+  );
+  assert.doesNotMatch(allText, /walk-away|pipeline pressure|hidden limit|private fallback/i);
 });
 
 test('buildMediationReviewPresentation: routes low-fit and missing-heavy cases to different archetypes', () => {
@@ -653,21 +725,21 @@ test('buildMediationReviewPresentation: maps legacy top-level V2 sections into t
 
   assert.equal(
     presentation.primary_insight,
-    'Recommended path: resolve timeline ownership before final approval.',
+    'resolve timeline ownership before final approval.',
   );
   // Legacy AI sections are repurposed under the decision-brief headings.
   assert.deepEqual(
     presentation.presentation_sections.find((section) => section.key === 'where_the_parties_align')?.paragraphs,
     [
-      'The draft is commercially promising, but delivery ownership remains underdefined.',
+      'The draft is commercially promising.',
       'Renewal economics and commercial scope are already aligned.',
     ],
   );
   assert.deepEqual(
     presentation.presentation_sections.find((section) => section.key === 'where_the_deal_is_stuck')?.paragraphs,
     [
+      'Delivery ownership remains underdefined.',
       'Timeline ownership and change-control mechanics remain unsettled.',
-      'The main tension is launch speed versus approval control.',
     ],
   );
 });
@@ -2514,9 +2586,9 @@ test('buildMediationReviewPresentation: splits 3-sentence legacy summary over 25
   );
 });
 
-// ─── Anti-repetition: Decision status line dedup ─────────────────────────────
+// ─── Anti-repetition: Decision status line removed from body ─────────────────
 
-test('buildMediationReviewPresentation: only one Decision status line appears in the entire report', () => {
+test('buildMediationReviewPresentation: Decision status lines are not rendered in body sections', () => {
   const presentation = buildMediationReviewPresentation({
     fit_level: 'medium',
     confidence_0_1: 0.62,
@@ -2532,8 +2604,8 @@ test('buildMediationReviewPresentation: only one Decision status line appears in
   const allParagraphs = presentation.presentation_sections.flatMap((s) => s.paragraphs || []);
   const decisionStatusLines = allParagraphs.filter((p) => /^Decision status:/i.test(p));
   assert.equal(
-    decisionStatusLines.length, 1,
-    `Must have exactly one Decision status line, got ${decisionStatusLines.length}: ${JSON.stringify(decisionStatusLines)}`,
+    decisionStatusLines.length, 0,
+    `Body sections must not duplicate status-chip wording, got: ${JSON.stringify(decisionStatusLines)}`,
   );
 });
 

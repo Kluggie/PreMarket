@@ -436,6 +436,78 @@ type MissingRule = {
 
 const MISSING_RULES: MissingRule[] = [
   {
+    id: 'referral_attribution',
+    priority: 116,
+    severity: 'severe',
+    patterns: ['referral', 'lead ownership', 'lead attribution', 'client attribution', 'registered referral', 'qualified lead', 'customer introduction'],
+    label: 'referral attribution and lead ownership still need definition',
+    question: 'What counts as a successful referral: introduction, qualified meeting, signed customer, paid subscription, or completed implementation?',
+    why: 'referral attribution determines when commission is earned and how client ownership is tracked',
+    condition: 'define the referral registration, attribution, and client ownership rules',
+    confidenceUp: 'clear referral attribution rules and a registered-referral process',
+    confidenceDown: 'referral credit and client ownership stay ambiguous',
+  },
+  {
+    id: 'client_protection',
+    priority: 115,
+    severity: 'severe',
+    patterns: ['client protection', 'non-circumvention', 'non circumvention', 'bypass', 'client ownership', 'direct sell', 'direct-sell'],
+    label: 'client protection and non-circumvention rules remain unresolved',
+    question: 'How long does client protection last, and what actions count as bypassing the partner?',
+    why: 'client protection and direct-sell rules determine whether the referral relationship is trustworthy',
+    condition: 'define the client-protection window and non-circumvention boundaries',
+    confidenceUp: 'clear client-protection and direct-sell rules',
+    confidenceDown: 'the parties discuss referrals without a practical protection mechanism',
+  },
+  {
+    id: 'commission_trigger',
+    priority: 114,
+    severity: 'material',
+    patterns: ['commission', 'referral fee', 'success fee', 'commission trigger', 'commission earned', 'paid subscription'],
+    label: 'commission triggers and payment timing remain open',
+    question: 'When is commission earned and paid?',
+    why: 'commission triggers determine whether the referral economics are measurable and enforceable',
+    condition: 'tie commission to a specific referral event and payment timing',
+    confidenceUp: 'commission economics tied to a clear trigger and payment process',
+    confidenceDown: 'commission is discussed without a trigger, attribution rule, or payment timing',
+  },
+  {
+    id: 'revenue_share_trigger',
+    priority: 113,
+    severity: 'material',
+    patterns: ['revenue share', 'revenue-share', 'recurring revenue', 'renewal economics', 'expansion economics', 'ongoing support'],
+    label: 'recurring revenue-share triggers remain open',
+    question: 'When does recurring revenue share apply: only during the first year, only while the partner provides documented ongoing support, or across renewals?',
+    why: 'recurring economics should track the partner’s ongoing contribution rather than create an undefined tail',
+    condition: 'tie recurring revenue share to active support, renewal treatment, and duration',
+    confidenceUp: 'recurring revenue share linked to documented ongoing support and defined renewal economics',
+    confidenceDown: 'revenue share remains open-ended or disconnected from ongoing support',
+  },
+  {
+    id: 'implementation_fee_support',
+    priority: 112,
+    severity: 'material',
+    patterns: ['implementation fee', 'implementation fees', 'onboarding', 'training', 'support responsibilities', 'customer handoff', 'handoff'],
+    label: 'implementation fees and support responsibilities remain unclear',
+    question: 'What implementation work is included in onboarding versus separately paid consulting?',
+    why: 'implementation fee ownership and support responsibilities determine how post-sale work is funded',
+    condition: 'separate onboarding, paid implementation work, training, support, and customer handoff responsibilities',
+    confidenceUp: 'clear implementation fee ownership and support handoff responsibilities',
+    confidenceDown: 'implementation support is expected without defined ownership or payment treatment',
+  },
+  {
+    id: 'pilot_exclusivity_threshold',
+    priority: 111,
+    severity: 'material',
+    patterns: ['pilot', 'six-month', '6-month', 'semi-exclusivity', 'semi exclusivity', 'exclusivity', 'performance threshold', 'renegotiation'],
+    label: 'pilot success and exclusivity thresholds remain unresolved',
+    question: 'What pilot outcome would justify semi-exclusivity or renegotiation?',
+    why: 'performance thresholds determine whether future exclusivity or economics are earned rather than granted upfront',
+    condition: 'tie renegotiation and any semi-exclusivity to measurable referral performance',
+    confidenceUp: 'pilot success criteria and performance-based renegotiation thresholds',
+    confidenceDown: 'future exclusivity or renegotiation is discussed without measurable performance criteria',
+  },
+  {
     id: 'scope',
     priority: 110,
     severity: 'severe',
@@ -997,6 +1069,101 @@ function domainDiligenceLabel(domain: ProposalDomain) {
   return 'diligence step';
 }
 
+const PROJECT_DELIVERY_MISSING_RULE_IDS = new Set([
+  'scope',
+  'data_cleanup',
+  'acceptance',
+  'dependency',
+  'change_order',
+  'technical',
+  'phase_boundary',
+  'timeline',
+  'risk',
+  'staffing',
+  'billing_trigger',
+]);
+
+const SAAS_PARTNERSHIP_RULE_IDS = [
+  'referral_attribution',
+  'client_protection',
+  'commission_trigger',
+  'revenue_share_trigger',
+  'implementation_fee_support',
+  'pilot_exclusivity_threshold',
+];
+
+const SAAS_PARTNERSHIP_FALLBACK_MISSING = [
+  'What counts as a successful referral: introduction, qualified meeting, signed customer, paid subscription, or completed implementation? — determines when commission is earned and how attribution is tracked.',
+  'When is commission earned and paid? — determines the trigger, timing, and auditability of the referral economics.',
+  'When does recurring revenue share apply: only during the first year, only while the partner provides documented ongoing support, or across renewals? — determines whether recurring economics track ongoing value.',
+  'How long does client protection last after a lead is introduced? — determines whether client ownership and direct-sell rights are workable.',
+  'What actions count as bypassing the partner? — determines the practical scope of non-circumvention.',
+  'What implementation work is included in onboarding versus separately paid consulting? — determines implementation fee ownership and support expectations.',
+  'What pilot outcome would justify semi-exclusivity or renegotiation? — determines whether future commitments are performance-based.',
+];
+
+const GENERIC_PROJECT_DELIVERY_MISSING_PATTERNS = [
+  'current scope',
+  'explicit exclusions',
+  'key deliverables',
+  'acceptance criteria',
+  'delivery sequencing',
+  'change exposure',
+  'scope control',
+  'current phase',
+  'data remediation',
+  'data migration',
+  'dependency ownership',
+  'dependency owners',
+  'what happens if they slip',
+];
+
+function factSheetCorpus(factSheet: ProposalFactSheet) {
+  return [
+    factSheet.project_goal || '',
+    ...factSheet.scope_deliverables,
+    factSheet.timeline.start || '',
+    factSheet.timeline.duration || '',
+    ...factSheet.timeline.milestones,
+    ...factSheet.constraints,
+    ...factSheet.success_criteria_kpis,
+    ...factSheet.vendor_preferences,
+    ...factSheet.assumptions,
+    ...factSheet.open_questions,
+    ...factSheet.missing_info,
+    ...factSheet.risks.map((risk) => risk.risk),
+  ].join(' ');
+}
+
+function isSaasReferralPartnershipFactSheet(factSheet: ProposalFactSheet) {
+  const corpus = factSheetCorpus(factSheet);
+  const hasReferralEconomics = [
+    'referral',
+    'commission',
+    'revenue share',
+    'recurring revenue',
+    'lead attribution',
+    'client attribution',
+    'client protection',
+    'non-circumvention',
+  ].some((pattern) => keywordMatch(corpus, pattern));
+  const hasPartnershipContext = [
+    'saas',
+    'software',
+    'platform',
+    'channel',
+    'partner',
+    'partnership',
+    'implementation partner',
+    'reseller',
+  ].some((pattern) => keywordMatch(corpus, pattern));
+  return hasReferralEconomics && hasPartnershipContext;
+}
+
+function isGenericProjectDeliveryMissing(value: string) {
+  return GENERIC_PROJECT_DELIVERY_MISSING_PATTERNS.some((pattern) => keywordMatch(value, pattern));
+}
+
 function findMatchingMissingRules(text: string) {
   const normalized = asText(text);
   if (!normalized) {
@@ -1517,6 +1684,7 @@ function collectCalibrationRules(params: {
 }) {
   const rules: MissingRule[] = [];
   const seen = new Set<string>();
+  const isSaasPartnership = isSaasReferralPartnershipFactSheet(params.factSheet);
 
   const addRule = (rule: MissingRule | null) => {
     if (!rule || seen.has(rule.id)) return;
@@ -1532,7 +1700,13 @@ function collectCalibrationRules(params: {
     addRule(getMissingRuleById(id));
   });
 
-  return rules.sort((a, b) => b.priority - a.priority);
+  if (isSaasPartnership) {
+    SAAS_PARTNERSHIP_RULE_IDS.forEach((id) => addRule(getMissingRuleById(id)));
+  }
+
+  return rules
+    .filter((rule) => !isSaasPartnership || !PROJECT_DELIVERY_MISSING_RULE_IDS.has(rule.id))
+    .sort((a, b) => b.priority - a.priority);
 }
 
 function normalizeMissingQuestions(params: {
@@ -1540,7 +1714,10 @@ function normalizeMissingQuestions(params: {
   missing: string[];
 }) {
   const domain = classifyProposalDomain(params.factSheet);
-  const domainFallback = DOMAIN_FALLBACK_MISSING[domain.id] || GENERIC_FALLBACK_MISSING;
+  const isSaasPartnership = isSaasReferralPartnershipFactSheet(params.factSheet);
+  const domainFallback = isSaasPartnership
+    ? SAAS_PARTNERSHIP_FALLBACK_MISSING
+    : DOMAIN_FALLBACK_MISSING[domain.id] || GENERIC_FALLBACK_MISSING;
   const sourceItems = [
     ...params.missing,
     ...params.factSheet.open_questions,
@@ -1607,9 +1784,23 @@ function normalizeMissingQuestions(params: {
   const identicalWarnings = deduped.filter((e) =>
     /shared and confidential inputs materially different|identical tiers/i.test(e.text),
   );
-  const regularEntries = deduped.filter((e) =>
+  let regularEntries = deduped.filter((e) =>
     !/shared and confidential inputs materially different|identical tiers/i.test(e.text),
   );
+
+  if (isSaasPartnership) {
+    regularEntries = regularEntries.filter((entry) => !isGenericProjectDeliveryMissing(entry.text));
+    const seenQuestions = new Set(regularEntries.map((entry) => normalizeKeywordText(entry.text).slice(0, 80)));
+    for (const item of SAAS_PARTNERSHIP_FALLBACK_MISSING) {
+      if (regularEntries.length >= MISSING_MIN_ITEMS) break;
+      const text = sanitizeMissingEntry(toActionableMissingQuestion(item));
+      const key = normalizeKeywordText(text).slice(0, 80);
+      if (text && !seenQuestions.has(key)) {
+        seenQuestions.add(key);
+        regularEntries.push({ text, priority: 80, key: `saas:${key}` });
+      }
+    }
+  }
 
   return [
     ...regularEntries.slice(0, MISSING_MAX_ITEMS).map((e) => e.text),

@@ -685,7 +685,7 @@ export function buildEvalPromptFromFactSheet(params: {
     '',
     'ANTI-GENERIC STAGE 2 RULE:',
     '- Do NOT default to generic project-management or delivery-contract language unless the underlying deal actually involves deliverables, implementation milestones, acceptance criteria, and change control.',
-    '- Avoid or heavily limit phrases like "key deliverables", "acceptance criteria for deliverables", "delivery sequencing", "change exposure", "scope control", "current phase", "sign-off", and "dependency ownership" unless they are specifically relevant to the inferred deal archetype.',
+    '- Avoid or heavily limit phrases like "current scope and explicit exclusions", "key deliverables", "acceptance criteria for deliverables", "measurable acceptance criteria", "delivery sequencing", "change exposure", "scope control", "current phase", "sign-off", "data remediation", "data migration", and "dependency ownership" unless they are specifically relevant to the inferred deal archetype.',
     '- Open questions must be deal-specific. For SaaS referral/channel deals, ask about referral definition, attribution, client protection, commission and revenue-share triggers, exclusivity thresholds, pilot success, and support or customer handoff responsibilities instead of default project-delivery questions.',
     '',
     'MEDIATION RUBRIC — reason through these steps in order before writing:',
@@ -760,8 +760,9 @@ export function buildEvalPromptFromFactSheet(params: {
     '- REASONING STABILITY: Your mediation logic must be driven by the substance of the deal — the actual terms, gaps, risks, and dynamics — not by surface wording. Two proposals describing the same commercial arrangement in different words should produce the same reasoning conclusions. Anchor every judgment to concrete fact_sheet evidence, not to how eloquently the proposal is written.',
     '- CRITICAL ANTI-REPETITION RULE: Each substantive point (blocker, alignment point, bridge, open question) may appear ONCE in the entire output. Do NOT restate the same idea in Recommendation, Where the Deal Is Stuck, Suggested Bridge, and Next Step. State it clearly once; reference it briefly elsewhere only if essential.',
     '- The Recommendation must be the decision brief, not a second summary. It should say what to do now, why the status/confidence was chosen, and avoid repeating all later sections.',
-    '- Do NOT include more than one "Decision status:" line in the entire output.',
+    '- Do NOT write "Decision status:" inside the visible body. Use the Recommendation section for human-readable advice, not a repeated status label.',
     '- Do NOT recycle the same unresolved items across Recommendation, deal analysis, and Open Questions. If a point is made in the narrative, the open questions should add NEW information, not restate.',
+    '- Section discipline is mandatory: Where the Parties Align must contain only compatibility/common-ground points; Where the Deal Is Stuck must contain only unresolved gaps or blockers; Suggested Bridge must contain proposed compromise terms; Next Step must contain one concrete action.',
     '- Avoid rigid formulaic labels like "Leverage signal:", "Structural tensions:", "Option A/B/C", or "Likely priorities:" — integrate those ideas into natural prose instead.',
     hasPriorBilateralContext
       ? '- Do NOT rewrite the negotiation from scratch. Write progress-aware narrative that references the issue ledger from step 16. Name which issues closed, which narrowed, which remain stuck.'
@@ -784,7 +785,7 @@ export function buildEvalPromptFromFactSheet(params: {
     '',
     'REQUIRED why[] ENTRIES:',
     '',
-    '1. "Recommendation: Decision status: [label]. [brief explanation]." Then add 1 short paragraph answering: what should the parties do now, what conditions are needed before proceeding, which unresolved issues matter most, and why the confidence level is appropriate. Do NOT repeat every alignment, blocker, bridge, or open question.',
+    '1. "Recommendation: [status label as plain prose, without the words Decision status]. [brief explanation]." Then add 1 short paragraph answering: what should the parties do now, what conditions are needed before proceeding, which unresolved issues matter most, and why the confidence level is appropriate. Do NOT repeat every alignment, blocker, bridge, or open question.',
     hasPriorBilateralContext
       ? `   ROUND-AWARE RECOMMENDATION (round ${bilateralRoundNumber}): The recommendation must become more decisive over time. Early rounds (1-2): recommend a bridge or structure. Mid rounds (3-4): recommend either the minimum remaining agenda to close the deal, or flag that critical issues are not closing. Late rounds (5+): recommend either a concrete closing path or a conclusion that the current structure is unlikely to result in agreement. Do NOT keep producing open-ended "explore further" recommendations indefinitely.`
       : '',
@@ -792,13 +793,13 @@ export function buildEvalPromptFromFactSheet(params: {
     hasPriorBilateralContext
       ? '2. "What Changed Since Last Round: …" — 1 short paragraph only. Include only genuine movement from prior_bilateral_context: what narrowed, what widened, what closed, and what new issue emerged. Do NOT include this section on first bilateral reviews. Do NOT use "Progress Since Prior Review".'
       : '',
-    `${hasPriorBilateralContext ? '3' : '2'}. "Where the Parties Align: …" — identify the deal-specific areas where both sides appear commercially compatible. For SaaS referral/channel/implementation partnerships, this may include pilot structure, referral relationship, implementation support, training, performance-based renegotiation, or shared commercial intent.`,
+    `${hasPriorBilateralContext ? '3' : '2'}. "Where the Parties Align: …" — identify only the deal-specific areas where both sides appear commercially compatible. Do not include unresolved-risk language here. For SaaS referral/channel/implementation partnerships, this may include pilot structure, referral relationship, implementation support, training, performance-based renegotiation, or shared commercial intent.`,
     '',
-    `${hasPriorBilateralContext ? '4' : '3'}. "Where the Deal Is Stuck: …" — identify the key unresolved gaps in plain commercial language. For SaaS referral/channel/implementation partnerships, focus on referral attribution, client protection / non-circumvention, commission triggers, recurring revenue-share triggers, implementation fee ownership, training/support responsibilities, customer handoff, pilot success criteria, semi-exclusivity thresholds, and performance-based renegotiation.`,
+    `${hasPriorBilateralContext ? '4' : '3'}. "Where the Deal Is Stuck: …" — identify only the key unresolved gaps and blockers in plain commercial language. Do not begin this section with alignment language. For SaaS referral/channel/implementation partnerships, focus on referral attribution, client protection / non-circumvention, commission triggers, recurring revenue-share triggers, implementation fee ownership, training/support responsibilities, customer handoff, pilot success criteria, semi-exclusivity thresholds, and performance-based renegotiation.`,
     '',
-    `${hasPriorBilateralContext ? '5' : '4'}. "Suggested Bridge: …" — propose practical, safe, non-binding compromise terms. For SaaS referral/channel partnerships, bridge terms should focus on attribution, commission or revenue-share triggers, implementation/support responsibility, client protection, pilot duration, and performance-based exclusivity or renegotiation. Use safe derived language only; do not reveal confidential limits or private fallbacks.`,
+    `${hasPriorBilateralContext ? '5' : '4'}. "Suggested Bridge: …" — propose a practical, safe, non-binding compromise package, not a one-sentence placeholder. For SaaS referral/channel partnerships, bridge terms should naturally include several supported terms such as a non-exclusive six-month pilot, registered-referral process, client-protection window, direct-sell rules, commission trigger, recurring revenue share only for active ongoing support, separate implementation fee path, post-pilot renegotiation based on measurable referrals, and semi-exclusivity only after a performance threshold. Use safe derived language only; do not reveal confidential limits or private fallbacks.`,
     '',
-    `${hasPriorBilateralContext ? '6' : '5'}. "Next Step: …" — give one concrete next action. For a partnership/referral deal, examples include drafting a one-page Pilot Rules of Engagement, agreeing attribution and client protection before long-term economics, or creating a closing agenda covering commission, revenue share, implementation fees, support responsibilities, and post-pilot review.`,
+    `${hasPriorBilateralContext ? '6' : '5'}. "Next Step: …" — give one concrete next action. Do not say merely "use the open questions as the agenda." For a partnership/referral deal, a good next step is: "Draft a one-page Pilot Rules of Engagement covering referral registration, client protection, commission/revenue-share triggers, implementation fee ownership, support responsibilities, and post-pilot renegotiation criteria."`,
     '',
     'The Recommendation label MUST include one of: "Not viable", "Explore further", "Proceed with conditions", or "Ready to finalize".',
     'Do NOT create a visible "Mediation Summary" section. Do NOT create a visible "Progress Since Prior Review" section.',
@@ -832,9 +833,11 @@ export function buildEvalPromptFromFactSheet(params: {
     '- Prefer 2-3 high-value questions over 5-6 that rehash earlier content. Only include a question if it adds information not already embedded in the mediation narrative.',
     '- Each item must be an actionable question AND include a "why it matters" clause after an em-dash (\u2014).',
     '  Example for a SaaS referral/channel partnership: "What counts as a successful referral: introduction, qualified meeting, signed customer, paid subscription, or completed implementation? \u2014 determines when commission is earned and how attribution is tracked."',
+    '  Other good SaaS referral/channel questions: "When is commission earned and paid?"; "When does recurring revenue share apply?"; "How long does client protection last?"; "What counts as bypassing the partner?"; "What implementation work is included in onboarding versus separately paid consulting?"; "What pilot outcome would justify semi-exclusivity or renegotiation?"',
     '  Example for a services/project delivery agreement: "What acceptance criteria define completion for each deliverable? \u2014 determines sign-off and payment triggers."',
     '- Order by criticality: deal-blockers first, then technical unknowns, then operational gaps.',
     '- Avoid generic questions. Reference the specific proposal context.',
+    '- For SaaS referral/channel/implementation partnerships, avoid default project-delivery questions about current scope and explicit exclusions, key deliverables, measurable acceptance criteria, delivery sequencing, change exposure, dependency ownership, or data remediation/migration unless those exact topics are central in the submitted materials.',
     '- Do NOT repeat questions that are already effectively answered in the mediation narrative.',
     '- Paraphrase items from fact_sheet.missing_info and fact_sheet.open_questions as actionable questions with why-matters clauses, but only if they are genuinely unresolved.',
     '- If information appears to exist privately but cannot be shared, prefer placing it in redactions[] rather than restating it as missing[].',
