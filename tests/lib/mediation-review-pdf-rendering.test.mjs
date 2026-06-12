@@ -3,7 +3,10 @@ import test from 'node:test';
 import { PDFParse } from 'pdf-parse';
 import { renderWebParityPdfBuffer } from '../../server/routes/document-comparisons/_pdf.ts';
 import { getPresentationSections } from '../../src/lib/aiReportUtils.js';
-import { buildStoredV2Evaluation } from '../../server/routes/document-comparisons/_helpers.ts';
+import {
+  buildRecipientSafeEvaluationProjection,
+  buildStoredV2Evaluation,
+} from '../../server/routes/document-comparisons/_helpers.ts';
 
 async function extractPdfText(buffer) {
   const parser = new PDFParse({ data: buffer });
@@ -137,4 +140,100 @@ test('shared intake web-parity PDF uses neutral Stage 1 framing without readines
   assert.doesNotMatch(rawText, /CONFIDENCE/);
   assert.doesNotMatch(rawText, /LIKELY RESPONSE FROM THE OTHER SIDE|RESIDUAL RISKS AND POINTS TO TIGHTEN/i);
   assert.doesNotMatch(rawText, /\bPre-send Review\b|\bIntake Status\b|\bsender-side\b|\bbefore sending\b/i);
+});
+
+test('recipient mediation PDF uses natural narrative and never renders internal analysis', async () => {
+  const confidentialMarker = 'PRIVATE_INTERNAL_THESIS_771';
+  const stored = buildStoredV2Evaluation({
+    ok: true,
+    data: {
+      analysis_stage: 'mediation_review',
+      fit_level: 'medium',
+      confidence_0_1: 0.64,
+      why: [
+        'Recommendation: Continue only after referral attribution and client protection are agreed.',
+        'Where the Parties Align: Both sides support a six-month referral pilot with implementation support.',
+        'Where the Deal Is Stuck: Commission timing and the client-protection window remain unresolved.',
+        'Suggested Bridge: Use registered referrals, a protection period, and separate implementation fees.',
+        'Next Step: Record the pilot rules before final commitment.',
+      ],
+      missing: [
+        'When is commission earned? — determines payment timing.',
+        'How long does client protection last? — determines attribution certainty.',
+      ],
+      redactions: [],
+      internal_analysis: {
+        recommendation: 'Proceed with conditions',
+        confidence: 0.64,
+        decision_status: 'proceed_with_conditions',
+        core_thesis: confidentialMarker,
+        commercial_rationale: [],
+        strongest_arguments_for: [],
+        strongest_arguments_against: [],
+        key_risks: [],
+        hidden_assumptions: [],
+        unresolved_questions: [],
+        negotiation_leverage: [],
+        suggested_next_actions: [],
+        evidence_used: [],
+        missing_information: [],
+        tone_profile: 'constructive',
+        output_mode: 'executive_memo',
+      },
+      narrative: {
+        title: 'A workable referral pilot, once ownership rules are explicit',
+        sections: [
+          {
+            heading: 'Why the pilot is commercially plausible',
+            paragraphs: [
+              'Both sides support a six-month referral relationship and an implementation role, which creates enough common ground to test customer demand before either side grants broader channel rights. The bounded term limits the initial commitment while preserving a path to expand if the evidence is positive.',
+              'The software company gains qualified introductions and implementation capacity, while the consulting partner can earn referral commission and separately priced implementation work. That division is coherent if customer attribution is documented rather than left to memory.',
+            ],
+          },
+          {
+            heading: 'The mechanics that still matter',
+            paragraphs: [
+              'Commission timing and the client-protection window remain unresolved. If those terms stay open, each side can reasonably believe it owns the same account or is entitled to a different payment event.',
+              'A registered-referral process, a defined protection period, separate implementation fees, and recurring revenue share tied to documented support would create a practical conditional path without granting exclusivity upfront.',
+            ],
+          },
+        ],
+        closing:
+          'Draft the referral-registration, client-protection, commission, implementation-fee, and support rules before final commitment.',
+      },
+    },
+    model: 'test-model',
+    generation_model: 'test-model',
+  });
+  const projection = buildRecipientSafeEvaluationProjection({
+    evaluationResult: stored,
+    publicReport: stored.report,
+    confidentialText: confidentialMarker,
+    sharedText: 'Shared six-month referral pilot with implementation support.',
+    title: 'Referral Partnership',
+  });
+
+  assert.equal('internal_analysis' in projection.public_report, false);
+  assert.equal(projection.public_report.renderer_path, 'narrative');
+  const sections = getPresentationSections(projection.public_report).map((section) => ({
+    heading: section.heading,
+    paragraphs: section.paragraphs,
+    bullets: section.bullets,
+    numberedBullets: section.numberedBullets,
+  }));
+  const buffer = await renderWebParityPdfBuffer({
+    title: 'Referral Partnership',
+    subtitle: '',
+    comparisonId: 'cmp_natural_pdf',
+    metrics: [
+      { label: 'Recommendation', value: 'Medium' },
+      { label: 'Confidence', value: '65%' },
+    ],
+    timelineItems: [],
+    sections,
+  });
+  const rawText = await extractPdfText(buffer);
+  assert.match(rawText, /WHY THE PILOT IS COMMERCIALLY PLAUSIBLE/);
+  assert.doesNotMatch(rawText, new RegExp(confidentialMarker));
+  assert.doesNotMatch(rawText, /INTERNAL_ANALYSIS|DECISION_STATUS|EVIDENCE_USED/);
 });

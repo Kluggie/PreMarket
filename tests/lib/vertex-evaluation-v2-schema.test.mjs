@@ -58,6 +58,43 @@ test('mediation schema validation preserves normalization of compatibility, deal
       why: ['Executive Summary: The deal is workable with adjustments.'],
       missing: ['Who owns final launch approval?'],
       redactions: [],
+      internal_analysis: {
+        recommendation: 'Proceed with conditions',
+        confidence: 0.62,
+        decision_status: 'proceed_with_conditions',
+        core_thesis: 'The deal is commercially plausible, but approval ownership remains open.',
+        commercial_rationale: ['Both sides support a staged launch.'],
+        strongest_arguments_for: ['A pilot contains execution risk.'],
+        strongest_arguments_against: ['Approval authority is undefined.'],
+        key_risks: ['The launch could stall at final approval.'],
+        hidden_assumptions: ['The approving stakeholder will remain available.'],
+        unresolved_questions: ['Who owns final launch approval?'],
+        negotiation_leverage: ['The pilot can be sequenced before a wider rollout.'],
+        suggested_next_actions: ['Name the approval owner in the pilot rules.'],
+        evidence_used: ['The materials describe a staged launch and an approval dependency.'],
+        missing_information: ['Final approval ownership.'],
+        tone_profile: 'constructive',
+        output_mode: 'negotiation_coach',
+      },
+      narrative: {
+        title: 'A workable launch, once authority is explicit',
+        sections: [
+          {
+            heading: 'The commercial picture',
+            paragraphs: [
+              'The staged launch gives both sides a credible way to test the arrangement before scaling it. It contains the initial commercial exposure while preserving a route to broader adoption if the launch evidence supports it.',
+              'The current weakness is not the commercial intent but the absence of a named final approver. Without that authority, a milestone can be completed operationally while still remaining commercially disputed.',
+            ],
+          },
+          {
+            heading: 'The negotiation that matters',
+            paragraphs: [
+              'The parties should attach approval authority to the pilot milestones so responsibility cannot drift. If the approver is unavailable, the same rules should name an escalation owner and a time-bound route to a decision.',
+            ],
+          },
+        ],
+        closing: 'Add the approval owner, escalation path, and milestone authority to the pilot rules before either side treats the launch plan as approved.',
+      },
       movement_direction: 'Converging',
       negotiation_analysis: {
         proposing_party: {
@@ -95,6 +132,68 @@ test('mediation schema validation preserves normalization of compatibility, deal
   assert.equal(
     result.normalized.negotiation_analysis?.counterparty.dealbreakers[0]?.basis,
     'not_clearly_established',
+  );
+  assert.equal(result.normalized.internal_analysis?.output_mode, 'negotiation_coach');
+  assert.equal(result.normalized.internal_analysis?.confidence, 0.62);
+  assert.equal(result.normalized.narrative?.sections.length, 2);
+  assert.match(result.normalized.narrative?.title || '', /workable launch/i);
+});
+
+test('mediation schema synthesizes the internal analysis contract for legacy-compatible responses', () => {
+  const result = validateResponseSchema(
+    {
+      analysis_stage: MEDIATION_REVIEW_STAGE,
+      fit_level: 'medium',
+      confidence_0_1: 0.54,
+      why: ['Recommendation: Keep the deal moving while the economics are clarified.'],
+      missing: ['When is commission earned?'],
+      redactions: [],
+    },
+    MEDIATION_REVIEW_STAGE,
+  );
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.normalized.internal_analysis?.decision_status, 'proceed_with_conditions');
+  assert.equal(result.normalized.internal_analysis?.confidence, 0.54);
+  assert.match(result.normalized.internal_analysis?.core_thesis || '', /keep the deal moving/i);
+  assert.deepEqual(
+    result.normalized.internal_analysis?.missing_information,
+    ['When is commission earned?'],
+  );
+});
+
+test('mediation schema rejects a supplied narrative that is too thin for the natural renderer', () => {
+  const result = validateResponseSchema(
+    {
+      analysis_stage: MEDIATION_REVIEW_STAGE,
+      fit_level: 'medium',
+      confidence_0_1: 0.54,
+      why: ['Recommendation: Keep the deal moving while the economics are clarified.'],
+      missing: ['When is commission earned?'],
+      redactions: [],
+      narrative: {
+        title: 'Thin memo',
+        sections: [
+          {
+            heading: 'Only section',
+            paragraphs: ['This is too short to support a natural mediation report.'],
+          },
+        ],
+        closing: '',
+      },
+    },
+    MEDIATION_REVIEW_STAGE,
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(
+    result.invalidFields.some((field) => field.includes('narrative_section_count_invalid')),
+    true,
+  );
+  assert.equal(
+    result.invalidFields.some((field) => field.includes('narrative_body_too_short')),
+    true,
   );
 });
 

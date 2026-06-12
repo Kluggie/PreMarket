@@ -8,6 +8,7 @@ import {
   selectReportStyle,
   assessReportQuality,
 } from '../../server/_lib/vertex-evaluation-v2.ts';
+import { buildStoredV2Evaluation } from '../../server/routes/document-comparisons/_helpers.ts';
 import {
   PRE_SEND_REVIEW_STAGE,
   MEDIATION_REVIEW_STAGE,
@@ -47,6 +48,53 @@ function validPayload(overrides = {}) {
     why: ['Shared obligations align with internal constraints.'],
     missing: ['Clarify renewal terms in shared draft.'],
     redactions: ['Internal budget assumptions'],
+    ...overrides,
+  };
+}
+
+function validNaturalNarrative(overrides = {}) {
+  return {
+    title: 'A workable path, once the remaining mechanics are explicit',
+    sections: [
+      {
+        heading: 'Why the commercial logic holds',
+        paragraphs: [
+          'The proposed dashboard engagement has a credible operating core because the materials identify the primary module, API integration work, milestones, and adoption expectations. Those facts give both sides a concrete basis for testing whether the planned rollout can create value.',
+          'The commercial case is strongest where the named milestones connect the implementation effort to observable progress. That structure can contain initial exposure while preserving a route to broader adoption if the early dashboard and integration work perform as expected.',
+        ],
+      },
+      {
+        heading: 'What still needs to be settled',
+        paragraphs: [
+          'The remaining uncertainty sits around final approval ownership and the treatment of dependencies that could move the launch timetable. If those mechanics remain open, the same milestone may be treated as complete by one side and incomplete by the other.',
+          'A practical route is to name the approval owner, document the escalation path, and tie any expansion to the existing milestones and adoption evidence. That keeps the current commitment bounded without inventing certainty about later phases.',
+        ],
+      },
+    ],
+    closing:
+      'Record the approval owner, dependency escalation path, and milestone authority before either side treats the implementation plan as final.',
+    ...overrides,
+  };
+}
+
+function validInternalAnalysis(overrides = {}) {
+  return {
+    recommendation: 'Proceed with conditions',
+    confidence: 0.73,
+    decision_status: 'proceed_with_conditions',
+    core_thesis: 'The engagement is workable once approval and dependency ownership are explicit.',
+    commercial_rationale: ['Named dashboard milestones create a bounded implementation path.'],
+    strongest_arguments_for: ['The scope and success measures are concrete.'],
+    strongest_arguments_against: ['Approval ownership can still delay commitment.'],
+    key_risks: ['An unresolved dependency could move the launch timetable.'],
+    hidden_assumptions: ['The named stakeholders remain available for review.'],
+    unresolved_questions: ['Who owns final approval?'],
+    negotiation_leverage: ['A phased rollout limits initial exposure.'],
+    suggested_next_actions: ['Name the approval owner and escalation path.'],
+    evidence_used: ['The materials identify dashboard milestones and adoption targets.'],
+    missing_information: ['Final approval ownership.'],
+    tone_profile: 'constructive',
+    output_mode: 'executive_memo',
     ...overrides,
   };
 }
@@ -796,7 +844,44 @@ test('v2 accepts valid JSON response', async () => {
     {
       response: {
         model: 'gemini-2.0-flash-001',
-        text: JSON.stringify(validPayload({ fit_level: 'high', confidence_0_1: 0.9 })),
+        text: JSON.stringify(validPayload({
+          fit_level: 'high',
+          confidence_0_1: 0.9,
+          internal_analysis: validInternalAnalysis({
+            recommendation: 'Move toward final agreement',
+            confidence: 0.9,
+            decision_status: 'ready_to_finalize',
+            core_thesis: 'The defined dashboard engagement supports a clean commitment.',
+            strongest_case_against: [],
+            key_risks: [],
+            unresolved_questions: [],
+            missing_information: [],
+            suggested_next_actions: ['Carry the agreed mechanics into final documentation.'],
+          }),
+          missing: [],
+          redactions: [],
+          narrative: validNaturalNarrative({
+            title: 'The dashboard engagement is ready for final documentation',
+            sections: [
+              {
+                heading: 'Why the deal now holds together',
+                paragraphs: [
+                  'The dashboard engagement is sufficiently bounded for a clean commitment because the materials define the core module, API integration, rollout milestones, budget constraint, and adoption target. Those elements connect the work, timetable, and expected outcome without requiring either side to infer the basic commercial model.',
+                  'The staged milestones give both parties a practical governance mechanism. They allow progress to be reviewed against the alpha and beta dates while keeping the broader six-month adoption objective visible.',
+                ],
+              },
+              {
+                heading: 'What to preserve in final documentation',
+                paragraphs: [
+                  'The final documents should retain the named dashboard scope, integration responsibility, milestone dates, infrastructure constraint, and user-adoption measure. Preserving those mechanics matters more than adding generic drafting volume.',
+                  'The remaining work is documentation rather than commercial redesign. The current evidence supports moving forward while ensuring the agreed milestones and responsibility boundaries are carried accurately into the final terms.',
+                ],
+              },
+            ],
+            closing:
+              'Carry the defined dashboard scope, milestone dates, infrastructure constraint, and adoption target into final documentation and approval.',
+          }),
+        })),
         finishReason: 'STOP',
         httpStatus: 200,
       },
@@ -815,10 +900,132 @@ test('v2 accepts valid JSON response', async () => {
     // Full-coverage fact sheet → no clamps → high / 0.9 preserved
     assert.equal(outcome.data.fit_level, 'high');
     assert.equal(outcome.data.confidence_0_1, 0.9);
+    assert.equal(outcome.data.internal_analysis?.decision_status, 'ready_to_finalize');
+    assert.equal(outcome.data.internal_analysis?.confidence, 0.9);
+    assert.equal(typeof outcome.data.internal_analysis?.core_thesis, 'string');
+    assert.equal(outcome.data.narrative?.title, 'The dashboard engagement is ready for final documentation');
+    assert.equal(outcome._internal?.narrative_validation?.renderer_path, 'narrative');
+    assert.equal(
+      /pause|reject|do not proceed/i.test(
+        JSON.stringify(outcome.data.narrative),
+      ),
+      false,
+    );
     assert.equal(outcome.attempt_count, 1);
     assert.equal(typeof outcome.model, 'string');
   } finally {
     cleanup();
+  }
+});
+
+test('post-calibration removes a narrative that contradicts the final conditional decision', async () => {
+  const factSheet = validFactSheetPayload({
+    project_goal: 'Test a SaaS referral and implementation partnership.',
+    scope_deliverables: ['Non-exclusive six-month pilot', 'Referral relationship', 'Implementation support'],
+    timeline: { start: null, duration: 'six months', milestones: [] },
+    constraints: [],
+    success_criteria_kpis: [],
+    risks: [],
+    open_questions: ['When is commission earned?', 'How long does client protection last?'],
+    missing_info: ['Commission trigger is undefined.', 'Client-protection period is undefined.'],
+    source_coverage: {
+      has_scope: true,
+      has_timeline: true,
+      has_kpis: false,
+      has_constraints: false,
+      has_risks: false,
+    },
+  });
+  const positiveWhy = [
+    'Recommendation: Approve the agreement and move directly to signature because the parties share a clear commercial objective and have enough common ground to launch the partnership immediately. The remaining mechanics can be resolved after approval without delaying the pilot.',
+    'Where the Parties Align: Both sides support a non-exclusive six-month pilot, referral commission, implementation support, and a path to broader cooperation if the partnership produces qualified customers. That alignment creates a credible reason to test the channel before either side grants wider rights.',
+    'Where the Deal Is Stuck: The materials do not yet define when commission is earned, how introduced accounts are registered, how long client protection lasts, or what continuing support would justify recurring revenue share. Those issues affect the value and control each side receives.',
+    'Suggested Bridge: Use registered referrals, a defined client-protection window, separate implementation fees, and recurring revenue share only while documented ongoing support continues. Semi-exclusivity should depend on a measurable performance threshold after the pilot.',
+    'Next Step: Approve the final agreement and schedule the pilot launch while the parties complete the remaining attribution wording. The commercial intent is strong enough that these drafting details should not delay signature.',
+  ];
+  const positiveNarrative = {
+    title: 'This partnership is ready to finalize now',
+    sections: [
+      {
+        heading: 'Why the parties should sign',
+        paragraphs: [
+          'The arrangement is ready to proceed because both sides support a six-month pilot, referral economics, and implementation support. Those elements form a coherent commercial package and appear to justify immediate approval.',
+          'The remaining attribution and support questions are unresolved, but they can be treated as routine drafting matters after signature. The current proposal therefore supports a clean commitment rather than a conditional path.',
+        ],
+      },
+      {
+        heading: 'The final route',
+        paragraphs: [
+          'The parties should move directly to signature and use the pilot period to settle any residual questions. Waiting for more detail would add process without changing the basic commercial logic.',
+          'This is ready to finalize, with only administrative wording left to complete. The current materials provide enough certainty for immediate commitment despite the open commission and client-protection mechanics.',
+        ],
+      },
+    ],
+    closing: 'Approve the final agreement and schedule the pilot launch.',
+  };
+  const passB = validPayload({
+    fit_level: 'high',
+    confidence_0_1: 0.94,
+    why: positiveWhy,
+    missing: [
+      'When is referral commission earned and paid? — determines the economic trigger.',
+      'How long does client protection last? — determines whether introductions remain attributable.',
+    ],
+    internal_analysis: validInternalAnalysis({
+      recommendation: 'Finalize the agreement now',
+      confidence: 0.94,
+      decision_status: 'ready_to_finalize',
+      core_thesis: 'The partnership is ready for immediate commitment.',
+      suggested_next_actions: ['Sign and launch.'],
+    }),
+    narrative: positiveNarrative,
+  });
+
+  let callCount = 0;
+  globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__ = async () => {
+    callCount += 1;
+    return {
+      model: 'gemini-2.0-flash-001',
+      text: JSON.stringify(callCount === 1 ? factSheet : passB),
+      finishReason: 'STOP',
+      httpStatus: 200,
+    };
+  };
+
+  try {
+    const outcome = await evaluateMediationWithVertexV2({
+      sharedText:
+        'Both parties support a non-exclusive six-month SaaS referral pilot with implementation support.',
+      confidentialText:
+        'Private constraints exist but must not be exposed in the shared mediation report.',
+      requestId: 'req-calibrated-narrative-consistency',
+    });
+
+    assert.equal(outcome.ok, true);
+    if (!outcome.ok) return;
+    assert.equal(outcome.data.fit_level, 'medium');
+    assert.equal(outcome.data.internal_analysis?.decision_status, 'proceed_with_conditions');
+    assert.equal(outcome.data.narrative, undefined);
+    assert.equal(outcome._internal?.narrative_validation?.renderer_path, 'fallback');
+    assert.equal(
+      outcome._internal?.caps_applied.includes('discard_invalid_or_decision_inconsistent_narrative'),
+      true,
+    );
+
+    const stored = buildStoredV2Evaluation(outcome);
+    const visibleText = stored.report.presentation_sections
+      .flatMap((section) => [...(section.paragraphs || []), ...(section.bullets || [])])
+      .join(' ');
+    assert.equal(stored.report.renderer_path, 'fallback');
+    assert.equal(stored.report.narrative_valid, false);
+    assert.equal(
+      /ready to finalize|approve the final agreement|move directly to signature|ready to sign/i.test(visibleText),
+      false,
+      visibleText,
+    );
+    assert.match(visibleText, /conditions|open|resolve|clarif|before/i);
+  } finally {
+    delete globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__;
   }
 });
 
@@ -3784,11 +3991,54 @@ test('quality gate: assessReportQuality returns score 1.0 for well-formed report
       'What governance structure will handle disputes? — determines escalation speed and cost.',
     ],
     redactions: ['Internal budget authority'],
+    internal_analysis: validInternalAnalysis({
+      confidence: 0.65,
+      decision_status: 'proceed_with_conditions',
+    }),
+    narrative: validNaturalNarrative(),
   };
   const quality = assessReportQuality(wellFormed);
   assert.equal(quality.score, 1.0, 'Well-formed report should score 1.0');
   assert.equal(quality.triggers.length, 0, 'No quality triggers for a well-formed report');
   assert.equal(quality.weakSections.length, 0, 'No weak sections for a well-formed report');
+});
+
+test('quality gate evaluates narrative substance and decision consistency', () => {
+  const quality = assessReportQuality({
+    analysis_stage: MEDIATION_REVIEW_STAGE,
+    fit_level: 'medium',
+    confidence_0_1: 0.58,
+    why: [
+      'Executive Summary: The proposal has a plausible commercial basis but still leaves several material mechanics unresolved across the intended relationship.',
+      'Decision Assessment: The open terms affect value, responsibility, and the conditions required before either side can make a reliable commitment.',
+    ],
+    missing: [
+      'When is commission earned? — determines payment timing.',
+      'How long does client protection last? — determines attribution certainty.',
+    ],
+    redactions: [],
+    narrative: {
+      title: 'Ready now',
+      sections: [
+        {
+          heading: 'Recommendation',
+          paragraphs: ['Approve this agreement immediately.'],
+        },
+      ],
+      closing: 'Sign now.',
+    },
+  });
+
+  assert.equal(quality.score < 0.5, true);
+  assert.equal(
+    quality.triggers.includes('narrative_section_count_invalid'),
+    true,
+  );
+  assert.equal(
+    quality.triggers.includes('narrative_conflicts_with_conditional_or_negative_decision'),
+    true,
+  );
+  assert.equal(quality.weakSections.includes('narrative'), true);
 });
 
 test('quality gate: assessReportQuality penalizes short why[] content', () => {

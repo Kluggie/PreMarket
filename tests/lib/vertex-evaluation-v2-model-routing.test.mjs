@@ -15,7 +15,11 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { evaluateWithVertexV2 } from '../../server/_lib/vertex-evaluation-v2.ts';
+import {
+  assessReportQuality,
+  evaluateWithVertexV2,
+  validateResponseSchema,
+} from '../../server/_lib/vertex-evaluation-v2.ts';
 import { MEDIATION_REVIEW_STAGE, STAGE1_SHARED_INTAKE_STAGE } from '../../src/lib/opportunityReviewStage.js';
 
 // ─── Input fixtures ───────────────────────────────────────────────────────────
@@ -49,6 +53,7 @@ function factSheetPayload() {
 // A valid Pass B (evaluation) JSON response.
 function evalPayload(overrides = {}) {
   return JSON.stringify({
+    analysis_stage: 'mediation_review',
     fit_level: 'medium',
     confidence_0_1: 0.71,
     why: [
@@ -67,6 +72,27 @@ function evalPayload(overrides = {}) {
       'What are the acceptance criteria for each deliverable? — determines payment triggers.',
     ],
     redactions: [],
+    narrative: {
+      title: 'A workable dashboard engagement still needs several terms bounded',
+      sections: [
+        {
+          heading: 'The commercial shape is credible',
+          paragraphs: [
+            'The proposed dashboard module, API integration, six-month timetable, and performance target give the parties a recognizable transaction to negotiate. The staged delivery concept also creates a practical basis for linking progress reviews to the work actually completed rather than relying on a broad promise of completion.',
+            'That alignment supports continued negotiation, but it does not remove the need to settle the renewal mechanism, scope-change authority, and the relationship between acceptance and payment. Those items determine how responsibility and financial exposure move if the implementation changes.',
+          ],
+        },
+        {
+          heading: 'The next round should close the operating gaps',
+          paragraphs: [
+            'A sensible conditional path is to confirm the renewal opt-out, name the people who can authorize changes, and connect each milestone payment to an agreed evidence standard. This would preserve the useful delivery structure while preventing either side from treating assumptions as final terms.',
+            'The report remains conditional because the current materials leave several commercially material questions open. Resolving those questions before final commitment would give both parties a clearer basis for approving the engagement and managing later implementation decisions.',
+          ],
+        },
+      ],
+      closing:
+        'Use the next negotiation round to settle renewal, change authority, and milestone evidence before final commitment.',
+    },
     ...overrides,
   });
 }
@@ -166,6 +192,32 @@ function evaluateStage1WithVertexV2(input) {
 // ─── Test 1: Generation call uses VERTEX_DOC_COMPARE_GENERATION_MODEL ─────────
 
 await test('T1 — generation call uses VERTEX_DOC_COMPARE_GENERATION_MODEL', async () => {
+  const routingFixtureQuality = assessReportQuality(
+    JSON.parse(evalPayload()),
+    JSON.parse(factSheetPayload()),
+  );
+  assert.equal(
+    routingFixtureQuality.score,
+    1,
+    `Routing fixture should not trigger a quality-repair call: ${JSON.stringify(routingFixtureQuality)}`,
+  );
+  const normalizedFixture = validateResponseSchema(
+    JSON.parse(evalPayload()),
+    MEDIATION_REVIEW_STAGE,
+  );
+  assert.equal(normalizedFixture.ok, true);
+  if (normalizedFixture.ok) {
+    const normalizedQuality = assessReportQuality(
+      normalizedFixture.normalized,
+      JSON.parse(factSheetPayload()),
+    );
+    assert.equal(
+      normalizedQuality.score,
+      1,
+      `Normalized routing fixture should not trigger a quality-repair call: ${JSON.stringify(normalizedQuality)}`,
+    );
+  }
+
   // Pass A (extract) gets factSheetPayload; Pass B (eval) gets evalPayload.
   const mainSequence = [
     { model: 'gemini-2.5-flash-lite', text: factSheetPayload() },  // Pass A

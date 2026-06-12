@@ -132,7 +132,7 @@ test('legacy pre-send prompt remains explicitly unilateral for historical compat
   assert.match(prompt, /analysis_stage\": \"pre_send_review\"/i);
 });
 
-test('mediation prompt keeps the stable bilateral structure and required headings', () => {
+test('mediation prompt separates structured internal analysis from the natural visible memo', () => {
   const prompt = buildEvalPromptFromFactSheet({
     factSheet: factSheet(),
     chunks: chunks(),
@@ -140,7 +140,21 @@ test('mediation prompt keeps the stable bilateral structure and required heading
   });
 
   assert.match(prompt, /shared neutral artifact/i);
-  assert.match(prompt, /Recommendation, Where the Parties Align, Where the Deal Is Stuck, Suggested Bridge, Open Questions, Next Step/i);
+  assert.match(prompt, /TWO-LAYER OUTPUT ARCHITECTURE/i);
+  assert.match(prompt, /First create internal_analysis/i);
+  assert.match(prompt, /Then create narrative/i);
+  assert.match(prompt, /narrative is the primary user-facing memo/i);
+  assert.match(prompt, /why\[\] is a compact compatibility sidecar/i);
+  assert.match(prompt, /Do not always begin with "Recommendation"/i);
+  assert.match(prompt, /Choose headings and order that fit this deal/i);
+  assert.match(prompt, /at least 3 substantive paragraphs/i);
+  assert.match(prompt, /exceed 500 characters without padding/i);
+  assert.match(prompt, /Make the memo longer through reasoning, trade-offs, implications, and concrete mechanics, never through padding/i);
+  assert.match(prompt, /final decision contract/i);
+  assert.match(prompt, /conditional.*must not sound like approval/i);
+  assert.match(prompt, /closing action must match the final decision/i);
+  assert.match(prompt, /internal_analysis and narrative are required/i);
+  assert.match(prompt, /executive_memo\|founder_friendly\|negotiation_coach\|skeptical_review\|balanced_assessment/i);
   assert.match(prompt, /Do NOT create a visible "Mediation Summary" section/i);
   assert.match(prompt, /Do NOT create a visible "Progress Since Prior Review" section/i);
   assert.doesNotMatch(prompt, /Required: .*Mediation Summary/i);

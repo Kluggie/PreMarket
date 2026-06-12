@@ -10,6 +10,11 @@ import {
 import { preflightPromptCheck, type PreflightResult } from './evaluation-context-budget.js';
 import { normalizeOpportunityReviewStage } from '../../src/lib/opportunityReviewStage.js';
 import {
+  decisionLanguageWarnings,
+  decisionStatusForFitLevel,
+  validateNarrativeMemo,
+} from './mediation-narrative.js';
+import {
   WHY_MAX_CHARS_STANDARD,
   WHY_MAX_CHARS_TIGHT,
   MISSING_MIN_ITEMS,
@@ -40,6 +45,7 @@ import {
   type FactSheetRisk,
   type FitLevel,
   type MediationReviewStage,
+  type MediationDecisionStatus,
   type NegotiationAnalysis,
   type ParseErrorKind,
   type PostProcessMode,
@@ -1214,10 +1220,13 @@ function normalizeWhyHeadingKey(value: string) {
   // --- New mediation headings ---
   if (['mediation summary', 'mediation overview', 'summary'].includes(normalized)) return 'mediation summary';
   if (['where agreement exists', 'agreement', 'areas of agreement'].includes(normalized)) return 'where agreement exists';
+  if (['where the parties align', 'where parties align', 'parties align'].includes(normalized)) return 'where agreement exists';
   if (['what is blocking commitment', 'blocking commitment', 'blockers'].includes(normalized)) return 'what is blocking commitment';
+  if (['where the deal is stuck', 'where deal is stuck', 'deal is stuck'].includes(normalized)) return 'what is blocking commitment';
   if (['the real hesitation', 'real hesitation', 'hesitation'].includes(normalized)) return 'the real hesitation';
   if (['risk and how to reduce it', 'risk reduction'].includes(normalized)) return 'risk and how to reduce it';
   if (['proposed bridge', 'bridge', 'bridging proposal'].includes(normalized)) return 'proposed bridge';
+  if (['suggested bridge', 'possible bridge', 'possible bridges'].includes(normalized)) return 'proposed bridge';
   if (['what can be agreed now', 'agree now'].includes(normalized)) return 'what can be agreed now';
   if (['what must wait', 'deferred', 'must wait'].includes(normalized)) return 'what must wait';
   if (['likely landing zone', 'landing zone'].includes(normalized)) return 'likely landing zone';
@@ -3259,6 +3268,10 @@ function rewriteWhyForCalibration(params: {
   const globallySeenParagraphs: string[] = [];
   const rewrittenSections = orderedWhySections(sections).map((section) => {
     let existingParagraphs = splitParagraphs(section.body);
+    const finalDecisionStatus = decisionStatusForFitLevel(params.data.fit_level);
+    existingParagraphs = existingParagraphs.filter(
+      (paragraph) => decisionLanguageWarnings(paragraph, finalDecisionStatus).length === 0,
+    );
 
     // Prevent contradictory decision statuses: when role defaults provide a
     // calibrated "Decision status:" paragraph, strip any conflicting model-
@@ -3328,7 +3341,16 @@ function rewriteWhyForCalibration(params: {
     }
 
     if (cappedParagraphs.length === 0) {
-      const fallbackParagraph = (roleDefaults[section.key] || [])[0] || section.body;
+      const roleFallback = (roleDefaults[section.key] || [])[0];
+      const originalFallback =
+        decisionLanguageWarnings(section.body, finalDecisionStatus).length === 0
+          ? section.body
+          : '';
+      const fallbackParagraph =
+        roleFallback ||
+        (RECOMMENDATION_SECTION_KEYS.has(section.key)
+          ? calibratedNextActionForStatus(finalDecisionStatus)
+          : originalFallback);
       const trimmedFallback = asText(fallbackParagraph);
       if (trimmedFallback) {
         cappedParagraphs.push(trimmedFallback);
@@ -3462,6 +3484,8 @@ function applyConsistencyCalibration(params: {
     why,
     missing,
     redactions,
+    internal_analysis,
+    narrative,
     negotiation_analysis,
     delta_summary,
     resolved_since_last_round,
@@ -3583,6 +3607,40 @@ function applyConsistencyCalibration(params: {
     }
   }
 
+  if (internal_analysis) {
+    const decisionStatus = decisionStatusForFitLevel(fit_level);
+    const calibratedThesis =
+      parseWhySections(why).find((section) =>
+        ['recommended path', 'decision readiness', 'mediation summary'].includes(section.key),
+      )?.body ||
+      internal_analysis.core_thesis;
+    internal_analysis = {
+      ...internal_analysis,
+      confidence: clamp01(confidence_0_1),
+      decision_status: decisionStatus,
+      recommendation: calibratedRecommendationForStatus(decisionStatus),
+      core_thesis: calibratedThesis,
+      suggested_next_actions:
+        decisionStatus === 'ready_to_finalize'
+          ? internal_analysis.suggested_next_actions
+          : [calibratedNextActionForStatus(decisionStatus)],
+    };
+  }
+
+  const finalDecisionStatus = decisionStatusForFitLevel(fit_level);
+  const narrativeValidation = validateNarrativeMemo(narrative, {
+    fitLevel: fit_level,
+    decisionStatus: finalDecisionStatus,
+    missingCount: missing.length,
+  });
+  if (narrative && !narrativeValidation.valid) {
+    narrative = undefined;
+    capsApplied.push('discard_invalid_or_decision_inconsistent_narrative');
+    capsApplied.push(
+      ...narrativeValidation.warnings.map((warning) => `narrative_validation:${warning}`),
+    );
+  }
+
   return {
     data: {
       analysis_stage: MEDIATION_STAGE,
@@ -3591,6 +3649,8 @@ function applyConsistencyCalibration(params: {
       why,
       missing,
       redactions,
+      internal_analysis,
+      narrative,
       ...(negotiation_analysis ? { negotiation_analysis } : {}),
       ...(delta_summary ? { delta_summary } : {}),
       ...(resolved_since_last_round ? { resolved_since_last_round } : {}),
@@ -3600,6 +3660,28 @@ function applyConsistencyCalibration(params: {
     },
     capsApplied,
   };
+}
+
+function calibratedRecommendationForStatus(status: MediationDecisionStatus) {
+  if (status === 'ready_to_finalize') return 'Move toward final agreement';
+  if (status === 'proceed_with_conditions') {
+    return 'Proceed only after the remaining material conditions are resolved';
+  }
+  if (status === 'not_viable') return 'Do not proceed on the current structure';
+  return 'Explore further before making a commitment';
+}
+
+function calibratedNextActionForStatus(status: MediationDecisionStatus) {
+  if (status === 'proceed_with_conditions') {
+    return 'Resolve the material open questions before final commitment.';
+  }
+  if (status === 'not_viable') {
+    return 'Pause the current structure and identify what would need to change before reconsideration.';
+  }
+  if (status === 'explore_further') {
+    return 'Clarify the missing commercial information before deciding whether to proceed.';
+  }
+  return 'Carry the agreed commercial mechanics into final documentation and approval.';
 }
 
 function uniqueStrings(values: string[]) {
@@ -4094,7 +4176,16 @@ function applyCoverageClamps(params: {
   postProcessMode?: PostProcessMode;
 }): ClampResult {
   const { factSheet, sharedText, confidentialText } = params;
-  let { fit_level, confidence_0_1, why, missing, redactions, negotiation_analysis } = params.data;
+  let {
+    fit_level,
+    confidence_0_1,
+    why,
+    missing,
+    redactions,
+    internal_analysis,
+    narrative,
+    negotiation_analysis,
+  } = params.data;
   const capsApplied: string[] = [];
   const sc = factSheet.source_coverage;
 
@@ -4147,6 +4238,8 @@ function applyCoverageClamps(params: {
       why,
       missing,
       redactions,
+      internal_analysis,
+      narrative,
       negotiation_analysis,
     },
     factSheet,
@@ -4324,6 +4417,43 @@ function flattenNegotiationAnalysisText(analysis?: NegotiationAnalysis) {
   ].filter(Boolean);
 }
 
+function flattenInternalAnalysisText(
+  analysis?: VertexEvaluationV2MediationResponse['internal_analysis'],
+) {
+  if (!analysis) return [] as string[];
+  return [
+    analysis.recommendation,
+    analysis.decision_status,
+    analysis.core_thesis,
+    ...analysis.commercial_rationale,
+    ...analysis.strongest_arguments_for,
+    ...analysis.strongest_arguments_against,
+    ...analysis.key_risks,
+    ...analysis.hidden_assumptions,
+    ...analysis.unresolved_questions,
+    ...analysis.negotiation_leverage,
+    ...analysis.suggested_next_actions,
+    ...analysis.evidence_used,
+    ...analysis.missing_information,
+    analysis.tone_profile,
+    analysis.output_mode,
+  ].filter(Boolean);
+}
+
+function flattenNarrativeText(
+  narrative?: VertexEvaluationV2MediationResponse['narrative'],
+) {
+  if (!narrative) return [] as string[];
+  return [
+    narrative.title,
+    ...narrative.sections.flatMap((section) => [
+      section.heading,
+      ...section.paragraphs,
+    ]),
+    narrative.closing,
+  ].filter(Boolean);
+}
+
 function flattenEvaluationResponseText(response: VertexEvaluationV2Response) {
   switch (response.analysis_stage) {
     case STAGE1_SHARED_INTAKE_STAGE:
@@ -4352,6 +4482,8 @@ function flattenEvaluationResponseText(response: VertexEvaluationV2Response) {
         ...response.why,
         ...response.missing,
         ...response.redactions,
+        ...flattenInternalAnalysisText(response.internal_analysis),
+        ...flattenNarrativeText(response.narrative),
         ...flattenNegotiationAnalysisText(response.negotiation_analysis),
         response.delta_summary || '',
         ...(response.resolved_since_last_round || []),
@@ -5150,13 +5282,82 @@ interface QualityAssessment {
   weakSections: string[];
 }
 
-function assessReportQuality(data: VertexEvaluationV2MediationResponse): QualityAssessment {
+const GROUNDING_STOP_WORDS = new Set([
+  'about',
+  'after',
+  'again',
+  'agreement',
+  'before',
+  'between',
+  'could',
+  'current',
+  'either',
+  'information',
+  'other',
+  'parties',
+  'party',
+  'proposal',
+  'should',
+  'their',
+  'there',
+  'these',
+  'those',
+  'through',
+  'under',
+  'where',
+  'which',
+  'would',
+]);
+
+function meaningfulGroundingTokens(value: string) {
+  return new Set(
+    String(value || '')
+      .toLowerCase()
+      .match(/[a-z][a-z0-9-]{4,}/g)
+      ?.filter((token) => !GROUNDING_STOP_WORDS.has(token)) || [],
+  );
+}
+
+function narrativeHasFactSheetGrounding(
+  narrativeText: string,
+  factSheet?: ProposalFactSheet,
+) {
+  if (!factSheet) return true;
+  const factText = [
+    factSheet.project_goal || '',
+    ...factSheet.scope_deliverables,
+    factSheet.timeline.start || '',
+    factSheet.timeline.duration || '',
+    ...factSheet.timeline.milestones,
+    ...factSheet.constraints,
+    ...factSheet.success_criteria_kpis,
+    ...factSheet.vendor_preferences,
+    ...factSheet.assumptions,
+    ...factSheet.risks.map((risk) => risk.risk),
+    ...factSheet.open_questions,
+    ...factSheet.missing_info,
+  ].join(' ');
+  const factTokens = meaningfulGroundingTokens(factText);
+  if (factTokens.size === 0) return true;
+  const narrativeTokens = meaningfulGroundingTokens(narrativeText);
+  let overlap = 0;
+  factTokens.forEach((token) => {
+    if (narrativeTokens.has(token)) overlap += 1;
+  });
+  return overlap >= Math.min(2, factTokens.size);
+}
+
+function assessReportQuality(
+  data: VertexEvaluationV2MediationResponse,
+  factSheet?: ProposalFactSheet,
+): QualityAssessment {
   const triggers: string[] = [];
   const weakSections: string[] = [];
   let penaltyPoints = 0;
 
   // 1. Check total why[] substance
   const whyText = (data.why || []).join(' ');
+  const narrativeText = flattenNarrativeText(data.narrative).join(' ');
   const whyTotalChars = whyText.length;
   if (whyTotalChars < MIN_WHY_TOTAL_CHARS) {
     triggers.push(`why_too_short:${whyTotalChars}chars`);
@@ -5181,7 +5382,7 @@ function assessReportQuality(data: VertexEvaluationV2MediationResponse): Quality
   // 3. Check for excessive generic filler
   let fillerHits = 0;
   for (const pattern of GENERIC_FILLER_PATTERNS) {
-    if (pattern.test(whyText)) {
+    if (pattern.test(`${whyText} ${narrativeText}`)) {
       fillerHits += 1;
     }
   }
@@ -5203,7 +5404,25 @@ function assessReportQuality(data: VertexEvaluationV2MediationResponse): Quality
     penaltyPoints += 1;
   }
 
-  // 5. Check for malformed or incomplete sections
+  // 5. Check the primary user-facing narrative, not only compatibility fields.
+  const narrativeValidation = validateNarrativeMemo(data.narrative, {
+    fitLevel: data.fit_level,
+    decisionStatus: data.internal_analysis?.decision_status,
+    missingCount: missingItems.length,
+  });
+  if (!narrativeValidation.valid) {
+    narrativeValidation.warnings.forEach((warning) => {
+      triggers.push(warning);
+      weakSections.push('narrative');
+    });
+    penaltyPoints += Math.max(3, Math.min(6, narrativeValidation.warnings.length + 2));
+  } else if (!narrativeHasFactSheetGrounding(narrativeText, factSheet)) {
+    triggers.push('narrative_lacks_fact_sheet_grounding');
+    weakSections.push('narrative');
+    penaltyPoints += 2;
+  }
+
+  // 6. Check for malformed or incomplete compatibility sections
   for (const section of sections) {
     if (section.body && !/[.!?]$/.test(section.body.trim())) {
       triggers.push(`incomplete_ending:${section.key}`);
@@ -5216,6 +5435,19 @@ function assessReportQuality(data: VertexEvaluationV2MediationResponse): Quality
   const score = Math.max(0, Math.min(1, 1 - penaltyPoints * 0.1));
 
   return { score, triggers, weakSections: [...new Set(weakSections)] };
+}
+
+function buildNarrativeValidationMetadata(data: VertexEvaluationV2MediationResponse) {
+  const validation = validateNarrativeMemo(data.narrative, {
+    fitLevel: data.fit_level,
+    decisionStatus: data.internal_analysis?.decision_status,
+    missingCount: data.missing.length,
+  });
+  return {
+    valid: validation.valid,
+    renderer_path: validation.valid ? 'narrative' as const : 'fallback' as const,
+    warnings: validation.warnings,
+  };
 }
 
 /**
@@ -5260,6 +5492,7 @@ function buildRefinementPrompt(params: {
     `- confidence_0_1 MUST remain: ${initialResult.confidence_0_1}`,
     '- Do NOT change the overall judgment, risk assessment direction, or recommendation direction.',
     '- Preserve negotiation_analysis exactly if it is present. Do NOT add, remove, or reclassify demands, dealbreakers, compatibility verdicts, or bridgeability notes.',
+    '- Preserve internal_analysis exactly except for prose polish that does not change its recommendation, confidence, decision_status, evidence, or risk direction.',
     '- Preserve delta_summary, resolved_since_last_round, remaining_deltas, new_open_issues, and movement_direction exactly if they are present.',
     '- Do NOT introduce new confidential information or leak confidential details.',
     '- Do NOT add new sections or remove required sections.',
@@ -5275,8 +5508,11 @@ function buildRefinementPrompt(params: {
     `- ${weakSectionsList}`,
     triggersList ? `- ${triggersList}` : '',
     '- Replace generic filler ("clarity and specificity", "broadly workable", "looks polished") with concrete evidence-backed statements.',
-    '- Strengthen top-line insights in Executive Summary and Decision Assessment.',
+    '- Strengthen the natural narrative title, opening judgment, commercial reasoning, trade-offs, and concrete closing action.',
+    '- Ensure the narrative title, judgment, body, and closing action match fit_level, confidence_0_1, and internal_analysis.decision_status exactly.',
+    '- Conditional or negative decisions must not sound like approval, signature authority, or readiness to finalize.',
     '- Ensure every section has substantive, specific content grounded in the fact_sheet.',
+    '- The narrative must use 2-4 naturally chosen sections, at least 3 substantive paragraphs, a non-empty closing, and at least 500 characters of grounded body prose.',
     '- Ensure each missing[] item has an actionable question with an em-dash why-it-matters clause.',
     '- Improve tradeoff framing — include at least 2 explicit if/then statements.',
     '- Ensure natural prose flow with varied sentence lengths.',
@@ -5301,6 +5537,30 @@ function buildRefinementPrompt(params: {
         why: ['string'],
         missing: ['string'],
         redactions: ['string'],
+        internal_analysis: {
+          recommendation: 'string',
+          confidence: 0,
+          decision_status: 'not_viable|explore_further|proceed_with_conditions|ready_to_finalize',
+          core_thesis: 'string',
+          commercial_rationale: ['string'],
+          strongest_arguments_for: ['string'],
+          strongest_arguments_against: ['string'],
+          key_risks: ['string'],
+          hidden_assumptions: ['string'],
+          unresolved_questions: ['string'],
+          negotiation_leverage: ['string'],
+          suggested_next_actions: ['string'],
+          evidence_used: ['string'],
+          missing_information: ['string'],
+          tone_profile: 'decisive|constructive|cautious|skeptical|balanced',
+          output_mode:
+            'executive_memo|founder_friendly|negotiation_coach|skeptical_review|balanced_assessment',
+        },
+        narrative: {
+          title: 'string',
+          sections: [{ heading: 'string', paragraphs: ['string'] }],
+          closing: 'string',
+        },
         delta_summary: 'string',
         resolved_since_last_round: ['string'],
         remaining_deltas: ['string'],
@@ -5330,6 +5590,7 @@ function buildRefinementPrompt(params: {
       2,
     ),
     'negotiation_analysis is optional; if it is present in the initial report, preserve it exactly.',
+    'internal_analysis and narrative are required; preserve their substantive relationship to the initial report.',
     'Progress fields are optional; if they are present in the initial report, preserve them exactly.',
     'Return JSON only.',
   ]
@@ -5416,6 +5677,7 @@ async function attemptRefinementPass(params: {
 
   const refinedResult: VertexEvaluationV2MediationResponse = {
     ...validation.normalized,
+    internal_analysis: params.initialResult.internal_analysis || validation.normalized.internal_analysis,
     negotiation_analysis: params.initialResult.negotiation_analysis,
     ...(params.initialResult.delta_summary ? { delta_summary: params.initialResult.delta_summary } : {}),
     ...(params.initialResult.resolved_since_last_round
@@ -5924,7 +6186,7 @@ export async function evaluateWithVertexV2(
       throw new TypeError('Mediation validation returned a non mediation response.');
     }
     const mediationResult = schemaValidation.normalized;
-    const rawQuality = assessReportQuality(mediationResult);
+    const rawQuality = assessReportQuality(mediationResult, factSheet);
     const QUALITY_THRESHOLD = 0.5;
     const shouldRefine = rawQuality.score < 1.0;
     const shouldRegenerate = rawQuality.score < QUALITY_THRESHOLD;
@@ -5963,7 +6225,7 @@ export async function evaluateWithVertexV2(
       };
       if (refinement.applied) {
         // Compare raw quality symmetrically (both pre-post-processing)
-        const refinedRawQuality = assessReportQuality(refinement.result);
+        const refinedRawQuality = assessReportQuality(refinement.result, factSheet);
         if (refinedRawQuality.score >= rawQuality.score) {
           bestRawResult = refinement.result;
           refinementMeta.applied = true;
@@ -6017,7 +6279,7 @@ export async function evaluateWithVertexV2(
 
               if (regenLeakSafe) {
                 // Compare raw quality (both pre-post-processing)
-                const regenRawQuality = assessReportQuality(regeneratedResult);
+                const regenRawQuality = assessReportQuality(regeneratedResult, factSheet);
                 if (regenRawQuality.score > rawQuality.score) {
                   bestRawResult = regeneratedResult;
                   regenMeta.applied = true;
@@ -6104,6 +6366,7 @@ export async function evaluateWithVertexV2(
         refinement: refinementMeta,
         regeneration: regenMeta,
         raw_quality_score: rawQuality.score,
+        narrative_validation: buildNarrativeValidationMetadata(finalData),
       },
     };
   }
@@ -6253,6 +6516,7 @@ export async function evaluateWithVertexV2(
         verifier_escalated: false,
         verifier_unavailable: false,
       },
+      narrative_validation: buildNarrativeValidationMetadata(fallbackClamped.data),
     },
   };
 }

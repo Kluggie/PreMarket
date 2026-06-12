@@ -2,6 +2,11 @@ import { STAGE1_PRELIMINARY_SUMMARY_NOTE } from '../../src/lib/aiReportUtils.js'
 import { normalizeOpportunityReviewStage } from '../../src/lib/opportunityReviewStage.js';
 import type { MediationMovementDirection } from './mediation-progress.js';
 import {
+  decisionStatusForFitLevel,
+  normalizeMediationDecisionStatus,
+  validateNarrativeMemo,
+} from './mediation-narrative.js';
+import {
   MEDIATION_STAGE,
   STAGE1_SHARED_INTAKE_STAGE,
   PRE_SEND_STAGE,
@@ -13,9 +18,12 @@ import {
   type NegotiationAnalysis,
   type NegotiationDealbreaker,
   type NegotiationPartyAnalysis,
+  type NarrativeOutputMode,
+  type NarrativeToneProfile,
   type PreSendReadinessStatus,
   type PreSendReviewStage,
   type SharedIntakeStatus,
+  type StructuredDealAnalysis,
   type Stage1SharedIntakeStage,
   type ReviewStage,
   type SchemaValidationResult,
@@ -317,6 +325,110 @@ function normalizeNegotiationAnalysis(value: unknown): NegotiationAnalysis | und
   };
 }
 
+function normalizeNarrativeOutputMode(value: unknown): NarrativeOutputMode {
+  const normalized = normalizeKeywordText(asText(value));
+  if (normalized === 'executive memo') return 'executive_memo';
+  if (normalized === 'founder friendly' || normalized === 'founder friendly explanation') {
+    return 'founder_friendly';
+  }
+  if (normalized === 'negotiation coach') return 'negotiation_coach';
+  if (normalized === 'skeptical review' || normalized === 'skeptical red flag review') {
+    return 'skeptical_review';
+  }
+  return 'balanced_assessment';
+}
+
+function normalizeNarrativeToneProfile(value: unknown): NarrativeToneProfile {
+  const normalized = normalizeKeywordText(asText(value));
+  if (normalized === 'decisive') return 'decisive';
+  if (normalized === 'constructive') return 'constructive';
+  if (normalized === 'cautious') return 'cautious';
+  if (normalized === 'skeptical') return 'skeptical';
+  return 'balanced';
+}
+
+function stripCompatibilityHeading(value: unknown) {
+  return asText(value).replace(/^[A-Z][^:\n]{0,60}:\s+/, '').trim();
+}
+
+function normalizeStructuredDealAnalysis(params: {
+  value: unknown;
+  fitLevel: FitLevel;
+  confidence: number;
+  why: string[];
+  missing: string[];
+  negotiationAnalysis?: NegotiationAnalysis;
+}): StructuredDealAnalysis {
+  const raw = toObjectRecord(params.value) || {};
+  const negotiation = params.negotiationAnalysis;
+  const fallbackFor = [
+    ...(negotiation?.proposing_party?.priorities || []),
+    ...(negotiation?.counterparty?.priorities || []),
+  ];
+  const fallbackAgainst = [
+    ...(negotiation?.critical_incompatibilities || []),
+    ...(negotiation?.proposing_party?.dealbreakers || []).map((entry) => entry.text),
+    ...(negotiation?.counterparty?.dealbreakers || []).map((entry) => entry.text),
+  ];
+  const fallbackActions = negotiation?.bridgeability_notes || [];
+  const recommendation =
+    asText(raw.recommendation) ||
+    (params.fitLevel === 'high'
+      ? 'Move toward agreement'
+      : params.fitLevel === 'medium'
+        ? 'Proceed with conditions'
+        : params.fitLevel === 'low'
+          ? 'Do not proceed on the current structure'
+          : 'Explore further');
+  const coreThesis =
+    asText(raw.core_thesis) ||
+    stripCompatibilityHeading(params.why[0]) ||
+    asText(negotiation?.compatibility_rationale);
+
+  return {
+    recommendation,
+    confidence: normalizeConfidence(raw.confidence ?? params.confidence),
+    decision_status: normalizeMediationDecisionStatus(
+      raw.decision_status,
+      decisionStatusForFitLevel(params.fitLevel),
+    ),
+    core_thesis: coreThesis,
+    commercial_rationale: normalizeNegotiationStringArray(
+      raw.commercial_rationale ?? params.why,
+      8,
+    ),
+    strongest_arguments_for: normalizeNegotiationStringArray(
+      raw.strongest_arguments_for ?? fallbackFor,
+      6,
+    ),
+    strongest_arguments_against: normalizeNegotiationStringArray(
+      raw.strongest_arguments_against ?? fallbackAgainst,
+      6,
+    ),
+    key_risks: normalizeNegotiationStringArray(
+      raw.key_risks ?? negotiation?.critical_incompatibilities ?? [],
+      8,
+    ),
+    hidden_assumptions: normalizeNegotiationStringArray(raw.hidden_assumptions, 8),
+    unresolved_questions: normalizeNegotiationStringArray(
+      raw.unresolved_questions ?? params.missing,
+      8,
+    ),
+    negotiation_leverage: normalizeNegotiationStringArray(raw.negotiation_leverage, 8),
+    suggested_next_actions: normalizeNegotiationStringArray(
+      raw.suggested_next_actions ?? fallbackActions,
+      6,
+    ),
+    evidence_used: normalizeNegotiationStringArray(raw.evidence_used ?? params.why, 10),
+    missing_information: normalizeNegotiationStringArray(
+      raw.missing_information ?? params.missing,
+      8,
+    ),
+    tone_profile: normalizeNarrativeToneProfile(raw.tone_profile),
+    output_mode: normalizeNarrativeOutputMode(raw.output_mode),
+  };
+}
+
 export function validateMediationResponseSchema(
   value: unknown,
 ): SchemaValidationResult<MediationReviewStage> {
@@ -387,6 +499,24 @@ export function validateMediationResponseSchema(
           }
         : undefined,
   );
+  const fitLevel = fit as FitLevel;
+  const internalAnalysis = normalizeStructuredDealAnalysis({
+    value: raw.internal_analysis,
+    fitLevel,
+    confidence: clamp01(confidence),
+    why,
+    missing,
+    negotiationAnalysis,
+  });
+  const narrativeValidation = validateNarrativeMemo(raw.narrative, {
+    fitLevel,
+    decisionStatus: internalAnalysis.decision_status,
+    missingCount: missing.length,
+  });
+  const narrative = narrativeValidation.valid ? narrativeValidation.narrative : undefined;
+  if (raw.narrative !== undefined && !narrativeValidation.valid) {
+    invalidFields.push(...narrativeValidation.warnings.map((warning) => `narrative.${warning}`));
+  }
   const movementDirection = normalizeMovementDirection(raw.movement_direction);
   if (raw.movement_direction !== undefined && !movementDirection) {
     invalidFields.push('movement_direction');
@@ -408,11 +538,13 @@ export function validateMediationResponseSchema(
     ok: true,
     normalized: {
       analysis_stage: MEDIATION_STAGE,
-      fit_level: fit as FitLevel,
+      fit_level: fitLevel,
       confidence_0_1: clamp01(confidence),
       why,
       missing,
       redactions,
+      internal_analysis: internalAnalysis,
+      ...(narrative ? { narrative } : {}),
       ...(negotiationAnalysis ? { negotiation_analysis: negotiationAnalysis } : {}),
       ...(deltaSummary ? { delta_summary: deltaSummary } : {}),
       ...(resolvedSinceLastRound.length > 0 ? { resolved_since_last_round: resolvedSinceLastRound } : {}),

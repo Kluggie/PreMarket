@@ -4,6 +4,8 @@ import {
   normalizeStoredMediationProgress,
   type MediationRoundContext,
 } from '../../_lib/mediation-progress.js';
+import { validateNarrativeMemo } from '../../_lib/mediation-narrative.js';
+import type { FitLevel, NarrativeMemo } from '../../_lib/vertex-evaluation-v2-types.js';
 import {
   getDecisionStatusDetails,
   getPresentationSections,
@@ -1084,12 +1086,145 @@ function classifyArchetypeFromFitLevel(fitLevel: string, confidence: number, mis
   return 'balanced_trade_off';
 }
 
+const NARRATIVE_MODE_HEADING_REPLACEMENTS: Record<string, Record<string, string>> = {
+  executive_memo: {
+    recommendation: 'Commercial View',
+    'where the parties align': 'Why the Logic Holds',
+    'where the deal is stuck': 'What Still Prevents Commitment',
+    'suggested bridge': 'A Workable Structure',
+    'open questions': 'Before a Decision',
+    'next step': 'Immediate Action',
+  },
+  founder_friendly: {
+    recommendation: 'My Read',
+    'where the parties align': 'Why This Could Work',
+    'where the deal is stuck': 'Where This Gets Difficult',
+    'suggested bridge': 'How I Would Shape It',
+    'open questions': 'What I Would Resolve First',
+    'next step': 'The Move to Make Now',
+  },
+  negotiation_coach: {
+    recommendation: 'How I Would Read the Room',
+    'where the parties align': 'The Common Ground',
+    'where the deal is stuck': 'The Negotiation That Matters',
+    'suggested bridge': 'The Landing Zone',
+    'open questions': 'Questions for the Next Conversation',
+    'next step': 'Your Next Move',
+  },
+  skeptical_review: {
+    recommendation: 'Why I Would Pause',
+    'where the parties align': 'What Is Genuinely Promising',
+    'where the deal is stuck': 'Where the Risk Concentrates',
+    'suggested bridge': 'What Would Make This Safer',
+    'open questions': 'Evidence Still Missing',
+    'next step': 'What Would Change My View',
+  },
+  balanced_assessment: {
+    recommendation: 'The Commercial Picture',
+    'where the parties align': 'What Supports the Deal',
+    'where the deal is stuck': 'Where It Could Break Down',
+    'suggested bridge': 'A Practical Way Through',
+    'open questions': 'What Still Needs Answering',
+    'next step': 'The Practical Next Move',
+  },
+};
+
+function getNarrativeOutputMode(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return 'balanced_assessment';
+  const mode = normalizeText((value as Record<string, any>).output_mode).toLowerCase();
+  return NARRATIVE_MODE_HEADING_REPLACEMENTS[mode] ? mode : 'balanced_assessment';
+}
+
+function replaceRigidNarrativeHeading(heading: string, outputMode: string) {
+  const normalized = normalizeHeadingKey(heading);
+  const replacements =
+    NARRATIVE_MODE_HEADING_REPLACEMENTS[outputMode] ||
+    NARRATIVE_MODE_HEADING_REPLACEMENTS.balanced_assessment;
+  return replacements[normalized] || heading;
+}
+
+function buildNaturalNarrativePresentation(params: {
+  narrative: NarrativeMemo;
+  internal_analysis?: unknown;
+  missing: string[];
+  redactionsCount: number;
+  reportArchetype: MediationReviewArchetype;
+}) {
+  const narrative = params.narrative;
+  const outputMode = getNarrativeOutputMode(params.internal_analysis);
+  const sections = narrative.sections
+    .map((section, index) =>
+      createPresentationSection({
+        key: `narrative_${index + 1}`,
+        heading: replaceRigidNarrativeHeading(section.heading, outputMode),
+        paragraphs: section.paragraphs,
+      }),
+    )
+    .filter(Boolean) as MediationPresentationSection[];
+
+  if (narrative.closing) {
+    const closingHeading =
+      NARRATIVE_MODE_HEADING_REPLACEMENTS[outputMode]?.['next step'] ||
+      NARRATIVE_MODE_HEADING_REPLACEMENTS.balanced_assessment['next step'];
+    const closingSection = createPresentationSection({
+      key: 'narrative_closing',
+      heading: closingHeading,
+      paragraphs: [narrative.closing],
+    });
+    if (closingSection) sections.push(closingSection);
+  }
+
+  const renderedText = normalizeText(
+    sections.flatMap((section) => [
+      ...(section.paragraphs || []),
+      ...(section.bullets || []),
+    ]).join(' '),
+  ).toLowerCase();
+  const unresolvedQuestions = params.missing.filter((question) => {
+    const comparable = stripMissingWhyMatters(question).toLowerCase();
+    return comparable && !renderedText.includes(comparable);
+  });
+  if (unresolvedQuestions.length > 0) {
+    const questionHeading =
+      NARRATIVE_MODE_HEADING_REPLACEMENTS[outputMode]?.['open questions'] ||
+      NARRATIVE_MODE_HEADING_REPLACEMENTS.balanced_assessment['open questions'];
+    const questionSection = createPresentationSection({
+      key: 'narrative_questions',
+      heading: questionHeading,
+      bullets: unresolvedQuestions.slice(0, 4),
+      numbered_bullets: true,
+    });
+    if (questionSection) {
+      const closingIndex = sections.findIndex((section) => section.key === 'narrative_closing');
+      if (closingIndex >= 0) sections.splice(closingIndex, 0, questionSection);
+      else sections.push(questionSection);
+    }
+  }
+
+  const primaryInsight =
+    sections[0]?.paragraphs?.[0] ||
+    narrative.closing ||
+    '';
+  return {
+    report_archetype: params.reportArchetype,
+    report_title: narrative.title,
+    primary_insight: primaryInsight,
+    presentation_sections: sections,
+    redactions_count: params.redactionsCount,
+    renderer_path: 'narrative' as const,
+    narrative_valid: true,
+    narrative_validation_warnings: [] as string[],
+  };
+}
+
 export function buildMediationReviewPresentation(params: {
   fit_level: unknown;
   confidence_0_1: unknown;
   why: unknown;
   missing: unknown;
   redactions?: unknown;
+  internal_analysis?: unknown;
+  narrative?: unknown;
   negotiation_analysis?: unknown;
   bilateral_round_number?: unknown;
   prior_bilateral_round_id?: unknown;
@@ -1115,9 +1250,26 @@ export function buildMediationReviewPresentation(params: {
   const remainingDeltas = uniqueText(progress?.remaining_deltas || []).slice(0, 4);
   const newOpenIssues = uniqueText(progress?.new_open_issues || []).slice(0, 3);
   const movementDirection = progress?.movement_direction || null;
+  const normalizedFitLevel: FitLevel =
+    fitLevel === 'high' || fitLevel === 'medium' || fitLevel === 'low'
+      ? fitLevel
+      : 'unknown';
+  const narrativeValidation = validateNarrativeMemo(params.narrative, {
+    fitLevel: normalizedFitLevel,
+    missingCount: missing.length,
+  });
 
   // Classify archetype for backward compatibility — but no longer drives section structure
   const archetype = classifyArchetypeFromFitLevel(fitLevel, confidence, missing.length);
+  if (narrativeValidation.valid && narrativeValidation.narrative) {
+    return buildNaturalNarrativePresentation({
+      narrative: narrativeValidation.narrative,
+      internal_analysis: params.internal_analysis,
+      missing,
+      redactionsCount: redactions.length,
+      reportArchetype: archetype,
+    });
+  }
 
   const sections: MediationPresentationSection[] = [];
   const whyEntries = (Array.isArray(why) ? why : []).map((entry) => {
@@ -1625,6 +1777,9 @@ export function buildMediationReviewPresentation(params: {
     primary_insight: primaryInsight,
     presentation_sections: cleanedSections,
     redactions_count: redactions.length,
+    renderer_path: 'fallback' as const,
+    narrative_valid: false,
+    narrative_validation_warnings: narrativeValidation.warnings,
   };
 }
 
@@ -2266,6 +2421,14 @@ export function buildStoredV2Evaluation(
     ? data.missing.map((entry: unknown) => normalizeText(entry)).filter(Boolean)
     : [];
   const redactions: string[] = [];
+  const internalAnalysis =
+    data?.internal_analysis && typeof data.internal_analysis === 'object' && !Array.isArray(data.internal_analysis)
+      ? data.internal_analysis
+      : undefined;
+  const narrative =
+    data?.narrative && typeof data.narrative === 'object' && !Array.isArray(data.narrative)
+      ? data.narrative
+      : undefined;
   const negotiationAnalysis = normalizeNegotiationAnalysis(data?.negotiation_analysis);
   const progress = buildStoredMediationProgress({
     currentMissing: data?.remaining_deltas ?? missing,
@@ -2290,6 +2453,8 @@ export function buildStoredV2Evaluation(
     why,
     missing,
     redactions,
+    internal_analysis: internalAnalysis,
+    narrative,
     negotiation_analysis: negotiationAnalysis,
     ...progress,
   });
@@ -2301,6 +2466,8 @@ export function buildStoredV2Evaluation(
     why,
     missing,
     redactions,
+    ...(internalAnalysis ? { internal_analysis: internalAnalysis } : {}),
+    ...(narrative ? { narrative } : {}),
     ...(negotiationAnalysis ? { negotiation_analysis: negotiationAnalysis } : {}),
     ...progress,
     generated_at_iso: generatedAt,
@@ -2316,6 +2483,9 @@ export function buildStoredV2Evaluation(
     report_title: presentation.report_title,
     primary_insight: presentation.primary_insight,
     presentation_sections: omitPublicMediationRedactionSections(presentation.presentation_sections),
+    renderer_path: presentation.renderer_path,
+    narrative_valid: presentation.narrative_valid,
+    narrative_validation_warnings: presentation.narrative_validation_warnings,
   };
 
   const stableConfidence = stabilizeConfidence(confidence);
@@ -3063,6 +3233,9 @@ function buildFallbackRecipientV2Report(params: {
     report_title: presentation.report_title,
     primary_insight: presentation.primary_insight,
     presentation_sections: presentation.presentation_sections,
+    renderer_path: presentation.renderer_path,
+    narrative_valid: presentation.narrative_valid,
+    narrative_validation_warnings: presentation.narrative_validation_warnings,
   };
 }
 
@@ -3310,6 +3483,10 @@ function buildV2RecipientProjection(params: {
   const negotiationAnalysis = toRecipientSafeNegotiationAnalysis(normalizeNegotiationAnalysis(
     redactConfidentialStrings(sourceReport.negotiation_analysis, markers),
   ));
+  const safeNarrative =
+    sourceReport.narrative && typeof sourceReport.narrative === 'object' && !Array.isArray(sourceReport.narrative)
+      ? redactConfidentialStrings(sourceReport.narrative, markers)
+      : undefined;
   const fitLevel = scrubString(
     sourceReport.fit_level,
     markers,
@@ -3321,6 +3498,7 @@ function buildV2RecipientProjection(params: {
     why,
     missing,
     redactions,
+    narrative: safeNarrative,
     negotiation_analysis: negotiationAnalysis,
     ...(progress || {}),
   });
@@ -3341,6 +3519,7 @@ function buildV2RecipientProjection(params: {
     why,
     missing,
     redactions,
+    ...(safeNarrative ? { narrative: safeNarrative } : {}),
     ...(negotiationAnalysis ? { negotiation_analysis: negotiationAnalysis } : {}),
     ...(progress || {}),
     generated_at_iso: generatedAt,
@@ -3376,6 +3555,17 @@ function buildV2RecipientProjection(params: {
     primary_insight:
       scrubString(sourceReport.primary_insight, markers, '') ||
       rebuiltPresentation.primary_insight,
+    renderer_path:
+      scrubString(sourceReport.renderer_path, markers, '') ||
+      rebuiltPresentation.renderer_path,
+    narrative_valid:
+      typeof sourceReport.narrative_valid === 'boolean'
+        ? sourceReport.narrative_valid
+        : rebuiltPresentation.narrative_valid,
+    narrative_validation_warnings:
+      scrubStringArray(sourceReport.narrative_validation_warnings, markers).length > 0
+        ? scrubStringArray(sourceReport.narrative_validation_warnings, markers)
+        : rebuiltPresentation.narrative_validation_warnings,
     presentation_sections:
       normalizedProjectedPresentationSections.length > 0
         ? normalizedProjectedPresentationSections

@@ -2127,6 +2127,43 @@ test('buildRecipientSafeEvaluationProjection: preserves safe presentation metada
     },
     sections: buildMediationReviewSections({ why, missing, redactions: [] }),
     recommendation: 'Medium',
+    internal_analysis: {
+      recommendation: 'Proceed with conditions',
+      confidence: 0.72,
+      decision_status: 'proceed_with_conditions',
+      core_thesis: `Internal thesis ${confidentialMarker}`,
+      commercial_rationale: [],
+      strongest_arguments_for: [],
+      strongest_arguments_against: [],
+      key_risks: [],
+      hidden_assumptions: [],
+      unresolved_questions: [],
+      negotiation_leverage: [],
+      suggested_next_actions: [],
+      evidence_used: [],
+      missing_information: [],
+      tone_profile: 'balanced',
+      output_mode: 'executive_memo',
+    },
+    narrative: {
+      title: 'A conditional path to launch',
+      sections: [
+        {
+          heading: 'The commercial picture',
+          paragraphs: [
+            'The proposal has a credible commercial core because both sides appear willing to use a staged launch rather than force a full commitment before the operating model is tested.',
+            'The unresolved issue is approval ownership, which matters because a milestone structure only contains risk when the person entitled to accept or reject each stage is known in advance.',
+          ],
+        },
+        {
+          heading: 'What would strengthen the arrangement',
+          paragraphs: [
+            'Naming the launch owner and escalation path would turn a broadly workable outline into a decision-ready pilot without requiring either side to settle every later expansion term now.',
+          ],
+        },
+      ],
+      closing: 'Record the launch owner, escalation path, and milestone authority before the pilot begins.',
+    },
     report_archetype: 'balanced_trade_off',
     report_title: `Balanced Trade-Off ${confidentialMarker}`,
     primary_insight: `The draft is workable, but ${confidentialMarker} should never appear.`,
@@ -2181,6 +2218,10 @@ test('buildRecipientSafeEvaluationProjection: preserves safe presentation metada
   assert.equal(Array.isArray(projection.public_report.presentation_sections), true);
   assert.equal(typeof projection.public_report.primary_insight, 'string');
   assert.equal(projection.public_report.primary_insight.length > 0, true);
+  assert.equal('internal_analysis' in projection.public_report, false);
+  assert.equal(projection.public_report.narrative.title, 'A conditional path to launch');
+  assert.equal(projection.public_report.renderer_path, 'narrative');
+  assert.equal(projection.public_report.narrative_valid, true);
   assert.equal(projection.public_report.negotiation_analysis.compatibility_assessment, 'compatible_with_adjustments');
   assert.deepEqual(projection.public_report.negotiation_analysis.proposing_party.demands, []);
   assert.deepEqual(projection.public_report.negotiation_analysis.counterparty.priorities, []);
@@ -2781,5 +2822,265 @@ test('buildMediationReviewPresentation: AI progress with multiple question marks
   assert.ok(
     /since the prior round/i.test(allText) || /converging/i.test(allText),
     `Should use metadata fallback, got: "${allText}"`,
+  );
+});
+
+function buildNarrativeScenario({
+  outputMode,
+  title,
+  sections,
+  closing,
+  missing = [],
+  fitLevel = 'medium',
+}) {
+  return buildMediationReviewPresentation({
+    fit_level: fitLevel,
+    confidence_0_1: 0.64,
+    why: [
+      'Recommendation: The arrangement should keep moving while the remaining commercial mechanics are made explicit.',
+      'Where the Parties Align: The parties share a credible commercial objective and appear willing to test the relationship before making a larger commitment.',
+      'Where the Deal Is Stuck: Several terms that determine value, control, or execution responsibility remain unresolved.',
+      'Suggested Bridge: A bounded first phase can test the relationship while preserving a path to renegotiate the long-term structure.',
+      `Next Step: ${closing}`,
+    ],
+    missing,
+    redactions: [],
+    internal_analysis: {
+      output_mode: outputMode,
+    },
+    narrative: {
+      title,
+      sections,
+      closing,
+    },
+  });
+}
+
+test('natural mediation renderer produces substantive, non-JSON memo prose with variable headings', () => {
+  const promising = buildNarrativeScenario({
+    outputMode: 'founder_friendly',
+    title: 'A promising pilot, provided the economics are explicit',
+    sections: [
+      {
+        heading: 'Why this is worth pursuing',
+        paragraphs: [
+          'I would keep this partnership moving. Both sides appear to want a six-month pilot, a referral relationship, and a practical implementation role, which is enough common ground to justify testing the model before either side grants broader channel rights.',
+          'The attractive part is the division of value: the software company gains qualified introductions and implementation capacity, while the consulting partner can earn referral commission and retain separately priced implementation work. That logic is commercially coherent if attribution and customer ownership are documented rather than left to memory.',
+        ],
+      },
+      {
+        heading: 'The terms that will decide whether it works',
+        paragraphs: [
+          'The arrangement could still unravel around commission triggers, the duration of client protection, and whether recurring revenue share reflects genuine ongoing support. If recurring economics continue after the partner stops contributing, the SaaS company carries too much cost; if protection is too weak, the partner has little reason to invest in introductions.',
+          'A sensible landing zone is a non-exclusive pilot with registered referrals, a defined protection window, implementation fees paid directly for implementation work, and any recurring revenue share tied to documented support. Semi-exclusivity should be earned only after a measurable referral threshold, not granted at the outset.',
+        ],
+      },
+    ],
+    closing:
+      'Draft a one-page pilot rules document covering referral registration, client protection, commission and revenue-share triggers, implementation fee ownership, support responsibilities, and the post-pilot review.',
+    missing: [
+      'What event earns commission: an introduction, qualified meeting, signed customer, or paid subscription?',
+    ],
+  });
+
+  const cautious = buildNarrativeScenario({
+    outputMode: 'skeptical_review',
+    title: 'The proposal is not yet concrete enough to price or commit',
+    sections: [
+      {
+        heading: 'Why I would pause',
+        paragraphs: [
+          'The opportunity may be real, but the current materials do not establish what is being bought, what outcome would count as success, or which party carries the cost when assumptions prove wrong. That makes an apparently simple commercial commitment capable of expanding after signature.',
+          'The strongest argument for continuing is that the parties have identified a useful business problem. The strongest argument against commitment is that the proposal still asks the reader to infer the operating model, decision rights, and financial exposure from broad statements rather than agreed mechanics.',
+        ],
+      },
+      {
+        heading: 'What would change the risk profile',
+        paragraphs: [
+          'Before the recommendation improves, the parties need evidence about the intended commercial model, the responsibilities each side is actually accepting, and the conditions that permit either side to stop. If those points remain unstated, a price or timetable would create false precision rather than reduce uncertainty.',
+          'This does not require a long contract at the exploratory stage. It does require a short decision document that names the objective, the bounded commitment, the owner of each critical dependency, and the information needed before a larger obligation is approved.',
+        ],
+      },
+    ],
+    closing:
+      'Prepare a two-page decision note that defines the commercial model, each side’s bounded commitment, the approval path, and the evidence required before pricing or signature.',
+    missing: [
+      'What commercial outcome is the arrangement intended to create?',
+      'Which obligations must be accepted before either side commits?',
+    ],
+    fitLevel: 'low',
+  });
+
+  const operational = buildNarrativeScenario({
+    outputMode: 'negotiation_coach',
+    title: 'Commercially aligned, operationally unfinished',
+    sections: [
+      {
+        heading: 'How I would read the room',
+        paragraphs: [
+          'The parties seem to want the same relationship: qualified referrals, implementation support, and a path to expand if the pilot performs. The tension is not whether the partnership has value, but whether the day-to-day handoff will protect the customer experience and reward the work each side actually performs.',
+          'That distinction matters because a deal can be economically aligned and still fail operationally. Referral attribution, onboarding ownership, training, support escalation, and customer communication all sit between the sale and the recurring revenue that both sides hope to share.',
+        ],
+      },
+      {
+        heading: 'The negotiation that matters',
+        paragraphs: [
+          'I would avoid bargaining over a single headline percentage until the parties define when a referral becomes attributable, who controls the customer relationship, and what ongoing activity qualifies for recurring revenue share. Once those mechanics are clear, the economics become easier to compare and much harder to dispute.',
+          'The bridge is a pilot operating model: registered leads, a protection period, named handoff steps, separate implementation fees, support records for recurring revenue share, and a post-pilot review tied to actual referrals and customer outcomes. That gives both sides evidence before semi-exclusivity or longer-term economics are discussed.',
+        ],
+      },
+    ],
+    closing:
+      'Hold one working session to draft the referral-to-handoff workflow, then price commission, implementation work, and ongoing support against that agreed operating model.',
+    missing: [
+      'Who owns customer onboarding and the transition into ongoing support?',
+    ],
+  });
+
+  const clientOwnership = buildNarrativeScenario({
+    outputMode: 'executive_memo',
+    title: 'The deal turns on who owns the introduced customer',
+    sections: [
+      {
+        heading: 'The commercial question',
+        paragraphs: [
+          'The referral model is attractive only if introductions can be registered and protected without blocking legitimate direct sales. The current ambiguity allows both sides to believe they own the same opportunity, which makes a later commission dispute predictable rather than accidental.',
+          'The consulting partner needs confidence that it will not be bypassed after creating access, while the SaaS company needs freedom to pursue existing relationships and leads developed independently. Both interests can be protected without granting blanket exclusivity.',
+        ],
+      },
+      {
+        heading: 'A workable attribution rule',
+        paragraphs: [
+          'Registration should identify the account, contact, date, and qualifying introduction, with a short acceptance window for the SaaS company to flag a pre-existing opportunity. Accepted referrals can then receive a defined protection period and commission trigger.',
+          'Direct-sell rules and non-circumvention wording should protect genuine introductions without converting the whole market into protected territory. Semi-exclusivity should depend on measured referral performance after the pilot rather than being granted upfront.',
+        ],
+      },
+    ],
+    closing:
+      'Agree the referral-registration, pre-existing-account, and client-protection rules before negotiating long-term revenue share.',
+  });
+
+  const positive = buildNarrativeScenario({
+    outputMode: 'balanced_assessment',
+    title: 'A defined pilot that can move into final documentation',
+    sections: [
+      {
+        heading: 'Why the agreement now holds together',
+        paragraphs: [
+          'The pilot has moved beyond broad intent because referral registration, commission timing, implementation fee ownership, training responsibility, and the customer handoff are all described in usable commercial terms. Those mechanics give each side a clear account of the work it performs and the value it receives.',
+          'The six-month term and non-exclusive structure contain the initial commitment, while the agreed success measures create an evidence-based point for reviewing expansion. This reduces the risk that either side treats early enthusiasm as a promise of permanent channel rights.',
+        ],
+      },
+      {
+        heading: 'What should carry into the final terms',
+        paragraphs: [
+          'The final document should preserve the registered-referral process, client-protection window, direct-sell exception, implementation fee path, and support evidence required for recurring revenue share. These are the mechanics that make the economics durable rather than merely attractive.',
+          'Semi-exclusivity remains tied to the documented performance threshold, so neither side needs to renegotiate the basic principle during the pilot. With that condition already bounded, the remaining work is accurate documentation rather than commercial redesign.',
+        ],
+      },
+    ],
+    closing:
+      'Carry the agreed referral, protection, fee, support, and performance-threshold mechanics into final documentation and approval.',
+    fitLevel: 'high',
+  });
+
+  const reports = [promising, cautious, operational, clientOwnership, positive];
+  const headingSignatures = reports.map((report) =>
+    report.presentation_sections.map((section) => section.heading).join('|'),
+  );
+  assert.equal(new Set(headingSignatures).size, 5);
+
+  reports.forEach((report) => {
+    const visibleText = report.presentation_sections
+      .flatMap((section) => [...(section.paragraphs || []), ...(section.bullets || [])])
+      .join(' ');
+    assert.equal(visibleText.trim().startsWith('{'), false);
+    assert.equal(visibleText.includes('"internal_analysis"'), false);
+    assert.equal(visibleText.length > 900, true, `Expected substantive memo prose, got ${visibleText.length} chars`);
+    assert.equal(report.presentation_sections.some((section) => section.heading === 'Recommendation'), false);
+    assert.equal(report.presentation_sections.some((section) => section.heading === 'Confidence'), false);
+    assert.equal(report.presentation_sections.some((section) => section.heading === 'Status'), false);
+    assert.equal(report.renderer_path, 'narrative');
+    assert.equal(report.narrative_valid, true);
+    assert.deepEqual(report.narrative_validation_warnings, []);
+  });
+
+  assert.match(
+    promising.presentation_sections.flatMap((section) => section.paragraphs || []).join(' '),
+    /registered referrals|referral registration/i,
+  );
+  assert.match(
+    cautious.presentation_sections.flatMap((section) => section.paragraphs || []).join(' '),
+    /do not establish|remain unstated|false precision/i,
+  );
+  assert.match(
+    operational.presentation_sections.flatMap((section) => section.paragraphs || []).join(' '),
+    /economically aligned and still fail operationally/i,
+  );
+  assert.doesNotMatch(
+    cautious.presentation_sections
+      .flatMap((section) => section.paragraphs || [])
+      .join(' '),
+    /approve the final agreement|ready to finalize|ready to sign/i,
+  );
+  assert.match(
+    clientOwnership.presentation_sections
+      .flatMap((section) => section.paragraphs || [])
+      .join(' '),
+    /registered and protected|client-protection|non-circumvention/i,
+  );
+  assert.match(
+    operational.presentation_sections.find((section) => section.key === 'narrative_closing')?.paragraphs?.[0] || '',
+    /draft the referral-to-handoff workflow/i,
+  );
+  assert.doesNotMatch(
+    positive.presentation_sections
+      .flatMap((section) => section.paragraphs || [])
+      .join(' '),
+    /do not proceed|reject the agreement|pause the agreement|high-risk/i,
+  );
+  assert.match(
+    positive.presentation_sections.find((section) => section.key === 'narrative_closing')?.paragraphs?.[0] || '',
+    /final documentation and approval/i,
+  );
+});
+
+test('mediation renderer marks thin or historical narrative fallback explicitly', () => {
+  const presentation = buildMediationReviewPresentation({
+    fit_level: 'medium',
+    confidence_0_1: 0.58,
+    why: [
+      'Recommendation: Continue only after the unresolved commercial terms are agreed.',
+      'Where the Parties Align: Both sides support a bounded pilot relationship.',
+      'Where the Deal Is Stuck: Referral attribution and commission timing remain unresolved.',
+      'Suggested Bridge: Use registered referrals and a defined client-protection period.',
+      'Next Step: Record the pilot rules before either side commits.',
+    ],
+    missing: [
+      'When is commission earned? — determines the payment trigger.',
+      'How long does client protection last? — determines attribution certainty.',
+    ],
+    redactions: [],
+    narrative: {
+      title: 'Thin memo',
+      sections: [
+        {
+          heading: 'Only section',
+          paragraphs: ['This is too short to render as the natural memo.'],
+        },
+      ],
+      closing: '',
+    },
+  });
+
+  assert.equal(presentation.renderer_path, 'fallback');
+  assert.equal(presentation.narrative_valid, false);
+  assert.equal(
+    presentation.narrative_validation_warnings.includes('narrative_section_count_invalid'),
+    true,
+  );
+  assert.equal(
+    presentation.presentation_sections.some((section) => section.heading === 'Recommendation'),
+    true,
   );
 });

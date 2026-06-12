@@ -38,6 +38,56 @@ export interface NegotiationAnalysis {
   critical_incompatibilities: string[];
 }
 
+export type NarrativeOutputMode =
+  | 'executive_memo'
+  | 'founder_friendly'
+  | 'negotiation_coach'
+  | 'skeptical_review'
+  | 'balanced_assessment';
+
+export type NarrativeToneProfile =
+  | 'decisive'
+  | 'constructive'
+  | 'cautious'
+  | 'skeptical'
+  | 'balanced';
+
+export type MediationDecisionStatus =
+  | 'not_viable'
+  | 'explore_further'
+  | 'proceed_with_conditions'
+  | 'ready_to_finalize';
+
+export interface StructuredDealAnalysis {
+  recommendation: string;
+  confidence: number;
+  decision_status: MediationDecisionStatus;
+  core_thesis: string;
+  commercial_rationale: string[];
+  strongest_arguments_for: string[];
+  strongest_arguments_against: string[];
+  key_risks: string[];
+  hidden_assumptions: string[];
+  unresolved_questions: string[];
+  negotiation_leverage: string[];
+  suggested_next_actions: string[];
+  evidence_used: string[];
+  missing_information: string[];
+  tone_profile: NarrativeToneProfile;
+  output_mode: NarrativeOutputMode;
+}
+
+export interface NarrativeMemoSection {
+  heading: string;
+  paragraphs: string[];
+}
+
+export interface NarrativeMemo {
+  title: string;
+  sections: NarrativeMemoSection[];
+  closing: string;
+}
+
 export type EvaluationChunks = {
   sharedChunks: Array<{ evidence_id: string; text: string }>;
   confidentialChunks: Array<{ evidence_id: string; text: string }>;
@@ -85,6 +135,8 @@ export interface VertexEvaluationV2MediationResponse {
   why: string[];
   missing: string[];
   redactions: string[];
+  internal_analysis?: StructuredDealAnalysis;
+  narrative?: NarrativeMemo;
   negotiation_analysis?: NegotiationAnalysis;
   delta_summary?: string;
   resolved_since_last_round?: string[];
@@ -245,6 +297,11 @@ export interface VertexEvaluationV2Internal {
     applied: boolean;
   };
   raw_quality_score?: number;
+  narrative_validation?: {
+    valid: boolean;
+    renderer_path: 'narrative' | 'fallback';
+    warnings: string[];
+  };
 }
 
 export interface VertexEvaluationV2Request<Stage extends ReviewStage = ReviewStage> {
