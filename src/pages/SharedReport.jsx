@@ -424,6 +424,13 @@ function toFriendlySaveError(error) {
 
 function toFriendlyEvaluateError(error) {
   const code = asText(error?.code).toLowerCase();
+  if (
+    Number(error?.status || 0) === 504 ||
+    code === 'request_timeout' ||
+    code === 'function_invocation_timeout'
+  ) {
+    return 'AI mediation took too long to complete. Please retry in a moment.';
+  }
   if (code === 'reevaluation_not_allowed') {
     return 'This link does not allow AI mediation.';
   }

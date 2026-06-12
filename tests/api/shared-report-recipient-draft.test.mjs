@@ -2495,6 +2495,8 @@ if (!hasDatabaseUrl()) {
     assert.equal(firstSaveRes.statusCode, 200);
 
     let passBCount = 0;
+    const previousMediationProvider = process.env.MEDIATION_AI_PROVIDER;
+    process.env.MEDIATION_AI_PROVIDER = 'vertex';
     const cleanup = mockVertexV2Call(async ({ prompt }) => {
       const normalizedPrompt = String(prompt || '');
       const isPassBPrompt = normalizedPrompt.includes('Required JSON schema (top-level evaluation keys required');
@@ -2526,14 +2528,12 @@ if (!hasDatabaseUrl()) {
           confidence_0_1: 0.66,
           why: [
             isLaterBilateralRound
-              ? 'Executive Summary: The negotiation is closer to agreement because implementation sequencing is now largely aligned, but commercial acceptance criteria still need closure.'
-              : 'Executive Summary: The first bilateral review finds the structure workable, but implementation sequencing and commercial acceptance criteria still need clarification.',
-            'Decision Assessment: Risk Summary: The main remaining risk is commercial sign-off ownership and acceptance criteria.\n\nKey Strengths: The phased scope and rollout structure are usable for both sides.',
-            'Negotiation Insights: Likely priorities: both sides appear to want implementation certainty and bounded approval mechanics.\n\nPossible concessions: optional reporting detail may move behind the first milestone.\n\nStructural tensions: the main tension is launch speed versus commercial approval control.',
-            'Leverage Signals: Leverage signal: both sides have reasons to keep momentum, but neither wants open-ended approval exposure.',
-            'Potential Deal Structures: Option A — keep the phased rollout with explicit sign-off gates.\n\nOption B — tie expansion to milestone acceptance.\n\nOption C — narrow phase one and defer lower-priority reporting detail.',
-            'Decision Readiness: Decision status: Proceed with conditions. Commercial acceptance criteria and final approval ownership still need final agreement.\n\nWhat must be agreed now vs later: lock acceptance criteria and sign-off ownership now.\n\nWhat would change the verdict: a bounded approval path would raise confidence.',
-            'Recommended Path: Recommended path: close the remaining commercial deltas in the next round.',
+              ? 'Recommendation: Proceed with conditions because implementation sequencing is now substantially aligned, while commercial acceptance criteria and final approval ownership still need closure. A bounded approval path would raise confidence without reopening the agreed rollout structure.'
+              : 'Recommendation: Proceed with conditions because the phased rollout is workable, but implementation sequencing, commercial acceptance criteria, and final approval ownership still need clarification. Resolving those mechanics would preserve momentum without creating open-ended approval exposure.',
+            'Where the Parties Align: Both sides support a phased rollout, named checkpoints, and a bounded approval process. They also appear to agree that the first phase should establish enough evidence to decide whether broader implementation work is justified.',
+            'Where the Deal Is Stuck: Commercial acceptance criteria and final approval ownership remain unresolved. Those gaps determine when a checkpoint is complete, who can authorize the next phase, and whether either side can treat the rollout as ready for expansion.',
+            'Suggested Bridge: Keep the phased rollout, name one approval owner for each checkpoint, and record the evidence required before the next phase begins. Optional reporting detail can remain outside the first phase unless both sides approve it through the agreed change process.',
+            'Next Step: Hold a short closing session to settle checkpoint evidence, final approval ownership, and the escalation path before either side treats the rollout plan as final.',
           ],
           missing: [
             isLaterBilateralRound
@@ -2541,6 +2541,44 @@ if (!hasDatabaseUrl()) {
               : 'Who owns implementation sequencing? — determines whether launch accountability is contractable.',
           ],
           redactions: [],
+          internal_analysis: {
+            recommendation: 'Proceed with conditions',
+            confidence: 0.66,
+            decision_status: 'proceed_with_conditions',
+            core_thesis: 'The phased rollout is workable once approval ownership and checkpoint evidence are explicit.',
+            commercial_rationale: ['Both sides support a bounded rollout with named checkpoints.'],
+            strongest_arguments_for: ['The rollout structure is concrete enough to close the remaining mechanics.'],
+            strongest_arguments_against: ['Approval ownership and completion evidence remain unresolved.'],
+            key_risks: ['An unresolved approval path could delay the next phase.'],
+            hidden_assumptions: ['The named stakeholders remain available for review.'],
+            unresolved_questions: ['Who owns final approval?'],
+            negotiation_leverage: ['A phased rollout limits initial exposure.'],
+            suggested_next_actions: ['Name the approval owner and checkpoint evidence.'],
+            evidence_used: ['The materials describe a phased rollout and approval checkpoints.'],
+            missing_information: ['Final approval ownership.'],
+            tone_profile: 'constructive',
+            output_mode: 'executive_memo',
+          },
+          narrative: {
+            title: 'A workable rollout, once approval mechanics are explicit',
+            sections: [
+              {
+                heading: 'The commercial direction is aligned',
+                paragraphs: [
+                  'Both sides support a phased rollout with named checkpoints, which creates a credible basis for continuing without treating later expansion as already agreed. The structure contains the first commitment while preserving a route to broader implementation if the evidence supports it.',
+                  'The remaining work is concentrated in the approval mechanics rather than the overall commercial direction. That makes the negotiation closeable if the parties define completion evidence and decision authority.',
+                ],
+              },
+              {
+                heading: 'The final mechanics still matter',
+                paragraphs: [
+                  'Commercial acceptance criteria and final approval ownership remain open. Without those rules, the same checkpoint could be treated as complete by one side and incomplete by the other.',
+                  'A practical bridge is to name the approval owner, record checkpoint evidence, and use a bounded escalation path before the next phase begins.',
+                ],
+              },
+            ],
+            closing: 'Settle checkpoint evidence, approval ownership, and escalation before finalizing the rollout plan.',
+          },
           ...(isLaterBilateralRound
             ? {
                 delta_summary:
@@ -2595,17 +2633,17 @@ if (!hasDatabaseUrl()) {
       assert.equal(secondReport.movement_direction, 'converging');
       assert.match(secondReport.delta_summary, /Since the prior bilateral round/i);
       assert.equal(Array.isArray(secondReport.presentation_sections), true);
-      assert.equal(
-        secondReport.presentation_sections.some((section) => section.heading === 'Progress Since Prior Review'),
-        true,
-      );
-      assert.equal(
-        secondReport.presentation_sections.some((section) => section.heading === 'Recommendation'),
-        true,
-      );
+      assert.equal(secondReport.presentation_sections.length > 0, true);
+      assert.equal(secondReport.renderer_path, 'narrative');
+      assert.equal(secondReport.narrative_valid, true);
       assert.equal(passBCount >= 2, true);
     } finally {
       cleanup();
+      if (previousMediationProvider === undefined) {
+        delete process.env.MEDIATION_AI_PROVIDER;
+      } else {
+        process.env.MEDIATION_AI_PROVIDER = previousMediationProvider;
+      }
     }
   });
 }

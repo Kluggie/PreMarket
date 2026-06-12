@@ -3976,13 +3976,11 @@ test('quality gate: assessReportQuality returns score 1.0 for well-formed report
     fit_level: 'medium',
     confidence_0_1: 0.65,
     why: [
-      'Executive Summary: The deal structure covers scope, timeline, and delivery mechanics across the primary engagement. The proposing side and counterparty have aligned on a phased approach with named milestones.',
-      'Decision Assessment: The current terms balance risk between timeline certainty and cost management, but acceptance criteria remain open. Gap areas include delivery ownership and sign-off governance.',
-      'Negotiation Insights: The proposing side may prioritize predictable billing tied to milestones; the counterparty may prioritize delivery flexibility and the ability to refine scope after kickoff.',
-      'Leverage Signals: Timeline pressure favors the party that can offer faster mobilization. Switching costs may be moderate given the specialized domain knowledge required.',
-      'Potential Deal Structures: Option A — fixed-scope engagement with milestone-based billing. Option B — phased discovery followed by a binding statement of work.',
-      'Decision Readiness: Decision status: Proceed with conditions. Both sides need to define acceptance criteria and name dependency owners before commitment is prudent.',
-      'Recommended Path: Use a discovery-first phase to confirm scope boundaries, then formalize a binding statement of work with milestone releases.',
+      'Recommendation: Proceed with conditions because the parties have a credible phased engagement with named dashboard work, integration responsibilities, milestone timing, and adoption measures. The commercial direction is workable, but final commitment should wait until approval authority and dependency handling are explicit.',
+      'Where the Parties Align: Both sides appear to support the dashboard module, API integration, staged milestones, and an adoption target that can be observed during the six-month term. That alignment provides a practical basis for moving forward without treating later expansion as already agreed.',
+      'Where the Deal Is Stuck: Final approval ownership, third-party dependency treatment, and the relationship between acceptance and payment remain open. Those gaps matter because the same milestone could otherwise be treated as complete by one side and incomplete by the other, creating avoidable timing and payment exposure.',
+      'Suggested Bridge: Name one approval owner for each milestone, record the evidence required for acceptance, and use an escalation path for delayed client inputs or integration dependencies. Keep the first phase bounded and require a documented review before optional expansion work is authorized.',
+      'Next Step: Hold a short closing session to assign approval authority, define milestone evidence, confirm dependency escalation, and record the change process before either side treats the engagement as final.',
     ],
     missing: [
       'What acceptance criteria define completion? — determines payment triggers and dispute risk.',
@@ -4001,6 +3999,110 @@ test('quality gate: assessReportQuality returns score 1.0 for well-formed report
   assert.equal(quality.score, 1.0, 'Well-formed report should score 1.0');
   assert.equal(quality.triggers.length, 0, 'No quality triggers for a well-formed report');
   assert.equal(quality.weakSections.length, 0, 'No weak sections for a well-formed report');
+});
+
+test('quality gate accepts the current mediation sidecar and avoids an unnecessary refinement call', async () => {
+  const factSheet = validFactSheetPayload({
+    project_goal: 'Test a SaaS referral and implementation partnership.',
+    scope_deliverables: [
+      'Non-exclusive six-month pilot',
+      'Registered referrals',
+      'Implementation support',
+      'Training responsibilities',
+    ],
+    open_questions: [
+      'When is commission earned?',
+      'How long does client protection last?',
+    ],
+    missing_info: [
+      'Commission trigger remains unresolved.',
+      'Client-protection period remains unresolved.',
+    ],
+  });
+  const why = [
+    'Recommendation: Proceed with conditions because both sides support a bounded six-month referral pilot, implementation support, and a path to revisit economics after measurable performance. Final commitment should wait until referral attribution, client protection, and payment triggers are documented.',
+    'Where the Parties Align: Both parties support a non-exclusive pilot, referral commission, separately paid implementation work, training, and potential expansion if the channel produces qualified customers. That common ground is enough to test the relationship without granting permanent rights at the outset.',
+    'Where the Deal Is Stuck: The materials do not yet establish when a referral becomes attributable, how long client protection lasts, what counts as bypassing the partner, or when ongoing support earns recurring revenue share. Those gaps affect the value and control each side receives.',
+    'Suggested Bridge: Use registered referrals, a defined client-protection window, clear direct-sell exceptions, commission triggered by an agreed customer event, recurring revenue share only while documented support continues, and semi-exclusivity only after a measurable performance threshold.',
+    'Next Step: Draft a one-page pilot rules document covering referral registration, client protection, commission and revenue-share triggers, implementation fee ownership, support responsibilities, and the post-pilot review before final commitment.',
+  ];
+  const passB = validPayload({
+    fit_level: 'medium',
+    confidence_0_1: 0.67,
+    why,
+    missing: [
+      'What counts as a successful referral? — determines attribution and commission eligibility.',
+      'When is commission earned and paid? — determines the commercial trigger.',
+      'How long does client protection last? — determines whether introductions remain protected.',
+      'When does recurring revenue share apply? — ties continuing economics to active support.',
+    ],
+    redactions: [],
+    internal_analysis: validInternalAnalysis({
+      confidence: 0.67,
+      core_thesis: 'The pilot is workable once attribution, protection, and payment triggers are explicit.',
+    }),
+    narrative: validNaturalNarrative({
+      title: 'A workable referral pilot, once ownership rules are explicit',
+      sections: [
+        {
+          heading: 'Why the pilot is commercially plausible',
+          paragraphs: [
+            'Both sides support a six-month referral relationship and an implementation role, which creates enough common ground to test customer demand before either side grants broader channel rights. The bounded term limits the initial commitment while preserving a path to expand if the evidence is positive.',
+            'The software company gains qualified introductions and implementation capacity, while the consulting partner can earn referral commission and separately priced implementation work. That division is coherent if customer attribution is documented rather than left to memory.',
+          ],
+        },
+        {
+          heading: 'The mechanics that still matter',
+          paragraphs: [
+            'Commission timing and the client-protection window remain unresolved. If those terms stay open, each side can reasonably believe it owns the same account or is entitled to a different payment event.',
+            'A registered-referral process, a defined protection period, separate implementation fees, and recurring revenue share tied to documented support would create a practical conditional path without granting exclusivity upfront.',
+          ],
+        },
+      ],
+      closing:
+        'Draft the referral-registration, client-protection, commission, implementation-fee, and support rules before final commitment.',
+    }),
+  });
+  const quality = assessReportQuality(passB, factSheet);
+  assert.equal(quality.score, 1);
+  assert.deepEqual(quality.triggers, []);
+
+  let callCount = 0;
+  globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__ = async () => {
+    callCount += 1;
+    if (callCount === 1) {
+      return {
+        model: 'gemini-2.5-flash-lite',
+        text: JSON.stringify(factSheet),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      };
+    }
+    if (callCount === 2) {
+      return {
+        model: 'gemini-2.5-pro',
+        text: JSON.stringify(passB),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      };
+    }
+    throw new Error(`Unexpected quality-repair call ${callCount}`);
+  };
+
+  try {
+    const outcome = await evaluateMediationWithVertexV2({
+      sharedText: 'Both parties support a non-exclusive six-month SaaS referral pilot with implementation support.',
+      confidentialText: 'Private commercial limits exist and must remain confidential.',
+      requestId: 'req-current-sidecar-no-refinement',
+    });
+    assert.equal(outcome.ok, true);
+    if (!outcome.ok) return;
+    assert.equal(callCount, 2);
+    assert.equal(outcome._internal.refinement?.attempted, false);
+    assert.equal(outcome._internal.narrative_validation?.renderer_path, 'narrative');
+  } finally {
+    delete globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__;
+  }
 });
 
 test('quality gate evaluates narrative substance and decision consistency', () => {

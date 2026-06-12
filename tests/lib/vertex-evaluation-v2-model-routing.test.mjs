@@ -57,13 +57,11 @@ function evalPayload(overrides = {}) {
     fit_level: 'medium',
     confidence_0_1: 0.71,
     why: [
-      'Executive Summary: Scope aligns with internal requirements and the proposal demonstrates a clear understanding of the expected deliverables, timelines, and resource allocation needed for successful project execution.',
-      'Decision Assessment: Several factors affect the readiness of this deal, including the clarity of deliverables, the timeline feasibility, and the alignment between stated objectives and proposed resource allocation.',
-      'Negotiation Insights: The vendor has structured their proposal with flexibility on timeline adjustments, which provides meaningful leverage for discussions about phased delivery milestones and payment schedules.',
-      'Leverage Signals: Budget parameters and delivery expectations create natural negotiation leverage, particularly around milestone-based payment structures and performance guarantees that protect both parties.',
-      'Potential Deal Structures: Multiple viable structures exist including fixed-price with milestone payments, time-and-materials with a cap, or a hybrid approach that balances risk between the parties.',
-      'Decision Readiness: Near-ready pending renewal clarification and a few outstanding questions that should be resolved before final commitment to ensure both parties are aligned on scope boundaries.',
-      'Recommended Path: Add renewal opt-out language before signing, negotiate milestone-based payments, and establish clear acceptance criteria to protect both buyer and vendor interests.',
+      'Recommendation: Proceed with conditions because the dashboard engagement has a recognizable scope, timetable, and commercial purpose, but renewal treatment, approval authority, and milestone evidence still need agreement before final commitment. Resolving those terms would preserve the useful phased structure without asking either side to accept open-ended exposure.',
+      'Where the Parties Align: Both sides appear to support the dashboard module, API integration, a six-month timetable, staged milestones, and measurable performance expectations. That alignment gives the parties a concrete basis for continuing the negotiation and linking payments to observable progress rather than a broad promise of completion.',
+      'Where the Deal Is Stuck: Renewal opt-out rights, scope-change authority, dependency ownership, and the evidence required for milestone acceptance remain open. Those issues determine whether timing and payment remain predictable when implementation assumptions change or a third-party dependency delays the work.',
+      'Suggested Bridge: Keep the phased engagement, name the person authorized to approve changes, tie milestone payments to agreed evidence, and add a clear renewal opt-out. A capped change process can preserve flexibility while preventing either side from treating unpriced expansion as part of the original commitment.',
+      'Next Step: Hold a short closing session to settle renewal, change authority, milestone evidence, and dependency escalation before either side treats the engagement as ready for final documentation.',
     ],
     missing: [
       'Confirm budget ceiling is within approved range? — determines negotiation boundary.',

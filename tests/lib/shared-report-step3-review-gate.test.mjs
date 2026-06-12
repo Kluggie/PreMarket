@@ -18,6 +18,11 @@ const SHARED_REPORTS_CLIENT_PATH = path.resolve(
   'src/api/sharedReportsClient.js',
 );
 
+const VERCEL_CONFIG_PATH = path.resolve(
+  process.cwd(),
+  'vercel.json',
+);
+
 // ─────────────────────────────────────────────────────────────────
 //  Core requirement: Step 2 must NOT run AI mediation directly
 // ─────────────────────────────────────────────────────────────────
@@ -167,6 +172,28 @@ test('recipient Run AI Mediation settles the click handler on route failure', as
   assert.ok(
     block.includes('try {') && block.includes('catch'),
     'Run Mediation must catch route failures after the mutation error handler shows the error',
+  );
+});
+
+test('recipient Run AI Mediation shows a specific timeout error and Vercel allows the API function to finish', async () => {
+  const source = await readFile(SHARED_REPORT_PATH, 'utf8');
+  const helperStart = source.indexOf('function toFriendlyEvaluateError');
+  assert.ok(helperStart >= 0, 'Expected toFriendlyEvaluateError');
+  const helperBlock = source.slice(helperStart, helperStart + 850);
+  assert.ok(
+    helperBlock.includes("Number(error?.status || 0) === 504"),
+    'Shared report should recognize gateway timeouts',
+  );
+  assert.ok(
+    helperBlock.includes('AI mediation took too long to complete'),
+    'Shared report should show a mediation-specific timeout message',
+  );
+
+  const vercelConfig = JSON.parse(await readFile(VERCEL_CONFIG_PATH, 'utf8'));
+  assert.equal(
+    vercelConfig?.functions?.['api/index.ts']?.maxDuration,
+    300,
+    'The consolidated API function must allow long-running mediation requests to finish',
   );
 });
 

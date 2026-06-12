@@ -65,6 +65,22 @@ import { MEDIATION_REVIEW_STAGE } from '../../../../src/lib/opportunityReviewSta
 const SHARED_REPORT_EVALUATE_ROUTE = `${SHARED_REPORT_ROUTE}/evaluate`;
 const MIN_SHARED_EVALUATION_TEXT_LENGTH = 40;
 
+function logEvaluationRuntime(
+  context: any,
+  event: string,
+  details: Record<string, unknown> = {},
+) {
+  console.info(
+    JSON.stringify({
+      level: 'info',
+      route: SHARED_REPORT_EVALUATE_ROUTE,
+      event,
+      requestId: context?.requestId || null,
+      ...details,
+    }),
+  );
+}
+
 function asText(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
 }
@@ -591,8 +607,15 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
 
     try {
       const engine = resolveDocumentComparisonEngine(req);
+      const evaluatorStartedAt = Date.now();
       let evaluated: any;
+      let evaluationDiagnostics: Record<string, unknown> = {};
       let v2Preflight: { promptChars?: number; estimatedPromptTokens?: number; overCeiling?: boolean; trimTriggered?: boolean } = {};
+      logEvaluationRuntime(context, 'evaluation_model_start', {
+        evaluationId: evaluationRunId,
+        engine,
+        analysisStage: MEDIATION_REVIEW_STAGE,
+      });
       if (engine === 'v2') {
         // Hard try-catch so any unexpected evaluator throw produces a valid
         // completed_with_warnings result rather than a 502.
@@ -691,6 +714,16 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
             priorSharedText: latestPriorBilateralRound?.sharedTextSnapshot || '',
           },
         });
+        evaluationDiagnostics = {
+          provider: (v2Result as any)?._internal?.models_used?.provider || null,
+          model: (v2Result as any)?.model || null,
+          passBAttempts: (v2Result as any)?._internal?.pass_b_attempt_count || null,
+          refinementAttempted: Boolean((v2Result as any)?._internal?.refinement?.attempted),
+          refinementApplied: Boolean((v2Result as any)?._internal?.refinement?.applied),
+          regenerationTriggered: Boolean((v2Result as any)?._internal?.regeneration?.triggered),
+          rawQualityScore: (v2Result as any)?._internal?.raw_quality_score ?? null,
+          rendererPath: (v2Result as any)?._internal?.narrative_validation?.renderer_path || null,
+        };
         // Extract preflight data for input_trace
         v2Preflight = (v2Result as any)?._internal?.preflight || {};
       } else {
@@ -713,6 +746,12 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
           },
         );
       }
+      logEvaluationRuntime(context, 'evaluation_model_complete', {
+        evaluationId: evaluationRunId,
+        engine,
+        elapsedMs: Date.now() - evaluatorStartedAt,
+        ...evaluationDiagnostics,
+      });
 
       const projection = buildRecipientSafeEvaluationProjection({
         evaluationResult: evaluated || {},
@@ -827,6 +866,11 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       });
     } catch (error: any) {
       const failure = toApiError(error);
+      logEvaluationRuntime(context, 'evaluation_failed', {
+        evaluationId: evaluationRunId,
+        statusCode: failure.statusCode,
+        errorCode: failure.code,
+      });
       const failedAt = new Date();
       await resolved.db
         .update(schema.sharedReportEvaluationRuns)

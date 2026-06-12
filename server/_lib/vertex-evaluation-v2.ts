@@ -1034,6 +1034,17 @@ const ADAPTIVE_WHY_SECTION_KEYS = [
 
 const ALL_KNOWN_WHY_SECTION_KEYS = [...REQUIRED_WHY_SECTION_KEYS, ...ADAPTIVE_WHY_SECTION_KEYS];
 
+// The generated compatibility sidecar follows the current mediation prompt.
+// Keep this separate from REQUIRED_WHY_SECTION_KEYS, which still supports
+// deterministic repair of historical reports that used legacy headings.
+const QUALITY_REQUIRED_WHY_SECTION_KEYS = [
+  'recommended path',
+  'where agreement exists',
+  'what is blocking commitment',
+  'proposed bridge',
+  'suggested next step',
+];
+
 type CalibrationSignals = {
   domain: ProposalDomain;
   rules: MissingRule[];
@@ -5366,7 +5377,7 @@ function assessReportQuality(
 
   // 2. Check each required section exists and has substance
   const sections = parseWhySections(data.why || []);
-  for (const key of REQUIRED_WHY_SECTION_KEYS) {
+  for (const key of QUALITY_REQUIRED_WHY_SECTION_KEYS) {
     const section = sections.find((s) => s.key === key);
     if (!section) {
       triggers.push(`missing_section:${key}`);
