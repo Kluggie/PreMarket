@@ -2722,12 +2722,30 @@ function containsConfidentialMarker(value: unknown, markers: string[]) {
   return markers.some((marker) => marker.length >= 8 && normalized.includes(marker));
 }
 
+const UNSAFE_PUBLIC_EVIDENCE_META_PATTERNS = [
+  /\bconfidential (?:context|material|materials|information|evidence|source|sources)\b/i,
+  /\bprivate (?:context|material|materials|information|evidence|source|sources|willingness|fallback|concession|pressure|threshold|thresholds|limit|limits|resourcing concerns?)\b/i,
+  /\binternal (?:analysis|evidence|context|information|pricing flexibility|pipeline pressure|pressure|threshold|thresholds|limit|limits|fallback|resourcing concerns?|constraints?)\b/i,
+  /\bhidden (?:posture|position|positions|threshold|thresholds|limit|limits)\b/i,
+  /\bconfidential[- ]only\b/i,
+  /\bretrieval diagnostics?\b/i,
+  /\binternal evidence visibility\b/i,
+];
+
+function containsUnsafePublicEvidenceMeta(value: unknown) {
+  const text = String(value || '');
+  return UNSAFE_PUBLIC_EVIDENCE_META_PATTERNS.some((pattern) => pattern.test(text));
+}
+
 function scrubString(value: unknown, markers: string[], fallback = '') {
   const text = String(value || '').trim();
   if (!text) {
     return fallback;
   }
-  if (containsConfidentialMarker(text, markers)) {
+  if (
+    containsConfidentialMarker(text, markers) ||
+    containsUnsafePublicEvidenceMeta(text)
+  ) {
     return fallback;
   }
   return text;
@@ -2969,7 +2987,10 @@ function sanitizeLegacySections(value: unknown, markers: string[]) {
 
 function redactConfidentialStrings(value: any, markers: string[]): any {
   if (typeof value === 'string') {
-    if (!containsConfidentialMarker(value, markers)) {
+    if (
+      !containsConfidentialMarker(value, markers) &&
+      !containsUnsafePublicEvidenceMeta(value)
+    ) {
       return value;
     }
     return '';
@@ -3485,15 +3506,26 @@ function buildV2RecipientProjection(params: {
   const negotiationAnalysis = toRecipientSafeNegotiationAnalysis(normalizeNegotiationAnalysis(
     redactConfidentialStrings(sourceReport.negotiation_analysis, markers),
   ));
-  const safeNarrative =
-    sourceReport.narrative && typeof sourceReport.narrative === 'object' && !Array.isArray(sourceReport.narrative)
-      ? redactConfidentialStrings(sourceReport.narrative, markers)
-      : undefined;
   const fitLevel = scrubString(
     sourceReport.fit_level,
     markers,
     recommendation.toLowerCase(),
   );
+  const scrubbedNarrative =
+    sourceReport.narrative && typeof sourceReport.narrative === 'object' && !Array.isArray(sourceReport.narrative)
+      ? redactConfidentialStrings(sourceReport.narrative, markers)
+      : undefined;
+  const narrativeValidation = validateNarrativeMemo(scrubbedNarrative, {
+    fitLevel:
+      fitLevel === 'high' || fitLevel === 'medium' || fitLevel === 'low'
+        ? fitLevel
+        : 'unknown',
+    missingCount: missing.length,
+    validateContentAlignment: true,
+  });
+  const safeNarrative = narrativeValidation.valid
+    ? narrativeValidation.narrative
+    : undefined;
   const rebuiltPresentation = buildMediationReviewPresentation({
     fit_level: fitLevel,
     confidence_0_1: clampConfidence(sourceReport.confidence_0_1, confidence / 100),
@@ -3512,6 +3544,8 @@ function buildV2RecipientProjection(params: {
       getPresentationSections({ presentation_sections: projectedPresentationSections }),
     ),
   );
+  const sourceNarrativeRemainsValid =
+    !sourceReport.narrative || narrativeValidation.valid;
 
   const safeReport = {
     report_format: 'v2' as const,
@@ -3552,23 +3586,26 @@ function buildV2RecipientProjection(params: {
       scrubString(sourceReport.report_archetype, markers, '') ||
       rebuiltPresentation.report_archetype,
     report_title:
-      scrubString(sourceReport.report_title, markers, '') ||
+      (sourceNarrativeRemainsValid
+        ? scrubString(sourceReport.report_title, markers, '')
+        : '') ||
       rebuiltPresentation.report_title,
     primary_insight:
-      scrubString(sourceReport.primary_insight, markers, '') ||
+      (sourceNarrativeRemainsValid
+        ? scrubString(sourceReport.primary_insight, markers, '')
+        : '') ||
       rebuiltPresentation.primary_insight,
     renderer_path:
-      scrubString(sourceReport.renderer_path, markers, '') ||
       rebuiltPresentation.renderer_path,
-    narrative_valid:
-      typeof sourceReport.narrative_valid === 'boolean'
-        ? sourceReport.narrative_valid
-        : rebuiltPresentation.narrative_valid,
+    narrative_valid: rebuiltPresentation.narrative_valid,
     narrative_validation_warnings:
-      scrubStringArray(sourceReport.narrative_validation_warnings, markers).length > 0
-        ? scrubStringArray(sourceReport.narrative_validation_warnings, markers)
-        : rebuiltPresentation.narrative_validation_warnings,
+      Array.from(new Set([
+        ...scrubStringArray(sourceReport.narrative_validation_warnings, markers),
+        ...narrativeValidation.warnings,
+        ...rebuiltPresentation.narrative_validation_warnings,
+      ])),
     presentation_sections:
+      sourceNarrativeRemainsValid &&
       normalizedProjectedPresentationSections.length > 0
         ? normalizedProjectedPresentationSections
         : omitPublicMediationRedactionSections(rebuiltPresentation.presentation_sections),

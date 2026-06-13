@@ -229,6 +229,18 @@ test('recipient Run AI Mediation polls the persisted run and recovers a delayed 
     'The shared report must poll while a persisted mediation run is pending',
   );
   assert.ok(
+    source.includes('refetchInterval: (query) =>'),
+    'Workspace polling must be owned by React Query so completed runs update component state automatically',
+  );
+  assert.ok(
+    source.includes('refetchIntervalInBackground: true'),
+    'Workspace polling must continue while the tab is backgrounded',
+  );
+  assert.ok(
+    source.includes('activeEvaluationId'),
+    'The recovery path must bind to the persisted evaluation run ID once observed',
+  );
+  assert.ok(
     source.includes('isStalePendingEvaluationRun'),
     'A stale pending run must clear the loading state and permit retry',
   );

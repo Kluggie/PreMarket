@@ -2230,6 +2230,74 @@ test('buildRecipientSafeEvaluationProjection: preserves safe presentation metada
   ]);
 });
 
+test('buildRecipientSafeEvaluationProjection: strips public references to confidential or internal evidence sources', () => {
+  const report = {
+    report_format: 'v2',
+    analysis_stage: 'mediation_review',
+    fit_level: 'medium',
+    confidence_0_1: 0.64,
+    why: [
+      'Recommendation: Proceed with conditions after the parties agree attribution and customer-protection rules.',
+      'Where the Parties Align: Both sides support a bounded referral pilot and implementation support.',
+      'Where the Deal Is Stuck: Confidential context suggests the economic gap may be narrower.',
+      'Where the Deal Is Stuck: Internal pipeline pressure may make one side more flexible.',
+      'Suggested Bridge: Use registered referrals, a protection window, and performance-based post-pilot rights.',
+      'Next Step: Draft a one-page Pilot Rules of Engagement.',
+    ],
+    missing: [
+      'When is referral commission earned and paid? — determines the economic trigger.',
+    ],
+    redactions: [],
+    recommendation: 'Medium',
+    narrative: {
+      title: 'A conditional referral pilot',
+      sections: [
+        {
+          heading: 'The commercial picture',
+          paragraphs: [
+            'Both sides support a bounded referral pilot with implementation support and a post-pilot review.',
+            'Private evidence shows that one side may accept less than its stated position.',
+          ],
+        },
+        {
+          heading: 'The operating rules',
+          paragraphs: [
+            'The parties still need registered-referral rules, a client-protection period, and a clear commission trigger before launch.',
+            'A separate implementation-fee path and documented support obligations would keep referral economics distinct from delivery work.',
+          ],
+        },
+      ],
+      closing: 'Draft the Pilot Rules of Engagement before launch.',
+    },
+  };
+
+  const projection = buildRecipientSafeEvaluationProjection({
+    evaluationResult: {
+      provider: 'vertex',
+      model: 'test-model',
+      generatedAt: '2026-06-13T00:00:00.000Z',
+      score: 64,
+      confidence: 64,
+      recommendation: 'Medium',
+      summary: 'Proceed with conditions.',
+      report,
+    },
+    publicReport: report,
+    confidentialText: 'A private commission fallback exists.',
+    sharedText: 'Both parties support a referral pilot and implementation support.',
+    title: 'Public Wording Safety',
+  });
+
+  const serialized = JSON.stringify(projection);
+  assert.doesNotMatch(
+    serialized,
+    /confidential context|private evidence|internal analysis|internal pipeline pressure|hidden posture|retrieval diagnostics/i,
+  );
+  assert.equal('internal_analysis' in projection.public_report, false);
+  assert.equal(projection.public_report.renderer_path, 'fallback');
+  assert.equal(projection.public_report.narrative_valid, false);
+});
+
 test('buildRecipientSafeEvaluationProjection: rebuilds dynamic sections when scrubbed presentation metadata becomes empty', () => {
   const confidentialMarker = 'vault hush 445';
   const report = {

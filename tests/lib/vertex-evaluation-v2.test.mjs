@@ -1036,6 +1036,124 @@ test('post-calibration removes a narrative that contradicts the final conditiona
   }
 });
 
+test('post-calibration revalidates and removes an unqualified viable narrative after a not-viable downgrade', async () => {
+  const factSheet = validFactSheetPayload({
+    project_goal: 'Explore a possible commercial partnership.',
+    scope_deliverables: [],
+    timeline: { start: null, duration: null, milestones: [] },
+    constraints: [],
+    success_criteria_kpis: [],
+    assumptions: [],
+    risks: [],
+    open_questions: [
+      'What commercial structure is being proposed?',
+      'What obligations would each party accept?',
+      'How would value and risk be allocated?',
+    ],
+    missing_info: [
+      'The proposed scope is not established.',
+      'The timing and decision process are not established.',
+      'The commercial terms and success measures are not established.',
+    ],
+    source_coverage: {
+      has_scope: false,
+      has_timeline: false,
+      has_kpis: false,
+      has_constraints: false,
+      has_risks: false,
+    },
+  });
+  const viableNarrative = validNaturalNarrative({
+    title: 'A workable and plausible partnership landing zone',
+    sections: [
+      {
+        heading: 'Why a bridge remains realistic',
+        paragraphs: [
+          'This still looks like a plausible and bridgeable partnership with a workable path to agreement. The parties can use a bounded pilot as a realistic landing zone while the unresolved commercial mechanics are developed.',
+          'A pilot would let both sides move forward now and use operating experience to settle the remaining economics. That approach treats the current gaps as manageable conditions rather than reasons to reject the opportunity.',
+        ],
+      },
+      {
+        heading: 'How to move ahead',
+        paragraphs: [
+          'The parties should proceed with a short pilot and record broad responsibilities before launch. They can defer the detailed value allocation and success measures until the relationship has produced initial evidence.',
+          'The practical next move is to approve the pilot concept and begin planning. The unresolved scope, timing, economics, and risk allocation can then be completed alongside implementation.',
+        ],
+      },
+    ],
+    closing:
+      'Approve a bounded pilot now and complete the remaining commercial mechanics as the partnership develops.',
+  });
+  const passB = validPayload({
+    fit_level: 'high',
+    confidence_0_1: 0.9,
+    why: [
+      'Recommendation: Proceed with a pilot now because the opportunity appears workable despite the limited record.',
+      'Where the Parties Align: Both sides appear interested in exploring a commercial relationship.',
+      'Where the Deal Is Stuck: Scope, timing, economics, success measures, and risk allocation remain unresolved.',
+      'Suggested Bridge: Use a bounded pilot while the parties develop the missing terms.',
+      'Next Step: Approve the pilot concept and begin planning.',
+    ],
+    missing: [
+      'What commercial structure is being proposed?',
+      'What obligations would each party accept?',
+      'How would value and risk be allocated?',
+    ],
+    internal_analysis: validInternalAnalysis({
+      recommendation: 'Proceed with a pilot',
+      confidence: 0.9,
+      decision_status: 'ready_to_finalize',
+      core_thesis: 'A pilot provides a workable path despite the thin source record.',
+      suggested_next_actions: ['Approve the pilot concept.'],
+    }),
+    narrative: viableNarrative,
+  });
+
+  let callCount = 0;
+  globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__ = async () => {
+    callCount += 1;
+    return {
+      model: 'gemini-2.0-flash-001',
+      text: JSON.stringify(callCount === 1 ? factSheet : passB),
+      finishReason: 'STOP',
+      httpStatus: 200,
+    };
+  };
+
+  try {
+    const outcome = await evaluateMediationWithVertexV2({
+      sharedText:
+        'The parties have expressed interest in exploring a possible commercial relationship.',
+      confidentialText:
+        'Private material must not be exposed in the shared mediation report.',
+      requestId: 'req-low-calibrated-narrative-consistency',
+      maxQualityRepairCalls: 0,
+    });
+
+    assert.equal(outcome.ok, true);
+    if (!outcome.ok) return;
+    assert.equal(outcome.data.fit_level, 'low');
+    assert.equal(outcome.data.internal_analysis?.decision_status, 'not_viable');
+    assert.equal(outcome.data.narrative, undefined);
+    assert.equal(outcome._internal?.narrative_validation?.renderer_path, 'fallback');
+    assert.equal(
+      outcome._internal?.caps_applied.includes('discard_invalid_or_decision_inconsistent_narrative'),
+      true,
+    );
+
+    const stored = buildStoredV2Evaluation(outcome);
+    const visibleText = JSON.stringify(stored.report.presentation_sections);
+    assert.equal(stored.report.renderer_path, 'fallback');
+    assert.equal(stored.report.narrative_valid, false);
+    assert.doesNotMatch(
+      visibleText,
+      /\bworkable\b|\bplausible\b|\bbridgeable\b|\brealistic landing zone\b/i,
+    );
+  } finally {
+    delete globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__;
+  }
+});
+
 test('v2 parses fenced JSON and preamble text', async () => {
   const body = `Model output follows:\n\`\`\`json\n${JSON.stringify(validPayload())}\n\`\`\`\nDone`;
   const cleanup = setVertexV2MockSequence([

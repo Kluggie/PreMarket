@@ -5794,6 +5794,8 @@ function buildRefinementPrompt(params: {
     '- Never quote confidential text verbatim.',
     '- Never disclose confidential numbers, IDs, dates, emails, pricing, or exact identifiers.',
     '- Use only generic, safely-derived conclusions when drawing on confidential context.',
+    '- Never mention confidential context, private evidence, internal analysis, hidden posture, confidential materials, confidential-only support, or retrieval diagnostics in user-facing narrative or compatibility fields.',
+    '- If a conclusion cannot be supported from shared/public material, omit it or describe the shared record as insufficient rather than revealing that private material influenced the analysis.',
     '',
     'IMPROVEMENT TARGETS:',
     `- ${weakSectionsList}`,

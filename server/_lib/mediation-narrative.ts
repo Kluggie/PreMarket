@@ -183,6 +183,45 @@ const STRONG_NEGATIVE_PATTERNS = [
   /\bhigh[- ]risk\b/i,
 ];
 
+const CONDITIONAL_VIABILITY_PATTERNS = [
+  /\bworkable\b/i,
+  /\bplausible\b/i,
+  /\bbridgeable\b/i,
+  /\bworth pursuing\b/i,
+  /\brealistic (?:agreement |deal |pilot )?(?:path|structure|landing zone)\b/i,
+  /\blanding zone\b/i,
+  /\bcredible path to agreement\b/i,
+];
+
+const CURRENT_STRUCTURE_NEGATIVE_PATTERNS = [
+  /\bcurrent (?:proposal|structure|draft|terms?) (?:is|are|remains?) not viable\b/i,
+  /\bnot viable as (?:currently )?(?:drafted|structured|proposed)\b/i,
+  /\bdo not proceed (?:with|on) the current (?:proposal|structure|draft|terms?)\b/i,
+];
+
+const ALTERNATIVE_STRUCTURE_PATTERNS = [
+  /\b(?:alternative|narrower|restructured|materially different|replacement) (?:proposal|structure|deal|pilot|arrangement)\b/i,
+  /\bcould become workable\b/i,
+  /\bwould need to be restructured\b/i,
+  /\bonly a different structure\b/i,
+];
+
+const CONDITIONAL_NEGATIVE_PATTERNS = [
+  /\bdo not proceed\b[^.]{0,120}\b(?:until|unless|before)\b/i,
+  /\bshould not (?:sign|approve|proceed|commit)\b[^.]{0,120}\b(?:until|unless|before)\b/i,
+  /\bpause\b[^.]{0,120}\b(?:until|unless|while)\b/i,
+];
+
+const PUBLIC_EVIDENCE_META_PATTERNS = [
+  /\bconfidential (?:context|material|materials|information|evidence|source|sources)\b/i,
+  /\bprivate (?:context|material|materials|information|evidence|source|sources|willingness|fallback|concession|pressure|threshold|thresholds|limit|limits|resourcing concerns?)\b/i,
+  /\binternal (?:analysis|evidence|context|information|pricing flexibility|pipeline pressure|pressure|threshold|thresholds|limit|limits|fallback|resourcing concerns?|constraints?)\b/i,
+  /\bhidden (?:posture|position|positions|threshold|thresholds|limit|limits)\b/i,
+  /\bconfidential[- ]only\b/i,
+  /\bretrieval diagnostics?\b/i,
+  /\binternal evidence visibility\b/i,
+];
+
 const UNCERTAINTY_PATTERNS = [
   /\bmissing\b/i,
   /\bunresolved\b/i,
@@ -218,6 +257,25 @@ function hasStrongNegativeDecisionLanguage(text: string) {
   return STRONG_NEGATIVE_PATTERNS.some((pattern) => hasUnnegatedPattern(text, pattern));
 }
 
+function hasConditionalViabilityLanguage(text: string) {
+  return CONDITIONAL_VIABILITY_PATTERNS.some((pattern) => hasUnnegatedPattern(text, pattern));
+}
+
+function describesQualifiedAlternativeStructure(text: string) {
+  return (
+    CURRENT_STRUCTURE_NEGATIVE_PATTERNS.some((pattern) => pattern.test(text)) &&
+    ALTERNATIVE_STRUCTURE_PATTERNS.some((pattern) => pattern.test(text))
+  );
+}
+
+function hasConditionalNegativeLanguage(text: string) {
+  return CONDITIONAL_NEGATIVE_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function mentionsPrivateOrInternalEvidenceSource(text: string) {
+  return PUBLIC_EVIDENCE_META_PATTERNS.some((pattern) => pattern.test(text));
+}
+
 export function decisionLanguageWarnings(
   text: string,
   status: MediationDecisionStatus,
@@ -234,6 +292,20 @@ export function decisionLanguageWarnings(
     hasStrongNegativeDecisionLanguage(text)
   ) {
     warnings.push('narrative_conflicts_with_positive_decision');
+  }
+  if (
+    status === 'not_viable' &&
+    hasConditionalViabilityLanguage(text) &&
+    !describesQualifiedAlternativeStructure(text)
+  ) {
+    warnings.push('narrative_presents_viable_path_under_not_viable_decision');
+  }
+  if (
+    status === 'proceed_with_conditions' &&
+    hasStrongNegativeDecisionLanguage(text) &&
+    !hasConditionalNegativeLanguage(text)
+  ) {
+    warnings.push('narrative_rejects_deal_under_conditional_decision');
   }
   return warnings;
 }
@@ -361,6 +433,9 @@ export function validateNarrativeMemo(
     /["']internal_analysis["']|\bdecision_status\b|\bevidence_used\b|\boutput_mode\b/i.test(bodyText)
   ) {
     warnings.push('narrative_contains_internal_or_json_artifacts');
+  }
+  if (mentionsPrivateOrInternalEvidenceSource(bodyText)) {
+    warnings.push('narrative_mentions_private_or_internal_evidence_source');
   }
   if (hasRigidDecisionBriefHeadings(narrative)) {
     warnings.push('narrative_uses_rigid_decision_brief_headings');

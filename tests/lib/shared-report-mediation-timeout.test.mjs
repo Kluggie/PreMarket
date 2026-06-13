@@ -53,6 +53,36 @@ test('a completed run saved after a delayed request is recognized as the latest 
   );
 });
 
+test('run recovery uses run identity and revision instead of browser/server clock comparison', () => {
+  const serverClockBehindRun = {
+    id: 'share_eval_clock_skew',
+    revision_id: 'share_rev_current',
+    status: 'success',
+    public_report: { renderer_path: 'narrative' },
+    created_at: new Date(startedAt - 10 * 60_000).toISOString(),
+  };
+
+  assert.equal(
+    isEvaluationRunForRequest(serverClockBehindRun, {
+      priorEvaluationId: 'share_eval_old',
+      requestStartedAt: startedAt,
+      activeRevisionId: 'share_rev_current',
+    }),
+    true,
+  );
+  assert.equal(
+    isEvaluationRunForRequest(
+      { ...serverClockBehindRun, revision_id: 'share_rev_other' },
+      {
+        activeEvaluationId: 'share_eval_clock_skew',
+        priorEvaluationId: 'share_eval_old',
+        activeRevisionId: 'share_rev_current',
+      },
+    ),
+    false,
+  );
+});
+
 test('stale pending runs stop polling and permit a retry instead of leaving the UI stuck', () => {
   const run = {
     id: 'share_eval_stale',
@@ -73,6 +103,7 @@ test('stale pending runs stop polling and permit a retry instead of leaving the 
     isStalePendingEvaluationRun(run, {
       now,
       activeRevisionId: 'share_rev_current',
+      requestStartedAt: startedAt,
     }),
     true,
   );

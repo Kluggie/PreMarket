@@ -329,6 +329,64 @@ test('section-content alignment rejects action prose under an unresolved-questio
   );
 });
 
+test('not-viable decisions reject unqualified workable, plausible, or bridgeable narratives', () => {
+  const narrative = substantiveNarrative();
+  narrative.title = 'A workable pilot with a realistic landing zone';
+  narrative.sections[0].paragraphs[0] =
+    'This still looks like a plausible and bridgeable SaaS partnership. A realistic landing zone is a non-exclusive pilot with registered referrals and a client-protection window.';
+
+  const validation = validateNarrativeMemo(narrative, {
+    fitLevel: 'low',
+    decisionStatus: 'not_viable',
+    missingCount: completeMissing.length,
+    validateContentAlignment: true,
+  });
+
+  assert.equal(validation.valid, false);
+  assert.equal(
+    validation.warnings.includes('narrative_presents_viable_path_under_not_viable_decision'),
+    true,
+  );
+});
+
+test('not-viable decisions may distinguish the current structure from a materially different alternative', () => {
+  const narrative = substantiveNarrative();
+  narrative.title = 'The current structure needs a full reset';
+  narrative.sections[0].paragraphs[0] =
+    'The current structure is not viable as drafted because attribution, customer protection, and economic triggers are not established. A materially different alternative pilot could become workable only after those commercial rules are agreed.';
+
+  const validation = validateNarrativeMemo(narrative, {
+    fitLevel: 'low',
+    decisionStatus: 'not_viable',
+    missingCount: completeMissing.length,
+    validateContentAlignment: true,
+  });
+
+  assert.equal(
+    validation.warnings.includes('narrative_presents_viable_path_under_not_viable_decision'),
+    false,
+  );
+});
+
+test('public narrative rejects references to confidential or internal evidence sources', () => {
+  const narrative = substantiveNarrative();
+  narrative.sections[0].paragraphs[0] +=
+    ' Confidential context suggests the economic gap may be narrower because of internal pipeline pressure.';
+
+  const validation = validateNarrativeMemo(narrative, {
+    fitLevel: 'medium',
+    decisionStatus: 'proceed_with_conditions',
+    missingCount: completeMissing.length,
+    validateContentAlignment: true,
+  });
+
+  assert.equal(validation.valid, false);
+  assert.equal(
+    validation.warnings.includes('narrative_mentions_private_or_internal_evidence_source'),
+    true,
+  );
+});
+
 test('quality gate rejects raw evidence IDs in public narrative prose', () => {
   const narrative = substantiveNarrative();
   narrative.sections[0].paragraphs[0] +=

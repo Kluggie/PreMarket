@@ -572,6 +572,7 @@ export default function SharedReport() {
   const evaluationRequestRef = useRef({
     startedAt: 0,
     priorEvaluationId: '',
+    activeEvaluationId: '',
     handledEvaluationId: '',
   });
   const [evaluationPollingActive, setEvaluationPollingActive] = useState(false);
@@ -590,6 +591,22 @@ export default function SharedReport() {
     enabled: Boolean(token),
     retry: false,
     queryFn: () => fetchWorkspaceWithTimeout(token),
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      const activeRevisionId =
+        data?.recipientDraft?.id ||
+        data?.currentDraft?.id ||
+        data?.latestSentRevision?.id ||
+        '';
+      return evaluationPollingActive ||
+        isRecentPendingEvaluationRun(data?.latestEvaluation, {
+          activeRevisionId,
+          requestStartedAt: evaluationRequestRef.current.startedAt,
+        })
+        ? MEDIATION_EVALUATION_POLL_INTERVAL_MS
+        : false;
+    },
+    refetchIntervalInBackground: true,
   });
 
   const share = workspaceQuery.data?.share || null;
@@ -993,6 +1010,7 @@ export default function SharedReport() {
     evaluationRequestRef.current = {
       startedAt: 0,
       priorEvaluationId: '',
+      activeEvaluationId: '',
       handledEvaluationId: '',
     };
     setEvaluationPollingActive(false);
@@ -1431,6 +1449,7 @@ export default function SharedReport() {
       evaluationRequestRef.current = {
         startedAt: Date.now(),
         priorEvaluationId: asText(latestEvaluation?.id),
+        activeEvaluationId: '',
         handledEvaluationId: '',
       };
       setEvaluationPollingActive(true);
@@ -1473,12 +1492,13 @@ export default function SharedReport() {
         latestSentRevision?.id ||
         '';
       const requestState = evaluationRequestRef.current;
+      const belongsToRequest = isEvaluationRunForRequest(run, {
+        activeEvaluationId: requestState.activeEvaluationId,
+        priorEvaluationId: requestState.priorEvaluationId,
+        activeRevisionId,
+      });
       if (
-        isEvaluationRunForRequest(run, {
-          priorEvaluationId: requestState.priorEvaluationId,
-          requestStartedAt: requestState.startedAt,
-          activeRevisionId,
-        }) &&
+        belongsToRequest &&
         asText(run?.status).toLowerCase() === 'success' &&
         Object.keys(run?.public_report || {}).length > 0
       ) {
@@ -1496,8 +1516,13 @@ export default function SharedReport() {
         return;
       }
       if (
-        isRecentPendingEvaluationRun(run, { activeRevisionId })
+        belongsToRequest &&
+        isRecentPendingEvaluationRun(run, {
+          activeRevisionId,
+          requestStartedAt: requestState.startedAt,
+        })
       ) {
+        evaluationRequestRef.current.activeEvaluationId = asText(run?.id);
         setEvaluationPollingActive(true);
         toast.info('AI mediation is taking longer than expected. This page will keep checking.');
         return;
@@ -1514,34 +1539,6 @@ export default function SharedReport() {
       workspaceQuery.data?.currentDraft?.id ||
       workspaceQuery.data?.latestSentRevision?.id ||
       '';
-    const shouldPoll =
-      (evaluateMutation.isPending &&
-        !evaluationRequestRef.current.handledEvaluationId) ||
-      evaluationPollingActive ||
-      isRecentPendingEvaluationRun(run, { activeRevisionId });
-    if (!shouldPoll) return undefined;
-
-    const timer = window.setInterval(() => {
-      void workspaceQuery.refetch();
-    }, MEDIATION_EVALUATION_POLL_INTERVAL_MS);
-    return () => window.clearInterval(timer);
-  }, [
-    evaluateMutation.isPending,
-    evaluationPollingActive,
-    workspaceQuery.data?.currentDraft?.id,
-    workspaceQuery.data?.latestEvaluation,
-    workspaceQuery.data?.latestSentRevision?.id,
-    workspaceQuery.data?.recipientDraft?.id,
-    workspaceQuery.refetch,
-  ]);
-
-  useEffect(() => {
-    const run = workspaceQuery.data?.latestEvaluation || null;
-    const activeRevisionId =
-      workspaceQuery.data?.recipientDraft?.id ||
-      workspaceQuery.data?.currentDraft?.id ||
-      workspaceQuery.data?.latestSentRevision?.id ||
-      '';
     const requestState = evaluationRequestRef.current;
     const status = asText(run?.status).toLowerCase();
     const recoveryActive =
@@ -1549,10 +1546,18 @@ export default function SharedReport() {
       evaluationPollingActive ||
       requestState.startedAt > 0;
     const belongsToRequest = isEvaluationRunForRequest(run, {
+      activeEvaluationId: requestState.activeEvaluationId,
       priorEvaluationId: requestState.priorEvaluationId,
-      requestStartedAt: requestState.startedAt,
       activeRevisionId,
     });
+
+    if (
+      belongsToRequest &&
+      !requestState.activeEvaluationId &&
+      ['pending', 'success', 'error', 'failed'].includes(status)
+    ) {
+      evaluationRequestRef.current.activeEvaluationId = asText(run?.id);
+    }
 
     if (
       recoveryActive &&
@@ -1587,7 +1592,12 @@ export default function SharedReport() {
       return;
     }
 
-    if (isStalePendingEvaluationRun(run, { activeRevisionId })) {
+    if (
+      isStalePendingEvaluationRun(run, {
+        activeRevisionId,
+        requestStartedAt: requestState.startedAt,
+      })
+    ) {
       setEvaluationPollingActive(false);
       setEvaluationPollingTimedOut(true);
       if (requestState.handledEvaluationId !== asText(run.id)) {
@@ -2676,6 +2686,7 @@ export default function SharedReport() {
     evaluationPollingActive ||
     isRecentPendingEvaluationRun(latestEvaluation, {
       activeRevisionId: activeEvaluationRevisionId,
+      requestStartedAt: evaluationRequestRef.current.startedAt,
     });
   const step3IsEvaluationNotConfigured = latestEvaluationErrorCode === 'not_configured';
   const step3IsEvaluationFailed =

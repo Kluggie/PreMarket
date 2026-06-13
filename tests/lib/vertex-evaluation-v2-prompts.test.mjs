@@ -326,6 +326,11 @@ test('mediation prompt protects private walk-away and hidden-limit information',
   assert.match(prompt, /private resourcing concerns/i);
   assert.match(prompt, /internal maximum\/minimum positions/i);
   assert.match(prompt, /private walk-away points must remain confidential/i);
+  assert.match(prompt, /Never mention that confidential, private, hidden, internal, or confidential-only material exists/i);
+  assert.match(prompt, /confidential context suggests/i);
+  assert.match(prompt, /private evidence shows/i);
+  assert.match(prompt, /internal analysis indicates/i);
+  assert.match(prompt, /public conclusion must still be supportable from shared\/public material/i);
 });
 
 test('later bilateral mediation prompt becomes progress-aware without changing report family', () => {

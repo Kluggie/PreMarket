@@ -14,13 +14,12 @@ function timestampMs(value) {
 export function isEvaluationRunForRequest(
   run,
   {
+    activeEvaluationId = '',
     priorEvaluationId = '',
-    requestStartedAt = 0,
     activeRevisionId = '',
   } = {},
 ) {
   if (!run?.id) return false;
-  if (priorEvaluationId && asText(run.id) === asText(priorEvaluationId)) return false;
   if (
     activeRevisionId &&
     asText(run.revision_id) &&
@@ -28,8 +27,14 @@ export function isEvaluationRunForRequest(
   ) {
     return false;
   }
-  const createdAt = timestampMs(run.created_at || run.updated_at);
-  return !requestStartedAt || !createdAt || createdAt >= Number(requestStartedAt) - 5_000;
+  if (activeEvaluationId) {
+    return asText(run.id) === asText(activeEvaluationId);
+  }
+  if (priorEvaluationId && asText(run.id) === asText(priorEvaluationId)) return false;
+  // The workspace endpoint already returns the newest run for this link.
+  // Match it by run identity and revision instead of comparing browser and
+  // database clocks, which may be skewed enough to reject a valid completion.
+  return true;
 }
 
 export function isRecentPendingEvaluationRun(
@@ -38,6 +43,7 @@ export function isRecentPendingEvaluationRun(
     now = Date.now(),
     staleAfterMs = MEDIATION_EVALUATION_STALE_MS,
     activeRevisionId = '',
+    requestStartedAt = 0,
   } = {},
 ) {
   if (asText(run?.status).toLowerCase() !== 'pending') return false;
@@ -48,7 +54,10 @@ export function isRecentPendingEvaluationRun(
   ) {
     return false;
   }
-  const startedAt = timestampMs(run?.created_at || run?.updated_at);
+  const startedAt =
+    Number(requestStartedAt) > 0
+      ? Number(requestStartedAt)
+      : timestampMs(run?.created_at || run?.updated_at);
   return startedAt > 0 && Number(now) - startedAt < staleAfterMs;
 }
 
@@ -58,6 +67,7 @@ export function isStalePendingEvaluationRun(
     now = Date.now(),
     staleAfterMs = MEDIATION_EVALUATION_STALE_MS,
     activeRevisionId = '',
+    requestStartedAt = 0,
   } = {},
 ) {
   if (asText(run?.status).toLowerCase() !== 'pending') return false;
@@ -68,6 +78,9 @@ export function isStalePendingEvaluationRun(
   ) {
     return false;
   }
-  const startedAt = timestampMs(run?.created_at || run?.updated_at);
+  const startedAt =
+    Number(requestStartedAt) > 0
+      ? Number(requestStartedAt)
+      : timestampMs(run?.created_at || run?.updated_at);
   return startedAt > 0 && Number(now) - startedAt >= staleAfterMs;
 }
