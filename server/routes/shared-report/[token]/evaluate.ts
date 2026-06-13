@@ -68,6 +68,7 @@ import { MEDIATION_REVIEW_STAGE } from '../../../../src/lib/opportunityReviewSta
 
 const SHARED_REPORT_EVALUATE_ROUTE = `${SHARED_REPORT_ROUTE}/evaluate`;
 const MIN_SHARED_EVALUATION_TEXT_LENGTH = 40;
+const SHARED_REPORT_EVALUATION_BUDGET_MS = 270_000;
 
 function logEvaluationRuntime(
   context: any,
@@ -626,11 +627,12 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       updatedAt: now,
     });
 
+    let evaluatorStartedAt: number | null = null;
+    let evaluationDiagnostics: Record<string, unknown> = {};
     try {
       const engine = resolveDocumentComparisonEngine(req);
-      const evaluatorStartedAt = Date.now();
+      evaluatorStartedAt = Date.now();
       let evaluated: any;
-      let evaluationDiagnostics: Record<string, unknown> = {};
       let v2Preflight: { promptChars?: number; estimatedPromptTokens?: number; overCeiling?: boolean; trimTriggered?: boolean } = {};
       logEvaluationRuntime(context, 'evaluation_model_start', {
         evaluationId: evaluationRunId,
@@ -653,6 +655,8 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
             convergenceDigestText: convergenceDigest?.digestText || undefined,
             mediationRoundContext,
             evidenceCandidates: mediationEvidenceCandidates,
+            executionDeadlineMs: routeStartedAt + SHARED_REPORT_EVALUATION_BUDGET_MS,
+            maxQualityRepairCalls: 1,
           });
         } catch (unexpectedError: any) {
           if (asLower(unexpectedError?.code) === 'openai_not_configured') {
@@ -759,6 +763,23 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
           omittedEvidenceCount: (v2Result as any)?._internal?.retrieval?.omitted_evidence_count ?? 0,
           evidenceBudgetUsed: (v2Result as any)?._internal?.retrieval?.token_budget_used ?? 0,
           retrievalWarnings: (v2Result as any)?._internal?.retrieval?.retrieval_warnings || [],
+          modelCallCount: (v2Result as any)?._internal?.runtime?.model_call_count ?? null,
+          modelElapsedMs: (v2Result as any)?._internal?.runtime?.model_elapsed_ms ?? null,
+          runtimeBudgetMs: (v2Result as any)?._internal?.runtime?.budget_ms ?? null,
+          runtimeBudgetRemainingMs:
+            (v2Result as any)?._internal?.runtime?.budget_remaining_ms ?? null,
+          runtimeBudgetExhausted:
+            Boolean((v2Result as any)?._internal?.runtime?.budget_exhausted),
+          runtimePhaseElapsedMs:
+            (v2Result as any)?._internal?.runtime?.phase_elapsed_ms || {},
+          qualityRepairCallCount:
+            (v2Result as any)?._internal?.runtime?.quality_repair_call_count ?? 0,
+          narrativeWordCount:
+            (v2Result as any)?._internal?.narrative_validation?.word_count ?? null,
+          narrativeParagraphCount:
+            (v2Result as any)?._internal?.narrative_validation?.paragraph_count ?? null,
+          narrativeSectionCount:
+            (v2Result as any)?._internal?.narrative_validation?.section_count ?? null,
         };
         // Extract preflight data for input_trace
         v2Preflight = (v2Result as any)?._internal?.preflight || {};
@@ -911,6 +932,10 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         evaluationId: evaluationRunId,
         statusCode: failure.statusCode,
         errorCode: failure.code,
+        evaluatorElapsedMs:
+          evaluatorStartedAt === null ? null : Date.now() - evaluatorStartedAt,
+        routeElapsedMs: Date.now() - routeStartedAt,
+        ...evaluationDiagnostics,
       });
       const failedAt = new Date();
       await resolved.db
@@ -924,6 +949,13 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
               code: failure.code,
               message: failure.message,
               status_code: failure.statusCode,
+            },
+            evaluation_diagnostics: {
+              ...evaluationDiagnostics,
+              evaluatorElapsedMs:
+                evaluatorStartedAt === null ? null : Date.now() - evaluatorStartedAt,
+              routeElapsedMs: Date.now() - routeStartedAt,
+              failureReason: failure.code,
             },
           },
           updatedAt: failedAt,

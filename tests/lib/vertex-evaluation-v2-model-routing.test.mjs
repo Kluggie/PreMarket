@@ -669,11 +669,52 @@ await test('O1 — first bilateral mediation review uses OpenAI when MEDIATION_A
     assert.equal(result.model, 'gpt-openai-test');
     assert.equal(result._internal?.models_used?.provider, 'openai');
     assert.equal(openAICalls.length, 2, 'OpenAI should handle Pass A and Pass B');
+    assert.equal(result._internal?.runtime?.model_call_count, 2);
+    assert.equal(result._internal?.runtime?.quality_repair_call_count, 0);
+    assert.equal(typeof result._internal?.narrative_validation?.word_count, 'number');
     assert.equal(openAICalls[0].preferredModel, 'gpt-openai-test');
     assert.equal(openAICalls[1].preferredModel, 'gpt-openai-test');
   } finally {
     restoreOpenAI();
     restoreVertex();
+    restoreProvider();
+    restoreModel();
+    restoreKey();
+  }
+});
+
+await test('O1b — OpenAI timeout is not retried by the evaluator and returns a bounded fallback', async () => {
+  let openAICalls = 0;
+  const openAIHook = async () => {
+    openAICalls += 1;
+    const error = new Error('OpenAI mediation request timed out');
+    error.code = 'openai_timeout';
+    error.statusCode = 504;
+    throw error;
+  };
+
+  const restoreOpenAI = setOpenAIHook(openAIHook);
+  const restoreProvider = setEnv('MEDIATION_AI_PROVIDER', 'openai');
+  const restoreModel = setEnv('MEDIATION_AI_MODEL', 'gpt-openai-timeout');
+  const restoreKey = setEnv('OPENAI_API_KEY', 'test-openai-key');
+
+  try {
+    const result = await evaluateMediationWithVertexV2({
+      sharedText: SHARED_TEXT,
+      confidentialText: CONFIDENTIAL_TEXT,
+      enforceLeakGuard: false,
+      executionDeadlineMs: Date.now() + 270_000,
+      maxQualityRepairCalls: 1,
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(openAICalls, 2, 'Fact extraction and generation each get one bounded attempt');
+    assert.equal(result._internal?.failure_kind, 'openai_timeout');
+    assert.equal(result._internal?.runtime?.model_call_count, 2);
+    assert.equal(result._internal?.runtime?.quality_repair_call_count, 0);
+    assert.equal(result._internal?.narrative_validation?.renderer_path, 'fallback');
+  } finally {
+    restoreOpenAI();
     restoreProvider();
     restoreModel();
     restoreKey();

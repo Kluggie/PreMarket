@@ -55,6 +55,13 @@ import {
   restoreRecipientEditorAiState,
 } from '@/pages/shared-report/recipientEditorAiState';
 import {
+  isEvaluationRunForRequest,
+  isRecentPendingEvaluationRun,
+  isStalePendingEvaluationRun,
+  MEDIATION_EVALUATION_CLIENT_WAIT_MS,
+  MEDIATION_EVALUATION_POLL_INTERVAL_MS,
+} from '@/pages/shared-report/mediationEvaluationState';
+import {
   ComparisonDetailTabs,
 } from '@/components/document-comparison/ComparisonDetailTabs';
 import RequestAgreementConfirmDialog from '@/components/proposal/RequestAgreementConfirmDialog';
@@ -562,6 +569,13 @@ export default function SharedReport() {
   const suggestionThreadsRef = useRef([]);
   const activeSuggestionThreadIdRef = useRef(null);
   const lastStep2AutosaveAtRef = useRef(0);
+  const evaluationRequestRef = useRef({
+    startedAt: 0,
+    priorEvaluationId: '',
+    handledEvaluationId: '',
+  });
+  const [evaluationPollingActive, setEvaluationPollingActive] = useState(false);
+  const [evaluationPollingTimedOut, setEvaluationPollingTimedOut] = useState(false);
   const step2AutosaveDebounceMs = useMemo(
     () => resolveStep2AutosaveDelayMs(DEFAULT_STEP2_AUTOSAVE_DEBOUNCE_MS),
     [],
@@ -976,6 +990,13 @@ export default function SharedReport() {
     suggestionThreadsRef.current = [];
     activeSuggestionThreadIdRef.current = null;
     lastStep2AutosaveAtRef.current = 0;
+    evaluationRequestRef.current = {
+      startedAt: 0,
+      priorEvaluationId: '',
+      handledEvaluationId: '',
+    };
+    setEvaluationPollingActive(false);
+    setEvaluationPollingTimedOut(false);
   }, [token]);
 
   useEffect(() => {
@@ -1406,27 +1427,182 @@ export default function SharedReport() {
   ]);
 
   const evaluateMutation = useMutation({
+    onMutate: () => {
+      evaluationRequestRef.current = {
+        startedAt: Date.now(),
+        priorEvaluationId: asText(latestEvaluation?.id),
+        handledEvaluationId: '',
+      };
+      setEvaluationPollingActive(true);
+      setEvaluationPollingTimedOut(false);
+    },
     mutationFn: async () => {
       if (draftDirty) {
         await saveDraftMutation.mutateAsync({ stepToSave: 3, silent: true });
       }
-      return sharedReportsClient.evaluateRecipient(token);
+      return sharedReportsClient.evaluateRecipient(token, {
+        timeoutMs: MEDIATION_EVALUATION_CLIENT_WAIT_MS,
+      });
     },
     onSuccess: async (result) => {
+      const alreadyHandled =
+        evaluationRequestRef.current.handledEvaluationId === asText(result?.evaluationId);
+      evaluationRequestRef.current.handledEvaluationId = asText(result?.evaluationId);
+      setEvaluationPollingActive(false);
+      setEvaluationPollingTimedOut(false);
       setLatestEvaluatedReport(result?.evaluation?.public_report || null);
       setShowStep3Results(true);
       setStep(3);
-      toast.success('AI mediation review ready');
+      if (!alreadyHandled) {
+        toast.success('AI mediation review ready');
+      }
       await workspaceQuery.refetch();
     },
-    onError: (error) => {
+    onError: async (error) => {
       if (isRecipientMismatchError(error)) {
+        setEvaluationPollingActive(false);
         handleRecipientMismatch(error);
         return;
       }
+      const refreshed = await workspaceQuery.refetch().catch(() => null);
+      const run = refreshed?.data?.latestEvaluation || null;
+      const activeRevisionId =
+        refreshed?.data?.recipientDraft?.id ||
+        refreshed?.data?.currentDraft?.id ||
+        recipientDraft?.id ||
+        latestSentRevision?.id ||
+        '';
+      const requestState = evaluationRequestRef.current;
+      if (
+        isEvaluationRunForRequest(run, {
+          priorEvaluationId: requestState.priorEvaluationId,
+          requestStartedAt: requestState.startedAt,
+          activeRevisionId,
+        }) &&
+        asText(run?.status).toLowerCase() === 'success' &&
+        Object.keys(run?.public_report || {}).length > 0
+      ) {
+        const alreadyHandled =
+          evaluationRequestRef.current.handledEvaluationId === asText(run.id);
+        evaluationRequestRef.current.handledEvaluationId = asText(run.id);
+        setEvaluationPollingActive(false);
+        setEvaluationPollingTimedOut(false);
+        setLatestEvaluatedReport(run.public_report);
+        setShowStep3Results(true);
+        setStep(3);
+        if (!alreadyHandled) {
+          toast.success('AI mediation review ready');
+        }
+        return;
+      }
+      if (
+        isRecentPendingEvaluationRun(run, { activeRevisionId })
+      ) {
+        setEvaluationPollingActive(true);
+        toast.info('AI mediation is taking longer than expected. This page will keep checking.');
+        return;
+      }
+      setEvaluationPollingActive(false);
       toast.error(toFriendlyEvaluateError(error));
     },
   });
+
+  useEffect(() => {
+    const run = workspaceQuery.data?.latestEvaluation || null;
+    const activeRevisionId =
+      workspaceQuery.data?.recipientDraft?.id ||
+      workspaceQuery.data?.currentDraft?.id ||
+      workspaceQuery.data?.latestSentRevision?.id ||
+      '';
+    const shouldPoll =
+      (evaluateMutation.isPending &&
+        !evaluationRequestRef.current.handledEvaluationId) ||
+      evaluationPollingActive ||
+      isRecentPendingEvaluationRun(run, { activeRevisionId });
+    if (!shouldPoll) return undefined;
+
+    const timer = window.setInterval(() => {
+      void workspaceQuery.refetch();
+    }, MEDIATION_EVALUATION_POLL_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [
+    evaluateMutation.isPending,
+    evaluationPollingActive,
+    workspaceQuery.data?.currentDraft?.id,
+    workspaceQuery.data?.latestEvaluation,
+    workspaceQuery.data?.latestSentRevision?.id,
+    workspaceQuery.data?.recipientDraft?.id,
+    workspaceQuery.refetch,
+  ]);
+
+  useEffect(() => {
+    const run = workspaceQuery.data?.latestEvaluation || null;
+    const activeRevisionId =
+      workspaceQuery.data?.recipientDraft?.id ||
+      workspaceQuery.data?.currentDraft?.id ||
+      workspaceQuery.data?.latestSentRevision?.id ||
+      '';
+    const requestState = evaluationRequestRef.current;
+    const status = asText(run?.status).toLowerCase();
+    const recoveryActive =
+      evaluateMutation.isPending ||
+      evaluationPollingActive ||
+      requestState.startedAt > 0;
+    const belongsToRequest = isEvaluationRunForRequest(run, {
+      priorEvaluationId: requestState.priorEvaluationId,
+      requestStartedAt: requestState.startedAt,
+      activeRevisionId,
+    });
+
+    if (
+      recoveryActive &&
+      belongsToRequest &&
+      status === 'success' &&
+      Object.keys(run?.public_report || {}).length > 0 &&
+      requestState.handledEvaluationId !== asText(run.id)
+    ) {
+      evaluationRequestRef.current.handledEvaluationId = asText(run.id);
+      setEvaluationPollingActive(false);
+      setEvaluationPollingTimedOut(false);
+      setLatestEvaluatedReport(run.public_report);
+      setShowStep3Results(true);
+      setStep(3);
+      toast.success('AI mediation review ready');
+      return;
+    }
+
+    if (
+      recoveryActive &&
+      belongsToRequest &&
+      (status === 'error' || status === 'failed')
+    ) {
+      setEvaluationPollingActive(false);
+      setEvaluationPollingTimedOut(false);
+      if (requestState.handledEvaluationId !== asText(run.id)) {
+        evaluationRequestRef.current.handledEvaluationId = asText(run.id);
+        toast.error(
+          asText(run?.error_message) || 'AI mediation could not be completed. Please retry.',
+        );
+      }
+      return;
+    }
+
+    if (isStalePendingEvaluationRun(run, { activeRevisionId })) {
+      setEvaluationPollingActive(false);
+      setEvaluationPollingTimedOut(true);
+      if (requestState.handledEvaluationId !== asText(run.id)) {
+        evaluationRequestRef.current.handledEvaluationId = asText(run.id);
+        toast.error('AI mediation did not finish in time. Please retry.');
+      }
+    }
+  }, [
+    evaluateMutation.isPending,
+    evaluationPollingActive,
+    workspaceQuery.data?.currentDraft?.id,
+    workspaceQuery.data?.latestEvaluation,
+    workspaceQuery.data?.latestSentRevision?.id,
+    workspaceQuery.data?.recipientDraft?.id,
+  ]);
 
   const sendBackMutation = useMutation({
     mutationFn: () => sharedReportsClient.sendBackRecipient(token),
@@ -2487,18 +2663,20 @@ export default function SharedReport() {
       latestEvaluation?.result?.error?.code ||
       latestEvaluation?.error?.code,
   ).toLowerCase();
-  // The recipient evaluate endpoint is synchronous: it blocks until the
-  // Vertex AI call completes and returns the full result in a single HTTP
-  // round-trip.  The server-side evaluation run row only ever carries statuses
-  // 'pending', 'success', or 'error' — never 'running'/'queued'/'evaluating'.
-  // Checking those statuses against latestEvaluationStatus would therefore
-  // never fire for legitimate in-progress evaluations, but COULD wrongly show
-  // the 'processing' card if stale workspace data happens to contain one of
-  // those strings.  Binding isEvaluationRunning solely to the mutation's
-  // pending state keeps the review panel and timeline perfectly in sync:
-  // they both derive from the same variable and transition to 'ready' in the
-  // same React render batch as the mutation settling.
-  const step3IsEvaluationRunning = evaluateMutation.isPending;
+  // The POST remains synchronous, but the pending database row is also polled.
+  // This lets the page recover a saved result if the original HTTP response is
+  // delayed or lost. Only a recent pending run for the active revision counts
+  // as running, so an abandoned row cannot leave the interface stuck forever.
+  const activeEvaluationRevisionId =
+    recipientDraft?.id || latestSentRevision?.id || '';
+  const evaluationRequestHandled =
+    Boolean(evaluationRequestRef.current.handledEvaluationId);
+  const step3IsEvaluationRunning =
+    (evaluateMutation.isPending && !evaluationRequestHandled) ||
+    evaluationPollingActive ||
+    isRecentPendingEvaluationRun(latestEvaluation, {
+      activeRevisionId: activeEvaluationRevisionId,
+    });
   const step3IsEvaluationNotConfigured = latestEvaluationErrorCode === 'not_configured';
   const step3IsEvaluationFailed =
     !step3IsEvaluationRunning &&
@@ -3108,7 +3286,7 @@ export default function SharedReport() {
               detailsTabLabel="Opportunity"
               aiReportProps={{
                 isEvaluationRunning: step3IsEvaluationRunning,
-                isPollingTimedOut: false,
+                isPollingTimedOut: evaluationPollingTimedOut,
                 isEvaluationNotConfigured: step3IsEvaluationNotConfigured,
                 showConfidentialityWarning: false,
                 confidentialityWarningMessage: '',
@@ -3142,15 +3320,15 @@ export default function SharedReport() {
               documents={allDisplayDocuments}
               confidentialBundle={step3Bundles.confidential}
               sharedBundle={step3Bundles.shared}
-              isFinishing={evaluateMutation.isPending}
-              finishStage={evaluateMutation.isPending ? 'evaluating' : 'idle'}
+              isFinishing={step3IsEvaluationRunning}
+              finishStage={step3IsEvaluationRunning ? 'evaluating' : 'idle'}
               exceedsAnySizeLimit={false}
               saveDraftPending={saveDraftMutation.isPending}
               onBack={() => setStep(2)}
               onRunEvaluation={runEvaluationFromReview}
               runActionLabel={getRunOpportunityReviewLabel({
                 stage: MEDIATION_REVIEW_STAGE,
-                isPending: evaluateMutation.isPending,
+                isPending: step3IsEvaluationRunning,
                 hasExisting: Boolean(latestEvaluation),
               })}
             />

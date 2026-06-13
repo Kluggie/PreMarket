@@ -7,6 +7,7 @@ export type ParseErrorKind =
   | 'empty_output'
   | 'vertex_timeout'
   | 'vertex_http_error'
+  | 'openai_timeout'
   | 'openai_request_failed'
   | 'openai_quota_exceeded'
   | 'confidential_leak_detected';
@@ -366,6 +367,24 @@ export interface VertexEvaluationV2Internal {
     valid: boolean;
     renderer_path: 'narrative' | 'fallback';
     warnings: string[];
+    word_count?: number;
+    paragraph_count?: number;
+    section_count?: number;
+  };
+  runtime?: {
+    total_elapsed_ms: number;
+    model_elapsed_ms: number;
+    model_call_count: number;
+    quality_repair_call_count: number;
+    budget_ms: number | null;
+    budget_remaining_ms: number | null;
+    budget_exhausted: boolean;
+    phase_elapsed_ms: {
+      fact_extraction: number;
+      generation: number;
+      verification: number;
+      quality_repair: number;
+    };
   };
   retrieval?: {
     retrieval_strategy: RetrievedMediationEvidencePacket['retrieval_strategy'];
@@ -391,6 +410,8 @@ export interface VertexEvaluationV2Request<Stage extends ReviewStage = ReviewSta
   convergenceDigestText?: string;
   mediationRoundContext?: MediationRoundContext;
   evidenceCandidates?: MediationEvidenceCandidate[];
+  executionDeadlineMs?: number;
+  maxQualityRepairCalls?: number;
 }
 
 export interface VertexEvaluationV2Result<Stage extends ReviewStage = ReviewStage> {

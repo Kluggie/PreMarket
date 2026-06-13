@@ -2655,6 +2655,13 @@ if (!hasDatabaseUrl()) {
       assert.equal(Array.isArray(diagnostics.retrievalWarnings), true);
       assert.equal(typeof diagnostics.evaluatorElapsedMs, 'number');
       assert.equal(typeof diagnostics.routeElapsedMs, 'number');
+      assert.equal(typeof diagnostics.modelElapsedMs, 'number');
+      assert.equal(typeof diagnostics.modelCallCount, 'number');
+      assert.equal(typeof diagnostics.qualityRepairCallCount, 'number');
+      assert.equal(typeof diagnostics.runtimeBudgetMs, 'number');
+      assert.equal(typeof diagnostics.runtimeBudgetExhausted, 'boolean');
+      assert.equal(typeof diagnostics.runtimePhaseElapsedMs, 'object');
+      assert.equal(typeof diagnostics.narrativeWordCount, 'number');
 
       const workspaceRes = await getRecipientWorkspace(link.token, recipientCookie);
       assert.equal(workspaceRes.statusCode, 200);

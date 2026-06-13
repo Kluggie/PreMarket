@@ -112,6 +112,12 @@ export type {
 } from './vertex-evaluation-v2-types.js';
 
 const VERTEX_TIMEOUT_MS = 90_000;
+const FACT_EXTRACTION_TIMEOUT_MS = 45_000;
+const MEDIATION_GENERATION_TIMEOUT_MS = 150_000;
+const LEAK_VERIFIER_TIMEOUT_MS = 30_000;
+const QUALITY_REPAIR_TIMEOUT_MS = 75_000;
+const MODEL_CALL_DEADLINE_RESERVE_MS = 5_000;
+const MIN_QUALITY_REPAIR_BUDGET_MS = 20_000;
 const MAX_ATTEMPTS = 2;
 const RETRY_BASE_MS = 450;
 const MAX_SHARED_CHARS = 16_000;
@@ -152,6 +158,8 @@ type VertexCallOverride = (params: {
   maxOutputTokens?: number;
   /** Preferred model to use; implementation may fall back to candidates if unavailable. */
   preferredModel?: string;
+  /** Per-call timeout bounded by the caller's overall evaluation deadline. */
+  timeoutMs?: number;
 }) => Promise<VertexCallResponse>;
 
 declare global {
@@ -406,6 +414,7 @@ async function extractProposalFactsV2(params: {
         prompt,
         requestId: params.requestId,
         inputChars,
+        maxOutputTokens: 1536,
         preferredModel: params.preferredModel,
       });
     } catch {
@@ -4778,7 +4787,7 @@ async function callVertexV2(params: {
           },
           body: JSON.stringify(body),
         },
-        VERTEX_TIMEOUT_MS,
+        params.timeoutMs ?? VERTEX_TIMEOUT_MS,
       );
 
     let response = await send(buildBody(generationConfig));
@@ -4887,7 +4896,8 @@ async function callOpenAIV2(params: {
   const model = asText(params.preferredModel) || resolveMediationOpenAiModel();
   const client = new OpenAI({
     apiKey,
-    timeout: VERTEX_TIMEOUT_MS,
+    timeout: params.timeoutMs ?? VERTEX_TIMEOUT_MS,
+    maxRetries: 0,
   });
 
   try {
@@ -4900,7 +4910,10 @@ async function callOpenAIV2(params: {
         format: { type: 'json_object' },
         verbosity: 'medium',
       },
-    } as any);
+    } as any, {
+      timeout: params.timeoutMs ?? VERTEX_TIMEOUT_MS,
+      maxRetries: 0,
+    });
 
     return {
       model,
@@ -4910,12 +4923,31 @@ async function callOpenAIV2(params: {
     };
   } catch (error: any) {
     if (asLower(error?.code) === 'openai_not_configured') throw error;
+    const errorName = asLower(error?.name);
+    const errorCode = asLower(error?.code);
     const upstreamStatus = Number(error?.status || error?.statusCode || 0);
     const upstreamCode = asText(error?.code) || asText(error?.error?.code);
     const upstreamMessage =
       asText(error?.message) ||
       asText(error?.error?.message) ||
       'OpenAI mediation request failed';
+    const timedOut =
+      errorName.includes('timeout') ||
+      errorCode === 'etimedout' ||
+      errorCode === 'request_timeout' ||
+      upstreamMessage.toLowerCase().includes('timed out') ||
+      upstreamMessage.toLowerCase().includes('timeout');
+    if (timedOut) {
+      throw new ApiError(504, 'openai_timeout', 'OpenAI mediation request timed out', {
+        model,
+        provider: 'openai',
+        upstreamStatus: upstreamStatus || null,
+        upstreamCode: upstreamCode || errorCode || null,
+        requestId: asText(params.requestId) || null,
+        inputChars: params.inputChars,
+        timeoutMs: params.timeoutMs ?? VERTEX_TIMEOUT_MS,
+      });
+    }
     throw new ApiError(502, 'openai_request_failed', 'OpenAI mediation request failed', {
       model,
       provider: 'openai',
@@ -5698,6 +5730,9 @@ function buildNarrativeValidationMetadata(data: VertexEvaluationV2MediationRespo
     valid: validation.valid,
     renderer_path: validation.valid ? 'narrative' as const : 'fallback' as const,
     warnings: validation.warnings,
+    word_count: validation.metrics.word_count,
+    paragraph_count: validation.metrics.paragraph_count,
+    section_count: validation.metrics.section_count,
   };
 }
 
@@ -6065,8 +6100,88 @@ export async function evaluateWithVertexV2(
 
   const chunks = buildChunks(sharedText, confidentialText);
   const forbiddenChunks = buildSourceChunks(forbiddenLeakText.slice(0, MAX_CONFIDENTIAL_CHARS), 'conf');
-  const callModel = useOpenAIMediation ? getOpenAICallImplementation() : getVertexCallImplementation();
-  const callVerifier = useOpenAIMediation ? getOpenAICallImplementation() : getVertexVerifierCallImplementation();
+  const rawCallModel = useOpenAIMediation ? getOpenAICallImplementation() : getVertexCallImplementation();
+  const rawCallVerifier = useOpenAIMediation ? getOpenAICallImplementation() : getVertexVerifierCallImplementation();
+  const evaluatorStartedAt = Date.now();
+  const requestedDeadline = Number(input.executionDeadlineMs || 0);
+  const executionDeadlineMs =
+    Number.isFinite(requestedDeadline) && requestedDeadline > evaluatorStartedAt
+      ? requestedDeadline
+      : null;
+  const maxQualityRepairCalls = Number.isFinite(Number(input.maxQualityRepairCalls))
+    ? Math.max(0, Math.floor(Number(input.maxQualityRepairCalls)))
+    : 2;
+  const runtime = {
+    modelElapsedMs: 0,
+    modelCallCount: 0,
+    qualityRepairCallCount: 0,
+    budgetExhausted: false,
+    phaseElapsedMs: {
+      fact_extraction: 0,
+      generation: 0,
+      verification: 0,
+      quality_repair: 0,
+    },
+  };
+  type RuntimePhase = keyof typeof runtime.phaseElapsedMs;
+  const remainingBudgetMs = () =>
+    executionDeadlineMs === null
+      ? null
+      : Math.max(0, executionDeadlineMs - Date.now());
+  const runtimeSnapshot = () => {
+    const remaining = remainingBudgetMs();
+    return {
+      runtime: {
+        total_elapsed_ms: Date.now() - evaluatorStartedAt,
+        model_elapsed_ms: runtime.modelElapsedMs,
+        model_call_count: runtime.modelCallCount,
+        quality_repair_call_count: runtime.qualityRepairCallCount,
+        budget_ms:
+          executionDeadlineMs === null ? null : executionDeadlineMs - evaluatorStartedAt,
+        budget_remaining_ms: remaining,
+        budget_exhausted: runtime.budgetExhausted || remaining === 0,
+        phase_elapsed_ms: { ...runtime.phaseElapsedMs },
+      },
+    };
+  };
+  const timedCall = (
+    implementation: VertexCallOverride,
+    phase: RuntimePhase,
+    defaultTimeoutMs: number,
+  ): VertexCallOverride => async (params) => {
+    const remaining = remainingBudgetMs();
+    const available =
+      remaining === null
+        ? defaultTimeoutMs
+        : Math.min(defaultTimeoutMs, remaining - MODEL_CALL_DEADLINE_RESERVE_MS);
+    if (available < 1_000) {
+      runtime.budgetExhausted = true;
+      throw new ApiError(
+        504,
+        'evaluation_runtime_budget_exhausted',
+        'AI mediation reached its runtime budget before the next model call.',
+      );
+    }
+    const startedAt = Date.now();
+    runtime.modelCallCount += 1;
+    if (phase === 'quality_repair') {
+      runtime.qualityRepairCallCount += 1;
+    }
+    try {
+      return await implementation({
+        ...params,
+        timeoutMs: Math.max(1_000, Math.floor(available)),
+      });
+    } finally {
+      const elapsed = Date.now() - startedAt;
+      runtime.modelElapsedMs += elapsed;
+      runtime.phaseElapsedMs[phase] += elapsed;
+    }
+  };
+  const callExtract = timedCall(rawCallModel, 'fact_extraction', FACT_EXTRACTION_TIMEOUT_MS);
+  const callModel = timedCall(rawCallModel, 'generation', MEDIATION_GENERATION_TIMEOUT_MS);
+  const callVerifier = timedCall(rawCallVerifier, 'verification', LEAK_VERIFIER_TIMEOUT_MS);
+  const callQualityRepair = timedCall(rawCallModel, 'quality_repair', QUALITY_REPAIR_TIMEOUT_MS);
 
   // ── Pass A: extract structured Fact Sheet ────────────────────────────────
   const proposalTextExcerpt =
@@ -6086,7 +6201,7 @@ export async function evaluateWithVertexV2(
   const { sheet: factSheet, parseError: passAParseError } = await extractProposalFactsV2({
     proposalTextExcerpt,
     requestId,
-    callVertex: callModel,
+    callVertex: callExtract,
     preferredModel: extractModel,
   });
   const retrievedEvidencePacket =
@@ -6211,7 +6326,9 @@ export async function evaluateWithVertexV2(
         });
       }
 
-      const isOpenAIRequest = code === 'openai_request_failed';
+      const isOpenAITimeout = code === 'openai_timeout';
+      const isRuntimeBudgetTimeout = code === 'evaluation_runtime_budget_exhausted';
+      const isOpenAIRequest = code === 'openai_request_failed' || isOpenAITimeout;
       const isOpenAIQuotaFailure =
         isOpenAIRequest &&
         (
@@ -6219,7 +6336,7 @@ export async function evaluateWithVertexV2(
           message.toLowerCase().includes('insufficient_quota') ||
           message.toLowerCase().includes('exceeded your current quota')
         );
-      const retryable = isOpenAIQuotaFailure
+      const retryable = isOpenAIQuotaFailure || isOpenAITimeout || isRuntimeBudgetTimeout
         ? false
         : isTimeout
         ? true
@@ -6230,6 +6347,8 @@ export async function evaluateWithVertexV2(
           });
       const kind: ParseErrorKind = isOpenAIQuotaFailure
         ? 'openai_quota_exceeded'
+        : isOpenAITimeout
+        ? 'openai_timeout'
         : isOpenAIRequest
         ? 'openai_request_failed'
         : isTimeout
@@ -6341,6 +6460,7 @@ export async function evaluateWithVertexV2(
               verifier_escalated: false,
               verifier_unavailable: false,
             },
+            ...runtimeSnapshot(),
             ...retrievalInternal,
           },
         };
@@ -6386,6 +6506,7 @@ export async function evaluateWithVertexV2(
               verifier_escalated: llmVerifyResult.escalated,
               verifier_unavailable: false,
             },
+            ...runtimeSnapshot(),
             ...retrievalInternal,
           },
         };
@@ -6419,6 +6540,7 @@ export async function evaluateWithVertexV2(
               verifier_escalated: llmVerifyResult.escalated,
               verifier_unavailable: true,
             },
+            ...runtimeSnapshot(),
             ...retrievalInternal,
           },
         };
@@ -6463,6 +6585,7 @@ export async function evaluateWithVertexV2(
             verifier_escalated: Boolean(llmVerifyMeta?.escalated),
             verifier_unavailable: false,
           },
+          ...runtimeSnapshot(),
         },
       };
     }
@@ -6501,6 +6624,7 @@ export async function evaluateWithVertexV2(
             verifier_escalated: Boolean(llmVerifyMeta?.escalated),
             verifier_unavailable: false,
           },
+          ...runtimeSnapshot(),
         },
       };
     }
@@ -6533,7 +6657,11 @@ export async function evaluateWithVertexV2(
     // Refines presentation quality without changing substantive judgment.
     // Single attempt — no retries. Operates on raw output to produce a
     // better raw result that will then go through post-processing.
-    if (shouldRefine) {
+    const repairBudgetRemaining = remainingBudgetMs();
+    const canAttemptQualityRepair =
+      runtime.qualityRepairCallCount < maxQualityRepairCalls &&
+      (repairBudgetRemaining === null || repairBudgetRemaining >= MIN_QUALITY_REPAIR_BUDGET_MS);
+    if (shouldRefine && canAttemptQualityRepair) {
       const refinement = await attemptRefinementPass({
         initialResult: mediationResult,
         factSheet,
@@ -6544,7 +6672,7 @@ export async function evaluateWithVertexV2(
         requestId,
         inputChars,
         generationModel,
-        callVertex: callModel,
+        callVertex: callQualityRepair,
         forbiddenLeakText,
         sharedText,
         forbiddenChunks,
@@ -6571,18 +6699,33 @@ export async function evaluateWithVertexV2(
           refinementMeta.skip_reason = 'refinement_quality_worse';
         }
       }
+    } else if (shouldRefine) {
+      refinementMeta = {
+        attempted: false,
+        applied: false,
+        skip_reason:
+          runtime.qualityRepairCallCount >= maxQualityRepairCalls
+            ? 'quality_repair_call_limit_reached'
+            : 'runtime_budget_too_low',
+      };
     }
 
     // ── Targeted regeneration (exactly one pass for weak output) ─────────
     // Only triggers when raw quality score is below threshold AND
     // refinement did not solve the issue. At most one regen attempt.
-    if (shouldRegenerate && !refinementMeta.applied) {
+    const regenBudgetRemaining = remainingBudgetMs();
+    if (
+      shouldRegenerate &&
+      !refinementMeta.applied &&
+      runtime.qualityRepairCallCount < maxQualityRepairCalls &&
+      (regenBudgetRemaining === null || regenBudgetRemaining >= MIN_QUALITY_REPAIR_BUDGET_MS)
+    ) {
       regenMeta = { triggered: true, reasons: rawQuality.triggers, applied: false };
 
       // Regeneration: re-run Pass B once with a strengthened prompt
       try {
         const regenPrompt = buildPrompt();
-        const regenVertex = await callModel({
+        const regenVertex = await callQualityRepair({
           prompt: regenPrompt,
           requestId: requestId ? `${requestId}_regen` : undefined,
           inputChars,
@@ -6709,6 +6852,7 @@ export async function evaluateWithVertexV2(
         raw_quality_score: rawQuality.score,
         quality_warnings: rawQuality.triggers,
         narrative_validation: buildNarrativeValidationMetadata(finalData),
+        ...runtimeSnapshot(),
         ...retrievalInternal,
       },
     };
@@ -6753,6 +6897,7 @@ export async function evaluateWithVertexV2(
           verifier_escalated: false,
           verifier_unavailable: false,
         },
+        ...runtimeSnapshot(),
       },
     };
   }
@@ -6794,6 +6939,7 @@ export async function evaluateWithVertexV2(
           verifier_escalated: false,
           verifier_unavailable: false,
         },
+        ...runtimeSnapshot(),
       },
     };
   }
@@ -6861,6 +7007,7 @@ export async function evaluateWithVertexV2(
         verifier_unavailable: false,
       },
       narrative_validation: buildNarrativeValidationMetadata(fallbackClamped.data),
+      ...runtimeSnapshot(),
       ...retrievalInternal,
     },
   };

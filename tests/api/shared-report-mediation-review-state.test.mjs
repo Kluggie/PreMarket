@@ -4,7 +4,7 @@
  * Pure-logic tests for the AI mediation review state-sync flow in SharedReport.
  *
  * Covers:
- *   1. step3IsEvaluationRunning is solely mutation-pending-based (no latestEvaluationStatus leakage)
+ *   1. step3IsEvaluationRunning follows the mutation or a recent persisted pending run
  *   2. Timeline item title / tone are consistent with review panel isEvaluationRunning
  *   3. hasStep3Report logic correctly computes from updatedRecipientReport chain
  *   4. Blank-panel edge case is detected (hasEvaluations=true + hasReport=false)
@@ -32,13 +32,15 @@ function asText(value) {
 }
 
 /**
- * Mirror of the step3IsEvaluationRunning derivation **after the fix**.
- * Only depends on mutation pending — the latestEvaluationStatus checks
- * were removed because the recipient evaluate endpoint is synchronous and
- * never produces 'running'/'queued'/'evaluating' statuses.
+ * Mirror of the step3IsEvaluationRunning derivation after timeout recovery.
+ * A recent persisted pending run keeps the UI polling if the original POST
+ * response is delayed or lost.
  */
-function deriveStep3IsEvaluationRunning({ evaluateMutationIsPending }) {
-  return Boolean(evaluateMutationIsPending);
+function deriveStep3IsEvaluationRunning({
+  evaluateMutationIsPending,
+  hasRecentPendingRun = false,
+}) {
+  return Boolean(evaluateMutationIsPending || hasRecentPendingRun);
 }
 
 /**
@@ -150,7 +152,7 @@ const VALID_REPORT = {
 // Tests — section 1: step3IsEvaluationRunning derivation
 // ---------------------------------------------------------------------------
 
-describe('step3IsEvaluationRunning — fix: solely mutation-pending-based', () => {
+describe('step3IsEvaluationRunning — mutation plus persisted-run recovery', () => {
   it('is true while evaluateMutation is pending', () => {
     assert.equal(deriveStep3IsEvaluationRunning({ evaluateMutationIsPending: true }), true);
   });
@@ -159,9 +161,7 @@ describe('step3IsEvaluationRunning — fix: solely mutation-pending-based', () =
     assert.equal(deriveStep3IsEvaluationRunning({ evaluateMutationIsPending: false }), false);
   });
 
-  it('is false even if latestEvaluationStatus would be running (pre-fix: would be true)', () => {
-    // Under the fix, latestEvaluationStatus has no effect on step3IsEvaluationRunning.
-    // (The recipient evaluate endpoint never sets 'running'/'queued'/'evaluating'.)
+  it('does not trust arbitrary running status strings without a recent pending run', () => {
     assert.equal(deriveStep3IsEvaluationRunning({ evaluateMutationIsPending: false }), false);
 
     // Pre-fix derivation would have returned true in this scenario:
@@ -178,10 +178,24 @@ describe('step3IsEvaluationRunning — fix: solely mutation-pending-based', () =
     assert.equal(deriveStep3IsEvaluationRunning({ evaluateMutationIsPending: false }), false);
   });
 
-  it('is false for status=pending (an abandoned prior run in the DB)', () => {
-    // Even if a stale 'pending' row exists, the review panel must not
-    // permanently show the "updates automatically" spinner.
-    assert.equal(deriveStep3IsEvaluationRunning({ evaluateMutationIsPending: false }), false);
+  it('is true for a recent persisted pending run after the original request settles', () => {
+    assert.equal(
+      deriveStep3IsEvaluationRunning({
+        evaluateMutationIsPending: false,
+        hasRecentPendingRun: true,
+      }),
+      true,
+    );
+  });
+
+  it('is false for an abandoned stale pending run', () => {
+    assert.equal(
+      deriveStep3IsEvaluationRunning({
+        evaluateMutationIsPending: false,
+        hasRecentPendingRun: false,
+      }),
+      false,
+    );
   });
 });
 

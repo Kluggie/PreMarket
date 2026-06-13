@@ -4153,6 +4153,7 @@ test('quality gate expands a compressed mediation sidecar when substantive evide
       sharedText: 'Both parties support a non-exclusive six-month SaaS referral pilot with implementation support.',
       confidentialText: 'Private commercial limits exist and must remain confidential.',
       requestId: 'req-current-sidecar-no-refinement',
+      maxQualityRepairCalls: 1,
       evidenceCandidates: [
         {
           id: 'shared:pilot',
@@ -4171,6 +4172,8 @@ test('quality gate expands a compressed mediation sidecar when substantive evide
     assert.equal(callCount, 3);
     assert.equal(outcome._internal.refinement?.attempted, true);
     assert.equal(outcome._internal.refinement?.applied, true);
+    assert.equal(outcome._internal.runtime?.quality_repair_call_count, 1);
+    assert.equal(outcome._internal.regeneration?.triggered, false);
     assert.equal(outcome._internal.narrative_validation?.renderer_path, 'narrative');
     const narrativeWords = JSON.stringify(outcome.data.narrative || '')
       .split(/\s+/)

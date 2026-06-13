@@ -24,6 +24,11 @@ const VERCEL_CONFIG_PATH = path.resolve(
   'vercel.json',
 );
 
+const SHARED_REPORT_EVALUATE_ROUTE_PATH = path.resolve(
+  process.cwd(),
+  'server/routes/shared-report/[token]/evaluate.ts',
+);
+
 // ─────────────────────────────────────────────────────────────────
 //  Core requirement: Step 2 must NOT run AI mediation directly
 // ─────────────────────────────────────────────────────────────────
@@ -138,7 +143,7 @@ test('recipient Step 3 review package has Run AI Mediation action', async () => 
 
 test('recipient Run AI Mediation client calls shared-report evaluate with POST', async () => {
   const source = await readFile(SHARED_REPORTS_CLIENT_PATH, 'utf8');
-  const start = source.indexOf('async evaluateRecipient(token)');
+  const start = source.indexOf('async evaluateRecipient(token');
   assert.ok(start >= 0, 'Expected sharedReportsClient.evaluateRecipient');
 
   const block = source.slice(start, start + 450);
@@ -150,13 +155,17 @@ test('recipient Run AI Mediation client calls shared-report evaluate with POST',
     block.includes("method: 'POST'"),
     'evaluateRecipient must use POST, not GET',
   );
+  assert.ok(
+    source.slice(start, start + 1200).includes('Promise.race'),
+    'evaluateRecipient must bound the synchronous browser wait while allowing the server request to continue',
+  );
 });
 
 test('recipient Run AI Mediation settles the click handler on route failure', async () => {
   const source = await readFile(SHARED_REPORT_PATH, 'utf8');
   const mutationStart = source.indexOf('const evaluateMutation = useMutation');
   assert.ok(mutationStart >= 0, 'Expected evaluateMutation');
-  const mutationBlock = source.slice(mutationStart, mutationStart + 900);
+  const mutationBlock = source.slice(mutationStart, mutationStart + 5000);
   assert.ok(
     mutationBlock.includes('onError:'),
     'evaluateMutation must keep a user-facing error handler',
@@ -196,6 +205,54 @@ test('recipient Run AI Mediation shows a specific timeout error and Vercel allow
     300,
     'The consolidated API function must allow long-running mediation requests to finish',
   );
+});
+
+test('recipient Run AI Mediation polls the persisted run and recovers a delayed saved result', async () => {
+  const source = await readFile(SHARED_REPORT_PATH, 'utf8');
+  const mutationStart = source.indexOf('const evaluateMutation = useMutation');
+  const mutationBlock = source.slice(mutationStart, mutationStart + 7000);
+
+  assert.ok(
+    mutationBlock.includes('MEDIATION_EVALUATION_CLIENT_WAIT_MS'),
+    'The browser wait must be bounded independently of the server function duration',
+  );
+  assert.ok(
+    mutationBlock.includes('workspaceQuery.refetch()'),
+    'A failed or delayed POST must check the persisted evaluation run',
+  );
+  assert.ok(
+    mutationBlock.includes("asText(run?.status).toLowerCase() === 'success'"),
+    'A saved successful run must recover the result even when the original response was lost',
+  );
+  assert.ok(
+    source.includes('MEDIATION_EVALUATION_POLL_INTERVAL_MS'),
+    'The shared report must poll while a persisted mediation run is pending',
+  );
+  assert.ok(
+    source.includes('isStalePendingEvaluationRun'),
+    'A stale pending run must clear the loading state and permit retry',
+  );
+  assert.ok(
+    source.includes('evaluateMutation.isPending && !evaluationRequestHandled'),
+    'A recovered saved result must clear the visible loading state even if the original POST is unresolved',
+  );
+});
+
+test('shared-report mediation bounds quality repair work and records timeout diagnostics', async () => {
+  const source = await readFile(SHARED_REPORT_EVALUATE_ROUTE_PATH, 'utf8');
+
+  assert.ok(
+    source.includes('maxQualityRepairCalls: 1'),
+    'Shared-report mediation must allow at most one quality repair provider call',
+  );
+  assert.ok(
+    source.includes('executionDeadlineMs: routeStartedAt + SHARED_REPORT_EVALUATION_BUDGET_MS'),
+    'The evaluator must receive a deadline below the serverless function duration',
+  );
+  assert.ok(source.includes('modelElapsedMs'));
+  assert.ok(source.includes('runtimePhaseElapsedMs'));
+  assert.ok(source.includes('narrativeWordCount'));
+  assert.ok(source.includes('failureReason: failure.code'));
 });
 
 test('recipient workspace strips internal evaluation diagnostics from the public run view', () => {

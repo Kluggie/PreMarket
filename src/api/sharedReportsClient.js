@@ -168,11 +168,27 @@ export const sharedReportsClient = {
     };
   },
 
-  async evaluateRecipient(token) {
-    const response = await request(`/api/shared-report/${encodeToken(token)}/evaluate`, {
+  async evaluateRecipient(token, { timeoutMs = 0 } = {}) {
+    let timeoutId = null;
+    const requestPromise = request(`/api/shared-report/${encodeToken(token)}/evaluate`, {
       method: 'POST',
       body: JSON.stringify({}),
     });
+    const response = await (Number(timeoutMs) > 0
+      ? Promise.race([
+          requestPromise,
+          new Promise((_, reject) => {
+            timeoutId = setTimeout(() => {
+              const error = new Error('AI mediation is still generating');
+              error.status = 504;
+              error.code = 'request_timeout';
+              reject(error);
+            }, Number(timeoutMs));
+          }),
+        ]).finally(() => {
+          if (timeoutId) clearTimeout(timeoutId);
+        })
+      : requestPromise);
     return {
       ok: Boolean(response.ok),
       evaluationId: response.evaluation_id || null,
