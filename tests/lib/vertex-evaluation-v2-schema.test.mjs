@@ -71,7 +71,11 @@ test('mediation schema validation preserves normalization of compatibility, deal
         unresolved_questions: ['Who owns final launch approval?'],
         negotiation_leverage: ['The pilot can be sequenced before a wider rollout.'],
         suggested_next_actions: ['Name the approval owner in the pilot rules.'],
-        evidence_used: ['The materials describe a staged launch and an approval dependency.'],
+        evidence_used: ['[shared:launch] The materials describe a staged launch and an approval dependency.'],
+        evidence_gaps: ['Final approver identity is not evidenced.'],
+        unsupported_claims: [],
+        grounding_summary: 'The staged launch is supported, while final approval ownership remains unsupported.',
+        retrieval_warnings: [],
         missing_information: ['Final approval ownership.'],
         tone_profile: 'constructive',
         output_mode: 'negotiation_coach',
@@ -135,6 +139,12 @@ test('mediation schema validation preserves normalization of compatibility, deal
   );
   assert.equal(result.normalized.internal_analysis?.output_mode, 'negotiation_coach');
   assert.equal(result.normalized.internal_analysis?.confidence, 0.62);
+  assert.deepEqual(
+    result.normalized.internal_analysis?.evidence_gaps,
+    ['Final approver identity is not evidenced.'],
+  );
+  assert.equal(result.normalized.internal_analysis?.unsupported_claims.length, 0);
+  assert.match(result.normalized.internal_analysis?.grounding_summary || '', /staged launch/i);
   assert.equal(result.normalized.narrative?.sections.length, 2);
   assert.match(result.normalized.narrative?.title || '', /workable launch/i);
 });

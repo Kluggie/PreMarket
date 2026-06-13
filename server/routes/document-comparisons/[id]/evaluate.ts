@@ -21,6 +21,10 @@ import {
 } from '../../../_lib/shared-report-history.js';
 import { evaluateDocumentComparisonWithVertex } from '../../../_lib/vertex-evaluation.js';
 import { evaluateWithVertexV2 } from '../../../_lib/vertex-evaluation-v2.js';
+import {
+  buildEvidenceCandidatesFromContributions,
+  buildPriorMediationEvidenceCandidate,
+} from '../../../_lib/mediation-evidence-retrieval.js';
 import { getVertexConfig } from '../../../_lib/integrations.js';
 import { generateDocumentComparisonCoach } from '../../../_lib/vertex-coach.js';
 import {
@@ -1508,6 +1512,28 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
           userId: user.id,
         })
       : null;
+    const mediationEvidenceCandidates =
+      analysisStage === MEDIATION_REVIEW_STAGE
+        ? [
+            ...buildEvidenceCandidatesFromContributions([
+              ...attributedSharedEntries,
+              ...attributedConfidentialEntries,
+            ]),
+            ...(mediationRoundContext?.prior_bilateral_round_id
+              ? [
+                  buildPriorMediationEvidenceCandidate({
+                    id: mediationRoundContext.prior_bilateral_round_id,
+                    roundNumber: mediationRoundContext.prior_bilateral_round_number,
+                    report: {
+                      primary_insight: mediationRoundContext.prior_primary_insight,
+                      why: mediationRoundContext.prior_bridgeability_notes,
+                      missing: mediationRoundContext.prior_missing,
+                    },
+                  }),
+                ].filter(Boolean)
+              : []),
+          ]
+        : undefined;
     const evaluationSource = getComparisonEvaluationSource(analysisStage);
     const evaluationSharedText = linkedProposal
       ? formatContributionsForAi(attributedSharedEntries)
@@ -1679,6 +1705,9 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
               requestId,
               enforceLeakGuard: false,
               ...(mediationRoundContext ? { mediationRoundContext } : {}),
+              ...(mediationEvidenceCandidates
+                ? { evidenceCandidates: mediationEvidenceCandidates }
+                : {}),
               // Model routing — resolved inside the lib via env vars if not set here.
               // Providing them explicitly lets the route override via query/body in future.
               generationModel: asText(process.env.VERTEX_DOC_COMPARE_GENERATION_MODEL) || undefined,

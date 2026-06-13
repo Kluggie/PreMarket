@@ -74,9 +74,67 @@ export interface StructuredDealAnalysis {
   negotiation_leverage: string[];
   suggested_next_actions: string[];
   evidence_used: string[];
+  evidence_gaps: string[];
+  unsupported_claims: string[];
+  grounding_summary: string;
+  retrieval_warnings: string[];
   missing_information: string[];
   tone_profile: NarrativeToneProfile;
   output_mode: NarrativeOutputMode;
+}
+
+export type MediationEvidenceSourceType =
+  | 'shared_contribution'
+  | 'confidential_contribution'
+  | 'prior_mediation'
+  | 'primary_shared_context'
+  | 'primary_confidential_context';
+
+export type MediationEvidenceVisibility = 'shared' | 'confidential' | 'internal_derived';
+
+export interface MediationEvidenceCandidate {
+  id: string;
+  source_type: MediationEvidenceSourceType;
+  source_label: string;
+  source_role: string;
+  visibility: MediationEvidenceVisibility;
+  text: string;
+  title_or_summary?: string;
+  party_or_side?: string;
+  round_number?: number | null;
+  version_info?: string;
+  created_at?: string | null;
+  updated_at?: string | null;
+  file_names?: string[];
+  limitations?: string[];
+}
+
+export interface RetrievedMediationEvidenceItem {
+  id: string;
+  source_type: MediationEvidenceSourceType;
+  source_label: string;
+  source_role: string;
+  visibility: MediationEvidenceVisibility;
+  relevance_score: number;
+  title_or_summary: string;
+  excerpt: string;
+  extracted_terms: string[];
+  dates_or_version_info?: string;
+  party_or_side?: string;
+  confidence: number;
+  include_reason: string;
+  limitations: string[];
+}
+
+export interface RetrievedMediationEvidencePacket {
+  retrieval_strategy: 'heuristic_commercial_terms_v1' | 'primary_context_fallback_v1';
+  evidence_count: number;
+  omitted_evidence_count: number;
+  token_budget_used: number;
+  character_budget_used: number;
+  retrieval_warnings: string[];
+  generated_at: string;
+  items: RetrievedMediationEvidenceItem[];
 }
 
 export interface NarrativeMemoSection {
@@ -303,10 +361,19 @@ export interface VertexEvaluationV2Internal {
     applied: boolean;
   };
   raw_quality_score?: number;
+  quality_warnings?: string[];
   narrative_validation?: {
     valid: boolean;
     renderer_path: 'narrative' | 'fallback';
     warnings: string[];
+  };
+  retrieval?: {
+    retrieval_strategy: RetrievedMediationEvidencePacket['retrieval_strategy'];
+    evidence_count: number;
+    omitted_evidence_count: number;
+    token_budget_used: number;
+    character_budget_used: number;
+    retrieval_warnings: string[];
   };
 }
 
@@ -323,6 +390,7 @@ export interface VertexEvaluationV2Request<Stage extends ReviewStage = ReviewSta
   extractModel?: string;
   convergenceDigestText?: string;
   mediationRoundContext?: MediationRoundContext;
+  evidenceCandidates?: MediationEvidenceCandidate[];
 }
 
 export interface VertexEvaluationV2Result<Stage extends ReviewStage = ReviewStage> {

@@ -2649,6 +2649,10 @@ if (!hasDatabaseUrl()) {
       const diagnostics = evaluationRows.rows[0]?.result_json?.evaluation_diagnostics || {};
       assert.equal(diagnostics.rendererPath, 'narrative');
       assert.equal(diagnostics.narrativeValid, true);
+      assert.equal(diagnostics.retrievalStrategy, 'heuristic_commercial_terms_v1');
+      assert.equal(diagnostics.evidenceCount > 0, true);
+      assert.equal(typeof diagnostics.evidenceBudgetUsed, 'number');
+      assert.equal(Array.isArray(diagnostics.retrievalWarnings), true);
       assert.equal(typeof diagnostics.evaluatorElapsedMs, 'number');
       assert.equal(typeof diagnostics.routeElapsedMs, 'number');
 

@@ -420,6 +420,10 @@ function normalizeStructuredDealAnalysis(params: {
       6,
     ),
     evidence_used: normalizeNegotiationStringArray(raw.evidence_used ?? params.why, 10),
+    evidence_gaps: normalizeNegotiationStringArray(raw.evidence_gaps, 8),
+    unsupported_claims: normalizeNegotiationStringArray(raw.unsupported_claims, 8),
+    grounding_summary: asText(raw.grounding_summary),
+    retrieval_warnings: normalizeNegotiationStringArray(raw.retrieval_warnings, 8),
     missing_information: normalizeNegotiationStringArray(
       raw.missing_information ?? params.missing,
       8,

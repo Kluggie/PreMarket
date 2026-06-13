@@ -905,6 +905,13 @@ test('v2 accepts valid JSON response', async () => {
     assert.equal(typeof outcome.data.internal_analysis?.core_thesis, 'string');
     assert.equal(outcome.data.narrative?.title, 'The dashboard engagement is ready for final documentation');
     assert.equal(outcome._internal?.narrative_validation?.renderer_path, 'narrative');
+    assert.equal(outcome._internal?.retrieval?.retrieval_strategy, 'primary_context_fallback_v1');
+    assert.equal(
+      outcome._internal?.retrieval?.retrieval_warnings.includes(
+        'structured_source_provenance_unavailable',
+      ),
+      true,
+    );
     assert.equal(
       /pause|reject|do not proceed/i.test(
         JSON.stringify(outcome.data.narrative),
@@ -4043,6 +4050,14 @@ test('quality gate accepts the current mediation sidecar and avoids an unnecessa
     internal_analysis: validInternalAnalysis({
       confidence: 0.67,
       core_thesis: 'The pilot is workable once attribution, protection, and payment triggers are explicit.',
+      evidence_used: [
+        '[shared:pilot] The current shared proposal supports a six-month referral pilot, registered attribution, client protection, and implementation support.',
+      ],
+      evidence_gaps: ['Commission timing and the exact client-protection window remain unresolved.'],
+      unsupported_claims: [],
+      grounding_summary:
+        'The current shared pilot terms support a conditional path, while payment and protection mechanics remain open.',
+      retrieval_warnings: [],
     }),
     narrative: validNaturalNarrative({
       title: 'A workable referral pilot, once ownership rules are explicit',
@@ -4097,15 +4112,97 @@ test('quality gate accepts the current mediation sidecar and avoids an unnecessa
       sharedText: 'Both parties support a non-exclusive six-month SaaS referral pilot with implementation support.',
       confidentialText: 'Private commercial limits exist and must remain confidential.',
       requestId: 'req-current-sidecar-no-refinement',
+      evidenceCandidates: [
+        {
+          id: 'shared:pilot',
+          source_type: 'shared_contribution',
+          source_label: 'Shared pilot proposal',
+          source_role: 'proposer',
+          visibility: 'shared',
+          text:
+            'Both parties support a non-exclusive six-month SaaS referral pilot with registered referrals, client protection, commission, implementation support, training, and a post-pilot review.',
+          round_number: 1,
+        },
+      ],
     });
     assert.equal(outcome.ok, true);
     if (!outcome.ok) return;
     assert.equal(callCount, 2);
     assert.equal(outcome._internal.refinement?.attempted, false);
     assert.equal(outcome._internal.narrative_validation?.renderer_path, 'narrative');
+    assert.equal(outcome._internal.retrieval?.retrieval_strategy, 'heuristic_commercial_terms_v1');
+    assert.equal(outcome._internal.retrieval?.evidence_count, 1);
+    assert.equal('retrieved_evidence_packet' in outcome._internal, false);
   } finally {
     delete globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__;
   }
+});
+
+test('quality gate flags a strong retrieved evidence packet that internal analysis ignores', () => {
+  const report = validPayload({
+    why: [
+      'Recommendation: Proceed with conditions because the current pilot structure is commercially plausible, but the remaining economic mechanics need agreement before commitment.',
+      'Where the Parties Align: Both sides support a bounded pilot and a referral relationship that can be tested before broader commitments are made.',
+      'Where the Deal Is Stuck: Referral attribution and client protection are not yet defined, leaving account ownership and commission eligibility unresolved.',
+      'Suggested Bridge: Use registered referrals, a defined protection window, and a commission trigger tied to an agreed customer event.',
+      'Next Step: Record the attribution, protection, and commission rules in a one-page pilot document before launch.',
+    ],
+    missing: [
+      'What event earns commission? — determines the payment trigger.',
+      'How long does client protection last? — determines whether the referral remains attributed.',
+    ],
+    internal_analysis: validInternalAnalysis({
+      evidence_used: ['The materials generally support a pilot.'],
+    }),
+    narrative: validNaturalNarrative({
+      sections: [
+        {
+          heading: 'A plausible pilot',
+          paragraphs: [
+            'The parties have a commercially plausible basis for a bounded pilot, but the current terms do not yet allocate the customer relationship clearly. That uncertainty affects whether either side can rely on the proposed economics.',
+            'The main unresolved mechanics are referral attribution and client protection. If those rules remain undefined, the same customer can create competing expectations about ownership and commission.',
+          ],
+        },
+        {
+          heading: 'A practical path',
+          paragraphs: [
+            'A registered-referral process and defined protection period would connect the commercial benefit to an observable event. The pilot can then test the relationship without granting broader rights before performance is known.',
+          ],
+        },
+      ],
+    }),
+  });
+  const packet = {
+    retrieval_strategy: 'heuristic_commercial_terms_v1',
+    evidence_count: 1,
+    omitted_evidence_count: 0,
+    token_budget_used: 30,
+    character_budget_used: 120,
+    retrieval_warnings: [],
+    generated_at: '2026-06-13T00:00:00.000Z',
+    items: [
+      {
+        id: 'recipient:attribution',
+        source_type: 'shared_contribution',
+        source_label: 'Shared by Recipient',
+        source_role: 'recipient',
+        visibility: 'shared',
+        relevance_score: 90,
+        title_or_summary: 'Attribution concern',
+        excerpt: 'Registered referral attribution and a client-protection window remain unresolved.',
+        extracted_terms: ['customer_attribution'],
+        confidence: 0.9,
+        include_reason: 'contains deal-specific attribution evidence',
+        limitations: [],
+      },
+    ],
+  };
+
+  const quality = assessReportQuality(report, undefined, packet);
+  assert.equal(
+    quality.triggers.includes('retrieved_evidence_not_used_in_internal_analysis'),
+    true,
+  );
 });
 
 test('quality gate evaluates narrative substance and decision consistency', () => {

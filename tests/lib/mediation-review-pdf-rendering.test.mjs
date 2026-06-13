@@ -176,6 +176,10 @@ test('recipient mediation PDF uses natural narrative and never renders internal 
         negotiation_leverage: [],
         suggested_next_actions: [],
         evidence_used: [],
+        evidence_gaps: [],
+        unsupported_claims: [],
+        grounding_summary: 'Grounded in the current shared pilot proposal.',
+        retrieval_warnings: [],
         missing_information: [],
         tone_profile: 'constructive',
         output_mode: 'executive_memo',
@@ -205,6 +209,18 @@ test('recipient mediation PDF uses natural narrative and never renders internal 
     model: 'test-model',
     generation_model: 'test-model',
   });
+  stored.report.retrieved_evidence_packet = {
+    items: [
+      {
+        id: 'private:evidence:1',
+        excerpt: `${confidentialMarker} private evidence excerpt`,
+      },
+    ],
+  };
+  stored.report.retrieval_diagnostics = {
+    evidence_count: 1,
+    retrieval_strategy: 'heuristic_commercial_terms_v1',
+  };
   const projection = buildRecipientSafeEvaluationProjection({
     evaluationResult: stored,
     publicReport: stored.report,
@@ -214,6 +230,8 @@ test('recipient mediation PDF uses natural narrative and never renders internal 
   });
 
   assert.equal('internal_analysis' in projection.public_report, false);
+  assert.equal('retrieved_evidence_packet' in projection.public_report, false);
+  assert.equal('retrieval_diagnostics' in projection.public_report, false);
   assert.equal(projection.public_report.renderer_path, 'narrative');
   const sections = getPresentationSections(projection.public_report).map((section) => ({
     heading: section.heading,
@@ -235,5 +253,5 @@ test('recipient mediation PDF uses natural narrative and never renders internal 
   const rawText = await extractPdfText(buffer);
   assert.match(rawText, /WHY THE PILOT IS COMMERCIALLY PLAUSIBLE/);
   assert.doesNotMatch(rawText, new RegExp(confidentialMarker));
-  assert.doesNotMatch(rawText, /INTERNAL_ANALYSIS|DECISION_STATUS|EVIDENCE_USED/);
+  assert.doesNotMatch(rawText, /INTERNAL_ANALYSIS|DECISION_STATUS|EVIDENCE_USED|PRIVATE:EVIDENCE/);
 });

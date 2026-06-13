@@ -30,6 +30,10 @@ import {
 import { evaluateDocumentComparisonWithVertex } from '../../../_lib/vertex-evaluation.js';
 import { evaluateWithVertexV2 } from '../../../_lib/vertex-evaluation-v2.js';
 import {
+  buildEvidenceCandidatesFromContributions,
+  buildPriorMediationEvidenceCandidate,
+} from '../../../_lib/mediation-evidence-retrieval.js';
+import {
   buildStoredV2Evaluation,
   buildRecipientSafeEvaluationProjection,
   CONFIDENTIAL_LABEL,
@@ -548,6 +552,22 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       priorBilateralRoundId: latestPriorBilateralRound?.evaluationRunId || null,
       priorReport: latestPriorBilateralRound?.report || null,
     });
+    const mediationEvidenceCandidates = [
+      ...buildEvidenceCandidatesFromContributions([
+        ...sharedHistoryEntriesForAi,
+        ...confidentialHistoryEntriesForAi,
+      ]),
+      ...priorBilateralRounds
+        .map((round) =>
+          buildPriorMediationEvidenceCandidate({
+            id: round.evaluationRunId,
+            roundNumber: round.round,
+            report: round.report,
+            createdAt: round.createdAt,
+          }),
+        )
+        .filter(Boolean),
+    ];
 
     // ── Build convergence digest from prior evaluation rounds ───────────────
     const priorEvalSnapshots: ExchangeRoundSnapshot[] = normalizedExchangeHistory.map((h) => ({
@@ -632,6 +652,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
             extractModel: asText(process.env.VERTEX_DOC_COMPARE_EXTRACT_MODEL) || undefined,
             convergenceDigestText: convergenceDigest?.digestText || undefined,
             mediationRoundContext,
+            evidenceCandidates: mediationEvidenceCandidates,
           });
         } catch (unexpectedError: any) {
           if (asLower(unexpectedError?.code) === 'openai_not_configured') {
@@ -723,6 +744,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
           refinementApplied: Boolean((v2Result as any)?._internal?.refinement?.applied),
           regenerationTriggered: Boolean((v2Result as any)?._internal?.regeneration?.triggered),
           rawQualityScore: (v2Result as any)?._internal?.raw_quality_score ?? null,
+          qualityWarnings: (v2Result as any)?._internal?.quality_warnings || [],
           rendererPath: (v2Result as any)?._internal?.narrative_validation?.renderer_path || null,
           narrativeValid: (v2Result as any)?._internal?.narrative_validation?.valid ?? null,
           narrativeValidationWarnings:
@@ -732,6 +754,11 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
           providerStatus: (v2Result as any)?._internal?.failure_details?.provider_status ?? null,
           providerCode: (v2Result as any)?._internal?.failure_details?.provider_code || null,
           warnings: (v2Result as any)?._internal?.warnings || [],
+          retrievalStrategy: (v2Result as any)?._internal?.retrieval?.retrieval_strategy || null,
+          evidenceCount: (v2Result as any)?._internal?.retrieval?.evidence_count ?? 0,
+          omittedEvidenceCount: (v2Result as any)?._internal?.retrieval?.omitted_evidence_count ?? 0,
+          evidenceBudgetUsed: (v2Result as any)?._internal?.retrieval?.token_budget_used ?? 0,
+          retrievalWarnings: (v2Result as any)?._internal?.retrieval?.retrieval_warnings || [],
         };
         // Extract preflight data for input_trace
         v2Preflight = (v2Result as any)?._internal?.preflight || {};
