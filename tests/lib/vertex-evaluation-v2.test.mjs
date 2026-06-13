@@ -4011,7 +4011,7 @@ test('quality gate: assessReportQuality returns score 1.0 for well-formed report
   assert.equal(quality.weakSections.length, 0, 'No weak sections for a well-formed report');
 });
 
-test('quality gate accepts the current mediation sidecar and avoids an unnecessary refinement call', async () => {
+test('quality gate expands a compressed mediation sidecar when substantive evidence is available', async () => {
   const factSheet = validFactSheetPayload({
     project_goal: 'Test a SaaS referral and implementation partnership.',
     scope_deliverables: [
@@ -4081,9 +4081,42 @@ test('quality gate accepts the current mediation sidecar and avoids an unnecessa
         'Draft the referral-registration, client-protection, commission, implementation-fee, and support rules before final commitment.',
     }),
   });
+  const narrativeTopics = [
+    ['Why the pilot is worth pursuing', 'commercial intent and the bounded six-month term'],
+    ['Why the pilot is worth pursuing', 'the exchange of referral access for implementation capacity'],
+    ['What each side needs protected', 'the partner’s introduced accounts and the SaaS company’s direct-sales freedom'],
+    ['What each side needs protected', 'commission entitlement and customer ownership'],
+    ['The mechanics that decide value', 'registered attribution, payment timing, and client protection'],
+    ['The mechanics that decide value', 'implementation fees, training, support, and customer handoff'],
+    ['A balanced landing zone', 'a non-exclusive pilot with performance-based post-pilot rights'],
+    ['A balanced landing zone', 'measurable referrals, active support, and documented renegotiation criteria'],
+  ];
+  const refinedNarrativeSections = [];
+  narrativeTopics.forEach(([heading, topic], index) => {
+    let section = refinedNarrativeSections.find((entry) => entry.heading === heading);
+    if (!section) {
+      section = { heading, paragraphs: [] };
+      refinedNarrativeSections.push(section);
+    }
+    section.paragraphs.push(
+      `The current proposal provides specific evidence about ${topic}. The shared materials support a six-month non-exclusive referral pilot with registered introductions, commission, implementation support, training, and a post-pilot review, which gives the parties a real commercial structure to assess rather than a generic intention to collaborate. This point matters because the recommendation depends on whether each promised benefit is connected to an observable event and a named responsibility. If the parties document that mechanic before launch, the pilot can test value without granting permanent rights; if they leave it implicit, the same customer or payment event can create competing expectations. Analysis point ${index + 1} therefore supports a conditional path while keeping long-term economics subject to measured performance.`,
+    );
+  });
+  const refinedPassB = {
+    ...passB,
+    narrative: {
+      title: 'A workable referral pilot, once customer and economic rules are explicit',
+      sections: refinedNarrativeSections,
+      closing:
+        'Draft and agree a one-page Pilot Rules of Engagement covering referral registration, client protection, commission and revenue-share triggers, implementation fee ownership, support responsibilities, and post-pilot performance criteria before launch.',
+    },
+  };
   const quality = assessReportQuality(passB, factSheet);
-  assert.equal(quality.score, 1);
-  assert.deepEqual(quality.triggers, []);
+  assert.equal(quality.score < 1, true);
+  assert.equal(
+    quality.triggers.some((entry) => entry.startsWith('narrative_too_short_for_available_evidence')),
+    true,
+  );
 
   let callCount = 0;
   globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__ = async () => {
@@ -4100,6 +4133,14 @@ test('quality gate accepts the current mediation sidecar and avoids an unnecessa
       return {
         model: 'gemini-2.5-pro',
         text: JSON.stringify(passB),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      };
+    }
+    if (callCount === 3) {
+      return {
+        model: 'gemini-2.5-pro',
+        text: JSON.stringify(refinedPassB),
         finishReason: 'STOP',
         httpStatus: 200,
       };
@@ -4127,9 +4168,14 @@ test('quality gate accepts the current mediation sidecar and avoids an unnecessa
     });
     assert.equal(outcome.ok, true);
     if (!outcome.ok) return;
-    assert.equal(callCount, 2);
-    assert.equal(outcome._internal.refinement?.attempted, false);
+    assert.equal(callCount, 3);
+    assert.equal(outcome._internal.refinement?.attempted, true);
+    assert.equal(outcome._internal.refinement?.applied, true);
     assert.equal(outcome._internal.narrative_validation?.renderer_path, 'narrative');
+    const narrativeWords = JSON.stringify(outcome.data.narrative || '')
+      .split(/\s+/)
+      .filter(Boolean).length;
+    assert.equal(narrativeWords >= 900, true);
     assert.equal(outcome._internal.retrieval?.retrieval_strategy, 'heuristic_commercial_terms_v1');
     assert.equal(outcome._internal.retrieval?.evidence_count, 1);
     assert.equal('retrieved_evidence_packet' in outcome._internal, false);

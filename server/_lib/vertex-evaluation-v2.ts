@@ -10,8 +10,10 @@ import {
 import { preflightPromptCheck, type PreflightResult } from './evaluation-context-budget.js';
 import { normalizeOpportunityReviewStage } from '../../src/lib/opportunityReviewStage.js';
 import {
+  assessNarrativeSourceDepth,
   decisionLanguageWarnings,
   decisionStatusForFitLevel,
+  SUBSTANTIVE_NARRATIVE_MIN_WORDS,
   validateNarrativeMemo,
 } from './mediation-narrative.js';
 import {
@@ -3671,6 +3673,7 @@ function applyConsistencyCalibration(params: {
     fitLevel: fit_level,
     decisionStatus: finalDecisionStatus,
     missingCount: missing.length,
+    validateContentAlignment: true,
   });
   if (narrative && !narrativeValidation.valid) {
     narrative = undefined;
@@ -5315,6 +5318,50 @@ const MIN_WHY_TOTAL_CHARS = 1200;
 const MIN_SECTION_BODY_CHARS = 80;
 const MIN_MISSING_ITEMS_QUALITY = 2;
 const MAX_GENERIC_FILLER_HITS = 3;
+const NATURAL_SOURCE_ATTRIBUTION_PATTERN =
+  /\b(?:current proposal|latest draft|shared materials?|counterparty(?:'s)? (?:comments?|position|submission)|available (?:record|materials?|evidence)|negotiation history|current materials?|submitted materials?)\b/i;
+const RECOMMENDATION_CAUSAL_PATTERN =
+  /\b(?:because|given|since|based on|supported by|the .* (?:shows?|indicates?|suggests?|establishes?|leaves?))\b/i;
+const LIMITED_SOURCE_PATTERN =
+  /\b(?:available (?:record|material|information) is (?:limited|thin|incomplete)|source material is (?:limited|thin|incomplete)|preliminary review|insufficient (?:information|evidence)|cannot yet assess reliably)\b/i;
+
+function retrievedEvidenceItemsGroundedInNarrative(
+  narrativeText: string,
+  packet: RetrievedMediationEvidencePacket,
+) {
+  return packet.items.filter((item) =>
+    item.visibility === 'shared' &&
+    narrativeHasRetrievedEvidenceGrounding(narrativeText, item.excerpt),
+  ).length;
+}
+
+function openQuestionsCoverEvidenceDimensions(
+  missingItems: string[],
+  packet: RetrievedMediationEvidencePacket,
+) {
+  const text = missingItems.join(' ').toLowerCase();
+  const dimensions = new Set(packet.items.flatMap((item) => item.extracted_terms));
+  const expectedPatterns = [
+    dimensions.has('customer_attribution')
+      ? /\b(?:referral|attribution|client protection|non-circumvention|bypass|direct sell)\b/i
+      : null,
+    dimensions.has('economics')
+      ? /\b(?:commission|revenue share|payment|fee|pricing|renewal|expansion)\b/i
+      : null,
+    dimensions.has('obligations_and_risk')
+      ? /\b(?:implementation|onboarding|training|support|handoff|responsibilit)\b/i
+      : null,
+    dimensions.has('rights_and_control')
+      ? /\b(?:exclusiv|ownership|control|approval|territory)\b/i
+      : null,
+    dimensions.has('performance_and_timing')
+      ? /\b(?:pilot|success|performance|threshold|term|timing|renewal)\b/i
+      : null,
+  ].filter((pattern): pattern is RegExp => Boolean(pattern));
+  if (expectedPatterns.length < 2) return true;
+  const covered = expectedPatterns.filter((pattern) => pattern.test(text)).length;
+  return covered >= Math.min(3, expectedPatterns.length);
+}
 
 interface QualityAssessment {
   /** Overall score 0-1 (below 0.5 = weak). */
@@ -5467,7 +5514,13 @@ function assessReportQuality(
     fitLevel: data.fit_level,
     decisionStatus: data.internal_analysis?.decision_status,
     missingCount: missingItems.length,
+    validateContentAlignment: true,
   });
+  const sourceDepth = assessNarrativeSourceDepth({
+    factSheet,
+    retrievedEvidencePacket,
+  });
+  const hasSourceDepthContext = Boolean(factSheet || retrievedEvidencePacket);
   if (!narrativeValidation.valid) {
     narrativeValidation.warnings.forEach((warning) => {
       triggers.push(warning);
@@ -5476,6 +5529,45 @@ function assessReportQuality(
     penaltyPoints += Math.max(3, Math.min(6, narrativeValidation.warnings.length + 2));
   } else if (!narrativeHasFactSheetGrounding(narrativeText, factSheet)) {
     triggers.push('narrative_lacks_fact_sheet_grounding');
+    weakSections.push('narrative');
+    penaltyPoints += 2;
+  }
+  if (
+    sourceDepth.adequate &&
+    narrativeValidation.metrics.word_count < SUBSTANTIVE_NARRATIVE_MIN_WORDS
+  ) {
+    triggers.push(
+      `narrative_too_short_for_available_evidence:${narrativeValidation.metrics.word_count}words`,
+    );
+    weakSections.push('narrative');
+    penaltyPoints += 3;
+  }
+  if (
+    sourceDepth.adequate &&
+    narrativeValidation.metrics.paragraph_count < 6
+  ) {
+    triggers.push(
+      `narrative_too_compressed_for_available_evidence:${narrativeValidation.metrics.paragraph_count}paragraphs`,
+    );
+    weakSections.push('narrative');
+    penaltyPoints += 1;
+  }
+  if (
+    hasSourceDepthContext &&
+    !sourceDepth.adequate &&
+    narrativeValidation.metrics.word_count < 350 &&
+    (!LIMITED_SOURCE_PATTERN.test(narrativeText) || missingItems.length < 2)
+  ) {
+    triggers.push('thin_source_narrative_does_not_explain_limitations');
+    weakSections.push('narrative');
+    penaltyPoints += 2;
+  }
+  if (
+    sourceDepth.adequate &&
+    (!NATURAL_SOURCE_ATTRIBUTION_PATTERN.test(narrativeText) ||
+      !RECOMMENDATION_CAUSAL_PATTERN.test(narrativeText))
+  ) {
+    triggers.push('recommendation_not_linked_to_supplied_evidence');
     weakSections.push('narrative');
     penaltyPoints += 2;
   }
@@ -5509,6 +5601,26 @@ function assessReportQuality(
       triggers.push('narrative_ignores_retrieved_shared_evidence');
       weakSections.push('narrative');
     }
+    const sharedEvidenceCount = retrievedEvidencePacket.items.filter(
+      (item) => item.visibility === 'shared',
+    ).length;
+    const groundedEvidenceCount = retrievedEvidenceItemsGroundedInNarrative(
+      narrativeText,
+      retrievedEvidencePacket,
+    );
+    if (
+      sharedEvidenceCount >= 2 &&
+      groundedEvidenceCount < Math.min(2, sharedEvidenceCount)
+    ) {
+      triggers.push('narrative_uses_retrieved_evidence_superficially');
+      weakSections.push('narrative');
+      penaltyPoints += 1;
+    }
+    if (!openQuestionsCoverEvidenceDimensions(missingItems, retrievedEvidencePacket)) {
+      triggers.push('open_questions_miss_deal_critical_evidence_gaps');
+      weakSections.push('missing');
+      penaltyPoints += 1;
+    }
 
     const copiedEvidence = retrievedEvidencePacket.items.find((item) => {
       const excerpt = normalizeSpaces(item.excerpt).toLowerCase();
@@ -5519,6 +5631,14 @@ function assessReportQuality(
       triggers.push('narrative_copies_raw_retrieved_evidence');
       weakSections.push('narrative');
       penaltyPoints += 1;
+    }
+    const exposedEvidenceId = retrievedEvidencePacket.items.find((item) =>
+      narrativeText.includes(item.id),
+    );
+    if (exposedEvidenceId) {
+      triggers.push('narrative_exposes_raw_evidence_id');
+      weakSections.push('narrative');
+      penaltyPoints += 2;
     }
 
     const priorEvidenceIds = retrievedEvidencePacket.items
@@ -5572,6 +5692,7 @@ function buildNarrativeValidationMetadata(data: VertexEvaluationV2MediationRespo
     fitLevel: data.fit_level,
     decisionStatus: data.internal_analysis?.decision_status,
     missingCount: data.missing.length,
+    validateContentAlignment: true,
   });
   return {
     valid: validation.valid,
@@ -5605,6 +5726,10 @@ function buildRefinementPrompt(params: {
   convergenceDigestText?: string;
 }) {
   const { initialResult, factSheet, reportStyle, quality } = params;
+  const sourceDepth = assessNarrativeSourceDepth({
+    factSheet,
+    retrievedEvidencePacket: params.retrievedEvidencePacket,
+  });
 
   const weakSectionsList = quality.weakSections.length > 0
     ? `WEAK SECTIONS (prioritize improving these): ${quality.weakSections.join(', ')}`
@@ -5645,7 +5770,11 @@ function buildRefinementPrompt(params: {
     '- Ensure every section has substantive, specific content grounded in the fact_sheet.',
     '- Use the retrieved evidence packet to improve specificity, but do not introduce claims that are not already supported by the initial internal_analysis.',
     '- Keep evidence IDs and retrieval diagnostics inside internal_analysis. Never expose them in narrative or compatibility fields.',
-    '- The narrative must use 2-4 naturally chosen sections, at least 3 substantive paragraphs, a non-empty closing, and at least 500 characters of grounded body prose.',
+    sourceDepth.adequate
+      ? `- Expand the narrative into a substantive ${sourceDepth.target_min_words}-${sourceDepth.target_max_words} word deal memo with 3-5 natural sections and normally 8-12 paragraphs. Add analysis, evidence links, implications, trade-offs, and concrete mechanics rather than padding.`
+      : `- Aim for at least ${sourceDepth.target_min_words} words even though the source material is thin. A shorter 2-3 section memo is acceptable only if the record genuinely cannot support more analysis and it explicitly explains the limitation and names the information needed for a reliable assessment.`,
+    '- Link every major recommendation naturally to the current proposal, latest draft, shared materials, counterparty comments, available record, or negotiation history. Do not expose evidence IDs.',
+    '- Correct section/body mismatches: question headings contain unresolved matters, risk headings contain failure points, bridge headings contain compromise mechanics, and next-step headings contain a concrete action.',
     '- Ensure each missing[] item has an actionable question with an em-dash why-it-matters clause.',
     '- Improve tradeoff framing — include at least 2 explicit if/then statements.',
     '- Ensure natural prose flow with varied sentence lengths.',

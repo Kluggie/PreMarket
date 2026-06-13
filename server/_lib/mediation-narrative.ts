@@ -2,14 +2,21 @@ import type {
   FitLevel,
   MediationDecisionStatus,
   NarrativeMemo,
+  ProposalFactSheet,
+  RetrievedMediationEvidencePacket,
 } from './vertex-evaluation-v2-types.js';
 
 export const NARRATIVE_MIN_SECTIONS = 2;
-export const NARRATIVE_MAX_SECTIONS = 4;
+export const NARRATIVE_MAX_SECTIONS = 5;
 export const NARRATIVE_MIN_PARAGRAPHS = 3;
 export const NARRATIVE_MIN_BODY_CHARS = 500;
 export const NARRATIVE_MIN_SECTION_CHARS = 120;
 export const NARRATIVE_MIN_CLOSING_CHARS = 20;
+export const SUBSTANTIVE_NARRATIVE_MIN_WORDS = 900;
+export const SUBSTANTIVE_NARRATIVE_TARGET_MIN_WORDS = 1_000;
+export const SUBSTANTIVE_NARRATIVE_TARGET_MAX_WORDS = 1_400;
+export const GENERAL_NARRATIVE_TARGET_MIN_WORDS = 800;
+export const GENERAL_NARRATIVE_TARGET_MAX_WORDS = 1_000;
 
 export type NarrativeValidationResult = {
   narrative?: NarrativeMemo;
@@ -19,7 +26,17 @@ export type NarrativeValidationResult = {
     section_count: number;
     paragraph_count: number;
     body_chars: number;
+    word_count: number;
   };
+};
+
+export type NarrativeSourceDepth = {
+  adequate: boolean;
+  material_signal_count: number;
+  evidence_count: number;
+  evidence_character_count: number;
+  target_min_words: number;
+  target_max_words: number;
 };
 
 function asText(value: unknown) {
@@ -43,6 +60,62 @@ function uniqueStrings(value: unknown, maxItems = 8) {
     output.push(text);
   });
   return output;
+}
+
+function countWords(value: string) {
+  return value.match(/\b[\p{L}\p{N}][\p{L}\p{N}'’-]*\b/gu)?.length || 0;
+}
+
+export function assessNarrativeSourceDepth(params: {
+  factSheet?: ProposalFactSheet;
+  retrievedEvidencePacket?: RetrievedMediationEvidencePacket;
+}): NarrativeSourceDepth {
+  const factSheet = params.factSheet;
+  const packet = params.retrievedEvidencePacket;
+  const materialSignalCount = factSheet
+    ? [
+        factSheet.project_goal,
+        ...factSheet.scope_deliverables,
+        factSheet.timeline.start,
+        factSheet.timeline.duration,
+        ...factSheet.timeline.milestones,
+        ...factSheet.constraints,
+        ...factSheet.success_criteria_kpis,
+        ...factSheet.vendor_preferences,
+        ...factSheet.assumptions,
+        ...factSheet.risks.map((entry) => entry.risk),
+        ...factSheet.open_questions,
+        ...factSheet.missing_info,
+      ].filter((entry) => asText(entry)).length
+    : 0;
+  const evidenceCount =
+    packet?.retrieval_strategy === 'heuristic_commercial_terms_v1'
+      ? Number(packet.evidence_count || 0)
+      : 0;
+  const evidenceCharacterCount =
+    packet?.retrieval_strategy === 'heuristic_commercial_terms_v1'
+      ? Number(packet.character_budget_used || 0)
+      : 0;
+  const coverageCount = factSheet
+    ? Object.values(factSheet.source_coverage).filter(Boolean).length
+    : 0;
+  const adequate =
+    materialSignalCount >= 8 ||
+    (evidenceCount >= 2 && evidenceCharacterCount >= 350) ||
+    (coverageCount >= 3 && evidenceCount >= 1 && evidenceCharacterCount >= 220);
+
+  return {
+    adequate,
+    material_signal_count: materialSignalCount,
+    evidence_count: evidenceCount,
+    evidence_character_count: evidenceCharacterCount,
+    target_min_words: adequate
+      ? SUBSTANTIVE_NARRATIVE_TARGET_MIN_WORDS
+      : GENERAL_NARRATIVE_TARGET_MIN_WORDS,
+    target_max_words: adequate
+      ? SUBSTANTIVE_NARRATIVE_TARGET_MAX_WORDS
+      : GENERAL_NARRATIVE_TARGET_MAX_WORDS,
+  };
 }
 
 export function decisionStatusForFitLevel(fitLevel: FitLevel): MediationDecisionStatus {
@@ -185,12 +258,54 @@ function hasRigidDecisionBriefHeadings(narrative: NarrativeMemo) {
   return headings.length >= 3 && headings.every((heading) => rigid.has(heading));
 }
 
+const QUESTION_HEADING_PATTERN =
+  /\b(?:open questions?|questions? for|still needs? answering|evidence still missing|before committing|resolve first|what would change my view)\b/i;
+const PROBLEM_HEADING_PATTERN =
+  /\b(?:deal is stuck|gets difficult|could break down|risk concentrates|real hesitation|blocking commitment)\b/i;
+const NEXT_STEP_HEADING_PATTERN =
+  /\b(?:next step|next move|move to make now|practical next move|action to take)\b/i;
+const RECOMMENDATION_OR_ACTION_PATTERN =
+  /\b(?:recommend|move forward|proceed|advance|finali[sz]e|sign|approve|draft|prepare|hold (?:a|one) (?:session|meeting|workshop)|the next step|should now|must now)\b/i;
+const RISK_CONTENT_PATTERN =
+  /\b(?:risk|break down|fail|dispute|exposure|ambiguity|uncertainty|blocker|tension|unresolved|unclear|undefined|could leave|may leave)\b/i;
+const CONCRETE_ACTION_PATTERN =
+  /\b(?:draft|prepare|document|record|agree|define|confirm|schedule|hold|create|map|register|review|negotiate|assign|circulate|write|set|establish)\b/i;
+
+function sectionContentAlignmentWarnings(narrative: NarrativeMemo) {
+  const warnings: string[] = [];
+  narrative.sections.forEach((section) => {
+    const heading = section.heading;
+    const body = section.paragraphs.join(' ');
+    if (
+      QUESTION_HEADING_PATTERN.test(heading) &&
+      RECOMMENDATION_OR_ACTION_PATTERN.test(body)
+    ) {
+      warnings.push('narrative_question_section_contains_recommendation_or_action');
+    }
+    if (
+      PROBLEM_HEADING_PATTERN.test(heading) &&
+      RECOMMENDATION_OR_ACTION_PATTERN.test(body) &&
+      !RISK_CONTENT_PATTERN.test(body)
+    ) {
+      warnings.push('narrative_problem_section_contains_bridge_or_action');
+    }
+    if (
+      NEXT_STEP_HEADING_PATTERN.test(heading) &&
+      !CONCRETE_ACTION_PATTERN.test(body)
+    ) {
+      warnings.push('narrative_next_step_lacks_concrete_action');
+    }
+  });
+  return [...new Set(warnings)];
+}
+
 export function validateNarrativeMemo(
   value: unknown,
   options: {
     fitLevel?: FitLevel;
     decisionStatus?: MediationDecisionStatus;
     missingCount?: number;
+    validateContentAlignment?: boolean;
   } = {},
 ): NarrativeValidationResult {
   const narrative = normalizeNarrativeMemo(value);
@@ -200,7 +315,7 @@ export function validateNarrativeMemo(
     return {
       valid: false,
       warnings: ['narrative_missing_or_malformed'],
-      metrics: { section_count: 0, paragraph_count: 0, body_chars: 0 },
+      metrics: { section_count: 0, paragraph_count: 0, body_chars: 0, word_count: 0 },
     };
   }
 
@@ -250,6 +365,9 @@ export function validateNarrativeMemo(
   if (hasRigidDecisionBriefHeadings(narrative)) {
     warnings.push('narrative_uses_rigid_decision_brief_headings');
   }
+  if (options.validateContentAlignment) {
+    warnings.push(...sectionContentAlignmentWarnings(narrative));
+  }
 
   const status =
     options.decisionStatus ||
@@ -272,6 +390,7 @@ export function validateNarrativeMemo(
       section_count: narrative.sections.length,
       paragraph_count: paragraphCount,
       body_chars: bodyChars,
+      word_count: countWords(bodyText),
     },
   };
 }

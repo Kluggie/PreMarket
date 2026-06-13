@@ -1,4 +1,5 @@
 import type { MediationRoundContext } from './mediation-progress.js';
+import { assessNarrativeSourceDepth } from './mediation-narrative.js';
 import { wrapRawUserContent } from './vertex-input-sanitizer.js';
 import { STAGE1_PRELIMINARY_SUMMARY_NOTE } from '../../src/lib/aiReportUtils.js';
 import {
@@ -20,7 +21,7 @@ import {
 export const WHY_MAX_CHARS_STANDARD = 5800;
 export const WHY_MAX_CHARS_TIGHT = 2600;
 export const MISSING_MIN_ITEMS = 2;
-export const MISSING_MAX_ITEMS = 4;
+export const MISSING_MAX_ITEMS = 6;
 export const REDACTIONS_MAX_ITEMS = 8;
 
 const STYLE_IDS: StyleId[] = ['analytical', 'direct', 'collaborative'];
@@ -568,6 +569,10 @@ export function buildEvalPromptFromFactSheet(params: {
   const hasAggressiveTimeline = containsAny(factSheet.constraints, [
     'aggressive', 'tight timeline', 'hard deadline', 'asap', 'urgent',
   ]);
+  const narrativeSourceDepth = assessNarrativeSourceDepth({
+    factSheet,
+    retrievedEvidencePacket,
+  });
 
   const requiredHeadings = [
     'Recommendation',
@@ -593,7 +598,12 @@ export function buildEvalPromptFromFactSheet(params: {
         ? 'Voice: blunt and direct. Short sentences. Minimal hedging. State conclusions plainly.'
         : 'Voice: constructive and collaborative. Forward-looking language. Frame gaps as opportunities.';
 
-  const effectiveVerbosity: Verbosity = coverageCount < 3 || tightMode ? 'tight' : reportStyle.verbosity;
+  const effectiveVerbosity: Verbosity =
+    tightMode || (!narrativeSourceDepth.adequate && coverageCount < 3)
+      ? 'tight'
+      : narrativeSourceDepth.adequate && reportStyle.verbosity === 'tight'
+        ? 'standard'
+        : reportStyle.verbosity;
   const depthGuide =
     effectiveVerbosity === 'tight'
       ? 'Depth: concise. Keep each paragraph to 2-3 tight sentences. Every word must earn its place — cut filler, keep substance.'
@@ -625,6 +635,7 @@ export function buildEvalPromptFromFactSheet(params: {
       missing_min_items: MISSING_MIN_ITEMS,
       missing_max_items: MISSING_MAX_ITEMS,
       redactions_max_items: REDACTIONS_MAX_ITEMS,
+      narrative_source_depth: narrativeSourceDepth,
       report_style: {
         style_id: reportStyle.style_id,
         ordering: reportStyle.ordering,
@@ -775,12 +786,18 @@ export function buildEvalPromptFromFactSheet(params: {
     '- output_mode: executive_memo, founder_friendly, negotiation_coach, skeptical_review, or balanced_assessment.',
     '',
     'NATURAL NARRATIVE REQUIREMENTS:',
-    '- Write a polished deal memo with a specific title and 2-4 naturally chosen sections. Use the number of sections the deal actually needs within that range.',
-    '- Write at least 3 substantive paragraphs across the memo, with enough grounded reasoning to exceed 500 characters without padding. Vary paragraph count and rhythm to fit the case.',
+    '- Write a polished deal memo with a specific title and 3-5 naturally chosen sections when the source material is adequate. Thin records may use 2-3 sections.',
+    narrativeSourceDepth.adequate
+      ? `- The available record is substantive. Write a paid-quality memo of ${narrativeSourceDepth.target_min_words}-${narrativeSourceDepth.target_max_words} words, normally 8-12 substantive paragraphs. A 200-400 word executive summary is not acceptable for this record.`
+      : `- Aim for at least ${narrativeSourceDepth.target_min_words} words even when the record is limited, using the space to explain known facts, uncertainty, commercial implications, and the evidence needed next. A shorter memo is acceptable only when the source genuinely cannot support more analysis; it must explicitly say the available material is limited and identify the exact missing information preventing a fuller assessment.`,
+    '- Add length through evidence-linked reasoning: explain why the recommendation follows, what each side appears to need protected, how loose terms create commercial risk, what a fair bridge would do, what must be agreed before proceeding, and what new evidence would change the recommendation.',
     '- Open with the judgment in natural language. Do not always begin with "Recommendation".',
     '- Choose headings and order that fit this deal and the selected output_mode. Do not reuse the same heading set mechanically.',
     '- The narrative should usually cover the commercial logic, strongest case for moving ahead, where the arrangement may break down, hidden assumptions, negotiation implications, and the practical path forward, but only where relevant.',
     '- Integrate missing information naturally. A section may be framed as "What would change my view", "Before committing", "The negotiation that matters", or another case-specific heading instead of always "Open Questions".',
+    '- Every major recommendation must explain its evidentiary basis using natural phrases such as "the current proposal", "the latest draft", "the shared materials", "the counterparty comments", "the available record", or "the negotiation history". Do not expose evidence IDs or retrieval metadata.',
+    '- Clearly distinguish established facts, reasonable inferences, and missing information. Use conditional language for inferences and say when the record does not establish a point.',
+    '- Section headings and body content must match. Question headings contain unresolved questions or missing evidence, risk headings explain failure points, bridge headings contain compromise mechanics, and next-step headings contain a concrete action.',
     '- End with one concrete next action in narrative.closing. Do not use a generic instruction such as "communicate clearly" or "use the questions as an agenda".',
     '- The closing action must match the final decision: conditional cases must resolve conditions before commitment; negative cases must pause or restructure; positive cases may move toward final documentation.',
     '- Make the memo longer through reasoning, trade-offs, implications, and concrete mechanics, never through padding.',
@@ -822,7 +839,7 @@ export function buildEvalPromptFromFactSheet(params: {
     '  "The friction appears to be less about intent and more about how execution risk is being allocated."',
     '  "This looks more bridgeable than misaligned, but the unresolved items still need tighter definition."',
     '- REASONING STABILITY: Your mediation logic must be driven by the substance of the deal — the actual terms, gaps, risks, and dynamics — not by surface wording. Two proposals describing the same commercial arrangement in different words should produce the same reasoning conclusions. Anchor every judgment to concrete fact_sheet evidence, not to how eloquently the proposal is written.',
-    '- CRITICAL ANTI-REPETITION RULE: Each substantive point (blocker, alignment point, bridge, open question) may appear ONCE in the entire output. Do NOT restate the same idea in Recommendation, Where the Deal Is Stuck, Suggested Bridge, and Next Step. State it clearly once; reference it briefly elsewhere only if essential.',
+    '- CRITICAL ANTI-REPETITION RULE: Avoid verbatim repetition and do not recycle identical sentences across sections. The recommendation may synthesize later analysis, but each later section must add new evidence, implication, trade-off, bridge mechanics, or decision consequence.',
     '- The Recommendation must be the decision brief, not a second summary. It should say what to do now, why the status/confidence was chosen, and avoid repeating all later sections.',
     '- Do NOT write "Decision status:" inside the visible body. Use the Recommendation section for human-readable advice, not a repeated status label.',
     '- Do NOT recycle the same unresolved items across Recommendation, deal analysis, and Open Questions. If a point is made in the narrative, the open questions should add NEW information, not restate.',
@@ -895,8 +912,10 @@ export function buildEvalPromptFromFactSheet(params: {
       : '- Total why[] array: 5-6 entries. Default to 5. Only 6 if the case genuinely needs one extra insight.',
     '',
     'MISSING FIELD \u2014 QUALITY RULES:',
-    `- Generate 2-4 items. Maximum ${MISSING_MAX_ITEMS} items. Include ONLY questions that would materially change the path to agreement.`,
-    '- Prefer 2-3 high-value questions over 5-6 that rehash earlier content. Only include a question if it adds information not already embedded in the mediation narrative.',
+    narrativeSourceDepth.adequate
+      ? `- Generate 3-${MISSING_MAX_ITEMS} deal-critical items when the evidence supports that many distinct gaps. Cover the full decision-critical agenda without manufacturing questions.`
+      : `- Generate 2-${MISSING_MAX_ITEMS} items. With thin source material, identify the specific information needed for a reliable assessment.`,
+    '- Prefer complete coverage of distinct deal-critical gaps over an artificially short list. Do not rehash earlier prose, but do not omit a material attribution, economics, protection, responsibility, renewal, termination, or control question merely to keep the list brief.',
     '- Each item must be an actionable question AND include a "why it matters" clause after an em-dash (\u2014).',
     '  Example for a SaaS referral/channel partnership: "What counts as a successful referral: introduction, qualified meeting, signed customer, paid subscription, or completed implementation? \u2014 determines when commission is earned and how attribution is tracked."',
     '  Other good SaaS referral/channel questions: "When is commission earned and paid?"; "When does recurring revenue share apply?"; "How long does client protection last?"; "What counts as bypassing the partner?"; "What implementation work is included in onboarding versus separately paid consulting?"; "What pilot outcome would justify semi-exclusivity or renegotiation?"',
@@ -1036,7 +1055,10 @@ export function buildEvalPromptFromFactSheet(params: {
     '- fit_level must be one of high|medium|low|unknown.',
     '- confidence_0_1 must be between 0 and 1.',
     '- why/missing/redactions must be arrays (can be empty).',
-    '- internal_analysis and narrative are required for newly generated mediation responses. narrative must have a non-empty title and closing, 2-4 sections, at least 3 substantive paragraphs, and at least 500 characters of grounded body prose.',
+    '- internal_analysis and narrative are required for newly generated mediation responses. narrative must have a non-empty title and closing, 2-5 sections, and grounded substantive prose.',
+    narrativeSourceDepth.adequate
+      ? `- This record is adequate for a substantive memo: narrative should be ${narrativeSourceDepth.target_min_words}-${narrativeSourceDepth.target_max_words} words and must not collapse into a short executive summary.`
+      : `- This record is thin: aim for at least ${narrativeSourceDepth.target_min_words} words, but a shorter narrative is allowed when the source genuinely cannot support more analysis and it explicitly explains the limitation and names the missing information that prevents fuller analysis.`,
     '- negotiation_analysis is optional, but if you include it the structure must match the schema above.',
     hasPriorBilateralContext
       ? '- Because prior_bilateral_context exists: resolved_since_last_round must list issues genuinely closed or narrowed this round. remaining_deltas must list issues still open with their current status classification. new_open_issues must list issues newly introduced this round. movement_direction must reflect your honest momentum assessment from step 16d — converging, stalled, or diverging. Do NOT use generic filler.'

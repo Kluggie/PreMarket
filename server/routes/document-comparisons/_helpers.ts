@@ -1025,14 +1025,15 @@ function buildSaasPartnershipNextStep() {
 }
 
 function normalizeOpenQuestionsForMediation(missing: string[], contextText: string) {
+  const maxVisibleQuestions = 6;
   const isSaasPartnership = looksLikeSaasPartnershipBrief(contextText);
   if (!isSaasPartnership) {
-    return missing;
+    return missing.slice(0, maxVisibleQuestions);
   }
 
   const filtered = uniqueText(missing.filter((item) => !isGenericProjectDeliveryQuestion(item)));
   SAAS_PARTNERSHIP_OPEN_QUESTIONS.forEach((question) => {
-    if (filtered.length >= 4) return;
+    if (filtered.length >= maxVisibleQuestions) return;
     const questionKey = normalizeHeadingKey(question.split('—')[0] || question).slice(0, 80);
     const alreadyCovered = filtered.some((existing) =>
       normalizeHeadingKey(existing).includes(questionKey.slice(0, 35)) ||
@@ -1042,7 +1043,7 @@ function normalizeOpenQuestionsForMediation(missing: string[], contextText: stri
       filtered.push(question);
     }
   });
-  return filtered.slice(0, 4);
+  return filtered.slice(0, maxVisibleQuestions);
 }
 
 /**
@@ -1191,7 +1192,7 @@ function buildNaturalNarrativePresentation(params: {
     const questionSection = createPresentationSection({
       key: 'narrative_questions',
       heading: questionHeading,
-      bullets: unresolvedQuestions.slice(0, 4),
+      bullets: unresolvedQuestions.slice(0, 6),
       numbered_bullets: true,
     });
     if (questionSection) {
@@ -1257,6 +1258,7 @@ export function buildMediationReviewPresentation(params: {
   const narrativeValidation = validateNarrativeMemo(params.narrative, {
     fitLevel: normalizedFitLevel,
     missingCount: missing.length,
+    validateContentAlignment: true,
   });
 
   // Classify archetype for backward compatibility — but no longer drives section structure

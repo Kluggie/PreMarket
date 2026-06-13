@@ -147,8 +147,13 @@ test('mediation prompt separates structured internal analysis from the natural v
   assert.match(prompt, /why\[\] is a compact compatibility sidecar/i);
   assert.match(prompt, /Do not always begin with "Recommendation"/i);
   assert.match(prompt, /Choose headings and order that fit this deal/i);
-  assert.match(prompt, /at least 3 substantive paragraphs/i);
-  assert.match(prompt, /exceed 500 characters without padding/i);
+  assert.match(prompt, /1000-1400 words/i);
+  assert.match(prompt, /normally 8-12 substantive paragraphs/i);
+  assert.match(prompt, /200-400 word executive summary is not acceptable/i);
+  assert.match(prompt, /every major recommendation must explain its evidentiary basis/i);
+  assert.match(prompt, /current proposal.*latest draft.*shared materials.*counterparty comments/i);
+  assert.match(prompt, /Section headings and body content must match/i);
+  assert.match(prompt, /Generate 3-6 deal-critical items/i);
   assert.match(prompt, /Make the memo longer through reasoning, trade-offs, implications, and concrete mechanics, never through padding/i);
   assert.match(prompt, /final decision contract/i);
   assert.match(prompt, /conditional.*must not sound like approval/i);
@@ -162,6 +167,38 @@ test('mediation prompt separates structured internal analysis from the natural v
   assert.match(prompt, /OUTPUT SHAPE/i);
   assert.match(prompt, /mediat/i);
   assert.match(prompt, /analysis_stage must be "mediation_review"/i);
+});
+
+test('thin mediation prompt allows shorter narrative only with an explicit source limitation', () => {
+  const prompt = buildEvalPromptFromFactSheet({
+    factSheet: factSheet({
+      project_goal: 'Explore a possible partnership.',
+      scope_deliverables: [],
+      timeline: { start: null, duration: null, milestones: [] },
+      constraints: [],
+      success_criteria_kpis: [],
+      vendor_preferences: [],
+      assumptions: [],
+      risks: [],
+      open_questions: [],
+      missing_info: [],
+      source_coverage: {
+        has_scope: false,
+        has_timeline: false,
+        has_kpis: false,
+        has_constraints: false,
+        has_risks: false,
+      },
+    }),
+    chunks: chunks(),
+    reportStyle: selectReportStyle(1),
+  });
+
+  assert.match(prompt, /record is limited/i);
+  assert.match(prompt, /at least 800 words/i);
+  assert.match(prompt, /explicitly say the available material is limited/i);
+  assert.match(prompt, /identify the exact missing information/i);
+  assert.doesNotMatch(prompt, /200-400 word executive summary is not acceptable/i);
 });
 
 test('mediation prompt injects ranked evidence as untrusted data and requires grounded private analysis', () => {

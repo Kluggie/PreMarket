@@ -50,6 +50,36 @@ function factSheetPayload() {
   });
 }
 
+function routingNarrative() {
+  const topics = [
+    'the dashboard module and API integration as the core commercial scope',
+    'the six-month timetable and staged milestone sequence',
+    'the performance target and evidence needed to assess progress',
+    'renewal treatment and the ability to opt out before another term begins',
+    'authority to approve scope changes and the financial effect of added work',
+    'ownership of client and third-party dependencies that can move the timetable',
+    'the connection between milestone acceptance and payment entitlement',
+    'the escalation path when evidence, approval, or access arrives late',
+    'the balance between a bounded first phase and possible later expansion',
+    'the specific closing agenda needed before final documentation',
+  ];
+  const paragraphs = topics.map((topic, index) =>
+    `The current proposal provides a useful starting point on ${topic}. The shared materials identify a dashboard engagement with a defined module, API work, a six-month horizon, and measurable performance expectations, so the recommendation is based on observable commercial terms rather than general optimism. This issue still needs careful treatment because the same wording could allocate cost, timing, or approval risk differently to each side. If the parties record the relevant owner, trigger, evidence, and exception before commitment, the phased structure can remain workable without creating open-ended exposure. If they leave it implicit, later implementation events may be interpreted as either an included obligation or an unapproved change. Analysis point ${index + 1} therefore supports proceeding only with conditions and explains what the next negotiation must resolve.`,
+  );
+  return {
+    title: 'A workable dashboard engagement still needs its operating rules closed',
+    sections: [
+      { heading: 'Why the commercial logic is credible', paragraphs: paragraphs.slice(0, 2) },
+      { heading: 'What the current record establishes', paragraphs: paragraphs.slice(2, 4) },
+      { heading: 'Where risk could move between the parties', paragraphs: paragraphs.slice(4, 6) },
+      { heading: 'A balanced route through the open terms', paragraphs: paragraphs.slice(6, 8) },
+      { heading: 'What should be closed before commitment', paragraphs: paragraphs.slice(8, 10) },
+    ],
+    closing:
+      'Hold one closing session to document renewal, change authority, dependency ownership, milestone evidence, payment triggers, and escalation before either side treats the engagement as ready for final approval.',
+  };
+}
+
 // A valid Pass B (evaluation) JSON response.
 function evalPayload(overrides = {}) {
   return JSON.stringify({
@@ -70,27 +100,7 @@ function evalPayload(overrides = {}) {
       'What are the acceptance criteria for each deliverable? — determines payment triggers.',
     ],
     redactions: [],
-    narrative: {
-      title: 'A workable dashboard engagement still needs several terms bounded',
-      sections: [
-        {
-          heading: 'The commercial shape is credible',
-          paragraphs: [
-            'The proposed dashboard module, API integration, six-month timetable, and performance target give the parties a recognizable transaction to negotiate. The staged delivery concept also creates a practical basis for linking progress reviews to the work actually completed rather than relying on a broad promise of completion.',
-            'That alignment supports continued negotiation, but it does not remove the need to settle the renewal mechanism, scope-change authority, and the relationship between acceptance and payment. Those items determine how responsibility and financial exposure move if the implementation changes.',
-          ],
-        },
-        {
-          heading: 'The next round should close the operating gaps',
-          paragraphs: [
-            'A sensible conditional path is to confirm the renewal opt-out, name the people who can authorize changes, and connect each milestone payment to an agreed evidence standard. This would preserve the useful delivery structure while preventing either side from treating assumptions as final terms.',
-            'The report remains conditional because the current materials leave several commercially material questions open. Resolving those questions before final commitment would give both parties a clearer basis for approving the engagement and managing later implementation decisions.',
-          ],
-        },
-      ],
-      closing:
-        'Use the next negotiation round to settle renewal, change authority, and milestone evidence before final commitment.',
-    },
+    narrative: routingNarrative(),
     ...overrides,
   });
 }
