@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
+import { mapEvaluationRunView } from '../../server/routes/shared-report/_shared.ts';
 
 const SHARED_REPORT_PATH = path.resolve(
   process.cwd(),
@@ -195,6 +196,40 @@ test('recipient Run AI Mediation shows a specific timeout error and Vercel allow
     300,
     'The consolidated API function must allow long-running mediation requests to finish',
   );
+});
+
+test('recipient workspace strips internal evaluation diagnostics from the public run view', () => {
+  const view = mapEvaluationRunView({
+    id: 'share_eval_diagnostics',
+    revisionId: 'share_rev_diagnostics',
+    actorRole: 'recipient',
+    status: 'success',
+    resultPublicReport: {
+      renderer_path: 'fallback',
+      narrative_valid: false,
+    },
+    resultJson: {
+      evaluation_result: {
+        report: {
+          renderer_path: 'fallback',
+          narrative_valid: false,
+        },
+      },
+      evaluation_diagnostics: {
+        failureKind: 'openai_quota_exceeded',
+        providerStatus: 429,
+        providerCode: 'insufficient_quota',
+      },
+    },
+    errorCode: null,
+    errorMessage: null,
+    createdAt: new Date('2026-06-12T00:00:00.000Z'),
+    updatedAt: new Date('2026-06-12T00:00:01.000Z'),
+  });
+
+  assert.equal(view.public_report.renderer_path, 'fallback');
+  assert.equal(view.result_json.evaluation_result.report.renderer_path, 'fallback');
+  assert.equal('evaluation_diagnostics' in view.result_json, false);
 });
 
 // ─────────────────────────────────────────────────────────────────

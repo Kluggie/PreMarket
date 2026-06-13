@@ -2637,6 +2637,27 @@ if (!hasDatabaseUrl()) {
       assert.equal(secondReport.renderer_path, 'narrative');
       assert.equal(secondReport.narrative_valid, true);
       assert.equal(passBCount >= 2, true);
+
+      const db = getDb();
+      const evaluationRows = await db.execute(
+        sql`select result_json
+            from shared_report_evaluation_runs
+            where proposal_id = ${comparison.proposal_id}
+            order by created_at desc
+            limit 1`,
+      );
+      const diagnostics = evaluationRows.rows[0]?.result_json?.evaluation_diagnostics || {};
+      assert.equal(diagnostics.rendererPath, 'narrative');
+      assert.equal(diagnostics.narrativeValid, true);
+      assert.equal(typeof diagnostics.evaluatorElapsedMs, 'number');
+      assert.equal(typeof diagnostics.routeElapsedMs, 'number');
+
+      const workspaceRes = await getRecipientWorkspace(link.token, recipientCookie);
+      assert.equal(workspaceRes.statusCode, 200);
+      assert.equal(
+        'evaluation_diagnostics' in (workspaceRes.jsonBody()?.latestEvaluation?.result_json || {}),
+        false,
+      );
     } finally {
       cleanup();
       if (previousMediationProvider === undefined) {

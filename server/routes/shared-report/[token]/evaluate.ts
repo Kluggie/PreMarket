@@ -360,6 +360,7 @@ function toApiError(error: any) {
 }
 
 export default async function handler(req: any, res: any, tokenParam?: string) {
+  const routeStartedAt = Date.now();
   await withApiRoute(req, res, SHARED_REPORT_EVALUATE_ROUTE, async (context) => {
     ensureMethod(req, ['POST']);
 
@@ -716,13 +717,21 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
         });
         evaluationDiagnostics = {
           provider: (v2Result as any)?._internal?.models_used?.provider || null,
-          model: (v2Result as any)?.model || null,
+          model: (v2Result as any)?.model || (v2Result as any)?.generation_model || null,
           passBAttempts: (v2Result as any)?._internal?.pass_b_attempt_count || null,
           refinementAttempted: Boolean((v2Result as any)?._internal?.refinement?.attempted),
           refinementApplied: Boolean((v2Result as any)?._internal?.refinement?.applied),
           regenerationTriggered: Boolean((v2Result as any)?._internal?.regeneration?.triggered),
           rawQualityScore: (v2Result as any)?._internal?.raw_quality_score ?? null,
           rendererPath: (v2Result as any)?._internal?.narrative_validation?.renderer_path || null,
+          narrativeValid: (v2Result as any)?._internal?.narrative_validation?.valid ?? null,
+          narrativeValidationWarnings:
+            (v2Result as any)?._internal?.narrative_validation?.warnings || [],
+          failureKind: (v2Result as any)?._internal?.failure_kind || null,
+          fallbackMode: (v2Result as any)?._internal?.fallback_mode || null,
+          providerStatus: (v2Result as any)?._internal?.failure_details?.provider_status ?? null,
+          providerCode: (v2Result as any)?._internal?.failure_details?.provider_code || null,
+          warnings: (v2Result as any)?._internal?.warnings || [],
         };
         // Extract preflight data for input_trace
         v2Preflight = (v2Result as any)?._internal?.preflight || {};
@@ -769,6 +778,11 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
           resultPublicReport: projection.public_report || {},
           resultJson: {
             evaluation_result: projection.evaluation_result || {},
+            evaluation_diagnostics: {
+              ...evaluationDiagnostics,
+              evaluatorElapsedMs: Date.now() - evaluatorStartedAt,
+              routeElapsedMs: Date.now() - routeStartedAt,
+            },
             input_trace: {
               shared_length: sharedText.length,
               current_round_shared_length: currentRoundSharedText.length,

@@ -873,3 +873,51 @@ await test('O6 — OpenAI mediation defaults to GPT-5.4 when MEDIATION_AI_MODEL 
     restoreKey();
   }
 });
+
+await test('O7 — OpenAI insufficient quota is recorded, not retried, and returns an explicit fallback', async () => {
+  let openAICalls = 0;
+  const openAIHook = async () => {
+    openAICalls += 1;
+    const error = new Error('OpenAI mediation request failed');
+    error.code = 'openai_request_failed';
+    error.statusCode = 502;
+    error.extra = {
+      upstreamStatus: 429,
+      upstreamCode: 'insufficient_quota',
+      upstreamMessage: 'You exceeded your current quota.',
+    };
+    throw error;
+  };
+
+  const restoreOpenAI = setOpenAIHook(openAIHook);
+  const restoreProvider = setEnv('MEDIATION_AI_PROVIDER', 'openai');
+  const restoreModel = setEnv('MEDIATION_AI_MODEL', 'gpt-5.4');
+  const restoreKey = setEnv('OPENAI_API_KEY', 'test-openai-key');
+
+  try {
+    const result = await evaluateMediationWithVertexV2({
+      sharedText: SHARED_TEXT,
+      confidentialText: CONFIDENTIAL_TEXT,
+      enforceLeakGuard: false,
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(openAICalls, 2, 'Quota failure should make one fact extraction call and one generation call without retry');
+    assert.equal(result._internal?.failure_kind, 'openai_quota_exceeded');
+    assert.equal(result._internal?.fallback_mode, 'incomplete');
+    assert.equal(result._internal?.failure_details?.provider_status, 429);
+    assert.equal(result._internal?.failure_details?.provider_code, 'insufficient_quota');
+    assert.equal(result._internal?.models_used?.provider, 'openai');
+    assert.equal(result._internal?.narrative_validation?.renderer_path, 'fallback');
+    assert.equal(result._internal?.narrative_validation?.valid, false);
+    assert.equal(
+      result._internal?.warnings?.includes('openai_quota_exceeded_fallback_used'),
+      true,
+    );
+  } finally {
+    restoreOpenAI();
+    restoreProvider();
+    restoreModel();
+    restoreKey();
+  }
+});

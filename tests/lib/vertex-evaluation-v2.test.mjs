@@ -1378,7 +1378,10 @@ test('v2 true incomplete fallback stays minimal and explicitly incomplete when e
     assert.equal(outcome.data.confidence_0_1, 0.2, 'true incomplete fallback confidence must remain at 0.2');
 
     const whyText = outcome.data.why.join('\n');
-    assert.equal(whyText.includes('Assessment incomplete'), true, 'incomplete fallback body must say the assessment is incomplete');
+    assert.equal(whyText.includes('could not be completed'), true, 'incomplete fallback must clearly say generation did not complete');
+    assert.equal(whyText.includes('source record is too thin'), false, 'generation failure must not be misreported as thin source material');
+    assert.equal(whyText.includes('collect the missing information below'), false, 'generation failure must not tell users to add information that may already exist');
+    assert.deepEqual(outcome.data.missing, [], 'failed generation must not invent generic project-delivery questions');
     assert.equal(whyText.includes('Conditionally viable'), false, 'incomplete fallback must not be rewritten into a substantive memo');
     assert.equal(whyText.includes('Paths to agreement'), false, 'incomplete fallback must not contain bridge-to-agreement memo content');
   } finally {

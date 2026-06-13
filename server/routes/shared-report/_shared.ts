@@ -519,13 +519,15 @@ export function mapEvaluationRunView(row: any) {
   if (!row) {
     return null;
   }
+  const recipientSafeResultJson = { ...toObject(row.resultJson) };
+  delete recipientSafeResultJson.evaluation_diagnostics;
   return {
     id: row.id,
     revision_id: row.revisionId,
     actor_role: row.actorRole,
     status: row.status,
     public_report: toObject(row.resultPublicReport),
-    result_json: toObject(row.resultJson),
+    result_json: recipientSafeResultJson,
     error_code: asText(row.errorCode) || null,
     error_message: asText(row.errorMessage) || null,
     created_at: row.createdAt,

@@ -7,6 +7,8 @@ export type ParseErrorKind =
   | 'empty_output'
   | 'vertex_timeout'
   | 'vertex_http_error'
+  | 'openai_request_failed'
+  | 'openai_quota_exceeded'
   | 'confidential_leak_detected';
 
 export type FitLevel = 'high' | 'medium' | 'low' | 'unknown';
@@ -270,6 +272,10 @@ export interface VertexEvaluationV2Internal {
   warnings?: string[];
   failure_kind?: string;
   fallback_mode?: FallbackMode;
+  failure_details?: {
+    provider_status?: number | null;
+    provider_code?: string | null;
+  };
   preflight?: {
     promptChars: number;
     estimatedPromptTokens: number;

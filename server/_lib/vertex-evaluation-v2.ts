@@ -3505,6 +3505,29 @@ function applyConsistencyCalibration(params: {
     movement_direction,
   } = params.data;
   const capsApplied: string[] = [];
+
+  if (params.postProcessMode === 'incomplete_fallback') {
+    return {
+      data: {
+        analysis_stage: MEDIATION_STAGE,
+        fit_level,
+        confidence_0_1: clamp01(confidence_0_1),
+        why,
+        missing,
+        redactions,
+        internal_analysis,
+        narrative,
+        ...(negotiation_analysis ? { negotiation_analysis } : {}),
+        ...(delta_summary ? { delta_summary } : {}),
+        ...(resolved_since_last_round ? { resolved_since_last_round } : {}),
+        ...(remaining_deltas ? { remaining_deltas } : {}),
+        ...(new_open_issues ? { new_open_issues } : {}),
+        ...(movement_direction ? { movement_direction } : {}),
+      },
+      capsApplied: ['preserve_incomplete_generation_fallback'],
+    };
+  }
+
   const signals = buildCalibrationSignals({
     factSheet: params.factSheet,
     data: {
@@ -4098,6 +4121,10 @@ function safeFallbackEvaluationFromFactSheet(
   const warningKey =
     params.failureKind === 'truncated_output'
       ? 'vertex_truncated_output_fallback_used'
+      : params.failureKind === 'openai_quota_exceeded'
+      ? 'openai_quota_exceeded_fallback_used'
+      : params.failureKind === 'openai_request_failed'
+      ? 'openai_request_failed_fallback_used'
       : params.failureKind.startsWith('vertex_http') || params.failureKind === 'vertex_timeout'
       ? 'vertex_request_failed_fallback_used'
       : params.failureKind === 'not_configured'
@@ -4118,15 +4145,13 @@ function safeFallbackEvaluationFromFactSheet(
         fit_level: 'unknown',
         confidence_0_1: 0.2,
         why: [
-          'Executive Summary: Assessment incomplete: generation failed and the extracted material is too thin for a reliable bilateral negotiation brief.',
-          'Decision Assessment: Risk Summary: too many deal-critical details remain unverified to allocate scope, dependency, or commercial risk with confidence.\n\nKey Strengths: the current materials provide only a limited basis for bilateral assessment.',
-          'Negotiation Insights: Likely priorities remain hard to infer with confidence because the record is too thin.\n\nPossible concessions cannot yet be assessed reliably.\n\nStructural tensions are visible, but not bounded well enough for a substantive neutral memo.',
-          'Leverage Signals: Leverage signal: the current information gap itself is the main constraint, because either side could be carrying material unknowns that are not yet visible in the shared record.',
-          'Potential Deal Structures: Option A — Re-run the evaluation after more complete materials are available.\n\nOption B — Use a short diligence step to fill the missing items below before resuming negotiation.\n\nOption C — Pause the process until a fuller source record exists.',
-          'Decision Readiness: Decision status: Explore further. Do not treat this as decision-ready; a fuller source record or a successful rerun is needed before a substantive neutral memo can be issued.',
-          'Recommended Path: Recommended path: collect the missing information below and rerun the mediation before using this report as a negotiation aid.',
+          'Recommendation: The AI mediation brief could not be completed because the generation service did not return a valid result. Treat this review as incomplete and retry before relying on it.',
+          'Where the Parties Align: No reliable alignment assessment was generated in this run.',
+          'Where the Deal Is Stuck: The current blocker is a generation-service failure, not a substantive conclusion about the deal or the completeness of the submitted material.',
+          'Suggested Bridge: No compromise package should be inferred from this incomplete result.',
+          'Next Step: Retry AI mediation once the AI service is available. If the problem continues, contact support.',
         ],
-        missing: fallbackMissing,
+        missing: [],
         redactions: [],
       },
       warnings: [warningKey],
@@ -4878,6 +4903,7 @@ async function callOpenAIV2(params: {
   } catch (error: any) {
     if (asLower(error?.code) === 'openai_not_configured') throw error;
     const upstreamStatus = Number(error?.status || error?.statusCode || 0);
+    const upstreamCode = asText(error?.code) || asText(error?.error?.code);
     const upstreamMessage =
       asText(error?.message) ||
       asText(error?.error?.message) ||
@@ -4886,6 +4912,7 @@ async function callOpenAIV2(params: {
       model,
       provider: 'openai',
       upstreamStatus: upstreamStatus || null,
+      upstreamCode: upstreamCode || null,
       upstreamMessage: upstreamMessage.slice(0, 400),
       requestId: asText(params.requestId) || null,
       inputChars: params.inputChars,
@@ -5874,6 +5901,12 @@ export async function evaluateWithVertexV2(
   let lastParseFailureKind: string = 'unknown';
   let lastFinishReason: string | null = null;
   let lastRawTextLength = 0;
+  let lastFailureDetails:
+    | {
+        provider_status?: number | null;
+        provider_code?: string | null;
+      }
+    | undefined;
 
   while (attempt < MAX_ATTEMPTS) {
     attempt += 1;
@@ -5893,8 +5926,9 @@ export async function evaluateWithVertexV2(
     } catch (error: any) {
       const code = asLower(error?.code);
       const status = Number(
-        error?.statusCode || error?.status || error?.extra?.upstreamStatus || error?.extra?.status || 0,
+        error?.extra?.upstreamStatus || error?.extra?.status || error?.statusCode || error?.status || 0,
       );
+      const upstreamCode = asLower(error?.extra?.upstreamCode || error?.extra?.code);
       const message =
         asText(error?.extra?.upstreamMessage) ||
         asText(error?.extra?.message) ||
@@ -5917,14 +5951,30 @@ export async function evaluateWithVertexV2(
         });
       }
 
-      const retryable = isTimeout
+      const isOpenAIRequest = code === 'openai_request_failed';
+      const isOpenAIQuotaFailure =
+        isOpenAIRequest &&
+        (
+          upstreamCode === 'insufficient_quota' ||
+          message.toLowerCase().includes('insufficient_quota') ||
+          message.toLowerCase().includes('exceeded your current quota')
+        );
+      const retryable = isOpenAIQuotaFailure
+        ? false
+        : isTimeout
         ? true
         : isTransientVertexHttpFailure({
             code,
             status,
             message,
           });
-      const kind: ParseErrorKind = isTimeout ? 'vertex_timeout' : 'vertex_http_error';
+      const kind: ParseErrorKind = isOpenAIQuotaFailure
+        ? 'openai_quota_exceeded'
+        : isOpenAIRequest
+        ? 'openai_request_failed'
+        : isTimeout
+        ? 'vertex_timeout'
+        : 'vertex_http_error';
 
       if (retryable && attempt < MAX_ATTEMPTS) {
         await waitMs(getRetryDelayMs(attempt));
@@ -5933,6 +5983,10 @@ export async function evaluateWithVertexV2(
 
       // Network error exhausted retries — fall through to fallback.
       lastParseFailureKind = kind;
+      lastFailureDetails = {
+        provider_status: status || null,
+        provider_code: upstreamCode || code || null,
+      };
       break;
     }
 
@@ -6518,6 +6572,7 @@ export async function evaluateWithVertexV2(
       warnings: fallback.warnings,
       failure_kind: lastParseFailureKind,
       fallback_mode: fallback.fallbackMode,
+      failure_details: lastFailureDetails,
       models_used: {
         provider: modelProvider,
         generation: generationModel,
