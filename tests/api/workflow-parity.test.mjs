@@ -460,31 +460,72 @@ if (!hasDatabaseUrl()) {
       globalThis.fetch = originalFetch;
     }
 
-    const evaluateReq = createMockReq({
-      method: 'POST',
-      url: `/api/proposals/${created.id}/evaluate`,
-      headers: { cookie: ownerCookie },
-      query: { id: created.id },
-      body: {},
+    const originalV2Call = globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__;
+    globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__ = async () => ({
+      model: 'gemini-2.5-pro',
+      text: JSON.stringify({
+        analysis_stage: 'stage1_shared_intake',
+        submission_summary:
+          'The submitting party has provided an initial opportunity profile for the recipient to review and correct.',
+        scope_snapshot: [
+          'The opportunity title and template context are identified.',
+          'The current responses were supplied by one party only.',
+        ],
+        unanswered_questions: [
+          'Which priorities or constraints would the recipient add or correct?',
+        ],
+        other_side_needed: [
+          'The recipient should confirm or correct the proposer-supplied observations before compatibility is assessed.',
+        ],
+        discussion_starting_points: [
+          'Use the current submission as a starting point for the recipient response.',
+        ],
+        intake_status: 'awaiting_other_side_input',
+        basis_note:
+          'This summary is based solely on the materials submitted by one party. It is a preliminary summary intended to help structure the next exchange. A more complete understanding will be possible once the other side has had an opportunity to review and respond.',
+      }),
+      finishReason: 'STOP',
+      httpStatus: 200,
     });
-    const evaluateRes = createMockRes();
-    await proposalEvaluateHandler(evaluateReq, evaluateRes, created.id);
-    assert.equal(evaluateRes.statusCode, 200);
-    assert.equal(typeof evaluateRes.jsonBody().evaluation.score, 'number');
-    assert.equal(evaluateRes.jsonBody().evaluation.source, 'proposal_vertex');
-    assertContractReportShape(evaluateRes.jsonBody().evaluation.result?.report || {});
-    assert.equal(
-      Number(evaluateRes.jsonBody().evaluation.result?.report?.quality?.completeness_a) < 1,
-      true,
-    );
-    assert.equal(
-      Number(evaluateRes.jsonBody().evaluation.result?.report?.quality?.confidence_overall) <= 0.4,
-      true,
-    );
-    assert.equal(
-      ['under_verification', 're_evaluated'].includes(evaluateRes.jsonBody().proposal.status),
-      true,
-    );
+    try {
+      const evaluateReq = createMockReq({
+        method: 'POST',
+        url: `/api/proposals/${created.id}/evaluate?engine=v1`,
+        headers: { cookie: ownerCookie },
+        query: { id: created.id, engine: 'v1' },
+        body: {},
+      });
+      const evaluateRes = createMockRes();
+      await proposalEvaluateHandler(evaluateReq, evaluateRes, created.id);
+      assert.equal(evaluateRes.statusCode, 200);
+      assert.equal(evaluateRes.jsonBody().evaluation.score, null);
+      assert.equal(evaluateRes.jsonBody().evaluation.source, 'proposal_stage1_intake');
+      assert.equal(evaluateRes.jsonBody().evaluation.evaluator_family, 'stage1_shared_intake');
+      assert.equal(evaluateRes.jsonBody().evaluation.evaluator_version, 'v2');
+      assert.equal(evaluateRes.jsonBody().evaluation.evaluation_architecture, 'vertex_evaluation_v2');
+      assert.equal(
+        evaluateRes.jsonBody().evaluation.result?.report?.analysis_stage,
+        'stage1_shared_intake',
+      );
+      assert.equal(
+        evaluateRes.jsonBody().evaluation.result?.report?.report_format,
+        'v2',
+      );
+      assert.equal(
+        'fit_level' in (evaluateRes.jsonBody().evaluation.result?.report || {}),
+        false,
+      );
+      assert.equal(
+        ['under_verification', 're_evaluated'].includes(evaluateRes.jsonBody().proposal.status),
+        true,
+      );
+    } finally {
+      if (originalV2Call === undefined) {
+        delete globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__;
+      } else {
+        globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__ = originalV2Call;
+      }
+    }
 
     const detailReq = createMockReq({
       method: 'GET',

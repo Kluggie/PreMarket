@@ -43,6 +43,10 @@ import {
   buildRecipientSafeEvaluationProjection,
   MEDIATION_REVIEW_TITLE,
 } from '../../server/routes/document-comparisons/_helpers.ts';
+import {
+  PRE_SEND_REVIEW_STAGE,
+  resolveOpportunityReviewStage,
+} from '../../src/lib/opportunityReviewStage.js';
 
 // ─── hasV2Report ─────────────────────────────────────────────────────────────
 
@@ -386,6 +390,36 @@ test('buildStoredV2Evaluation: legacy pre-send reports remain renderable for his
   assert.equal(Array.isArray(stored.report.presentation_sections), true);
   assert.equal(stored.report.presentation_sections.length > 0, true);
   assert.equal('confidence_0_1' in stored.report, false);
+});
+
+test('historical V1 proposal reports remain classified and renderable through the legacy compatibility path', () => {
+  const historicalReport = {
+    template_id: 'legacy_profile_match',
+    template_name: 'Historical Profile Match',
+    generated_at_iso: '2025-01-01T00:00:00.000Z',
+    output_report_json: {
+      summary: {
+        fit_level: 'medium',
+        top_fit_reasons: [{ text: 'The historical report remains available.' }],
+        top_blockers: [],
+        next_actions: ['Review the original report context.'],
+      },
+    },
+    sections: [
+      {
+        key: 'executive_summary',
+        heading: 'Executive Summary',
+        bullets: ['This stored V1 report remains readable without regeneration.'],
+      },
+    ],
+  };
+
+  assert.equal(
+    resolveOpportunityReviewStage(historicalReport, { source: 'proposal_vertex' }),
+    PRE_SEND_REVIEW_STAGE,
+  );
+  assert.equal(hasV2Report(historicalReport), false);
+  assert.deepEqual(filterLegacySectionsForDisplay(historicalReport.sections), historicalReport.sections);
 });
 
 test('decision status helpers: prefer canonical Decision Readiness status over fit-level fallback', () => {

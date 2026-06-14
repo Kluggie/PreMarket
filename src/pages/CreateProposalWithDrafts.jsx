@@ -895,7 +895,7 @@ export default function CreateProposalWithDrafts({ guestMode = false }) {
         if (starterMessage) {
           setEvaluationError(starterMessage);
         } else if (error?.status === 501 || error?.code === 'not_configured') {
-          setEvaluationError('AI evaluation is not configured for this environment yet.');
+          setEvaluationError('Initial Review is not configured for this environment yet.');
         } else {
           setEvaluationError(error?.message || 'Evaluation failed. Opportunity was still saved.');
         }
@@ -1487,9 +1487,9 @@ export default function CreateProposalWithDrafts({ guestMode = false }) {
                     <div className="flex items-start gap-3">
                       <Sparkles className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
                       <div>
-                        <p className="font-medium text-blue-900">AI Evaluation</p>
+                        <p className="font-medium text-blue-900">Initial Review</p>
                         <p className="text-sm text-blue-700 mt-1">
-                          Run evaluation to generate compatibility signals and next-step recommendations.
+                          Generate a neutral summary of the current one-sided submission before the recipient responds.
                         </p>
                       </div>
                     </div>
@@ -1505,7 +1505,7 @@ export default function CreateProposalWithDrafts({ guestMode = false }) {
                   {guestMode ? (
                     <>
                       <SignInGate
-                        message="Create a free account to run the AI evaluation and send your opportunity to the recipient."
+                        message="Create a free account to run the Initial Review and send your opportunity to the recipient."
                         onSignIn={handleGuestSignIn}
                       />
                       <div className="flex justify-start mt-4">
@@ -1527,11 +1527,11 @@ export default function CreateProposalWithDrafts({ guestMode = false }) {
                         className={isProfileMatchingTemplate ? 'bg-purple-600 hover:bg-purple-700' : 'bg-blue-600 hover:bg-blue-700'}
                       >
                         {isSubmittingEvaluation ? (
-                          'Running Evaluation...'
+                          'Running Initial Review...'
                         ) : (
                           <>
                             <Sparkles className="w-4 h-4 mr-2" />
-                            {isProfileMatchingTemplate ? 'Run Profile Evaluation' : 'Run Evaluation'}
+                            Run Initial Review
                           </>
                         )}
                       </Button>

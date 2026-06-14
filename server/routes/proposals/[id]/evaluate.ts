@@ -18,7 +18,6 @@ import {
 } from '../../../_lib/shared-report-history.js';
 import {
   evaluateDocumentComparisonWithVertex,
-  evaluateProposalWithVertex,
 } from '../../../_lib/vertex-evaluation.js';
 import { evaluateWithVertexV2 } from '../../../_lib/vertex-evaluation-v2.js';
 import {
@@ -219,6 +218,108 @@ function buildProposalInput(proposal: any, template: any, templateQuestions: any
     responses: normalizedResponses,
     rubric: toObject(template?.metadata).evaluation_rubric_json || null,
     computedSignals: null,
+  };
+}
+
+function formatProposalResponseValue(value: unknown) {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  if (typeof value === 'string') {
+    return value.trim();
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  if (typeof value === 'object') {
+    const rangeMin = asText((value as any).min);
+    const rangeMax = asText((value as any).max);
+    if (rangeMin || rangeMax) {
+      return [rangeMin ? `minimum ${rangeMin}` : '', rangeMax ? `maximum ${rangeMax}` : '']
+        .filter(Boolean)
+        .join(', ');
+    }
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return '';
+    }
+  }
+  return String(value).trim();
+}
+
+export function buildProposalStage1Texts(params: {
+  proposal: any;
+  proposalInput: any;
+  supplementaryContext?: string | null;
+}) {
+  const proposal = params.proposal || {};
+  const proposalInput = params.proposalInput || {};
+  const responses = Array.isArray(proposalInput.responses) ? proposalInput.responses : [];
+  const sharedLines: string[] = [];
+  const confidentialLines: string[] = [];
+
+  for (const response of responses) {
+    const hasRangeValue = Boolean(asText(response?.rangeMin) || asText(response?.rangeMax));
+    const value =
+      formatProposalResponseValue(response?.value) ||
+      (hasRangeValue
+        ? formatProposalResponseValue({
+            min: response?.rangeMin,
+            max: response?.rangeMax,
+          })
+        : '');
+    if (!value) {
+      continue;
+    }
+    const label = asText(response?.label || response?.questionId) || 'Submitted response';
+    const subject =
+      normalizeParty(response?.party) === 'b'
+        ? 'Counterparty-related observation supplied by the submitting party'
+        : 'Submitting-party response';
+    const line = `- ${label} (${subject}): ${value}`;
+    if (normalizeVisibility(response?.visibility) === 'full') {
+      sharedLines.push(line);
+    } else {
+      confidentialLines.push(line);
+    }
+  }
+
+  const title = asText(proposal.title) || 'Untitled opportunity';
+  const templateName = asText(proposalInput.templateName) || 'Opportunity template';
+  const sharedText = [
+    `Opportunity title: ${title}`,
+    `Template: ${templateName}`,
+    'Submission status: This is a one-sided submission. Every response below was supplied by the submitting party. Counterparty-related labels are proposer observations, not counterparty submissions.',
+    '',
+    'Shared submission responses:',
+    ...(sharedLines.length > 0
+      ? sharedLines
+      : ['- No substantive shared response details were supplied in this submission.']),
+  ].join('\n');
+
+  const supplementaryContext = asText(params.supplementaryContext);
+  const confidentialText = [
+    'Private context for the Initial Review. Do not reproduce private values or imply that the counterparty supplied them.',
+    '',
+    'Confidential submission responses:',
+    ...(confidentialLines.length > 0
+      ? confidentialLines
+      : ['- No separate confidential response details were supplied.']),
+    ...(supplementaryContext
+      ? [
+          '',
+          'Private supplementary document context:',
+          supplementaryContext,
+        ]
+      : []),
+  ].join('\n');
+
+  return {
+    sharedText,
+    confidentialText,
+    sharedResponseCount: sharedLines.length,
+    confidentialResponseCount: confidentialLines.length,
   };
 }
 
@@ -570,7 +671,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
       .where(eq(schema.proposalResponses.proposalId, proposalId));
 
     let result = null;
-    let evaluationSource = 'proposal_vertex';
+    let evaluationSource = 'proposal_stage1_intake';
     let linkedComparison: any = null;
 
     const isDocumentComparisonProposal =
@@ -836,45 +937,95 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
 
         // Relevance-based document context — only included when docs match proposal context
         const docCtx = await selectRelevantDocuments(auth.user.id, proposalContext).catch(() => null);
-        const enrichedProposalInput = docCtx
-          ? { ...proposalInput, supplementaryContext: docCtx.contextBlock }
-          : proposalInput;
+        const stage1Input = buildProposalStage1Texts({
+          proposal,
+          proposalInput,
+          supplementaryContext: docCtx?.contextBlock || null,
+        });
 
         if (process.env.NODE_ENV !== 'production') {
           console.info(
             JSON.stringify({
               level: 'info',
               route: '/api/proposals/[id]/evaluate',
-              event: 'proposal_vertex_evaluation_start',
+              event: 'proposal_stage1_v2_evaluation_start',
               requestId,
               proposalId: proposal.id,
               responseCount: proposalInput.responses.length,
+              sharedResponseCount: stage1Input.sharedResponseCount,
+              confidentialResponseCount: stage1Input.confidentialResponseCount,
+              evaluatorFamily: STAGE1_SHARED_INTAKE_STAGE,
+              evaluatorVersion: 'v2',
             }),
           );
         }
-        const proposalEvaluation = await evaluateProposalWithVertex(enrichedProposalInput, {
-          correlationId: requestId,
-          routeName: '/api/proposals/[id]/evaluate',
-          entityId: proposal.id,
-          inputChars: JSON.stringify(proposalInput.responses || []).length,
+        let v2Result: any;
+        try {
+          v2Result = await evaluateWithVertexV2({
+            sharedText: stage1Input.sharedText,
+            confidentialText: stage1Input.confidentialText,
+            analysisStage: STAGE1_SHARED_INTAKE_STAGE,
+            requestId,
+            enforceLeakGuard: false,
+          });
+        } catch (unexpectedError: any) {
+          v2Result = {
+            ok: true,
+            data: buildStageFallbackV2Data(STAGE1_SHARED_INTAKE_STAGE, 'unexpected_error'),
+            attempt_count: 1,
+            model: null,
+            _internal: {
+              warnings: ['vertex_unexpected_error_fallback_used'],
+              failure_kind: 'unexpected_error',
+            },
+          };
+        }
+        if (!v2Result.ok) {
+          const error = v2Result.error;
+          const parseKind = asLower(error?.parse_error_kind);
+          if (parseKind === 'confidential_leak_detected') {
+            throw toV2ApiError(error);
+          }
+          v2Result = {
+            ok: true,
+            data: buildStageFallbackV2Data(STAGE1_SHARED_INTAKE_STAGE, 'unavailable'),
+            attempt_count: v2Result.attempt_count ?? 1,
+            model: null,
+            _internal: {
+              warnings: ['vertex_invalid_response_fallback_used'],
+              failure_kind: parseKind,
+            },
+          };
+        }
+        const proposalEvaluation = convertV2ResponseToEvaluation(v2Result);
+        const proposalResult = buildProposalResultFromEvaluation(proposal, proposalEvaluation, {
+          response_count: responses.length,
+          template_question_count: templateQuestions.length,
+          shared_response_count: stage1Input.sharedResponseCount,
+          confidential_response_count: stage1Input.confidentialResponseCount,
         });
         if (process.env.NODE_ENV !== 'production') {
           console.info(
             JSON.stringify({
               level: 'info',
               route: '/api/proposals/[id]/evaluate',
-              event: 'proposal_vertex_evaluation_success',
+              event: 'proposal_stage1_v2_evaluation_success',
               requestId,
               proposalId: proposal.id,
               provider: asText(proposalEvaluation?.evaluation_provider || proposalEvaluation?.provider) || null,
               model: asText(proposalEvaluation?.evaluation_model || proposalEvaluation?.model) || null,
+              evaluatorFamily: STAGE1_SHARED_INTAKE_STAGE,
+              evaluatorVersion: 'v2',
             }),
           );
         }
-        result = buildProposalResultFromEvaluation(proposal, proposalEvaluation, {
-          response_count: responses.length,
-          template_question_count: templateQuestions.length,
-        });
+        result = {
+          ...proposalResult,
+          analysis_stage: STAGE1_SHARED_INTAKE_STAGE,
+          evaluator_family: STAGE1_SHARED_INTAKE_STAGE,
+          evaluator_version: 'v2',
+          evaluation_architecture: 'vertex_evaluation_v2',
+        };
       }
     } catch (error: any) {
       await persistFailedEvaluation({
@@ -969,8 +1120,8 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         ? buildSharedReportHref(sharedReportToken)
         : null;
       const notificationCopy = getReviewNotificationCopy(
-        evaluationSource === 'document_comparison_pre_send'
-          ? PRE_SEND_REVIEW_STAGE
+        getReviewLabelForSource(evaluationSource) === 'Initial Review'
+          ? STAGE1_SHARED_INTAKE_STAGE
           : MEDIATION_REVIEW_STAGE,
         proposal.title || '',
       );
@@ -1022,6 +1173,9 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         evaluation_model: asText((saved?.result as any)?.evaluation_model || (saved?.result as any)?.model) || null,
         evaluation_provider_reason:
           asText((saved?.result as any)?.evaluation_provider_reason || (saved?.result as any)?.fallbackReason) || null,
+        evaluator_family: asText((saved?.result as any)?.evaluator_family) || null,
+        evaluator_version: asText((saved?.result as any)?.evaluator_version) || null,
+        evaluation_architecture: asText((saved?.result as any)?.evaluation_architecture) || null,
         result: saved.result || {},
         created_date: saved.createdAt,
         updated_date: saved.updatedAt,
