@@ -59,6 +59,7 @@ import {
   getPayloadText,
   getToken,
   logTokenEvent,
+  mapRecipientSafeEvaluationDiagnostics,
   requireRecipientAuthorization,
   resolveSharedReportToken,
   toObject,
@@ -830,6 +831,11 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       });
 
       const completedAt = new Date();
+      const completedEvaluationDiagnostics = {
+        ...evaluationDiagnostics,
+        evaluatorElapsedMs: Date.now() - evaluatorStartedAt,
+        routeElapsedMs: Date.now() - routeStartedAt,
+      };
       await resolved.db
         .update(schema.sharedReportEvaluationRuns)
         .set({
@@ -837,11 +843,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
           resultPublicReport: projection.public_report || {},
           resultJson: {
             evaluation_result: projection.evaluation_result || {},
-            evaluation_diagnostics: {
-              ...evaluationDiagnostics,
-              evaluatorElapsedMs: Date.now() - evaluatorStartedAt,
-              routeElapsedMs: Date.now() - routeStartedAt,
-            },
+            evaluation_diagnostics: completedEvaluationDiagnostics,
             input_trace: {
               shared_length: sharedText.length,
               current_round_shared_length: currentRoundSharedText.length,
@@ -929,6 +931,14 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
           public_report: projection.public_report || {},
           evaluation_result: projection.evaluation_result || {},
           status: 'success',
+          runtime_diagnostics: mapRecipientSafeEvaluationDiagnostics({
+            id: evaluationRunId,
+            status: 'success',
+            resultJson: {
+              evaluation_diagnostics: completedEvaluationDiagnostics,
+            },
+            resultPublicReport: projection.public_report || {},
+          }),
         },
       });
 

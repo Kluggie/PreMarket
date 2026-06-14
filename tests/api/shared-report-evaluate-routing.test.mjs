@@ -143,7 +143,35 @@ if (!hasDatabaseUrl()) {
       });
       assert.equal(evaluateRes.statusCode, 200);
       assert.equal(evaluatorCalls, 1);
-      assert.equal(evaluateRes.jsonBody()?.evaluation?.status, 'success');
+      const evaluateBody = evaluateRes.jsonBody();
+      assert.equal(evaluateBody?.evaluation?.status, 'success');
+      assert.equal(
+        evaluateBody?.evaluation?.runtime_diagnostics?.evaluation_id,
+        evaluateBody?.evaluation_id,
+      );
+      assert.equal(evaluateBody?.evaluation?.runtime_diagnostics?.run_status, 'success');
+      assert.equal(
+        Number.isFinite(evaluateBody?.evaluation?.runtime_diagnostics?.route_duration_ms),
+        true,
+      );
+
+      const workspaceRes = await invokeApiIndex({
+        method: 'GET',
+        path: `shared-report/${link.token}/workspace`,
+        headers: { cookie: recipientCookie },
+      });
+      assert.equal(workspaceRes.statusCode, 200);
+      const workspaceBody = workspaceRes.jsonBody();
+      assert.equal(workspaceBody?.latestEvaluation?.id, evaluateBody?.evaluation_id);
+      assert.equal(workspaceBody?.latestEvaluation?.status, 'success');
+      assert.equal(
+        workspaceBody?.latestEvaluation?.runtime_diagnostics?.evaluation_id,
+        evaluateBody?.evaluation_id,
+      );
+      assert.equal(
+        'evaluation_diagnostics' in (workspaceBody?.latestEvaluation?.result_json || {}),
+        false,
+      );
     } finally {
       if (previousEvaluator === undefined) {
         delete globalThis.__PREMARKET_TEST_DOCUMENT_COMPARISON_EVALUATOR__;

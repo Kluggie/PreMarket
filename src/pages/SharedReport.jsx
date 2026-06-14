@@ -1047,6 +1047,20 @@ export default function SharedReport() {
   }, [workspaceQuery.data]);
 
   useEffect(() => {
+    const run = workspaceQuery.data?.latestEvaluation;
+    if (!run?.id) return;
+    console.info('[SharedReport] mediation evaluation runtime', {
+      evaluationId: run.id,
+      status: run.status || null,
+      ...(run.runtime_diagnostics || {}),
+    });
+  }, [
+    workspaceQuery.data?.latestEvaluation?.id,
+    workspaceQuery.data?.latestEvaluation?.status,
+    workspaceQuery.data?.latestEvaluation?.updated_at,
+  ]);
+
+  useEffect(() => {
     if (!workspaceQuery.data) return;
 
     setTitle(asText(comparison?.title) || asText(parent?.title) || 'Shared Report');

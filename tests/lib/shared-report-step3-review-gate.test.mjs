@@ -289,6 +289,8 @@ test('recipient workspace strips internal evaluation diagnostics from the public
     resultPublicReport: {
       renderer_path: 'fallback',
       narrative_valid: false,
+      generation_status: 'failed',
+      retry_recommended: true,
     },
     resultJson: {
       evaluation_result: {
@@ -298,9 +300,16 @@ test('recipient workspace strips internal evaluation diagnostics from the public
         },
       },
       evaluation_diagnostics: {
-        failureKind: 'openai_quota_exceeded',
+        provider: 'openai',
+        model: 'gpt-5.5',
+        routeElapsedMs: 253_281,
+        modelElapsedMs: 247_000,
+        modelCallCount: 3,
+        failurePhase: 'schema_validation',
+        failureKind: 'schema_validation_failed',
         providerStatus: 429,
         providerCode: 'insufficient_quota',
+        confidentialPrompt: 'do not expose',
       },
     },
     errorCode: null,
@@ -312,6 +321,30 @@ test('recipient workspace strips internal evaluation diagnostics from the public
   assert.equal(view.public_report.renderer_path, 'fallback');
   assert.equal(view.result_json.evaluation_result.report.renderer_path, 'fallback');
   assert.equal('evaluation_diagnostics' in view.result_json, false);
+  assert.deepEqual(view.runtime_diagnostics, {
+    evaluation_id: 'share_eval_diagnostics',
+    run_status: 'success',
+    provider: 'openai',
+    model: 'gpt-5.5',
+    route_duration_ms: 253_281,
+    model_duration_ms: 247_000,
+    model_call_count: 3,
+    failure_phase: 'schema_validation',
+    failure_reason: 'schema_validation_failed',
+    renderer_path: 'fallback',
+    narrative_valid: false,
+    generation_status: 'failed',
+    retry_recommended: true,
+  });
+  assert.equal('providerStatus' in view.runtime_diagnostics, false);
+  assert.equal('confidentialPrompt' in view.runtime_diagnostics, false);
+});
+
+test('shared-report browser logs safe mediation runtime diagnostics for production debugging', async () => {
+  const source = await readFile(SHARED_REPORT_PATH, 'utf8');
+
+  assert.ok(source.includes('[SharedReport] mediation evaluation runtime'));
+  assert.ok(source.includes('run.runtime_diagnostics || {}'));
 });
 
 // ─────────────────────────────────────────────────────────────────

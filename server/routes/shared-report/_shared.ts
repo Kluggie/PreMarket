@@ -515,6 +515,49 @@ export async function getLatestRecipientSentRevision(db: any, linkId: string) {
   return row || null;
 }
 
+export function mapRecipientSafeEvaluationDiagnostics(row: any) {
+  if (!row) {
+    return null;
+  }
+
+  const resultJson = toObject(row.resultJson);
+  const storedDiagnostics = toObject(resultJson.evaluation_diagnostics);
+  const publicReport = toObject(row.resultPublicReport);
+  const numberOrNull = (value: unknown) => {
+    if (value === null || value === undefined || value === '') {
+      return null;
+    }
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+
+  return {
+    evaluation_id: asText(row.id) || null,
+    run_status: asText(row.status) || null,
+    provider: asText(storedDiagnostics.provider) || null,
+    model: asText(storedDiagnostics.model) || null,
+    route_duration_ms: numberOrNull(storedDiagnostics.routeElapsedMs),
+    model_duration_ms: numberOrNull(storedDiagnostics.modelElapsedMs),
+    model_call_count: numberOrNull(storedDiagnostics.modelCallCount),
+    failure_phase: asText(storedDiagnostics.failurePhase) || null,
+    failure_reason:
+      asText(storedDiagnostics.failureReason || storedDiagnostics.failureKind) || null,
+    renderer_path:
+      asText(publicReport.renderer_path || storedDiagnostics.rendererPath) || null,
+    narrative_valid:
+      typeof publicReport.narrative_valid === 'boolean'
+        ? publicReport.narrative_valid
+        : typeof storedDiagnostics.narrativeValid === 'boolean'
+          ? storedDiagnostics.narrativeValid
+          : null,
+    generation_status: asText(publicReport.generation_status) || null,
+    retry_recommended:
+      typeof publicReport.retry_recommended === 'boolean'
+        ? publicReport.retry_recommended
+        : null,
+  };
+}
+
 export function mapEvaluationRunView(row: any) {
   if (!row) {
     return null;
@@ -532,6 +575,7 @@ export function mapEvaluationRunView(row: any) {
     error_message: asText(row.errorMessage) || null,
     created_at: row.createdAt,
     updated_at: row.updatedAt,
+    runtime_diagnostics: mapRecipientSafeEvaluationDiagnostics(row),
   };
 }
 
