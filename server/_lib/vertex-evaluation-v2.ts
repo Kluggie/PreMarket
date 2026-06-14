@@ -1128,12 +1128,94 @@ const SAAS_PARTNERSHIP_RULE_IDS = [
 const SAAS_PARTNERSHIP_FALLBACK_MISSING = [
   'What counts as a successful referral: introduction, qualified meeting, signed customer, paid subscription, or completed implementation? — determines when commission is earned and how attribution is tracked.',
   'When is commission earned and paid? — determines the trigger, timing, and auditability of the referral economics.',
-  'When does recurring revenue share apply: only during the first year, only while the partner provides documented ongoing support, or across renewals? — determines whether recurring economics track ongoing value.',
-  'How long does client protection last after a lead is introduced? — determines whether client ownership and direct-sell rights are workable.',
-  'What actions count as bypassing the partner? — determines the practical scope of non-circumvention.',
-  'What implementation work is included in onboarding versus separately paid consulting? — determines implementation fee ownership and support expectations.',
-  'What pilot outcome would justify semi-exclusivity or renegotiation? — determines whether future commitments are performance-based.',
+  'How long does client protection last, and what counts as circumvention or an allowed direct sale? — determines whether genuine introductions are protected without blocking independently sourced opportunities.',
+  'What implementation, onboarding, training, or support work is each side responsible for? — determines implementation fee ownership, customer handoff, and operating accountability.',
+  'Are renewals, expansions, or related accounts commissionable, and when does recurring revenue share apply? — determines whether continuing economics track documented ongoing value.',
+  'What pilot outcome would justify stronger rights, renegotiation, or semi-exclusivity? — determines whether future commitments are earned through measurable performance.',
 ];
+
+const SAAS_PARTNERSHIP_DIMENSION_ORDER = [
+  'referral_attribution',
+  'commission_trigger',
+  'client_protection',
+  'implementation_fee_support',
+  'revenue_share_trigger',
+  'pilot_exclusivity_threshold',
+] as const;
+
+type SaasPartnershipQuestionDimension = typeof SAAS_PARTNERSHIP_DIMENSION_ORDER[number];
+
+const SAAS_PARTNERSHIP_RULE_EVIDENCE: Record<SaasPartnershipQuestionDimension, string[]> = {
+  referral_attribution: [
+    'referral',
+    'lead attribution',
+    'client attribution',
+    'registered referral',
+    'qualified lead',
+    'customer introduction',
+  ],
+  commission_trigger: [
+    'commission',
+    'referral fee',
+    'success fee',
+    'payment timing',
+  ],
+  client_protection: [
+    'client protection',
+    'non-circumvention',
+    'non circumvention',
+    'bypass',
+    'direct sell',
+    'direct-sell',
+    'pre-existing account',
+    'pre-existing opportunity',
+    'client ownership',
+  ],
+  implementation_fee_support: [
+    'implementation fee',
+    'implementation fees',
+    'onboarding',
+    'training',
+    'support responsibilities',
+    'customer handoff',
+    'handoff',
+  ],
+  revenue_share_trigger: [
+    'revenue share',
+    'revenue-share',
+    'recurring revenue',
+    'renewal',
+    'expansion',
+    'related account',
+    'ongoing support',
+  ],
+  pilot_exclusivity_threshold: [
+    'semi-exclusivity',
+    'semi exclusivity',
+    'exclusivity',
+    'performance threshold',
+    'renegotiation',
+    'stronger rights',
+  ],
+};
+
+const SAAS_GENERIC_RULE_EVIDENCE: Partial<Record<string, string[]>> = {
+  commercial: [
+    'budget',
+    'pricing model',
+    'contract price',
+    'commercial model',
+    'cost estimate',
+  ],
+  governance: [
+    'board',
+    'governance',
+    'control rights',
+    'reserved matters',
+    'observer rights',
+    'protective provisions',
+  ],
+};
 
 const GENERIC_PROJECT_DELIVERY_MISSING_PATTERNS = [
   'current scope',
@@ -1191,6 +1273,24 @@ function isSaasReferralPartnershipFactSheet(factSheet: ProposalFactSheet) {
     'reseller',
   ].some((pattern) => keywordMatch(corpus, pattern));
   return hasReferralEconomics && hasPartnershipContext;
+}
+
+function hasSaasPartnershipRuleEvidence(
+  factSheet: ProposalFactSheet,
+  ruleId: SaasPartnershipQuestionDimension,
+) {
+  const corpus = factSheetCorpus(factSheet);
+  return SAAS_PARTNERSHIP_RULE_EVIDENCE[ruleId].some((pattern) => keywordMatch(corpus, pattern));
+}
+
+function hasDistinctGenericRuleEvidenceForSaas(
+  factSheet: ProposalFactSheet,
+  rule: MissingRule,
+) {
+  const evidencePatterns = SAAS_GENERIC_RULE_EVIDENCE[rule.id];
+  if (!evidencePatterns) return true;
+  const corpus = factSheetCorpus(factSheet);
+  return evidencePatterns.some((pattern) => keywordMatch(corpus, pattern));
 }
 
 function isGenericProjectDeliveryMissing(value: string) {
@@ -1737,11 +1837,26 @@ function collectCalibrationRules(params: {
   });
 
   if (isSaasPartnership) {
-    SAAS_PARTNERSHIP_RULE_IDS.forEach((id) => addRule(getMissingRuleById(id)));
+    SAAS_PARTNERSHIP_RULE_IDS.forEach((id) => {
+      if (
+        SAAS_PARTNERSHIP_DIMENSION_ORDER.includes(id as SaasPartnershipQuestionDimension)
+        && hasSaasPartnershipRuleEvidence(
+          params.factSheet,
+          id as SaasPartnershipQuestionDimension,
+        )
+      ) {
+        addRule(getMissingRuleById(id));
+      }
+    });
   }
 
   return rules
-    .filter((rule) => !isSaasPartnership || !PROJECT_DELIVERY_MISSING_RULE_IDS.has(rule.id))
+    .filter((rule) =>
+      !isSaasPartnership
+      || (
+        !PROJECT_DELIVERY_MISSING_RULE_IDS.has(rule.id)
+        && hasDistinctGenericRuleEvidenceForSaas(params.factSheet, rule)
+      ))
     .sort((a, b) => b.priority - a.priority);
 }
 
@@ -1806,14 +1921,17 @@ function normalizeMissingQuestions(params: {
     GENERIC_FALLBACK_MISSING.forEach((item) => addEntry(toActionableMissingQuestion(item), null));
   }
 
+  const sanitizedEntries = entries
+    .sort((a, b) => b.priority - a.priority)
+    .map((entry) => ({
+      ...entry,
+      text: sanitizeMissingEntry(entry.text),
+    }))
+    .filter((entry) => entry.text);
   const deduped = dedupeMissingEntries(
-    entries
-      .sort((a, b) => b.priority - a.priority)
-      .map((entry) => ({
-        ...entry,
-        text: sanitizeMissingEntry(entry.text),
-      }))
-      .filter((entry) => entry.text),
+    isSaasPartnership
+      ? selectDistinctSaasPartnershipQuestions(sanitizedEntries)
+      : sanitizedEntries,
   );
 
   // Separate identical-tier warnings so they are never clipped by the cap
@@ -1826,13 +1944,21 @@ function normalizeMissingQuestions(params: {
 
   if (isSaasPartnership) {
     regularEntries = regularEntries.filter((entry) => !isGenericProjectDeliveryMissing(entry.text));
+    regularEntries = selectDistinctSaasPartnershipQuestions(regularEntries);
     const seenQuestions = new Set(regularEntries.map((entry) => normalizeKeywordText(entry.text).slice(0, 80)));
+    const seenDimensions = new Set(
+      regularEntries
+        .map((entry) => classifySaasPartnershipQuestion(entry.text))
+        .filter(Boolean),
+    );
     for (const item of SAAS_PARTNERSHIP_FALLBACK_MISSING) {
       if (regularEntries.length >= MISSING_MIN_ITEMS) break;
       const text = sanitizeMissingEntry(toActionableMissingQuestion(item));
       const key = normalizeKeywordText(text).slice(0, 80);
-      if (text && !seenQuestions.has(key)) {
+      const dimension = classifySaasPartnershipQuestion(text);
+      if (text && !seenQuestions.has(key) && (!dimension || !seenDimensions.has(dimension))) {
         seenQuestions.add(key);
+        if (dimension) seenDimensions.add(dimension);
         regularEntries.push({ text, priority: 80, key: `saas:${key}` });
       }
     }
@@ -2160,6 +2286,176 @@ function dedupeMissingEntries(entries: Array<{ text: string; priority: number; k
   return deduped;
 }
 
+function classifySaasPartnershipQuestion(
+  value: string,
+): SaasPartnershipQuestionDimension | null {
+  const { question } = splitMissingEntry(value);
+  const normalizedQuestion = normalizeKeywordText(question);
+  if (!normalizedQuestion) return null;
+
+  if (
+    [
+      'successful referral',
+      'qualified referral',
+      'qualified lead',
+      'referral definition',
+      'referral registration',
+      'registered referral',
+      'lead attribution',
+      'client attribution',
+      'customer introduction',
+    ].some((pattern) => normalizedQuestion.includes(pattern))
+  ) {
+    return 'referral_attribution';
+  }
+  if (
+    [
+      'client protection',
+      'non circumvention',
+      'circumvention',
+      'bypass',
+      'direct sell',
+      'pre existing account',
+      'pre existing opportunity',
+      'protected account',
+      'protection period',
+      'protection window',
+      'client ownership',
+    ].some((pattern) => normalizedQuestion.includes(pattern))
+  ) {
+    return 'client_protection';
+  }
+  if (
+    [
+      'commission earned',
+      'commission paid',
+      'commission trigger',
+      'payment timing',
+      'referral fee',
+      'success fee',
+    ].some((pattern) => normalizedQuestion.includes(pattern))
+  ) {
+    return 'commission_trigger';
+  }
+  if (
+    [
+      'recurring revenue',
+      'revenue share',
+      'renewal',
+      'expansion',
+      'related account',
+      'ongoing support',
+    ].some((pattern) => normalizedQuestion.includes(pattern))
+  ) {
+    return 'revenue_share_trigger';
+  }
+  if (
+    [
+      'implementation',
+      'onboarding',
+      'training',
+      'support work',
+      'support responsibility',
+      'customer handoff',
+      'paid consulting',
+    ].some((pattern) => normalizedQuestion.includes(pattern))
+  ) {
+    return 'implementation_fee_support';
+  }
+  if (
+    [
+      'semi exclusivity',
+      'exclusivity',
+      'performance threshold',
+      'renegotiation',
+      'stronger rights',
+      'pilot outcome',
+      'pilot success',
+    ].some((pattern) => normalizedQuestion.includes(pattern))
+  ) {
+    return 'pilot_exclusivity_threshold';
+  }
+  return null;
+}
+
+function selectDistinctSaasPartnershipQuestions(
+  entries: Array<{ text: string; priority: number; key: string }>,
+) {
+  const selectedByDimension = new Map<
+    SaasPartnershipQuestionDimension,
+    { text: string; priority: number; key: string }
+  >();
+  const dimensionCounts = new Map<SaasPartnershipQuestionDimension, number>();
+  const unclassified: Array<{ text: string; priority: number; key: string }> = [];
+
+  entries.forEach((entry) => {
+    const dimension = classifySaasPartnershipQuestion(entry.text);
+    if (!dimension) {
+      unclassified.push(entry);
+      return;
+    }
+    dimensionCounts.set(dimension, (dimensionCounts.get(dimension) || 0) + 1);
+    const existing = selectedByDimension.get(dimension);
+    if (
+      !existing
+      || entry.priority > existing.priority
+      || (
+        entry.priority === existing.priority
+        && isMoreSpecificMissingEntry(entry.text, existing.text)
+      )
+    ) {
+      selectedByDimension.set(dimension, entry);
+    }
+  });
+
+  const selected = SAAS_PARTNERSHIP_DIMENSION_ORDER
+    .map((dimension) => {
+      let entry = selectedByDimension.get(dimension);
+      if (!entry) return null;
+      if ((dimensionCounts.get(dimension) || 0) > 1) {
+        const rule = getMissingRuleById(dimension);
+        const mergedText = rule
+          ? sanitizeMissingEntry(`${rule.question} — ${rule.why}.`)
+          : '';
+        if (mergedText) {
+          entry = {
+            ...entry,
+            text: mergedText,
+            key: `rule:${dimension}`,
+          };
+        }
+      }
+      const { question, why } = splitMissingEntry(entry.text);
+      const normalizedWhy = normalizeKeywordText(why);
+      return { entry, dimension, question, normalizedWhy };
+    })
+    .filter(Boolean) as Array<{
+      entry: { text: string; priority: number; key: string };
+      dimension: SaasPartnershipQuestionDimension;
+      question: string;
+      normalizedWhy: string;
+    }>;
+
+  const seenExplanations = new Set<string>();
+  const withDistinctExplanations = selected.map(({ entry, dimension, question, normalizedWhy }) => {
+    if (!normalizedWhy || !seenExplanations.has(normalizedWhy)) {
+      if (normalizedWhy) seenExplanations.add(normalizedWhy);
+      return entry;
+    }
+    const rule = getMissingRuleById(dimension);
+    const replacementWhy = stripTrailingPunctuation(rule?.why || GENERIC_MISSING_WHY);
+    const replacementText = sanitizeMissingEntry(`${question} — ${replacementWhy}.`);
+    const replacementWhyKey = normalizeKeywordText(replacementWhy);
+    if (replacementWhyKey) seenExplanations.add(replacementWhyKey);
+    return {
+      ...entry,
+      text: replacementText || entry.text,
+    };
+  });
+
+  return [...withDistinctExplanations, ...unclassified];
+}
+
 function sanitizeRedactionEntry(value: string) {
   let next = normalizeSpaces(asText(value));
   if (!next) return '';
@@ -2219,7 +2515,12 @@ function filterVisibleMissingItems(params: {
       return;
     }
     const subject = extractMissingSubject(text);
-    const detailSpecific = hasDetailHint(text);
+    const detailSpecific =
+      hasDetailHint(text)
+      || (
+        isSaasReferralPartnershipFactSheet(params.factSheet)
+        && Boolean(classifySaasPartnershipQuestion(text))
+      );
     const alreadyVisible =
       !detailSpecific
       && (

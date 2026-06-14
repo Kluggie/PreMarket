@@ -637,6 +637,84 @@ test('buildMediationReviewPresentation: keeps SaaS partnership sections specific
   assert.doesNotMatch(allText, /walk-away|pipeline pressure|hidden limit|private fallback/i);
 });
 
+test('buildMediationReviewPresentation: merges repetitive SaaS attribution and protection questions into distinct commercial dimensions', () => {
+  const presentation = buildMediationReviewPresentation({
+    fit_level: 'medium',
+    confidence_0_1: 0.68,
+    why: [
+      'Recommendation: Proceed with conditions after the pilot operating rules are documented.',
+      'Where the Parties Align: Both sides support a non-exclusive six-month SaaS referral and implementation pilot.',
+      'Where the Deal Is Stuck: Referral definition, commission timing, client protection, implementation responsibilities, renewal economics, and semi-exclusivity thresholds remain open.',
+      'Suggested Bridge: Use registered referrals, a client-protection window, separate implementation fees, and performance-based post-pilot rights.',
+      'Next Step: Draft a one-page Pilot Rules of Engagement.',
+    ],
+    missing: [
+      'What counts as a successful referral? — determines whether an introduction qualifies.',
+      'How are introduced leads attributed? — determines which party owns the opportunity.',
+      'How long does client protection last? — determines whether an introduced account remains protected.',
+      'What counts as bypassing the partner? — determines the scope of non-circumvention.',
+      'How are direct sales to introduced accounts handled? — determines whether direct-sell rights are workable.',
+      'When is commission earned and paid? — determines the economic trigger and payment timing.',
+      'Who owns onboarding, implementation, training, and support? — determines operating accountability.',
+      'Are renewals or expansions commissionable? — determines the treatment of continuing economics.',
+      'What pilot outcome justifies semi-exclusivity? — determines whether stronger rights are performance-based.',
+    ],
+    redactions: [],
+  });
+
+  const questions =
+    presentation.presentation_sections.find((section) => section.key === 'open_questions')?.bullets || [];
+  const questionsText = questions.join(' ');
+
+  assert.equal(questions.length, 6);
+  assert.equal(
+    questions.filter((entry) => /successful referral|qualified referral|lead attribution/i.test(entry)).length,
+    1,
+  );
+  assert.equal(
+    questions.filter((entry) => /client protection|circumvention|bypass|direct sale/i.test(entry)).length,
+    1,
+  );
+  assert.match(questionsText, /commission earned and paid/i);
+  assert.match(questionsText, /implementation|onboarding|training|support/i);
+  assert.match(questionsText, /renewals|expansions|recurring revenue share/i);
+  assert.match(questionsText, /semi-exclusivity|stronger rights|renegotiation/i);
+
+  const explanations = questions
+    .map((entry) => String(entry).split('—')[1]?.trim().toLowerCase() || '')
+    .filter(Boolean);
+  assert.equal(new Set(explanations).size, explanations.length);
+});
+
+test('buildMediationReviewPresentation: does not invent unsupported SaaS open-question dimensions', () => {
+  const presentation = buildMediationReviewPresentation({
+    fit_level: 'medium',
+    confidence_0_1: 0.62,
+    why: [
+      'Recommendation: Continue the SaaS referral pilot discussion after resolving commission timing and client protection.',
+      'Where the Parties Align: Both sides support a referral relationship.',
+      'Where the Deal Is Stuck: Commission payment timing and client protection remain open.',
+      'Suggested Bridge: Document the commission trigger and a proportionate protection window.',
+      'Next Step: Record those two operating rules.',
+    ],
+    missing: [
+      'When is commission earned and paid? — determines the economic trigger.',
+      'How long does client protection last? — determines protection for introduced accounts.',
+      'What counts as bypassing the partner? — determines the scope of non-circumvention.',
+    ],
+    redactions: [],
+  });
+
+  const questions =
+    presentation.presentation_sections.find((section) => section.key === 'open_questions')?.bullets || [];
+  const questionsText = questions.join(' ');
+
+  assert.equal(questions.length, 2);
+  assert.match(questionsText, /commission earned and paid/i);
+  assert.match(questionsText, /client protection|circumvention|bypass/i);
+  assert.doesNotMatch(questionsText, /renewals|expansions|implementation|semi-exclusivity/i);
+});
+
 test('buildMediationReviewPresentation: routes low-fit and missing-heavy cases to different archetypes', () => {
   const riskPresentation = buildMediationReviewPresentation({
     fit_level: 'low',

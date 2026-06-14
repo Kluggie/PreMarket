@@ -154,6 +154,11 @@ test('mediation prompt separates structured internal analysis from the natural v
   assert.match(prompt, /current proposal.*latest draft.*shared materials.*counterparty comments/i);
   assert.match(prompt, /Section headings and body content must match/i);
   assert.match(prompt, /Generate 3-6 deal-critical items/i);
+  assert.match(prompt, /at most one question for each distinct commercial dimension/i);
+  assert.match(prompt, /Merge overlapping referral-attribution, client-ownership, client-protection, direct-sell, and non-circumvention wording/i);
+  assert.match(prompt, /Do not repeat the same explanatory clause verbatim/i);
+  assert.match(prompt, /How long does client protection last, and what counts as circumvention/i);
+  assert.match(prompt, /Are renewals, expansions, or related accounts commissionable/i);
   assert.match(prompt, /Make the memo longer through reasoning, trade-offs, implications, and concrete mechanics, never through padding/i);
   assert.match(prompt, /final decision contract/i);
   assert.match(prompt, /conditional.*must not sound like approval/i);

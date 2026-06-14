@@ -880,12 +880,133 @@ const GENERIC_PROJECT_DELIVERY_QUESTION_PATTERNS = [
 const SAAS_PARTNERSHIP_OPEN_QUESTIONS = [
   'What counts as a successful referral: introduction, qualified meeting, signed customer, paid subscription, or completed implementation? — determines when commission is earned and how attribution is tracked.',
   'When is commission earned and paid? — determines the trigger, timing, and auditability of the referral economics.',
-  'When does recurring revenue share apply: only during the first year, only while the partner provides documented ongoing support, or across renewals? — determines whether recurring economics track ongoing value.',
-  'How long does client protection last after a lead is introduced? — determines whether client ownership and direct-sell rights are workable.',
-  'What actions count as bypassing the partner? — determines the practical scope of non-circumvention.',
-  'What implementation work is included in onboarding versus separately paid consulting? — determines implementation fee ownership and support expectations.',
-  'What pilot outcome would justify semi-exclusivity or renegotiation? — determines whether future commitments are performance-based.',
+  'How long does client protection last, and what counts as circumvention or an allowed direct sale? — determines whether genuine introductions are protected without blocking independently sourced opportunities.',
+  'What implementation, onboarding, training, or support work is each side responsible for? — determines implementation fee ownership, customer handoff, and operating accountability.',
+  'Are renewals, expansions, or related accounts commissionable, and when does recurring revenue share apply? — determines whether continuing economics track documented ongoing value.',
+  'What pilot outcome would justify stronger rights, renegotiation, or semi-exclusivity? — determines whether future commitments are earned through measurable performance.',
 ];
+
+const SAAS_OPEN_QUESTION_DIMENSIONS: Array<{
+  id: string;
+  patterns: RegExp[];
+}> = [
+  {
+    id: 'referral_definition',
+    patterns: [
+      /\bsuccessful referral\b/i,
+      /\bqualified referral\b/i,
+      /\bqualified lead\b/i,
+      /\breferral (?:definition|registration|attribution)\b/i,
+      /\bregistered referral\b/i,
+      /\b(?:lead|client) attribution\b/i,
+    ],
+  },
+  {
+    id: 'client_protection',
+    patterns: [
+      /\bclient protection\b/i,
+      /\bnon-circumvention\b/i,
+      /\bcircumvention\b/i,
+      /\bbypass/i,
+      /\bdirect[- ]sell\b/i,
+      /\bpre-existing (?:account|opportunit)/i,
+      /\bclient ownership\b/i,
+    ],
+  },
+  {
+    id: 'commission_trigger',
+    patterns: [
+      /\bcommission (?:earned|paid|trigger)/i,
+      /\bpayment timing\b/i,
+      /\breferral fee\b/i,
+    ],
+  },
+  {
+    id: 'revenue_share',
+    patterns: [
+      /\brecurring revenue\b/i,
+      /\brevenue[- ]share\b/i,
+      /\brenewal/i,
+      /\bexpansion/i,
+      /\brelated account\b/i,
+    ],
+  },
+  {
+    id: 'implementation_responsibilities',
+    patterns: [
+      /\bimplementation\b/i,
+      /\bonboarding\b/i,
+      /\btraining\b/i,
+      /\bsupport (?:work|responsibilit)/i,
+      /\bcustomer handoff\b/i,
+      /\bpaid consulting\b/i,
+    ],
+  },
+  {
+    id: 'pilot_rights',
+    patterns: [
+      /\bsemi-exclusivity\b/i,
+      /\bexclusivity\b/i,
+      /\bperformance threshold\b/i,
+      /\brenegotiation\b/i,
+      /\bstronger rights\b/i,
+      /\bpilot (?:outcome|success)\b/i,
+    ],
+  },
+];
+
+const SAAS_OPEN_QUESTION_DISPLAY_ORDER = [
+  'referral_definition',
+  'commission_trigger',
+  'client_protection',
+  'implementation_responsibilities',
+  'revenue_share',
+  'pilot_rights',
+];
+
+function getSaasOpenQuestionDimension(value: string) {
+  const question = normalizeText(String(value || '').split('—')[0] || '');
+  return SAAS_OPEN_QUESTION_DIMENSIONS.find((dimension) =>
+    dimension.patterns.some((pattern) => pattern.test(question)),
+  )?.id || '';
+}
+
+function hasSaasOpenQuestionEvidence(dimensionId: string, contextText: string) {
+  const dimension = SAAS_OPEN_QUESTION_DIMENSIONS.find((item) => item.id === dimensionId);
+  if (!dimension) return false;
+  const context = normalizeText(contextText);
+  return dimension.patterns.some((pattern) => pattern.test(context));
+}
+
+function distinctSaasOpenQuestions(values: string[]) {
+  const selectedByDimension = new Map<string, string>();
+  const dimensionCounts = new Map<string, number>();
+  const unclassified: string[] = [];
+  uniqueText(values).forEach((question) => {
+    const dimension = getSaasOpenQuestionDimension(question);
+    if (!dimension) {
+      unclassified.push(question);
+      return;
+    }
+    dimensionCounts.set(dimension, (dimensionCounts.get(dimension) || 0) + 1);
+    if (!selectedByDimension.has(dimension)) {
+      selectedByDimension.set(dimension, question);
+    }
+  });
+  dimensionCounts.forEach((count, dimension) => {
+    if (count <= 1) return;
+    const canonical = SAAS_PARTNERSHIP_OPEN_QUESTIONS.find(
+      (question) => getSaasOpenQuestionDimension(question) === dimension,
+    );
+    if (canonical) selectedByDimension.set(dimension, canonical);
+  });
+  return [
+    ...SAAS_OPEN_QUESTION_DISPLAY_ORDER
+      .map((dimension) => selectedByDimension.get(dimension) || '')
+      .filter(Boolean),
+    ...unclassified,
+  ];
+}
 
 function signalScore(value: string, patterns: RegExp[]) {
   const text = normalizeText(value);
@@ -1031,14 +1152,22 @@ function normalizeOpenQuestionsForMediation(missing: string[], contextText: stri
     return missing.slice(0, maxVisibleQuestions);
   }
 
-  const filtered = uniqueText(missing.filter((item) => !isGenericProjectDeliveryQuestion(item)));
+  const filtered = distinctSaasOpenQuestions(
+    missing.filter((item) => !isGenericProjectDeliveryQuestion(item)),
+  );
   SAAS_PARTNERSHIP_OPEN_QUESTIONS.forEach((question) => {
     if (filtered.length >= maxVisibleQuestions) return;
+    const questionDimension = getSaasOpenQuestionDimension(question);
+    if (!questionDimension || !hasSaasOpenQuestionEvidence(questionDimension, contextText)) return;
     const questionKey = normalizeHeadingKey(question.split('—')[0] || question).slice(0, 80);
-    const alreadyCovered = filtered.some((existing) =>
-      normalizeHeadingKey(existing).includes(questionKey.slice(0, 35)) ||
-      normalizeHeadingKey(question).includes(normalizeHeadingKey(existing).slice(0, 35)),
-    );
+    const alreadyCovered = filtered.some((existing) => {
+      const existingDimension = getSaasOpenQuestionDimension(existing);
+      return (
+        Boolean(questionDimension && existingDimension === questionDimension) ||
+        normalizeHeadingKey(existing).includes(questionKey.slice(0, 35)) ||
+        normalizeHeadingKey(question).includes(normalizeHeadingKey(existing).slice(0, 35))
+      );
+    });
     if (!alreadyCovered) {
       filtered.push(question);
     }

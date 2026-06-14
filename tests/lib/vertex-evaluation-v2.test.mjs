@@ -2875,6 +2875,127 @@ test('presentation hygiene: open questions are deduped when two items resolve th
   }
 });
 
+test('presentation hygiene: SaaS referral questions cover distinct commercial dimensions without repeated explanations', async () => {
+  const saasFactSheet = validFactSheetPayload({
+    project_goal: 'Run a six-month SaaS referral and implementation partnership pilot.',
+    scope_deliverables: [
+      'Registered referrals and client attribution',
+      'Referral commission',
+      'Recurring revenue share for active ongoing support and renewals',
+      'Separate implementation fees',
+      'Onboarding, training, and customer handoff',
+    ],
+    timeline: {
+      start: null,
+      duration: 'six months',
+      milestones: ['Post-pilot renegotiation'],
+    },
+    constraints: ['Non-exclusive during the pilot', 'Semi-exclusivity only after a performance threshold'],
+    success_criteria_kpis: ['Qualified referrals and converted customers'],
+    assumptions: ['Direct-sell and non-circumvention rules will protect genuine introductions'],
+    risks: [
+      {
+        risk: 'Introduced accounts may create competing client-ownership claims.',
+        impact: 'high',
+        likelihood: 'med',
+      },
+    ],
+    open_questions: [
+      'What counts as a qualified referral?',
+      'How are introduced leads attributed?',
+      'How long does client protection last?',
+      'What counts as bypassing the partner?',
+      'When is commission earned and paid?',
+      'Who owns onboarding, implementation, training, and support?',
+      'Are renewals and expansions commissionable?',
+      'What performance threshold justifies semi-exclusivity?',
+    ],
+    missing_info: [
+      'Referral registration and attribution are not defined.',
+      'Client protection, pre-existing account, and direct-sell rules are not defined.',
+      'Implementation fee ownership and customer handoff remain open.',
+    ],
+  });
+
+  const passB = validPayload({
+    fit_level: 'medium',
+    confidence_0_1: 0.68,
+    why: [
+      'Recommendation: Proceed with conditions after the pilot operating rules are documented.',
+      'Where the Parties Align: Both sides support a non-exclusive referral and implementation pilot.',
+      'Where the Deal Is Stuck: Attribution, protection, economics, operating responsibilities, and post-pilot rights remain open.',
+      'Suggested Bridge: Use registered referrals, a protection window, separate implementation fees, and performance-based rights.',
+      'Next Step: Draft the Pilot Rules of Engagement.',
+    ],
+    missing: [
+      'What counts as a successful referral? — this issue determines whether the commercial model is workable.',
+      'How are introduced leads attributed and client ownership recorded? — this issue determines whether the commercial model is workable.',
+      'How long does client protection last? — this issue determines whether the commercial model is workable.',
+      'What counts as bypassing the partner? — this issue determines whether the commercial model is workable.',
+      'When is commission earned and paid? — this issue determines whether the commercial model is workable.',
+      'Who owns onboarding, implementation, training, and support? — this issue determines whether the commercial model is workable.',
+      'Are renewals and expansions commissionable? — this issue determines whether the commercial model is workable.',
+      'What performance threshold justifies semi-exclusivity? — this issue determines whether the commercial model is workable.',
+    ],
+    redactions: [],
+  });
+
+  const cleanup = setVertexV2MockSequence([
+    {
+      response: {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(saasFactSheet),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+    ...Array.from({ length: 4 }, () => ({
+      response: {
+        model: 'gemini-2.0-flash-001',
+        text: JSON.stringify(passB),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    })),
+  ]);
+
+  try {
+    const outcome = await evaluateMediationWithVertexV2({
+      sharedText:
+        'The parties propose a non-exclusive SaaS referral pilot with commission, client protection, implementation fees, active support, renewals, and performance-based semi-exclusivity.',
+      confidentialText: 'Private notes do not add any public commercial terms.',
+      requestId: 'req-saas-open-question-dimensions-1',
+    });
+
+    assert.equal(outcome.ok, true);
+    if (!outcome.ok) return;
+
+    const questions = outcome.data.missing;
+    const questionsText = questions.join(' ');
+    assert.equal(questions.length <= 6, true);
+    assert.equal(
+      questions.filter((entry) => /successful referral|qualified referral|lead attribution/i.test(entry)).length,
+      1,
+      JSON.stringify(questions),
+    );
+    assert.equal(
+      questions.filter((entry) => /client protection|circumvention|bypass|direct sale/i.test(entry)).length,
+      1,
+    );
+    assert.match(questionsText, /commission earned and paid/i);
+    assert.match(questionsText, /implementation|onboarding|training|support/i);
+    assert.match(questionsText, /renewals|expansions|recurring revenue share/i);
+    assert.match(questionsText, /semi-exclusivity|stronger rights|renegotiation/i);
+
+    const explanations = questions
+      .map((entry) => String(entry).split('—')[1]?.trim().toLowerCase() || '')
+      .filter(Boolean);
+    assert.equal(new Set(explanations).size, explanations.length);
+  } finally {
+    cleanup();
+  }
+});
+
 // ─── Report style: determinism + conditional modules (Prompt 3) ───────────────
 
 test('style: computeReportStyleSeed + selectReportStyle are deterministic', () => {
