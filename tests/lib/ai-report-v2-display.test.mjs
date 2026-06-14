@@ -2438,6 +2438,48 @@ test('generation-service fallback is marked retryable only when generation actua
   assert.equal(projection.public_report.retry_recommended, true);
 });
 
+test('confidentiality-suppressed mediation is marked failed and retryable instead of appearing substantive', () => {
+  const suppressed = buildStoredV2Evaluation({
+    ok: true,
+    generation_model: 'gpt-5.4',
+    data: {
+      analysis_stage: 'mediation_review',
+      fit_level: 'unknown',
+      confidence_0_1: 0,
+      why: [
+        'Output suppressed: evaluation output contained confidential information and could not be shared.',
+      ],
+      missing: [],
+      redactions: [],
+    },
+    _internal: {
+      failure_kind: 'confidential_leak_detected',
+      warnings: ['confidential_leak_detected_output_suppressed'],
+      models_used: { provider: 'openai' },
+    },
+  });
+
+  assert.equal(suppressed.report.renderer_path, 'fallback');
+  assert.equal(suppressed.report.narrative_valid, false);
+  assert.equal(suppressed.report.generation_status, 'failed');
+  assert.equal(suppressed.report.retry_recommended, true);
+
+  const projection = buildRecipientSafeEvaluationProjection({
+    evaluationResult: suppressed,
+    publicReport: suppressed.report,
+    confidentialText: 'Private commercial limits and resourcing concerns.',
+    sharedText: 'The parties are discussing a referral pilot.',
+    title: 'Confidentiality Suppression',
+  });
+
+  assert.equal(projection.public_report.generation_status, 'failed');
+  assert.equal(projection.public_report.retry_recommended, true);
+  assert.doesNotMatch(
+    JSON.stringify(projection),
+    /private commercial limits|resourcing concerns/i,
+  );
+});
+
 test('buildRecipientSafeEvaluationProjection: rebuilds dynamic sections when scrubbed presentation metadata becomes empty', () => {
   const confidentialMarker = 'vault hush 445';
   const report = {

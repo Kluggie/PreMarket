@@ -2547,9 +2547,19 @@ export function buildStoredV2Evaluation(
     : normalizedFitLevel === 'medium'
       ? 'Medium'
       : 'Low';
+  const failureKind = normalizeHeadingKey(v2Result?._internal?.failure_kind);
   const generationFailed =
-    normalizeHeadingKey(v2Result?._internal?.fallback_mode) === 'incomplete' &&
-    Boolean(normalizeText(v2Result?._internal?.failure_kind));
+    (
+      normalizeHeadingKey(v2Result?._internal?.fallback_mode) === 'incomplete'
+      && Boolean(failureKind)
+    )
+    || [
+      'confidential leak detected',
+      'verifier unavailable',
+      'unexpected error',
+      'not configured',
+      'openai not configured',
+    ].includes(failureKind);
   const why = Array.isArray(data?.why) ? data.why.map((entry: unknown) => normalizeText(entry)).filter(Boolean) : [];
   const missing = Array.isArray(data?.missing)
     ? data.missing.map((entry: unknown) => normalizeText(entry)).filter(Boolean)
