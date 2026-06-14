@@ -334,6 +334,12 @@ export interface VertexEvaluationV2Internal {
   failure_details?: {
     provider_status?: number | null;
     provider_code?: string | null;
+    failure_phase?: 'provider' | 'empty_output' | 'truncated_output' | 'json_parse' | 'schema_validation';
+    response_received?: boolean;
+    raw_text_length?: number;
+    finish_reason?: string | null;
+    schema_missing_keys?: string[];
+    schema_invalid_fields?: string[];
   };
   preflight?: {
     promptChars: number;

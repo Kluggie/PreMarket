@@ -84,3 +84,10 @@ export function isStalePendingEvaluationRun(
       : timestampMs(run?.created_at || run?.updated_at);
   return startedAt > 0 && Number(now) - startedAt >= staleAfterMs;
 }
+
+export function isGenerationFailureFallback(report) {
+  return (
+    asText(report?.generation_status).toLowerCase() === 'failed' &&
+    report?.retry_recommended !== false
+  );
+}

@@ -56,6 +56,7 @@ import {
 } from '@/pages/shared-report/recipientEditorAiState';
 import {
   isEvaluationRunForRequest,
+  isGenerationFailureFallback,
   isRecentPendingEvaluationRun,
   isStalePendingEvaluationRun,
   MEDIATION_EVALUATION_CLIENT_WAIT_MS,
@@ -1238,7 +1239,8 @@ export default function SharedReport() {
           evalRevisionId === activeDraftId &&
           Boolean(latestEvaluation?.public_report) &&
           typeof latestEvaluation.public_report === 'object' &&
-          Object.keys(latestEvaluation.public_report).length > 0;
+          Object.keys(latestEvaluation.public_report).length > 0 &&
+          !isGenerationFailureFallback(latestEvaluation.public_report);
         setShowStep3Results(evaluationBelongsToCurrentDraft);
       }
     } else if (!isAuthenticated && step !== 0) {
@@ -1469,11 +1471,17 @@ export default function SharedReport() {
       evaluationRequestRef.current.handledEvaluationId = asText(result?.evaluationId);
       setEvaluationPollingActive(false);
       setEvaluationPollingTimedOut(false);
-      setLatestEvaluatedReport(result?.evaluation?.public_report || null);
-      setShowStep3Results(true);
+      const publicReport = result?.evaluation?.public_report || null;
+      const generationFailed = isGenerationFailureFallback(publicReport);
+      setLatestEvaluatedReport(publicReport);
+      setShowStep3Results(!generationFailed);
       setStep(3);
       if (!alreadyHandled) {
-        toast.success('AI mediation review ready');
+        if (generationFailed) {
+          toast.error('AI mediation could not be completed. Please retry.');
+        } else {
+          toast.success('AI mediation review ready');
+        }
       }
       await workspaceQuery.refetch();
     },
@@ -1507,11 +1515,16 @@ export default function SharedReport() {
         evaluationRequestRef.current.handledEvaluationId = asText(run.id);
         setEvaluationPollingActive(false);
         setEvaluationPollingTimedOut(false);
+        const generationFailed = isGenerationFailureFallback(run.public_report);
         setLatestEvaluatedReport(run.public_report);
-        setShowStep3Results(true);
+        setShowStep3Results(!generationFailed);
         setStep(3);
         if (!alreadyHandled) {
-          toast.success('AI mediation review ready');
+          if (generationFailed) {
+            toast.error('AI mediation could not be completed. Please retry.');
+          } else {
+            toast.success('AI mediation review ready');
+          }
         }
         return;
       }
@@ -1569,10 +1582,15 @@ export default function SharedReport() {
       evaluationRequestRef.current.handledEvaluationId = asText(run.id);
       setEvaluationPollingActive(false);
       setEvaluationPollingTimedOut(false);
+      const generationFailed = isGenerationFailureFallback(run.public_report);
       setLatestEvaluatedReport(run.public_report);
-      setShowStep3Results(true);
+      setShowStep3Results(!generationFailed);
       setStep(3);
-      toast.success('AI mediation review ready');
+      if (generationFailed) {
+        toast.error('AI mediation could not be completed. Please retry.');
+      } else {
+        toast.success('AI mediation review ready');
+      }
       return;
     }
 
@@ -2692,7 +2710,8 @@ export default function SharedReport() {
   const step3IsEvaluationFailed =
     !step3IsEvaluationRunning &&
     !step3IsEvaluationNotConfigured &&
-    (latestEvaluationStatus === 'failed' ||
+    (isGenerationFailureFallback(updatedRecipientReport) ||
+      latestEvaluationStatus === 'failed' ||
       latestEvaluationStatus === 'error' ||
       Boolean(latestEvaluationErrorCode));
   const step3EvaluationFailureMessage =
@@ -3335,6 +3354,11 @@ export default function SharedReport() {
               finishStage={step3IsEvaluationRunning ? 'evaluating' : 'idle'}
               exceedsAnySizeLimit={false}
               saveDraftPending={saveDraftMutation.isPending}
+              evaluationFailureMessage={
+                isGenerationFailureFallback(updatedRecipientReport)
+                  ? 'The AI mediation brief could not be completed. No substantive mediation result was produced. Please retry.'
+                  : ''
+              }
               onBack={() => setStep(2)}
               onRunEvaluation={runEvaluationFromReview}
               runActionLabel={getRunOpportunityReviewLabel({

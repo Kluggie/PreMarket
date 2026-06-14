@@ -2298,6 +2298,68 @@ test('buildRecipientSafeEvaluationProjection: strips public references to confid
   assert.equal(projection.public_report.narrative_valid, false);
 });
 
+test('generation-service fallback is marked retryable only when generation actually failed', () => {
+  const fallback = buildStoredV2Evaluation({
+    ok: true,
+    generation_model: 'gpt-5.4',
+    data: {
+      analysis_stage: 'mediation_review',
+      fit_level: 'unknown',
+      confidence_0_1: 0.2,
+      why: [
+        'Recommendation: The AI mediation brief could not be completed because the generation service did not return a valid result.',
+        'Where the Parties Align: No reliable alignment assessment was generated in this run.',
+        'Where the Deal Is Stuck: The current blocker is a generation-service failure.',
+        'Suggested Bridge: No compromise package should be inferred from this incomplete result.',
+        'Next Step: Retry AI mediation once the AI service is available.',
+      ],
+      missing: [],
+      redactions: [],
+    },
+    _internal: {
+      failure_kind: 'schema_validation_error',
+      fallback_mode: 'incomplete',
+      models_used: { provider: 'openai' },
+    },
+  });
+  const thinButValid = buildStoredV2Evaluation({
+    ok: true,
+    generation_model: 'gpt-5.4',
+    data: {
+      analysis_stage: 'mediation_review',
+      fit_level: 'unknown',
+      confidence_0_1: 0.35,
+      why: [
+        'Recommendation: Treat this as a preliminary review because the available shared record is limited.',
+        'Where the Parties Align: The parties share an interest in exploring a commercial relationship.',
+        'Where the Deal Is Stuck: The shared record does not yet establish the proposed economics or obligations.',
+        'Suggested Bridge: Exchange a short commercial outline before assessing feasibility.',
+        'Next Step: Confirm the intended commercial structure and each party’s role.',
+      ],
+      missing: ['What commercial structure is being proposed?'],
+      redactions: [],
+    },
+    _internal: {
+      models_used: { provider: 'openai' },
+    },
+  });
+
+  assert.equal(fallback.report.generation_status, 'failed');
+  assert.equal(fallback.report.retry_recommended, true);
+  assert.equal('generation_status' in thinButValid.report, false);
+  assert.equal('retry_recommended' in thinButValid.report, false);
+
+  const projection = buildRecipientSafeEvaluationProjection({
+    evaluationResult: fallback,
+    publicReport: fallback.report,
+    confidentialText: 'Private context.',
+    sharedText: 'The parties are exploring a commercial relationship.',
+    title: 'Generation Failure',
+  });
+  assert.equal(projection.public_report.generation_status, 'failed');
+  assert.equal(projection.public_report.retry_recommended, true);
+});
+
 test('buildRecipientSafeEvaluationProjection: rebuilds dynamic sections when scrubbed presentation metadata becomes empty', () => {
   const confidentialMarker = 'vault hush 445';
   const report = {

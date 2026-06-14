@@ -757,6 +757,17 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
           fallbackMode: (v2Result as any)?._internal?.fallback_mode || null,
           providerStatus: (v2Result as any)?._internal?.failure_details?.provider_status ?? null,
           providerCode: (v2Result as any)?._internal?.failure_details?.provider_code || null,
+          failurePhase: (v2Result as any)?._internal?.failure_details?.failure_phase || null,
+          responseReceived:
+            (v2Result as any)?._internal?.failure_details?.response_received ?? null,
+          rawTextLength:
+            (v2Result as any)?._internal?.failure_details?.raw_text_length ?? null,
+          finishReason:
+            (v2Result as any)?._internal?.failure_details?.finish_reason || null,
+          schemaMissingKeys:
+            (v2Result as any)?._internal?.failure_details?.schema_missing_keys || [],
+          schemaInvalidFields:
+            (v2Result as any)?._internal?.failure_details?.schema_invalid_fields || [],
           warnings: (v2Result as any)?._internal?.warnings || [],
           retrievalStrategy: (v2Result as any)?._internal?.retrieval?.retrieval_strategy || null,
           evidenceCount: (v2Result as any)?._internal?.retrieval?.evidence_count ?? 0,

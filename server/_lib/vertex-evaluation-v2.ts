@@ -6282,6 +6282,12 @@ export async function evaluateWithVertexV2(
     | {
         provider_status?: number | null;
         provider_code?: string | null;
+        failure_phase?: 'provider' | 'empty_output' | 'truncated_output' | 'json_parse' | 'schema_validation';
+        response_received?: boolean;
+        raw_text_length?: number;
+        finish_reason?: string | null;
+        schema_missing_keys?: string[];
+        schema_invalid_fields?: string[];
       }
     | undefined;
 
@@ -6367,6 +6373,10 @@ export async function evaluateWithVertexV2(
       lastFailureDetails = {
         provider_status: status || null,
         provider_code: upstreamCode || code || null,
+        failure_phase: 'provider',
+        response_received: false,
+        raw_text_length: 0,
+        finish_reason: null,
       };
       break;
     }
@@ -6383,6 +6393,12 @@ export async function evaluateWithVertexV2(
       }
       // Empty output after all attempts — fall through to fallback.
       lastParseFailureKind = 'empty_output';
+      lastFailureDetails = {
+        failure_phase: 'empty_output',
+        response_received: true,
+        raw_text_length: 0,
+        finish_reason: finishReason,
+      };
       break;
     }
 
@@ -6395,6 +6411,12 @@ export async function evaluateWithVertexV2(
       }
       // Tight retry also truncated → use fallback.
       lastParseFailureKind = 'truncated_output';
+      lastFailureDetails = {
+        failure_phase: 'truncated_output',
+        response_received: true,
+        raw_text_length: rawTextLength,
+        finish_reason: finishReason,
+      };
       break;
     }
 
@@ -6409,6 +6431,12 @@ export async function evaluateWithVertexV2(
       }
       // Both attempts failed to parse → use fallback.
       lastParseFailureKind = 'json_parse_error';
+      lastFailureDetails = {
+        failure_phase: 'json_parse',
+        response_received: true,
+        raw_text_length: rawTextLength,
+        finish_reason: finishReason,
+      };
       break;
     }
 
@@ -6423,6 +6451,14 @@ export async function evaluateWithVertexV2(
       }
       // Schema still invalid after tight retry → fallback.
       lastParseFailureKind = 'schema_validation_error';
+      lastFailureDetails = {
+        failure_phase: 'schema_validation',
+        response_received: true,
+        raw_text_length: rawTextLength,
+        finish_reason: finishReason,
+        schema_missing_keys: schemaValidation.missingKeys.slice(0, 20),
+        schema_invalid_fields: schemaValidation.invalidFields.slice(0, 30),
+      };
       break;
     }
 

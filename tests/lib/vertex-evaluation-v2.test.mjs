@@ -1455,6 +1455,10 @@ test('v2 falls back on persistent json_parse_error (tight retry also fails)', as
     assert.equal(outcome.ok, true, 'json parse error must return ok:true via fallback');
     if (!outcome.ok) return;
     assert.equal(outcome._internal.failure_kind, 'json_parse_error', 'failure_kind must record json_parse_error');
+    assert.equal(outcome._internal.failure_details?.failure_phase, 'json_parse');
+    assert.equal(outcome._internal.failure_details?.response_received, true);
+    assert.equal(outcome._internal.failure_details?.raw_text_length, badJsonResponse.text.length);
+    assert.equal(outcome._internal.failure_details?.finish_reason, 'stop');
     assert.ok(
       Array.isArray(outcome._internal.warnings) && outcome._internal.warnings.length > 0,
       '_internal.warnings must be non-empty for fallback path',
@@ -1499,6 +1503,10 @@ test('v2 true incomplete fallback stays minimal and explicitly incomplete when e
     if (!outcome.ok) return;
 
     assert.equal(outcome._internal.fallback_mode, 'incomplete', 'thin fallback must be marked as incomplete');
+    assert.equal(outcome._internal.failure_kind, 'json_parse_error');
+    assert.equal(outcome._internal.failure_details?.failure_phase, 'json_parse');
+    assert.equal(outcome._internal.failure_details?.response_received, true);
+    assert.equal(outcome._internal.failure_details?.raw_text_length, badJsonResponse.text.length);
     assert.equal(outcome.data.fit_level, 'unknown', 'true incomplete fallback must remain unknown');
     assert.equal(outcome.data.confidence_0_1, 0.2, 'true incomplete fallback confidence must remain at 0.2');
 
@@ -1509,6 +1517,52 @@ test('v2 true incomplete fallback stays minimal and explicitly incomplete when e
     assert.deepEqual(outcome.data.missing, [], 'failed generation must not invent generic project-delivery questions');
     assert.equal(whyText.includes('Conditionally viable'), false, 'incomplete fallback must not be rewritten into a substantive memo');
     assert.equal(whyText.includes('Paths to agreement'), false, 'incomplete fallback must not contain bridge-to-agreement memo content');
+  } finally {
+    cleanup();
+  }
+});
+
+test('schema-rejected provider output records only safe validation diagnostics', async () => {
+  const invalidPayload = validPayload({
+    narrative: {
+      title: 'Too short',
+      sections: [],
+      closing: '',
+    },
+  });
+  const rawText = JSON.stringify(invalidPayload);
+  const invalidResponse = {
+    model: 'gemini-2.0-flash-001',
+    text: rawText,
+    finishReason: 'STOP',
+    httpStatus: 200,
+  };
+  const cleanup = setVertexV2MockSequence([
+    { response: factSheetResponse() },
+    { response: invalidResponse },
+    { response: invalidResponse },
+  ]);
+
+  try {
+    const outcome = await evaluateMediationWithVertexV2({
+      sharedText: 'The parties submitted enough material for a bilateral review.',
+      confidentialText: 'Private context exists and must remain confidential.',
+      requestId: 'req-schema-safe-diagnostics',
+    });
+
+    assert.equal(outcome.ok, true);
+    if (!outcome.ok) return;
+    assert.equal(outcome._internal.failure_kind, 'schema_validation_error');
+    assert.equal(outcome._internal.failure_details?.failure_phase, 'schema_validation');
+    assert.equal(outcome._internal.failure_details?.response_received, true);
+    assert.equal(outcome._internal.failure_details?.raw_text_length, rawText.length);
+    assert.equal(outcome._internal.failure_details?.finish_reason, 'stop');
+    assert.equal(
+      outcome._internal.failure_details?.schema_invalid_fields?.some((field) =>
+        field.startsWith('narrative.')),
+      true,
+    );
+    assert.equal('raw_text' in (outcome._internal.failure_details || {}), false);
   } finally {
     cleanup();
   }

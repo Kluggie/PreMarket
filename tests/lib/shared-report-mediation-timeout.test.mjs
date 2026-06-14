@@ -2,12 +2,39 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   isEvaluationRunForRequest,
+  isGenerationFailureFallback,
   isRecentPendingEvaluationRun,
   isStalePendingEvaluationRun,
   MEDIATION_EVALUATION_STALE_MS,
 } from '../../src/pages/shared-report/mediationEvaluationState.js';
 
 const startedAt = Date.parse('2026-06-13T08:00:00.000Z');
+
+test('only an explicitly marked generation failure enters the retry state', () => {
+  assert.equal(
+    isGenerationFailureFallback({
+      generation_status: 'failed',
+      retry_recommended: true,
+      renderer_path: 'fallback',
+    }),
+    true,
+  );
+  assert.equal(
+    isGenerationFailureFallback({
+      renderer_path: 'fallback',
+      narrative_valid: false,
+      fit_level: 'unknown',
+    }),
+    false,
+  );
+  assert.equal(
+    isGenerationFailureFallback({
+      renderer_path: 'narrative',
+      narrative_valid: true,
+    }),
+    false,
+  );
+});
 
 test('a newly persisted pending run remains pollable while the original POST is in flight', () => {
   const run = {

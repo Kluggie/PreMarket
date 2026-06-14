@@ -2418,6 +2418,9 @@ export function buildStoredV2Evaluation(
     : normalizedFitLevel === 'medium'
       ? 'Medium'
       : 'Low';
+  const generationFailed =
+    normalizeHeadingKey(v2Result?._internal?.fallback_mode) === 'incomplete' &&
+    Boolean(normalizeText(v2Result?._internal?.failure_kind));
   const why = Array.isArray(data?.why) ? data.why.map((entry: unknown) => normalizeText(entry)).filter(Boolean) : [];
   const missing = Array.isArray(data?.missing)
     ? data.missing.map((entry: unknown) => normalizeText(entry)).filter(Boolean)
@@ -2488,6 +2491,12 @@ export function buildStoredV2Evaluation(
     renderer_path: presentation.renderer_path,
     narrative_valid: presentation.narrative_valid,
     narrative_validation_warnings: presentation.narrative_validation_warnings,
+    ...(generationFailed
+      ? {
+          generation_status: 'failed',
+          retry_recommended: true,
+        }
+      : {}),
   };
 
   const stableConfidence = stabilizeConfidence(confidence);
@@ -3604,6 +3613,12 @@ function buildV2RecipientProjection(params: {
         ...narrativeValidation.warnings,
         ...rebuiltPresentation.narrative_validation_warnings,
       ])),
+    ...(scrubString(sourceReport.generation_status, markers, '') === 'failed'
+      ? {
+          generation_status: 'failed',
+          retry_recommended: true,
+        }
+      : {}),
     presentation_sections:
       sourceNarrativeRemainsValid &&
       normalizedProjectedPresentationSections.length > 0

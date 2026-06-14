@@ -161,6 +161,7 @@ function BundleSection({ label, icon, colorClass, borderClass, bgClass, sourceDo
  *   finishStage             'idle' | 'saving' | 'evaluating'
  *   exceedsAnySizeLimit     boolean
  *   saveDraftPending        boolean
+ *   evaluationFailureMessage string
  *   onBack                  () => void
  *   onRunEvaluation         () => void
  */
@@ -178,6 +179,7 @@ export default function Step3ReviewPackage({
   runActionTestId = 'step2-run-evaluation-button',
   actionButtonClassName = 'bg-blue-600 hover:bg-blue-700',
   footerNote = null,
+  evaluationFailureMessage = '',
 }) {
   const counts = getDocumentCounts(documents);
   const confidentialDocs = documents.filter((d) => d.visibility === VISIBILITY_CONFIDENTIAL);
@@ -297,6 +299,15 @@ export default function Step3ReviewPackage({
           </AlertDescription>
         </Alert>
       )}
+
+      {evaluationFailureMessage ? (
+        <Alert className="bg-red-50 border-red-200">
+          <AlertTriangle className="h-4 w-4 text-red-700" />
+          <AlertDescription className="text-red-800">
+            {evaluationFailureMessage}
+          </AlertDescription>
+        </Alert>
+      ) : null}
 
       {/* Privacy reminder */}
       <Alert className="bg-blue-50 border-blue-200">

@@ -264,7 +264,20 @@ test('shared-report mediation bounds quality repair work and records timeout dia
   assert.ok(source.includes('modelElapsedMs'));
   assert.ok(source.includes('runtimePhaseElapsedMs'));
   assert.ok(source.includes('narrativeWordCount'));
+  assert.ok(source.includes('responseReceived'));
+  assert.ok(source.includes('rawTextLength'));
+  assert.ok(source.includes('schemaMissingKeys'));
+  assert.ok(source.includes('schemaInvalidFields'));
   assert.ok(source.includes('failureReason: failure.code'));
+});
+
+test('generation-service fallback returns to the existing retry screen instead of showing a substantive report', async () => {
+  const source = await readFile(SHARED_REPORT_PATH, 'utf8');
+
+  assert.ok(source.includes('isGenerationFailureFallback'));
+  assert.ok(source.includes('setShowStep3Results(!generationFailed)'));
+  assert.ok(source.includes('AI mediation could not be completed. Please retry.'));
+  assert.ok(source.includes('No substantive mediation result was produced. Please retry.'));
 });
 
 test('recipient workspace strips internal evaluation diagnostics from the public run view', () => {
@@ -313,13 +326,13 @@ test('showStep3Results controls which Step 3 view is active', async () => {
     'SharedReport must use showStep3Results state to toggle between review and results',
   );
 
-  // showStep3Results must be set to true on evaluation success.
+  // Valid evaluation results show the report, while a generation failure
+  // returns to the existing retry screen.
   const evalOnSuccess = source.indexOf("toast.success('AI mediation review ready')");
   assert.ok(evalOnSuccess >= 0, 'Expected evaluation success toast');
-  const nearSuccess = source.slice(Math.max(0, evalOnSuccess - 300), evalOnSuccess);
   assert.ok(
-    nearSuccess.includes('setShowStep3Results(true)'),
-    'evaluateMutation.onSuccess must set showStep3Results to true',
+    source.includes('setShowStep3Results(!generationFailed)'),
+    'evaluateMutation.onSuccess must show results only when generation succeeded',
   );
 });
 
@@ -491,7 +504,7 @@ test('both proposer and recipient use TOTAL_WORKFLOW_STEPS = 3', async () => {
 test('lineage check: current draft with matching evaluation => results mode', async () => {
   const source = await readFile(SHARED_REPORT_PATH, 'utf8');
   const hydrationBlock = source.indexOf('if (!stepHydrated)');
-  const nearHydration = source.slice(hydrationBlock, hydrationBlock + 1200);
+  const nearHydration = source.slice(hydrationBlock, hydrationBlock + 1800);
 
   // The lineage logic must compare evalRevisionId to activeDraftId.
   // When evalRevisionId === activeDraftId, setShowStep3Results(true).
@@ -510,7 +523,7 @@ test('lineage check: current draft with matching evaluation => results mode', as
 test('lineage check: evaluation with non-matching revision_id => review package mode', async () => {
   const source = await readFile(SHARED_REPORT_PATH, 'utf8');
   const hydrationBlock = source.indexOf('if (!stepHydrated)');
-  const nearHydration = source.slice(hydrationBlock, hydrationBlock + 1200);
+  const nearHydration = source.slice(hydrationBlock, hydrationBlock + 1800);
 
   // If evalRevisionId does not match activeDraftId, the flag must be false,
   // which means Review Package is shown, not results.
@@ -522,7 +535,7 @@ test('lineage check: evaluation with non-matching revision_id => review package 
   );
   assert.ok(
     nearHydration.includes('setShowStep3Results(evaluationBelongsToCurrentDraft)'),
-    'showStep3Results must be set to the lineage match result — false when revision mismatch',
+    'showStep3Results must be set to the lineage and generation-success result',
   );
 });
 
