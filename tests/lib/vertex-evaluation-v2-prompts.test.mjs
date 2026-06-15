@@ -102,6 +102,17 @@ test('stage1 shared intake prompt stays explicitly one-sided, neutral, and non-e
   const prompt = buildStage1SharedIntakePromptFromFactSheet({
     factSheet: factSheet(),
     reportStyle: selectReportStyle(42),
+    sourceProvenance: {
+      shared_source_types: ['template_responses'],
+      confidential_source_types: ['template_responses', 'uploaded_document_context'],
+      shared_response_count: 5,
+      confidential_response_count: 2,
+      uploaded_document_context_present: true,
+      proposer_observation_count: 2,
+      actual_recipient_submission_count: 0,
+      empty_response_count: 1,
+      range_response_count: 1,
+    },
   });
 
   assert.match(prompt, /Stage 1 Initial Review writer/i);
@@ -110,6 +121,16 @@ test('stage1 shared intake prompt stays explicitly one-sided, neutral, and non-e
   assert.match(prompt, /NOT bilateral mediation, NOT a verdict, and NOT a compatibility judgment/i);
   assert.match(prompt, /Do NOT make confidence, compatibility, bridgeability, or final risk judgments/i);
   assert.match(prompt, /Do NOT predict likely pushback or likely response from the other side/i);
+  assert.match(prompt, /no actual recipient submission/i);
+  assert.match(prompt, /proposer-supplied observation or assumption/i);
+  assert.match(prompt, /Never convert a proposer observation about the recipient into a recipient fact/i);
+  assert.match(prompt, /Ground each major statement in a concrete fact-sheet item/i);
+  assert.match(prompt, /Distinguish stated facts, proposer assumptions, missing information, and reasonable recipient-facing questions/i);
+  assert.match(prompt, /Never expose source IDs, evidence IDs, internal labels, or provenance keys/i);
+  assert.match(prompt, /unanswered_questions must cover distinct commercial dimensions/i);
+  assert.match(prompt, /Do not manufacture a full generic checklist/i);
+  assert.match(prompt, /"proposer_observation_count": 2/i);
+  assert.match(prompt, /"actual_recipient_submission_count": 0/i);
   assert.match(prompt, /Status: provide a short neutral status only/i);
   assert.match(prompt, /scope_snapshot should be concise sentence-style items that combine naturally into compact paragraph prose/i);
   assert.match(prompt, /other_side_needed must stay neutral\. Write a single flowing prose paragraph/i);

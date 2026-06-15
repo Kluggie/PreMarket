@@ -2646,7 +2646,7 @@ if (!hasDatabaseUrl()) {
     assert.equal(Number(evaluation?.report?.quality?.confidence_overall) <= 0.4, true);
   });
 
-  test('proposal document-comparison evaluation persists Vertex-style report output to proposal and comparison', async () => {
+  test('proposal document-comparison evaluation persists the Stage 1 report to proposal and comparison', async () => {
     await ensureMigrated();
     await resetTables();
 
@@ -2690,7 +2690,7 @@ if (!hasDatabaseUrl()) {
       ['under_verification', 're_evaluated'].includes(evaluateRes.jsonBody().proposal.status),
       true,
     );
-    assert.equal(evaluateRes.jsonBody().evaluation.source, 'document_comparison_vertex');
+    assert.equal(evaluateRes.jsonBody().evaluation.source, 'proposal_stage1_intake');
     assert.equal(
       Array.isArray(evaluateRes.jsonBody().evaluation.result?.report?.sections),
       true,
@@ -2706,7 +2706,7 @@ if (!hasDatabaseUrl()) {
     await proposalDetailHandler(proposalDetailReq, proposalDetailRes, createdProposal.id);
     assert.equal(proposalDetailRes.statusCode, 200);
     assert.equal(proposalDetailRes.jsonBody().evaluations.length >= 1, true);
-    assert.equal(proposalDetailRes.jsonBody().evaluations[0].source, 'document_comparison_vertex');
+    assert.equal(proposalDetailRes.jsonBody().evaluations[0].source, 'proposal_stage1_intake');
     assert.equal(proposalDetailRes.jsonBody().evaluations[0].evaluation_provider, 'fallback');
     assert.equal(
       Array.isArray(proposalDetailRes.jsonBody().evaluations[0]?.result?.report?.sections),

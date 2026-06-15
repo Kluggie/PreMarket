@@ -7,6 +7,8 @@ import {
   computeReportStyleSeed,
   selectReportStyle,
   assessReportQuality,
+  assessStage1Quality,
+  dedupeStage1Questions,
 } from '../../server/_lib/vertex-evaluation-v2.ts';
 import { buildStoredV2Evaluation } from '../../server/routes/document-comparisons/_helpers.ts';
 import {
@@ -276,6 +278,17 @@ test('evaluateWithVertexV2 returns Stage 1 shared intake shape when analysisStag
       confidentialText: 'Internal notes highlight unresolved ownership and timing assumptions.',
       analysisStage: STAGE1_SHARED_INTAKE_STAGE,
       requestId: 'test_stage1_shared_intake',
+      stage1SourceProvenance: {
+        shared_source_types: ['template_responses'],
+        confidential_source_types: ['template_responses'],
+        shared_response_count: 4,
+        confidential_response_count: 1,
+        uploaded_document_context_present: false,
+        proposer_observation_count: 1,
+        actual_recipient_submission_count: 0,
+        empty_response_count: 1,
+        range_response_count: 0,
+      },
     });
 
     assert.equal(outcome.ok, true);
@@ -291,6 +304,207 @@ test('evaluateWithVertexV2 returns Stage 1 shared intake shape when analysisStag
     assert.equal('confidence_0_1' in outcome.data, false);
     assert.equal('readiness_status' in outcome.data, false);
     assert.equal('send_readiness_summary' in outcome.data, false);
+    assert.equal(outcome._internal.stage1_provenance.actual_recipient_submission_count, 0);
+    assert.equal(typeof outcome._internal.stage1_quality.score, 'number');
+    assert.equal(outcome._internal.stage1_quality.fallback_used, false);
+  } finally {
+    cleanup();
+  }
+});
+
+test('Stage 1 quality pass neutralizes unsupported recipient claims and deduplicates commercial dimensions', () => {
+  const quality = assessStage1Quality({
+    data: validStage1Payload({
+      submission_summary:
+        'The recipient wants a six-month pilot and requires commission to be paid monthly.',
+      unanswered_questions: [
+        'When is commission paid?',
+        'What is the payment timing for commission?',
+        'What is the pilot timeline?',
+        'Who owns customer onboarding?',
+      ],
+    }),
+    factSheet: validFactSheetPayload({
+      project_goal: 'Run a six-month referral partnership pilot.',
+      scope_deliverables: ['Referral process', 'Customer onboarding support'],
+      timeline: { start: null, duration: 'Six months', milestones: [] },
+    }),
+    provenance: {
+      shared_source_types: ['template_responses'],
+      confidential_source_types: ['template_responses'],
+      shared_response_count: 4,
+      confidential_response_count: 1,
+      uploaded_document_context_present: false,
+      proposer_observation_count: 2,
+      actual_recipient_submission_count: 0,
+      empty_response_count: 0,
+      range_response_count: 0,
+    },
+  });
+
+  assert.match(quality.data.submission_summary, /submitting party's materials suggest/i);
+  assert.doesNotMatch(quality.data.submission_summary, /^The recipient wants/i);
+  assert.equal(quality.data.unanswered_questions.length, 3);
+  assert.equal(quality.warnings.includes('stage1_recipient_assertion_neutralized'), true);
+  assert.equal(quality.warnings.includes('stage1_duplicate_questions_removed'), true);
+  assert.equal(quality.fallbackReason, undefined);
+});
+
+test('Stage 1 semantic question dedupe preserves distinct issues while merging wording variants', () => {
+  const questions = dedupeStage1Questions([
+    'When is the referral commission earned and paid?',
+    'What payment timing applies to commission?',
+    'How long will the pilot run?',
+    'Who owns onboarding and support?',
+    'What success criteria apply to the pilot?',
+  ]);
+
+  assert.equal(questions.length, 4);
+  assert.match(questions.join(' '), /commission/i);
+  assert.match(questions.join(' '), /pilot run/i);
+  assert.match(questions.join(' '), /onboarding/i);
+  assert.match(questions.join(' '), /success criteria/i);
+});
+
+test('evaluateWithVertexV2 rejects bilateral verdicts from Stage 1 without another model call', async () => {
+  const cleanup = setVertexV2MockSequence([
+    {
+      response: {
+        model: 'gemini-2.5-flash-lite',
+        text: JSON.stringify(validFactSheetPayload()),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+    {
+      response: {
+        model: 'gemini-2.5-pro',
+        text: JSON.stringify(validStage1Payload({
+          submission_summary:
+            'The parties align on the main structure, the deal is viable, and the final recommendation is to proceed with conditions.',
+        })),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+  ]);
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'The proposer submitted scope, timeline, and commercial preferences.',
+      confidentialText: 'Private proposer notes contain unresolved assumptions.',
+      analysisStage: STAGE1_SHARED_INTAKE_STAGE,
+      requestId: 'test_stage1_rejects_bilateral_verdict',
+    });
+
+    assert.equal(outcome.ok, true);
+    assert.doesNotMatch(JSON.stringify(outcome.data), /deal is viable|proceed with conditions|final recommendation/i);
+    assert.equal(outcome._internal.stage1_quality.fallback_used, true);
+    assert.equal(
+      outcome._internal.stage1_quality.fallback_reason,
+      'stage1_bilateral_conclusion_rejected',
+    );
+    assert.equal(outcome._internal.runtime.model_call_count, 2);
+  } finally {
+    cleanup();
+  }
+});
+
+test('Stage 1 quality pass rejects internal provenance labels from visible output', () => {
+  const quality = assessStage1Quality({
+    data: validStage1Payload({
+      scope_snapshot: ['Evidence source_id shared:template_q4 confirms the proposed scope.'],
+    }),
+    factSheet: validFactSheetPayload(),
+  });
+
+  assert.equal(quality.fallbackReason, 'stage1_internal_provenance_rejected');
+  assert.equal(quality.warnings.includes('stage1_internal_provenance_rejected'), true);
+});
+
+test('Stage 1 quality pass repairs missing questions and flags generic thin output against adequate source material', () => {
+  const quality = assessStage1Quality({
+    data: validStage1Payload({
+      submission_summary: 'The proposal contains information that may require further clarity.',
+      scope_snapshot: ['Additional details may be useful.'],
+      unanswered_questions: [],
+      other_side_needed: ['More information may be needed.'],
+      discussion_starting_points: ['Discuss the opportunity.'],
+    }),
+    factSheet: validFactSheetPayload({
+      open_questions: ['When is the commission earned and paid?'],
+      missing_info: ['Who owns customer onboarding and support?'],
+    }),
+  });
+
+  assert.equal(quality.data.unanswered_questions.length >= 1, true);
+  assert.equal(quality.warnings.includes('stage1_missing_questions_repaired'), true);
+  assert.equal(quality.warnings.includes('stage1_output_too_thin_for_source_depth'), true);
+  assert.equal(quality.warnings.includes('stage1_claim_grounding_weak'), true);
+  assert.equal(quality.warnings.includes('stage1_generic_output'), true);
+});
+
+test('Stage 1 quality pass removes unsupported checklist questions while keeping supported dimensions', () => {
+  const quality = assessStage1Quality({
+    data: validStage1Payload({
+      unanswered_questions: [
+        'When is the fixed pilot fee paid?',
+        'What termination notice period applies?',
+      ],
+    }),
+    factSheet: validFactSheetPayload({
+      project_goal: 'Run a fixed-fee analytics pilot.',
+      scope_deliverables: ['Analytics pilot'],
+      constraints: ['Fixed pilot fee'],
+      open_questions: ['When is the fixed pilot fee paid?'],
+      missing_info: [],
+    }),
+  });
+
+  assert.deepEqual(quality.data.unanswered_questions, ['When is the fixed pilot fee paid?']);
+  assert.equal(quality.warnings.includes('stage1_unsupported_questions_removed'), true);
+});
+
+test('evaluateWithVertexV2 suppresses confidential Stage 1 canaries even without an extra verifier call', async () => {
+  const canary = 'STAGE1_PRIVATE_LIMIT_CANARY_84Z';
+  const cleanup = setVertexV2MockSequence([
+    {
+      response: {
+        model: 'gemini-2.5-flash-lite',
+        text: JSON.stringify(validFactSheetPayload()),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+    {
+      response: {
+        model: 'gemini-2.5-pro',
+        text: JSON.stringify(validStage1Payload({
+          submission_summary: `The submission includes ${canary} as an internal commercial constraint.`,
+        })),
+        finishReason: 'STOP',
+        httpStatus: 200,
+      },
+    },
+  ]);
+
+  try {
+    const outcome = await evaluateWithVertexV2({
+      sharedText: 'The proposer describes a six-month referral pilot.',
+      confidentialText: `The internal commission ceiling is ${canary}.`,
+      forbiddenLeakCanaryTokens: [canary],
+      analysisStage: STAGE1_SHARED_INTAKE_STAGE,
+      requestId: 'test_stage1_confidential_canary_suppressed',
+    });
+
+    assert.equal(outcome.ok, true);
+    assert.doesNotMatch(JSON.stringify(outcome.data), new RegExp(canary, 'i'));
+    assert.equal(outcome._internal.stage1_quality.fallback_used, true);
+    assert.equal(
+      outcome._internal.stage1_quality.fallback_reason,
+      'stage1_confidential_output_rejected',
+    );
+    assert.equal(outcome._internal.runtime.model_call_count, 2);
   } finally {
     cleanup();
   }
@@ -393,6 +607,8 @@ test('evaluateWithVertexV2 Stage 1 fallback stays neutral when model output is i
     assert.equal('confidence_0_1' in outcome.data, false);
     assert.equal('readiness_status' in outcome.data, false);
     assert.equal('send_readiness_summary' in outcome.data, false);
+    assert.equal(outcome._internal.stage1_quality.fallback_used, true);
+    assert.equal(outcome._internal.stage1_quality.fallback_reason, 'json_parse_error');
   } finally {
     cleanup();
   }

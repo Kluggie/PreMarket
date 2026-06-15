@@ -2435,6 +2435,45 @@ export function buildStoredV2Evaluation(
       primary_insight: presentation.primary_insight,
       presentation_sections: presentation.presentation_sections,
     };
+    const stage1Quality =
+      v2Result?._internal?.stage1_quality &&
+      typeof v2Result._internal.stage1_quality === 'object' &&
+      !Array.isArray(v2Result._internal.stage1_quality)
+        ? v2Result._internal.stage1_quality
+        : {};
+    const runtime =
+      v2Result?._internal?.runtime &&
+      typeof v2Result._internal.runtime === 'object' &&
+      !Array.isArray(v2Result._internal.runtime)
+        ? v2Result._internal.runtime
+        : {};
+    const sourceCoverage =
+      v2Result?._internal?.fact_sheet?.source_coverage &&
+      typeof v2Result._internal.fact_sheet.source_coverage === 'object' &&
+      !Array.isArray(v2Result._internal.fact_sheet.source_coverage)
+        ? v2Result._internal.fact_sheet.source_coverage
+        : {};
+    const qualityWarnings = Array.isArray(stage1Quality?.warnings)
+      ? stage1Quality.warnings.map((entry: unknown) => normalizeText(entry)).filter(Boolean)
+      : [];
+    const fallbackReason =
+      normalizeText(stage1Quality?.fallback_reason) ||
+      normalizeText(v2Result?._internal?.failure_kind) ||
+      null;
+    const fallbackUsed = Boolean(stage1Quality?.fallback_used || fallbackReason);
+    const retryRecommended =
+      fallbackUsed &&
+      /(?:timeout|request_failed|not_configured|http|empty|truncated|invalid_response|unexpected|unavailable)/i.test(
+        fallbackReason || qualityWarnings.join(' '),
+      );
+    const coverageFlags = {
+      has_scope: Boolean(sourceCoverage?.has_scope),
+      has_timeline: Boolean(sourceCoverage?.has_timeline),
+      has_kpis: Boolean(sourceCoverage?.has_kpis),
+      has_constraints: Boolean(sourceCoverage?.has_constraints),
+      has_risks: Boolean(sourceCoverage?.has_risks),
+    };
+    const coverageCount = Object.values(coverageFlags).filter(Boolean).length;
 
     return {
       provider: evaluationProvider,
@@ -2449,6 +2488,31 @@ export function buildStoredV2Evaluation(
       evaluation_model: generationModel,
       evaluation_provider_model: providerModel,
       evaluation_provider_reason: null,
+      evaluator_family: 'stage1_shared_intake',
+      evaluator_version: 'v2',
+      evaluation_architecture: 'vertex_evaluation_v2',
+      analysis_stage: STAGE1_SHARED_INTAKE_STAGE,
+      generation_status: fallbackUsed ? 'completed_with_warnings' : 'completed',
+      fallback_reason: fallbackReason,
+      retry_recommended: retryRecommended,
+      quality_score: Number.isFinite(Number(stage1Quality?.score))
+        ? Number(stage1Quality.score)
+        : null,
+      quality_warnings: qualityWarnings,
+      source_coverage: {
+        coverage_count: coverageCount,
+        source_depth: coverageCount >= 4 ? 'strong' : coverageCount >= 2 ? 'partial' : 'thin',
+        ...coverageFlags,
+      },
+      model_duration_ms: Number.isFinite(Number(runtime?.model_elapsed_ms))
+        ? Number(runtime.model_elapsed_ms)
+        : null,
+      evaluation_duration_ms: Number.isFinite(Number(runtime?.total_elapsed_ms))
+        ? Number(runtime.total_elapsed_ms)
+        : null,
+      model_call_count: Number.isFinite(Number(runtime?.model_call_count))
+        ? Number(runtime.model_call_count)
+        : null,
     };
   }
 

@@ -81,4 +81,15 @@ test('proposal Stage 1 input keeps private responses separate and labels propose
   assert.match(input.confidentialText, /Private uploaded-document summary/);
   assert.equal(input.sharedResponseCount, 3);
   assert.equal(input.confidentialResponseCount, 1);
+  assert.deepEqual(input.sourceProvenance, {
+    shared_source_types: ['template_responses'],
+    confidential_source_types: ['template_responses', 'uploaded_document_context'],
+    shared_response_count: 3,
+    confidential_response_count: 1,
+    uploaded_document_context_present: true,
+    proposer_observation_count: 1,
+    actual_recipient_submission_count: 0,
+    empty_response_count: 1,
+    range_response_count: 1,
+  });
 });

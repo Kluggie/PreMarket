@@ -203,6 +203,150 @@ test('buildStoredV2Evaluation: stores Stage 1 shared intake reports without medi
   assert.equal('send_readiness_summary' in stored.report, false);
 });
 
+test('buildStoredV2Evaluation: keeps Stage 1 diagnostics safe and outside the visible report', () => {
+  const stored = buildStoredV2Evaluation({
+    ok: true,
+    data: {
+      analysis_stage: 'stage1_shared_intake',
+      submission_summary: 'The submission describes a six-month referral pilot.',
+      scope_snapshot: ['Referral registration and onboarding support are proposed.'],
+      unanswered_questions: ['When is commission earned and paid?'],
+      other_side_needed: ['Clarification on referral attribution and support responsibilities.'],
+      discussion_starting_points: ['Review the pilot mechanics and commercial assumptions.'],
+      intake_status: 'awaiting_other_side_input',
+      basis_note:
+        'This summary is based solely on the materials submitted by one party. It is a preliminary summary intended to help structure the next exchange. A more complete understanding will be possible once the other side has had an opportunity to review and respond.',
+    },
+    model: 'gemini-2.5-pro',
+    generation_model: 'gemini-2.5-pro',
+    _internal: {
+      failure_kind: null,
+      fact_sheet: {
+        source_coverage: {
+          has_scope: true,
+          has_timeline: true,
+          has_kpis: false,
+          has_constraints: true,
+          has_risks: false,
+        },
+      },
+      stage1_quality: {
+        score: 0.88,
+        warnings: ['stage1_duplicate_questions_removed'],
+        repaired: true,
+        fallback_used: false,
+      },
+      runtime: {
+        total_elapsed_ms: 2400,
+        model_elapsed_ms: 2100,
+        model_call_count: 2,
+      },
+    },
+  });
+
+  assert.equal(stored.evaluator_family, 'stage1_shared_intake');
+  assert.equal(stored.evaluator_version, 'v2');
+  assert.equal(stored.evaluation_architecture, 'vertex_evaluation_v2');
+  assert.equal(stored.generation_status, 'completed');
+  assert.equal(stored.quality_score, 0.88);
+  assert.deepEqual(stored.quality_warnings, ['stage1_duplicate_questions_removed']);
+  assert.equal(stored.source_coverage.coverage_count, 3);
+  assert.equal(stored.source_coverage.source_depth, 'partial');
+  assert.equal(stored.model_call_count, 2);
+  assert.equal(stored.model_duration_ms, 2100);
+  assert.equal(stored.evaluation_duration_ms, 2400);
+  assert.equal('stage1_quality' in stored.report, false);
+  assert.equal('runtime' in stored.report, false);
+  assert.equal('source_coverage' in stored.report, false);
+  assert.doesNotMatch(JSON.stringify(stored.report), /stage1_duplicate_questions_removed/);
+});
+
+test('buildRecipientSafeEvaluationProjection: removes private Stage 1 content and internal diagnostics', () => {
+  const canary = 'STAGE1_PRIVATE_UPLOAD_CANARY_22Q';
+  const sourceReport = {
+    report_format: 'v2',
+    analysis_stage: 'stage1_shared_intake',
+    submission_summary: `The uploaded context states ${canary}.`,
+    scope_snapshot: ['A referral pilot is proposed.'],
+    unanswered_questions: ['When is commission earned and paid?'],
+    other_side_needed: ['Clarification on the commercial structure.'],
+    discussion_starting_points: ['Review referral attribution.'],
+    intake_status: 'awaiting_other_side_input',
+    basis_note:
+      'This summary is based solely on the materials submitted by one party. It is a preliminary summary intended to help structure the next exchange. A more complete understanding will be possible once the other side has had an opportunity to review and respond.',
+    report_title: 'Initial Review',
+    primary_insight: `Private diagnostic ${canary}`,
+    presentation_sections: [
+      {
+        heading: 'Submission Summary',
+        paragraphs: [`The uploaded context states ${canary}.`],
+      },
+    ],
+  };
+
+  const projection = buildRecipientSafeEvaluationProjection({
+    evaluationResult: {
+      provider: 'vertex',
+      model: 'gemini-2.5-pro',
+      summary: `Private diagnostic ${canary}`,
+      quality_warnings: ['stage1_confidential_output_rejected'],
+      report: sourceReport,
+    },
+    publicReport: sourceReport,
+    confidentialText: `Private uploaded-document context: ${canary}`,
+    sharedText: 'A six-month referral pilot is proposed.',
+    title: 'Referral partnership',
+  });
+
+  assert.doesNotMatch(JSON.stringify(projection), new RegExp(canary, 'i'));
+  assert.equal('quality_warnings' in projection.evaluation_result, false);
+  assert.equal('stage1_quality' in projection.public_report, false);
+  assert.equal(projection.public_report.analysis_stage, 'stage1_shared_intake');
+});
+
+test('buildStoredV2Evaluation: records retryable Stage 1 fallback diagnostics without presenting a confident review', () => {
+  const stored = buildStoredV2Evaluation({
+    ok: true,
+    data: {
+      analysis_stage: 'stage1_shared_intake',
+      submission_summary: 'The submitted materials outline an opportunity, but the current record remains high level.',
+      scope_snapshot: [],
+      unanswered_questions: ['What is the confirmed scope boundary?'],
+      other_side_needed: ['Clarification on the current open questions.'],
+      discussion_starting_points: ['Confirm what has been submitted so far.'],
+      intake_status: 'awaiting_other_side_input',
+      basis_note:
+        'This summary is based solely on the materials submitted by one party. It is a preliminary summary intended to help structure the next exchange. A more complete understanding will be possible once the other side has had an opportunity to review and respond.',
+    },
+    model: null,
+    generation_model: 'gemini-2.5-pro',
+    _internal: {
+      failure_kind: 'vertex_timeout',
+      stage1_quality: {
+        score: 0,
+        warnings: ['vertex_request_failed_fallback_used'],
+        repaired: false,
+        fallback_used: true,
+        fallback_reason: 'vertex_timeout',
+      },
+      runtime: {
+        total_elapsed_ms: 90000,
+        model_elapsed_ms: 90000,
+        model_call_count: 2,
+      },
+    },
+  });
+
+  assert.equal(stored.generation_status, 'completed_with_warnings');
+  assert.equal(stored.fallback_reason, 'vertex_timeout');
+  assert.equal(stored.retry_recommended, true);
+  assert.equal(stored.quality_score, 0);
+  assert.equal(stored.score, null);
+  assert.equal(stored.confidence, null);
+  assert.equal(stored.recommendation, null);
+  assert.doesNotMatch(JSON.stringify(stored.report), /vertex_timeout|request_failed|quality_score/i);
+});
+
 test('buildStoredV2Evaluation: synthesizes Stage 1 shared intake into neutral intake sections', () => {
   const stored = buildStoredV2Evaluation({
     ok: true,

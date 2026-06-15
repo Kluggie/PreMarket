@@ -1660,6 +1660,15 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     const engine = resolveDocumentComparisonEngine(req);
     const useV2 = engine === 'v2';
     const evaluateComparison = useV2 ? null : getDocumentComparisonEvaluator();
+    const stage1InputFiles = [
+      ...(Array.isArray((draft.inputs as any)?.doc_a_files) ? (draft.inputs as any).doc_a_files : []),
+      ...(Array.isArray((draft.inputs as any)?.doc_b_files) ? (draft.inputs as any).doc_b_files : []),
+    ];
+    const stage1HasUploadedDocumentContext =
+      stage1InputFiles.length > 0 ||
+      Boolean(asText((draft.inputs as any)?.doc_a_url || (draft.inputs as any)?.doc_b_url)) ||
+      [(draft.inputs as any)?.doc_a_source, (draft.inputs as any)?.doc_b_source]
+        .some((source) => Boolean(asText(source)) && asLower(source) !== 'typed');
     let attemptCount = 0;
     let evaluation: any = null;
     let latestFailedResult: Record<string, unknown> | null = null;
@@ -1707,6 +1716,25 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
               ...(mediationRoundContext ? { mediationRoundContext } : {}),
               ...(mediationEvidenceCandidates
                 ? { evidenceCandidates: mediationEvidenceCandidates }
+                : {}),
+              ...(analysisStage === STAGE1_SHARED_INTAKE_STAGE
+                ? {
+                    stage1SourceProvenance: {
+                      shared_source_types: stage1HasUploadedDocumentContext
+                        ? ['proposer_shared_material', 'uploaded_document_context']
+                        : ['proposer_shared_material'],
+                      confidential_source_types: stage1HasUploadedDocumentContext
+                        ? ['proposer_private_material', 'uploaded_document_context']
+                        : ['proposer_private_material'],
+                      shared_response_count: evaluationSharedText.trim() ? 1 : 0,
+                      confidential_response_count: evaluationConfidentialText.trim() ? 1 : 0,
+                      uploaded_document_context_present: stage1HasUploadedDocumentContext,
+                      proposer_observation_count: 0,
+                      actual_recipient_submission_count: 0,
+                      empty_response_count: 0,
+                      range_response_count: 0,
+                    },
+                  }
                 : {}),
               // Model routing — resolved inside the lib via env vars if not set here.
               // Providing them explicitly lets the route override via query/body in future.

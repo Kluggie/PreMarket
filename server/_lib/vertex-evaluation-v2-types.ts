@@ -272,6 +272,18 @@ export interface ProposalFactSheet {
   source_coverage: ProposalFactSheetCoverage;
 }
 
+export interface Stage1SourceProvenance {
+  shared_source_types: string[];
+  confidential_source_types: string[];
+  shared_response_count: number;
+  confidential_response_count: number;
+  uploaded_document_context_present: boolean;
+  proposer_observation_count: number;
+  actual_recipient_submission_count: number;
+  empty_response_count: number;
+  range_response_count: number;
+}
+
 export type ProposalDomainId = 'software' | 'investment' | 'supply' | 'services' | 'generic';
 
 export type ProposalDomain = {
@@ -400,6 +412,14 @@ export interface VertexEvaluationV2Internal {
     character_budget_used: number;
     retrieval_warnings: string[];
   };
+  stage1_provenance?: Stage1SourceProvenance;
+  stage1_quality?: {
+    score: number;
+    warnings: string[];
+    repaired: boolean;
+    fallback_used: boolean;
+    fallback_reason?: string;
+  };
 }
 
 export interface VertexEvaluationV2Request<Stage extends ReviewStage = ReviewStage> {
@@ -418,6 +438,7 @@ export interface VertexEvaluationV2Request<Stage extends ReviewStage = ReviewSta
   evidenceCandidates?: MediationEvidenceCandidate[];
   executionDeadlineMs?: number;
   maxQualityRepairCalls?: number;
+  stage1SourceProvenance?: Stage1SourceProvenance;
 }
 
 export interface VertexEvaluationV2Result<Stage extends ReviewStage = ReviewStage> {

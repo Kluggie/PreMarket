@@ -14,6 +14,7 @@ import {
   type ProposalFactSheetCoverage,
   type RetrievedMediationEvidencePacket,
   type ReportStyle,
+  type Stage1SourceProvenance,
   type StyleId,
   type Verbosity,
 } from './vertex-evaluation-v2-types.js';
@@ -446,8 +447,9 @@ export function buildStage1SharedIntakePromptFromFactSheet(params: {
   factSheet: ProposalFactSheet;
   reportStyle: ReportStyle;
   tightMode?: boolean;
+  sourceProvenance?: Stage1SourceProvenance;
 }) {
-  const { factSheet, reportStyle } = params;
+  const { factSheet, reportStyle, sourceProvenance } = params;
   const tightMode = Boolean(params.tightMode);
   const domain = classifyProposalDomain(factSheet);
 
@@ -467,12 +469,16 @@ export function buildStage1SharedIntakePromptFromFactSheet(params: {
     'It is a preliminary summary intended to help structure the next exchange.',
     'It is NOT bilateral mediation, NOT a verdict, and NOT a compatibility judgment.',
     'You do NOT know the other side’s position yet.',
+    sourceProvenance?.actual_recipient_submission_count
+      ? `The provenance summary records ${sourceProvenance.actual_recipient_submission_count} actual recipient submission(s). Use only those submissions as recipient evidence.`
+      : 'The provenance summary records no actual recipient submission. Any statement about recipient needs, capacity, priorities, or preferences is only a proposer-supplied observation or assumption.',
     '',
     'IMPORTANT BOUNDARY:',
     '- Do NOT make confidence, compatibility, bridgeability, or final risk judgments.',
     '- Do NOT predict likely pushback or likely response from the other side.',
     '- Do NOT write as if bilateral neutrality has already been achieved.',
     '- Do NOT sound like a consultant memo, negotiation verdict, or adjudication.',
+    '- Never convert a proposer observation about the recipient into a recipient fact. Attribute it as "the proposer assumes...", "the submitting party expects...", or "the materials suggest...".',
     '',
     'CONFIDENTIALITY RULES (strictly enforced):',
     '- Never quote confidential text verbatim.',
@@ -494,12 +500,18 @@ export function buildStage1SharedIntakePromptFromFactSheet(params: {
     '',
     'WRITING RULES:',
     '- Summarize only what is reasonably supported by the fact_sheet.',
+    '- Ground each major statement in a concrete fact-sheet item or explicitly mark it as missing, uncertain, implied, or proposer-supplied.',
+    '- Distinguish stated facts, proposer assumptions, missing information, and reasonable recipient-facing questions. Do not blend these categories.',
+    '- Do not invent exact amounts, dates, thresholds, roles, commitments, or recipient preferences.',
+    '- Refer naturally to "the submitted material", "the proposer’s current answers", or "uploaded context". Never expose source IDs, evidence IDs, internal labels, or provenance keys.',
     '- Separate stated facts from weaker inference. When something is only implied, use restrained phrasing such as "appears", "seems", or "the materials suggest".',
     '- Keep the tone factual, neutral, descriptive, and incomplete-by-design.',
     '- submission_summary must be a concise paragraph, not a verdict.',
     '- scope_snapshot should be concise sentence-style items that combine naturally into compact paragraph prose.',
     '- unanswered_questions must focus on missing definitions, dependencies, timing, pricing structure, ownership, assumptions, success metrics, or scope boundaries.',
     '- unanswered_questions should read naturally when rendered together as a short paragraph, so avoid long formal bullet wording.',
+    '- unanswered_questions must cover distinct commercial dimensions. Merge wording variants that ask the same thing, such as multiple versions of payment timing, scope boundary, ownership, or acceptance.',
+    '- Include only the most important unresolved questions supported by the fact_sheet. Do not manufacture a full generic checklist.',
     '- other_side_needed must stay neutral. Write a single flowing prose paragraph that joins the clarification topics naturally using commas and conjunctions. Do not use bullet fragments, directive requests, or a deliverables checklist. The paragraph should read like a polished human-written sentence.',
     '- discussion_starting_points must be concise, polished, and neutral. Each item should name a specific discussion topic in review-artifact style (e.g. "Review of the proposed scope boundary", "Alignment on success metrics methodology"). Do NOT use conversational or meeting-style phrasing such as "Let\'s", "Can we", or "Shall we". Items should stay short enough to read smoothly as compact prose.',
     `- basis_note must say exactly: "${STAGE1_PRELIMINARY_SUMMARY_NOTE}"`,
@@ -529,6 +541,17 @@ export function buildStage1SharedIntakePromptFromFactSheet(params: {
       {
         analysis_stage: STAGE1_SHARED_INTAKE_STAGE,
         fact_sheet: factSheet,
+        source_provenance: sourceProvenance || {
+          shared_source_types: ['submitted_shared_material'],
+          confidential_source_types: ['submitted_private_material'],
+          shared_response_count: 0,
+          confidential_response_count: 0,
+          uploaded_document_context_present: false,
+          proposer_observation_count: 0,
+          actual_recipient_submission_count: 0,
+          empty_response_count: 0,
+          range_response_count: 0,
+        },
       },
       null,
       2,

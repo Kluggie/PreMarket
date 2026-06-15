@@ -64,6 +64,7 @@ import {
   type ReportStyle,
   type ReviewStage,
   type Stage1SharedIntakeStage,
+  type Stage1SourceProvenance,
   type VertexEvaluationV2Failure,
   type VertexEvaluationV2Internal,
   type VertexEvaluationV2MediationResponse,
@@ -98,6 +99,7 @@ export type {
   ReportStyle,
   ReviewStage,
   Stage1SharedIntakeStage,
+  Stage1SourceProvenance,
   VertexEvaluationV2Failure,
   VertexEvaluationV2Internal,
   VertexEvaluationV2MediationResponse,
@@ -4073,11 +4075,87 @@ function toStage1Question(value: string) {
 }
 
 function normalizeStage1Questions(values: string[], fallback: string[] = [], maxItems = 6) {
-  return trimStageItems(
+  const primary = dedupeStage1Questions(
     values.map((item) => toStage1Question(item)).filter(Boolean),
     maxItems,
-    fallback.map((item) => toStage1Question(item)).filter(Boolean),
   );
+  if (primary.length > 0) return primary;
+  return dedupeStage1Questions(
+    fallback.map((item) => toStage1Question(item)).filter(Boolean),
+    maxItems,
+  );
+}
+
+const STAGE1_QUESTION_DIMENSIONS = [
+  { id: 'payment', pattern: /\b(price|pricing|payment|fee|commission|revenue share|cost|budget|invoice|commercial term)\b/i },
+  { id: 'scope', pattern: /\b(scope|boundary|included|excluded|deliverable|workstream|service)\b/i },
+  { id: 'timing', pattern: /\b(timing|timeline|date|duration|milestone|deadline|start|schedule|phase)\b/i },
+  { id: 'support', pattern: /\b(implementation|onboarding|training|support|handoff|enablement)\b/i },
+  { id: 'ownership', pattern: /\b(owner|ownership|responsib|accountab|who (?:will|does|approves)|approval)\b/i },
+  { id: 'success', pattern: /\b(success|acceptance|completion|outcome|metric|kpi|criteria|sign[- ]?off)\b/i },
+  { id: 'dependency', pattern: /\b(dependenc|assumption|prerequisite|input|required before)\b/i },
+  { id: 'data', pattern: /\b(data|privacy|confidential|security|publicity|information sharing)\b/i },
+  { id: 'renewal', pattern: /\b(renewal|expansion|extension|follow-on|future term)\b/i },
+  { id: 'exit', pattern: /\b(termination|exit|notice|break clause|end the arrangement)\b/i },
+  { id: 'decision', pattern: /\b(decision|selection|priority|evaluation|governance)\b/i },
+] as const;
+
+function stage1QuestionDimension(value: string) {
+  const text = asText(value);
+  return STAGE1_QUESTION_DIMENSIONS.find((entry) => entry.pattern.test(text))?.id || null;
+}
+
+function normalizeStage1QuestionKey(value: string) {
+  return asLower(value)
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\b(the|a|an|is|are|will|would|should|could|what|which|who|when|how|does|do)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export function dedupeStage1Questions(values: string[], maxItems = 6) {
+  const seenDimensions = new Set<string>();
+  const seenKeys = new Set<string>();
+  const result: string[] = [];
+
+  for (const rawValue of values) {
+    const value = toStage1Question(rawValue);
+    if (!value) continue;
+    const dimension = stage1QuestionDimension(value);
+    const key = normalizeStage1QuestionKey(value);
+    if (!key || seenKeys.has(key) || (dimension && seenDimensions.has(dimension))) continue;
+    seenKeys.add(key);
+    if (dimension) seenDimensions.add(dimension);
+    result.push(value);
+    if (result.length >= maxItems) break;
+  }
+
+  return result;
+}
+
+function normalizeStage1SourceProvenance(
+  value: Stage1SourceProvenance | undefined,
+): Stage1SourceProvenance {
+  const count = (input: unknown) => {
+    const parsed = Number(input);
+    return Number.isFinite(parsed) ? Math.max(0, Math.min(10_000, Math.floor(parsed))) : 0;
+  };
+  const sourceTypes = (input: unknown, fallback: string[]) => {
+    if (!Array.isArray(input)) return fallback;
+    const normalized = uniqueStrings(input.map((entry) => asLower(entry))).slice(0, 8);
+    return normalized.length > 0 ? normalized : fallback;
+  };
+  return {
+    shared_source_types: sourceTypes(value?.shared_source_types, ['submitted_shared_material']),
+    confidential_source_types: sourceTypes(value?.confidential_source_types, ['submitted_private_material']),
+    shared_response_count: count(value?.shared_response_count),
+    confidential_response_count: count(value?.confidential_response_count),
+    uploaded_document_context_present: Boolean(value?.uploaded_document_context_present),
+    proposer_observation_count: count(value?.proposer_observation_count),
+    actual_recipient_submission_count: count(value?.actual_recipient_submission_count),
+    empty_response_count: count(value?.empty_response_count),
+    range_response_count: count(value?.range_response_count),
+  };
 }
 
 function toStage1ClarificationTopic(value: string) {
@@ -4242,6 +4320,279 @@ function safeFallbackStage1SharedIntakeFromFactSheet(
     },
     warnings: [warningKey],
     fallbackMode: classifyFallbackMode(factSheet),
+  };
+}
+
+const STAGE1_BILATERAL_VERDICT_PATTERN =
+  /\b(the parties (?:align|are aligned|are compatible)|both parties (?:align|are aligned|agree)|strong match|deal is viable|agreement is likely|proceed with conditions|ready to finalize|final recommendation|bilateral compatibility)\b/i;
+const STAGE1_INTERNAL_PROVENANCE_PATTERN =
+  /\b(evidence_id|source_id|shared_source_types|confidential_source_types|actual_recipient_submission_count|template_q\d+|(?:shared|conf|source|evidence):[a-z0-9_-]+)\b/i;
+
+function stage1ResponseText(data: VertexEvaluationV2Stage1SharedIntakeResponse) {
+  return [
+    data.submission_summary,
+    ...data.scope_snapshot,
+    ...data.unanswered_questions,
+    ...data.other_side_needed,
+    ...data.discussion_starting_points,
+    data.basis_note,
+  ].join('\n');
+}
+
+function neutralizeUnsupportedRecipientClaims(value: string) {
+  return asText(value)
+    .replace(
+      /\b(?:the\s+)?(recipient|counterparty|other side)\s+(wants|requires|expects|prefers|needs|seeks|intends|plans|values|prioritizes|considers|will|has|is)\b/gi,
+      (_match, subject: string, verb: string) => {
+        const normalizedVerb = asLower(verb);
+        const baseVerb: Record<string, string> = {
+          wants: 'want',
+          requires: 'require',
+          expects: 'expect',
+          prefers: 'prefer',
+          needs: 'need',
+          seeks: 'seek',
+          intends: 'intend',
+          plans: 'plan',
+          values: 'value',
+          prioritizes: 'prioritize',
+          considers: 'consider',
+        };
+        const softenedVerb =
+          normalizedVerb === 'has'
+            ? 'may have'
+            : normalizedVerb === 'is'
+              ? 'may be'
+              : normalizedVerb === 'will'
+                ? 'may'
+                : `may ${baseVerb[normalizedVerb] || normalizedVerb}`;
+        return `the submitting party's materials suggest that the ${asLower(subject)} ${softenedVerb}`;
+      },
+    )
+    .replace(
+      /\b(?:the\s+)?(recipient|counterparty|other side)'s\s+(priorities|preferences|requirements|needs|budget|timeline|constraints)\b/gi,
+      (_match, subject: string, noun: string) =>
+        `the submitting party's stated assumptions about the ${asLower(subject)}'s ${asLower(noun)}`,
+    );
+}
+
+function trimStage1Text(value: string, maxChars: number) {
+  return truncateTextAtNaturalBoundary(asText(value), maxChars);
+}
+
+function normalizeStage1Response(
+  data: VertexEvaluationV2Stage1SharedIntakeResponse,
+  provenance: Stage1SourceProvenance,
+) {
+  let repaired = false;
+  const warnings: string[] = [];
+  const normalizeText = (value: string, maxChars: number) => {
+    const trimmed = trimStage1Text(value, maxChars);
+    const neutralized =
+      provenance.actual_recipient_submission_count === 0
+        ? neutralizeUnsupportedRecipientClaims(trimmed)
+        : trimmed;
+    if (neutralized !== asText(value)) repaired = true;
+    if (neutralized !== trimmed) {
+      warnings.push('stage1_recipient_assertion_neutralized');
+    }
+    return neutralized;
+  };
+  const normalizeItems = (values: string[], maxItems: number, maxChars: number) => {
+    const normalized = uniqueStrings(
+      values.map((value) => normalizeText(value, maxChars)).filter(Boolean),
+    ).slice(0, maxItems);
+    if (normalized.length !== values.length) repaired = true;
+    return normalized;
+  };
+
+  const originalQuestions = data.unanswered_questions.map((value) => normalizeText(value, 260));
+  const unansweredQuestions = dedupeStage1Questions(originalQuestions, 6);
+  if (unansweredQuestions.length !== originalQuestions.length) {
+    repaired = true;
+    warnings.push('stage1_duplicate_questions_removed');
+  }
+
+  return {
+    data: {
+      analysis_stage: STAGE1_SHARED_INTAKE_STAGE,
+      submission_summary: normalizeText(data.submission_summary, 900),
+      scope_snapshot: normalizeItems(data.scope_snapshot, 6, 360),
+      unanswered_questions: unansweredQuestions,
+      other_side_needed: normalizeItems(data.other_side_needed, 4, 420),
+      discussion_starting_points: normalizeItems(data.discussion_starting_points, 5, 320),
+      intake_status: 'awaiting_other_side_input' as const,
+      basis_note: DEFAULT_STAGE1_BASIS_NOTE,
+    },
+    warnings: uniqueStrings(warnings),
+    repaired,
+  };
+}
+
+function stage1FactTerms(factSheet: ProposalFactSheet) {
+  return uniqueStrings([
+    factSheet.project_goal || '',
+    ...factSheet.scope_deliverables,
+    factSheet.timeline.start || '',
+    factSheet.timeline.duration || '',
+    ...factSheet.timeline.milestones,
+    ...factSheet.constraints,
+    ...factSheet.success_criteria_kpis,
+    ...factSheet.vendor_preferences,
+    ...factSheet.assumptions,
+  ])
+    .flatMap((value) => asLower(value).split(/[^a-z0-9]+/g))
+    .filter((term) => term.length >= 5 && !['about', 'which', 'their', 'there', 'these', 'would'].includes(term));
+}
+
+function stage1SupportedQuestionDimensions(factSheet: ProposalFactSheet) {
+  const sourceText = [
+    factSheet.project_goal || '',
+    ...factSheet.scope_deliverables,
+    factSheet.timeline.start || '',
+    factSheet.timeline.duration || '',
+    ...factSheet.timeline.milestones,
+    ...factSheet.constraints,
+    ...factSheet.success_criteria_kpis,
+    ...factSheet.vendor_preferences,
+    ...factSheet.assumptions,
+    ...factSheet.open_questions,
+    ...factSheet.missing_info,
+    ...factSheet.risks.map((entry) => entry.risk),
+  ].join(' ');
+  const supported = new Set(
+    STAGE1_QUESTION_DIMENSIONS
+      .filter((entry) => entry.pattern.test(sourceText))
+      .map((entry) => entry.id),
+  );
+  if (factSheet.source_coverage.has_scope) supported.add('scope');
+  if (factSheet.source_coverage.has_timeline) supported.add('timing');
+  if (factSheet.source_coverage.has_kpis) supported.add('success');
+  return supported;
+}
+
+export function assessStage1Quality(params: {
+  data: VertexEvaluationV2Stage1SharedIntakeResponse;
+  factSheet: ProposalFactSheet;
+  provenance?: Stage1SourceProvenance;
+}) {
+  const provenance = normalizeStage1SourceProvenance(params.provenance);
+  const normalized = normalizeStage1Response(params.data, provenance);
+  const warnings = [...normalized.warnings];
+  let repaired = normalized.repaired;
+  let data = normalized.data;
+  const coverageCount = computeCoverageCount(params.factSheet.source_coverage);
+  const supportedQuestionDimensions = stage1SupportedQuestionDimensions(params.factSheet);
+  if (coverageCount >= 2 && supportedQuestionDimensions.size > 0) {
+    const supportedQuestions = data.unanswered_questions.filter((question) => {
+      const dimension = stage1QuestionDimension(question);
+      return !dimension || supportedQuestionDimensions.has(dimension);
+    });
+    if (supportedQuestions.length !== data.unanswered_questions.length) {
+      data = { ...data, unanswered_questions: supportedQuestions };
+      repaired = true;
+      warnings.push('stage1_unsupported_questions_removed');
+    }
+  }
+  if (
+    data.unanswered_questions.length === 0 &&
+    (params.factSheet.open_questions.length > 0 || params.factSheet.missing_info.length > 0)
+  ) {
+    data = {
+      ...data,
+      unanswered_questions: normalizeStage1Questions([
+        ...params.factSheet.open_questions,
+        ...params.factSheet.missing_info,
+      ]),
+    };
+    repaired = true;
+    warnings.push('stage1_missing_questions_repaired');
+  }
+  const outputText = stage1ResponseText(data);
+  const rawWordCount = stage1ResponseText(params.data).split(/\s+/g).filter(Boolean).length;
+  const wordCount = outputText.split(/\s+/g).filter(Boolean).length;
+  const factTermMatches = uniqueStrings(stage1FactTerms(params.factSheet))
+    .filter((term) => asLower(outputText).includes(term))
+    .length;
+
+  if (coverageCount >= 3 && (wordCount < 90 || normalized.data.scope_snapshot.length < 2)) {
+    warnings.push('stage1_output_too_thin_for_source_depth');
+  }
+  if (rawWordCount > 500) {
+    warnings.push('stage1_output_overlong_trimmed');
+  }
+  if (coverageCount >= 2 && factTermMatches < 2) {
+    warnings.push('stage1_claim_grounding_weak');
+    if (/\b(opportunity|proposal|clarity|details|information|consideration)\b/i.test(outputText)) {
+      warnings.push('stage1_generic_output');
+    }
+  }
+
+  const severeReason = STAGE1_BILATERAL_VERDICT_PATTERN.test(outputText)
+    ? 'stage1_bilateral_conclusion_rejected'
+    : STAGE1_INTERNAL_PROVENANCE_PATTERN.test(outputText)
+      ? 'stage1_internal_provenance_rejected'
+      : undefined;
+  if (severeReason) warnings.push(severeReason);
+
+  const uniqueWarnings = uniqueStrings(warnings);
+  return {
+    data,
+    provenance,
+    score: clamp01(1 - uniqueWarnings.length * 0.12 - (severeReason ? 0.28 : 0)),
+    warnings: uniqueWarnings,
+    repaired,
+    fallbackReason: severeReason,
+  };
+}
+
+function finalizeStage1Response(params: {
+  data: VertexEvaluationV2Stage1SharedIntakeResponse;
+  factSheet: ProposalFactSheet;
+  provenance?: Stage1SourceProvenance;
+  sharedText: string;
+  forbiddenLeakText: string;
+  forbiddenChunks: Array<{ evidence_id: string; text: string }>;
+  canaryTokens: string[];
+}) {
+  const quality = assessStage1Quality(params);
+  const leak = detectConfidentialLeak({
+    response: quality.data,
+    forbiddenText: params.forbiddenLeakText,
+    sharedText: params.sharedText,
+    forbiddenChunks: params.forbiddenChunks,
+    canaryTokens: params.canaryTokens,
+  });
+  const fallbackReason = quality.fallbackReason || (leak ? 'stage1_confidential_output_rejected' : undefined);
+  const qualityWarnings = leak
+    ? uniqueStrings([...quality.warnings, 'stage1_confidential_output_rejected'])
+    : quality.warnings;
+  if (!fallbackReason) {
+    return {
+      data: quality.data,
+      provenance: quality.provenance,
+      quality: {
+        score: quality.score,
+        warnings: qualityWarnings,
+        repaired: quality.repaired,
+        fallback_used: false,
+      },
+    };
+  }
+
+  const fallback = safeFallbackStage1SharedIntakeFromFactSheet(params.factSheet, {
+    failureKind: 'stage1_quality_rejected',
+  });
+  return {
+    data: fallback.data,
+    provenance: quality.provenance,
+    quality: {
+      score: quality.score,
+      warnings: qualityWarnings,
+      repaired: true,
+      fallback_used: true,
+      fallback_reason: fallbackReason,
+    },
   };
 }
 
@@ -6536,6 +6887,7 @@ export async function evaluateWithVertexV2(
           factSheet,
           reportStyle,
           tightMode: options.tightMode,
+          sourceProvenance: input.stage1SourceProvenance,
         })
       : analysisStage === PRE_SEND_STAGE
       ? buildPreSendPromptFromFactSheet({
@@ -6895,9 +7247,18 @@ export async function evaluateWithVertexV2(
       if (!isStage1SharedIntakeResponse(schemaValidation.normalized)) {
         throw new TypeError('Stage 1 validation returned a non Stage 1 response.');
       }
+      const stage1Result = finalizeStage1Response({
+        data: schemaValidation.normalized,
+        factSheet,
+        provenance: input.stage1SourceProvenance,
+        sharedText,
+        forbiddenLeakText,
+        forbiddenChunks,
+        canaryTokens: forbiddenLeakCanaryTokens,
+      });
       return {
         ok: true,
-        data: schemaValidation.normalized,
+        data: stage1Result.data,
         attempt_count: attempt,
         model: vertex.model,
         generation_model: generationModel,
@@ -6924,6 +7285,14 @@ export async function evaluateWithVertexV2(
             verifier_escalated: Boolean(llmVerifyMeta?.escalated),
             verifier_unavailable: false,
           },
+          stage1_provenance: stage1Result.provenance,
+          stage1_quality: stage1Result.quality,
+          ...(stage1Result.quality.warnings.length > 0
+            ? { warnings: stage1Result.quality.warnings }
+            : {}),
+          ...(stage1Result.quality.fallback_reason
+            ? { failure_kind: stage1Result.quality.fallback_reason }
+            : {}),
           ...runtimeSnapshot(),
         },
       };
@@ -7203,6 +7572,7 @@ export async function evaluateWithVertexV2(
     const fallback = safeFallbackStage1SharedIntakeFromFactSheet(factSheet, {
       failureKind: lastParseFailureKind,
     });
+    const stage1Provenance = normalizeStage1SourceProvenance(input.stage1SourceProvenance);
 
     return {
       ok: true,
@@ -7227,6 +7597,14 @@ export async function evaluateWithVertexV2(
         warnings: fallback.warnings,
         failure_kind: lastParseFailureKind,
         fallback_mode: fallback.fallbackMode,
+        stage1_provenance: stage1Provenance,
+        stage1_quality: {
+          score: 0,
+          warnings: fallback.warnings,
+          repaired: false,
+          fallback_used: true,
+          fallback_reason: lastParseFailureKind,
+        },
         models_used: {
           provider: modelProvider,
           generation: generationModel,

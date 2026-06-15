@@ -258,9 +258,13 @@ export function buildProposalStage1Texts(params: {
   const responses = Array.isArray(proposalInput.responses) ? proposalInput.responses : [];
   const sharedLines: string[] = [];
   const confidentialLines: string[] = [];
+  let emptyResponseCount = 0;
+  let rangeResponseCount = 0;
+  let proposerObservationCount = 0;
 
   for (const response of responses) {
     const hasRangeValue = Boolean(asText(response?.rangeMin) || asText(response?.rangeMax));
+    if (hasRangeValue) rangeResponseCount += 1;
     const value =
       formatProposalResponseValue(response?.value) ||
       (hasRangeValue
@@ -270,6 +274,7 @@ export function buildProposalStage1Texts(params: {
           })
         : '');
     if (!value) {
+      emptyResponseCount += 1;
       continue;
     }
     const label = asText(response?.label || response?.questionId) || 'Submitted response';
@@ -277,6 +282,9 @@ export function buildProposalStage1Texts(params: {
       normalizeParty(response?.party) === 'b'
         ? 'Counterparty-related observation supplied by the submitting party'
         : 'Submitting-party response';
+    if (normalizeParty(response?.party) === 'b') {
+      proposerObservationCount += 1;
+    }
     const line = `- ${label} (${subject}): ${value}`;
     if (normalizeVisibility(response?.visibility) === 'full') {
       sharedLines.push(line);
@@ -320,6 +328,19 @@ export function buildProposalStage1Texts(params: {
     confidentialText,
     sharedResponseCount: sharedLines.length,
     confidentialResponseCount: confidentialLines.length,
+    sourceProvenance: {
+      shared_source_types: ['template_responses'],
+      confidential_source_types: supplementaryContext
+        ? ['template_responses', 'uploaded_document_context']
+        : ['template_responses'],
+      shared_response_count: sharedLines.length,
+      confidential_response_count: confidentialLines.length,
+      uploaded_document_context_present: Boolean(supplementaryContext),
+      proposer_observation_count: proposerObservationCount,
+      actual_recipient_submission_count: 0,
+      empty_response_count: emptyResponseCount,
+      range_response_count: rangeResponseCount,
+    },
   };
 }
 
@@ -782,6 +803,12 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         const comparisonConfidentialText = attributedConfidentialEntries.length > 0
           ? formatContributionsForAi(attributedConfidentialEntries)
           : String(comparison.docAText || '');
+        const hasUploadedDocumentContext =
+          currentSharedPayload.files.length > 0 ||
+          currentConfidentialPayload.files.length > 0 ||
+          Boolean(asText((comparison.inputs as any)?.doc_a_url || (comparison.inputs as any)?.doc_b_url)) ||
+          [currentSharedPayload.source, currentConfidentialPayload.source]
+            .some((source) => Boolean(asText(source)) && asLower(source) !== 'typed');
         if (process.env.NODE_ENV !== 'production') {
           console.info(
             JSON.stringify({
@@ -808,6 +835,25 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
               requestId,
               enforceLeakGuard: false,
               ...(mediationRoundContext ? { mediationRoundContext } : {}),
+              ...(analysisStage === STAGE1_SHARED_INTAKE_STAGE
+                ? {
+                    stage1SourceProvenance: {
+                      shared_source_types: hasUploadedDocumentContext
+                        ? ['proposer_shared_material', 'uploaded_document_context']
+                        : ['proposer_shared_material'],
+                      confidential_source_types: hasUploadedDocumentContext
+                        ? ['proposer_private_material', 'uploaded_document_context']
+                        : ['proposer_private_material'],
+                      shared_response_count: comparisonSharedText.trim() ? 1 : 0,
+                      confidential_response_count: comparisonConfidentialText.trim() ? 1 : 0,
+                      uploaded_document_context_present: hasUploadedDocumentContext,
+                      proposer_observation_count: 0,
+                      actual_recipient_submission_count: 0,
+                      empty_response_count: 0,
+                      range_response_count: 0,
+                    },
+                  }
+                : {}),
             });
           } catch (unexpectedError: any) {
             if (asLower(unexpectedError?.code) === 'openai_not_configured') {
@@ -967,6 +1013,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
             analysisStage: STAGE1_SHARED_INTAKE_STAGE,
             requestId,
             enforceLeakGuard: false,
+            stage1SourceProvenance: stage1Input.sourceProvenance,
           });
         } catch (unexpectedError: any) {
           v2Result = {
