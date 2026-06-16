@@ -16,6 +16,7 @@ import {
   MEDIATION_REVIEW_STAGE,
   STAGE1_SHARED_INTAKE_STAGE,
 } from '../../src/lib/opportunityReviewStage.js';
+import { buildMediationRoundContext } from '../../server/_lib/mediation-progress.ts';
 
 const require = createRequire(import.meta.url);
 /** @type {{ cases: Array<any> }} */
@@ -859,8 +860,14 @@ test('evaluateWithVertexV2 adds prior bilateral context to later mediation round
         ],
         missing: [
           'Who owns final approval sequencing? — determines whether launch accountability is contractable.',
+          'How is timeline_dependency defined? — determines whether the prior issue is actually closed.',
           'What launch dependencies must be signed off before work starts? — determines whether the current timeline is realistic.',
         ],
+        delta_summary: 'The timeline_dependency issue narrowed while approval ownership remains open.',
+        resolved_since_last_round: ['timeline_dependency'],
+        remaining_deltas: ['timeline_dependency'],
+        new_open_issues: [],
+        movement_direction: 'converging',
       })),
       finishReason: 'STOP',
       httpStatus: 200,
@@ -872,27 +879,51 @@ test('evaluateWithVertexV2 adds prior bilateral context to later mediation round
       sharedText: 'Shared round-two draft with phased scope, launch timing, and governance discussion.',
       confidentialText: 'Private notes say pricing flexibility exists if governance risk is contained.',
       requestId: 'test_later_mediation_round',
-      mediationRoundContext: {
-        current_bilateral_round_number: 2,
-        prior_bilateral_round_id: 'eval_prev_1',
-        prior_bilateral_round_number: 1,
-        prior_primary_insight: 'The first bilateral review found the structure workable but governance ownership remained open.',
-        prior_missing: [
-          'Who owns final approval sequencing?',
-          'What launch dependencies must be signed off before work starts?',
-        ],
-        prior_bridgeability_notes: ['Clarify governance ownership before final commitment.'],
-      },
+      mediationRoundContext: buildMediationRoundContext({
+        bilateralRoundNumber: 2,
+        priorBilateralRoundId: 'eval_prev_1',
+        priorReport: {
+          analysis_stage: MEDIATION_REVIEW_STAGE,
+          bilateral_round_number: 1,
+          fit_level: 'medium',
+          confidence_0_1: 0.55,
+          primary_insight:
+            'The first bilateral review found the structure workable but governance ownership remained open.',
+          why: [
+            'Recommendation: Proceed with conditions after governance ownership is clarified.',
+            'Suggested Bridge: Clarify governance ownership before final commitment.',
+            'Next Step: Assign final launch approval.',
+          ],
+          missing: [
+            'Who owns final approval sequencing?',
+            'What launch dependencies must be signed off before work starts?',
+          ],
+        },
+      }),
     });
 
     assert.equal(outcome.ok, true);
     assert.equal(outcome.data.analysis_stage, MEDIATION_REVIEW_STAGE);
+    assert.doesNotMatch(
+      JSON.stringify({
+        why: outcome.data.why,
+        missing: outcome.data.missing,
+        delta_summary: outcome.data.delta_summary,
+        resolved_since_last_round: outcome.data.resolved_since_last_round,
+        remaining_deltas: outcome.data.remaining_deltas,
+        new_open_issues: outcome.data.new_open_issues,
+      }),
+      /\btimeline_dependency\b/,
+    );
 
     const mediationPrompt = prompts.find((entry) => entry.includes('prior_bilateral_context'));
     assert.equal(Boolean(mediationPrompt), true);
     assert.match(mediationPrompt, /delta_summary/);
     assert.match(mediationPrompt, /progress across rounds/i);
     assert.match(mediationPrompt, /output shape/i);
+    assert.match(mediationPrompt, /prior_review_summary/i);
+    assert.match(mediationPrompt, /delta_analysis/i);
+    assert.doesNotMatch(mediationPrompt, /internal_analysis.*SECRET/i);
   } finally {
     if (previous === undefined) {
       delete globalThis.__PREMARKET_TEST_VERTEX_EVAL_V2_CALL__;

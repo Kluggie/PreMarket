@@ -16,6 +16,7 @@ import {
 } from '../../../_lib/meaningful-recipient-contribution.js';
 import {
   buildMediationRoundContext,
+  enrichMediationRoundContext,
   extractMediationReport,
   type MediationRoundContext,
 } from '../../../_lib/mediation-progress.js';
@@ -549,11 +550,15 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     }));
     const priorBilateralRounds = normalizedExchangeHistory.filter((entry) => entry.report);
     const latestPriorBilateralRound = priorBilateralRounds[priorBilateralRounds.length - 1] || null;
-    const mediationRoundContext = buildMediationRoundContext({
+    const baseMediationRoundContext = buildMediationRoundContext({
       bilateralRoundNumber: priorBilateralRounds.length + 1,
       priorBilateralRoundId: latestPriorBilateralRound?.evaluationRunId || null,
       priorReport: latestPriorBilateralRound?.report || null,
     });
+    const mediationRoundContext = enrichMediationRoundContext({
+      mediationRoundContext: baseMediationRoundContext,
+      currentSharedText: currentRoundSharedText,
+    }) || baseMediationRoundContext;
     const mediationEvidenceCandidates = [
       ...buildEvidenceCandidatesFromContributions([
         ...sharedHistoryEntriesForAi,

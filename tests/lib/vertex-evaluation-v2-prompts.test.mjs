@@ -6,6 +6,10 @@ import {
   buildStage1SharedIntakePromptFromFactSheet,
   selectReportStyle,
 } from '../../server/_lib/vertex-evaluation-v2-prompts.ts';
+import {
+  buildMediationRoundContext,
+  enrichMediationRoundContext,
+} from '../../server/_lib/mediation-progress.ts';
 
 function factSheet(overrides = {}) {
   return {
@@ -360,18 +364,32 @@ test('mediation prompt protects private walk-away and hidden-limit information',
 });
 
 test('later bilateral mediation prompt becomes progress-aware without changing report family', () => {
+  const mediationRoundContext = enrichMediationRoundContext({
+    mediationRoundContext: buildMediationRoundContext({
+      bilateralRoundNumber: 3,
+      priorBilateralRoundId: 'eval_prev_2',
+      priorReport: {
+        analysis_stage: 'mediation_review',
+        bilateral_round_number: 2,
+        fit_level: 'medium',
+        confidence_0_1: 0.58,
+        primary_insight: 'Liability and launch ownership remained open last round.',
+        why: [
+          'Recommendation: Proceed with conditions while approval ownership remains unresolved.',
+          'Suggested Bridge: Tie launch authority to milestone sign-off.',
+          'Next Step: Assign the launch approval owner.',
+        ],
+        missing: ['Who owns launch approval?'],
+      },
+    }),
+    currentSharedText:
+      'The latest shared draft assigns launch approval to the joint steering committee.',
+  });
   const prompt = buildEvalPromptFromFactSheet({
     factSheet: factSheet(),
     chunks: chunks(),
     reportStyle: selectReportStyle(123),
-    mediationRoundContext: {
-      current_bilateral_round_number: 3,
-      prior_bilateral_round_id: 'eval_prev_2',
-      prior_bilateral_round_number: 2,
-      prior_primary_insight: 'Liability and launch ownership remained open last round.',
-      prior_missing: ['Who owns launch approval?'],
-      prior_bridgeability_notes: ['Tie launch authority to milestone sign-off.'],
-    },
+    mediationRoundContext,
   });
 
   assert.match(prompt, /progress across rounds/i);
@@ -380,4 +398,13 @@ test('later bilateral mediation prompt becomes progress-aware without changing r
   assert.match(prompt, /Do NOT use "Progress Since Prior Review"/i);
   assert.match(prompt, /prior_bilateral_context/i);
   assert.match(prompt, /movement_direction/i);
+  assert.match(prompt, /prior_review_summary/i);
+  assert.match(prompt, /delta_analysis/i);
+  assert.match(prompt, /what the previous review recommended/i);
+  assert.match(prompt, /which recommended conditions or next actions were addressed/i);
+  assert.match(prompt, /recommendation remains the same, improves, or worsens/i);
+  assert.match(prompt, /confidence change/i);
+  assert.match(prompt, /Current source material outranks prior model-generated summaries/i);
+  assert.match(prompt, /Do not repeat a prior question classified as resolved/i);
+  assert.match(prompt, /Never expose their raw issue IDs/i);
 });

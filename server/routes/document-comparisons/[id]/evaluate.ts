@@ -29,6 +29,7 @@ import { getVertexConfig } from '../../../_lib/integrations.js';
 import { generateDocumentComparisonCoach } from '../../../_lib/vertex-coach.js';
 import {
   buildMediationRoundContext,
+  enrichMediationRoundContext,
   extractMediationReport,
   type MediationRoundContext,
 } from '../../../_lib/mediation-progress.js';
@@ -1505,7 +1506,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     const analysisStage = hasRecipientContributions
       ? MEDIATION_REVIEW_STAGE
       : STAGE1_SHARED_INTAKE_STAGE;
-    const mediationRoundContext = analysisStage === MEDIATION_REVIEW_STAGE
+    const baseMediationRoundContext = analysisStage === MEDIATION_REVIEW_STAGE
       ? await loadPriorBilateralRoundContext({
           db,
           proposalId: existing.proposalId,
@@ -1519,15 +1520,15 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
               ...attributedSharedEntries,
               ...attributedConfidentialEntries,
             ]),
-            ...(mediationRoundContext?.prior_bilateral_round_id
+            ...(baseMediationRoundContext?.prior_bilateral_round_id
               ? [
                   buildPriorMediationEvidenceCandidate({
-                    id: mediationRoundContext.prior_bilateral_round_id,
-                    roundNumber: mediationRoundContext.prior_bilateral_round_number,
+                    id: baseMediationRoundContext.prior_bilateral_round_id,
+                    roundNumber: baseMediationRoundContext.prior_bilateral_round_number,
                     report: {
-                      primary_insight: mediationRoundContext.prior_primary_insight,
-                      why: mediationRoundContext.prior_bridgeability_notes,
-                      missing: mediationRoundContext.prior_missing,
+                      primary_insight: baseMediationRoundContext.prior_primary_insight,
+                      why: baseMediationRoundContext.prior_bridgeability_notes,
+                      missing: baseMediationRoundContext.prior_missing,
                     },
                   }),
                 ].filter(Boolean)
@@ -1541,6 +1542,10 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     const evaluationConfidentialText = linkedProposal
       ? formatContributionsForAi(attributedConfidentialEntries)
       : draft.docAText;
+    const mediationRoundContext = enrichMediationRoundContext({
+      mediationRoundContext: baseMediationRoundContext || undefined,
+      currentSharedText: evaluationSharedText,
+    }) || baseMediationRoundContext;
     const inputSource = hasRequestInputOverride(body) ? 'request_body' : 'db';
     const inputVersion = getInputVersionFromMetadata(existing?.metadata);
     const evaluationInputTrace = buildEvaluationInputTrace({

@@ -6,6 +6,10 @@ import {
 } from '../../server/_lib/mediation-narrative.ts';
 import { assessReportQuality } from '../../server/_lib/vertex-evaluation-v2.ts';
 import { buildMediationReviewPresentation } from '../../server/routes/document-comparisons/_helpers.ts';
+import {
+  buildMediationRoundContext,
+  enrichMediationRoundContext,
+} from '../../server/_lib/mediation-progress.ts';
 
 function referralFactSheet(overrides = {}) {
   return {
@@ -174,6 +178,33 @@ function report(narrative, missing) {
   };
 }
 
+function laterRoundContext(currentSharedText) {
+  return enrichMediationRoundContext({
+    mediationRoundContext: buildMediationRoundContext({
+      bilateralRoundNumber: 2,
+      priorBilateralRoundId: 'eval_round_1',
+      priorReport: {
+        analysis_stage: 'mediation_review',
+        bilateral_round_number: 1,
+        fit_level: 'medium',
+        confidence_0_1: 0.58,
+        primary_insight:
+          'The pilot was workable, but client protection and commission mechanics remained open.',
+        why: [
+          'Recommendation: Proceed with conditions once client protection and commission triggers are defined.',
+          'Suggested Bridge: Use a protection window and an observable commission trigger.',
+          'Next Step: Draft the pilot rules.',
+        ],
+        missing: [
+          'How long does client protection last?',
+          'When is commission earned and paid?',
+        ],
+      },
+    }),
+    currentSharedText,
+  });
+}
+
 const completeMissing = [
   'What counts as a qualified referral? — determines whether an introduction is eligible for attribution.',
   'When is commission earned and paid? — determines the economic trigger and payment timing.',
@@ -246,6 +277,96 @@ test('substantive referral memo passes length, evidence-link, and open-question 
   );
   assert.equal(quality.triggers.includes('recommendation_not_linked_to_supplied_evidence'), false);
   assert.equal(quality.triggers.includes('open_questions_miss_deal_critical_evidence_gaps'), false);
+});
+
+test('later-round narrative must visibly explain progress and recommendation continuity', () => {
+  const context = laterRoundContext(
+    'Client protection applies for 12 months after an accepted referral. Commission will be paid, but the earning trigger remains to be agreed.',
+  );
+  const standalone = substantiveNarrative();
+  const standaloneValidation = validateNarrativeMemo(standalone, {
+    fitLevel: 'medium',
+    decisionStatus: 'proceed_with_conditions',
+    confidence: 0.67,
+    missingCount: completeMissing.length,
+    validateContentAlignment: true,
+    mediationRoundContext: context,
+  });
+  assert.equal(
+    standaloneValidation.warnings.includes('later_round_narrative_lacks_visible_progress_analysis'),
+    true,
+  );
+
+  const progressAware = substantiveNarrative();
+  progressAware.sections[0] = {
+    heading: 'What moved, and what still has not',
+    paragraphs: [
+      'Since the last review, the parties have resolved the duration of client protection by agreeing a twelve-month window after an accepted referral. The commission question remains open because the latest shared language says payment will occur but still does not define the event that earns it. The recommendation therefore remains conditional for a narrower reason, and confidence has increased because one material customer-protection issue now has a concrete answer.',
+      ...progressAware.sections[0].paragraphs,
+    ],
+  };
+  const progressValidation = validateNarrativeMemo(progressAware, {
+    fitLevel: 'medium',
+    decisionStatus: 'proceed_with_conditions',
+    confidence: 0.67,
+    missingCount: completeMissing.length,
+    validateContentAlignment: true,
+    mediationRoundContext: context,
+  });
+
+  assert.equal(
+    progressValidation.warnings.includes('later_round_narrative_lacks_visible_progress_analysis'),
+    false,
+  );
+  assert.equal(
+    progressValidation.warnings.includes('later_round_recommendation_change_not_explained'),
+    false,
+  );
+  assert.equal(
+    progressValidation.warnings.includes('later_round_confidence_change_not_explained'),
+    false,
+  );
+});
+
+test('later-round quality gate flags a resolved prior question repeated as open', () => {
+  const context = laterRoundContext(
+    'Client protection applies for 12 months after an accepted referral. Commission will be paid, but the earning trigger remains to be agreed.',
+  );
+  const narrative = substantiveNarrative();
+  narrative.sections[0].paragraphs.unshift(
+    'Since the last review, client protection has been resolved while commission timing remains open. The recommendation remains conditional because the earning trigger is still missing, and confidence has increased because the protection window is now concrete.',
+  );
+  const quality = assessReportQuality(
+    report(narrative, completeMissing),
+    referralFactSheet(),
+    referralEvidencePacket(),
+    context,
+  );
+
+  assert.equal(
+    quality.triggers.some((trigger) => trigger.startsWith('resolved_questions_repeated:')),
+    true,
+  );
+});
+
+test('later-round narrative rejects raw continuity issue IDs in public prose', () => {
+  const context = laterRoundContext(
+    'Client protection applies for 12 months after an accepted referral.',
+  );
+  const narrative = substantiveNarrative();
+  narrative.sections[0].paragraphs.unshift(
+    'Since the last review, client_protection is resolved. The recommendation remains conditional because commission mechanics still need agreement, and confidence remains measured because that economic trigger is open.',
+  );
+  const validation = validateNarrativeMemo(narrative, {
+    fitLevel: 'medium',
+    decisionStatus: 'proceed_with_conditions',
+    confidence: 0.58,
+    missingCount: completeMissing.length,
+    validateContentAlignment: true,
+    mediationRoundContext: context,
+  });
+
+  assert.equal(validation.warnings.includes('narrative_exposes_raw_issue_id'), true);
 });
 
 test('thin material permits a shorter memo only when the limitation and missing information are explicit', () => {

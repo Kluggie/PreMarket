@@ -12,6 +12,7 @@ import {
   buildEvalPromptFromFactSheet,
   selectReportStyle,
 } from '../../server/_lib/vertex-evaluation-v2-prompts.ts';
+import { buildMediationRoundContext } from '../../server/_lib/mediation-progress.ts';
 
 function factSheet(overrides = {}) {
   return {
@@ -154,6 +155,57 @@ test('retriever prefers the latest changed version while retaining conflicting m
   assert.equal(packet.items[0]?.id, 'version:3');
   assert.equal(packet.items.some((item) => item.id === 'version:1'), true);
   assert.match(packet.items[0]?.dates_or_version_info || '', /round 3/i);
+  assert.equal(
+    packet.items
+      .find((item) => item.id === 'version:1')
+      ?.limitations.some((item) => /stale or superseded/i.test(item)),
+    true,
+  );
+});
+
+test('retriever uses prior unresolved issues as continuity query context while current evidence stays primary', () => {
+  const mediationRoundContext = buildMediationRoundContext({
+    bilateralRoundNumber: 2,
+    priorBilateralRoundId: 'eval_prev',
+    priorReport: {
+      analysis_stage: 'mediation_review',
+      bilateral_round_number: 1,
+      fit_level: 'medium',
+      confidence_0_1: 0.55,
+      primary_insight: 'Client protection remained unresolved.',
+      missing: ['How long does client protection last?'],
+      why: ['Recommendation: Proceed with conditions after client protection is defined.'],
+    },
+  });
+  const packet = retrieveMediationEvidence({
+    factSheet: factSheet({
+      project_goal: 'Continue the referral pilot.',
+      scope_deliverables: ['Referral partnership'],
+    }),
+    sharedText: 'The current round continues the pilot.',
+    confidentialText: 'Private context.',
+    mediationRoundContext,
+    candidates: [
+      candidate({
+        id: 'round:2:answer',
+        round_number: 2,
+        text: 'Accepted referrals receive a twelve-month client-protection window.',
+      }),
+      {
+        id: 'prior:summary',
+        source_type: 'prior_mediation',
+        source_label: 'Prior review',
+        source_role: 'mediator',
+        visibility: 'internal_derived',
+        text: 'Client protection was unresolved in the prior review.',
+        round_number: 1,
+      },
+    ],
+  });
+
+  assert.equal(packet.items[0]?.id, 'round:2:answer');
+  assert.match(packet.items[0]?.include_reason || '', /prior unresolved mediation issue/i);
+  assert.equal(packet.items[0]?.source_type, 'shared_contribution');
 });
 
 test('retriever surfaces a counterparty concern that is absent from generic proposal wording', () => {

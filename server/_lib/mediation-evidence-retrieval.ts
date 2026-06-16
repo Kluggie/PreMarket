@@ -1,4 +1,5 @@
 import { sanitizeUserInput } from './vertex-input-sanitizer.js';
+import type { MediationRoundContext } from './mediation-progress.js';
 import type {
   MediationEvidenceCandidate,
   MediationEvidenceSourceType,
@@ -125,7 +126,22 @@ function splitEvidenceText(value: string) {
   return paragraphs.length ? paragraphs : [normalizeSpaces(normalized)];
 }
 
-function factSheetQueryText(factSheet: ProposalFactSheet) {
+function factSheetQueryText(
+  factSheet: ProposalFactSheet,
+  mediationRoundContext?: MediationRoundContext,
+) {
+  const continuityText = mediationRoundContext?.prior_review_summary
+    ? [
+        ...mediationRoundContext.prior_review_summary.prior_open_questions.flatMap((issue) => [
+          issue.label,
+          issue.question || '',
+        ]),
+        ...mediationRoundContext.prior_review_summary.prior_unresolved_issues.flatMap((issue) => [
+          issue.label,
+          issue.question || '',
+        ]),
+      ]
+    : [];
   return normalizeSpaces([
     factSheet.project_goal || '',
     ...factSheet.scope_deliverables,
@@ -139,6 +155,16 @@ function factSheetQueryText(factSheet: ProposalFactSheet) {
     ...factSheet.risks.map((entry) => entry.risk),
     ...factSheet.open_questions,
     ...factSheet.missing_info,
+    ...continuityText,
+  ].join(' '));
+}
+
+function continuityQueryText(mediationRoundContext?: MediationRoundContext) {
+  const summary = mediationRoundContext?.prior_review_summary;
+  if (!summary) return '';
+  return normalizeSpaces([
+    ...summary.prior_open_questions.flatMap((issue) => [issue.label, issue.question || '']),
+    ...summary.prior_unresolved_issues.flatMap((issue) => [issue.label, issue.question || '']),
   ].join(' '));
 }
 
@@ -344,6 +370,7 @@ export function retrieveMediationEvidence(params: {
   generatedAt?: string;
   maxItems?: number;
   maxTotalChars?: number;
+  mediationRoundContext?: MediationRoundContext;
 }): RetrievedMediationEvidencePacket {
   const maxItems = Math.max(1, Math.min(20, Number(params.maxItems || MEDIATION_EVIDENCE_MAX_ITEMS)));
   const maxTotalChars = Math.max(
@@ -357,7 +384,8 @@ export function retrieveMediationEvidence(params: {
   const candidates = usingFallback
     ? fallbackCandidates(params).map(normalizeCandidate).filter(Boolean)
     : suppliedCandidates;
-  const queryText = factSheetQueryText(params.factSheet);
+  const queryText = factSheetQueryText(params.factSheet, params.mediationRoundContext);
+  const continuityQuery = continuityQueryText(params.mediationRoundContext);
   const latestRound = candidates.reduce(
     (max, candidate) => Math.max(max, Number(candidate?.round_number || 0)),
     0,
@@ -395,8 +423,21 @@ export function retrieveMediationEvidence(params: {
           ? 'latest available round'
           : '',
         concreteSignals > 0 ? 'contains concrete commercial terms or timing' : '',
+        continuityQuery &&
+        tokenOverlap(selected.excerpt, continuityQuery) >= 0.25
+          ? 'addresses a prior unresolved mediation issue'
+          : '',
       ].filter(Boolean);
       const limitations = [...(candidate.limitations || [])];
+      if (
+        latestRound > 0 &&
+        Number(candidate.round_number || 0) > 0 &&
+        Number(candidate.round_number || 0) < latestRound
+      ) {
+        limitations.push(
+          'Older-round source: treat conflicting terms as possibly stale or superseded by the latest shared material.',
+        );
+      }
       if (candidate.visibility === 'confidential') {
         limitations.push(
           'Confidential: use only to calibrate internal reasoning; do not quote, cite, or reveal the underlying detail publicly.',

@@ -788,6 +788,9 @@ export function buildEvalPromptFromFactSheet(params: {
     '- Do not mechanically cite evidence IDs in narrative. The narrative should refer naturally to what the current proposal, latest draft, or counterparty comments suggest.',
     '- If retrieved evidence is absent or retrieval_warnings includes retrieval_failed, continue from the fact_sheet and primary context. Record the limitation internally without exposing technical retrieval errors publicly.',
     '- Never mention "RAG", retrieval diagnostics, evidence scores, source IDs, token budgets, or internal evidence visibility in narrative, why[], missing[], or redactions[].',
+    hasPriorBilateralContext
+      ? '- prior_bilateral_context.prior_review_summary and prior_bilateral_context.delta_analysis are public-safe internal continuity aids. Never expose their raw issue IDs, object keys, classifications, or metadata in user-facing prose.'
+      : '',
     '',
     'INTERNAL ANALYSIS REQUIREMENTS:',
     '- recommendation: the practical direction, stated without legal certainty.',
@@ -873,6 +876,18 @@ export function buildEvalPromptFromFactSheet(params: {
       ? '- Do NOT rewrite the negotiation from scratch. Write progress-aware narrative that references the issue ledger from step 16. Name which issues closed, which narrowed, which remain stuck.'
       : '',
     hasPriorBilateralContext
+      ? '- Use prior_review_summary as the baseline: identify what the previous review recommended, which recommended conditions or next actions were addressed, and which were not.'
+      : '',
+    hasPriorBilateralContext
+      ? '- Use delta_analysis as a starting hypothesis, then verify it against the current fact_sheet and current shared evidence. Current source material outranks prior model-generated summaries. If the latest evidence conflicts with old terms, treat the old terms as stale or superseded.'
+      : '',
+    hasPriorBilateralContext
+      ? '- Explain whether the recommendation remains the same, improves, or worsens, and why. Explain any meaningful confidence change in natural qualitative language without exposing scoring mechanics.'
+      : '',
+    hasPriorBilateralContext
+      ? '- A later-round narrative must visibly explain progress. Include one naturally titled section focused on change, such as "What Changed Since the Last Round", "Where Progress Was Made", "What Still Has Not Moved", "New Issues Introduced", "Why the Recommendation Has Changed", or "Why the Recommendation Remains Conditional". Vary the heading to fit the deal.'
+      : '',
+    hasPriorBilateralContext
       ? '- Include your progress analysis as prose narrative — statements about what changed, what narrowed, what was resolved, not lists of open questions. Minimise question marks in the progress analysis. Write it as mediator observations, not interrogation.'
       : '',
     hasPriorBilateralContext
@@ -894,7 +909,7 @@ export function buildEvalPromptFromFactSheet(params: {
     '',
     '1. "Recommendation: [status label as plain prose, without the words Decision status]. [brief explanation]." Then add 1 short paragraph answering: what should the parties do now, what conditions are needed before proceeding, which unresolved issues matter most, and why the confidence level is appropriate. Do NOT repeat every alignment, blocker, bridge, or open question.',
     hasPriorBilateralContext
-      ? `   ROUND-AWARE RECOMMENDATION (round ${bilateralRoundNumber}): The recommendation must become more decisive over time. Early rounds (1-2): recommend a bridge or structure. Mid rounds (3-4): recommend either the minimum remaining agenda to close the deal, or flag that critical issues are not closing. Late rounds (5+): recommend either a concrete closing path or a conclusion that the current structure is unlikely to result in agreement. Do NOT keep producing open-ended "explore further" recommendations indefinitely.`
+      ? `   ROUND-AWARE RECOMMENDATION (round ${bilateralRoundNumber}): Compare the prior recommendation/status/confidence with the current conclusion. State whether the recommendation remains, improves, or worsens and explain the evidence-based reason. Identify which prior conditions were satisfied and whether new issues offset that progress. Early rounds (1-2): recommend a bridge or structure. Mid rounds (3-4): recommend either the minimum remaining agenda to close the deal, or flag that critical issues are not closing. Late rounds (5+): recommend either a concrete closing path or a conclusion that the current structure is unlikely to result in agreement. Do NOT keep producing open-ended "explore further" recommendations indefinitely.`
       : '',
     '',
     hasPriorBilateralContext
@@ -950,6 +965,12 @@ export function buildEvalPromptFromFactSheet(params: {
     '- Avoid generic questions. Reference the specific proposal context.',
     '- For SaaS referral/channel/implementation partnerships, avoid default project-delivery questions about current scope and explicit exclusions, key deliverables, measurable acceptance criteria, delivery sequencing, change exposure, dependency ownership, or data remediation/migration unless those exact topics are central in the submitted materials.',
     '- Do NOT repeat questions that are already effectively answered in the mediation narrative.',
+    hasPriorBilateralContext
+      ? '- Compare missing[] against prior_review_summary and delta_analysis. Do not repeat a prior question classified as resolved, superseded, or no longer relevant. Prioritize prior questions that remain unchanged or only partially resolved, then add genuinely new questions from this round.'
+      : '',
+    hasPriorBilateralContext
+      ? '- Similar words are not proof of resolution. Treat a question as answered only when the shared evidence supplies the missing commercial fact. For example, "client protection will apply" does not answer how long it lasts; "client protection applies for 12 months after an accepted referral" does.'
+      : '',
     '- Paraphrase items from fact_sheet.missing_info and fact_sheet.open_questions as actionable questions with why-matters clauses, but only if they are genuinely unresolved.',
     '- If information appears to exist privately but cannot be shared, prefer placing it in redactions[] rather than restating it as missing[].',
     coverageCount < 3
@@ -1087,7 +1108,7 @@ export function buildEvalPromptFromFactSheet(params: {
       : `- This record is thin: aim for at least ${narrativeSourceDepth.target_min_words} words, but a shorter narrative is allowed when the source genuinely cannot support more analysis and it explicitly explains the limitation and names the missing information that prevents fuller analysis.`,
     '- negotiation_analysis is optional, but if you include it the structure must match the schema above.',
     hasPriorBilateralContext
-      ? '- Because prior_bilateral_context exists: resolved_since_last_round must list issues genuinely closed or narrowed this round. remaining_deltas must list issues still open with their current status classification. new_open_issues must list issues newly introduced this round. movement_direction must reflect your honest momentum assessment from step 16d — converging, stalled, or diverging. Do NOT use generic filler.'
+      ? '- Because prior_bilateral_context exists: resolved_since_last_round must list issues genuinely closed this round; place narrowed or partially answered issues in remaining_deltas with their current gap stated. remaining_deltas must list issues still open. new_open_issues must list issues genuinely introduced this round. movement_direction must reflect your honest momentum assessment from step 16d — converging, stalled, or diverging. Do NOT use generic filler.'
       : '- If this is the first bilateral review, you may omit the optional progress fields rather than inventing prior-round movement.',
     '- Keep ALL statements safe for public sharing.',
     '- Use generic derived wording for confidential-driven conclusions.',

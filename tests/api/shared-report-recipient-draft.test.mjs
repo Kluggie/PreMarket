@@ -2499,19 +2499,62 @@ if (!hasDatabaseUrl()) {
     process.env.MEDIATION_AI_PROVIDER = 'vertex';
     const cleanup = mockVertexV2Call(async ({ prompt }) => {
       const normalizedPrompt = String(prompt || '');
-      const isPassBPrompt = normalizedPrompt.includes('Required JSON schema (top-level evaluation keys required');
-      const isLaterBilateralRound = normalizedPrompt.includes('prior_bilateral_context');
+      const isRefinementPrompt = normalizedPrompt.includes('INITIAL REPORT TO REFINE:');
+      const isPassBPrompt =
+        normalizedPrompt.includes('Required JSON schema (top-level evaluation keys required') ||
+        isRefinementPrompt;
+      const isLaterBilateralRound =
+        normalizedPrompt.includes('prior_bilateral_context') ||
+        normalizedPrompt.includes('"current_bilateral_round_number": 2');
 
       if (!isPassBPrompt) {
         return {
           model: 'gemini-2.5-flash-lite',
           text: JSON.stringify({
-            analysis_stage: 'mediation_review',
-            fit_level: 'medium',
-            confidence_0_1: 0.64,
-            why: ['Fact sheet fallback for tests.'],
-            missing: ['Fact sheet fallback question.'],
-            redactions: [],
+            project_goal: 'Agree a phased implementation rollout with bounded approval mechanics.',
+            scope_deliverables: [
+              'Phased rollout plan',
+              'Named implementation checkpoints',
+              'Documented approval path',
+            ],
+            timeline: {
+              start: 'After approval mechanics are agreed',
+              duration: 'Phased',
+              milestones: ['Initial rollout checkpoint', 'Expansion decision'],
+            },
+            constraints: [
+              'Expansion is conditional on checkpoint evidence.',
+              'Final approval ownership must be explicit.',
+            ],
+            success_criteria_kpis: [
+              'Checkpoint evidence is accepted by the named approval owner.',
+              'Implementation sequencing is completed as agreed.',
+            ],
+            vendor_preferences: [],
+            assumptions: [
+              'The named stakeholders remain available for checkpoint review.',
+            ],
+            risks: [
+              {
+                risk: 'Unclear approval ownership could delay the next rollout phase.',
+                impact: 'high',
+                likelihood: 'med',
+              },
+            ],
+            open_questions: [
+              'Who owns final approval for each checkpoint?',
+              'What evidence completes each checkpoint?',
+            ],
+            missing_info: [
+              'Final approval ownership and checkpoint evidence remain open.',
+            ],
+            source_coverage: {
+              has_scope: true,
+              has_timeline: true,
+              has_kpis: true,
+              has_constraints: true,
+              has_risks: true,
+            },
           }),
           finishReason: 'STOP',
           httpStatus: 200,
@@ -2563,10 +2606,19 @@ if (!hasDatabaseUrl()) {
             title: 'A workable rollout, once approval mechanics are explicit',
             sections: [
               {
-                heading: 'The commercial direction is aligned',
+                heading: isLaterBilateralRound
+                  ? 'The rollout has moved closer since the prior round'
+                  : 'The commercial direction is aligned',
                 paragraphs: [
-                  'Both sides support a phased rollout with named checkpoints, which creates a credible basis for continuing without treating later expansion as already agreed. The structure contains the first commitment while preserving a route to broader implementation if the evidence supports it.',
+                  isLaterBilateralRound
+                    ? 'Since the prior bilateral round, implementation sequencing is now substantially aligned and the parties have moved closer on the operating shape of the rollout. Both sides continue to support named checkpoints, which preserves a credible route to broader implementation without treating later expansion as already agreed.'
+                    : 'Both sides support a phased rollout with named checkpoints, which creates a credible basis for continuing without treating later expansion as already agreed. The structure contains the first commitment while preserving a route to broader implementation if the evidence supports it.',
                   'The remaining work is concentrated in the approval mechanics rather than the overall commercial direction. That makes the negotiation closeable if the parties define completion evidence and decision authority.',
+                  ...(isLaterBilateralRound
+                    ? [
+                        'The recommendation remains to proceed with conditions because the latest shared material resolves the earlier sequencing concern but does not yet close commercial acceptance criteria or final approval ownership. Confidence remains moderate for the same reason: the operating sequence is stronger, while the authority to approve completion is still not fully documented.',
+                      ]
+                    : []),
                 ],
               },
               {

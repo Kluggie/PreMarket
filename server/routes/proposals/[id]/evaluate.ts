@@ -22,6 +22,7 @@ import {
 import { evaluateWithVertexV2 } from '../../../_lib/vertex-evaluation-v2.js';
 import {
   buildMediationRoundContext,
+  enrichMediationRoundContext,
   extractMediationReport,
   type MediationRoundContext,
 } from '../../../_lib/mediation-progress.js';
@@ -789,7 +790,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         const analysisStage = hasRecipientContributions
           ? MEDIATION_REVIEW_STAGE
           : STAGE1_SHARED_INTAKE_STAGE;
-        const mediationRoundContext = analysisStage === MEDIATION_REVIEW_STAGE
+        const baseMediationRoundContext = analysisStage === MEDIATION_REVIEW_STAGE
           ? await loadPriorBilateralRoundContext({
               db,
               proposalId: proposal.id,
@@ -803,6 +804,10 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
         const comparisonConfidentialText = attributedConfidentialEntries.length > 0
           ? formatContributionsForAi(attributedConfidentialEntries)
           : String(comparison.docAText || '');
+        const mediationRoundContext = enrichMediationRoundContext({
+          mediationRoundContext: baseMediationRoundContext || undefined,
+          currentSharedText: comparisonSharedText,
+        }) || baseMediationRoundContext;
         const hasUploadedDocumentContext =
           currentSharedPayload.files.length > 0 ||
           currentConfidentialPayload.files.length > 0 ||

@@ -20,6 +20,11 @@ import {
   retrieveMediationEvidenceSafely,
 } from './mediation-evidence-retrieval.js';
 import {
+  enrichMediationRoundContext,
+  mediationIssueIdForText,
+  type MediationRoundContext,
+} from './mediation-progress.js';
+import {
   WHY_MAX_CHARS_STANDARD,
   WHY_MAX_CHARS_TIGHT,
   MISSING_MIN_ITEMS,
@@ -3802,11 +3807,44 @@ function mapConfidenceIntoRange(aiConfidence: number, floor: number, ceiling: nu
   return Math.min(mapped, aiConfidence);
 }
 
+function replaceRawContinuityIssueIds(
+  value: string,
+  mediationRoundContext?: MediationRoundContext,
+) {
+  let output = value;
+  const issues = [
+    ...(mediationRoundContext?.prior_review_summary?.prior_open_questions || []),
+    ...(mediationRoundContext?.prior_review_summary?.prior_unresolved_issues || []),
+    ...(mediationRoundContext?.prior_review_summary?.prior_resolved_issues || []),
+    ...(mediationRoundContext?.delta_analysis?.issue_changes || []),
+  ];
+  const labels = new Map<string, string>();
+  issues.forEach((issue) => {
+    if (issue.issue_id && issue.label && !labels.has(issue.issue_id)) {
+      labels.set(issue.issue_id, issue.label);
+    }
+  });
+  labels.forEach((label, issueId) => {
+    output = output.replaceAll(issueId, label.toLowerCase());
+  });
+  return output;
+}
+
+function sanitizeContinuityIdentifiers(
+  values: string[],
+  mediationRoundContext?: MediationRoundContext,
+) {
+  return values.map((value) =>
+    replaceRawContinuityIssueIds(value, mediationRoundContext),
+  );
+}
+
 function applyConsistencyCalibration(params: {
   data: VertexEvaluationV2MediationResponse;
   factSheet: ProposalFactSheet;
   sharedText: string;
   postProcessMode?: PostProcessMode;
+  mediationRoundContext?: MediationRoundContext;
 }): ClampResult {
   let {
     fit_level,
@@ -3824,6 +3862,38 @@ function applyConsistencyCalibration(params: {
     movement_direction,
   } = params.data;
   const capsApplied: string[] = [];
+  const sanitizedWhy = sanitizeContinuityIdentifiers(why, params.mediationRoundContext);
+  const sanitizedMissing = sanitizeContinuityIdentifiers(missing, params.mediationRoundContext);
+  const sanitizedProgress = {
+    delta_summary: delta_summary
+      ? replaceRawContinuityIssueIds(delta_summary, params.mediationRoundContext)
+      : delta_summary,
+    resolved_since_last_round: resolved_since_last_round
+      ? sanitizeContinuityIdentifiers(resolved_since_last_round, params.mediationRoundContext)
+      : resolved_since_last_round,
+    remaining_deltas: remaining_deltas
+      ? sanitizeContinuityIdentifiers(remaining_deltas, params.mediationRoundContext)
+      : remaining_deltas,
+    new_open_issues: new_open_issues
+      ? sanitizeContinuityIdentifiers(new_open_issues, params.mediationRoundContext)
+      : new_open_issues,
+  };
+  if (
+    JSON.stringify(sanitizedWhy) !== JSON.stringify(why) ||
+    JSON.stringify(sanitizedMissing) !== JSON.stringify(missing) ||
+    sanitizedProgress.delta_summary !== delta_summary ||
+    JSON.stringify(sanitizedProgress.resolved_since_last_round) !== JSON.stringify(resolved_since_last_round) ||
+    JSON.stringify(sanitizedProgress.remaining_deltas) !== JSON.stringify(remaining_deltas) ||
+    JSON.stringify(sanitizedProgress.new_open_issues) !== JSON.stringify(new_open_issues)
+  ) {
+    why = sanitizedWhy;
+    missing = sanitizedMissing;
+    delta_summary = sanitizedProgress.delta_summary;
+    resolved_since_last_round = sanitizedProgress.resolved_since_last_round;
+    remaining_deltas = sanitizedProgress.remaining_deltas;
+    new_open_issues = sanitizedProgress.new_open_issues;
+    capsApplied.push('sanitize_continuity_issue_ids');
+  }
 
   if (params.postProcessMode === 'incomplete_fallback') {
     return {
@@ -3984,8 +4054,10 @@ function applyConsistencyCalibration(params: {
   const narrativeValidation = validateNarrativeMemo(narrative, {
     fitLevel: fit_level,
     decisionStatus: finalDecisionStatus,
+    confidence: confidence_0_1,
     missingCount: missing.length,
     validateContentAlignment: true,
+    mediationRoundContext: params.mediationRoundContext,
   });
   if (narrative && !narrativeValidation.valid) {
     narrative = undefined;
@@ -4879,6 +4951,7 @@ function applyCoverageClamps(params: {
   sharedText: string;
   confidentialText: string;
   postProcessMode?: PostProcessMode;
+  mediationRoundContext?: MediationRoundContext;
 }): ClampResult {
   const { factSheet, sharedText, confidentialText } = params;
   let {
@@ -4890,6 +4963,11 @@ function applyCoverageClamps(params: {
     internal_analysis,
     narrative,
     negotiation_analysis,
+    delta_summary,
+    resolved_since_last_round,
+    remaining_deltas,
+    new_open_issues,
+    movement_direction,
   } = params.data;
   const capsApplied: string[] = [];
   const sc = factSheet.source_coverage;
@@ -4946,10 +5024,16 @@ function applyCoverageClamps(params: {
       internal_analysis,
       narrative,
       negotiation_analysis,
+      delta_summary,
+      resolved_since_last_round,
+      remaining_deltas,
+      new_open_issues,
+      movement_direction,
     },
     factSheet,
     sharedText,
     postProcessMode: params.postProcessMode,
+    mediationRoundContext: params.mediationRoundContext,
   });
 
   return {
@@ -6139,6 +6223,7 @@ function assessReportQuality(
   data: VertexEvaluationV2MediationResponse,
   factSheet?: ProposalFactSheet,
   retrievedEvidencePacket?: RetrievedMediationEvidencePacket,
+  mediationRoundContext?: MediationRoundContext,
 ): QualityAssessment {
   const triggers: string[] = [];
   const weakSections: string[] = [];
@@ -6197,8 +6282,10 @@ function assessReportQuality(
   const narrativeValidation = validateNarrativeMemo(data.narrative, {
     fitLevel: data.fit_level,
     decisionStatus: data.internal_analysis?.decision_status,
+    confidence: data.confidence_0_1,
     missingCount: missingItems.length,
     validateContentAlignment: true,
+    mediationRoundContext,
   });
   const sourceDepth = assessNarrativeSourceDepth({
     factSheet,
@@ -6244,6 +6331,24 @@ function assessReportQuality(
   ) {
     triggers.push('thin_source_narrative_does_not_explain_limitations');
     weakSections.push('narrative');
+    penaltyPoints += 2;
+  }
+
+  const resolvedContinuityIds = new Set(
+    (mediationRoundContext?.delta_analysis?.issue_changes || [])
+      .filter((issue) =>
+        issue.current_status === 'resolved' ||
+        issue.current_status === 'superseded' ||
+        issue.current_status === 'no_longer_relevant',
+      )
+      .map((issue) => issue.issue_id),
+  );
+  const repeatedResolvedQuestions = missingItems.filter((item) =>
+    resolvedContinuityIds.has(mediationIssueIdForText(item)),
+  );
+  if (repeatedResolvedQuestions.length > 0) {
+    triggers.push(`resolved_questions_repeated:${repeatedResolvedQuestions.length}`);
+    weakSections.push('missing');
     penaltyPoints += 2;
   }
   if (
@@ -6371,12 +6476,17 @@ function assessReportQuality(
   return { score, triggers, weakSections: [...new Set(weakSections)] };
 }
 
-function buildNarrativeValidationMetadata(data: VertexEvaluationV2MediationResponse) {
+function buildNarrativeValidationMetadata(
+  data: VertexEvaluationV2MediationResponse,
+  mediationRoundContext?: MediationRoundContext,
+) {
   const validation = validateNarrativeMemo(data.narrative, {
     fitLevel: data.fit_level,
     decisionStatus: data.internal_analysis?.decision_status,
+    confidence: data.confidence_0_1,
     missingCount: data.missing.length,
     validateContentAlignment: true,
+    mediationRoundContext,
   });
   return {
     valid: validation.valid,
@@ -6411,6 +6521,7 @@ function buildRefinementPrompt(params: {
   reportStyle: ReportStyle;
   quality: QualityAssessment;
   convergenceDigestText?: string;
+  mediationRoundContext?: MediationRoundContext;
 }) {
   const { initialResult, factSheet, reportStyle, quality } = params;
   const sourceDepth = assessNarrativeSourceDepth({
@@ -6465,6 +6576,14 @@ function buildRefinementPrompt(params: {
     '- Link every major recommendation naturally to the current proposal, latest draft, shared materials, counterparty comments, available record, or negotiation history. Do not expose evidence IDs.',
     '- Correct section/body mismatches: question headings contain unresolved matters, risk headings contain failure points, bridge headings contain compromise mechanics, and next-step headings contain a concrete action.',
     '- Ensure each missing[] item has an actionable question with an em-dash why-it-matters clause.',
+    params.mediationRoundContext?.current_bilateral_round_number &&
+    params.mediationRoundContext.current_bilateral_round_number > 1
+      ? '- Preserve and strengthen visible later-round progress analysis: explain what resolved, narrowed, remained open, or appeared for the first time; explain why recommendation and confidence changed or stayed the same.'
+      : '',
+    params.mediationRoundContext?.current_bilateral_round_number &&
+    params.mediationRoundContext.current_bilateral_round_number > 1
+      ? '- Do not repeat questions marked resolved, superseded, or no longer relevant in delta_analysis. Do not expose raw issue IDs or continuity metadata.'
+      : '',
     '- Improve tradeoff framing — include at least 2 explicit if/then statements.',
     '- Ensure natural prose flow with varied sentence lengths.',
     '- Maintain the same report style:',
@@ -6482,6 +6601,12 @@ function buildRefinementPrompt(params: {
       : 'No retrieved evidence was available.',
     '',
     params.convergenceDigestText || '',
+    params.mediationRoundContext
+      ? [
+          'PUBLIC-SAFE PRIOR REVIEW AND DELTA CONTEXT:',
+          JSON.stringify(params.mediationRoundContext, null, 2),
+        ].join('\n')
+      : '',
     '',
     'INITIAL REPORT TO REFINE:',
     JSON.stringify(initialResult, null, 2),
@@ -6576,6 +6701,7 @@ async function attemptRefinementPass(params: {
   reportStyle: ReportStyle;
   quality: QualityAssessment;
   convergenceDigestText?: string;
+  mediationRoundContext?: MediationRoundContext;
   requestId?: string;
   inputChars: number;
   generationModel: string;
@@ -6597,6 +6723,7 @@ async function attemptRefinementPass(params: {
     reportStyle: params.reportStyle,
     quality: params.quality,
     convergenceDigestText: params.convergenceDigestText,
+    mediationRoundContext: params.mediationRoundContext,
   });
 
   let vertex: VertexCallResponse;
@@ -6865,6 +6992,15 @@ export async function evaluateWithVertexV2(
           sharedText,
           confidentialText,
           candidates: input.evidenceCandidates,
+          mediationRoundContext: input.mediationRoundContext,
+        })
+      : undefined;
+  const mediationRoundContext =
+    analysisStage === MEDIATION_STAGE
+      ? enrichMediationRoundContext({
+          mediationRoundContext: input.mediationRoundContext,
+          currentSharedText: sharedText,
+          retrievedEvidencePacket,
         })
       : undefined;
   const retrievalInternal = retrievedEvidencePacket
@@ -6902,7 +7038,7 @@ export async function evaluateWithVertexV2(
           reportStyle,
           tightMode: options.tightMode,
           convergenceDigestText: options.includeDigest === false ? undefined : convergenceDigestText,
-          mediationRoundContext: input.mediationRoundContext,
+          mediationRoundContext,
         });
 
   let prompt = buildPrompt();
@@ -7350,6 +7486,7 @@ export async function evaluateWithVertexV2(
       mediationResult,
       factSheet,
       retrievedEvidencePacket,
+      mediationRoundContext,
     );
     const QUALITY_THRESHOLD = 0.5;
     const shouldRefine = rawQuality.score < 1.0;
@@ -7377,6 +7514,7 @@ export async function evaluateWithVertexV2(
         reportStyle,
         quality: rawQuality,
         convergenceDigestText,
+        mediationRoundContext,
         requestId,
         inputChars,
         generationModel,
@@ -7398,6 +7536,7 @@ export async function evaluateWithVertexV2(
           refinement.result,
           factSheet,
           retrievedEvidencePacket,
+          mediationRoundContext,
         );
         if (refinedRawQuality.score >= rawQuality.score) {
           bestRawResult = refinement.result;
@@ -7471,6 +7610,7 @@ export async function evaluateWithVertexV2(
                   regeneratedResult,
                   factSheet,
                   retrievedEvidencePacket,
+                  mediationRoundContext,
                 );
                 if (regenRawQuality.score > rawQuality.score) {
                   bestRawResult = regeneratedResult;
@@ -7492,6 +7632,7 @@ export async function evaluateWithVertexV2(
       sharedText,
       confidentialText,
       postProcessMode: 'normal',
+      mediationRoundContext,
     });
     const finalData = clamped.data;
 
@@ -7559,7 +7700,7 @@ export async function evaluateWithVertexV2(
         regeneration: regenMeta,
         raw_quality_score: rawQuality.score,
         quality_warnings: rawQuality.triggers,
-        narrative_validation: buildNarrativeValidationMetadata(finalData),
+        narrative_validation: buildNarrativeValidationMetadata(finalData, mediationRoundContext),
         ...runtimeSnapshot(),
         ...retrievalInternal,
       },
@@ -7675,6 +7816,7 @@ export async function evaluateWithVertexV2(
     sharedText,
     confidentialText,
     postProcessMode: fallback.fallbackMode === 'salvaged_memo' ? 'salvaged_fallback' : 'incomplete_fallback',
+    mediationRoundContext,
   });
 
   const fallbackTelemetry = buildTelemetry({
@@ -7723,7 +7865,10 @@ export async function evaluateWithVertexV2(
         verifier_escalated: false,
         verifier_unavailable: false,
       },
-      narrative_validation: buildNarrativeValidationMetadata(fallbackClamped.data),
+      narrative_validation: buildNarrativeValidationMetadata(
+        fallbackClamped.data,
+        mediationRoundContext,
+      ),
       ...runtimeSnapshot(),
       ...retrievalInternal,
     },

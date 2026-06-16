@@ -5,6 +5,7 @@ import type {
   ProposalFactSheet,
   RetrievedMediationEvidencePacket,
 } from './vertex-evaluation-v2-types.js';
+import type { MediationRoundContext } from './mediation-progress.js';
 
 export const NARRATIVE_MIN_SECTIONS = 2;
 export const NARRATIVE_MAX_SECTIONS = 5;
@@ -371,13 +372,124 @@ function sectionContentAlignmentWarnings(narrative: NarrativeMemo) {
   return [...new Set(warnings)];
 }
 
+const PROGRESS_LANGUAGE_PATTERN =
+  /\b(?:since (?:the )?(?:last|prior|previous) (?:round|review)|this round|compared (?:with|to) (?:the )?(?:last|prior|previous)|has (?:now )?(?:resolved|closed|narrowed|changed|regressed)|is now (?:agreed|defined|resolved|clear|aligned)|partly answered since|partially resolved since|remains unchanged from|new issue (?:has )?(?:appeared|emerged)|new concern (?:has )?(?:appeared|emerged)|moved closer|moved further|progress (?:was|has been|is))\b/i;
+const CAUSAL_LANGUAGE_PATTERN =
+  /\b(?:because|as a result|given|reflects?|due to|based on|now that|while|although|but)\b/i;
+const RECOMMENDATION_CONTINUITY_PATTERN =
+  /\b(?:recommendation|recommended path|case for proceeding|case for pausing|remains conditional|remains unchanged|has changed|is stronger|is weaker)\b/i;
+const CONFIDENCE_CONTINUITY_PATTERN =
+  /\bconfidence\b.{0,120}\b(?:increas|decreas|remain|unchanged|stronger|weaker)\b|\b(?:increas|decreas|remain|unchanged)\w*\b.{0,120}\bconfidence\b/i;
+
+function continuityTokens(value: string) {
+  return new Set(
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .split(/\s+/)
+      .filter((token) => token.length >= 5),
+  );
+}
+
+function narrativeMentionsIssue(bodyText: string, label: string) {
+  const bodyTokens = continuityTokens(bodyText);
+  const issueTokens = continuityTokens(label);
+  if (issueTokens.size === 0) return false;
+  let overlap = 0;
+  issueTokens.forEach((token) => {
+    if (bodyTokens.has(token)) overlap += 1;
+  });
+  return overlap >= Math.min(2, issueTokens.size);
+}
+
+function laterRoundContinuityWarnings(params: {
+  narrative: NarrativeMemo;
+  bodyText: string;
+  context?: MediationRoundContext;
+  decisionStatus?: MediationDecisionStatus;
+  confidence?: number;
+}) {
+  const context = params.context;
+  if (!context || context.current_bilateral_round_number <= 1 || !context.prior_review_summary) {
+    return [] as string[];
+  }
+
+  const warnings: string[] = [];
+  const delta = context.delta_analysis;
+  if (!PROGRESS_LANGUAGE_PATTERN.test(params.bodyText)) {
+    warnings.push('later_round_narrative_lacks_visible_progress_analysis');
+  }
+
+  const activePriorIssues = [
+    ...context.prior_review_summary.prior_open_questions,
+    ...context.prior_review_summary.prior_unresolved_issues,
+  ];
+  if (
+    activePriorIssues.length > 0 &&
+    !activePriorIssues.some((issue) => narrativeMentionsIssue(params.bodyText, issue.label))
+  ) {
+    warnings.push('later_round_narrative_ignores_prior_open_issues');
+  }
+
+  const newIssues = (delta?.issue_changes || []).filter(
+    (issue) => issue.current_status === 'newly_introduced',
+  );
+  if (
+    newIssues.length > 0 &&
+    !newIssues.some((issue) => narrativeMentionsIssue(params.bodyText, issue.label))
+  ) {
+    warnings.push('later_round_narrative_ignores_new_issues');
+  }
+
+  const rawIssueIds = new Set([
+    ...activePriorIssues.map((issue) => issue.issue_id),
+    ...(delta?.issue_changes || []).map((issue) => issue.issue_id),
+  ]);
+  if ([...rawIssueIds].some((issueId) => issueId && params.bodyText.includes(issueId))) {
+    warnings.push('narrative_exposes_raw_issue_id');
+  }
+
+  const priorStatus = context.prior_review_summary.prior_decision_status;
+  if (
+    priorStatus &&
+    params.decisionStatus &&
+    (
+      priorStatus !== params.decisionStatus ||
+      context.current_bilateral_round_number >= 3
+    ) &&
+    (
+      !RECOMMENDATION_CONTINUITY_PATTERN.test(params.bodyText) ||
+      !CAUSAL_LANGUAGE_PATTERN.test(params.bodyText)
+    )
+  ) {
+    warnings.push('later_round_recommendation_change_not_explained');
+  }
+
+  const priorConfidence = context.prior_review_summary.prior_confidence_0_1;
+  if (
+    typeof priorConfidence === 'number' &&
+    typeof params.confidence === 'number' &&
+    Math.abs(priorConfidence - params.confidence) >= 0.05 &&
+    (
+      !CONFIDENCE_CONTINUITY_PATTERN.test(params.bodyText) ||
+      !CAUSAL_LANGUAGE_PATTERN.test(params.bodyText)
+    )
+  ) {
+    warnings.push('later_round_confidence_change_not_explained');
+  }
+
+  return [...new Set(warnings)];
+}
+
 export function validateNarrativeMemo(
   value: unknown,
   options: {
     fitLevel?: FitLevel;
     decisionStatus?: MediationDecisionStatus;
+    confidence?: number;
     missingCount?: number;
     validateContentAlignment?: boolean;
+    mediationRoundContext?: MediationRoundContext;
   } = {},
 ): NarrativeValidationResult {
   const narrative = normalizeNarrativeMemo(value);
@@ -443,6 +555,15 @@ export function validateNarrativeMemo(
   if (options.validateContentAlignment) {
     warnings.push(...sectionContentAlignmentWarnings(narrative));
   }
+  warnings.push(
+    ...laterRoundContinuityWarnings({
+      narrative,
+      bodyText,
+      context: options.mediationRoundContext,
+      decisionStatus: options.decisionStatus,
+      confidence: options.confidence,
+    }),
+  );
 
   const status =
     options.decisionStatus ||
