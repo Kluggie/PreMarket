@@ -21,6 +21,8 @@ Optional:
 - `RESEND_FROM_NAME`
 - `RESEND_REPLY_TO` (must be an email address, never an API key)
 - `DEV_EMAIL_SINK` (non-production safety sink in `EMAIL_MODE=transactional`)
+- `MEDIATION_STEP2_AI_PROVIDER=openai` for Opportunity Workspace Step 2 suggestions
+- `MEDIATION_STEP2_AI_MODEL=gpt-5.4` for Opportunity Workspace Step 2 suggestions; this path uses OpenAI/ChatGPT 5.4 and does not call Vertex/Gemini
 
 ## Contact + Sales Email Mapping
 

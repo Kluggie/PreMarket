@@ -112,13 +112,15 @@ const GUEST_AI_MEDIATION_RUN_LIMIT = 1;
 const STEP2_AUTOSAVE_DEBOUNCE_MS = 30_000;
 const STEP2_AUTOSAVE_MIN_INTERVAL_MS = 30_000;
 const COACH_INTENT_LABELS = {
+  draft_response: 'Draft Response',
   improve_shared: 'Improve shared writing',
   negotiate: 'Negotiation strategy',
   risks: 'Risks & Gaps',
+  clarifying_questions: 'Clarifying Questions',
+  company_context: 'Company Context',
   rewrite_selection: 'Rewrite selection',
   general: 'General improvements',
   custom_prompt: 'Custom prompt',
-  company_brief: 'Company Brief',
 };
 
 function asText(value) {
@@ -3093,7 +3095,7 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
   const runCoach = async ({
     action = '',
     mode = 'full',
-    intent = 'general',
+    intent = 'draft_response',
     promptText = '',
     selectionText = '',
     selectionTarget = null,
@@ -3148,6 +3150,8 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
         selectionText: selectionText || undefined,
         selectionTarget: selectionTarget || undefined,
         threadHistory: threadHistory.length > 0 ? threadHistory : undefined,
+        company_name: asText(companyContextName) || undefined,
+        company_website: asText(companyContextWebsite) || undefined,
       };
       if (!isCustomPromptRequest) {
         const sanitizedDocAHtml = sanitizeEditorHtml(docAHtml || textToHtml(docAText));
@@ -3252,7 +3256,7 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
         return null;
       }
       if (status === 501 || code === 'not_configured') {
-        const message = 'AI suggestions are unavailable because Vertex AI is not configured.';
+        const message = 'AI suggestions are unavailable because OpenAI is not configured.';
         setCoachResult(null);
         setCoachResultHash('');
         setCoachCached(false);
@@ -3441,7 +3445,7 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
       }
 
       if (status === 501 || code === 'not_configured') {
-        const message = 'AI suggestions are unavailable because Vertex AI is not configured.';
+        const message = 'AI suggestions are unavailable because OpenAI is not configured.';
         setCoachResult(null);
         setCoachResultHash('');
         setCoachCached(false);
@@ -4119,7 +4123,6 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
       onDismissSuggestion={dismissSuggestion}
       onOpenCoachSuggestionReview={openCoachSuggestionReview}
       onRetryCompanyContextSave={retryCompanyContextSave}
-      onRunCompanyBrief={handleCompanyBriefAction}
       onRunCustomPrompt={runCustomPromptCoach}
       onRunSuggestedPrompt={(option) => {
         const request = buildCoachActionRequest(option, selectionContext);

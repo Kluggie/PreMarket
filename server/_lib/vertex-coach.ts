@@ -1,4 +1,5 @@
 import { createHash, createSign } from 'node:crypto';
+import OpenAI from 'openai';
 import { z } from 'zod';
 import { formatMediatorContextBlock, type SafeMediatorContext } from './coach-mediator-context.js';
 import { ApiError } from './errors.js';
@@ -6,12 +7,16 @@ import { getVertexConfig, getVertexNotConfiguredError } from './integrations.js'
 import { sanitizeUserInput, wrapRawUserContent } from './vertex-input-sanitizer.js';
 
 export const COACH_PROMPT_VERSION = 'coach-v1';
+export const DEFAULT_STEP2_OPENAI_MODEL = 'gpt-5.4';
 
 export type CoachMode = 'full' | 'shared_only' | 'selection';
 export type CoachIntent =
   | 'improve_shared'
+  | 'draft_response'
   | 'negotiate'
   | 'risks'
+  | 'clarifying_questions'
+  | 'company_context'
   | 'rewrite_selection'
   | 'general'
   | 'custom_prompt';
@@ -128,6 +133,26 @@ type ThreadHistoryEntry = {
   promptType?: string;
 };
 
+type CoachProviderProfile = 'step2_openai' | 'legacy_vertex';
+
+type CoachModelCallResponse = {
+  provider: 'openai' | 'vertex' | 'mock';
+  model: string;
+  text: string;
+};
+
+type CoachOpenAICallOverride = (params: {
+  prompt: string;
+  preferredModel?: string;
+  maxOutputTokens?: number;
+  responseFormat?: 'json' | 'text';
+  purpose?: 'coach_structured' | 'coach_custom';
+}) => Promise<Partial<CoachModelCallResponse> | string>;
+
+declare global {
+  var __PREMARKET_TEST_OPENAI_COACH_CALL__: CoachOpenAICallOverride | undefined;
+}
+
 type GenerateCoachParams = {
   title: string;
   docAText: string;
@@ -149,6 +174,7 @@ type GenerateCoachParams = {
   mediatorContext?: SafeMediatorContext | null;
   sharedHistoryContext?: string;
   confidentialHistoryContext?: string;
+  providerProfile?: CoachProviderProfile;
 };
 
 function asText(value: unknown) {
@@ -157,6 +183,25 @@ function asText(value: unknown) {
 
 function asLower(value: unknown) {
   return asText(value).toLowerCase();
+}
+
+export function resolveStep2CoachProvider() {
+  return 'openai';
+}
+
+export function resolveStep2CoachModel() {
+  return (
+    asText(process.env.MEDIATION_STEP2_AI_MODEL) ||
+    asText(process.env.MEDIATION_AI_MODEL) ||
+    DEFAULT_STEP2_OPENAI_MODEL
+  );
+}
+
+export function resolveStep2CoachProviderModel() {
+  return {
+    provider: resolveStep2CoachProvider(),
+    model: resolveStep2CoachModel(),
+  };
 }
 
 function invalidModelOutput(message: string, extra: Record<string, unknown> = {}) {
@@ -211,7 +256,7 @@ async function fetchGoogleAccessToken(credentials: {
   return accessToken;
 }
 
-function extractModelText(payload: any) {
+function extractVertexModelText(payload: any) {
   const candidates = Array.isArray(payload?.candidates) ? payload.candidates : [];
   const parts = Array.isArray(candidates?.[0]?.content?.parts) ? candidates[0].content.parts : [];
   return parts
@@ -331,6 +376,20 @@ function buildIntentSpecificRules(params: GenerateCoachParams) {
         '- Do NOT introduce new requirements, dates, numbers, budgets, or constraints that are not already in doc_b.',
         '- concerns, questions, and negotiation_moves must be empty arrays.',
       ];
+    case 'draft_response':
+      return [
+        'Intent-specific rules (draft_response):',
+        '- Help the user draft a practical response to the current shared round, whether it is an original proposal, reply, counterproposal, or later negotiation update.',
+        '- summary.overall MUST be markdown containing a concise response the user could realistically send after light editing.',
+        '- The draft must be professional, neutral, and negotiation-aware.',
+        '- Acknowledge areas of agreement where visible.',
+        '- Raise unresolved issues without overcommitting.',
+        '- Include concrete next steps or clarifying questions where appropriate.',
+        '- Refer to the current shared round and visible prior shared rounds where useful.',
+        '- Distinguish known facts from assumptions.',
+        '- Do not provide legal advice as definitive.',
+        '- suggestions should be empty unless a narrowly scoped editable wording change is clearly useful.',
+      ];
     case 'negotiate':
       return [
         'Intent-specific rules (negotiate):',
@@ -366,6 +425,29 @@ function buildIntentSpecificRules(params: GenerateCoachParams) {
         '- In each concerns.details value, prefix with "Risk level: High", "Risk level: Medium", or "Risk level: Low".',
         '- Suggestions are optional and should focus on clarifications/mitigations.',
         '- negotiation_moves should usually be empty for this intent.',
+      ];
+    case 'clarifying_questions':
+      return [
+        'Intent-specific rules (clarifying_questions):',
+        '- Generate questions the user should ask before responding, accepting, rejecting, or moving the negotiation forward.',
+        '- summary.overall MUST be markdown with a short prioritized list of practical questions.',
+        '- Group questions by topic where useful.',
+        '- Each question must include a short note explaining why it matters.',
+        '- Populate the questions array with the highest-priority counterparty and self-check questions.',
+        '- Do not invent missing facts. Ask for missing information instead.',
+        '- suggestions and negotiation_moves should be empty arrays unless a direct next-step framing is needed.',
+      ];
+    case 'company_context':
+      return [
+        'Intent-specific rules (company_context):',
+        '- Help the user understand relevant company or counterparty context for this negotiation.',
+        '- Use only company fields, public/shared text, user-provided confidential text, and visible shared history provided in this request.',
+        '- Do not hallucinate company facts, market facts, funding, customers, size, geography, or public claims.',
+        '- If company details are available, summary.overall MUST include a short company/context brief and implications for the negotiation.',
+        '- If there is not enough company information, summary.overall MUST say what information is missing and what the user should provide.',
+        '- Distinguish known facts from assumptions.',
+        '- concerns may identify context gaps; questions may request missing company details.',
+        '- suggestions and negotiation_moves should usually be empty arrays.',
       ];
     case 'rewrite_selection':
       return [
@@ -602,93 +684,127 @@ type CustomPromptModelCallInput = {
   selectionText: string;
   strictMode: boolean;
   canaryTokens: string[];
+  providerProfile?: CoachProviderProfile;
 };
 
-async function callCustomPromptModel(input: CustomPromptModelCallInput) {
-  const testOverride = (globalThis as any).__PREMARKET_TEST_VERTEX_CUSTOM_COACH_CALL__;
-  if (typeof testOverride === 'function') {
-    const overrideResult = await testOverride({
-      ...input,
-    });
-    const text = asText(overrideResult?.text || overrideResult?.feedback || overrideResult);
-    return {
-      provider: asText(overrideResult?.provider) || 'mock',
-      model: asText(overrideResult?.model) || 'vertex-coach-custom-test',
-      text,
-    };
+function extractOpenAIResponseText(payload: any) {
+  const outputText = asText(payload?.output_text);
+  if (outputText) {
+    return outputText;
   }
 
-  return callVertexCoach(input.prompt, process.env.VERTEX_COACH_MODEL || process.env.VERTEX_MODEL || '');
+  const output = Array.isArray(payload?.output) ? payload.output : [];
+  const parts: string[] = [];
+  for (const item of output) {
+    const content = Array.isArray(item?.content) ? item.content : [];
+    for (const part of content) {
+      const text = asText(part?.text || part?.content || part?.value);
+      if (text) {
+        parts.push(text);
+      }
+    }
+  }
+  return parts.join('\n').trim();
 }
 
-async function generateCustomPromptFeedback(params: GenerateCoachParams) {
-  const promptText = asText(params.promptText).slice(0, MAX_CUSTOM_PROMPT_CHARS);
-  const selectionText = asText(params.selectionText);
-  const canaryTokens = normalizeCanaryTokens(params.otherPartyCanaryTokens);
-  const mockFeedback = asText(process.env.VERTEX_COACH_CUSTOM_PROMPT_MOCK_RESPONSE);
-  if (mockFeedback) {
+function normalizeCoachModelOverrideResult(
+  value: Partial<CoachModelCallResponse> | string,
+  fallback: CoachModelCallResponse,
+): CoachModelCallResponse {
+  if (typeof value === 'string') {
     return {
-      provider: 'mock' as const,
-      model: 'vertex-coach-custom-mock',
-      result: toCustomPromptCoachResult(mockFeedback, false),
+      ...fallback,
+      text: value,
     };
   }
-
-  if (String(process.env.VERTEX_MOCK || '').trim() === '1') {
-    const preview = promptText || 'No prompt provided.';
-    return {
-      provider: 'mock' as const,
-      model: 'vertex-coach-mock',
-      result: toCustomPromptCoachResult(`Custom prompt feedback: ${preview}`, false),
-    };
-  }
-
-  const firstPrompt = buildCustomPromptFeedbackPrompt(params, false);
-  const firstResponse = await callCustomPromptModel({
-    prompt: firstPrompt,
-    promptText,
-    sharedText: String(params.docBText || ''),
-    userConfidentialText: String(params.docAText || ''),
-    selectionText,
-    strictMode: false,
-    canaryTokens,
-  });
-  const firstText = asText(firstResponse.text);
-  if (!containsCanaryTokenInText(firstText, canaryTokens)) {
-    return {
-      provider: firstResponse.provider,
-      model: firstResponse.model,
-      result: toCustomPromptCoachResult(firstText || CUSTOM_PROMPT_SAFE_FALLBACK, false),
-    };
-  }
-
-  const retryPrompt = buildCustomPromptFeedbackPrompt(params, true);
-  const retryResponse = await callCustomPromptModel({
-    prompt: retryPrompt,
-    promptText,
-    sharedText: String(params.docBText || ''),
-    userConfidentialText: String(params.docAText || ''),
-    selectionText,
-    strictMode: true,
-    canaryTokens,
-  });
-  const retryText = asText(retryResponse.text);
-  if (!containsCanaryTokenInText(retryText, canaryTokens)) {
-    return {
-      provider: retryResponse.provider,
-      model: retryResponse.model,
-      result: toCustomPromptCoachResult(retryText || CUSTOM_PROMPT_SAFE_FALLBACK, false),
-    };
-  }
-
   return {
-    provider: retryResponse.provider,
-    model: retryResponse.model,
-    result: toCustomPromptCoachResult(CUSTOM_PROMPT_SAFE_FALLBACK, true),
+    provider: value?.provider || fallback.provider,
+    model: asText(value?.model) || fallback.model,
+    text: asText(value?.text) || fallback.text,
   };
 }
 
-async function callVertexCoach(prompt: string, preferredModel = '') {
+async function callOpenAICoach(params: {
+  prompt: string;
+  preferredModel?: string;
+  maxOutputTokens?: number;
+  responseFormat?: 'json' | 'text';
+  purpose?: 'coach_structured' | 'coach_custom';
+}): Promise<CoachModelCallResponse> {
+  const model = asText(params.preferredModel) || resolveStep2CoachModel();
+  const fallback: CoachModelCallResponse = {
+    provider: 'openai',
+    model,
+    text: '',
+  };
+  const testOverride = globalThis.__PREMARKET_TEST_OPENAI_COACH_CALL__;
+  if (typeof testOverride === 'function') {
+    const overrideResult = await testOverride({
+      prompt: params.prompt,
+      preferredModel: model,
+      maxOutputTokens: params.maxOutputTokens,
+      responseFormat: params.responseFormat || 'json',
+      purpose: params.purpose || 'coach_structured',
+    });
+    return normalizeCoachModelOverrideResult(overrideResult, fallback);
+  }
+
+  const apiKey = asText(process.env.OPENAI_API_KEY);
+  if (!apiKey) {
+    throw new ApiError(
+      501,
+      'not_configured',
+      'OPENAI_API_KEY is required for Step 2 AI suggestions.',
+      {
+        provider: 'openai',
+        model,
+      },
+    );
+  }
+
+  const client = new OpenAI({
+    apiKey,
+    timeout: 45_000,
+    maxRetries: 0,
+  });
+  try {
+    const textConfig =
+      params.responseFormat === 'text'
+        ? { verbosity: 'medium' }
+        : { format: { type: 'json_object' }, verbosity: 'medium' };
+    const response = await client.responses.create({
+      model: model as any,
+      input: params.prompt,
+      max_output_tokens: params.maxOutputTokens ?? 5000,
+      store: false,
+      text: textConfig,
+    } as any, {
+      timeout: 45_000,
+      maxRetries: 0,
+    });
+    return {
+      provider: 'openai',
+      model,
+      text: extractOpenAIResponseText(response),
+    };
+  } catch (error: any) {
+    const upstreamStatus = Number(error?.status || error?.statusCode || 0);
+    const upstreamCode = asText(error?.code || error?.error?.code);
+    const upstreamMessage =
+      asText(error?.message) ||
+      asText(error?.error?.message) ||
+      'OpenAI Step 2 suggestion request failed';
+    throw new ApiError(502, 'openai_request_failed', 'OpenAI Step 2 suggestion request failed', {
+      provider: 'openai',
+      model,
+      upstreamStatus: upstreamStatus || null,
+      upstreamCode: upstreamCode || null,
+      upstreamMessage: upstreamMessage.slice(0, 400),
+    });
+  }
+}
+
+async function callVertexCoach(prompt: string, preferredModel = ''): Promise<CoachModelCallResponse> {
   const vertex = getVertexConfig();
   if (!vertex.ready || !vertex.credentials) {
     const config = getVertexNotConfiguredError();
@@ -700,7 +816,7 @@ async function callVertexCoach(prompt: string, preferredModel = '') {
   const location = asText(process.env.GCP_LOCATION) || vertex.location;
   const preferred =
     asText(preferredModel) || asText(process.env.VERTEX_COACH_MODEL) || asText(process.env.VERTEX_MODEL) || vertex.model;
-  const modelCandidates = [preferred, 'gemini-2.5-flash', 'gemini-2.5-flash', 'gemini-2.5-flash']
+  const modelCandidates = [preferred, 'gemini-2.5-flash']
     .map((value) => asText(value))
     .filter(Boolean)
     .filter((value, index, values) => values.indexOf(value) === index);
@@ -737,9 +853,9 @@ async function callVertexCoach(prompt: string, preferredModel = '') {
     if (response.ok) {
       const payload = await response.json().catch(() => ({}));
       return {
-        provider: 'vertex' as const,
+        provider: 'vertex',
         model,
-        text: extractModelText(payload),
+        text: extractVertexModelText(payload),
       };
     }
 
@@ -763,6 +879,104 @@ async function callVertexCoach(prompt: string, preferredModel = '') {
     upstreamMessage: lastMessage || 'No accessible Vertex model found for this project',
     triedModels: modelCandidates,
   });
+}
+
+async function callStructuredCoachModel(
+  prompt: string,
+  providerProfile: CoachProviderProfile = 'step2_openai',
+): Promise<CoachModelCallResponse> {
+  if (providerProfile === 'legacy_vertex') {
+    return callVertexCoach(prompt, process.env.VERTEX_COACH_MODEL || process.env.VERTEX_MODEL || '');
+  }
+
+  return callOpenAICoach({
+    prompt,
+    preferredModel: resolveStep2CoachModel(),
+    responseFormat: 'json',
+    purpose: 'coach_structured',
+  });
+}
+
+async function callCustomPromptModel(input: CustomPromptModelCallInput) {
+  if (input.providerProfile === 'legacy_vertex') {
+    return callVertexCoach(input.prompt, process.env.VERTEX_COACH_MODEL || process.env.VERTEX_MODEL || '');
+  }
+
+  return callOpenAICoach({
+    prompt: input.prompt,
+    preferredModel: resolveStep2CoachModel(),
+    responseFormat: 'text',
+    purpose: 'coach_custom',
+  });
+}
+
+async function generateCustomPromptFeedback(params: GenerateCoachParams) {
+  const promptText = asText(params.promptText).slice(0, MAX_CUSTOM_PROMPT_CHARS);
+  const selectionText = asText(params.selectionText);
+  const canaryTokens = normalizeCanaryTokens(params.otherPartyCanaryTokens);
+  const mockFeedback = asText(process.env.VERTEX_COACH_CUSTOM_PROMPT_MOCK_RESPONSE);
+  if (mockFeedback) {
+    return {
+      provider: 'mock' as const,
+      model: 'vertex-coach-custom-mock',
+      result: toCustomPromptCoachResult(mockFeedback, false),
+    };
+  }
+
+  if (String(process.env.VERTEX_MOCK || '').trim() === '1') {
+    const preview = promptText || 'No prompt provided.';
+    return {
+      provider: 'mock' as const,
+      model: 'vertex-coach-mock',
+      result: toCustomPromptCoachResult(`Custom prompt feedback: ${preview}`, false),
+    };
+  }
+
+  const firstPrompt = buildCustomPromptFeedbackPrompt(params, false);
+  const firstResponse = await callCustomPromptModel({
+    prompt: firstPrompt,
+    promptText,
+    sharedText: String(params.docBText || ''),
+    userConfidentialText: String(params.docAText || ''),
+    selectionText,
+    strictMode: false,
+    canaryTokens,
+    providerProfile: params.providerProfile,
+  });
+  const firstText = asText(firstResponse.text);
+  if (!containsCanaryTokenInText(firstText, canaryTokens)) {
+    return {
+      provider: firstResponse.provider,
+      model: firstResponse.model,
+      result: toCustomPromptCoachResult(firstText || CUSTOM_PROMPT_SAFE_FALLBACK, false),
+    };
+  }
+
+  const retryPrompt = buildCustomPromptFeedbackPrompt(params, true);
+  const retryResponse = await callCustomPromptModel({
+    prompt: retryPrompt,
+    promptText,
+    sharedText: String(params.docBText || ''),
+    userConfidentialText: String(params.docAText || ''),
+    selectionText,
+    strictMode: true,
+    canaryTokens,
+    providerProfile: params.providerProfile,
+  });
+  const retryText = asText(retryResponse.text);
+  if (!containsCanaryTokenInText(retryText, canaryTokens)) {
+    return {
+      provider: retryResponse.provider,
+      model: retryResponse.model,
+      result: toCustomPromptCoachResult(retryText || CUSTOM_PROMPT_SAFE_FALLBACK, false),
+    };
+  }
+
+  return {
+    provider: retryResponse.provider,
+    model: retryResponse.model,
+    result: toCustomPromptCoachResult(CUSTOM_PROMPT_SAFE_FALLBACK, true),
+  };
 }
 
 export function validateCoachResultV1(raw: unknown): CoachResultV1 {
@@ -910,6 +1124,8 @@ export function enforceCoachIntentShape(params: {
     concerns = [];
     questions = [];
     negotiationMoves = [];
+  } else if (intent === 'draft_response') {
+    negotiationMoves = negotiationMoves.slice(0, 3);
   } else if (intent === 'negotiate') {
     suggestions = suggestions.map((suggestion) => ({
       ...suggestion,
@@ -930,6 +1146,20 @@ export function enforceCoachIntentShape(params: {
           'No concrete risk concerns were returned. Manually verify legal, security, timeline, and scope risks before sharing.',
       });
     }
+  } else if (intent === 'clarifying_questions') {
+    suggestions = suggestions.slice(0, 3);
+    negotiationMoves = [];
+    if (!questions.length) {
+      questions.push({
+        id: 'clarifying_question_follow_up',
+        to: 'counterparty',
+        text: 'Which unresolved terms or assumptions should be confirmed before the next response?',
+        why: 'The model did not return concrete questions, so this flags the need to clarify open issues before committing.',
+      });
+    }
+  } else if (intent === 'company_context') {
+    suggestions = [];
+    negotiationMoves = negotiationMoves.slice(0, 3);
   } else if (intent === 'rewrite_selection') {
     const expectedScope = selectionTarget === 'doc_a' ? 'confidential' : 'shared';
     const rewriteSuggestion = suggestions.find(
@@ -1398,6 +1628,35 @@ function buildMockCoachResult(params: GenerateCoachParams): CoachResultV1 {
     };
   }
 
+  if (params.intent === 'draft_response') {
+    return {
+      version: COACH_PROMPT_VERSION,
+      summary: {
+        overall:
+          'Thanks for the latest round. We are aligned on the main commercial direction, but we need to clarify scope boundaries, acceptance timing, and implementation responsibilities before confirming. Could you confirm the required handoff milestones and which items are firm versus negotiable? Once those points are clear, we can respond with a narrower counterproposal and next-step timeline.',
+        top_priorities: ['Acknowledge alignment', 'Clarify open issues', 'Avoid overcommitting'],
+      },
+      suggestions: [],
+      concerns: [
+        {
+          id: 'draft_response_open_issues',
+          severity: 'warning',
+          title: 'Response should preserve flexibility',
+          details: 'The draft should acknowledge progress without accepting undefined terms.',
+        },
+      ],
+      questions: [
+        {
+          id: 'draft_response_scope_question',
+          to: 'counterparty',
+          text: 'Which scope items are mandatory versus optional for the next round?',
+          why: 'This prevents the response from accepting obligations that are still undefined.',
+        },
+      ],
+      negotiation_moves: [],
+    };
+  }
+
   if (params.intent === 'risks') {
     return {
       version: COACH_PROMPT_VERSION,
@@ -1439,6 +1698,68 @@ function buildMockCoachResult(params: GenerateCoachParams): CoachResultV1 {
         },
       ],
       questions: [],
+      negotiation_moves: [],
+    };
+  }
+
+  if (params.intent === 'clarifying_questions') {
+    return {
+      version: COACH_PROMPT_VERSION,
+      summary: {
+        overall:
+          'Prioritized questions: 1. Which deliverables are required for acceptance, and why: this defines completion. 2. Who owns implementation handoffs, and why: this avoids operational gaps. 3. What commercial terms are flexible, and why: this guides the next counter.',
+        top_priorities: ['Acceptance criteria', 'Implementation ownership', 'Commercial flexibility'],
+      },
+      suggestions: [],
+      concerns: [],
+      questions: [
+        {
+          id: 'clarify_acceptance',
+          to: 'counterparty',
+          text: 'Which deliverables must be completed before acceptance is triggered?',
+          why: 'Clear acceptance criteria reduce delivery and payment disputes.',
+        },
+        {
+          id: 'clarify_ownership',
+          to: 'counterparty',
+          text: 'Who owns implementation handoffs and ongoing support after launch?',
+          why: 'Ownership gaps can create operational risk after agreement.',
+        },
+      ],
+      negotiation_moves: [],
+    };
+  }
+
+  if (params.intent === 'company_context') {
+    const company = asText(params.companyName) || 'the counterparty';
+    const hasCompanyDetails = Boolean(asText(params.companyName) || asText(params.companyWebsite));
+    return {
+      version: COACH_PROMPT_VERSION,
+      summary: {
+        overall: hasCompanyDetails
+          ? `Known company context for ${company}: use the provided company details and shared round text to assess negotiation fit. Treat any missing market, size, funding, or customer information as unknown until the user provides it. Negotiation implication: confirm buyer profile, implementation capacity, and decision process before relying on company assumptions.`
+          : 'Company context is limited. Provide the company name, website, business model, decision-maker role, and any known constraints before relying on counterparty-specific assumptions.',
+        top_priorities: ['Separate known facts from assumptions', 'Ask for missing company details'],
+      },
+      suggestions: [],
+      concerns: [
+        {
+          id: 'company_context_gap',
+          severity: 'warning',
+          title: 'Company context may be incomplete',
+          details: hasCompanyDetails
+            ? 'Only provided company details are available; do not infer public facts without evidence.'
+            : 'Company name and website are missing, limiting context-specific advice.',
+        },
+      ],
+      questions: [
+        {
+          id: 'company_context_missing_info',
+          to: 'self',
+          text: 'What confirmed company details should be considered before responding?',
+          why: 'Confirmed facts help avoid negotiation advice based on unsupported assumptions.',
+        },
+      ],
       negotiation_moves: [],
     };
   }
@@ -1640,7 +1961,7 @@ export function buildSelectionTextHash(selectionText: string) {
 
 export async function generateDocumentComparisonCoach(params: GenerateCoachParams) {
   // Sanitize all user-supplied text at entry to prevent null bytes and control
-  // characters from reaching the Vertex API or confusing the model.
+  // characters from reaching the model provider or confusing the model.
   // This does NOT change evaluation logic, intent, or downstream behavior.
   const sanitizedParams: GenerateCoachParams = {
     ...params,
@@ -1697,10 +2018,10 @@ export async function generateDocumentComparisonCoach(params: GenerateCoachParam
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const prompt = attempt === 0 ? basePrompt : buildCoachCorrectionPrompt(basePrompt, latestText);
-    const vertex = await callVertexCoach(prompt, process.env.VERTEX_COACH_MODEL || process.env.VERTEX_MODEL || '');
-    latestText = vertex.text;
-    latestModel = vertex.model;
-    const parsed = parseModelJson(vertex.text);
+    const modelResponse = await callStructuredCoachModel(prompt, p.providerProfile);
+    latestText = modelResponse.text;
+    latestModel = modelResponse.model;
+    const parsed = parseModelJson(modelResponse.text);
     if (!parsed) {
       continue;
     }
@@ -1714,8 +2035,8 @@ export async function generateDocumentComparisonCoach(params: GenerateCoachParam
         selectionText: p.selectionText,
       });
       return {
-        provider: vertex.provider,
-        model: vertex.model,
+        provider: modelResponse.provider,
+        model: modelResponse.model,
         result: normalized,
       };
     } catch (error) {

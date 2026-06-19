@@ -56,7 +56,6 @@ export default function SuggestionCoachPanel({
   companyContextWebsite = '',
   customPromptText = '',
   deletingThreadId = null,
-  disableCompanyBrief = false,
   disableCustomPrompt = false,
   disableSuggestedPrompts = false,
   expandedSuggestionIds = [],
@@ -83,7 +82,6 @@ export default function SuggestionCoachPanel({
   onDismissSuggestion = () => {},
   onOpenCoachSuggestionReview = () => {},
   onRetryCompanyContextSave = null,
-  onRunCompanyBrief = () => {},
   onRunCustomPrompt = () => {},
   onRunSuggestedPrompt = () => {},
   onSelectThread = () => {},
@@ -124,7 +122,7 @@ export default function SuggestionCoachPanel({
             {coachCached ? <Badge variant="outline">Cached</Badge> : null}
           </CardTitle>
           <CardDescription>
-            Generate suggestions only when you click an action. No background requests.
+            Ask AI for help drafting a response, assessing risks, or planning your negotiation. Suggestions only run when you click an action.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -341,18 +339,6 @@ export default function SuggestionCoachPanel({
                       ) : null}
                     </div>
                   ) : null}
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="w-full mt-1"
-                    disabled={coachLoading || coachNotConfigured || disableCompanyBrief}
-                    onClick={onRunCompanyBrief}
-                    data-testid="coach-company-brief-action"
-                  >
-                    {coachLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
-                    Generate Company Brief
-                  </Button>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <p className="w-full text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">Suggested Prompts</p>
@@ -378,14 +364,14 @@ export default function SuggestionCoachPanel({
                   <Label htmlFor="coach-custom-prompt-input" className="text-xs font-semibold uppercase tracking-wide text-slate-600">
                     Custom prompt
                   </Label>
-                  <p className="text-xs text-slate-500">Ask for feedback, risks, gaps, strategy...</p>
+                  <p className="text-xs text-slate-500">Ask for a response draft, counterproposal, risks, gaps, strategy, or company context...</p>
                 </div>
                 <Textarea
                   id="coach-custom-prompt-input"
                   data-testid="coach-custom-prompt-input"
                   rows={5}
                   className="min-h-[140px] w-full resize-y bg-white"
-                  placeholder="Ask for feedback, risks, gaps, strategy..."
+                  placeholder="Ask for a response draft, counterproposal, risks, gaps, strategy, or company context..."
                   value={customPromptText}
                   onChange={(event) => onCustomPromptTextChange(event.target.value)}
                   onKeyDown={onCustomPromptKeyDown}
@@ -415,7 +401,7 @@ export default function SuggestionCoachPanel({
             <Alert className="bg-amber-50 border-amber-200">
               <AlertTriangle className="h-4 w-4 text-amber-700" />
               <AlertDescription className="text-amber-800">
-                AI suggestions are unavailable because Vertex AI is not configured.
+                AI suggestions are unavailable because OpenAI is not configured.
               </AlertDescription>
             </Alert>
           ) : null}

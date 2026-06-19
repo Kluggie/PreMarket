@@ -115,13 +115,15 @@ const E2E_AUTOSAVE_MIN_MS = 250;
 const HISTORY_SHARED_DOC_ID_PREFIX = 'shared-history-';
 const HISTORY_CONFIDENTIAL_DOC_ID_PREFIX = 'history-confidential-';
 const COACH_INTENT_LABELS = {
+  draft_response: 'Draft Response',
   improve_shared: 'Improve shared writing',
   negotiate: 'Negotiation strategy',
   risks: 'Risks & Gaps',
+  clarifying_questions: 'Clarifying Questions',
+  company_context: 'Company Context',
   rewrite_selection: 'Rewrite selection',
   general: 'General improvements',
   custom_prompt: 'Custom prompt',
-  company_brief: 'Company Brief',
 };
 
 function asText(value) {
@@ -1991,7 +1993,7 @@ export default function SharedReport() {
   const runCoach = async ({
     action = '',
     mode = 'full',
-    intent = 'general',
+    intent = 'draft_response',
     promptText = '',
     selectionText = '',
     selectionTarget = null,
@@ -2112,7 +2114,7 @@ export default function SharedReport() {
       const status = Number(error?.status || 0);
       const code = asText(error?.body?.error?.code || error?.body?.code || error?.code);
       if (status === 501 || code === 'not_configured') {
-        const message = 'AI suggestions are unavailable because Vertex AI is not configured.';
+        const message = 'AI suggestions are unavailable because OpenAI is not configured.';
         setCoachResult(null);
         setCoachResultHash('');
         setCoachCached(false);
@@ -2217,7 +2219,7 @@ export default function SharedReport() {
       }
       if (status === 501 || code === 'not_configured') {
         setCoachNotConfigured(true);
-        setCoachError('AI suggestions are unavailable because Vertex AI is not configured.');
+        setCoachError('AI suggestions are unavailable because OpenAI is not configured.');
         toast.error('AI is not configured.');
         return null;
       }
@@ -2934,7 +2936,6 @@ export default function SharedReport() {
         setCompanyContextSaveError('');
         saveDraftMutation.mutate({ stepToSave: 2, silent: true });
       }}
-      onRunCompanyBrief={runCompanyBrief}
       onRunCustomPrompt={runCustomPromptCoach}
       onRunSuggestedPrompt={(option) => {
         const request = buildCoachActionRequest(option, selectionContext);

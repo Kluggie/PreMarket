@@ -1714,15 +1714,13 @@ if (!hasDatabaseUrl()) {
       'recipient@example.com',
     );
 
-    const originalVertexMock = process.env.VERTEX_MOCK;
-    const originalOverride = globalThis.__PREMARKET_TEST_VERTEX_CUSTOM_COACH_CALL__;
+    const originalOverride = globalThis.__PREMARKET_TEST_OPENAI_COACH_CALL__;
     const capturedCalls = [];
-    process.env.VERTEX_MOCK = '0';
-    globalThis.__PREMARKET_TEST_VERTEX_CUSTOM_COACH_CALL__ = async (input) => {
+    globalThis.__PREMARKET_TEST_OPENAI_COACH_CALL__ = async (input) => {
       capturedCalls.push(input);
       return {
-        provider: 'mock',
-        model: 'shared-report-thread-history-test',
+        provider: 'openai',
+        model: 'gpt-5.4',
         text: 'Thread-aware custom prompt feedback.',
       };
     };
@@ -1741,6 +1739,8 @@ if (!hasDatabaseUrl()) {
 
       assert.equal(coachRes.statusCode, 200);
       assert.equal(capturedCalls.length, 1);
+      assert.equal(capturedCalls[0]?.preferredModel, 'gpt-5.4');
+      assert.equal(capturedCalls[0]?.purpose, 'coach_custom');
 
       const modelPrompt = String(capturedCalls[0]?.prompt || '');
       assert.equal(modelPrompt.includes('Prior conversation in this session'), true);
@@ -1757,15 +1757,9 @@ if (!hasDatabaseUrl()) {
       );
     } finally {
       if (originalOverride === undefined) {
-        delete globalThis.__PREMARKET_TEST_VERTEX_CUSTOM_COACH_CALL__;
+        delete globalThis.__PREMARKET_TEST_OPENAI_COACH_CALL__;
       } else {
-        globalThis.__PREMARKET_TEST_VERTEX_CUSTOM_COACH_CALL__ = originalOverride;
-      }
-
-      if (originalVertexMock === undefined) {
-        delete process.env.VERTEX_MOCK;
-      } else {
-        process.env.VERTEX_MOCK = originalVertexMock;
+        globalThis.__PREMARKET_TEST_OPENAI_COACH_CALL__ = originalOverride;
       }
     }
   });

@@ -8,6 +8,7 @@ import {
   buildCoachCacheHash,
   COACH_PROMPT_VERSION,
   generateDocumentComparisonCoach,
+  resolveStep2CoachProviderModel,
 } from '../../../_lib/vertex-coach.js';
 import { assertDocumentComparisonWithinLimits } from '../../document-comparisons/_limits.js';
 import {
@@ -18,8 +19,11 @@ import {
 const ALLOWED_MODES = new Set(['full', 'shared_only', 'selection']);
 const ALLOWED_INTENTS = new Set([
   'improve_shared',
+  'draft_response',
   'negotiate',
   'risks',
+  'clarifying_questions',
+  'company_context',
   'rewrite_selection',
   'general',
   'custom_prompt',
@@ -45,19 +49,22 @@ function parseMode(value: unknown) {
 function parseIntent(value: unknown) {
   const intent = asText(value).toLowerCase();
   if (!intent) {
-    return 'general';
+    return 'draft_response';
   }
   if (!ALLOWED_INTENTS.has(intent)) {
     throw new ApiError(
       400,
       'invalid_input',
-      'intent must be one of: improve_shared, negotiate, risks, rewrite_selection, general, custom_prompt',
+      'intent must be one of: improve_shared, draft_response, negotiate, risks, clarifying_questions, company_context, rewrite_selection, general, custom_prompt',
     );
   }
   return intent as
     | 'improve_shared'
+    | 'draft_response'
     | 'negotiate'
     | 'risks'
+    | 'clarifying_questions'
+    | 'company_context'
     | 'rewrite_selection'
     | 'general'
     | 'custom_prompt';
@@ -75,7 +82,16 @@ function parseSelectionTarget(value: unknown) {
 }
 
 function validateIntentMode(params: {
-  intent: 'improve_shared' | 'negotiate' | 'risks' | 'rewrite_selection' | 'general' | 'custom_prompt';
+  intent:
+    | 'improve_shared'
+    | 'draft_response'
+    | 'negotiate'
+    | 'risks'
+    | 'clarifying_questions'
+    | 'company_context'
+    | 'rewrite_selection'
+    | 'general'
+    | 'custom_prompt';
   mode: 'full' | 'shared_only' | 'selection';
   selectionText: string;
   selectionTarget: 'confidential' | 'shared' | null;
@@ -104,7 +120,17 @@ function validateIntentMode(params: {
     throw new ApiError(400, 'invalid_input', 'mode=selection is only supported for rewrite_selection');
   }
 
-  if ((intent === 'negotiate' || intent === 'risks' || intent === 'general') && mode !== 'full') {
+  if (
+    (
+      intent === 'draft_response' ||
+      intent === 'negotiate' ||
+      intent === 'risks' ||
+      intent === 'clarifying_questions' ||
+      intent === 'company_context' ||
+      intent === 'general'
+    ) &&
+    mode !== 'full'
+  ) {
     throw new ApiError(400, 'invalid_input', `${intent} requires mode=full`);
   }
 
@@ -155,10 +181,11 @@ export default async function handler(req: any, res: any) {
       docBText: previewInput.docBText,
     });
 
+    const step2ProviderModel = resolveStep2CoachProviderModel();
     const cacheHash = buildCoachCacheHash({
       docAText: previewInput.docAText,
       docBText: previewInput.docBText,
-      model: String(process.env.VERTEX_COACH_MODEL || process.env.VERTEX_MODEL || '').trim(),
+      model: `${step2ProviderModel.provider}:${step2ProviderModel.model}`,
       mode,
       intent,
       selectionTarget: selectionTarget || undefined,
@@ -182,6 +209,7 @@ export default async function handler(req: any, res: any) {
       companyWebsite: previewInput.companyWebsite,
       threadHistory: threadHistory.length > 0 ? threadHistory : undefined,
       otherPartyCanaryTokens: [],
+      providerProfile: 'step2_openai',
     });
     const relevanceGuarded = applyCoachRelevanceGuard({
       coachResult: generated.result,

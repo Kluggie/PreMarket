@@ -618,6 +618,7 @@ async function regenerateEvaluationSection(params: {
     companyName: params.companyName,
     companyWebsite: params.companyWebsite,
     otherPartyCanaryTokens: params.counterpartyCanaryTokens,
+    providerProfile: 'legacy_vertex',
   });
 
   return asText(

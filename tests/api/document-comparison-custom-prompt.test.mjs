@@ -46,15 +46,13 @@ if (!hasDatabaseUrl()) {
       },
     });
 
-    const originalVertexMock = process.env.VERTEX_MOCK;
-    const originalOverride = globalThis.__PREMARKET_TEST_VERTEX_CUSTOM_COACH_CALL__;
-    process.env.VERTEX_MOCK = '0';
+    const originalOverride = globalThis.__PREMARKET_TEST_OPENAI_COACH_CALL__;
     const capturedCalls = [];
-    globalThis.__PREMARKET_TEST_VERTEX_CUSTOM_COACH_CALL__ = async (input) => {
+    globalThis.__PREMARKET_TEST_OPENAI_COACH_CALL__ = async (input) => {
       capturedCalls.push(input);
       return {
-        provider: 'mock',
-        model: 'custom-prompt-test-model',
+        provider: 'openai',
+        model: 'gpt-5.4',
         text: 'Safe custom prompt feedback.',
       };
     };
@@ -79,6 +77,8 @@ if (!hasDatabaseUrl()) {
 
       assert.equal(res.statusCode, 200);
       assert.equal(capturedCalls.length, 1);
+      assert.equal(capturedCalls[0]?.preferredModel, 'gpt-5.4');
+      assert.equal(capturedCalls[0]?.purpose, 'coach_custom');
 
       const modelPrompt = String(capturedCalls[0]?.prompt || '');
       assert.equal(modelPrompt.includes('Owner confidential budget threshold is 42.'), true);
@@ -94,15 +94,9 @@ if (!hasDatabaseUrl()) {
       assert.equal(String(res.jsonBody().coach.custom_feedback || '').length > 0, true);
     } finally {
       if (originalOverride === undefined) {
-        delete globalThis.__PREMARKET_TEST_VERTEX_CUSTOM_COACH_CALL__;
+        delete globalThis.__PREMARKET_TEST_OPENAI_COACH_CALL__;
       } else {
-        globalThis.__PREMARKET_TEST_VERTEX_CUSTOM_COACH_CALL__ = originalOverride;
-      }
-
-      if (originalVertexMock === undefined) {
-        delete process.env.VERTEX_MOCK;
-      } else {
-        process.env.VERTEX_MOCK = originalVertexMock;
+        globalThis.__PREMARKET_TEST_OPENAI_COACH_CALL__ = originalOverride;
       }
     }
   });
@@ -119,15 +113,13 @@ if (!hasDatabaseUrl()) {
       },
     });
 
-    const originalVertexMock = process.env.VERTEX_MOCK;
-    const originalOverride = globalThis.__PREMARKET_TEST_VERTEX_CUSTOM_COACH_CALL__;
-    process.env.VERTEX_MOCK = '0';
+    const originalOverride = globalThis.__PREMARKET_TEST_OPENAI_COACH_CALL__;
     const strictModes = [];
-    globalThis.__PREMARKET_TEST_VERTEX_CUSTOM_COACH_CALL__ = async (input) => {
-      strictModes.push(Boolean(input?.strictMode));
+    globalThis.__PREMARKET_TEST_OPENAI_COACH_CALL__ = async (input) => {
+      strictModes.push(String(input?.prompt || '').includes('Strict safety reminder:'));
       return {
-        provider: 'mock',
-        model: 'custom-prompt-test-model',
+        provider: 'openai',
+        model: 'gpt-5.4',
         text: `Leaked output includes ${canaryToken}.`,
       };
     };
@@ -161,15 +153,9 @@ if (!hasDatabaseUrl()) {
       );
     } finally {
       if (originalOverride === undefined) {
-        delete globalThis.__PREMARKET_TEST_VERTEX_CUSTOM_COACH_CALL__;
+        delete globalThis.__PREMARKET_TEST_OPENAI_COACH_CALL__;
       } else {
-        globalThis.__PREMARKET_TEST_VERTEX_CUSTOM_COACH_CALL__ = originalOverride;
-      }
-
-      if (originalVertexMock === undefined) {
-        delete process.env.VERTEX_MOCK;
-      } else {
-        process.env.VERTEX_MOCK = originalVertexMock;
+        globalThis.__PREMARKET_TEST_OPENAI_COACH_CALL__ = originalOverride;
       }
     }
   });

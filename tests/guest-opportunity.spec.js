@@ -229,13 +229,22 @@ test('guest Step 2 AI assistance uses the public preview path, applies suggestio
   await expect(page.getByTestId('coach-custom-prompt-panel')).toBeVisible({
     timeout: LOAD_TIMEOUT_MS,
   });
+  await expect(page.getByRole('button', { name: 'Draft Response' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Negotiation Strategy' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Risks & Gaps' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Clarifying Questions' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Company Context' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'General Improvements' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Company Brief' })).toHaveCount(0);
+  expect(guestCoachCalls).toBe(0);
 
   await typeInEditor(
     page,
     '[data-testid="doc-b-editor"]',
     'Shared implementation scope currently has no fallback for a delayed delivery.',
   );
-  await page.getByRole('button', { name: 'General Improvements' }).click();
+  expect(guestCoachCalls).toBe(0);
+  await page.getByRole('button', { name: 'Risks & Gaps' }).click();
 
   await expect.poll(() => guestCoachCalls, { timeout: LOAD_TIMEOUT_MS }).toBe(1);
   await expect(page.getByTestId('coach-response-feedback')).toContainText('Suggested update ready.', {

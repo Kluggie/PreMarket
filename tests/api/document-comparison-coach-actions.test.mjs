@@ -6,16 +6,26 @@ import {
   DOCUMENT_COMPARISON_COACH_ACTIONS,
 } from '../../src/components/document-comparison/coachActions.js';
 
-test('coach actions expose distinct intent/mode combinations including general improvements', () => {
+test('coach actions expose the final neutral Step 2 prompt set in order', () => {
   assert.equal(Array.isArray(DOCUMENT_COMPARISON_COACH_ACTIONS), true);
-  assert.equal(DOCUMENT_COMPARISON_COACH_ACTIONS.length, 3);
+  assert.equal(DOCUMENT_COMPARISON_COACH_ACTIONS.length, 5);
 
-  const pairs = DOCUMENT_COMPARISON_COACH_ACTIONS.map((action) => `${action.intent}:${action.mode}`);
-  assert.deepEqual(pairs.sort(), [
-    'general:full',
+  assert.deepEqual(DOCUMENT_COMPARISON_COACH_ACTIONS.map((action) => action.label), [
+    'Draft Response',
+    'Negotiation Strategy',
+    'Risks & Gaps',
+    'Clarifying Questions',
+    'Company Context',
+  ]);
+  assert.deepEqual(DOCUMENT_COMPARISON_COACH_ACTIONS.map((action) => `${action.intent}:${action.mode}`), [
+    'draft_response:full',
     'negotiate:full',
     'risks:full',
+    'clarifying_questions:full',
+    'company_context:full',
   ]);
+  assert.equal(DOCUMENT_COMPARISON_COACH_ACTIONS.some((action) => action.label === 'General Improvements'), false);
+  assert.equal(DOCUMENT_COMPARISON_COACH_ACTIONS.some((action) => action.label === 'Company Brief'), false);
 });
 
 test('rewrite selection gating requires non-empty selection text and valid range', () => {

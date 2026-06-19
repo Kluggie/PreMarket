@@ -55,3 +55,40 @@ test('risks prompt includes ranked-risk structure and mitigation framing', () =>
   assert.match(prompt, /Risk level: Medium/);
   assert.match(prompt, /Risk level: Low/);
 });
+
+test('draft_response prompt asks for a sendable response across round types', () => {
+  const prompt = buildCoachPrompt({
+    ...BASE_PROMPT_PARAMS,
+    intent: 'draft_response',
+  });
+
+  assert.match(prompt, /Help the user draft a practical response to the current shared round/);
+  assert.match(prompt, /original proposal, reply, counterproposal, or later negotiation update/);
+  assert.match(prompt, /summary\.overall MUST be markdown containing a concise response/);
+  assert.match(prompt, /Acknowledge areas of agreement/);
+  assert.match(prompt, /Raise unresolved issues without overcommitting/);
+});
+
+test('clarifying_questions prompt asks for prioritized questions with reasons', () => {
+  const prompt = buildCoachPrompt({
+    ...BASE_PROMPT_PARAMS,
+    intent: 'clarifying_questions',
+  });
+
+  assert.match(prompt, /Generate questions the user should ask before responding/);
+  assert.match(prompt, /short prioritized list of practical questions/);
+  assert.match(prompt, /Each question must include a short note explaining why it matters/);
+  assert.match(prompt, /Populate the questions array/);
+});
+
+test('company_context prompt forbids hallucinated company facts', () => {
+  const prompt = buildCoachPrompt({
+    ...BASE_PROMPT_PARAMS,
+    intent: 'company_context',
+  });
+
+  assert.match(prompt, /Help the user understand relevant company or counterparty context/);
+  assert.match(prompt, /Do not hallucinate company facts/);
+  assert.match(prompt, /If there is not enough company information/);
+  assert.match(prompt, /Distinguish known facts from assumptions/);
+});

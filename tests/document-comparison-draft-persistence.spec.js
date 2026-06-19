@@ -524,7 +524,7 @@ test.describe('Document Comparison Draft Persistence', () => {
     expect(coachRequests[1]?.promptText).toBe('Run from keyboard');
   });
 
-  test('inline company context validates Company Brief and persists via PATCH', async ({ page }) => {
+  test('inline company context persists and feeds Company Context suggestions', async ({ page }) => {
     await authenticate(page, uniqueId('company_context'));
     await openStep2FromStep1(page, `Company Context ${uniqueId('title')}`);
 
@@ -572,18 +572,43 @@ test.describe('Document Comparison Draft Persistence', () => {
         }),
       });
     });
+    const coachRequests = [];
+    await page.route('**/api/document-comparisons/**/coach', async (route) => {
+      const payload = JSON.parse(route.request().postData() || '{}');
+      coachRequests.push(payload);
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          comparison_id: readDraftIdFromUrl(page.url()) || 'comparison_test',
+          cache_hash: `company_context_hash_${coachRequests.length}`,
+          cached: false,
+          provider: 'openai',
+          model: 'gpt-5.4',
+          prompt_version: 'coach-v1',
+          coach: {
+            version: 'coach-v1',
+            summary: {
+              overall: 'Company context output.',
+              top_priorities: [],
+            },
+            suggestions: [],
+            concerns: [],
+            questions: [],
+            negotiation_moves: [],
+          },
+          created_at: new Date().toISOString(),
+          withheld_count: 0,
+        }),
+      });
+    });
 
     const nameInput = page.getByTestId('company-context-name-input-inline');
     const websiteInput = page.getByTestId('company-context-website-input-inline');
 
-    await page.getByRole('button', { name: 'Company Brief' }).click();
-    await expect(page.getByTestId('company-context-validation-error')).toContainText(
-      'Company name is required for Company Brief',
-      {
-        timeout: STEP_LOAD_TIMEOUT_MS,
-      },
-    );
-    await expect(nameInput).toBeFocused();
+    await expect(page.getByRole('button', { name: 'Company Context' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Company Brief' })).toHaveCount(0);
     expect(companyBriefRequests).toHaveLength(0);
     await expect(page.getByTestId('company-context-dialog')).toHaveCount(0);
 
@@ -597,5 +622,14 @@ test.describe('Document Comparison Draft Persistence', () => {
     expect(
       companyContextRequests.some((payload) => payload?.companyName === 'Acme Industries'),
     ).toBe(true);
+
+    await page.getByRole('button', { name: 'Company Context' }).click();
+    await expect
+      .poll(() => coachRequests.length, { timeout: STEP_LOAD_TIMEOUT_MS })
+      .toBe(1);
+    expect(coachRequests[0]?.intent).toBe('company_context');
+    expect(coachRequests[0]?.company_name).toBe('Acme Industries');
+    expect(coachRequests[0]?.company_website).toBe('acme.test');
+    expect(companyBriefRequests).toHaveLength(0);
   });
 });
