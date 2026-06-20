@@ -29,7 +29,7 @@ export function generateThreadId() {
 
 // ── Title derivation ─────────────────────────────────────────────────────
 const INTENT_TITLE_MAP = {
-  draft_response: 'Draft Response',
+  draft_response: 'Draft Next Message',
   negotiate: 'Negotiation Strategy',
   risks: 'Risks & Gaps',
   clarifying_questions: 'Clarifying Questions',

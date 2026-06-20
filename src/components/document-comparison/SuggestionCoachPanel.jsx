@@ -130,7 +130,7 @@ export default function SuggestionCoachPanel({
             {coachCached ? <Badge variant="outline">Cached</Badge> : null}
           </CardTitle>
           <CardDescription>
-            Ask AI for help drafting a response, assessing risks, or planning your negotiation. Suggestions only run when you click an action.
+            Ask AI for help shaping your opportunity, response, risks, questions, or negotiation strategy. Suggestions only run when you click an action.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
   buildCoachActionRequest,
@@ -14,7 +15,7 @@ test('coach actions expose the final neutral Step 2 prompt set in order', () => 
   assert.equal(DOCUMENT_COMPARISON_COACH_ACTIONS.length, 4);
 
   assert.deepEqual(DOCUMENT_COMPARISON_COACH_ACTIONS.map((action) => action.label), [
-    'Draft Response',
+    'Draft Next Message',
     'Negotiation Strategy',
     'Risks & Gaps',
     'Clarifying Questions',
@@ -26,9 +27,21 @@ test('coach actions expose the final neutral Step 2 prompt set in order', () => 
     'clarifying_questions:full',
   ]);
   assert.equal(DOCUMENT_COMPARISON_COACH_ACTIONS.some((action) => action.label === 'Company Context'), false);
+  assert.equal(DOCUMENT_COMPARISON_COACH_ACTIONS.some((action) => action.label === 'Draft Response'), false);
   assert.equal(DOCUMENT_COMPARISON_COACH_ACTIONS.some((action) => action.label === 'General Improvements'), false);
   assert.equal(DOCUMENT_COMPARISON_COACH_ACTIONS.some((action) => action.label === 'Company Brief'), false);
   assert.equal(DOCUMENT_COMPARISON_COACH_ACTIONS.some((action) => action.label === 'Draft My Reply'), false);
+});
+
+test('Step 2 copy describes opportunity, response, risks, questions, and negotiation strategy', () => {
+  const source = readFileSync(
+    new URL('../../src/components/document-comparison/SuggestionCoachPanel.jsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(
+    source,
+    /Ask AI for help shaping your opportunity, response, risks, questions, or negotiation strategy\. Suggestions only run when you click an action\./,
+  );
 });
 
 test('Company Context is a separate company-section coach action', () => {

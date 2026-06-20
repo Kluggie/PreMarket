@@ -117,7 +117,7 @@ const E2E_AUTOSAVE_MIN_MS = 250;
 const HISTORY_SHARED_DOC_ID_PREFIX = 'shared-history-';
 const HISTORY_CONFIDENTIAL_DOC_ID_PREFIX = 'history-confidential-';
 const COACH_INTENT_LABELS = {
-  draft_response: 'Draft Response',
+  draft_response: 'Draft Next Message',
   improve_shared: 'Improve shared writing',
   negotiate: 'Negotiation strategy',
   risks: 'Risks & Gaps',

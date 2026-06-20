@@ -230,7 +230,7 @@ test('guest Step 2 AI assistance uses the public preview path, applies suggestio
     timeout: LOAD_TIMEOUT_MS,
   });
   const suggestedPrompts = page.getByTestId('step2-suggested-prompts');
-  await expect(suggestedPrompts.getByRole('button', { name: 'Draft Response' })).toBeVisible();
+  await expect(suggestedPrompts.getByRole('button', { name: 'Draft Next Message' })).toBeVisible();
   await expect(suggestedPrompts.getByRole('button', { name: 'Negotiation Strategy' })).toBeVisible();
   await expect(suggestedPrompts.getByRole('button', { name: 'Risks & Gaps' })).toBeVisible();
   await expect(suggestedPrompts.getByRole('button', { name: 'Clarifying Questions' })).toBeVisible();

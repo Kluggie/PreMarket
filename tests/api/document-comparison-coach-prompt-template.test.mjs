@@ -40,7 +40,7 @@ test('negotiate prompt includes consultant constraints and required sections', (
   assert.doesNotMatch(prompt, /Website Evidence:/);
 });
 
-test('risks prompt includes ranked-risk structure and mitigation framing', () => {
+test('risks prompt includes ranked-risk structure and next-message mitigation framing', () => {
   const prompt = buildCoachPrompt({
     ...BASE_PROMPT_PARAMS,
     intent: 'risks',
@@ -55,19 +55,27 @@ test('risks prompt includes ranked-risk structure and mitigation framing', () =>
   assert.match(prompt, /Risk level: High/);
   assert.match(prompt, /Risk level: Medium/);
   assert.match(prompt, /Risk level: Low/);
+  assert.match(prompt, /what the user should ask, change, narrow, or protect before sending the next message/);
+  assert.match(prompt, /Include suggested wording or clause language where useful and safe/);
+  assert.match(prompt, /Avoid purely abstract risk lists/);
 });
 
-test('draft_response prompt asks for a sendable response across round types', () => {
+test('draft_response prompt asks for a sendable next message across round types', () => {
   const prompt = buildCoachPrompt({
     ...BASE_PROMPT_PARAMS,
     intent: 'draft_response',
   });
 
-  assert.match(prompt, /Help the user draft a practical response to the current shared round/);
-  assert.match(prompt, /original proposal, reply, counterproposal, or later negotiation update/);
-  assert.match(prompt, /summary\.overall MUST be markdown containing a concise response/);
+  assert.match(prompt, /draft the next practical message/);
+  assert.match(prompt, /original opportunity\/proposal, reply, counterproposal, or later negotiation update/);
+  assert.match(prompt, /If the user is forming or improving an original opportunity, draft or improve the opportunity message/);
+  assert.match(prompt, /If the user is replying to another party, draft a practical response/);
+  assert.match(prompt, /If the user is responding to a counterproposal or later shared round, draft the next message in the negotiation/);
+  assert.match(prompt, /Do not assume the user is always the recipient, and do not assume the user is always replying/);
+  assert.match(prompt, /summary\.overall MUST be markdown containing a concise next message/);
   assert.match(prompt, /Acknowledge areas of agreement/);
   assert.match(prompt, /Raise unresolved issues without overcommitting/);
+  assert.match(prompt, /Include concrete next steps, conditions, questions, or proposed changes where useful/);
 });
 
 test('clarifying_questions prompt asks for prioritized questions with reasons', () => {
@@ -102,6 +110,7 @@ test('company_context prompt forbids hallucinated company facts', () => {
   assert.match(prompt, /What we know from the provided company details/);
   assert.match(prompt, /Relevance to this negotiation/);
   assert.match(prompt, /Missing information \/ what to verify/);
+  assert.match(prompt, /what the user should adjust, ask, or verify before sending the next message/);
 });
 
 test('company_context prompt includes fetched website evidence when available', () => {

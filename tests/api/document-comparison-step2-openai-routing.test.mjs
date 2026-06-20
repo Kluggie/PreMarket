@@ -125,10 +125,48 @@ test('Step 2 custom prompts use the same OpenAI / gpt-5.4 route', async () => {
     assert.equal(calls[0].preferredModel, 'gpt-5.4');
     assert.equal(calls[0].responseFormat, 'text');
     assert.equal(calls[0].purpose, 'coach_custom');
+    assert.match(calls[0].prompt, /Default product job: answer the custom prompt in a way that helps the user shape the next opportunity, proposal, counterproposal, reply, or negotiation message/);
+    assert.match(calls[0].prompt, /Be practical and next-step oriented/);
+    assert.match(calls[0].prompt, /Distinguish known facts from assumptions/);
+    assert.match(calls[0].prompt, /Avoid generic business advice/);
+    assert.match(calls[0].prompt, /Company research safeguard/);
   } finally {
     restoreHook();
     restoreProvider();
     restoreStep2Model();
+  }
+});
+
+test('Step 2 custom prompts warn against company research without company fields', async () => {
+  const calls = [];
+  const restoreHook = setOpenAICoachHook(async (params) => {
+    calls.push(params);
+    return {
+      provider: 'openai',
+      model: params.preferredModel,
+      text: 'Company details are needed before providing company background.',
+    };
+  });
+
+  try {
+    const result = await generateDocumentComparisonCoach({
+      ...baseCoachInput('custom_prompt'),
+      companyName: '',
+      companyWebsite: '',
+      promptText: 'Research the counterparty company and summarize their background.',
+    });
+
+    assert.equal(result.provider, 'openai');
+    assert.equal(result.model, 'gpt-5.4');
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].purpose, 'coach_custom');
+    assert.match(calls[0].prompt, /Company name: unknown/);
+    assert.match(calls[0].prompt, /Website: unknown/);
+    assert.match(calls[0].prompt, /if the user asks for company research, company background, company context, or counterparty research and no company name or website is provided, do not hallucinate company facts/i);
+    assert.match(calls[0].prompt, /ask the user to provide a company name or website/i);
+    assert.match(result.result.custom_feedback, /Company details are needed/);
+  } finally {
+    restoreHook();
   }
 });
 

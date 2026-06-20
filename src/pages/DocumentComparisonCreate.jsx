@@ -114,7 +114,7 @@ const GUEST_AI_MEDIATION_RUN_LIMIT = 1;
 const STEP2_AUTOSAVE_DEBOUNCE_MS = 30_000;
 const STEP2_AUTOSAVE_MIN_INTERVAL_MS = 30_000;
 const COACH_INTENT_LABELS = {
-  draft_response: 'Draft Response',
+  draft_response: 'Draft Next Message',
   improve_shared: 'Improve shared writing',
   negotiate: 'Negotiation strategy',
   risks: 'Risks & Gaps',

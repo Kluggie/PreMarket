@@ -8,7 +8,7 @@ export const COMPANY_CONTEXT_COACH_ACTION = {
 export const DOCUMENT_COMPARISON_COACH_ACTIONS = [
   {
     id: 'draft_response_full',
-    label: 'Draft Response',
+    label: 'Draft Next Message',
     mode: 'full',
     intent: 'draft_response',
   },

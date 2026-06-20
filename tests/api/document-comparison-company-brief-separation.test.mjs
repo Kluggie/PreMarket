@@ -19,7 +19,7 @@ import {
 } from '../../src/pages/document-comparison/suggestionThreads.js';
 
 const FINAL_LABELS = [
-  'Draft Response',
+  'Draft Next Message',
   'Negotiation Strategy',
   'Risks & Gaps',
   'Clarifying Questions',
@@ -39,6 +39,7 @@ test('Suggested Prompts contain the final neutral Step 2 action set and no old l
 
   const labels = DOCUMENT_COMPARISON_COACH_ACTIONS.map((action) => action.label);
   assert.equal(labels.includes('Company Context'), false);
+  assert.equal(labels.includes('Draft Response'), false);
   assert.equal(labels.includes('General Improvements'), false);
   assert.equal(labels.includes('Company Brief'), false);
   assert.equal(labels.includes('Draft My Reply'), false);
@@ -55,9 +56,9 @@ test('all visible Suggested Prompts build full coach requests without branching 
   }
 });
 
-test('Draft Response starts a thread and appears first', () => {
+test('Draft Next Message starts a thread and appears first while keeping draft_response intent', () => {
   const firstAction = DOCUMENT_COMPARISON_COACH_ACTIONS[0];
-  assert.equal(firstAction.label, 'Draft Response');
+  assert.equal(firstAction.label, 'Draft Next Message');
   assert.equal(firstAction.intent, 'draft_response');
 
   const st = appendUserEntry([], null, {
@@ -66,7 +67,7 @@ test('Draft Response starts a thread and appears first', () => {
     intent: firstAction.intent,
   });
   const thread = getActiveThread(st.threads, st.activeThreadId);
-  assert.equal(thread.title, 'Draft Response');
+  assert.equal(thread.title, 'Draft Next Message');
   assert.equal(thread.entries.length, 1);
   assert.equal(thread.entries[0].promptType, 'draft_response');
 });

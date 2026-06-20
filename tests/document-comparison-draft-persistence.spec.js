@@ -612,7 +612,7 @@ test.describe('Document Comparison Draft Persistence', () => {
     await expect(companyContextButton).toBeVisible();
     await expect(companyContextButton).toHaveText(/Generate Company Context/);
     await expect(companyContextButton).toBeDisabled();
-    await expect(suggestedPrompts.getByRole('button', { name: 'Draft Response' })).toBeVisible();
+    await expect(suggestedPrompts.getByRole('button', { name: 'Draft Next Message' })).toBeVisible();
     await expect(suggestedPrompts.getByRole('button', { name: 'Negotiation Strategy' })).toBeVisible();
     await expect(suggestedPrompts.getByRole('button', { name: 'Risks & Gaps' })).toBeVisible();
     await expect(suggestedPrompts.getByRole('button', { name: 'Clarifying Questions' })).toBeVisible();
