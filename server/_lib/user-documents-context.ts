@@ -1,5 +1,5 @@
 /**
- * Relevance-based document context selection for AI evaluations.
+ * Relevance-based document context selection for AI mediation reviews.
  *
  * Only includes document summaries when they are relevant to the proposal context.
  * Uses a lightweight keyword-overlap heuristic with an optional LLM relevance pass.
@@ -260,4 +260,3 @@ export async function selectRelevantDocuments(
 export async function getUserDocumentContext(userId: string): Promise<UserDocumentContext | null> {
   return null;
 }
-

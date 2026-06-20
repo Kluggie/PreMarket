@@ -32,8 +32,10 @@ import { createPageUrl } from '../utils';
 
 const PLAN_LABELS = {
   professional: 'Professional',
+  team: 'Team',
   enterprise: 'Enterprise',
   early_access: 'Free trial',
+  early_access_program: 'Free trial',
   starter: 'Starter',
 };
 

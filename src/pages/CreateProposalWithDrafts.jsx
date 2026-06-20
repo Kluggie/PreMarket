@@ -897,7 +897,7 @@ export default function CreateProposalWithDrafts({ guestMode = false }) {
         } else if (error?.status === 501 || error?.code === 'not_configured') {
           setEvaluationError('Initial Review is not configured for this environment yet.');
         } else {
-          setEvaluationError(error?.message || 'Evaluation failed. Opportunity was still saved.');
+          setEvaluationError(error?.message || 'Review failed. Opportunity was still saved.');
         }
       }
 

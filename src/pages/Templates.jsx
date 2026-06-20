@@ -210,7 +210,7 @@ export default function Templates() {
                   </div>
                   <h3 className="font-semibold text-lg mb-2">AI Deal Mediator</h3>
                   <p className="text-sm text-slate-500 mb-4">
-                    Compare two documents with AI evaluation and confidentiality controls
+                    Compare two documents with AI mediation review and confidentiality controls
                   </p>
                 </CardContent>
               </Card>

@@ -1,7 +1,7 @@
 export const STARTER_PLAN_LIMITS = Object.freeze({
-  opportunitiesPerMonth: 5,
-  activeOpportunities: 2,
-  aiEvaluationsPerMonth: 10,
+  opportunitiesPerMonth: 1,
+  activeOpportunities: 1,
+  aiEvaluationsPerMonth: 3,
   uploadBytesPerOpportunity: 25 * 1024 * 1024,
   uploadBytesPerMonth: 100 * 1024 * 1024,
 });

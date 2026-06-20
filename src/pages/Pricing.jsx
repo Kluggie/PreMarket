@@ -23,7 +23,7 @@ import {
 } from '@/components/ui/dialog';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Check, X, Zap, Building2, Shield } from 'lucide-react';
+import { Check, X, Zap, Building2, Shield, Users } from 'lucide-react';
 import { PLAN_FEATURES } from '@/lib/planFeatures';
 import { toast } from 'sonner';
 
@@ -82,7 +82,7 @@ export default function Pricing() {
   const professionalState = (() => {
     if (!user) return null;
     const tier = billing?.plan_tier;
-    if (tier === 'early_access') return 'trial';
+    if (tier === 'early_access' || tier === 'early_access_program') return 'trial';
     if (tier !== 'professional') return null;
     const status = billing?.subscription_status;
     if (status === 'past_due') return 'past_due';
@@ -92,6 +92,7 @@ export default function Pricing() {
 
   // Enterprise is always admin-provisioned — no Stripe billing cycle.
   // subscription_status is effectively meaningless for enterprise users.
+  const isTeam = Boolean(user) && billing?.plan_tier === 'team';
   const isEnterprise = Boolean(user) && billing?.plan_tier === 'enterprise';
 
   // cancelingSoon: subscription is active (or managed) but scheduled to end at period end.
@@ -171,9 +172,9 @@ export default function Pricing() {
   const plans = [
     {
       name: 'Starter',
-      price: '$0',
-      period: 'Forever free',
-      description: 'Perfect for individuals testing the workflow',
+      price: 'A$0',
+      period: 'per month',
+      description: 'For individuals testing the workflow',
       icon: Zap,
       color: 'from-slate-500 to-slate-600',
       features: PLAN_FEATURES.starter.map((f) => ({ text: f.text, included: true })),
@@ -188,14 +189,25 @@ export default function Pricing() {
       icon: Building2,
       color: 'from-blue-500 to-indigo-600',
       features: PLAN_FEATURES.professional.map((f) => ({ text: f.text, included: true })),
-      cta: 'Start Subscription',
+      cta: 'Upgrade to Professional',
       popular: true,
+    },
+    {
+      name: 'Team',
+      price: 'A$199.99',
+      period: 'per month',
+      description: 'For teams managing higher opportunity volume',
+      icon: Users,
+      color: 'from-cyan-500 to-blue-600',
+      features: PLAN_FEATURES.team.map((f) => ({ text: f.text, included: true })),
+      cta: 'Contact us',
+      popular: false,
     },
     {
       name: 'Enterprise',
       price: 'Custom',
       period: 'contact us',
-      description: 'For teams with sensitive or complex workflows',
+      description: 'For sensitive, high-volume, or complex workflows',
       icon: Shield,
       color: 'from-indigo-500 to-purple-600',
       features: PLAN_FEATURES.enterprise.map((f) => ({ text: f.text, included: true })),
@@ -232,6 +244,15 @@ export default function Pricing() {
       return;
     }
 
+    if (plan.name === 'Team') {
+      if (isTeam) {
+        navigate(createPageUrl('Billing'));
+      } else {
+        setShowContactSales(true);
+      }
+      return;
+    }
+
     if (plan.name === 'Starter') {
       authClient.redirectToLogin(createPageUrl('Dashboard'));
       return;
@@ -254,7 +275,7 @@ export default function Pricing() {
           <Badge className="mb-4 bg-blue-100 text-blue-700">Pricing</Badge>
           <h1 className="text-4xl font-bold text-slate-900 mb-4">Simple, transparent pricing</h1>
           <p className="text-lg text-slate-600 max-w-2xl mx-auto">
-            Start free and upgrade when you need more capacity.
+            Start free and upgrade when you need more review capacity.
           </p>
           <p className="text-sm text-slate-500 mt-2">
             No hidden fees. Cancel anytime. Paid changes take effect according to your billing cycle.
@@ -267,7 +288,7 @@ export default function Pricing() {
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">Limited-time offer: 30 days of Professional free for the first 50 users</h2>
                 <p className="text-sm text-slate-600 mt-2 max-w-2xl">
-                  Get full Professional access for 30 days, including advanced workflow features and a direct feedback loop with the product team. Access expires automatically after 30 days.
+                  Get Professional features for 30 days, including 20 AI mediation review credits and a direct feedback loop with the product team. Access expires automatically after 30 days.
                 </p>
                 <p className="text-xs text-slate-500 mt-2">No credit card required.</p>
               </div>
@@ -315,7 +336,12 @@ export default function Pricing() {
           </CardContent>
         </Card>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto">
+        <p className="max-w-5xl mx-auto mb-6 text-sm text-slate-600 text-center">
+          Opportunities and AI mediation reviews are measured separately. Paid plans include
+          monthly review credits, and invited counterparties can participate in shared opportunities for free.
+        </p>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-8 max-w-7xl mx-auto">
           {plans.map((plan, index) => (
             <motion.div
               key={plan.name}
@@ -340,6 +366,10 @@ export default function Pricing() {
                 <div className="absolute -top-4 left-1/2 -translate-x-1/2 z-10">
                   <Badge className="bg-amber-500 text-white px-4 py-1">Payment Issue</Badge>
                 </div>
+              ) : plan.name === 'Team' && isTeam ? (
+                <div className="absolute -top-4 left-1/2 -translate-x-1/2 z-10">
+                  <Badge className="bg-green-600 text-white px-4 py-1">Current Plan</Badge>
+                </div>
               ) : plan.name === 'Enterprise' && isEnterprise ? (
                 <div className="absolute -top-4 left-1/2 -translate-x-1/2 z-10">
                   <Badge className="bg-green-600 text-white px-4 py-1">Current Plan</Badge>
@@ -353,6 +383,7 @@ export default function Pricing() {
                   plan.name === 'Professional' && cancelingSoon
                     ? 'border-2 border-amber-400 shadow-lg'
                     : (plan.name === 'Professional' && (professionalState === 'active' || professionalState === 'managed'))
+                      || (plan.name === 'Team' && isTeam)
                       || (plan.name === 'Enterprise' && isEnterprise)
                         ? 'border-2 border-green-500 shadow-lg'
                         : plan.name === 'Professional' && professionalState === 'trial'
@@ -411,14 +442,17 @@ export default function Pricing() {
                           ? 'bg-green-600 hover:bg-green-700'
                           : plan.name === 'Professional' && professionalState === 'trial'
                             ? 'bg-blue-600 hover:bg-blue-700'
-                            : plan.name === 'Professional' && professionalState === 'past_due'
-                              ? 'bg-amber-500 hover:bg-amber-600'
-                              : plan.popular && !professionalState
-                                ? 'bg-blue-600 hover:bg-blue-700'
-                                : ''
+                        : plan.name === 'Professional' && professionalState === 'past_due'
+                          ? 'bg-amber-500 hover:bg-amber-600'
+                          : plan.name === 'Team' && isTeam
+                            ? 'bg-green-600 hover:bg-green-700'
+                          : plan.popular && !professionalState
+                            ? 'bg-blue-600 hover:bg-blue-700'
+                            : ''
                     }`}
                     variant={
                       professionalState ||
+                      (plan.name === 'Team' && isTeam) ||
                       (plan.name === 'Enterprise' && isEnterprise) ||
                       (plan.popular && !professionalState)
                         ? 'default'
@@ -426,14 +460,14 @@ export default function Pricing() {
                     }
                   >
                     {plan.name === 'Professional' && (professionalState === 'active' || professionalState === 'managed')
-                      ? 'Manage Subscription'
+                      ? 'Current Plan'
                       : plan.name === 'Professional' && professionalState === 'trial'
-                        ? 'Current Plan'
-                        : plan.name === 'Professional' && professionalState === 'past_due'
-                          ? 'Update Billing'
-                          : plan.name === 'Enterprise' && isEnterprise
-                            ? 'View Plan'
-                            : plan.cta}
+                      ? 'Current Plan'
+                      : plan.name === 'Professional' && professionalState === 'past_due'
+                        ? 'Update Billing'
+                        : (plan.name === 'Team' && isTeam) || (plan.name === 'Enterprise' && isEnterprise)
+                          ? 'View Plan'
+                          : plan.cta}
                   </Button>
                 </CardContent>
               </Card>
@@ -451,11 +485,11 @@ export default function Pricing() {
               },
               {
                 q: 'Do recipients need to pay or create an account?',
-                a: 'No. Recipients can view and respond via the share link. An account is only required to create opportunities and manage negotiations.',
+                a: 'No. Invited counterparties can view, review, respond, and participate in a shared opportunity for free.',
               },
               {
                 q: 'What counts toward my plan limits?',
-                a: 'Only actions taken by the opportunity owner count toward your plan (creating opportunities and running AI evaluations). Recipient viewing/responding does not use the recipient\'s plan.',
+                a: 'Opportunity owners use their monthly review credits when AI mediation reviews run. Recipient viewing and responding does not use the recipient\'s plan.',
               },
               {
                 q: 'How is confidential information protected?',

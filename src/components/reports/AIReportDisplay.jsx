@@ -201,7 +201,7 @@ export function FitCardReportDisplay({ report }) {
             <p className="text-sm font-semibold text-slate-600 mb-2">Recommended Next Step</p>
             <p className="text-sm text-blue-600 font-medium">
               {completeness.percent < 70 
-                ? 'Request Party B criteria to complete evaluation'
+                ? 'Request Party B criteria to complete the mediation review'
                 : json.followup_questions?.length > 0
                   ? 'Review follow-up questions to refine match assessment'
                   : 'Proceed with direct engagement'}
@@ -398,7 +398,7 @@ export function SharedFinanceReportDisplay({ report }) {
           <div className="flex items-center justify-between">
             <CardTitle className="flex items-center gap-2">
               <Sparkles className="w-5 h-5 text-emerald-600" />
-              Shared Evaluation Report
+              Shared Mediation Review Report
             </CardTitle>
             <Badge variant="outline">Both parties see this report</Badge>
           </div>

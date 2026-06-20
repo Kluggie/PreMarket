@@ -95,8 +95,10 @@ export default function Billing() {
 
   const planTier = billing?.plan_tier || 'starter';
   const isProfessional = planTier === 'professional';
-  const isEarlyAccess = planTier === 'early_access';
-  const hasProAccess = isProfessional || isEarlyAccess;
+  const isTeam = planTier === 'team';
+  const isEnterprise = planTier === 'enterprise';
+  const isEarlyAccess = planTier === 'early_access' || planTier === 'early_access_program';
+  const hasPaidOrTrialAccess = isProfessional || isTeam || isEnterprise || isEarlyAccess;
   const isActive = billing?.subscription_status === 'active';
   const cancelAtPeriodEnd = Boolean(billing?.cancel_at_period_end);
   const periodEnd = formatDate(billing?.current_period_end);
@@ -104,8 +106,10 @@ export default function Billing() {
 
   const PLAN_LABELS = {
     professional: 'Professional',
+    team: 'Team',
     enterprise: 'Enterprise',
     early_access: 'Free Trial',
+    early_access_program: 'Free Trial',
     starter: 'Starter',
   };
   const planLabel = PLAN_LABELS[planTier] || planTier;
@@ -147,6 +151,10 @@ export default function Billing() {
                   <p className="text-sm text-slate-500 mt-1">
                     {isProfessional
                       ? 'A$49.99 per month'
+                      : isTeam
+                        ? 'A$199.99 per month'
+                        : isEnterprise
+                          ? 'Custom plan'
                       : isEarlyAccess
                         ? trialEndDate
                           ? `Professional features until ${trialEndDate}`
@@ -202,7 +210,7 @@ export default function Billing() {
               ) : null}
 
               <div className="flex gap-3 pt-2 flex-wrap">
-                {!hasProAccess ? (
+                {!hasPaidOrTrialAccess ? (
                   <Button
                     onClick={() => checkoutMutation.mutate()}
                     disabled={checkoutMutation.isPending}

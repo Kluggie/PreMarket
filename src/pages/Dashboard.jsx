@@ -192,7 +192,7 @@ function StarterUsageCard({ starterUsage }) {
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <div>
             <p className="text-sm font-semibold text-slate-900">Starter plan usage</p>
-            <p className="text-xs text-slate-600">Evaluate up to 3 opportunities each month.</p>
+            <p className="text-xs text-slate-600">Opportunities and AI mediation reviews are measured separately.</p>
           </div>
           <Badge variant="outline" className="border-amber-300 bg-white text-amber-800">Starter</Badge>
         </div>
@@ -207,6 +207,11 @@ function StarterUsageCard({ starterUsage }) {
             label="Active opportunities"
             used={usage.activeOpportunities}
             limit={limits.activeOpportunities}
+          />
+          <StarterUsageMetric
+            label="AI mediation reviews"
+            used={usage.aiEvaluationsThisMonth}
+            limit={limits.aiEvaluationsPerMonth}
           />
           <StarterUsageMetric
             label="Upload usage"
@@ -226,7 +231,7 @@ function StarterUsageCard({ starterUsage }) {
           </div>
         )}
         <p className="text-xs text-slate-500">
-          AI analysis included for every opportunity. Per opportunity upload cap: {formatBytes(limits.uploadBytesPerOpportunity)}.
+          Starter includes 3 AI mediation reviews per month total. Per opportunity upload cap: {formatBytes(limits.uploadBytesPerOpportunity)}.
         </p>
       </CardContent>
     </Card>

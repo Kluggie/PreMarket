@@ -12,10 +12,11 @@ const PRIVATE_MODE_ELIGIBLE_PLANS = new Set([
   'early-access-program',
   'early access program',
   'professional',
+  'team',
   'enterprise',
 ]);
 
-export const PRIVATE_MODE_ELIGIBILITY_COPY = 'Available on Early Access, Professional, and Enterprise plans';
+export const PRIVATE_MODE_ELIGIBILITY_COPY = 'Available on Early Access, Professional, Team, and Enterprise plans';
 
 export function isPrivateModePlanEligible(planTier) {
   return PRIVATE_MODE_ELIGIBLE_PLANS.has(String(planTier || '').trim().toLowerCase());

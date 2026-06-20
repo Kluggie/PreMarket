@@ -85,7 +85,7 @@ export default function Privacy() {
                   </li>
                   <li>
                     <span className="font-medium text-slate-900">Optional social links:</span> links
-                    only when provided by you, including explicit consent before use in AI analysis.
+                    only when provided by you, including explicit consent before use in AI mediation reviews.
                   </li>
                   <li>
                     <span className="font-medium text-slate-900">Usage and device data:</span> IP

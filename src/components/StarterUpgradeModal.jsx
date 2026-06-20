@@ -25,11 +25,11 @@ export function StarterUpgradeModal({ open, onClose }) {
         <DialogHeader>
           <DialogTitle>You've used all your opportunities this month</DialogTitle>
           <DialogDescription>
-            You've reached your opportunity limit for this month. Upgrade to continue evaluating deals.
+            You've reached your opportunity limit for this month. Upgrade to create more opportunities.
           </DialogDescription>
         </DialogHeader>
         <p className="text-sm text-slate-500">
-          Unlock more opportunities, deeper analysis, and advanced features.
+          Unlock unlimited opportunities, more AI mediation review credits, and advanced features.
         </p>
         <DialogFooter className="gap-2 sm:gap-2">
           <Button variant="outline" onClick={onClose}>

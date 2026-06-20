@@ -66,7 +66,7 @@ export default function About() {
                 PreMarket exists to solve a fundamental challenge in business relationships: how do parties evaluate compatibility and fit before revealing sensitive information or committing resources?
               </p>
               <p className="text-lg text-slate-600 mb-4">
-                PreMarket makes early-stage business evaluation more private, structured, and efficient. 
+                PreMarket makes early-stage business review more private, structured, and efficient.
                 Too often, parties are expected to share sensitive details before they know whether there is enough alignment to justify deeper engagement. 
                 PreMarket helps both sides assess fit first, so conversations can move forward with more clarity and less unnecessary exposure where parties can:
               </p>
@@ -129,7 +129,7 @@ export default function About() {
             <CardContent className="p-8">
               <h2 className="text-2xl font-bold text-slate-900 mb-4">Important Disclaimer</h2>
               <p className="text-slate-600 mb-4">
-                PreMarket helps parties assess fit before deeper engagement. AI evaluations are informational only. 
+                PreMarket helps parties assess fit before deeper engagement. AI mediation reviews are informational only.
                 We do not broker deals, provide legal or financial advice, or act on behalf of either party. Users remain responsible for their own diligence, professional advice, and final decisions.
               </p>
             </CardContent>

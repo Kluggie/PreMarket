@@ -4206,8 +4206,8 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
                 </p>
                 <p className="text-xs text-slate-600">
                   {finishStage === 'evaluating'
-                    ? 'Running AI evaluation on your latest saved inputs.'
-                    : 'Persisting your latest draft before evaluation.'}
+                    ? 'Running an AI mediation review on your latest saved inputs.'
+                    : 'Persisting your latest draft before review.'}
                 </p>
                 {finishStage === 'evaluating' ? (
                   <p className="text-xs text-slate-500">

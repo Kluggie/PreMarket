@@ -65,7 +65,7 @@ import {
   resolveSharedReportToken,
   toObject,
 } from '../_shared.js';
-import { assertStarterAiEvaluationAllowed } from '../../../_lib/starter-entitlements.js';
+import { assertAiMediationReviewAllowed } from '../../../_lib/starter-entitlements.js';
 import { MEDIATION_REVIEW_STAGE } from '../../../../src/lib/opportunityReviewStage.js';
 
 const SHARED_REPORT_EVALUATE_ROUTE = `${SHARED_REPORT_ROUTE}/evaluate`;
@@ -391,9 +391,9 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     });
     requireRecipientAuthorization(resolved.link, auth.user);
 
-    await assertStarterAiEvaluationAllowed(resolved.db, {
-      userId: auth.user.id,
-      userEmail: auth.user.email || null,
+    await assertAiMediationReviewAllowed(resolved.db, {
+      userId: resolved.link.userId,
+      userEmail: resolved.owner?.email || resolved.proposal.partyAEmail || null,
     });
 
     if (!resolved.link.canReevaluate) {

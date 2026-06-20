@@ -27,7 +27,7 @@ import {
   type MediationRoundContext,
 } from '../../../_lib/mediation-progress.js';
 import { selectRelevantDocuments } from '../../../_lib/user-documents-context.js';
-import { assertStarterAiEvaluationAllowed } from '../../../_lib/starter-entitlements.js';
+import { assertAiMediationReviewAllowed } from '../../../_lib/starter-entitlements.js';
 import { buildStoredV2Evaluation } from '../../document-comparisons/_helpers.js';
 import {
   buildSharedReportHref,
@@ -682,7 +682,7 @@ export default async function handler(req: any, res: any, proposalIdParam?: stri
       throw new ApiError(404, 'proposal_not_found', 'Proposal not found');
     }
 
-    await assertStarterAiEvaluationAllowed(db, {
+    await assertAiMediationReviewAllowed(db, {
       userId: proposal.userId,
       userEmail: proposal.partyAEmail || auth.user.email,
     });

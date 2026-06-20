@@ -1,19 +1,35 @@
-import { and, eq, gte, ilike, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, eq, gte, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import { ApiError } from './errors.js';
 import { newId } from './ids.js';
 import { getProposalFinalOutcomeStatus } from './proposal-outcomes.js';
 import { schema } from './db/client.js';
 
 export const STARTER_LIMITS = {
-  opportunitiesPerMonth: 5,
-  activeOpportunities: 2,
-  aiEvaluationsPerMonth: 10,
+  opportunitiesPerMonth: 1,
+  activeOpportunities: 1,
+  aiEvaluationsPerMonth: 3,
   uploadBytesPerOpportunity: 25 * 1024 * 1024,
   uploadBytesPerMonth: 100 * 1024 * 1024,
 } as const;
 
+export const PLAN_REVIEW_CREDIT_LIMITS = {
+  starter: 3,
+  free: 3,
+  professional: 20,
+  early_access: 20,
+  early_access_program: 20,
+  team: 100,
+} as const;
+
 const STARTER_PLAN_ALIASES = new Set(['starter', 'free']);
 const UPLOAD_BYTES_EVENT = 'upload_bytes';
+const AI_REVIEW_PROPOSAL_SOURCES: string[] = [
+  'proposal_stage1_intake',
+  'document_comparison_stage1_intake',
+  'document_comparison_pre_send',
+  'document_comparison_mediation',
+  'document_comparison_vertex',
+];
 
 function normalizePlan(value: unknown) {
   return String(value || '').trim().toLowerCase().replace(/[-\s]+/g, '_');
@@ -89,18 +105,81 @@ export function isStarterPlan(planTier: unknown) {
   return normalized ? STARTER_PLAN_ALIASES.has(normalized) : false;
 }
 
+export function getAiMediationReviewLimitForPlan(planTier: unknown): number | null {
+  const normalized = normalizePlan(planTier);
+  if (!normalized) {
+    return PLAN_REVIEW_CREDIT_LIMITS.starter;
+  }
+  if (Object.prototype.hasOwnProperty.call(PLAN_REVIEW_CREDIT_LIMITS, normalized)) {
+    return PLAN_REVIEW_CREDIT_LIMITS[normalized as keyof typeof PLAN_REVIEW_CREDIT_LIMITS];
+  }
+  return null;
+}
+
+function getPlanDisplayName(planTier: unknown) {
+  const normalized = normalizePlan(planTier);
+  if (normalized === 'professional') return 'Professional';
+  if (normalized === 'early_access' || normalized === 'early_access_program') return 'Professional trial';
+  if (normalized === 'team') return 'Team';
+  if (normalized === 'enterprise') return 'Enterprise';
+  return 'Starter';
+}
+
+async function countOwnerAiMediationReviewsThisMonth(
+  db: any,
+  params: {
+    userId: string;
+    start: Date;
+    end: Date;
+  },
+) {
+  const [proposalEvalRow] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(schema.proposalEvaluations)
+    .where(
+      and(
+        eq(schema.proposalEvaluations.userId, params.userId),
+        eq(schema.proposalEvaluations.status, 'completed'),
+        inArray(schema.proposalEvaluations.source, AI_REVIEW_PROPOSAL_SOURCES),
+        gte(schema.proposalEvaluations.createdAt, params.start),
+        lt(schema.proposalEvaluations.createdAt, params.end),
+      ),
+    );
+
+  const [sharedEvalRow] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(schema.sharedReportEvaluationRuns)
+    .innerJoin(
+      schema.sharedLinks,
+      eq(schema.sharedReportEvaluationRuns.sharedLinkId, schema.sharedLinks.id),
+    )
+    .where(
+      and(
+        eq(schema.sharedLinks.userId, params.userId),
+        eq(schema.sharedReportEvaluationRuns.actorRole, 'recipient'),
+        eq(schema.sharedReportEvaluationRuns.status, 'success'),
+        gte(schema.sharedReportEvaluationRuns.createdAt, params.start),
+        lt(schema.sharedReportEvaluationRuns.createdAt, params.end),
+      ),
+    );
+
+  return toCount(proposalEvalRow?.count) + toCount(sharedEvalRow?.count);
+}
+
 function buildLimitError(params: {
   code:
     | 'starter_opportunities_monthly_limit_reached'
     | 'starter_active_opportunities_limit_reached'
     | 'starter_ai_evaluations_monthly_limit_reached'
+    | 'ai_mediation_reviews_monthly_limit_reached'
     | 'starter_upload_per_opportunity_limit_exceeded'
     | 'starter_upload_monthly_limit_exceeded';
   message: string;
+  plan?: string;
   extra: Record<string, unknown>;
 }) {
   return new ApiError(429, params.code, params.message, {
-    plan: 'starter',
+    plan: params.plan || 'starter',
     ...params.extra,
   });
 }
@@ -127,7 +206,7 @@ export async function assertStarterOpportunityCreateAllowed(db: any, userId: str
   if (monthlyCreated >= STARTER_LIMITS.opportunitiesPerMonth) {
     throw buildLimitError({
       code: 'starter_opportunities_monthly_limit_reached',
-      message: 'Starter plan allows up to 5 new opportunities per month.',
+      message: 'Starter plan allows 1 new opportunity per month.',
       extra: {
         limit: STARTER_LIMITS.opportunitiesPerMonth,
         used: monthlyCreated,
@@ -164,10 +243,48 @@ export async function assertStarterOpportunityCreateAllowed(db: any, userId: str
   if (activeCount >= STARTER_LIMITS.activeOpportunities) {
     throw buildLimitError({
       code: 'starter_active_opportunities_limit_reached',
-      message: 'Starter plan allows up to 2 active opportunities at a time.',
+      message: 'Starter plan allows 1 active opportunity at a time.',
       extra: {
         limit: STARTER_LIMITS.activeOpportunities,
         used: activeCount,
+      },
+    });
+  }
+}
+
+export async function assertAiMediationReviewAllowed(
+  db: any,
+  params: {
+    userId: string;
+    userEmail?: string | null;
+    now?: Date;
+  },
+) {
+  const planTier = await getUserPlanTier(db, params.userId);
+  const reviewLimit = getAiMediationReviewLimitForPlan(planTier);
+  if (reviewLimit === null) {
+    return;
+  }
+
+  const { start, end } = getMonthWindow(params.now || new Date());
+  const used = await countOwnerAiMediationReviewsThisMonth(db, {
+    userId: params.userId,
+    start,
+    end,
+  });
+
+  if (used >= reviewLimit) {
+    const normalizedPlan = normalizePlan(planTier) || 'starter';
+    const starterPlan = isStarterPlan(planTier);
+    throw buildLimitError({
+      code: starterPlan
+        ? 'starter_ai_evaluations_monthly_limit_reached'
+        : 'ai_mediation_reviews_monthly_limit_reached',
+      message: `${getPlanDisplayName(planTier)} includes ${reviewLimit} AI mediation reviews per month.`,
+      plan: starterPlan ? 'starter' : normalizedPlan,
+      extra: {
+        limit: reviewLimit,
+        used,
       },
     });
   }
@@ -181,62 +298,7 @@ export async function assertStarterAiEvaluationAllowed(
     now?: Date;
   },
 ) {
-  const planTier = await getUserPlanTier(db, params.userId);
-  if (!isStarterPlan(planTier)) {
-    return;
-  }
-
-  const { start, end } = getMonthWindow(params.now || new Date());
-
-  const [proposalEvalRow] = await db
-    .select({ count: sql<number>`count(*)::int` })
-    .from(schema.proposalEvaluations)
-    .where(
-      and(
-        eq(schema.proposalEvaluations.userId, params.userId),
-        eq(schema.proposalEvaluations.status, 'completed'),
-        gte(schema.proposalEvaluations.createdAt, start),
-        lt(schema.proposalEvaluations.createdAt, end),
-      ),
-    );
-
-  const normalizedEmail = String(params.userEmail || '').trim().toLowerCase();
-  const sharedRecipientPredicate = normalizedEmail
-    ? or(
-        eq(schema.sharedLinks.authorizedUserId, params.userId),
-        ilike(schema.sharedLinks.recipientEmail, normalizedEmail),
-      )
-    : eq(schema.sharedLinks.authorizedUserId, params.userId);
-
-  const [sharedEvalRow] = await db
-    .select({ count: sql<number>`count(*)::int` })
-    .from(schema.sharedReportEvaluationRuns)
-    .innerJoin(
-      schema.sharedLinks,
-      eq(schema.sharedReportEvaluationRuns.sharedLinkId, schema.sharedLinks.id),
-    )
-    .where(
-      and(
-        gte(schema.sharedReportEvaluationRuns.createdAt, start),
-        lt(schema.sharedReportEvaluationRuns.createdAt, end),
-        eq(schema.sharedReportEvaluationRuns.actorRole, 'recipient'),
-        eq(schema.sharedReportEvaluationRuns.status, 'success'),
-        sharedRecipientPredicate,
-      ),
-    );
-
-  const used = toCount(proposalEvalRow?.count) + toCount(sharedEvalRow?.count);
-
-  if (used >= STARTER_LIMITS.aiEvaluationsPerMonth) {
-    throw buildLimitError({
-      code: 'starter_ai_evaluations_monthly_limit_reached',
-      message: 'Starter plan allows up to 10 AI evaluations per month.',
-      extra: {
-        limit: STARTER_LIMITS.aiEvaluationsPerMonth,
-        used,
-      },
-    });
-  }
+  return assertAiMediationReviewAllowed(db, params);
 }
 
 export function sumComparisonInputUploadBytes(params: {
@@ -412,44 +474,11 @@ export async function getStarterUsageSnapshot(
     return normalizedStatus !== 'won' && normalizedStatus !== 'lost';
   }).length;
 
-  const [proposalEvalRow] = await db
-    .select({ count: sql<number>`count(*)::int` })
-    .from(schema.proposalEvaluations)
-    .where(
-      and(
-        eq(schema.proposalEvaluations.userId, params.userId),
-        eq(schema.proposalEvaluations.status, 'completed'),
-        gte(schema.proposalEvaluations.createdAt, start),
-        lt(schema.proposalEvaluations.createdAt, end),
-      ),
-    );
-
-  const normalizedEmail = String(params.userEmail || '').trim().toLowerCase();
-  const sharedRecipientPredicate = normalizedEmail
-    ? or(
-        eq(schema.sharedLinks.authorizedUserId, params.userId),
-        ilike(schema.sharedLinks.recipientEmail, normalizedEmail),
-      )
-    : eq(schema.sharedLinks.authorizedUserId, params.userId);
-
-  const [sharedEvalRow] = await db
-    .select({ count: sql<number>`count(*)::int` })
-    .from(schema.sharedReportEvaluationRuns)
-    .innerJoin(
-      schema.sharedLinks,
-      eq(schema.sharedReportEvaluationRuns.sharedLinkId, schema.sharedLinks.id),
-    )
-    .where(
-      and(
-        gte(schema.sharedReportEvaluationRuns.createdAt, start),
-        lt(schema.sharedReportEvaluationRuns.createdAt, end),
-        eq(schema.sharedReportEvaluationRuns.actorRole, 'recipient'),
-        eq(schema.sharedReportEvaluationRuns.status, 'success'),
-        sharedRecipientPredicate,
-      ),
-    );
-
-  const aiEvaluationsThisMonth = toCount(proposalEvalRow?.count) + toCount(sharedEvalRow?.count);
+  const aiEvaluationsThisMonth = await countOwnerAiMediationReviewsThisMonth(db, {
+    userId: params.userId,
+    start,
+    end,
+  });
 
   const [uploadUsageRow] = await db
     .select({ totalBytes: sql<number>`coalesce(sum(${schema.starterUsageEvents.quantity}), 0)::bigint` })
@@ -471,6 +500,7 @@ export async function getStarterUsageSnapshot(
       opportunitiesPerMonth: STARTER_LIMITS.opportunitiesPerMonth,
       activeOpportunities: STARTER_LIMITS.activeOpportunities,
       aiEvaluationsPerMonth: STARTER_LIMITS.aiEvaluationsPerMonth,
+      aiMediationReviewsPerMonth: STARTER_LIMITS.aiEvaluationsPerMonth,
       uploadBytesPerOpportunity: STARTER_LIMITS.uploadBytesPerOpportunity,
       uploadBytesPerMonth: STARTER_LIMITS.uploadBytesPerMonth,
     },
@@ -478,12 +508,14 @@ export async function getStarterUsageSnapshot(
       opportunitiesCreatedThisMonth,
       activeOpportunities,
       aiEvaluationsThisMonth,
+      aiMediationReviewsThisMonth: aiEvaluationsThisMonth,
       uploadBytesThisMonth,
     },
     remaining: {
       opportunitiesPerMonth: Math.max(0, STARTER_LIMITS.opportunitiesPerMonth - opportunitiesCreatedThisMonth),
       activeOpportunities: Math.max(0, STARTER_LIMITS.activeOpportunities - activeOpportunities),
       aiEvaluationsPerMonth: Math.max(0, STARTER_LIMITS.aiEvaluationsPerMonth - aiEvaluationsThisMonth),
+      aiMediationReviewsPerMonth: Math.max(0, STARTER_LIMITS.aiEvaluationsPerMonth - aiEvaluationsThisMonth),
       uploadBytesPerMonth: Math.max(0, STARTER_LIMITS.uploadBytesPerMonth - uploadBytesThisMonth),
     },
   };

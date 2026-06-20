@@ -461,7 +461,7 @@ export default function Step1AddSources({
               <p className="font-semibold">Confidential vs Shared</p>
               <p>
                 <span className="text-rose-600 font-medium">Confidential</span> documents are used
-                internally during AI evaluation but are never included in the recipient-facing
+                internally during AI mediation review but are never included in the recipient-facing
                 shared report.{' '}
                 <span className="text-emerald-600 font-medium">Shared</span> documents may appear
                 in the public output.

@@ -225,7 +225,7 @@ export function ComparisonAiReportTab({
       {!isEvaluationRunning && !isEvaluationNotConfigured && !isEvaluationFailed && hasEvaluations && !hasReport ? (
         <Card className="border border-slate-200 shadow-sm">
           <CardContent className="py-6 text-slate-600">
-            {reviewLabel} completed. Detailed report content is not available for this evaluation.
+            {reviewLabel} completed. Detailed report content is not available for this review.
             This can happen if the report was filtered for confidentiality. You may re-run the
             review to generate a new result.
           </CardContent>

@@ -303,7 +303,7 @@ export default function HowItWorks() {
                   'Walk-away points',
                   'Private priorities',
                   'Internal financial or strategic context',
-                  'Notes intended only for AI evaluation',
+                  'Notes intended only for AI mediation review',
                 ].map((item) => (
                   <li key={item} className="flex items-center gap-2 text-slate-600">
                     <Shield className="w-4 h-4 text-amber-500 shrink-0" />
@@ -321,7 +321,7 @@ export default function HowItWorks() {
             viewport={{ once: true }}
             className="text-center text-slate-500 mt-10 max-w-2xl mx-auto text-sm"
           >
-            Confidential information is hidden from the counterparty and used to improve the quality of the neutral evaluation.
+            Confidential information is hidden from the counterparty and used to improve the quality of the neutral mediation review.
           </motion.p>
         </div>
       </section>
@@ -376,7 +376,7 @@ export default function HowItWorks() {
               <ul className="space-y-3">
                 {[
                   'No success fees or commissions',
-                  'Faster structured evaluation',
+                  'Faster structured mediation review',
                   'One neutral framework for both sides',
                   'Clear separation of shared vs confidential inputs',
                   'Consistent deal analysis',
@@ -423,7 +423,7 @@ export default function HowItWorks() {
               },
               {
                 icon: TrendingUp,
-                title: 'Investment and commercial deal evaluation',
+                title: 'Investment and commercial deal review',
                 description: 'Get a structured assessment of alignment, risk, and readiness before term sheet discussions.',
               },
             ].map((useCase, index) => (
@@ -454,7 +454,7 @@ export default function HowItWorks() {
               What the AI evaluates
             </h2>
             <p className="text-lg text-slate-600 max-w-2xl mx-auto">
-              Every evaluation covers the dimensions that matter for reaching agreement.
+              Every mediation review covers the dimensions that matter for reaching agreement.
             </p>
           </div>
 
@@ -752,12 +752,12 @@ const faqItems = [
   {
     question: 'Can the other side see my confidential information?',
     answer:
-      'No. Confidential inputs are never shared with the counterparty. They are used only to improve the quality and relevance of the neutral AI evaluation that both sides receive.',
+      'No. Confidential inputs are never shared with the counterparty. They are used only to improve the quality and relevance of the neutral AI mediation review that both sides receive.',
   },
   {
     question: 'Do both sides need to join?',
     answer:
-      'For a full two-sided evaluation, yes. However, you can start by submitting your own position first. The evaluation improves once both sides have provided their inputs.',
+      'For a full two-sided mediation review, yes. However, you can start by submitting your own position first. The review improves once both sides have provided their inputs.',
   },
   {
     question: 'What kinds of deals can I use this for?',

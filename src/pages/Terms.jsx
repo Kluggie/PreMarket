@@ -11,7 +11,7 @@ const tocItems = [
   { id: 'disclaimers', label: 'Critical Disclaimers' },
   { id: 'responsibilities', label: 'User Responsibilities' },
   { id: 'accounts', label: 'Accounts and Security' },
-  { id: 'ai-evaluations', label: 'AI Evaluations' },
+  { id: 'ai-evaluations', label: 'AI Mediation Reviews' },
   { id: 'prohibited', label: 'Prohibited Conduct' },
   { id: 'liability', label: 'Liability Limits' },
   { id: 'termination', label: 'Termination' },
@@ -73,7 +73,7 @@ export default function Terms() {
               <Section id="service" title="Service Scope">
                 <p>
                   PreMarket is a pre-qualification information platform that allows users to exchange
-                  structured opportunities, apply visibility controls, and request AI-assisted evaluations.
+                  structured opportunities, apply visibility controls, and request AI mediation reviews.
                 </p>
               </Section>
 
@@ -114,11 +114,11 @@ export default function Terms() {
                 </p>
               </Section>
 
-              <Section id="ai-evaluations" title="AI Evaluations">
+              <Section id="ai-evaluations" title="AI Mediation Reviews">
                 <p>AI outputs are designed to support pre-qualification workflows, not replace judgment.</p>
                 <ul className="list-disc pl-5 space-y-2">
                   <li>Outputs may be incomplete, inaccurate, or context-limited.</li>
-                  <li>Evaluation results are not promises of fit, performance, or outcomes.</li>
+                  <li>Review results are not promises of fit, performance, or outcomes.</li>
                   <li>Optional social-link analysis requires explicit user consent.</li>
                 </ul>
               </Section>

@@ -10,7 +10,10 @@ import templateUseHandler from '../../server/routes/templates/[id]/use.ts';
 import documentComparisonsHandler from '../../server/routes/document-comparisons/index.ts';
 import documentsHandler from '../../server/routes/documents/index.ts';
 import documentsExtractHandler from '../../server/routes/documents/extract.ts';
-import { assertStarterAiEvaluationAllowed } from '../../server/_lib/starter-entitlements.ts';
+import {
+  assertStarterAiEvaluationAllowed,
+  getAiMediationReviewLimitForPlan,
+} from '../../server/_lib/starter-entitlements.ts';
 import { ensureTestEnv, makeSessionCookie } from '../helpers/auth.mjs';
 import { ensureMigrated, hasDatabaseUrl, resetTables } from '../helpers/db.mjs';
 import { createMockReq, createMockRes } from '../helpers/httpMock.mjs';
@@ -101,10 +104,21 @@ function startOfPreviousUtcMonth() {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1, 0, 0, 0, 0));
 }
 
+test('AI mediation review credit limits are configured by plan tier', () => {
+  assert.equal(getAiMediationReviewLimitForPlan('starter'), 3);
+  assert.equal(getAiMediationReviewLimitForPlan('free'), 3);
+  assert.equal(getAiMediationReviewLimitForPlan('professional'), 20);
+  assert.equal(getAiMediationReviewLimitForPlan('early_access'), 20);
+  assert.equal(getAiMediationReviewLimitForPlan('early_access_program'), 20);
+  assert.equal(getAiMediationReviewLimitForPlan('team'), 100);
+  assert.equal(getAiMediationReviewLimitForPlan('enterprise'), null);
+  assert.equal(getAiMediationReviewLimitForPlan('custom'), null);
+});
+
 if (!hasDatabaseUrl()) {
   test('starter limits integration (skipped: DATABASE_URL missing)', { skip: true }, () => {});
 } else {
-  test('Starter creation limit: /api/proposals blocks after 3 opportunities/month', async () => {
+  test('Starter creation limit: /api/proposals blocks after 1 opportunity/month', async () => {
     await ensureMigrated();
     await resetTables();
 
@@ -114,10 +128,8 @@ if (!hasDatabaseUrl()) {
     await seedUserAndPlan(userId, email, 'starter');
 
     await seedProposal(userId, 'p1');
-    await seedProposal(userId, 'p2');
-    await seedProposal(userId, 'p3');
 
-    const result = await createProposalViaApi(cookie, 'blocked p4');
+    const result = await createProposalViaApi(cookie, 'blocked p2');
     assert.equal(result.status, 429);
     assert.equal(result.body?.error?.code, 'starter_opportunities_monthly_limit_reached');
   });
@@ -146,8 +158,6 @@ if (!hasDatabaseUrl()) {
     });
 
     await seedProposal(userId, 'p1');
-    await seedProposal(userId, 'p2');
-    await seedProposal(userId, 'p3');
 
     const req = createMockReq({
       method: 'POST',
@@ -165,7 +175,7 @@ if (!hasDatabaseUrl()) {
     assert.equal(res.jsonBody()?.error?.code, 'starter_opportunities_monthly_limit_reached');
   });
 
-  test('Starter active limit: /api/proposals blocks when 2 active already exist', async () => {
+  test('Starter active limit: /api/proposals blocks when 1 active opportunity already exists', async () => {
     await ensureMigrated();
     await resetTables();
 
@@ -174,15 +184,19 @@ if (!hasDatabaseUrl()) {
     const cookie = authCookie(userId, email);
     await seedUserAndPlan(userId, email, 'starter');
 
-    await seedProposal(userId, 'active1', { status: 'draft' });
-    await seedProposal(userId, 'active2', { status: 'under_verification' });
+    const previousMonth = startOfPreviousUtcMonth();
+    await seedProposal(userId, 'active1', {
+      status: 'draft',
+      createdAt: previousMonth,
+      updatedAt: previousMonth,
+    });
 
-    const result = await createProposalViaApi(cookie, 'blocked active 3rd');
+    const result = await createProposalViaApi(cookie, 'blocked active 2nd');
     assert.equal(result.status, 429);
     assert.equal(result.body?.error?.code, 'starter_active_opportunities_limit_reached');
   });
 
-  test('Starter evaluation limit: /api/proposals/[id]/evaluate blocks after 10/month', async () => {
+  test('Starter review limit: /api/proposals/[id]/evaluate blocks after 3/month', async () => {
     await ensureMigrated();
     await resetTables();
 
@@ -199,12 +213,12 @@ if (!hasDatabaseUrl()) {
     });
 
     const now = new Date();
-    for (let i = 0; i < 10; i += 1) {
+    for (let i = 0; i < 3; i += 1) {
       await db.insert(schema.proposalEvaluations).values({
         id: `eval_limit_${i}`,
         proposalId: 'proposal_eval_limit_target',
         userId,
-        source: 'manual',
+        source: 'document_comparison_mediation',
         status: 'completed',
         score: 60,
         summary: 'seed',
@@ -226,6 +240,49 @@ if (!hasDatabaseUrl()) {
 
     assert.equal(res.statusCode, 429);
     assert.equal(res.jsonBody()?.error?.code, 'starter_ai_evaluations_monthly_limit_reached');
+  });
+
+  test('Professional review credits block after 20 AI mediation reviews/month', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const userId = 'professional_review_limit';
+    const email = 'professional.review.limit@example.com';
+    await seedUserAndPlan(userId, email, 'professional');
+
+    await seedProposal(userId, 'Professional Review Limit', {
+      id: 'proposal_professional_review_limit',
+      partyAEmail: email,
+      partyBEmail: 'recipient@example.com',
+    });
+
+    const db = await getDb();
+    const now = new Date();
+    for (let i = 0; i < 20; i += 1) {
+      await db.insert(schema.proposalEvaluations).values({
+        id: `professional_review_limit_${i}`,
+        proposalId: 'proposal_professional_review_limit',
+        userId,
+        source: 'document_comparison_mediation',
+        status: 'completed',
+        score: 60,
+        summary: 'seed',
+        result: {},
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+
+    await assert.rejects(
+      assertStarterAiEvaluationAllowed(db, {
+        userId,
+        userEmail: email,
+      }),
+      (error) =>
+        error?.code === 'ai_mediation_reviews_monthly_limit_reached' &&
+        error?.extra?.plan === 'professional' &&
+        error?.extra?.limit === 20,
+    );
   });
 
   test('Starter upload limits: per-opportunity cap blocks large document comparison attachments', async () => {
@@ -322,6 +379,7 @@ if (!hasDatabaseUrl()) {
       'early-access-program',
       'early access program',
       'professional',
+      'team',
       'enterprise',
     ];
 
@@ -473,7 +531,7 @@ if (!hasDatabaseUrl()) {
     }
   });
 
-  test('Starter evaluation pool ignores failed attempts and failed shared-report runs', async () => {
+  test('Starter review pool ignores failed attempts and failed shared-report runs', async () => {
     await ensureMigrated();
     await resetTables();
 
@@ -493,7 +551,7 @@ if (!hasDatabaseUrl()) {
         id: `eval_failed_${i}`,
         proposalId: 'proposal_eval_failed_ignored',
         userId,
-        source: 'manual',
+        source: 'document_comparison_mediation',
         status: 'failed',
         score: null,
         summary: 'failed',
@@ -557,27 +615,30 @@ if (!hasDatabaseUrl()) {
     );
   });
 
-  test('Starter shared-report evaluations count against the same monthly pool', async () => {
+  test('Starter shared-report reviews count against the same monthly owner pool', async () => {
     await ensureMigrated();
     await resetTables();
 
     const userId = 'starter_eval_shared_pool';
     const email = 'starter.eval.shared.pool@example.com';
+    const recipientUserId = 'starter_eval_shared_pool_recipient';
+    const recipientEmail = 'starter.eval.shared.pool.recipient@example.com';
     await seedUserAndPlan(userId, email, 'starter');
+    await seedUserAndPlan(recipientUserId, recipientEmail, 'starter');
     await seedProposal(userId, 'Shared Eval Pool', {
       id: 'proposal_eval_shared_pool',
       partyAEmail: email,
-      partyBEmail: 'recipient@example.com',
+      partyBEmail: recipientEmail,
     });
 
     const db = await getDb();
     const now = new Date();
-    for (let i = 0; i < 9; i += 1) {
+    for (let i = 0; i < 2; i += 1) {
       await db.insert(schema.proposalEvaluations).values({
         id: `eval_shared_pool_${i}`,
         proposalId: 'proposal_eval_shared_pool',
         userId,
-        source: 'manual',
+        source: 'document_comparison_mediation',
         status: 'completed',
         score: 70,
         summary: 'ok',
@@ -592,8 +653,8 @@ if (!hasDatabaseUrl()) {
       token: 'token_eval_shared_pool',
       userId,
       proposalId: 'proposal_eval_shared_pool',
-      recipientEmail: email,
-      authorizedUserId: userId,
+      recipientEmail,
+      authorizedUserId: recipientUserId,
       canView: true,
       canEdit: true,
       canReevaluate: true,
@@ -639,6 +700,13 @@ if (!hasDatabaseUrl()) {
         userEmail: email,
       }),
       (error) => error?.code === 'starter_ai_evaluations_monthly_limit_reached',
+    );
+
+    await assert.doesNotReject(
+      assertStarterAiEvaluationAllowed(db, {
+        userId: recipientUserId,
+        userEmail: recipientEmail,
+      }),
     );
   });
 
@@ -738,8 +806,12 @@ if (!hasDatabaseUrl()) {
       updatedAt: new Date(),
     });
 
-    await seedProposal(userId, 'active-template-1', { status: 'draft' });
-    await seedProposal(userId, 'active-template-2', { status: 'under_verification' });
+    const previousMonth = startOfPreviousUtcMonth();
+    await seedProposal(userId, 'active-template-1', {
+      status: 'draft',
+      createdAt: previousMonth,
+      updatedAt: previousMonth,
+    });
 
     const req = createMockReq({
       method: 'POST',
@@ -757,8 +829,8 @@ if (!hasDatabaseUrl()) {
     const body = res.jsonBody();
     assert.equal(body?.error?.code, 'starter_active_opportunities_limit_reached');
     assert.equal(body?.error?.plan, 'starter');
-    assert.equal(body?.error?.limit, 2);
-    assert.equal(body?.error?.used, 2);
+    assert.equal(body?.error?.limit, 1);
+    assert.equal(body?.error?.used, 1);
   });
 
   test('Starter active capacity is released after archive semantics mark a row non-active', async () => {
@@ -770,8 +842,13 @@ if (!hasDatabaseUrl()) {
     const cookie = authCookie(userId, email);
     await seedUserAndPlan(userId, email, 'starter');
 
-    await seedProposal(userId, 'active-release-1', { id: 'active_release_p1', status: 'draft' });
-    await seedProposal(userId, 'active-release-2', { id: 'active_release_p2', status: 'sent' });
+    const previousMonth = startOfPreviousUtcMonth();
+    await seedProposal(userId, 'active-release-1', {
+      id: 'active_release_p1',
+      status: 'draft',
+      createdAt: previousMonth,
+      updatedAt: previousMonth,
+    });
 
     const blocked = await createProposalViaApi(cookie, 'blocked-before-release');
     assert.equal(blocked.status, 429);
@@ -935,15 +1012,14 @@ test('Beta signup with past trialEndsAt falls back to Starter (IS capped)', asyn
     .onConflictDoNothing({ target: schema.betaSignups.emailNormalized });
 
   await seedProposal(userId, 'trial-expired-p1');
-  await seedProposal(userId, 'trial-expired-p2');
-  await seedProposal(userId, 'trial-expired-p3');
 
-  const result = await createProposalViaApi(cookie, 'trial-expired-p4-should-be-blocked');
+  const result = await createProposalViaApi(cookie, 'trial-expired-p2-should-be-blocked');
   assert.equal(
     result.status,
     429,
     `Expired beta trial must fall back to starter cap: ${JSON.stringify(result.body)}`,
   );
+  assert.equal(result.body?.error?.code, 'starter_opportunities_monthly_limit_reached');
 });
 
 test('Beta signup with NULL trialEndsAt (legacy row) is treated as non-expired Early Access', async () => {

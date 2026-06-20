@@ -32,11 +32,11 @@ export default function Documentation() {
       ]
     },
     {
-      title: 'AI Evaluations',
+      title: 'AI Mediation Reviews',
       icon: BarChart3,
       color: 'from-green-500 to-green-600',
       items: [
-        { title: 'How Evaluations Work', desc: 'Understanding AI compatibility scoring' },
+        { title: 'How Reviews Work', desc: 'Understanding AI compatibility scoring' },
         { title: 'Criteria & Weights', desc: 'What factors influence the score' },
         { title: 'Red Flags', desc: 'Interpreting warnings and recommendations' },
         { title: 'Social Links Consent', desc: 'Opting in to social profile analysis' }
@@ -49,7 +49,7 @@ export default function Documentation() {
       items: [
         { title: 'Opportunity Lifecycle', desc: 'From creation to reveal' },
         { title: 'Verification Process', desc: 'How to verify counterparty information' },
-        { title: 'Re-evaluation', desc: 'Updating evaluations with new data' },
+        { title: 'Review updates', desc: 'Updating mediation reviews with new data' },
         { title: 'Comments & Communication', desc: 'Collaborating within opportunities' }
       ]
     }

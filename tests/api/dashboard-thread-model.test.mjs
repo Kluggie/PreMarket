@@ -414,12 +414,13 @@ if (!hasDatabaseUrl()) {
 
     const summary = await getSummary(starterCookie);
     assert.equal(summary.starterUsage?.plan, 'starter');
-    assert.equal(summary.starterUsage?.limits?.opportunitiesPerMonth, 3);
-    assert.equal(summary.starterUsage?.limits?.activeOpportunities, 2);
-    assert.equal(summary.starterUsage?.limits?.aiEvaluationsPerMonth, 10);
+    assert.equal(summary.starterUsage?.limits?.opportunitiesPerMonth, 1);
+    assert.equal(summary.starterUsage?.limits?.activeOpportunities, 1);
+    assert.equal(summary.starterUsage?.limits?.aiEvaluationsPerMonth, 3);
+    assert.equal(summary.starterUsage?.limits?.aiMediationReviewsPerMonth, 3);
     assert.equal(summary.starterUsage?.limits?.uploadBytesPerMonth, 100 * 1024 * 1024);
     assert.equal(summary.starterUsage?.usage?.opportunitiesCreatedThisMonth >= 1, true);
-    assert.equal(summary.starterUsage?.remaining?.opportunitiesPerMonth <= 2, true);
+    assert.equal(summary.starterUsage?.remaining?.opportunitiesPerMonth, 0);
   });
 
   test('dashboard summary omits starter usage snapshot for paid users', async () => {

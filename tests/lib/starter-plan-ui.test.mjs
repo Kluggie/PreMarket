@@ -101,37 +101,36 @@ test('starter error helper maps backend limit codes to user copy', () => {
   assert.equal(getStarterLimitErrorCopy({ code: 'validation_failed' }, 'create'), null);
 });
 
-test('starter opportunities monthly limit constant is 5', () => {
-  assert.equal(STARTER_PLAN_LIMITS.opportunitiesPerMonth, 5,
-    'monthly opportunities limit must be 5, not the legacy value of 3');
-  assert.notEqual(STARTER_PLAN_LIMITS.opportunitiesPerMonth, 3,
-    'stale legacy limit of 3 must not be used as the opportunities denominator');
+test('starter pricing limits match the review-credit model', () => {
+  assert.equal(STARTER_PLAN_LIMITS.opportunitiesPerMonth, 1,
+    'Starter must allow 1 opportunity per month');
+  assert.equal(STARTER_PLAN_LIMITS.activeOpportunities, 1,
+    'Starter must allow 1 active opportunity at once');
+  assert.equal(STARTER_PLAN_LIMITS.aiEvaluationsPerMonth, 3,
+    'Starter must include 3 AI mediation reviews per month total');
 });
 
 test('isStarterOpportunityLimitReached detects monthly limit correctly', () => {
-  const starterAt5 = { plan: 'starter', usage: { opportunitiesCreatedThisMonth: 5 }, limits: {} };
-  const starterAt4 = { plan: 'starter', usage: { opportunitiesCreatedThisMonth: 4 }, limits: {} };
+  const starterAt1 = { plan: 'starter', usage: { opportunitiesCreatedThisMonth: 1 }, limits: {} };
   const starterAt0 = { plan: 'starter', usage: { opportunitiesCreatedThisMonth: 0 }, limits: {} };
-  const starterOver = { plan: 'starter', usage: { opportunitiesCreatedThisMonth: 7 }, limits: {} };
-  const freeAt5   = { plan: 'free', usage: { opportunitiesCreatedThisMonth: 5 }, limits: {} };
-  const proPlan   = { plan: 'professional', usage: { opportunitiesCreatedThisMonth: 5 }, limits: {} };
+  const starterOver = { plan: 'starter', usage: { opportunitiesCreatedThisMonth: 2 }, limits: {} };
+  const freeAt1   = { plan: 'free', usage: { opportunitiesCreatedThisMonth: 1 }, limits: {} };
+  const proPlan   = { plan: 'professional', usage: { opportunitiesCreatedThisMonth: 1 }, limits: {} };
 
-  // At the canonical limit (5) — should be blocked
-  assert.equal(isStarterOpportunityLimitReached(starterAt5), true,
-    'should be blocked at 5/5');
+  // At the canonical limit (1) — should be blocked
+  assert.equal(isStarterOpportunityLimitReached(starterAt1), true,
+    'should be blocked at 1/1');
 
   // Over limit — should also be blocked
   assert.equal(isStarterOpportunityLimitReached(starterOver), true,
     'should be blocked when over limit');
 
   // Under limit — action allowed
-  assert.equal(isStarterOpportunityLimitReached(starterAt4), false,
-    'should NOT be blocked at 4/5');
   assert.equal(isStarterOpportunityLimitReached(starterAt0), false,
-    'should NOT be blocked at 0/5');
+    'should NOT be blocked at 0/1');
 
   // free plan alias also counts as starter
-  assert.equal(isStarterOpportunityLimitReached(freeAt5), true,
+  assert.equal(isStarterOpportunityLimitReached(freeAt1), true,
     'free plan alias should be treated same as starter');
 
   // Non-starter plans are never blocked by this helper
@@ -145,9 +144,4 @@ test('isStarterOpportunityLimitReached detects monthly limit correctly', () => {
     'missing usage field should not throw — treated as 0 used');
   assert.equal(isStarterOpportunityLimitReached({ plan: 'starter', usage: {} }), false,
     'undefined opportunitiesCreatedThisMonth treated as 0');
-
-  // Explicitly verify the denominator used is 5, not the legacy 3
-  const atLegacyLimit = { plan: 'starter', usage: { opportunitiesCreatedThisMonth: 3 }, limits: {} };
-  assert.equal(isStarterOpportunityLimitReached(atLegacyLimit), false,
-    '3 used out of 5 should NOT be blocked — 3 is the legacy stale value');
 });

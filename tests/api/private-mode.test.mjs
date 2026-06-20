@@ -7,13 +7,14 @@
  *  1. Starter plan is rejected when creating a private opportunity (403)
  *  2. Early Access plan can create a private opportunity (201)
  *  3. Professional plan can create a private opportunity (201)
- *  4. Enterprise plan can create a private opportunity (201)
- *  5. Owner (party_a) GET list — still sees own identity (party_a_email present)
- *  6. Recipient (party_b) GET list — party_a_email + counterparty_email masked
- *  7. Recipient (party_b) GET detail — party_a_email + owner_user_id masked
- *  8. Owner GET detail — party_a_email NOT masked
- *  9. Non-private proposal — identity visible to both sides unchanged
- * 10. Legacy records without is_private_mode — treated as false (not masked)
+ *  4. Team plan can create a private opportunity (201)
+ *  5. Enterprise plan can create a private opportunity (201)
+ *  6. Owner (party_a) GET list — still sees own identity (party_a_email present)
+ *  7. Recipient (party_b) GET list — party_a_email + counterparty_email masked
+ *  8. Recipient (party_b) GET detail — party_a_email + owner_user_id masked
+ *  9. Owner GET detail — party_a_email NOT masked
+ * 10. Non-private proposal — identity visible to both sides unchanged
+ * 11. Legacy records without is_private_mode — treated as false (not masked)
  */
 
 import assert from 'node:assert/strict';
@@ -210,6 +211,25 @@ if (!hasDatabaseUrl()) {
     });
 
     assert.equal(statusCode, 201, `Professional plan should be able to create private proposal, got ${statusCode}: ${JSON.stringify(body)}`);
+    assert.equal(body.ok, true);
+    assert.equal(body.proposal.is_private_mode, true, 'Newly created proposal must have is_private_mode: true');
+  });
+
+  test('Private Mode: plan gating — team plan CAN create private proposals', async () => {
+    await ensureMigrated();
+    await resetTables();
+
+    const userId = 'pm_team_user';
+    const cookie = authCookie(userId, 'team@example.com');
+    await seedBillingPlan(userId, 'team');
+
+    const { statusCode, body } = await createProposal(cookie, {
+      title: 'Private on Team',
+      partyBEmail: 'recipient@example.com',
+      is_private_mode: true,
+    });
+
+    assert.equal(statusCode, 201, `Team plan should be able to create private proposal, got ${statusCode}: ${JSON.stringify(body)}`);
     assert.equal(body.ok, true);
     assert.equal(body.proposal.is_private_mode, true, 'Newly created proposal must have is_private_mode: true');
   });

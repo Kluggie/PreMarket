@@ -5,11 +5,12 @@ import {
   PRIVATE_MODE_ELIGIBILITY_COPY,
 } from '../../src/lib/privateModeEligibility.js';
 
-test('Private Mode UI eligibility: Early Access, Professional, Enterprise are eligible', () => {
+test('Private Mode UI eligibility: Early Access, Professional, Team, Enterprise are eligible', () => {
   assert.equal(isPrivateModePlanEligible('early_access'), true);
   assert.equal(isPrivateModePlanEligible('early access'), true);
   assert.equal(isPrivateModePlanEligible('early_access_program'), true);
   assert.equal(isPrivateModePlanEligible('professional'), true);
+  assert.equal(isPrivateModePlanEligible('team'), true);
   assert.equal(isPrivateModePlanEligible('enterprise'), true);
 });
 
@@ -23,6 +24,6 @@ test('Private Mode UI eligibility: Starter and unknown plans are not eligible', 
 test('Private Mode UI copy includes Early Access terminology', () => {
   assert.equal(
     PRIVATE_MODE_ELIGIBILITY_COPY,
-    'Available on Early Access, Professional, and Enterprise plans',
+    'Available on Early Access, Professional, Team, and Enterprise plans',
   );
 });

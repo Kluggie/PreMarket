@@ -39,9 +39,9 @@ export function getStarterLimitErrorCopy(error, context = 'general') {
 
   if (code === 'starter_ai_evaluations_monthly_limit_reached') {
     if (context === 'evaluation') {
-      return `Starter includes ${formatCount(STARTER_PLAN_LIMITS.aiEvaluationsPerMonth)} AI evaluations per month. This opportunity is saved; run AI mediation again next month or upgrade.`;
+      return `Starter includes ${formatCount(STARTER_PLAN_LIMITS.aiEvaluationsPerMonth)} AI mediation reviews per month. This opportunity is saved; run another review next month or upgrade.`;
     }
-    return `Starter includes ${formatCount(STARTER_PLAN_LIMITS.aiEvaluationsPerMonth)} AI evaluations per month. Try again next month or upgrade your plan.`;
+    return `Starter includes ${formatCount(STARTER_PLAN_LIMITS.aiEvaluationsPerMonth)} AI mediation reviews per month. Try again next month or upgrade your plan.`;
   }
 
   if (code === 'starter_upload_per_opportunity_limit_exceeded') {

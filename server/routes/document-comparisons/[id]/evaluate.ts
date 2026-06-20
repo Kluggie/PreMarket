@@ -49,7 +49,7 @@ import {
   mapComparisonRow,
 } from '../_helpers.js';
 import { assertDocumentComparisonWithinLimits } from '../_limits.js';
-import { assertStarterAiEvaluationAllowed } from '../../../_lib/starter-entitlements.js';
+import { assertAiMediationReviewAllowed } from '../../../_lib/starter-entitlements.js';
 import {
   buildSharedReportHref,
   buildLegacyOpportunityNotificationHref,
@@ -1396,7 +1396,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
     ensureComparisonFound(existingRow);
     const existing = existingRow as DocumentComparisonRow;
 
-    await assertStarterAiEvaluationAllowed(db, {
+    await assertAiMediationReviewAllowed(db, {
       userId: existing.userId,
       userEmail: user.email || null,
     });

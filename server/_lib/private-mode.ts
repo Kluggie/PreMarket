@@ -35,6 +35,7 @@ const PRIVATE_MODE_ELIGIBLE_PLANS = new Set([
   'early-access-program',
   'early access program',
   'professional',
+  'team',
   'enterprise',
 ]);
 
