@@ -28,6 +28,15 @@ function setOpenAICoachHook(fn) {
   };
 }
 
+function setCompanyWebsiteExtractHook(fn) {
+  const previous = globalThis.__PREMARKET_TEST_COMPANY_CONTEXT_WEBSITE_EXTRACT__;
+  globalThis.__PREMARKET_TEST_COMPANY_CONTEXT_WEBSITE_EXTRACT__ = fn;
+  return () => {
+    if (previous === undefined) delete globalThis.__PREMARKET_TEST_COMPANY_CONTEXT_WEBSITE_EXTRACT__;
+    else globalThis.__PREMARKET_TEST_COMPANY_CONTEXT_WEBSITE_EXTRACT__ = previous;
+  };
+}
+
 function coachJson(overrides = {}) {
   return JSON.stringify({
     version: COACH_PROMPT_VERSION,
@@ -156,5 +165,155 @@ test('Step 2 supports a specific model override without using Vertex/Gemini', as
     restoreHook();
     restoreStep2Model();
     restoreVertexMock();
+  }
+});
+
+test('Company Context rejects empty company fields before calling OpenAI', async () => {
+  const calls = [];
+  const restoreHook = setOpenAICoachHook(async (params) => {
+    calls.push(params);
+    return {
+      provider: 'openai',
+      model: params.preferredModel,
+      text: coachJson(),
+    };
+  });
+
+  try {
+    await assert.rejects(
+      () =>
+        generateDocumentComparisonCoach({
+          ...baseCoachInput('company_context'),
+          companyName: '',
+          companyWebsite: '',
+        }),
+      (error) => {
+        assert.equal(error?.code, 'missing_company_context');
+        assert.equal(error?.statusCode, 400);
+        assert.match(String(error?.message || ''), /Add a company name or website/);
+        return true;
+      },
+    );
+    assert.equal(calls.length, 0);
+  } finally {
+    restoreHook();
+  }
+});
+
+test('Company Context can run with company name only and marks context as limited', async () => {
+  const calls = [];
+  const restoreHook = setOpenAICoachHook(async (params) => {
+    calls.push(params);
+    return {
+      provider: 'openai',
+      model: params.preferredModel,
+      text: coachJson({
+        summary: {
+          overall:
+            '## Company Context\n\n### What we know from the provided company details\nCompany context is limited because only the company name was provided. Add a website for a more specific brief.\n\n### Relevance to this negotiation\nUse this as limited counterparty context.\n\n### Missing information / what to verify\nVerify the website and public facts.',
+          top_priorities: ['Add website'],
+        },
+      }),
+    };
+  });
+
+  try {
+    const result = await generateDocumentComparisonCoach({
+      ...baseCoachInput('company_context'),
+      companyName: 'Acme Finance',
+      companyWebsite: '',
+    });
+
+    assert.equal(result.provider, 'openai');
+    assert.equal(result.model, 'gpt-5.4');
+    assert.equal(calls.length, 1);
+    assert.match(calls[0].prompt, /Input basis: company name only/);
+    assert.match(calls[0].prompt, /Company context is limited because only the company name was provided/);
+    assert.match(result.result.summary.overall, /Company context is limited/);
+  } finally {
+    restoreHook();
+  }
+});
+
+test('Company Context can run with website only and passes website as primary input', async () => {
+  const calls = [];
+  const websiteExtractCalls = [];
+  const restoreWebsiteExtract = setCompanyWebsiteExtractHook(async (params) => {
+    websiteExtractCalls.push(params);
+    return {
+      normalizedWebsite: params.normalizedWebsite,
+      title: 'Acme Finance - FP&A Automation',
+      extractedText: 'Acme Finance helps finance teams automate monthly reporting and variance analysis.',
+      fetched: true,
+    };
+  });
+  const restoreHook = setOpenAICoachHook(async (params) => {
+    calls.push(params);
+    return {
+      provider: 'openai',
+      model: params.preferredModel,
+      text: coachJson({
+        summary: {
+          overall:
+            '## Company Context\n\n### What we know from the provided company details\nWebsite excerpt fetched from https://acme.example.\n\n### Relevance to this negotiation\nUse the excerpt as primary company context.\n\n### Missing information / what to verify\nVerify public facts before relying on them.',
+          top_priorities: ['Verify company facts'],
+        },
+      }),
+    };
+  });
+
+  try {
+    const result = await generateDocumentComparisonCoach({
+      ...baseCoachInput('company_context'),
+      companyName: '',
+      companyWebsite: 'https://acme.example',
+    });
+
+    assert.equal(result.provider, 'openai');
+    assert.equal(result.model, 'gpt-5.4');
+    assert.equal(calls.length, 1);
+    assert.equal(websiteExtractCalls.length, 1);
+    assert.match(calls[0].prompt, /Input basis: website only/);
+    assert.match(calls[0].prompt, /Website: https:\/\/acme\.example/);
+    assert.match(calls[0].prompt, /Website provided; treat this URL as the primary company-context input/);
+    assert.match(calls[0].prompt, /Fetched website URL: https:\/\/acme\.example/);
+    assert.match(calls[0].prompt, /Fetched page title: Acme Finance - FP&A Automation/);
+    assert.match(calls[0].prompt, /Acme Finance helps finance teams automate monthly reporting/);
+    assert.match(result.result.summary.overall, /Website excerpt fetched from https:\/\/acme\.example/);
+  } finally {
+    restoreHook();
+    restoreWebsiteExtract();
+  }
+});
+
+test('Other Step 2 suggested prompts still run without company fields', async () => {
+  const calls = [];
+  const restoreHook = setOpenAICoachHook(async (params) => {
+    calls.push(params);
+    return {
+      provider: 'openai',
+      model: params.preferredModel,
+      text: coachJson(),
+    };
+  });
+
+  try {
+    for (const intent of ['draft_response', 'negotiate', 'risks', 'clarifying_questions']) {
+      const result = await generateDocumentComparisonCoach({
+        ...baseCoachInput(intent),
+        companyName: '',
+        companyWebsite: '',
+      });
+      assert.equal(result.provider, 'openai');
+      assert.equal(result.model, 'gpt-5.4');
+    }
+
+    assert.equal(calls.length, 4);
+    assert.deepEqual(
+      calls.map((call) => /Intent: ([a-z_]+)/.exec(call.prompt)?.[1]),
+      ['draft_response', 'negotiate', 'risks', 'clarifying_questions'],
+    );
+  } finally {
+    restoreHook();
   }
 });

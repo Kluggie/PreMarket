@@ -4,6 +4,8 @@ import {
   buildCoachActionRequest,
   canRunRewriteSelection,
   DOCUMENT_COMPARISON_COACH_ACTIONS,
+  getCompanyContextInputBasis,
+  hasCompanyContextInput,
 } from '../../src/components/document-comparison/coachActions.js';
 
 test('coach actions expose the final neutral Step 2 prompt set in order', () => {
@@ -26,6 +28,7 @@ test('coach actions expose the final neutral Step 2 prompt set in order', () => 
   ]);
   assert.equal(DOCUMENT_COMPARISON_COACH_ACTIONS.some((action) => action.label === 'General Improvements'), false);
   assert.equal(DOCUMENT_COMPARISON_COACH_ACTIONS.some((action) => action.label === 'Company Brief'), false);
+  assert.equal(DOCUMENT_COMPARISON_COACH_ACTIONS.some((action) => action.label === 'Draft My Reply'), false);
 });
 
 test('rewrite selection gating requires non-empty selection text and valid range', () => {
@@ -53,4 +56,23 @@ test('buildCoachActionRequest returns rewrite_selection payload with selection d
   assert.equal(payload.selectionTarget, 'confidential');
   assert.equal(payload.selectionText, 'Selected confidential snippet');
   assert.deepEqual(payload.selectionRange, { from: 25, to: 52 });
+});
+
+test('Company Context helper requires company name or website and describes generated basis', () => {
+  assert.equal(hasCompanyContextInput({ companyName: '', companyWebsite: '' }), false);
+  assert.equal(hasCompanyContextInput({ companyName: 'Acme' }), true);
+  assert.equal(hasCompanyContextInput({ companyWebsite: 'https://acme.example' }), true);
+
+  assert.equal(
+    getCompanyContextInputBasis({ companyName: 'Acme', companyWebsite: '' }),
+    'Based on: company name only',
+  );
+  assert.equal(
+    getCompanyContextInputBasis({ companyName: '', companyWebsite: 'https://acme.example' }),
+    'Based on: website only · Website provided: https://acme.example',
+  );
+  assert.equal(
+    getCompanyContextInputBasis({ companyName: 'Acme', companyWebsite: 'https://acme.example' }),
+    'Based on: website + company name · Website provided: https://acme.example',
+  );
 });

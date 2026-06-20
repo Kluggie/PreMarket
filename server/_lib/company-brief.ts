@@ -34,6 +34,14 @@ export type CompanyBriefResult = {
   citationCount: number;
 };
 
+export type CompanyWebsiteContextExtraction = {
+  normalizedWebsite: string;
+  title: string;
+  extractedText: string;
+  fetched: boolean;
+  reason?: string;
+};
+
 type SearchResult = {
   title: string;
   url: string;
@@ -234,9 +242,9 @@ function extractTextFromHtml(html: string) {
     .slice(0, MAX_SOURCE_EXCERPT_CHARS);
 }
 
-async function fetchSourceExcerpt(url: string) {
+async function fetchSourceExcerpt(url: string, timeoutMs = 10000) {
   try {
-    const response = await fetchWithTimeout(url, 10000);
+    const response = await fetchWithTimeout(url, timeoutMs);
     if (!response.ok) {
       return { title: '', text: '' };
     }
@@ -258,6 +266,45 @@ async function fetchSourceExcerpt(url: string) {
   } catch {
     return { title: '', text: '' };
   }
+}
+
+export async function extractCompanyWebsiteContext(
+  website: string,
+  timeoutMs = 5000,
+): Promise<CompanyWebsiteContextExtraction> {
+  const normalizedWebsite = normalizeWebsite(website);
+  if (!normalizedWebsite) {
+    return {
+      normalizedWebsite: '',
+      title: '',
+      extractedText: '',
+      fetched: false,
+      reason: 'invalid_website',
+    };
+  }
+
+  const testOverride = (globalThis as any).__PREMARKET_TEST_COMPANY_CONTEXT_WEBSITE_EXTRACT__;
+  if (typeof testOverride === 'function') {
+    const overridden = await testOverride({ website, normalizedWebsite });
+    const extractedText = asText(overridden?.extractedText || overridden?.text || overridden?.excerpt);
+    return {
+      normalizedWebsite: asText(overridden?.normalizedWebsite) || normalizedWebsite,
+      title: asText(overridden?.title),
+      extractedText,
+      fetched: Boolean(overridden?.fetched ?? extractedText),
+      reason: asText(overridden?.reason),
+    };
+  }
+
+  const extracted = await fetchSourceExcerpt(normalizedWebsite, timeoutMs);
+  const extractedText = asText(extracted.text);
+  return {
+    normalizedWebsite,
+    title: asText(extracted.title),
+    extractedText,
+    fetched: Boolean(extractedText),
+    reason: extractedText ? '' : 'no_extractable_website_text',
+  };
 }
 
 async function collectPublicSources(params: {

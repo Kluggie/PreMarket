@@ -15,7 +15,10 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import CoachResponseText from '@/components/document-comparison/CoachResponseText';
-import { DOCUMENT_COMPARISON_COACH_ACTIONS } from '@/components/document-comparison/coachActions';
+import {
+  DOCUMENT_COMPARISON_COACH_ACTIONS,
+  hasCompanyContextInput,
+} from '@/components/document-comparison/coachActions';
 import {
   getNormalizedSuggestionId,
   getSuggestionCategoryLabel,
@@ -101,6 +104,10 @@ export default function SuggestionCoachPanel({
   visibleCoachSuggestions = [],
 }) {
   const renameInputRef = useRef(null);
+  const hasCompanyInput = hasCompanyContextInput({
+    companyName: companyContextName,
+    companyWebsite: companyContextWebsite,
+  });
 
   useEffect(() => {
     if (!renamingThreadId) {
@@ -302,6 +309,9 @@ export default function SuggestionCoachPanel({
                       </p>
                     ) : null}
                   </div>
+                  <p className="text-xs text-slate-500">
+                    Add a company name or website to generate company-specific context.
+                  </p>
                   <div className="space-y-2">
                     <Input
                       ref={companyContextNameInputRef}
@@ -342,19 +352,29 @@ export default function SuggestionCoachPanel({
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <p className="w-full text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">Suggested Prompts</p>
-                  {suggestedPromptOptions.map((option) => (
-                    <Button
-                      key={option.id}
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={coachLoading || coachNotConfigured || disableSuggestedPrompts}
-                      onClick={() => onRunSuggestedPrompt(option)}
-                    >
-                      {coachLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
-                      {option.label}
-                    </Button>
-                  ))}
+                  {suggestedPromptOptions.map((option) => {
+                    const isCompanyContextAction = option.intent === 'company_context';
+                    const needsCompanyInput = isCompanyContextAction && !hasCompanyInput;
+                    const disabled =
+                      coachLoading ||
+                      coachNotConfigured ||
+                      disableSuggestedPrompts ||
+                      needsCompanyInput;
+                    return (
+                      <Button
+                        key={option.id}
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={disabled}
+                        title={needsCompanyInput ? 'Enter a company name or website first.' : undefined}
+                        onClick={() => onRunSuggestedPrompt(option)}
+                      >
+                        {coachLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
+                        {option.label}
+                      </Button>
+                    );
+                  })}
                 </div>
               </div>
             </div>

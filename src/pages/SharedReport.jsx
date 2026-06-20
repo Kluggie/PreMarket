@@ -19,6 +19,8 @@ import ComparisonEvaluationStep from '@/components/document-comparison/Compariso
 import {
   buildCoachActionRequest,
   DOCUMENT_COMPARISON_COACH_ACTIONS,
+  getCompanyContextInputBasis,
+  hasCompanyContextInput,
 } from '@/components/document-comparison/coachActions';
 import {
   VISIBILITY_CONFIDENTIAL,
@@ -2012,6 +2014,20 @@ export default function SharedReport() {
     if (coachNotConfigured) {
       return null;
     }
+    if (
+      intent === 'company_context' &&
+      !hasCompanyContextInput({
+        companyName: companyContextName,
+        companyWebsite: companyContextWebsite,
+      })
+    ) {
+      const message = 'Add a company name or website to generate company context.';
+      setCompanyContextValidationError(message);
+      setCoachError(message);
+      companyContextNameInputRef.current?.focus?.();
+      toast.error(message);
+      return null;
+    }
 
     setCoachLoading(true);
     setCoachError('');
@@ -2048,8 +2064,8 @@ export default function SharedReport() {
         selectionText: selectionText || undefined,
         selectionTarget: selectionTarget || undefined,
         threadHistory: threadHistory.length > 0 ? threadHistory : undefined,
-        company_name: asText(companyContextName) || undefined,
-        company_website: asText(companyContextWebsite) || undefined,
+        company_name: asText(companyContextName),
+        company_website: asText(companyContextWebsite),
       };
       if (!isCustomPromptRequest) {
         const confBundle = compiledRecipientBundles.confidential;
@@ -2078,6 +2094,8 @@ export default function SharedReport() {
         promptText: isCustomPromptRequest ? String(promptText || '').trim() : '',
         model: response?.model || 'unknown',
         provider: response?.provider || 'vertex',
+        companyName: asText(companyContextName),
+        companyWebsite: asText(companyContextWebsite),
         selectionText: selectionText || '',
         selectionTarget: selectionTarget || null,
         selectionRange:
@@ -2794,6 +2812,15 @@ export default function SharedReport() {
   const isCustomPromptResponse = coachIntentKey === 'custom_prompt';
   const coachResponseLabel = COACH_INTENT_LABELS[coachIntentKey] || 'Suggestion feedback';
   const coachResponseMetaParts = [];
+  if (coachIntentKey === 'company_context') {
+    const basis = getCompanyContextInputBasis({
+      companyName: coachRequestMeta?.companyName,
+      companyWebsite: coachRequestMeta?.companyWebsite,
+    });
+    if (basis) {
+      coachResponseMetaParts.push(basis);
+    }
+  }
   if (visibleCoachSuggestions.length > 0) {
     coachResponseMetaParts.push(
       `${visibleCoachSuggestions.length} suggestion${visibleCoachSuggestions.length === 1 ? '' : 's'}`,

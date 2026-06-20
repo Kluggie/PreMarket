@@ -23,6 +23,8 @@ import DocumentComparisonEditorErrorBoundary from '@/components/document-compari
 import {
   buildCoachActionRequest,
   DOCUMENT_COMPARISON_COACH_ACTIONS,
+  getCompanyContextInputBasis,
+  hasCompanyContextInput,
 } from '@/components/document-comparison/coachActions';
 import { sanitizeEditorHtml } from '@/components/document-comparison/editorSanitization';
 import {
@@ -1982,6 +1984,15 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
   const isCustomPromptResponse = coachIntentKey === 'custom_prompt';
   const coachResponseLabel = COACH_INTENT_LABELS[coachIntentKey] || 'Suggestion feedback';
   const coachResponseMetaParts = [];
+  if (coachIntentKey === 'company_context') {
+    const basis = getCompanyContextInputBasis({
+      companyName: coachRequestMeta?.companyName,
+      companyWebsite: coachRequestMeta?.companyWebsite,
+    });
+    if (basis) {
+      coachResponseMetaParts.push(basis);
+    }
+  }
   if (visibleCoachSuggestions.length > 0) {
     coachResponseMetaParts.push(`${visibleCoachSuggestions.length} suggestion${visibleCoachSuggestions.length === 1 ? '' : 's'}`);
   }
@@ -3105,6 +3116,22 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
     if (coachNotConfigured) {
       return null;
     }
+    if (
+      intent === 'company_context' &&
+      !hasCompanyContextInput({
+        companyName: companyContextName,
+        companyWebsite: companyContextWebsite,
+      })
+    ) {
+      const message = 'Add a company name or website to generate company context.';
+      setCompanyContextValidationError(message);
+      setCoachError(message);
+      companyContextNameInputRef.current?.focus?.();
+      if (!silent) {
+        toast.error(message);
+      }
+      return null;
+    }
 
     const resolvedId = await ensureComparisonIdForCoach();
     if (!resolvedId) {
@@ -3150,8 +3177,8 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
         selectionText: selectionText || undefined,
         selectionTarget: selectionTarget || undefined,
         threadHistory: threadHistory.length > 0 ? threadHistory : undefined,
-        company_name: asText(companyContextName) || undefined,
-        company_website: asText(companyContextWebsite) || undefined,
+        company_name: asText(companyContextName),
+        company_website: asText(companyContextWebsite),
       };
       if (!isCustomPromptRequest) {
         const sanitizedDocAHtml = sanitizeEditorHtml(docAHtml || textToHtml(docAText));
@@ -3169,8 +3196,8 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
             title: asText(title) || 'Untitled',
             guestDraftId: getGuestComparisonIds().guestDraftId,
             guestSessionId: getGuestComparisonIds().guestSessionId,
-            companyName: asText(companyContextName) || undefined,
-            companyWebsite: asText(companyContextWebsite) || undefined,
+            companyName: asText(companyContextName),
+            companyWebsite: asText(companyContextWebsite),
           })
         : await documentComparisonsClient.coach(resolvedId, payload);
       const coach = response?.coach || null;
@@ -3186,6 +3213,8 @@ function DocumentComparisonCreateEditor({ guestMode = false, allowGuestEntry = f
         promptText: isCustomPromptRequest ? String(promptText || '').trim() : '',
         model: response?.model || 'unknown',
         provider: response?.provider || 'vertex',
+        companyName: asText(companyContextName),
+        companyWebsite: asText(companyContextWebsite),
         selectionText: selectionText || '',
         selectionTarget: selectionTarget || null,
         selectionRange:

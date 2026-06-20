@@ -2,6 +2,7 @@ import { createHash, createSign } from 'node:crypto';
 import OpenAI from 'openai';
 import { z } from 'zod';
 import { formatMediatorContextBlock, type SafeMediatorContext } from './coach-mediator-context.js';
+import { extractCompanyWebsiteContext, type CompanyWebsiteContextExtraction } from './company-brief.js';
 import { ApiError } from './errors.js';
 import { getVertexConfig, getVertexNotConfiguredError } from './integrations.js';
 import { sanitizeUserInput, wrapRawUserContent } from './vertex-input-sanitizer.js';
@@ -164,6 +165,7 @@ type GenerateCoachParams = {
   promptText?: string;
   companyName?: string;
   companyWebsite?: string;
+  companyWebsiteContext?: CompanyWebsiteContextExtraction | null;
   otherPartyCanaryTokens?: string[];
   threadHistory?: ThreadHistoryEntry[];
   /**
@@ -179,6 +181,75 @@ type GenerateCoachParams = {
 
 function asText(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+export function hasCompanyContextInput(input: { companyName?: unknown; companyWebsite?: unknown } = {}) {
+  return Boolean(asText(input.companyName) || asText(input.companyWebsite));
+}
+
+function getCompanyContextBasis(input: { companyName?: unknown; companyWebsite?: unknown } = {}) {
+  const companyName = asText(input.companyName);
+  const companyWebsite = asText(input.companyWebsite);
+  if (companyName && companyWebsite) {
+    return 'website + company name';
+  }
+  if (companyWebsite) {
+    return 'website only';
+  }
+  if (companyName) {
+    return 'company name only';
+  }
+  return 'none';
+}
+
+function normalizeCompanyWebsiteContext(
+  context: CompanyWebsiteContextExtraction | null | undefined,
+): CompanyWebsiteContextExtraction | null {
+  if (!context) {
+    return null;
+  }
+  const normalizedWebsite = asText(context.normalizedWebsite);
+  const extractedText = sanitizeUserInput(asText(context.extractedText)).slice(0, 2200);
+  const title = sanitizeUserInput(asText(context.title)).slice(0, 240);
+  return {
+    normalizedWebsite,
+    title,
+    extractedText,
+    fetched: Boolean(context.fetched && extractedText),
+    reason: asText(context.reason),
+  };
+}
+
+export async function resolveCompanyWebsiteContextForCoach(params: {
+  intent?: unknown;
+  companyWebsite?: unknown;
+  companyWebsiteContext?: CompanyWebsiteContextExtraction | null;
+}) {
+  if (params.intent !== 'company_context') {
+    return null;
+  }
+  if (params.companyWebsiteContext) {
+    return normalizeCompanyWebsiteContext(params.companyWebsiteContext);
+  }
+  const website = asText(params.companyWebsite);
+  if (!website) {
+    return null;
+  }
+  return normalizeCompanyWebsiteContext(await extractCompanyWebsiteContext(website));
+}
+
+function companyWebsiteContextCacheToken(context: CompanyWebsiteContextExtraction | null | undefined) {
+  const normalized = normalizeCompanyWebsiteContext(context);
+  if (!normalized) {
+    return '';
+  }
+  return [
+    normalized.fetched ? 'fetched' : 'unavailable',
+    normalized.reason || '',
+    normalized.normalizedWebsite || '',
+    normalized.title || '',
+    normalized.extractedText || '',
+  ].join('\n');
 }
 
 function asLower(value: unknown) {
@@ -440,10 +511,15 @@ function buildIntentSpecificRules(params: GenerateCoachParams) {
     case 'company_context':
       return [
         'Intent-specific rules (company_context):',
-        '- Help the user understand relevant company or counterparty context for this negotiation.',
-        '- Use only company fields, public/shared text, user-provided confidential text, and visible shared history provided in this request.',
+        '- Help the user understand relevant company or counterparty context based on the provided Company Context fields.',
+        '- Website is the primary company-context input when provided. If a Website Evidence excerpt is included, use it as the primary evidence.',
+        '- If no Website Evidence excerpt is available, use the website URL as provided context only and do not claim to have fetched or read website pages.',
+        '- Company name alone is allowed, but summary.overall MUST clearly say context is limited because no website was provided and suggest adding a website for a more specific brief.',
+        '- Use public/shared text, user-provided confidential text, mediator context, and visible shared history only as secondary negotiation context.',
+        '- Do not treat proposal wording, negotiation history, or shared workspace context as a substitute for company research.',
         '- Do not hallucinate company facts, market facts, funding, customers, size, geography, or public claims.',
-        '- If company details are available, summary.overall MUST include a short company/context brief and implications for the negotiation.',
+        '- summary.overall MUST be short markdown with heading "Company Context" and these sections: "What we know from the provided company details", "Relevance to this negotiation", and "Missing information / what to verify".',
+        '- The first section must state which company fields were provided and must not infer facts beyond those fields.',
         '- If there is not enough company information, summary.overall MUST say what information is missing and what the user should provide.',
         '- Distinguish known facts from assumptions.',
         '- concerns may identify context gaps; questions may request missing company details.',
@@ -478,10 +554,33 @@ function buildIntentSpecificRules(params: GenerateCoachParams) {
   }
 }
 
+function buildCompanyWebsiteEvidenceLines(context: CompanyWebsiteContextExtraction | null | undefined, rawWebsite: string) {
+  const website = asText(rawWebsite);
+  if (!website) {
+    return [] as string[];
+  }
+  const normalized = normalizeCompanyWebsiteContext(context);
+  const sourceUrl = normalized?.normalizedWebsite || website;
+  if (normalized?.fetched && normalized.extractedText) {
+    return [
+      'Website Evidence:',
+      `Fetched website URL: ${sourceUrl}`,
+      `Fetched page title: ${normalized.title || '(not available)'}`,
+      'Fetched website excerpt:',
+      wrapRawUserContent('company_website_excerpt', normalized.extractedText),
+    ];
+  }
+  return [
+    'Website Evidence:',
+    `No website page excerpt was available for ${sourceUrl}. Base company context only on the provided URL/name and available shared workspace context. Do not infer company facts from the website.`,
+  ];
+}
+
 export function buildCoachPrompt(params: GenerateCoachParams) {
   const title = params.title || 'Untitled';
-  const companyName = asText(params.companyName) || 'unknown';
-  const companyWebsite = asText(params.companyWebsite) || 'unknown';
+  const companyName = asText(params.companyName);
+  const companyWebsite = asText(params.companyWebsite);
+  const companyBasis = getCompanyContextBasis(params);
   const selectionTarget = params.selectionTarget || 'shared';
   const selectionText = asText(params.selectionText);
   const selectionDocText = selectionTarget === 'confidential' ? params.docAText : params.docBText;
@@ -518,8 +617,18 @@ export function buildCoachPrompt(params: GenerateCoachParams) {
     `Intent: ${params.intent}`,
     `Title: ${title}`,
     'Company Context:',
-    `Company name: ${companyName}`,
-    `Website: ${companyWebsite}`,
+    `Input basis: ${companyBasis}`,
+    `Company name: ${companyName || '(not provided)'}`,
+    `Website: ${companyWebsite || '(not provided)'}`,
+    ...(companyWebsite
+      ? ['Website provided; treat this URL as the primary company-context input.']
+      : []),
+    ...(params.intent === 'company_context'
+      ? buildCompanyWebsiteEvidenceLines(params.companyWebsiteContext, companyWebsite)
+      : []),
+    ...(companyName && !companyWebsite
+      ? ['Company context is limited because only the company name was provided. Add a website for a more specific brief.']
+      : []),
     `Selection Target: ${params.mode === 'selection' ? selectionTarget : 'n/a'}`,
     'Selection Text:',
     params.mode === 'selection' ? selectionText || '(none provided)' : 'n/a',
@@ -1732,13 +1841,32 @@ function buildMockCoachResult(params: GenerateCoachParams): CoachResultV1 {
 
   if (params.intent === 'company_context') {
     const company = asText(params.companyName) || 'the counterparty';
-    const hasCompanyDetails = Boolean(asText(params.companyName) || asText(params.companyWebsite));
+    const website = asText(params.companyWebsite);
+    const websiteContext = normalizeCompanyWebsiteContext(params.companyWebsiteContext);
+    const basis = getCompanyContextBasis(params);
+    let firstSection = `Company context is limited because only the company name was provided: ${company}. Add a website for a more specific brief.`;
+    if (website && websiteContext?.fetched && websiteContext.extractedText) {
+      firstSection = `Website excerpt fetched from ${websiteContext.normalizedWebsite || website}. ${
+        websiteContext.title ? `Page title: ${websiteContext.title}. ` : ''
+      }Company name provided: ${asText(params.companyName) || '(not provided)'}. Use the fetched excerpt as primary company context and verify facts before relying on them.`;
+    } else if (website) {
+      firstSection = `Website provided: ${website}. ${asText(params.companyName) ? `Company name provided: ${company}.` : 'No company name was provided.'} No website page excerpt was available, so use the URL/name as provided context only and do not infer company facts from the website.`;
+    }
     return {
       version: COACH_PROMPT_VERSION,
       summary: {
-        overall: hasCompanyDetails
-          ? `Known company context for ${company}: use the provided company details and shared round text to assess negotiation fit. Treat any missing market, size, funding, or customer information as unknown until the user provides it. Negotiation implication: confirm buyer profile, implementation capacity, and decision process before relying on company assumptions.`
-          : 'Company context is limited. Provide the company name, website, business model, decision-maker role, and any known constraints before relying on counterparty-specific assumptions.',
+        overall: [
+          '## Company Context',
+          '',
+          '### What we know from the provided company details',
+          firstSection,
+          '',
+          '### Relevance to this negotiation',
+          'Use the provided company details as secondary context for fit, implementation capacity, decision process, and negotiation assumptions. Do not treat the proposal text as company research.',
+          '',
+          '### Missing information / what to verify',
+          'Verify company role, decision maker, implementation capacity, security/compliance needs, and any public facts before relying on counterparty-specific assumptions.',
+        ].join('\n'),
         top_priorities: ['Separate known facts from assumptions', 'Ask for missing company details'],
       },
       suggestions: [],
@@ -1747,9 +1875,7 @@ function buildMockCoachResult(params: GenerateCoachParams): CoachResultV1 {
           id: 'company_context_gap',
           severity: 'warning',
           title: 'Company context may be incomplete',
-          details: hasCompanyDetails
-            ? 'Only provided company details are available; do not infer public facts without evidence.'
-            : 'Company name and website are missing, limiting context-specific advice.',
+          details: `Input basis: ${basis}. Only provided company details are available; do not infer public facts without evidence.`,
         },
       ],
       questions: [
@@ -1915,6 +2041,7 @@ export function buildCoachCacheHash(params: {
   promptText?: string;
   companyName?: string;
   companyWebsite?: string;
+  companyWebsiteContext?: CompanyWebsiteContextExtraction | null;
   threadHistory?: ThreadHistoryEntry[];
   mediatorContext?: SafeMediatorContext | null;
   sharedHistoryContext?: string;
@@ -1940,6 +2067,7 @@ export function buildCoachCacheHash(params: {
         String(params.docBText || ''),
         String(params.companyName || ''),
         String(params.companyWebsite || ''),
+        companyWebsiteContextCacheToken(params.companyWebsiteContext),
         String(params.selectionText || ''),
         String(params.promptText || ''),
         String(params.sharedHistoryContext || ''),
@@ -1969,9 +2097,29 @@ export async function generateDocumentComparisonCoach(params: GenerateCoachParam
     docBText: sanitizeUserInput(params.docBText),
     selectionText: params.selectionText != null ? sanitizeUserInput(params.selectionText) : params.selectionText,
     promptText: params.promptText != null ? sanitizeUserInput(params.promptText) : params.promptText,
+    companyName: params.companyName != null ? sanitizeUserInput(params.companyName) : params.companyName,
+    companyWebsite: params.companyWebsite != null ? sanitizeUserInput(params.companyWebsite) : params.companyWebsite,
+    companyWebsiteContext: normalizeCompanyWebsiteContext(params.companyWebsiteContext),
   };
   // Use sanitized params for the rest of the function
-  const p = sanitizedParams;
+  let p = sanitizedParams;
+
+  if (p.intent === 'company_context' && !hasCompanyContextInput(p)) {
+    throw new ApiError(
+      400,
+      'missing_company_context',
+      'Add a company name or website to generate company context.',
+    );
+  }
+
+  const resolvedWebsiteContext = await resolveCompanyWebsiteContextForCoach(p);
+  if (resolvedWebsiteContext) {
+    p = {
+      ...p,
+      companyWebsite: resolvedWebsiteContext.normalizedWebsite || p.companyWebsite,
+      companyWebsiteContext: resolvedWebsiteContext,
+    };
+  }
 
   if (p.intent === 'custom_prompt') {
     return generateCustomPromptFeedback(p);

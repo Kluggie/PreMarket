@@ -234,6 +234,7 @@ test('guest Step 2 AI assistance uses the public preview path, applies suggestio
   await expect(page.getByRole('button', { name: 'Risks & Gaps' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Clarifying Questions' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Company Context' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Company Context' })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'General Improvements' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Company Brief' })).toHaveCount(0);
   expect(guestCoachCalls).toBe(0);

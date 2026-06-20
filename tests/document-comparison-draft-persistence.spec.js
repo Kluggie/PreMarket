@@ -607,14 +607,18 @@ test.describe('Document Comparison Draft Persistence', () => {
     const nameInput = page.getByTestId('company-context-name-input-inline');
     const websiteInput = page.getByTestId('company-context-website-input-inline');
 
-    await expect(page.getByRole('button', { name: 'Company Context' })).toBeVisible();
+    const companyContextButton = page.getByRole('button', { name: 'Company Context' });
+    await expect(companyContextButton).toBeVisible();
+    await expect(companyContextButton).toBeDisabled();
     await expect(page.getByRole('button', { name: 'Company Brief' })).toHaveCount(0);
     expect(companyBriefRequests).toHaveLength(0);
+    expect(coachRequests).toHaveLength(0);
     await expect(page.getByTestId('company-context-dialog')).toHaveCount(0);
 
     await nameInput.fill('Acme Industries');
     await websiteInput.fill('acme.test');
     await websiteInput.blur();
+    await expect(companyContextButton).toBeEnabled();
 
     await expect
       .poll(() => companyContextRequests.length, { timeout: STEP_LOAD_TIMEOUT_MS })
@@ -623,7 +627,7 @@ test.describe('Document Comparison Draft Persistence', () => {
       companyContextRequests.some((payload) => payload?.companyName === 'Acme Industries'),
     ).toBe(true);
 
-    await page.getByRole('button', { name: 'Company Context' }).click();
+    await companyContextButton.click();
     await expect
       .poll(() => coachRequests.length, { timeout: STEP_LOAD_TIMEOUT_MS })
       .toBe(1);

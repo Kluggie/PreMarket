@@ -31,6 +31,29 @@ export const DOCUMENT_COMPARISON_COACH_ACTIONS = [
   },
 ];
 
+export function hasCompanyContextInput(input = {}) {
+  return Boolean(
+    String(input.companyName || '').trim() ||
+      String(input.companyWebsite || '').trim()
+  );
+}
+
+export function getCompanyContextInputBasis(input = {}) {
+  const companyName = String(input.companyName || '').trim();
+  const companyWebsite = String(input.companyWebsite || '').trim();
+
+  if (companyName && companyWebsite) {
+    return `Based on: website + company name · Website provided: ${companyWebsite}`;
+  }
+  if (companyWebsite) {
+    return `Based on: website only · Website provided: ${companyWebsite}`;
+  }
+  if (companyName) {
+    return 'Based on: company name only';
+  }
+  return '';
+}
+
 export function canRunRewriteSelection(selectionContext) {
   const text = String(selectionContext?.text || '').trim();
   const from = Number(selectionContext?.range?.from || 0);

@@ -18,6 +18,8 @@ import {
   buildSelectionTextHash,
   COACH_PROMPT_VERSION,
   generateDocumentComparisonCoach,
+  hasCompanyContextInput,
+  resolveCompanyWebsiteContextForCoach,
   resolveStep2CoachProviderModel,
 } from '../../../_lib/vertex-coach.js';
 import { extractSafeMediatorContext } from '../../../_lib/coach-mediator-context.js';
@@ -52,6 +54,43 @@ type CoachRouteContext = {
 
 function asText(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function hasOwn(value: unknown, key: string) {
+  return Boolean(
+    value &&
+      typeof value === 'object' &&
+      Object.prototype.hasOwnProperty.call(value, key)
+  );
+}
+
+function hasCompanyContextFields(body: Record<string, unknown>) {
+  return (
+    hasOwn(body, 'company_name') ||
+    hasOwn(body, 'companyName') ||
+    hasOwn(body, 'company_website') ||
+    hasOwn(body, 'companyWebsite')
+  );
+}
+
+function bodyText(body: Record<string, unknown>, snakeKey: string, camelKey: string) {
+  if (hasOwn(body, snakeKey)) {
+    return asText(body[snakeKey]);
+  }
+  if (hasOwn(body, camelKey)) {
+    return asText(body[camelKey]);
+  }
+  return '';
+}
+
+function assertCompanyContextInput(intent: string, input: { companyName?: string; companyWebsite?: string }) {
+  if (intent === 'company_context' && !hasCompanyContextInput(input)) {
+    throw new ApiError(
+      400,
+      'missing_company_context',
+      'Add a company name or website to generate company context.',
+    );
+  }
 }
 
 function parseMode(value: unknown) {
@@ -347,10 +386,20 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
         ? existing.inputs
         : {};
     const savedCompanyContext = resolveComparisonCompanyContext(existing, existingInputs);
+    const hasRequestCompanyContext = hasCompanyContextFields(body);
     const companyContext = {
-      companyName: asText(body.company_name || body.companyName) || savedCompanyContext.companyName,
-      companyWebsite: asText(body.company_website || body.companyWebsite) || savedCompanyContext.companyWebsite,
+      companyName: hasRequestCompanyContext
+        ? bodyText(body, 'company_name', 'companyName')
+        : savedCompanyContext.companyName,
+      companyWebsite: hasRequestCompanyContext
+        ? bodyText(body, 'company_website', 'companyWebsite')
+        : savedCompanyContext.companyWebsite,
     };
+    assertCompanyContextInput(intent, companyContext);
+    const companyWebsiteContext = await resolveCompanyWebsiteContextForCoach({
+      intent,
+      companyWebsite: companyContext.companyWebsite,
+    });
     const linkedProposal =
       existing.proposalId
         ? await db
@@ -483,6 +532,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       promptText: promptText || undefined,
       companyName: companyContext.companyName,
       companyWebsite: companyContext.companyWebsite,
+      companyWebsiteContext,
       threadHistory: threadHistory.length > 0 ? threadHistory : undefined,
       mediatorContext,
       sharedHistoryContext,
@@ -534,6 +584,7 @@ export default async function handler(req: any, res: any, comparisonIdParam?: st
       promptText: promptText || undefined,
       companyName: companyContext.companyName,
       companyWebsite: companyContext.companyWebsite,
+      companyWebsiteContext,
       otherPartyCanaryTokens: resolveOtherPartyCanaryTokens(existing, existingInputs),
       threadHistory: threadHistory.length > 0 ? threadHistory : undefined,
       mediatorContext,

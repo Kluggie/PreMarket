@@ -8,6 +8,8 @@ import {
   buildCoachCacheHash,
   COACH_PROMPT_VERSION,
   generateDocumentComparisonCoach,
+  hasCompanyContextInput,
+  resolveCompanyWebsiteContextForCoach,
   resolveStep2CoachProviderModel,
 } from '../../../_lib/vertex-coach.js';
 import { assertDocumentComparisonWithinLimits } from '../../document-comparisons/_limits.js';
@@ -33,6 +35,16 @@ const MAX_CUSTOM_PROMPT_CHARS = 4000;
 
 function asText(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function assertCompanyContextInput(intent: string, input: { companyName?: string; companyWebsite?: string }) {
+  if (intent === 'company_context' && !hasCompanyContextInput(input)) {
+    throw new ApiError(
+      400,
+      'missing_company_context',
+      'Add a company name or website to generate company context.',
+    );
+  }
 }
 
 function parseMode(value: unknown) {
@@ -175,6 +187,14 @@ export default async function handler(req: any, res: any) {
       selectionText,
       promptText,
     });
+    assertCompanyContextInput(intent, {
+      companyName: previewInput.companyName,
+      companyWebsite: previewInput.companyWebsite,
+    });
+    const companyWebsiteContext = await resolveCompanyWebsiteContextForCoach({
+      intent,
+      companyWebsite: previewInput.companyWebsite,
+    });
 
     assertDocumentComparisonWithinLimits({
       docAText: previewInput.docAText,
@@ -193,6 +213,7 @@ export default async function handler(req: any, res: any) {
       promptText: promptText || undefined,
       companyName: previewInput.companyName,
       companyWebsite: previewInput.companyWebsite,
+      companyWebsiteContext,
       threadHistory: threadHistory.length > 0 ? threadHistory : undefined,
     });
 
@@ -207,6 +228,7 @@ export default async function handler(req: any, res: any) {
       promptText: promptText || undefined,
       companyName: previewInput.companyName,
       companyWebsite: previewInput.companyWebsite,
+      companyWebsiteContext,
       threadHistory: threadHistory.length > 0 ? threadHistory : undefined,
       otherPartyCanaryTokens: [],
       providerProfile: 'step2_openai',

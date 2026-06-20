@@ -37,6 +37,7 @@ test('negotiate prompt includes consultant constraints and required sections', (
   assert.match(prompt, /Company Context:/);
   assert.match(prompt, /Company name: Acme Dynamics/);
   assert.match(prompt, /Website: https:\/\/acme\.example\.com/);
+  assert.doesNotMatch(prompt, /Website Evidence:/);
 });
 
 test('risks prompt includes ranked-risk structure and mitigation framing', () => {
@@ -88,7 +89,47 @@ test('company_context prompt forbids hallucinated company facts', () => {
   });
 
   assert.match(prompt, /Help the user understand relevant company or counterparty context/);
+  assert.match(prompt, /Website is the primary company-context input when provided/);
+  assert.match(prompt, /Use public\/shared text, user-provided confidential text, mediator context, and visible shared history only as secondary negotiation context/);
+  assert.match(prompt, /Do not treat proposal wording, negotiation history, or shared workspace context as a substitute for company research/);
   assert.match(prompt, /Do not hallucinate company facts/);
   assert.match(prompt, /If there is not enough company information/);
   assert.match(prompt, /Distinguish known facts from assumptions/);
+  assert.match(prompt, /Input basis: website \+ company name/);
+  assert.match(prompt, /Website provided; treat this URL as the primary company-context input/);
+  assert.match(prompt, /No website page excerpt was available for https:\/\/acme\.example\.com/);
+  assert.match(prompt, /do not infer company facts from the website/i);
+  assert.match(prompt, /What we know from the provided company details/);
+  assert.match(prompt, /Relevance to this negotiation/);
+  assert.match(prompt, /Missing information \/ what to verify/);
+});
+
+test('company_context prompt includes fetched website evidence when available', () => {
+  const prompt = buildCoachPrompt({
+    ...BASE_PROMPT_PARAMS,
+    intent: 'company_context',
+    companyWebsiteContext: {
+      normalizedWebsite: 'https://acme.example.com',
+      title: 'Acme Dynamics - Finance Workflow Platform',
+      extractedText: 'Acme Dynamics provides reporting automation for finance teams.',
+      fetched: true,
+    },
+  });
+
+  assert.match(prompt, /Website Evidence:/);
+  assert.match(prompt, /Fetched website URL: https:\/\/acme\.example\.com/);
+  assert.match(prompt, /Fetched page title: Acme Dynamics - Finance Workflow Platform/);
+  assert.match(prompt, /Acme Dynamics provides reporting automation for finance teams/);
+});
+
+test('company_context prompt marks company-name-only context as limited', () => {
+  const prompt = buildCoachPrompt({
+    ...BASE_PROMPT_PARAMS,
+    companyWebsite: '',
+    intent: 'company_context',
+  });
+
+  assert.match(prompt, /Input basis: company name only/);
+  assert.match(prompt, /Company context is limited because only the company name was provided/);
+  assert.match(prompt, /Add a website for a more specific brief/);
 });

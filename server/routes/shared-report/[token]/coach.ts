@@ -25,6 +25,8 @@ import {
   buildSelectionTextHash,
   COACH_PROMPT_VERSION,
   generateDocumentComparisonCoach,
+  hasCompanyContextInput,
+  resolveCompanyWebsiteContextForCoach,
   resolveStep2CoachProviderModel,
 } from '../../../_lib/vertex-coach.js';
 import { extractSafeMediatorContext } from '../../../_lib/coach-mediator-context.js';
@@ -60,6 +62,43 @@ const MAX_CUSTOM_PROMPT_CHARS = 4000;
 
 function asText(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function hasOwn(value: unknown, key: string) {
+  return Boolean(
+    value &&
+      typeof value === 'object' &&
+      Object.prototype.hasOwnProperty.call(value, key)
+  );
+}
+
+function hasCompanyContextFields(body: Record<string, unknown>) {
+  return (
+    hasOwn(body, 'company_name') ||
+    hasOwn(body, 'companyName') ||
+    hasOwn(body, 'company_website') ||
+    hasOwn(body, 'companyWebsite')
+  );
+}
+
+function bodyText(body: Record<string, unknown>, snakeKey: string, camelKey: string) {
+  if (hasOwn(body, snakeKey)) {
+    return asText(body[snakeKey]);
+  }
+  if (hasOwn(body, camelKey)) {
+    return asText(body[camelKey]);
+  }
+  return '';
+}
+
+function assertCompanyContextInput(intent: string, input: { companyName?: string; companyWebsite?: string }) {
+  if (intent === 'company_context' && !hasCompanyContextInput(input)) {
+    throw new ApiError(
+      400,
+      'missing_company_context',
+      'Add a company name or website to generate company context.',
+    );
+  }
 }
 
 function parseMode(value: unknown) {
@@ -344,11 +383,20 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
     });
 
     // Recipient can supply company context inline (not persisted to the comparison).
-    // Falls back to the comparison's saved company context.
-    const companyName = asText(body.company_name || body.companyName)
-      || asText(resolved.comparison?.companyName);
-    const companyWebsite = asText(body.company_website || body.companyWebsite)
-      || asText(resolved.comparison?.companyWebsite);
+    // If any company field is submitted, treat that submitted field set as authoritative
+    // so cleared fields do not fall back to stale saved comparison context.
+    const hasRequestCompanyContext = hasCompanyContextFields(body);
+    const companyName = hasRequestCompanyContext
+      ? bodyText(body, 'company_name', 'companyName')
+      : asText(resolved.comparison?.companyName);
+    const companyWebsite = hasRequestCompanyContext
+      ? bodyText(body, 'company_website', 'companyWebsite')
+      : asText(resolved.comparison?.companyWebsite);
+    assertCompanyContextInput(intent, { companyName, companyWebsite });
+    const companyWebsiteContext = await resolveCompanyWebsiteContextForCoach({
+      intent,
+      companyWebsite,
+    });
 
     // ── Extract safe mediator context from shared-report evaluation history ──
     // Query the latest successful evaluation runs for this shared link.
@@ -394,6 +442,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       promptText: promptText || undefined,
       companyName: companyName || undefined,
       companyWebsite: companyWebsite || undefined,
+      companyWebsiteContext,
       threadHistory: threadHistory.length > 0 ? threadHistory : undefined,
       mediatorContext,
       sharedHistoryContext,
@@ -438,6 +487,7 @@ export default async function handler(req: any, res: any, tokenParam?: string) {
       promptText: promptText || undefined,
       companyName: companyName || undefined,
       companyWebsite: companyWebsite || undefined,
+      companyWebsiteContext,
       threadHistory: threadHistory.length > 0 ? threadHistory : undefined,
       mediatorContext,
       sharedHistoryContext,
