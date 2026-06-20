@@ -1,3 +1,10 @@
+export const COMPANY_CONTEXT_COACH_ACTION = {
+  id: 'company_context_full',
+  label: 'Company Context',
+  mode: 'full',
+  intent: 'company_context',
+};
+
 export const DOCUMENT_COMPARISON_COACH_ACTIONS = [
   {
     id: 'draft_response_full',
@@ -22,12 +29,6 @@ export const DOCUMENT_COMPARISON_COACH_ACTIONS = [
     label: 'Clarifying Questions',
     mode: 'full',
     intent: 'clarifying_questions',
-  },
-  {
-    id: 'company_context_full',
-    label: 'Company Context',
-    mode: 'full',
-    intent: 'company_context',
   },
 ];
 

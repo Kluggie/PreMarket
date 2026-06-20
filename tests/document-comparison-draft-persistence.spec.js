@@ -606,17 +606,28 @@ test.describe('Document Comparison Draft Persistence', () => {
 
     const nameInput = page.getByTestId('company-context-name-input-inline');
     const websiteInput = page.getByTestId('company-context-website-input-inline');
+    const suggestedPrompts = page.getByTestId('step2-suggested-prompts');
 
-    const companyContextButton = page.getByRole('button', { name: 'Company Context' });
+    const companyContextButton = page.getByTestId('generate-company-context-button');
     await expect(companyContextButton).toBeVisible();
+    await expect(companyContextButton).toHaveText(/Generate Company Context/);
     await expect(companyContextButton).toBeDisabled();
+    await expect(suggestedPrompts.getByRole('button', { name: 'Draft Response' })).toBeVisible();
+    await expect(suggestedPrompts.getByRole('button', { name: 'Negotiation Strategy' })).toBeVisible();
+    await expect(suggestedPrompts.getByRole('button', { name: 'Risks & Gaps' })).toBeVisible();
+    await expect(suggestedPrompts.getByRole('button', { name: 'Clarifying Questions' })).toBeVisible();
+    await expect(suggestedPrompts.getByRole('button', { name: 'Company Context' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Company Brief' })).toHaveCount(0);
     expect(companyBriefRequests).toHaveLength(0);
     expect(coachRequests).toHaveLength(0);
     await expect(page.getByTestId('company-context-dialog')).toHaveCount(0);
 
     await nameInput.fill('Acme Industries');
+    await expect(companyContextButton).toBeEnabled();
+    await nameInput.fill('');
     await websiteInput.fill('acme.test');
+    await expect(companyContextButton).toBeEnabled();
+    await nameInput.fill('Acme Industries');
     await websiteInput.blur();
     await expect(companyContextButton).toBeEnabled();
 

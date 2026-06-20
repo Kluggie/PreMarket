@@ -229,12 +229,14 @@ test('guest Step 2 AI assistance uses the public preview path, applies suggestio
   await expect(page.getByTestId('coach-custom-prompt-panel')).toBeVisible({
     timeout: LOAD_TIMEOUT_MS,
   });
-  await expect(page.getByRole('button', { name: 'Draft Response' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Negotiation Strategy' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Risks & Gaps' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Clarifying Questions' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Company Context' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Company Context' })).toBeDisabled();
+  const suggestedPrompts = page.getByTestId('step2-suggested-prompts');
+  await expect(suggestedPrompts.getByRole('button', { name: 'Draft Response' })).toBeVisible();
+  await expect(suggestedPrompts.getByRole('button', { name: 'Negotiation Strategy' })).toBeVisible();
+  await expect(suggestedPrompts.getByRole('button', { name: 'Risks & Gaps' })).toBeVisible();
+  await expect(suggestedPrompts.getByRole('button', { name: 'Clarifying Questions' })).toBeVisible();
+  await expect(suggestedPrompts.getByRole('button', { name: 'Company Context' })).toHaveCount(0);
+  await expect(page.getByTestId('generate-company-context-button')).toBeVisible();
+  await expect(page.getByTestId('generate-company-context-button')).toBeDisabled();
   await expect(page.getByRole('button', { name: 'General Improvements' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Company Brief' })).toHaveCount(0);
   expect(guestCoachCalls).toBe(0);

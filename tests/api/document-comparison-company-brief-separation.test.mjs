@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   buildCoachActionRequest,
+  COMPANY_CONTEXT_COACH_ACTION,
   DOCUMENT_COMPARISON_COACH_ACTIONS,
 } from '../../src/components/document-comparison/coachActions.js';
 import {
@@ -22,7 +23,6 @@ const FINAL_LABELS = [
   'Negotiation Strategy',
   'Risks & Gaps',
   'Clarifying Questions',
-  'Company Context',
 ];
 
 const FINAL_INTENTS = [
@@ -30,7 +30,6 @@ const FINAL_INTENTS = [
   'negotiate',
   'risks',
   'clarifying_questions',
-  'company_context',
 ];
 
 test('Suggested Prompts contain the final neutral Step 2 action set and no old labels', () => {
@@ -39,6 +38,7 @@ test('Suggested Prompts contain the final neutral Step 2 action set and no old l
   assert.equal(DOCUMENT_COMPARISON_COACH_ACTIONS.every((action) => action.mode === 'full'), true);
 
   const labels = DOCUMENT_COMPARISON_COACH_ACTIONS.map((action) => action.label);
+  assert.equal(labels.includes('Company Context'), false);
   assert.equal(labels.includes('General Improvements'), false);
   assert.equal(labels.includes('Company Brief'), false);
   assert.equal(labels.includes('Draft My Reply'), false);
@@ -71,7 +71,11 @@ test('Draft Response starts a thread and appears first', () => {
   assert.equal(thread.entries[0].promptType, 'draft_response');
 });
 
-test('Company Context is threaded like every other Step 2 prompt', () => {
+test('Company Context remains a Step 2 coach action outside the Suggested Prompts list', () => {
+  const request = buildCoachActionRequest(COMPANY_CONTEXT_COACH_ACTION, { side: 'b', text: '', range: null });
+  assert.equal(request.intent, 'company_context');
+  assert.equal(request.mode, 'full');
+
   let st = appendUserEntry([], null, {
     content: 'Risks & Gaps',
     promptType: 'risks',
@@ -117,7 +121,7 @@ test('custom prompt follow-up continues the active thread', () => {
   assert.equal(st2.threads[0].entries[2].promptType, 'custom_prompt');
 });
 
-test('thread history can include Company Context because it is a Step 2 suggestion', () => {
+test('thread history can include Company Context because it is a Step 2 coach action', () => {
   let st = appendUserEntry([], null, { content: 'Company Context', promptType: 'company_context' });
   st = appendAssistantEntry(st.threads, st.activeThreadId, {
     content: 'Company context answer',
